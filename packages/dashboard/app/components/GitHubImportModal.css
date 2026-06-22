@@ -752,6 +752,133 @@ The markdown variant must NOT pre-wrap/clamp — MailboxMessageContent emits rea
   margin-bottom: 0;
 }
 
+/*
+FNXC:GitHubImport 2026-06-23-01:00:
+Checks + Comments sections live below the PR body in the scrollable preview pane. Theme tokens only — check pills color via --success/--danger/--warning/--text-muted, mirroring the preview-state-badge token fallbacks.
+*/
+.github-import-pr-checks,
+.github-import-pr-comments {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+
+.preview-section-heading {
+  margin: 0 0 var(--space-sm);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.preview-detail-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.preview-detail-error {
+  color: var(--danger, var(--text-muted));
+  font-size: 12px;
+}
+
+.preview-detail-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.github-import-pr-checks__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.github-import-pr-check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.github-import-pr-check-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 64px;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.github-import-pr-check-pill--success {
+  color: var(--success, var(--accent));
+  border-color: color-mix(in srgb, var(--success, var(--accent)) 40%, transparent);
+}
+
+.github-import-pr-check-pill--failure {
+  color: var(--danger, var(--text-muted));
+  border-color: color-mix(in srgb, var(--danger, var(--text-muted)) 40%, transparent);
+}
+
+.github-import-pr-check-pill--pending {
+  color: var(--warning, var(--accent));
+  border-color: color-mix(in srgb, var(--warning, var(--accent)) 40%, transparent);
+}
+
+.github-import-pr-check-pill--neutral {
+  color: var(--text-muted);
+  border-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
+.github-import-pr-check-name {
+  color: var(--text);
+  text-decoration: none;
+  word-break: break-word;
+}
+
+a.github-import-pr-check-name:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.github-import-pr-comments__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.github-import-pr-comment {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--card);
+}
+
+.github-import-pr-comment__author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: var(--space-xs);
+}
+
+.github-import-pr-comment__body {
+  color: var(--text);
+}
+
 /* Back button - hidden on desktop by default */
 .github-import-back-button {
   display: none;

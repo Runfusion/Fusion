@@ -3572,6 +3572,143 @@ export class GitHubClient {
     }));
   }
 
+  /*
+  FNXC:GitHubImport 2026-06-23-01:00:
+  The Import Tasks PR preview needs the FULL comment thread plus per-check status for the SELECTED PR only.
+  `gh pr list` (listPullRequests) returns just comment COUNT + no per-check detail, so this per-PR detail fetch is intentionally separate and called on selection — never for the whole list (too expensive).
+  Returns the issue-level comment thread (author/body/createdAt, chronological) and the status-check rollup mapped to { name, status, conclusion?, detailsUrl? }.
+  Falls back to REST when gh CLI auth is unavailable; check failures degrade to an empty checks array rather than failing the whole detail.
+  */
+  async getPullRequestDetail(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<{
+    comments: Array<{ author: string; body: string; createdAt: string }>;
+    checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }>;
+  }> {
+    if (this.hasGhAuth()) {
+      try {
+        return await this.getPullRequestDetailWithGh(owner, repo, number);
+      } catch (err) {
+        if (this.token) {
+          return this.getPullRequestDetailWithApi(owner, repo, number);
+        }
+        throw new Error(getGhErrorMessage(err));
+      }
+    }
+    if (this.token) {
+      return this.getPullRequestDetailWithApi(owner, repo, number);
+    }
+    throw new Error("GitHub CLI (gh) is not available or not authenticated, and no GITHUB_TOKEN provided. Run 'gh auth login' to authenticate.");
+  }
+
+  private async getPullRequestDetailWithGh(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<{
+    comments: Array<{ author: string; body: string; createdAt: string }>;
+    checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }>;
+  }> {
+    const pr = await runGhJsonAsync<{
+      comments?: Array<{ author?: { login?: string } | null; body?: string; createdAt?: string }>;
+      // `gh pr view --json statusCheckRollup` returns a flat array of mixed CheckRun/StatusContext shapes.
+      statusCheckRollup?: Array<{
+        name?: string;
+        context?: string;
+        status?: string;
+        state?: string;
+        conclusion?: string;
+        detailsUrl?: string;
+        targetUrl?: string;
+        link?: string;
+      }> | null;
+    }>([
+      "pr", "view", String(number),
+      "--repo", `${owner}/${repo}`,
+      "--json", "comments,statusCheckRollup",
+    ]);
+
+    const comments = (pr.comments ?? []).map((c) => ({
+      author: c.author?.login ?? "unknown",
+      body: c.body ?? "",
+      createdAt: c.createdAt ?? "",
+    }));
+
+    const checks = (pr.statusCheckRollup ?? []).map((c) => ({
+      name: c.name ?? c.context ?? "check",
+      // CheckRun uses `status`; StatusContext uses `state`. Surface whichever is present.
+      status: (c.status ?? c.state ?? "").toLowerCase(),
+      conclusion: c.conclusion ? c.conclusion.toLowerCase() : undefined,
+      detailsUrl: c.detailsUrl ?? c.targetUrl ?? c.link ?? undefined,
+    }));
+
+    return { comments, checks };
+  }
+
+  private async getPullRequestDetailWithApi(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<{
+    comments: Array<{ author: string; body: string; createdAt: string }>;
+    checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }>;
+  }> {
+    const headers = this.buildHeaders();
+
+    // Issue comments thread (the PR conversation tab), chronological.
+    const commentsUrl = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}/comments?per_page=100`;
+    const commentsRes = await fetch(commentsUrl, { headers });
+    if (!commentsRes.ok) {
+      if (commentsRes.status === 404) {
+        throw new Error(`PR #${number} not found in ${owner}/${repo}`);
+      }
+      throw new Error(`GitHub API error: ${commentsRes.status} ${commentsRes.statusText}`);
+    }
+    const commentData = (await commentsRes.json()) as Array<{
+      user?: { login?: string } | null;
+      body?: string;
+      created_at?: string;
+    }>;
+    const comments = commentData.map((c) => ({
+      author: c.user?.login ?? "unknown",
+      body: c.body ?? "",
+      createdAt: c.created_at ?? "",
+    }));
+
+    // Per-check status via the combined check-runs endpoint on the PR head sha.
+    // Check failures degrade to an empty checks array rather than failing the whole detail.
+    let checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }> = [];
+    try {
+      const prUrl = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${number}`;
+      const prRes = await fetch(prUrl, { headers });
+      if (prRes.ok) {
+        const prJson = (await prRes.json()) as { head?: { sha?: string } };
+        const sha = prJson.head?.sha;
+        if (sha) {
+          const checksUrl = `${this.baseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${sha}/check-runs?per_page=100`;
+          const checksRes = await fetch(checksUrl, { headers });
+          if (checksRes.ok) {
+            const checksJson = (await checksRes.json()) as {
+              check_runs?: Array<{ name?: string; status?: string; conclusion?: string | null; details_url?: string | null }>;
+            };
+            checks = (checksJson.check_runs ?? []).map((c) => ({
+              name: c.name ?? "check",
+              status: (c.status ?? "").toLowerCase(),
+              conclusion: c.conclusion ? c.conclusion.toLowerCase() : undefined,
+              detailsUrl: c.details_url ?? undefined,
+            }));
+          }
+        }
+      }
+    } catch {
+      checks = [];
+    }
+
+    return { comments, checks };
+  }
+
   /**
    * Fetch a single pull request by number.
    * Uses gh CLI if available, otherwise falls back to REST API.

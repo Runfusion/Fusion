@@ -2428,6 +2428,24 @@ export function apiFetchGitHubPulls(
   });
 }
 
+/*
+FNXC:GitHubImport 2026-06-23-01:00:
+Per-PR detail for the Import Tasks PR preview pane. `gh pr list` (apiFetchGitHubPulls) returns only comment COUNT + no per-check status, so the preview fetches the FULL comment thread + per-check status ON SELECTION via this client fn (never for the whole list — too expensive).
+`status` is the gh CheckRun status (queued/in_progress/completed) or StatusContext state; `conclusion` (success/failure/neutral/...) is present once a check completes.
+*/
+export interface GitHubPullDetail {
+  comments: Array<{ author: string; body: string; createdAt: string }>;
+  checks: Array<{ name: string; status: string; conclusion?: string; detailsUrl?: string }>;
+}
+
+/** Fetch the full comment thread + per-check status for a single GitHub PR (called on selection in the import preview). */
+export function apiFetchGitHubPullDetail(repo: string, number: number): Promise<GitHubPullDetail> {
+  return api<GitHubPullDetail>("/github/pulls/detail", {
+    method: "POST",
+    body: JSON.stringify({ repo, number }),
+  });
+}
+
 /** Import a specific GitHub pull request as a fn review task */
 export function apiImportGitHubPull(owner: string, repo: string, prNumber: number, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId("/github/pulls/import", projectId), {

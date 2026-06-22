@@ -5,6 +5,7 @@ import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
   apiFetchGitHubPulls,
+  apiFetchGitHubPullDetail,
   apiImportGitHubPull,
   fetchGitRemotes,
 } from "../../api";
@@ -21,6 +22,7 @@ vi.mock("../../api", async (importOriginal) => {
     apiFetchGitHubIssues: vi.fn(),
     apiImportGitHubIssue: vi.fn(),
     apiFetchGitHubPulls: vi.fn(),
+    apiFetchGitHubPullDetail: vi.fn(),
     apiImportGitHubPull: vi.fn(),
     fetchGitRemotes: vi.fn(),
   };
@@ -95,10 +97,12 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiFetchGitHubIssues).mockReset();
     vi.mocked(apiImportGitHubIssue).mockReset();
     vi.mocked(apiFetchGitHubPulls).mockReset();
+    vi.mocked(apiFetchGitHubPullDetail).mockReset();
     vi.mocked(apiImportGitHubPull).mockReset();
     // Set default mock for apiFetchGitHubIssues to return empty array (prevents undefined issues state)
     vi.mocked(apiFetchGitHubIssues).mockResolvedValue([]);
     vi.mocked(apiFetchGitHubPulls).mockResolvedValue([]);
+    vi.mocked(apiFetchGitHubPullDetail).mockResolvedValue({ comments: [], checks: [] });
     onClose.mockReset();
     onImport.mockReset();
   });
@@ -866,6 +870,88 @@ describe("GitHubImportModal", () => {
       expect(within(previewCard).getByText((content) => content.includes(beyondPreviousCutoff))).toBeTruthy();
       expect(previewCard.textContent).toContain(longBody);
       expect(previewCard.textContent).not.toContain(`${"P".repeat(200)}…`);
+    });
+
+    // FNXC:GitHubImport 2026-06-23-01:00: Selecting a PR fetches its detail and renders the full comment thread + per-check status below the body, scoped to PRs (issues unchanged).
+    it("renders the selected PR's checks and comments from the detail fetch", async () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1200 });
+
+      const pulls = [
+        { number: 7, title: "Detail PR", body: "PR body text", html_url: "https://github.com/owner/repo/pull/7", headBranch: "feature", baseBranch: "main" },
+      ];
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(pulls);
+      vi.mocked(apiFetchGitHubPullDetail).mockResolvedValueOnce({
+        comments: [
+          { author: "alice", body: "First comment from alice", createdAt: "2024-01-01T00:00:00Z" },
+          { author: "bob", body: "Second comment from bob", createdAt: "2024-01-02T00:00:00Z" },
+        ],
+        checks: [
+          { name: "build", status: "completed", conclusion: "success" },
+          { name: "lint", status: "completed", conclusion: "failure" },
+        ],
+      });
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      await waitFor(() => {
+        expect(screen.getByText("Detail PR")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #7/i }));
+
+      // Detail fetch is scoped to the selected PR by "owner/repo" + number.
+      await waitFor(() => {
+        expect(vi.mocked(apiFetchGitHubPullDetail)).toHaveBeenCalledWith("dustinbyrne/kb", 7);
+      });
+
+      const checks = await screen.findByTestId("github-import-pr-checks");
+      const comments = await screen.findByTestId("github-import-pr-comments");
+
+      // Body still renders immediately, independent of detail.
+      expect(screen.getByTestId("github-import-preview-body").textContent).toContain("PR body text");
+
+      // Per-check status surfaces both name and conclusion.
+      await waitFor(() => {
+        expect(checks.textContent).toContain("build");
+        expect(checks.textContent).toContain("success");
+        expect(checks.textContent).toContain("lint");
+        expect(checks.textContent).toContain("failure");
+      });
+      // Failed check gets the failure pill variant.
+      expect(checks.querySelector(".github-import-pr-check-pill--failure")).toBeTruthy();
+      expect(checks.querySelector(".github-import-pr-check-pill--success")).toBeTruthy();
+
+      // Full comment thread renders, chronological, with authors + bodies.
+      expect(comments.textContent).toContain("alice");
+      expect(comments.textContent).toContain("First comment from alice");
+      expect(comments.textContent).toContain("bob");
+      expect(comments.textContent).toContain("Second comment from bob");
+    });
+
+    // FNXC:GitHubImport 2026-06-23-01:00: Empty detail shows the "No checks"/"No comments" empty states.
+    it("shows empty states when the selected PR has no checks or comments", async () => {
+      Object.defineProperty(window, "innerWidth", { writable: true, configurable: true, value: 1200 });
+
+      const pulls = [
+        { number: 9, title: "Bare PR", body: "Bare body", html_url: "https://github.com/owner/repo/pull/9", headBranch: "feature", baseBranch: "main" },
+      ];
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(pulls);
+      vi.mocked(apiFetchGitHubPullDetail).mockResolvedValueOnce({ comments: [], checks: [] });
+
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+
+      fireEvent.click(await screen.findByRole("tab", { name: /Pull Requests/i }));
+      await waitFor(() => {
+        expect(screen.getByText("Bare PR")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole("radio", { name: /Select pull request #9/i }));
+
+      expect(await screen.findByTestId("github-import-pr-checks-empty")).toBeTruthy();
+      expect(await screen.findByTestId("github-import-pr-comments-empty")).toBeTruthy();
     });
 
     // FNXC:GitHubImport 2026-06-22-18:30: Desktop preview must show the FULL issue/PR body (no 200-char clamp). The list response already carries the complete body, so no detail fetch is needed.

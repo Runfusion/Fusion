@@ -7,10 +7,12 @@ import {
   apiFetchGitHubIssues,
   apiImportGitHubIssue,
   apiFetchGitHubPulls,
+  apiFetchGitHubPullDetail,
   apiImportGitHubPull,
   fetchGitRemotes,
   type GitHubIssue,
   type GitHubPull,
+  type GitHubPullDetail,
   type GitRemote,
 } from "../api";
 import { Loader2, RefreshCw, ArrowLeft, GitPullRequest, CircleDot } from "lucide-react";
@@ -93,6 +95,19 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   // Pulls state
   const [pulls, setPulls] = useState<GitHubPull[]>([]);
   const [selectedPullNumber, setSelectedPullNumber] = useState<number | null>(null);
+
+  /*
+  FNXC:GitHubImport 2026-06-23-01:00:
+  The PR preview pane shows the full comment thread + per-check status for the SELECTED PR only.
+  `gh pr list` returns just comment COUNT + no per-check detail, so the full thread/checks are fetched ON SELECTION via apiFetchGitHubPullDetail — never for the whole list (too expensive).
+  Detail is cached by PR number in a ref so re-selecting a PR does not refetch; the body renders immediately while checks/comments stream in (loading/error tracked separately, never blocking the body).
+  */
+  const pullDetailCacheRef = useRef<Map<number, GitHubPullDetail>>(new Map());
+  const [pullDetail, setPullDetail] = useState<GitHubPullDetail | null>(null);
+  const [pullDetailLoading, setPullDetailLoading] = useState(false);
+  const [pullDetailError, setPullDetailError] = useState<string | null>(null);
+  // Guards against a stale in-flight detail response overwriting a newer selection.
+  const pullDetailRequestRef = useRef(0);
 
   const [error, setError] = useState<string | null>(null);
   const [isIssuesEmptyState, setIsIssuesEmptyState] = useState(false);
@@ -546,6 +561,46 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       }
     }
   }, [activeTab, selectedIssueNumber, selectedPullNumber, owner, repo, projectId, onImport, isMobile, mobileView]);
+
+  /*
+  FNXC:GitHubImport 2026-06-23-01:00:
+  Fetch the selected PR's detail (comments + checks) on selection. Serves from the per-number cache on re-select; otherwise fetches and caches.
+  Body render is never blocked on this — the body shows immediately and checks/comments populate when this resolves.
+  */
+  useEffect(() => {
+    if (activeTab !== "pulls" || selectedPullNumber === null || !owner.trim() || !repo.trim()) {
+      setPullDetail(null);
+      setPullDetailLoading(false);
+      setPullDetailError(null);
+      return;
+    }
+
+    const cached = pullDetailCacheRef.current.get(selectedPullNumber);
+    if (cached) {
+      setPullDetail(cached);
+      setPullDetailLoading(false);
+      setPullDetailError(null);
+      return;
+    }
+
+    const requestId = ++pullDetailRequestRef.current;
+    setPullDetail(null);
+    setPullDetailLoading(true);
+    setPullDetailError(null);
+
+    apiFetchGitHubPullDetail(`${owner.trim()}/${repo.trim()}`, selectedPullNumber)
+      .then((detail) => {
+        pullDetailCacheRef.current.set(selectedPullNumber, detail);
+        if (pullDetailRequestRef.current !== requestId) return;
+        setPullDetail(detail);
+        setPullDetailLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (pullDetailRequestRef.current !== requestId) return;
+        setPullDetailError(getErrorMessage(err));
+        setPullDetailLoading(false);
+      });
+  }, [activeTab, selectedPullNumber, owner, repo]);
 
   const selectedIssue = issues.find((i) => i.number === selectedIssueNumber);
   const selectedPull = pulls.find((p) => p.number === selectedPullNumber);
@@ -1012,6 +1067,74 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                         {t("git.noDescription", "(no description)")}
                       </div>
                     )}
+                    {/*
+                    FNXC:GitHubImport 2026-06-23-01:00:
+                    Checks + Comments render BELOW the PR body inside the already-scrollable preview pane. They stream in after the per-PR detail fetch resolves and never block the body above.
+                    Check status maps to a theme-token pill class (success/failure/pending/neutral); the rollup conclusion is preferred over the in-progress status for color.
+                    */}
+                    <div className="github-import-pr-checks" data-testid="github-import-pr-checks">
+                      <h5 className="preview-section-heading">{t("git.checksHeading", "Checks")}</h5>
+                      {pullDetailLoading ? (
+                        <div className="preview-detail-loading" data-testid="github-import-pr-checks-loading">
+                          <Loader2 size={14} className="spin" aria-hidden="true" />
+                          <span>{t("git.loadingChecks", "Loading checks…")}</span>
+                        </div>
+                      ) : pullDetailError ? (
+                        <div className="preview-detail-error" data-testid="github-import-pr-checks-error">{pullDetailError}</div>
+                      ) : pullDetail && pullDetail.checks.length > 0 ? (
+                        <ul className="github-import-pr-checks__list">
+                          {pullDetail.checks.map((check, idx) => {
+                            const indicator = check.conclusion ?? check.status;
+                            const variant =
+                              indicator === "success"
+                                ? "success"
+                                : indicator === "failure" || indicator === "error" || indicator === "cancelled" || indicator === "timed_out"
+                                  ? "failure"
+                                  : indicator === "neutral" || indicator === "skipped"
+                                    ? "neutral"
+                                    : "pending";
+                            return (
+                              <li key={`${check.name}-${idx}`} className="github-import-pr-check-row">
+                                <span className={`github-import-pr-check-pill github-import-pr-check-pill--${variant}`}>{indicator || "pending"}</span>
+                                {check.detailsUrl ? (
+                                  <a className="github-import-pr-check-name" href={check.detailsUrl} target="_blank" rel="noopener noreferrer">{check.name}</a>
+                                ) : (
+                                  <span className="github-import-pr-check-name">{check.name}</span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <div className="preview-detail-empty" data-testid="github-import-pr-checks-empty">{t("git.noChecks", "No checks")}</div>
+                      )}
+                    </div>
+                    <div className="github-import-pr-comments" data-testid="github-import-pr-comments">
+                      <h5 className="preview-section-heading">{t("git.commentsHeading", "Comments")}</h5>
+                      {pullDetailLoading ? (
+                        <div className="preview-detail-loading" data-testid="github-import-pr-comments-loading">
+                          <Loader2 size={14} className="spin" aria-hidden="true" />
+                          <span>{t("git.loadingComments", "Loading comments…")}</span>
+                        </div>
+                      ) : pullDetailError ? (
+                        <div className="preview-detail-error" data-testid="github-import-pr-comments-error">{pullDetailError}</div>
+                      ) : pullDetail && pullDetail.comments.length > 0 ? (
+                        <ul className="github-import-pr-comments__list">
+                          {pullDetail.comments.map((comment, idx) => (
+                            <li key={idx} className="github-import-pr-comment">
+                              <div className="github-import-pr-comment__author">{comment.author}</div>
+                              <MailboxMessageContent
+                                className="github-import-pr-comment__body preview-body--markdown"
+                                content={comment.body || t("git.noCommentBody", "(empty comment)")}
+                                testId="github-import-pr-comment-body"
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="preview-detail-empty" data-testid="github-import-pr-comments-empty">{t("git.noComments", "No comments")}</div>
+                      )}
+                    </div>
                   </div>
                 ) : activeTab === "pulls" ? (
                   <div className="github-import-state github-import-state--idle" data-testid="github-import-preview-empty">

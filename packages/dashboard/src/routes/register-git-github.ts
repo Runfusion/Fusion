@@ -4175,6 +4175,58 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     }
   });
 
+  /*
+  FNXC:GitHubImport 2026-06-23-01:00:
+  POST /api/github/pulls/detail — per-PR detail fetch for the Import Tasks PR preview pane.
+  `gh pr list` only yields comment COUNT + no per-check status, so the preview fetches the FULL comment thread + per-check status ON SELECTION via this route (never for the whole list — too expensive).
+  Body: { repo: string ("owner/name"), number: number }. Returns { comments, checks }.
+  */
+  router.post("/github/pulls/detail", async (req, res) => {
+    try {
+      const { repo, number } = req.body;
+
+      if (!repo || typeof repo !== "string" || !repo.includes("/")) {
+        throw badRequest("repo is required and must be in 'owner/name' form");
+      }
+      if (!number || typeof number !== "number" || number < 1) {
+        throw badRequest("number is required and must be a positive number");
+      }
+
+      const [owner, repoName] = repo.split("/");
+      if (!owner || !repoName) {
+        throw badRequest("repo must be in 'owner/name' form");
+      }
+
+      if (!isGhAuthenticated()) {
+        throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
+      }
+
+      const client = new GitHubClient();
+
+      try {
+        const detail = await client.getPullRequestDetail(owner, repoName, number);
+        res.json(detail);
+      } catch (err: unknown) {
+        if (err instanceof ApiError) {
+          throw err;
+        }
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        if (errorMessage.includes("not found") || errorMessage.includes("404")) {
+          throw notFound(`Pull request not found: ${repo}#${number}`);
+        }
+        if (errorMessage.includes("authentication") || errorMessage.includes("401") || errorMessage.includes("403")) {
+          throw unauthorized("Not authenticated with GitHub. Run `gh auth login`.");
+        }
+        throw new ApiError(502, `GitHub CLI error: ${errorMessage}`);
+      }
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   /**
    * POST /api/github/pulls/import
    * Import a specific GitHub pull request as a fn review task.
