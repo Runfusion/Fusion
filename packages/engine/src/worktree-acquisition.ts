@@ -632,7 +632,7 @@ export async function acquireWorkspaceRepoWorktree(
   const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, runContext, audit, runConfiguredCommand, taskEnv } = opts;
   const { join, isAbsolute, normalize, sep } = await import("node:path");
 
-  // FNXC:WorkspaceWorktree 2026-06-22 — reject absolute / `..`-escaping repo paths before resolving.
+  // FNXC:WorkspaceWorktree 2026-06-22-00:00: reject absolute / `..`-escaping repo paths before resolving.
   assertInRootRepoRelPath(repoRelPath, sep, isAbsolute, normalize);
   const repoAbsPath = join(workspaceRootDir, repoRelPath);
 
@@ -692,8 +692,17 @@ export async function acquireWorkspaceRepoWorktree(
     runInitCommand: true,
   });
 
+  /*
+  FNXC:WorkspaceWorktree 2026-06-22-00:00:
+  Re-read the task immediately before merging so a concurrent sibling-repo acquisition that
+  landed between our initial read and now is not clobbered — `updateTask` replaces the
+  `workspaceWorktrees` map wholesale, so we must merge onto the freshest map, not the stale
+  snapshot captured before `acquireTaskWorktree`. This narrows the read-modify-write window to
+  the store's own lock; a fully atomic per-repo store-level merge is a follow-up.
+  */
+  const freshTask = (await store.getTask(task.id)) ?? task;
   const updated: Record<string, { worktreePath: string; branch: string }> = {
-    ...(task.workspaceWorktrees ?? {}),
+    ...(freshTask.workspaceWorktrees ?? {}),
     [repoRelPath]: { worktreePath: result.worktreePath, branch: result.branch },
   };
   /*
