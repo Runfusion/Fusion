@@ -1,5 +1,5 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
-import { aiMergeTask } from "@fusion/engine";
+import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, assertNotWorkspaceTaskMerge, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { runAiMerge } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import { createSession, submitResponse, RateLimitError, SessionNotFoundError, InvalidSessionStateError } from "@fusion/dashboard/planning";
@@ -850,8 +850,15 @@ export async function runTaskMerge(id: string, projectName?: string) {
 
   console.log(`\n  Merging ${id} with AI...\n`);
 
+  // FNXC:Workspace 2026-06-21-00:00: R7 merge-boundary guard (master-plan U0).
+  // Reject workspace-mode tasks before any merge work; per-repo merge lands in
+  // master-plan U6, which removes this guard.
+  // FNXC:MergerUnification 2026-06-21-00:00: unified onto runAiMerge (U0).
+  const mergeTaskRecord = await store.getTask(id).catch(() => null);
+  if (mergeTaskRecord) assertNotWorkspaceTaskMerge(mergeTaskRecord);
+
   try {
-    const result = await aiMergeTask(store, projectPath, id, {
+    const result = await runAiMerge(store, projectPath, id, {
       onAgentText: (delta) => process.stdout.write(delta),
     });
 

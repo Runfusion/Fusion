@@ -3,8 +3,13 @@
  *
  * This is "AI mode" — a self-contained merge implementation that deliberately
  * does NOT share the legacy `aiMergeTask` pipeline (prerebase / conflict-strategy
- * ladder / transient self-heal), which is buggy and error-prone. The engine
- * dispatches here when `merger.mode === "ai"` (the default).
+ * ladder / transient self-heal), which is buggy and error-prone.
+ *
+ * FNXC:MergerUnification 2026-06-21-00:00: master-plan U0 made this the SOLE
+ * merge path. Every merge entry point (engine dispatch, `fn task merge`, the
+ * UI-only dashboard merge) routes here; `merger.mode` is inert (a "deterministic"
+ * value only logs a one-time deprecation warning). The legacy `aiMergeTask`
+ * pipeline is soft-deprecated.
  *
  * Shape:
  *   1. Clean room — create a throwaway detached worktree at the integration

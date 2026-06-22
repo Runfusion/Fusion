@@ -7637,6 +7637,17 @@ export async function syncGroupPrOnLanding(input: {
   }
 }
 
+/**
+ * @deprecated Soft-deprecated by master-plan U0 (2026-06-21). `runAiMerge`
+ * (`merger-ai.ts`, the FN-5633 clean-room AI merge path) is now the SOLE merge
+ * path; no production code calls `aiMergeTask`. The body is RETAINED for a later
+ * deletion pass and direct unit tests, but new callers must use `runAiMerge`.
+ * The `merger.mode === "deterministic"` setting that once routed here is inert.
+ *
+ * FNXC:MergerUnification 2026-06-21-00:00: legacy deterministic merge pipeline,
+ * superseded by runAiMerge. Helpers it shares with runAiMerge (e.g.
+ * captureSingleCommitLandedMetadata) are NOT deprecated.
+ */
 export async function aiMergeTask(
   store: TaskStore,
   rootDir: string,

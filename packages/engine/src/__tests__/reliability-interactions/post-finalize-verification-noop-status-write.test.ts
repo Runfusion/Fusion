@@ -3,15 +3,18 @@ import { EventEmitter } from "node:events";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 
 const testState = vi.hoisted(() => ({
-  aiMergeTask: vi.fn(),
+  runAiMerge: vi.fn(),
   currentStore: null as (TaskStore & EventEmitter) | null,
 }));
 
-vi.mock("../../merger.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../merger.js")>();
+// FNXC:MergerUnification 2026-06-21-00:00: master-plan U0 unified the merge
+// dispatch onto runAiMerge (merger-ai.js). This test uses the merge fn as a
+// mockable seam to inject a verification failure; it now mocks runAiMerge.
+vi.mock("../../merger-ai.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../merger-ai.js")>();
   return {
     ...actual,
-    aiMergeTask: testState.aiMergeTask,
+    runAiMerge: testState.runAiMerge,
   };
 });
 
@@ -63,7 +66,8 @@ function createStore(task: Task, sequence: Task[]) {
       globalPause: false,
       enginePaused: false,
       pollIntervalMs: 15_000,
-      merger: { mode: "deterministic" },
+      // FNXC:MergerUnification 2026-06-21-00:00: U0 unified merges onto runAiMerge;
+      // no `merger.mode` pin needed (dispatch ignores it).
     } as Settings)),
     listTasks: vi.fn(async () => [task]),
     getTask: vi.fn(async () => {
@@ -109,7 +113,7 @@ async function runMergeCycle(engine: ProjectEngine, taskId: string): Promise<voi
 describe("post-finalize verification noop status-write guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    testState.aiMergeTask.mockReset();
+    testState.runAiMerge.mockReset();
     testState.currentStore = null;
   });
 
@@ -119,7 +123,7 @@ describe("post-finalize verification noop status-write guard", () => {
   ])("keeps done task unchanged on $name write path", async ({ failureCount, blockedStatus }) => {
     const verificationError = new Error("Deterministic test verification failed: no-op race");
     verificationError.name = "VerificationError";
-    testState.aiMergeTask.mockRejectedValueOnce(verificationError);
+    testState.runAiMerge.mockRejectedValueOnce(verificationError);
 
     const inReviewTask = makeTask({ verificationFailureCount: failureCount });
     const doneTask = makeTask({
@@ -128,7 +132,11 @@ describe("post-finalize verification noop status-write guard", () => {
       mergeDetails: { mergeConfirmed: true, commitSha: "abcdef1234567890" },
     });
 
-    const { store, logs, audits } = createStore(inReviewTask, [inReviewTask, inReviewTask, inReviewTask, doneTask]);
+    // FNXC:MergerUnification 2026-06-21-00:00: the U0 R7 guard adds one
+    // store.getTask read at the merge dispatch before runAiMerge, so the read
+    // sequence gains one leading in-review entry; the post-failure recovery still
+    // resolves the same done-task tail (the "already-done task" no-op path).
+    const { store, logs, audits } = createStore(inReviewTask, [inReviewTask, inReviewTask, inReviewTask, inReviewTask, doneTask]);
     testState.currentStore = store;
 
     const engine = new ProjectEngine(

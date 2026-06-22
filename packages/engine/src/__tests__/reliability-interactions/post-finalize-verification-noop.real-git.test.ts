@@ -9,15 +9,19 @@ import { commitOrAmendMergeWithFixes } from "../../merger.js";
 import { SelfHealingManager } from "../../self-healing.js";
 
 const testState = vi.hoisted(() => ({
-  aiMergeTask: vi.fn(),
+  runAiMerge: vi.fn(),
   currentStore: null as (TaskStore & EventEmitter) | null,
 }));
 
-vi.mock("../../merger.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../merger.js")>();
+// FNXC:MergerUnification 2026-06-21-00:00: master-plan U0 unified the merge
+// dispatch onto runAiMerge (merger-ai.js). This test injects a verification
+// failure through the merge seam, so it now mocks runAiMerge. merger.js stays
+// real (importOriginal) for commitOrAmendMergeWithFixes used below.
+vi.mock("../../merger-ai.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../merger-ai.js")>();
   return {
     ...actual,
-    aiMergeTask: testState.aiMergeTask,
+    runAiMerge: testState.runAiMerge,
   };
 });
 
@@ -57,7 +61,8 @@ function createStore(task: Task, taskSequence?: Task[]) {
       globalPause: false,
       enginePaused: false,
       pollIntervalMs: 15_000,
-      merger: { mode: "deterministic" },
+      // FNXC:MergerUnification 2026-06-21-00:00: U0 unified merges onto runAiMerge;
+      // no `merger.mode` pin needed (dispatch ignores it).
     } as Settings)),
     listTasks: vi.fn(async () => [task]),
     getTask: vi.fn(async () => {
@@ -106,7 +111,7 @@ async function runMergeCycle(engine: ProjectEngine, taskId: string): Promise<voi
 describe("post-finalize verification failure reliability interactions (real git)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    testState.aiMergeTask.mockReset();
+    testState.runAiMerge.mockReset();
     testState.currentStore = null;
   });
 
@@ -174,7 +179,7 @@ describe("post-finalize verification failure reliability interactions (real git)
 
       const verificationError = new Error("Deterministic test verification failed");
       verificationError.name = "VerificationError";
-      testState.aiMergeTask.mockRejectedValueOnce(verificationError);
+      testState.runAiMerge.mockRejectedValueOnce(verificationError);
 
       const engine = new ProjectEngine(
         {

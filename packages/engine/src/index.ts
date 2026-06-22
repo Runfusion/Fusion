@@ -186,6 +186,9 @@ export {
   getConflictedFiles,
   type AutostashHandle,
 } from "./merger.js";
+// FNXC:MergerUnification 2026-06-21-00:00: runAiMerge is the sole merge path
+// (master-plan U0); exported for the CLI callers (fn task merge + UI-only merge).
+export { runAiMerge } from "./merger-ai.js";
 export {
   resolveMergePolicy,
   type ResolvedMergePolicy,
