@@ -1,0 +1,63 @@
+/*
+FNXC:RightDockFiles 2026-06-22-00:00:
+The inline Files viewer fills the right-dock body and scrolls internally so the read-only FileEditor never overflows the dock.
+The header is a compact bar: BACK on the left, a truncating file name in the middle, POP-OUT on the right.
+*/
+.dock-files-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.dock-files-view--viewer {
+  overflow: hidden;
+}
+
+.dock-files-viewer__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.dock-files-viewer__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dock-files-viewer__back,
+.dock-files-viewer__popout {
+  flex: 0 0 auto;
+}
+
+.dock-files-viewer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.dock-files-viewer__body .file-editor-container {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dock-files-viewer__status {
+  padding: var(--space-md);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+.dock-files-viewer__status--error {
+  color: var(--danger, var(--text));
+}

@@ -9,11 +9,10 @@ import {
 import type { Task, TaskDetail, WorkflowStep } from "@fusion/core";
 import type { PluginDashboardViewEntry } from "../api";
 import type { ToastType } from "../hooks/useToast";
-import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { buildPluginTaskViewId } from "../plugins/pluginViewRegistry";
 import { PluginDashboardViewHost } from "../plugins/PluginDashboardViewHost";
 import type { DetailTaskTab, PluginDashboardViewContext } from "../plugins/types";
-import { FileBrowser } from "./FileBrowser";
+import { DockFilesView } from "./DockFilesView";
 import { PageErrorBoundary } from "./ErrorBoundary";
 import { getPluginNavIcon } from "./pluginNavIcon";
 import { UsageIndicator } from "./UsageIndicator";
@@ -88,26 +87,6 @@ function wrapOverflowView(node: ReactNode): ReactNode {
   );
 }
 
-function InlineFilesView({ projectId, openFile }: Pick<OverflowViewRenderProps, "projectId" | "openFile">) {
-  const { entries, currentPath, setPath, loading, error, refresh } = useWorkspaceFileBrowser("project", true, projectId);
-  return (
-    <div data-testid="right-dock-files-view">
-      <FileBrowser
-        entries={entries}
-        currentPath={currentPath}
-        onSelectFile={(path) => openFile?.(path, { workspace: "project" })}
-        onNavigate={setPath}
-        loading={loading}
-        error={error}
-        onRetry={refresh}
-        workspace="project"
-        onRefresh={refresh}
-        projectId={projectId}
-      />
-    </div>
-  );
-}
-
 /*
 FNXC:Navigation 2026-06-21-00:00:
 The right dock and its expand modal must resolve every hosted overflow destination through this registry so toolbar gating, component choice, and props cannot drift between the compact panel and full-size modal surfaces.
@@ -166,7 +145,7 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     label: "Files",
     icon: Folder,
     testId: "right-dock-tab-files",
-    render: (props) => wrapOverflowView(<InlineFilesView projectId={props.projectId} openFile={props.openFile} />),
+    render: (props) => wrapOverflowView(<DockFilesView projectId={props.projectId} openFile={props.openFile} />),
   },
 ];
 

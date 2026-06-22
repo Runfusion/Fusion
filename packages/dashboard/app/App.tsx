@@ -99,6 +99,7 @@ import { subscribeSse } from "./sse-bus";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "./auth";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { PlanningModeModal } from "./components/PlanningModeModal";
+import { PlanningWorkflowSwitcherSlot } from "./components/PlanningWorkflowSwitcherSlot";
 
 // ChatView's CSS is imported eagerly so the styles bundle into the main
 // CSS file. Without this, the lazy ChatView JS chunk loaded its own CSS
@@ -1823,6 +1824,11 @@ function AppInner() {
       };
       return (
         <PageErrorBoundary>
+          {/*
+          FNXC:Navigation 2026-06-22-00:00:
+          Planning shows the same board WorkflowSwitcher in the same Header workflow slot as Board/List (portaled by PlanningWorkflowSwitcherSlot), so workflow selection is reachable from the left-sidebar Planning destination.
+          */}
+          <PlanningWorkflowSwitcherSlot projectId={currentProject?.id} onOpenWorkflowEditor={openWorkflowEditorWithNav} />
           <PlanningModeModal
             isOpen={true}
             onClose={closePlanningView}

@@ -577,6 +577,11 @@
   min-height: 0;
   min-width: 0;
   width: 100%;
+  /*
+  FNXC:Navigation 2026-06-22-00:10:
+  Anchor for the right dock, which is absolutely positioned so it overlays the page content instead of shrinking it.
+  */
+  position: relative;
 }
 
 .dashboard-project-shell--with-sidebar {

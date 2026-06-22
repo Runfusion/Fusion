@@ -1966,6 +1966,53 @@ The embedded host fills its right-dock container; the inner shell drops overlay-
   position: static;
 }
 
+/*
+FNXC:GitManager 2026-06-22-00:10:
+The embedded Git Manager renders inside the narrow right dock, so it must use the mobile single-column layout (section tabs as a horizontal strip above a full-width content pane) regardless of viewport width, mirroring the max-width:768px rules.
+*/
+.gm-modal--embedded .gm-layout {
+  flex-direction: column;
+}
+
+.gm-modal--embedded .gm-sidebar {
+  flex: 0 0 auto;
+  flex-direction: row;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(var(--space-2xl) + var(--space-md));
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-xs) var(--space-sm);
+  gap: var(--space-xs);
+}
+
+.gm-modal--embedded .gm-nav-item {
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  padding: var(--space-xs) var(--space-sm);
+  border-left: none;
+  border-bottom: 2px solid transparent;
+  min-width: calc(var(--space-2xl) + var(--space-xl));
+  text-align: center;
+  justify-content: center;
+}
+
+.gm-modal--embedded .gm-nav-item.active {
+  border-left-color: transparent;
+  border-bottom-color: var(--todo);
+}
+
+.gm-modal--embedded .gm-status-grid {
+  grid-template-columns: 1fr;
+}
+
+.gm-modal--embedded .gm-create-form {
+  flex-wrap: wrap;
+}
+
 /* Main layout: sidebar + content */
 .gm-layout {
   display: flex;

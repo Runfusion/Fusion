@@ -2,10 +2,17 @@
 FNXC:Navigation 2026-06-21-00:00:
 The right dock CSS uses a mobile media query as a belt-and-suspenders guard only. The authoritative mobile gate is the JS `rightDockActive` value from `useViewportMode`, which also covers phone classes that a width-only query cannot classify reliably.
 */
+/*
+FNXC:Navigation 2026-06-22-00:10:
+The right dock OVERLAYS the page content (floats over the right edge) instead of being a flex sibling that shrinks the main content. It is absolutely positioned against the project shell (which is position:relative) so opening/closing or resizing it never reflows the page beneath. z-index sits above content but below the docked terminal/modals.
+*/
 .right-dock {
-  position: relative;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
   display: flex;
-  flex: 0 0 auto;
   flex-direction: column;
   min-width: min(100%, var(--right-dock-min-width, calc(var(--space-2xl) * 8)));
   max-width: min(100%, var(--right-dock-max-width, calc(var(--space-2xl) * 22)));
