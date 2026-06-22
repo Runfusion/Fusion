@@ -8,6 +8,7 @@ export const dnsResolver = {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BYTES = 500 * 1024;
 const DEFAULT_USER_AGENT = "FusionWebFetch/1.0";
+const MAX_REDIRECTS = 5;
 
 export interface WebFetchOptions {
   timeoutMs?: number;
@@ -89,8 +90,9 @@ export async function assertSafeUrl(url: string, allowPrivateHosts = false): Pro
 export async function fetchWebContent(url: string, options: WebFetchOptions = {}): Promise<WebFetchResult> {
   const timeoutMs = Number(options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const maxBytes = Number(options.maxBytes ?? DEFAULT_MAX_BYTES);
-
-  await assertSafeUrl(url, options.allowPrivateHosts ?? false);
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new WebFetchError("too-large", "maxBytes must be a positive safe integer");
+  }
 
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const requestSignal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
@@ -100,12 +102,9 @@ export async function fetchWebContent(url: string, options: WebFetchOptions = {}
       throw new DOMException("Aborted", "AbortError");
     }
 
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent": options.userAgent ?? DEFAULT_USER_AGENT,
-      },
+    const { response, finalUrl } = await fetchWithSafeRedirects(url, {
+      allowPrivateHosts: options.allowPrivateHosts ?? false,
+      userAgent: options.userAgent ?? DEFAULT_USER_AGENT,
       signal: requestSignal,
     });
 
@@ -115,7 +114,7 @@ export async function fetchWebContent(url: string, options: WebFetchOptions = {}
 
     const contentType = response.headers.get("content-type") ?? "application/octet-stream";
     const mimeType = contentType.split(";")[0].trim().toLowerCase();
-    const raw = await response.text();
+    const { text: raw, truncated, bytesRead } = await readBoundedBody(response, maxBytes);
 
     let title: string | undefined;
     let description: string | undefined;
@@ -126,7 +125,7 @@ export async function fetchWebContent(url: string, options: WebFetchOptions = {}
       title = extracted.title;
       description = extracted.description;
       content = extracted.content;
-    } else if (mimeType.includes("application/json") || looksLikeJson(raw)) {
+    } else if (!truncated && (mimeType.includes("application/json") || looksLikeJson(raw))) {
       content = JSON.stringify(JSON.parse(raw), null, 2);
     } else if (mimeType.includes("text/") || mimeType.includes("markdown")) {
       content = raw;
@@ -134,17 +133,16 @@ export async function fetchWebContent(url: string, options: WebFetchOptions = {}
       throw new WebFetchError("unsupported-mime", `unsupported mime type: ${mimeType}`);
     }
 
-    const bytesRead = content.length;
-    if (bytesRead > maxBytes) {
+    if (truncated) {
       return {
         url,
-        finalUrl: response.url || url,
+        finalUrl,
         status: response.status,
         contentType,
         mimeType,
         title,
         description,
-        content: content.slice(0, maxBytes),
+        content,
         truncated: true,
         bytesRead,
       };
@@ -152,7 +150,7 @@ export async function fetchWebContent(url: string, options: WebFetchOptions = {}
 
     return {
       url,
-      finalUrl: response.url || url,
+      finalUrl,
       status: response.status,
       contentType,
       mimeType,
@@ -175,6 +173,88 @@ export async function fetchWebContent(url: string, options: WebFetchOptions = {}
     }
     throw new WebFetchError("network-error", error instanceof Error ? error.message : "fetch failed", { cause: error });
   }
+}
+
+async function fetchWithSafeRedirects(
+  initialUrl: string,
+  options: { allowPrivateHosts: boolean; userAgent: string; signal: AbortSignal },
+): Promise<{ response: Response; finalUrl: string }> {
+  let currentUrl = initialUrl;
+
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    await assertSafeUrl(currentUrl, options.allowPrivateHosts);
+    const response = await fetch(currentUrl, {
+      method: "GET",
+      redirect: "manual",
+      headers: { "User-Agent": options.userAgent },
+      signal: options.signal,
+    });
+
+    if (!isRedirect(response.status)) {
+      return { response, finalUrl: response.url || currentUrl };
+    }
+
+    const location = response.headers.get("location");
+    if (!location) {
+      return { response, finalUrl: response.url || currentUrl };
+    }
+    if (redirectCount === MAX_REDIRECTS) {
+      throw new WebFetchError("http-error", `fetch exceeded ${MAX_REDIRECTS} redirects`);
+    }
+
+    await response.body?.cancel();
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new WebFetchError("http-error", `fetch exceeded ${MAX_REDIRECTS} redirects`);
+}
+
+function isRedirect(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+async function readBoundedBody(
+  response: Response,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
+  if (!response.body) {
+    return { text: "", truncated: false, bytesRead: 0 };
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let retainedBytes = 0;
+  let bytesRead = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+
+    const remaining = maxBytes - retainedBytes;
+    if (remaining > 0) {
+      const retained = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      chunks.push(retained);
+      retainedBytes += retained.byteLength;
+    }
+
+    if (bytesRead > maxBytes) {
+      await reader.cancel();
+      return { text: decodeChunks(chunks, retainedBytes), truncated: true, bytesRead };
+    }
+  }
+
+  return { text: decodeChunks(chunks, retainedBytes), truncated: false, bytesRead };
+}
+
+function decodeChunks(chunks: Uint8Array[], totalBytes: number): string {
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
 }
 
 function normalizeHost(host: string): string {

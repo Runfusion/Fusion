@@ -12,6 +12,19 @@ onlyBuiltDependencies:
   - esbuild
   - koffi
   - protobufjs
+overrides:
+  '@types/node': ^25.5.2
+  '@grpc/grpc-js': 1.14.4
+  fast-uri: 3.1.2
+  form-data: 4.0.6
+  hono: 4.12.25
+  music-metadata: 11.12.3
+  path-to-regexp: 8.4.0
+  protobufjs: ^7.6.1
+  shell-quote: 1.8.4
+  undici: 8.5.0
+  ws@7.5.10: 7.5.11
+  ws@8.20.0: 8.21.0
 packages:
   - "packages/*"
   - "plugins/examples/*"

@@ -1,8 +1,14 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dnsResolver, fetchWebContent, WebFetchError } from "../web-fetch.js";
 
 describe("web-fetch", () => {
   const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    vi.spyOn(dnsResolver, "lookup").mockResolvedValue([
+      { address: "93.184.216.34", family: 4 },
+    ] as unknown as Awaited<ReturnType<typeof dnsResolver.lookup>>);
+  });
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -10,42 +16,33 @@ describe("web-fetch", () => {
   });
 
   it("extracts html content", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      url: "https://example.com/final",
-      headers: new Headers({ "content-type": "text/html" }),
-      text: async () => "<html><head><title>Hello</title><meta name='description' content='Desc'></head><body><main><h1>Title</h1><p>Body</p></main></body></html>",
-    } as Response);
+    global.fetch = vi.fn().mockResolvedValue(new Response(
+      "<html><head><title>Hello</title><meta name='description' content='Desc'></head><body><main><h1>Title</h1><p>Body</p></main></body></html>",
+      { status: 200, headers: { "content-type": "text/html" } },
+    ));
 
     const result = await fetchWebContent("https://example.com");
     expect(result.content).toContain("Title Body");
     expect(result.title).toBe("Hello");
     expect(result.description).toBe("Desc");
-    expect(result.finalUrl).toBe("https://example.com/final");
+    expect(result.finalUrl).toBe("https://example.com");
   });
 
   it("pretty prints json", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+    global.fetch = vi.fn().mockResolvedValue(new Response('{"a":1}', {
       status: 200,
-      url: "https://example.com",
-      headers: new Headers({ "content-type": "application/json" }),
-      text: async () => '{"a":1}',
-    } as Response);
+      headers: { "content-type": "application/json" },
+    }));
 
     const result = await fetchWebContent("https://example.com");
     expect(result.content).toContain('"a": 1');
   });
 
   it("passes through plain text", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+    global.fetch = vi.fn().mockResolvedValue(new Response("hello world", {
       status: 200,
-      url: "https://example.com",
-      headers: new Headers({ "content-type": "text/plain" }),
-      text: async () => "hello world",
-    } as Response);
+      headers: { "content-type": "text/plain" },
+    }));
 
     const result = await fetchWebContent("https://example.com");
     expect(result.content).toBe("hello world");
@@ -54,24 +51,45 @@ describe("web-fetch", () => {
   it("maps timeout", async () => {
     global.fetch = vi.fn().mockImplementation(async (_url, init: RequestInit) => {
       await new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))));
-      return { ok: true, status: 200, url: "https://example.com", headers: new Headers(), text: async () => "" } as Response;
+      return new Response("");
     });
     await expect(fetchWebContent("https://example.com", { timeoutMs: 1 })).rejects.toMatchObject({ code: "timeout" });
   });
 
   it("truncates content to max bytes", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
+    global.fetch = vi.fn().mockResolvedValue(new Response("x".repeat(100), {
       status: 200,
-      url: "https://example.com",
-      headers: new Headers({ "content-type": "text/plain" }),
-      text: async () => "x".repeat(100),
-    } as Response);
+      headers: { "content-type": "text/plain" },
+    }));
 
     const result = await fetchWebContent("https://example.com", { maxBytes: 10 });
     expect(result.content).toHaveLength(10);
     expect(result.truncated).toBe(true);
     expect(result.bytesRead).toBe(100);
+  });
+
+  it("validates each redirect destination before following it", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(null, {
+      status: 302,
+      headers: { location: "http://127.0.0.1/admin" },
+    }));
+
+    await expect(fetchWebContent("https://example.com/start")).rejects.toMatchObject({ code: "blocked-host" });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://example.com/start",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
+  it("follows safe relative redirects", async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: "/final" } }))
+      .mockResolvedValueOnce(new Response("safe", { status: 200, headers: { "content-type": "text/plain" } }));
+
+    const result = await fetchWebContent("https://example.com/start");
+    expect(result.finalUrl).toBe("https://example.com/final");
+    expect(result.content).toBe("safe");
   });
 
   it("maps non-ok response to http-error", async () => {

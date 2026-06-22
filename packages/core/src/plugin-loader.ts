@@ -9,10 +9,9 @@
  * - Error isolation (plugin crashes don't crash the loader)
  */
 
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { copyFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { EventEmitter } from "node:events";
 import type { TaskStore } from "./store.js";
@@ -461,11 +460,9 @@ export class PluginLoader extends EventEmitter<{
 
     if (bypassCache) {
       moduleImportVersion += 1;
-      const ext = extname(path);
-      const baseName = basename(path, ext);
-      const reloadedPath = resolve(dirname(path), `.${baseName}.reload-${moduleImportVersion}${ext}`);
-      await copyFile(path, reloadedPath);
-      mod = await import(pathToFileURL(reloadedPath).href);
+      const reloadUrl = new URL(moduleUrl);
+      reloadUrl.searchParams.set("fusionReload", String(moduleImportVersion));
+      mod = await import(reloadUrl.href);
     } else {
       mod = await import(moduleUrl);
     }

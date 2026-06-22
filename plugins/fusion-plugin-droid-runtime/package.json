@@ -27,8 +27,8 @@
     "@fusion/plugin-sdk": "workspace:*"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-ai": "^0.79.9",
+    "@earendil-works/pi-coding-agent": "^0.79.9"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",

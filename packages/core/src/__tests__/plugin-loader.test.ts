@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { mkdtempSync, existsSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1267,6 +1267,9 @@ export default plugin;
 
       await loader.loadPlugin("reload-log-test");
       await loader.reloadPlugin("reload-log-test");
+
+      const pluginFiles = await readdir(pluginDir);
+      expect(pluginFiles.some((name) => name.includes(".reload-"))).toBe(false);
 
       expect(loggerMap.get("plugin-loader")?.log).toHaveBeenCalledWith(
         "Reloading plugin: reload-log-test",

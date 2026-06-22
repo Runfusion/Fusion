@@ -7,6 +7,8 @@ description: AI-orchestrated task board (Fusion) interface. Use when working wit
 
 Fusion is an AI-orchestrated task board. You throw in rough ideas; AI specifies, executes, reviews, and delivers them.
 
+**Integration selection:** Use registered `fn_*` tools when the current agent exposes them. Otherwise, use the globally installed `fn` CLI from the target repository root. Codex sessions normally use this CLI fallback; see `references/codex-cli-workflows.md`. Never invent tool calls that are not registered in the current session.
+
 **Task lifecycle:** Triage → Todo → In Progress → In Review → Done → Archived
 
 - **Triage** — AI auto-generates a full specification (PROMPT.md) with steps, file scope, and acceptance criteria
@@ -99,6 +101,8 @@ For these operations, guide the user to the dashboard (`/fn`) or CLI commands do
 </known_limitations>
 
 <reference_index>
+
+For Codex and other CLI-only agents, load `references/codex-cli-workflows.md` before mutating Fusion state.
 
 | Reference | When to Use |
 |-----------|-------------|

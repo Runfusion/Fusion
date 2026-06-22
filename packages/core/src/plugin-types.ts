@@ -118,6 +118,8 @@ export interface AiSessionResult {
   /** The underlying agent session — plugins call .prompt() on it */
   session: {
     prompt(text: string): Promise<void>;
+    /** Release underlying model/session resources when the caller is finished. */
+    dispose?(): void;
     state: {
       messages: Array<{
         role: string;

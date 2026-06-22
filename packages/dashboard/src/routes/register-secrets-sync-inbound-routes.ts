@@ -32,13 +32,17 @@ async function upsertRecords(
   let appliedCount = 0;
   let skippedCount = 0;
   const appliedKeys: Array<{ key: string; scope: "project" | "global" }> = [];
+  const existingByScope = {
+    project: new Map(secretsStore.listSecrets("project").map((secret) => [secret.key, secret])),
+    global: new Map(secretsStore.listSecrets("global").map((secret) => [secret.key, secret])),
+  };
 
   for (const record of records) {
     if (record.key === RESERVED_SYNC_PASSPHRASE_KEY) {
       skippedCount += 1;
       continue;
     }
-    const existing = secretsStore.listSecrets(record.scope).find((secret) => secret.key === record.key);
+    const existing = existingByScope[record.scope].get(record.key);
     if (existing) {
       await secretsStore.updateSecret(existing.id, record.scope, {
         plaintextValue: record.value,
@@ -48,7 +52,7 @@ async function upsertRecords(
         envExportKey: record.envExportKey,
       });
     } else {
-      await secretsStore.createSecret({
+      const created = await secretsStore.createSecret({
         scope: record.scope,
         key: record.key,
         plaintextValue: record.value,
@@ -57,6 +61,7 @@ async function upsertRecords(
         envExportable: record.envExportable,
         envExportKey: record.envExportKey,
       });
+      existingByScope[record.scope].set(record.key, created);
     }
     appliedCount += 1;
     appliedKeys.push({ key: record.key, scope: record.scope });
@@ -68,20 +73,24 @@ async function upsertRecords(
 async function listSyncRecords(store: Parameters<ApiRouteRegistrar>[0]["store"]): Promise<SecretsSyncRecord[]> {
   const secretsStore = await store.getSecretsStore();
   const records = [] as SecretsSyncRecord[];
-  for (const record of secretsStore.listSecrets()) {
-    if (record.key === RESERVED_SYNC_PASSPHRASE_KEY) {
-      continue;
-    }
-    const revealed = await secretsStore.revealSecret(record.id, record.scope, { agentId: null, userId: null });
-    records.push({
-      key: record.key,
-      value: revealed.plaintextValue,
-      scope: record.scope,
-      description: record.description,
-      accessPolicy: record.accessPolicy,
-      envExportable: record.envExportable,
-      envExportKey: record.envExportKey,
-    });
+  const syncable = secretsStore.listSecrets().filter((record) => record.key !== RESERVED_SYNC_PASSPHRASE_KEY);
+  const revealConcurrency = 8;
+
+  for (let offset = 0; offset < syncable.length; offset += revealConcurrency) {
+    const batch = syncable.slice(offset, offset + revealConcurrency);
+    const revealedBatch = await Promise.all(batch.map(async (record): Promise<SecretsSyncRecord> => {
+      const revealed = await secretsStore.revealSecret(record.id, record.scope, { agentId: null, userId: null });
+      return {
+        key: record.key,
+        value: revealed.plaintextValue,
+        scope: record.scope,
+        description: record.description,
+        accessPolicy: record.accessPolicy,
+        envExportable: record.envExportable,
+        envExportKey: record.envExportKey,
+      };
+    }));
+    records.push(...revealedBatch);
   }
   return records;
 }

@@ -22,7 +22,7 @@
     "directory": "packages/pi-llama-cpp"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "^0.79.9"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
