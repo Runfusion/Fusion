@@ -284,6 +284,12 @@ describe("AgentsView", () => {
       expect(screen.getByText("Choose an agent from the sidebar to view details")).toBeInTheDocument();
     });
 
+    it("adds top breathing room to the split-sidebar agent list", () => {
+      const css = loadAllAppCss();
+
+      expect(css).toMatch(/\.agent-list\s*\{[^}]*padding-top:\s*var\(--space-sm\);/);
+    });
+
     it("opens inline detail pane and marks selected card", async () => {
       const { container } = render(<AgentsView addToast={mockAddToast} />);
 

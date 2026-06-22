@@ -1,15 +1,14 @@
 import "./FileBrowser.css";
-import { useState, useCallback, useEffect, useMemo, useRef, useId } from "react";
+import { useState, useCallback, useEffect, useMemo, useId } from "react";
 import { useTranslation } from "react-i18next";
 import { X, Save, RotateCcw, Folder, FileType, ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { useWorkspaceFileBrowser } from "../hooks/useWorkspaceFileBrowser";
 import { useWorkspaceFileEditor } from "../hooks/useWorkspaceFileEditor";
 import { useWorkspaces } from "../hooks/useWorkspaces";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
-import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { downloadFileUrl } from "../api";
 import { FileBrowser } from "./FileBrowser";
 import { FileEditor } from "./FileEditor";
+import { FloatingWindow } from "./FloatingWindow";
 import { WorkspaceSelector } from "./WorkspaceSelector";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 
@@ -80,9 +79,6 @@ export function FileBrowserModal({
 }: FileBrowserModalProps) {
   const { t } = useTranslation("app");
   const { projectName, workspaces } = useWorkspaces(projectId);
-  const modalRef = useRef<HTMLDivElement>(null);
-  useModalResizePersist(modalRef, true, "fusion:files-modal-size");
-  const overlayDismissProps = useOverlayDismiss(onClose);
   const [currentWorkspace, setCurrentWorkspace] = useState(initialWorkspace);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
@@ -289,6 +285,7 @@ export function FileBrowserModal({
   }, [currentWorkspace, workspaces, t]);
 
   const modalTitle = t("fileBrowser.modalTitle", "Files — {{workspace}}", { workspace: workspaceLabel });
+  const isNarrowEditorView = Boolean(isMobile && selectedFile && mobileView === "editor" && !isBinaryFile(selectedFile));
 
   // Compute image source URL when an image file is selected
   const imageSrc = useMemo(() => {
@@ -303,8 +300,22 @@ export function FileBrowserModal({
   };
 
   return (
-    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true">
-      <div className="modal file-browser-modal" ref={modalRef}>
+    <FloatingWindow
+      windowKey="file-browser"
+      title={modalTitle}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".file-browser-modal-header"
+      className="floating-window--file-browser"
+      defaultSize={{ width: 1120, height: 720 }}
+      minSize={{ width: 640, height: 420 }}
+      persistGeometryKey="fusion:files-modal-window"
+    >
+      {/*
+       * FNXC:FileBrowser 2026-06-22-15:22:
+       * The file browser modal uses the shared FloatingWindow shell so it is smoothly movable/resizable like Chat and task detail pop-outs, with a transparent non-blurring backdrop and its own title row as the drag handle.
+       */}
+      <div className="modal file-browser-modal">
         <div className="modal-header file-browser-modal-header">
           <div className="file-browser-header-title">
             <Folder size={18} />
@@ -377,7 +388,7 @@ export function FileBrowserModal({
                         <span>{t("actions.back", "Back")}</span>
                       </button>
                     )}
-                    {!isBinaryFile(selectedFile) && (
+                    {!isBinaryFile(selectedFile) && !isNarrowEditorView && (
                       <button
                         className="btn btn-sm btn-icon file-editor-toolbar-button"
                         onClick={() => setToolbarActionsExpanded((prev) => !prev)}
@@ -451,7 +462,8 @@ export function FileBrowserModal({
                       showLineNumbers={showLineNumbers && !isBinaryFile(selectedFile)}
                       onToggleLineNumbers={handleToggleLineNumbers}
                       canToggleLineNumbers={!isBinaryFile(selectedFile)}
-                      toolbarExpanded={toolbarActionsExpanded}
+                      toolbarExpanded={isNarrowEditorView ? true : toolbarActionsExpanded}
+                      forceToolbarActionsVisible={isNarrowEditorView}
                       toolbarActionsId={toolbarActionsId}
                       onSendSelectionToTask={onSendSelectionToTask}
                     />
@@ -474,6 +486,6 @@ export function FileBrowserModal({
           </div>
         </div>
       </div>
-    </div>
+    </FloatingWindow>
   );
 }

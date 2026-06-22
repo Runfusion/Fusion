@@ -1,6 +1,5 @@
 /* === AgentMentionPopup === */
-.chat-input-wrapper,
-.quick-chat-input-wrapper {
+.chat-input-wrapper {
   position: relative;
   display: flex;
   flex: 1;
@@ -116,4 +115,3 @@
     left: 0;
   }
 }
-

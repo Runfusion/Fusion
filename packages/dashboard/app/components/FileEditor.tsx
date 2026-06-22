@@ -20,6 +20,7 @@ interface FileEditorProps {
   onToggleLineNumbers?: () => void;
   canToggleLineNumbers?: boolean;
   toolbarExpanded?: boolean;
+  forceToolbarActionsVisible?: boolean;
   toolbarActionsId?: string;
   onSendSelectionToTask?: (description: string) => void;
 }
@@ -69,6 +70,7 @@ export function FileEditor({
   onToggleLineNumbers,
   canToggleLineNumbers = true,
   toolbarExpanded,
+  forceToolbarActionsVisible = false,
   toolbarActionsId: externalToolbarActionsId,
   onSendSelectionToTask,
 }: FileEditorProps) {
@@ -81,7 +83,12 @@ export function FileEditor({
   const [wordWrap, setWordWrap] = useState(true);
   const [internalExpanded, setInternalExpanded] = useState(false);
   const isControlled = toolbarExpanded !== undefined;
-  const expanded = isControlled ? toolbarExpanded : internalExpanded;
+  /*
+   * FNXC:FileBrowser 2026-06-22-15:16:
+   * Narrow modal file views must keep the editor controls visible instead of showing only an expand/collapse chevron. The standalone full file view keeps its collapsible toolbar behavior.
+   */
+  const expanded = forceToolbarActionsVisible ? true : isControlled ? toolbarExpanded : internalExpanded;
+  const showToolbarDisclosure = !forceToolbarActionsVisible && !isControlled;
 
   const editorHostRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -249,7 +256,7 @@ export function FileEditor({
     <div className="file-editor-container">
       {hasToolbarActions && (expanded || !isControlled) ? (
         <div className={`file-editor-toolbar ${expanded ? "file-editor-toolbar--expanded" : ""}`}>
-          {!isControlled && (
+          {showToolbarDisclosure && (
             <button className="btn btn-sm btn-icon file-editor-toolbar-button" onClick={handleToolbarActionsToggle} aria-label={t("fileEditor.toggleOptions", "Toggle editor options")} title={t("fileEditor.toggleOptions", "Toggle editor options")} aria-expanded={expanded} aria-controls={toolbarActionsId}>
               {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>

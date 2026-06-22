@@ -4322,9 +4322,9 @@ export interface ProjectSettings {
    *  - "always": Always handoff after completion (not implemented, reserved for future)
    */
   reviewHandoffPolicy?: "disabled" | "comment-triggered" | "always";
-  /** When true, show the quick-chat floating action button (FAB) in the dashboard.
-   *  When false, the FAB is hidden but chat remains accessible via the More menu.
-   *  Default: false. */
+  /** Quick Chat launcher placement. "floating" shows the draggable FAB, "footer" shows a footer button, "off" hides both. */
+  quickChatButtonMode?: "floating" | "footer" | "off";
+  /** Legacy Quick Chat FAB toggle. Prefer quickChatButtonMode for new callers. */
   showQuickChatFAB?: boolean;
   /** Number of days of chat inactivity before old chat sessions/rooms are auto-cleaned.
    *  Allowed values: 0 (off, default), 7, 14, 30, 60, 90. Uses updatedAt inactivity age. */

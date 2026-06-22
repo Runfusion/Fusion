@@ -23,6 +23,18 @@ describe("Air color theme", () => {
     expect(`${darkBlock}\n${lightBlock}`).not.toMatch(/#[0-9a-fA-F]{8}\b/);
   });
 
+  it("hides horizontal header and modal dividers while leaving vertical dividers themeable", () => {
+    const dividerBlock = extractGroupedRuleBlock(themeData, '[data-color-theme="air"] .view-header');
+
+    expect(dividerBlock).toContain('[data-color-theme="air"] .header');
+    expect(dividerBlock).toContain('[data-color-theme="air"] .modal-header');
+    expect(dividerBlock).toContain('[data-color-theme="air"] .floating-window-header');
+    expect(dividerBlock).toContain("border-top-color: transparent;");
+    expect(dividerBlock).toContain("border-bottom-color: transparent;");
+    expect(dividerBlock).not.toContain("border-right-color");
+    expect(dividerBlock).not.toContain("border-left-color");
+  });
+
   it("registers Air in core, dashboard options, and both bootstrap validators", () => {
     expect(CORE_COLOR_THEMES).toContain("air");
     expect(DASHBOARD_COLOR_THEMES).toContainEqual({
@@ -55,4 +67,26 @@ function extractSelectorBlock(css: string, selector: string): string {
   }
 
   return css.slice(startIdx, end + 1);
+}
+
+function extractGroupedRuleBlock(css: string, selector: string): string {
+  const selectorIdx = css.indexOf(selector);
+  if (selectorIdx === -1) {
+    throw new Error(`Could not find selector in grouped block: ${selector}`);
+  }
+
+  const openBraceIdx = css.indexOf("{", selectorIdx);
+  let depth = 1;
+  let end = openBraceIdx;
+  for (let i = openBraceIdx + 1; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    if (css[i] === "}") depth--;
+    if (depth === 0) {
+      end = i;
+      break;
+    }
+  }
+
+  const priorCloseIdx = css.lastIndexOf("}", selectorIdx);
+  return css.slice(priorCloseIdx + 1, end + 1);
 }

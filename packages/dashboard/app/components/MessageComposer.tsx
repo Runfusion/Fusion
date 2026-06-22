@@ -50,8 +50,8 @@ export function MessageComposer({
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // Aligned with FN-5146 ChatView/QuickChatFAB 640px cap so pasted
-  // multi-paragraph messages stay visible without internal scroll.
+  // Aligned with ChatView's 640px cap so pasted multi-paragraph messages stay
+  // visible without internal scroll.
   const { ref: autosizeRef } = useAutosizeTextarea({
     value: content,
     minHeight: 68,

@@ -1,9 +1,8 @@
 /**
- * Shared chat type definitions used by both `useChat` (full chat panel) and
- * `useQuickChat` (FAB) plus the `createChatStreamHandlers` factory they
- * compose. Keeping the types here lets the streaming-handler factory live in
- * its own file without re-importing from one of the hooks (which would create
- * an awkward parent→sibling dependency cycle).
+ * Shared chat type definitions used by `useChat` and the
+ * `createChatStreamHandlers` factory. Keeping the types here lets the
+ * streaming-handler factory live in its own file without re-importing from the
+ * hook (which would create an awkward parent→sibling dependency cycle).
  */
 
 export interface ToolCallInfo {

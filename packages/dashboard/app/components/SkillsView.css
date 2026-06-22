@@ -134,11 +134,14 @@ WIDE container (>=640px): two-pane side-by-side master/detail. Both panes always
 /*
 FNXC:Navigation 2026-06-22-02:00:
 The shared ViewHeader already supplies the top + side --space-lg padding, so the content area must NOT repeat the top padding (that doubled the gap under the header). Side + bottom padding only, aligned with the header.
+
+FNXC:Skills 2026-06-22-14:23:
+The search controls at the top of the Skills list need breathing room below the shared header. Restore a single --space-lg top inset on the scrollable content so the search box does not visually bump into the header.
 */
 .skills-view-content {
   flex: 1;
   overflow-y: auto;
-  padding: 0 var(--space-lg) var(--space-lg);
+  padding: var(--space-lg) var(--space-lg) var(--space-lg);
 }
 
 .skills-view-section {
@@ -628,4 +631,3 @@ File viewer column inside the detail body. Header bar carries the "← Back to S
     min-height: calc(var(--space-lg) + var(--space-md) + var(--space-xs));
   }
 }
-

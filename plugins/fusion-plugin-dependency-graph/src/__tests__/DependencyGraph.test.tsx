@@ -226,14 +226,17 @@ describe("DependencyGraph", () => {
     expect(setGraphBounds).toHaveBeenCalled();
   });
 
-  it("does not auto-fit when the user has saved positions (manual layout opt-out)", async () => {
+  it("auto-fits saved/manual positions into the viewport after layout settles", async () => {
     mockSavedPositions = { A: { x: 10, y: 10 }, B: { x: 300, y: 10 } };
     render(<DependencyGraph tasks={[createTask("A", "todo"), createTask("B", "todo", ["A"])]} projectId="p1" onOpenTaskDetail={vi.fn()} />);
 
     setViewportSize(1200, 800);
-    // Give the deferred (rAF) fit path a chance to fire; it must stay suppressed for saved layouts.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(fitToGraph).not.toHaveBeenCalled();
+    await waitFor(() => expect(fitToGraph).toHaveBeenCalled());
+    const [fittedPositions, fittedWidth, fittedHeight] = fitToGraph.mock.calls.at(-1)!;
+    expect(fittedWidth).toBe(1200);
+    expect(fittedHeight).toBe(800);
+    expect((fittedPositions as Map<string, { x: number; y: number }>).get("A")).toEqual({ x: 0, y: 0 });
+    expect((fittedPositions as Map<string, { x: number; y: number }>).get("B")).toEqual({ x: 290, y: 0 });
   });
 
   it("forwards keyboard events to interaction hook", () => {

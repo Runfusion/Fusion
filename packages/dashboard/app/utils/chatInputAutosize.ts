@@ -11,8 +11,8 @@ export function resolveChatInputOverflowY(
 }
 
 export function clampChatInputHeight(scrollHeight: number, maxHeight: number = CHAT_INPUT_MAX_HEIGHT_PX): number {
-  // Floor matches QuickChat (clampQuickChatInputHeight) and the CSS min-height,
-  // so a 0-scrollHeight measurement (e.g. before layout) still yields a
-  // sensible inline height instead of collapsing the composer to 0.
+  // Floor matches the CSS min-height, so a 0-scrollHeight measurement (e.g.
+  // before layout) still yields a sensible inline height instead of collapsing
+  // the composer to 0.
   return Math.max(40, Math.min(scrollHeight, maxHeight));
 }

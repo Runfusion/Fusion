@@ -205,6 +205,59 @@ describe("ExecutorStatusBar", () => {
       expect(screen.getByTestId("terminal-toggle-btn")).toBeInTheDocument();
     });
 
+    it("renders the Quick Chat footer launcher beside Terminal when footer mode is enabled", async () => {
+      const user = userEvent.setup();
+      const onOpenQuickChat = vi.fn();
+
+      render(
+        <ExecutorStatusBar
+          tasks={emptyTasks}
+          onToggleTerminal={vi.fn()}
+          onOpenScripts={vi.fn()}
+          onRunScript={vi.fn()}
+          quickChatButtonMode="footer"
+          onOpenQuickChat={onOpenQuickChat}
+        />,
+      );
+
+      expect(screen.getByTestId("executor-quick-chat-launcher-segment")).toBeInTheDocument();
+      expect(screen.getByTestId("executor-terminal-launcher-segment")).toBeInTheDocument();
+      await user.click(screen.getByTestId("executor-quick-chat-launcher"));
+
+      expect(onOpenQuickChat).toHaveBeenCalledTimes(1);
+    });
+
+    it("omits the Quick Chat footer launcher for floating, off, and mobile modes", () => {
+      const { rerender } = render(
+        <ExecutorStatusBar
+          tasks={emptyTasks}
+          quickChatButtonMode="floating"
+          onOpenQuickChat={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("executor-quick-chat-launcher-segment")).toBeNull();
+
+      rerender(
+        <ExecutorStatusBar
+          tasks={emptyTasks}
+          quickChatButtonMode="off"
+          onOpenQuickChat={vi.fn()}
+        />,
+      );
+      expect(screen.queryByTestId("executor-quick-chat-launcher-segment")).toBeNull();
+
+      viewportModeMock.value = "mobile";
+      rerender(
+        <ExecutorStatusBar
+          tasks={emptyTasks}
+          quickChatButtonMode="footer"
+          onOpenQuickChat={vi.fn()}
+        />,
+      );
+      expect(screen.queryByTestId("executor-quick-chat-launcher-segment")).toBeNull();
+    });
+
     it("omits the terminal launcher from the footer on mobile", () => {
       viewportModeMock.value = "mobile";
 

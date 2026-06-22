@@ -337,6 +337,9 @@
 FNXC:DashboardTheming 2026-06-19-15:39:
 Air must be the calmest, flattest theme: near-monochrome tokens, a restrained blue-gray accent, a clean system sans stack, and faint color-mix borders.
 The "remove unnecessary UI" requirement is intentionally CSS-only and scoped to [data-color-theme="air"] so shared DOM affordances remain present while borders, shadows, and decorative chrome flatten visually.
+
+FNXC:DashboardTheming 2026-06-22-14:24:
+Air should hide horizontal divider lines across headers, modal title bars, footers, and tab rails while preserving vertical pane dividers and component outlines. Keep this as theme CSS so the DOM and hit targets remain shared across themes.
 */
 [data-color-theme="air"] {
   --bg: #0f1115;
@@ -432,6 +435,46 @@ The "remove unnecessary UI" requirement is intentionally CSS-only and scoped to 
 [data-color-theme="air"] .tag {
   border-color: var(--border);
   box-shadow: 0 0 0 transparent;
+}
+
+[data-color-theme="air"] .view-header,
+[data-color-theme="air"] .header,
+[data-color-theme="air"] .modal-header,
+[data-color-theme="air"] .modal-actions,
+[data-color-theme="air"] .modal-footer,
+[data-color-theme="air"] .floating-window-header,
+[data-color-theme="air"] .settings-section-heading,
+[data-color-theme="air"] .settings-section-divider,
+[data-color-theme="air"] .runtime-card__tabs,
+[data-color-theme="air"] .runtime-card__footer,
+[data-color-theme="air"] .mailbox-thread-detail-header,
+[data-color-theme="air"] .chat-sidebar-footer,
+[data-color-theme="air"] .task-detail-tabs,
+[data-color-theme="air"] .task-detail-section,
+[data-color-theme="air"] .workflow-output-modal-header,
+[data-color-theme="air"] .file-browser-modal-header,
+[data-color-theme="air"] .activity-log-header {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+}
+
+/*
+FNXC:DashboardTheming 2026-06-22-14:24:
+Shadcn-family themes should read as seamless app shells: header and modal-title separators disappear, but vertical pane borders and local control outlines stay intact.
+*/
+[data-color-theme^="shadcn"] .view-header,
+[data-color-theme^="shadcn"] .header,
+[data-color-theme^="shadcn"] .modal-header,
+[data-color-theme^="shadcn"] .modal-actions,
+[data-color-theme^="shadcn"] .modal-footer,
+[data-color-theme^="shadcn"] .floating-window-header,
+[data-color-theme^="shadcn"] .settings-section-heading,
+[data-color-theme^="shadcn"] .settings-section-divider,
+[data-color-theme^="shadcn"] .workflow-output-modal-header,
+[data-color-theme^="shadcn"] .file-browser-modal-header,
+[data-color-theme^="shadcn"] .activity-log-header {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
 }
 
 /* GRAPHITE - Dark graphite blacks */
@@ -6781,4 +6824,3 @@ body[data-color-theme="terminal"][data-theme="light"]::before {
   --accent: #9a8050;
   --accent-text: #fff;
 }
-

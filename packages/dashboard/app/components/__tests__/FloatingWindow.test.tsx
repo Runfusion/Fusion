@@ -1,6 +1,9 @@
 import { render, screen, fireEvent } from "@testing-library/react";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { FloatingWindow } from "../FloatingWindow";
+
+const floatingWindowCss = readFileSync("app/components/FloatingWindow.css", "utf8");
 
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
@@ -114,5 +117,43 @@ describe("FloatingWindow", () => {
     expect(screen.getByTestId("floating-window-w1")).toBeTruthy();
     expect(screen.getByTestId("floating-window-w2")).toBeTruthy();
     expect(screen.getByTestId("floating-window-w3")).toBeTruthy();
+  });
+
+  it("restores persisted geometry and clamps it on screen", () => {
+    localStorage.setItem(
+      "floating-window:test",
+      JSON.stringify({
+        size: { width: 700, height: 500 },
+        position: { x: 9999, y: -200 },
+      }),
+    );
+
+    render(
+      <FloatingWindow
+        windowKey="persisted"
+        title="Persisted"
+        onClose={() => {}}
+        persistGeometryKey="floating-window:test"
+        minSize={{ width: 360, height: 280 }}
+      >
+        <div>persisted body</div>
+      </FloatingWindow>
+    );
+
+    const panel = screen.getByTestId("floating-window-persisted");
+    expect(panel.style.width).toBe("700px");
+    expect(panel.style.height).toBe("500px");
+    expect(panel.style.top).toBe("16px");
+    expect(Number.parseFloat(panel.style.left)).toBeLessThan(window.innerWidth);
+  });
+
+  it("makes only the mobile chat floating window full-screen", () => {
+    const mobileBlock = floatingWindowCss.match(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.floating-window--chat \.chat-view\s*\{[\s\S]*?\n\}/)?.[0];
+
+    expect(mobileBlock).toContain(".floating-window--chat");
+    expect(mobileBlock).toContain("width: 100vw !important;");
+    expect(mobileBlock).toContain("height: 100dvh !important;");
+    expect(mobileBlock).toContain(".floating-window--chat .floating-window__resize-handle");
+    expect(floatingWindowCss).not.toMatch(/@media\s*\(min-width:\s*769px\)[\s\S]*\.floating-window--chat[\s\S]*100dvh/);
   });
 });

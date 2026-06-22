@@ -10,11 +10,34 @@
   resize: both;
 }
 
+.floating-window--file-browser.floating-window--headerless .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--file-browser .file-browser-modal {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  resize: none;
+  border: none;
+  border-radius: inherit;
+  box-shadow: none;
+}
+
 .file-browser-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-lg);
+  cursor: grab;
+  user-select: none;
+}
+
+.file-browser-modal-header:active {
+  cursor: grabbing;
 }
 
 .file-browser-header-title {
@@ -166,6 +189,52 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+}
+
+.file-browser-new-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.file-browser-new-menu-trigger {
+  white-space: nowrap;
+}
+
+.file-browser-new-menu-panel {
+  position: absolute;
+  top: calc(100% + var(--space-xs));
+  right: 0;
+  z-index: 20;
+  min-width: calc(var(--space-xl) * 5.5);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.file-browser-new-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: calc(var(--space-lg) + var(--space-md));
+  padding: var(--space-sm) var(--space-md);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-browser-new-menu-item:hover,
+.file-browser-new-menu-item:focus-visible {
+  outline: none;
+  background: var(--card-hover);
 }
 
 .file-browser-list {
@@ -353,13 +422,19 @@
     padding-right: var(--space-xs);
   }
 
-  /* On mobile the file browser is presented as a full-screen sheet — drop
-     the overlay's default top padding so the modal actually fills the
-     viewport instead of being pushed below it. */
-  .modal-overlay:has(.file-browser-modal) {
-    padding-top: 0;
-    align-items: stretch;
-    justify-content: stretch;
+  .floating-window--file-browser {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    max-width: none;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--file-browser .floating-window__resize-handle {
+    display: none;
   }
 
   .modal.file-browser-modal {
@@ -840,4 +915,3 @@
   font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
   font-family: var(--font-mono);
 }
-

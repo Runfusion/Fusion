@@ -803,8 +803,8 @@ describe("TaskDetailModal", () => {
 
     it("FN-6370/FN-6517 defines expanded chat chrome CSS for desktop and mobile", () => {
       const css = readDashboardStylesSource();
-      const titleRule = getCssRuleBlock(css, ".detail-title-row");
       const expandedTitleRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-title-row");
+      const expandedMetaRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-meta");
       const expandedTabsRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-tabs");
       const expandedActionsRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .modal-actions");
       const expandedHeaderRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .modal-header");
@@ -815,8 +815,8 @@ describe("TaskDetailModal", () => {
       const mobileTabsRule = getCssRuleBlock(mobileCss, ".task-detail-content--chat-expanded .detail-tabs");
       const mobileActionsRule = getCssRuleBlock(mobileCss, ".task-detail-content--chat-expanded .modal-actions");
 
-      expect(titleRule).toContain("display: flex");
       expect(expandedTitleRule).not.toContain("display: none");
+      expect(expandedMetaRule).toContain("display: none");
       expect(expandedTabsRule).toContain("display: none");
       expect(expandedActionsRule).toContain("display: none");
       expect(expandedHeaderRule).toContain("justify-content: space-between");

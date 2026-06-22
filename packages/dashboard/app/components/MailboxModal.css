@@ -714,8 +714,8 @@ FN-6912 requires the full-page Messages divider to read thinner between the mess
 FNXC:Mailbox 2026-06-22-18:20:
 The mailbox resize divider mirrors the Chat sidebar divider exactly — handle hit area var(--space-sm), centered visible line var(--space-xs), transparent until hover — so the two views' dividers read identically (the widths were previously swapped + the mailbox handle had an always-on background).
 
-FNXC:SidebarDivider 2026-06-23-01:45:
-Tighten the mailbox divider's static visible line to a single 1px var(--border) line so it matches Chat/List exactly (previously the centered ::before was var(--space-xs)=4px wide and had no static color, reading inconsistently next to the panes' own borders). The handle hit-area stays var(--space-sm) (invisible drag target); only the visible centered line changes — 1px var(--border) by default, tinting to var(--todo) on hover/active. Focus ring preserved.
+FNXC:SidebarDivider 2026-06-22-13:26:
+Mailbox must match Chat's divider exactly: the pane border supplies the static line, while the resize handle remains transparent until hover/active. Do not draw a second always-visible divider inside the handle.
 */
 .mailbox-view .mailbox-split-resize-handle {
   position: relative;
@@ -734,15 +734,13 @@ Tighten the mailbox divider's static visible line to a single 1px var(--border) 
   top: 0;
   bottom: 0;
   left: 50%;
-  width: var(--btn-border-width);
+  width: var(--space-xs);
   transform: translateX(-50%);
-  background: var(--border);
-  transition: background var(--transition-fast);
 }
 
 .mailbox-view .mailbox-split-resize-handle:hover::before,
 .mailbox-view .mailbox-split-resize-handle:active::before {
-  background: color-mix(in srgb, var(--todo) 35%, transparent);
+  background: color-mix(in srgb, var(--todo) 30%, transparent);
 }
 
 .mailbox-view .mailbox-split-resize-handle:focus-visible {

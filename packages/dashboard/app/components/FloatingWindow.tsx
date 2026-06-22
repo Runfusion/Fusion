@@ -44,6 +44,9 @@ export interface FloatingWindowProps {
   */
   hideHeader?: boolean;
   dragHandleSelector?: string;
+  className?: string;
+  /** Optional localStorage key used to restore the last clamped position and size. */
+  persistGeometryKey?: string;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -98,6 +101,40 @@ function defaultPositionFor(windowKey: string, size: FloatingWindowSize): Floati
   );
 }
 
+interface PersistedFloatingWindowGeometry {
+  size?: Partial<FloatingWindowSize>;
+  position?: Partial<FloatingWindowPosition>;
+}
+
+function readPersistedGeometry(
+  persistGeometryKey: string | undefined,
+  fallbackSize: FloatingWindowSize,
+  fallbackPosition: FloatingWindowPosition,
+  minSize: FloatingWindowSize,
+): { size: FloatingWindowSize; position: FloatingWindowPosition } {
+  if (!persistGeometryKey || typeof window === "undefined") {
+    return { size: fallbackSize, position: fallbackPosition };
+  }
+
+  try {
+    const raw = localStorage.getItem(persistGeometryKey);
+    if (!raw) return { size: fallbackSize, position: fallbackPosition };
+    const parsed = JSON.parse(raw) as PersistedFloatingWindowGeometry;
+    const persistedSize = {
+      width: typeof parsed.size?.width === "number" ? parsed.size.width : fallbackSize.width,
+      height: typeof parsed.size?.height === "number" ? parsed.size.height : fallbackSize.height,
+    };
+    const size = clampSize(persistedSize, minSize);
+    const persistedPosition = {
+      x: typeof parsed.position?.x === "number" ? parsed.position.x : fallbackPosition.x,
+      y: typeof parsed.position?.y === "number" ? parsed.position.y : fallbackPosition.y,
+    };
+    return { size, position: clampPosition(persistedPosition, size) };
+  } catch {
+    return { size: fallbackSize, position: fallbackPosition };
+  }
+}
+
 export function FloatingWindow({
   title,
   onClose,
@@ -108,16 +145,21 @@ export function FloatingWindow({
   minSize,
   hideHeader = false,
   dragHandleSelector,
+  className,
+  persistGeometryKey,
 }: FloatingWindowProps) {
   const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
+  const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
+  if (!initialGeometry.current) {
+    const fallbackSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize);
+    const fallbackPosition = defaultPosition ? clampPosition(defaultPosition, fallbackSize) : defaultPositionFor(windowKey, fallbackSize);
+    initialGeometry.current = readPersistedGeometry(persistGeometryKey, fallbackSize, fallbackPosition, resolvedMinSize);
+  }
 
   const [size, setSize] = useState<FloatingWindowSize>(() =>
-    clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize)
+    initialGeometry.current!.size
   );
-  const [position, setPosition] = useState<FloatingWindowPosition>(() => {
-    const initialSize = clampSize(defaultSize ?? { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }, resolvedMinSize);
-    return defaultPosition ? clampPosition(defaultPosition, initialSize) : defaultPositionFor(windowKey, initialSize);
-  });
+  const [position, setPosition] = useState<FloatingWindowPosition>(() => initialGeometry.current!.position);
   // FNXC:FloatingWindow 2026-06-22-21:30: Each window owns its z-index; mounting claims the front of the SHARED cross-type stack.
   const [zIndex, setZIndex] = useState<number>(() => nextFloatingZ());
 
@@ -276,6 +318,19 @@ export function FloatingWindow({
   // FNXC:FloatingWindow 2026-06-22-20:45: Run any active drag/resize teardown on unmount so captured-element listeners + a pending rAF never outlive the window.
   useEffect(() => () => dragTeardownRef.current?.(), []);
 
+  /*
+  FNXC:ChatModal 2026-06-22-14:57:
+  Quick Chat reopens should restore the last desktop floating-window size and position while still clamping onto the current viewport. Keep persistence generic for other FloatingWindow callers, but opt in with persistGeometryKey so existing task pop-outs remain ephemeral.
+  */
+  useEffect(() => {
+    if (!persistGeometryKey || typeof window === "undefined") return;
+    try {
+      localStorage.setItem(persistGeometryKey, JSON.stringify({ size, position }));
+    } catch {
+      // Ignore storage failures; geometry persistence is a convenience only.
+    }
+  }, [persistGeometryKey, position, size]);
+
   const panelStyle = {
     left: `${position.x}px`,
     top: `${position.y}px`,
@@ -298,7 +353,7 @@ export function FloatingWindow({
       style={{ zIndex }}
     >
       <div
-        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}`}
+        className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
         onPointerDownCapture={bringToFront}

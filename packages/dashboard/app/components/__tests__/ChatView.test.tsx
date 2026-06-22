@@ -4042,6 +4042,53 @@ describe("Chat header New Chat button", () => {
   });
 });
 
+describe("Chat pop-out header actions", () => {
+  it("renders a pop-out action in the main Chat header", async () => {
+    const onPopOut = vi.fn();
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} onPopOut={onPopOut} />);
+
+    const button = screen.getByTestId("chat-pop-out");
+    expect(button.closest(".view-header")).toBeInTheDocument();
+    fireEvent.click(button);
+    expect(onPopOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders maximize, minimize, and close actions in floating Chat", async () => {
+    const onMaximize = vi.fn();
+    const onMinimize = vi.fn();
+    const onClose = vi.fn();
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    await renderWithAct(
+      <ChatView
+        projectId="proj-123"
+        addToast={vi.fn()}
+        floating
+        onMaximize={onMaximize}
+        onMinimize={onMinimize}
+        onClose={onClose}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-modal-maximize"));
+    fireEvent.click(screen.getByTestId("chat-modal-minimize"));
+    fireEvent.click(screen.getByTestId("chat-modal-close"));
+    expect(onMaximize).toHaveBeenCalledTimes(1);
+    expect(onMinimize).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("defines a modal-width narrow layout that mirrors mobile one-pane behavior", async () => {
+    const css = loadAllAppCss();
+
+    expect(css).toMatch(/\.chat-view--narrow \.chat-view__body\s*\{[^}]*flex-direction:\s*column;/);
+    expect(css).toMatch(/\.chat-view--narrow \.chat-sidebar\s*\{[^}]*min-width:\s*100%;[^}]*border-right:\s*none;/);
+    expect(css).toMatch(/\.chat-view--narrow \.chat-sidebar:not\(\.chat-sidebar--hidden\) \+ \.chat-thread\s*\{[^}]*display:\s*none;/);
+  });
+});
+
 describe("ChatView mobile behavior", () => {
   let savedVisualViewport: typeof window.visualViewport;
   let savedInnerHeight: number;

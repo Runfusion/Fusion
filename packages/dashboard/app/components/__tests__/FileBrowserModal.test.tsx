@@ -252,6 +252,40 @@ describe("FileBrowserModal", () => {
     });
   });
 
+  it("shows full editor toolbar actions directly in the narrow mobile file view", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      writable: true,
+      configurable: true,
+      value: 375,
+    });
+    mockUseWorkspaceFileEditor.mockReturnValue({
+      ...defaultEditorState,
+      content: "# Heading\n\nBody",
+      originalContent: "# Heading\n\nBody",
+    });
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile="README.md"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("button", { name: /toggle editor options/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /edit mode/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /preview mode/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /toggle line numbers/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /toggle word wrap/i })).toBeInTheDocument();
+  });
+
   it("keeps mobile close button visible and clickable", async () => {
     Object.defineProperty(window, "innerWidth", {
       writable: true,
@@ -259,7 +293,7 @@ describe("FileBrowserModal", () => {
       value: 375,
     });
 
-    const { container } = render(
+    render(
       <FileBrowserModal
         initialWorkspace="project"
         isOpen={true}
@@ -269,7 +303,7 @@ describe("FileBrowserModal", () => {
 
     fireEvent(window, new Event("resize"));
 
-    const closeButton = container.querySelector("button.modal-close");
+    const closeButton = document.querySelector("button.modal-close");
     expect(closeButton).toBeInTheDocument();
     expect(closeButton).toBeVisible();
 
@@ -295,7 +329,7 @@ describe("FileBrowserModal", () => {
       ],
     });
 
-    const { container } = render(
+    render(
       <FileBrowserModal
         initialWorkspace="project"
         isOpen={true}
@@ -310,12 +344,12 @@ describe("FileBrowserModal", () => {
 
     // Verify the file path appears in the header
     await waitFor(() => {
-      const pathEl = container.querySelector(".file-browser-header-path");
+      const pathEl = document.querySelector(".file-browser-header-path");
       expect(pathEl).toBeInTheDocument();
       expect(pathEl?.textContent).toBe(longFileName);
     });
 
-    const closeButton = container.querySelector("button.modal-close");
+    const closeButton = document.querySelector("button.modal-close");
     expect(closeButton).toBeInTheDocument();
     expect(closeButton).toBeVisible();
 
@@ -435,7 +469,7 @@ describe("FileBrowserModal", () => {
     });
 
     it("updates sidebar width while dragging the resize handle", () => {
-      const { container } = render(
+      render(
         <FileBrowserModal
           initialWorkspace="project"
           isOpen={true}
@@ -444,7 +478,7 @@ describe("FileBrowserModal", () => {
       );
 
       const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-      const sidebar = container.querySelector(".file-browser-sidebar");
+      const sidebar = document.querySelector(".file-browser-sidebar");
       expect(sidebar).not.toBeNull();
 
       fireEvent.pointerDown(handle, { pointerId: 1, clientX: 280 });
@@ -474,7 +508,7 @@ describe("FileBrowserModal", () => {
     });
 
     it("clamps sidebar width between min and max bounds", () => {
-      const { container } = render(
+      render(
         <FileBrowserModal
           initialWorkspace="project"
           isOpen={true}
@@ -483,7 +517,7 @@ describe("FileBrowserModal", () => {
       );
 
       const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-      const sidebar = container.querySelector(".file-browser-sidebar");
+      const sidebar = document.querySelector(".file-browser-sidebar");
       expect(sidebar).not.toBeNull();
 
       fireEvent.pointerDown(handle, { pointerId: 1, clientX: 280 });
@@ -533,7 +567,7 @@ describe("FileBrowserModal", () => {
     });
 
     it("supports keyboard resize with arrow keys and persists updated width", () => {
-      const { container } = render(
+      render(
         <FileBrowserModal
           initialWorkspace="project"
           isOpen={true}
@@ -542,7 +576,7 @@ describe("FileBrowserModal", () => {
       );
 
       const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-      const sidebar = container.querySelector(".file-browser-sidebar");
+      const sidebar = document.querySelector(".file-browser-sidebar");
       expect(sidebar).not.toBeNull();
 
       fireEvent.keyDown(handle, { key: "ArrowRight" });
@@ -557,7 +591,7 @@ describe("FileBrowserModal", () => {
     });
 
     it("clamps keyboard resize within min and max bounds", () => {
-      const { container } = render(
+      render(
         <FileBrowserModal
           initialWorkspace="project"
           isOpen={true}
@@ -566,7 +600,7 @@ describe("FileBrowserModal", () => {
       );
 
       const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-      const sidebar = container.querySelector(".file-browser-sidebar");
+      const sidebar = document.querySelector(".file-browser-sidebar");
       expect(sidebar).not.toBeNull();
 
       for (let i = 0; i < 30; i += 1) {
@@ -583,7 +617,7 @@ describe("FileBrowserModal", () => {
     });
 
     it("ignores non-arrow keys when resizing from keyboard", () => {
-      const { container } = render(
+      render(
         <FileBrowserModal
           initialWorkspace="project"
           isOpen={true}
@@ -592,7 +626,7 @@ describe("FileBrowserModal", () => {
       );
 
       const handle = screen.getByRole("separator", { name: "Resize sidebar" });
-      const sidebar = container.querySelector(".file-browser-sidebar");
+      const sidebar = document.querySelector(".file-browser-sidebar");
       expect(sidebar).not.toBeNull();
 
       fireEvent.keyDown(handle, { key: "Enter" });

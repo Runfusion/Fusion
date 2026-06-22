@@ -3,10 +3,14 @@ import type { ComponentProps } from "react";
 import { render, screen, fireEvent, waitFor, within, act, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EditorView } from "@codemirror/view";
+import fs from "fs";
+import path from "path";
 import { SettingsModal } from "../SettingsModal";
 import { __test_clearCache as clearPluginUiSlotsCache } from "../../hooks/usePluginUiSlots";
 import type { PluginUiContributionEntry, SettingsExportData, UpdateCheckResponse } from "../../api";
 import { ApiRequestError } from "../../api";
+
+const settingsModalCss = fs.readFileSync(path.resolve(__dirname, "../SettingsModal.css"), "utf8");
 
 // --- API mocks ---
 const mockFetchSettings = vi.fn();
@@ -372,6 +376,12 @@ describe("SettingsModal", () => {
       // No fixed full-screen overlay backdrop and no dialog role in embedded mode.
       expect(container.querySelector(".settings-modal-overlay")).toBeNull();
       expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("removes the embedded page outer inset and keeps content padding inside each settings screen", () => {
+      expect(settingsModalCss).toMatch(/\.settings-embedded\.right-dock-embedded-view\s*\{[^}]*padding:\s*0;/);
+      expect(settingsModalCss).toMatch(/\.settings-content\s*\{[^}]*padding:\s*var\(--space-md\) var\(--space-xl\) var\(--space-lg\);/);
+      expect(settingsModalCss).toMatch(/\.settings-section-heading\s*\{[^}]*padding:\s*var\(--space-lg\) 0 var\(--space-md\);/);
     });
 
     it("does not dismiss on Escape in embedded mode", async () => {

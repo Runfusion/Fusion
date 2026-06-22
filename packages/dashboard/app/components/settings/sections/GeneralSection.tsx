@@ -106,9 +106,16 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         <small>{t("settings.general.controlsHowFutureTaskSpecsHandleReleaseNote", " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ")}<code>.changeset</code>{t("settings.general.workflowsOrChangelogModeWhenContributorsShouldUpdate", " workflows, or changelog mode when contributors should update an existing changelog file. ")}</small>
       </div>
       <div className="form-group">
-        <label htmlFor="showQuickChatFAB" className="checkbox-label">
-          <input id="showQuickChatFAB" type="checkbox" checked={form.showQuickChatFAB === true} onChange={(e) => setForm((f) => ({ ...f, showQuickChatFAB: e.target.checked }))}/>{t("settings.general.showQuickChatButton", " Show quick chat button ")}</label>
-        <small>{t("settings.general.showTheFloatingChatButtonInTheDashboard", "Show the floating chat button in the dashboard. Chat is still accessible from the Chat tab in the mobile navigation.")}</small>
+        <label htmlFor="quickChatButtonMode">{t("settings.general.quickChatLauncher", "Quick Chat launcher")}</label>
+        <select id="quickChatButtonMode" className="select" value={form.quickChatButtonMode ?? (form.showQuickChatFAB ? "floating" : "off")} onChange={(e) => setForm((f) => {
+            const mode = e.target.value as "floating" | "footer" | "off";
+            return { ...f, quickChatButtonMode: mode, showQuickChatFAB: mode === "floating" };
+        })}>
+          <option value="floating">{t("settings.general.quickChatLauncherFloating", "Floating button")}</option>
+          <option value="footer">{t("settings.general.quickChatLauncherFooter", "Footer button")}</option>
+          <option value="off">{t("settings.general.off", "Off")}</option>
+        </select>
+        <small>{t("settings.general.quickChatLauncherHint", "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden.")}</small>
       </div>
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.chatHistory", "Chat history")}</h4>
       <div className="form-group">

@@ -67,7 +67,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  /* Must sit above QuickChatFAB mobile full-screen panel (z-index 1100). */
+  /* Must sit above floating dashboard panels. */
   z-index: 1200;
   max-height: 320px;
   display: flex;

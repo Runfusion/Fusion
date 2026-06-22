@@ -61,8 +61,8 @@ describe("skills-view mobile css", () => {
   // .skills-view-title. Assert the shared header is defined and carries its standard padding/title.
   it("uses the shared .view-header for the skills title row", () => {
     expect(cssContent).toContain(".view-header {");
-    const block = extractRuleBlock(cssContent, ".view-header");
-    expect(block).toMatch(/padding:\s*var\(--space-lg\)/);
+    const viewHeaderBlocks = [...cssContent.matchAll(/\.view-header\s*\{([^}]*)\}/g)].map((match) => match[1]);
+    expect(viewHeaderBlocks.some((block) => /padding:\s*var\(--space-lg\)\s+var\(--space-xl\)/.test(block))).toBe(true);
   });
 
   it("defines the shared .view-header__title", () => {
@@ -190,6 +190,7 @@ describe("skills-view mobile css", () => {
   it(".skills-view-content has overflow-y auto in base CSS", () => {
     expect(cssContent).toMatch(/\.skills-view-content\s*\{[^}]*overflow-y:\s*auto[^}]*\}/s);
     expect(cssContent).toMatch(/\.skills-view-content\s*\{[^}]*flex:\s*1[^}]*\}/s);
+    expect(cssContent).toMatch(/\.skills-view-content\s*\{[^}]*padding:\s*var\(--space-lg\) var\(--space-lg\) var\(--space-lg\)[^}]*\}/s);
   });
 
   it("defines .skills-view-detail with reduced padding on mobile", () => {

@@ -77,6 +77,42 @@ Headerless task pop-outs still need a visible drag affordance. The embedded task
   cursor: grabbing;
 }
 
+.floating-window--chat.floating-window--headerless .floating-window__body {
+  overflow: hidden;
+}
+
+.floating-window--chat .chat-view {
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+/*
+FNXC:ChatModal 2026-06-22-14:49:
+On mobile/narrow app viewports, opening Quick Chat should present the full Chat modal as a full-screen sheet instead of a small draggable desktop window. Scope this to the chat FloatingWindow and override the inline desktop geometry only at the mobile breakpoint; desktop pop-out behavior remains movable/resizable.
+*/
+@media (max-width: 768px) {
+  .floating-window--chat {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--chat .floating-window__resize-handle {
+    display: none;
+  }
+
+  .floating-window--chat .chat-view {
+    border-radius: 0;
+  }
+}
+
 .floating-window__title {
   display: flex;
   flex: 1;

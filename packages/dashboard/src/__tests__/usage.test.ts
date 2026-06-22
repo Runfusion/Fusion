@@ -80,6 +80,7 @@ describe("usage", () => {
     );
     coreInteropMocks.readStoredCredentialsFromAuthFile.mockReturnValue({});
     vi.stubEnv("HOME", "/home/testuser");
+    vi.stubEnv("CODEX_HOME", "");
   });
 
   afterEach(() => {

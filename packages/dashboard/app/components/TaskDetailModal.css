@@ -785,7 +785,14 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
 /*
 FNXC:TaskDetailChat 2026-06-16-22:13:
 Expanded chat should take over the modal except for the task title row, so users keep task ID and column context while tabs and modal actions stay hidden.
+
+FNXC:TaskDetailChat 2026-06-22-13:27:
+Expanded chat must also cover the task metadata row — priority, execution mode, provenance/Created by, and Created/Updated timestamps — so the chat grows all the way up to the title row instead of stopping below secondary metadata controls.
 */
+.task-detail-content--chat-expanded .detail-meta {
+  display: none;
+}
+
 .task-detail-content--chat-expanded .detail-tabs {
   display: none;
 }

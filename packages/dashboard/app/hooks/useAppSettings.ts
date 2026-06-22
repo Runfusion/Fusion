@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchConfig, fetchSettings, updateSettings, updateGlobalSettings } from "../api";
 import { setAutoReloadEnabled } from "../versionCheck";
 
+export type QuickChatButtonMode = "floating" | "footer" | "off";
+
 /**
  * Settings state and actions consumed by the dashboard App shell.
  */
@@ -17,6 +19,7 @@ export interface UseAppSettingsResult {
   staleHighFanoutBlockerAgeThresholdMs: number;
   capacityRiskBannerEnabled: boolean;
   capacityRiskTodoThreshold: number;
+  quickChatButtonMode: QuickChatButtonMode;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
@@ -52,6 +55,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [staleHighFanoutBlockerAgeThresholdMs, setStaleHighFanoutBlockerAgeThresholdMs] = useState(2 * 60 * 60 * 1000);
   const [capacityRiskBannerEnabled, setCapacityRiskBannerEnabled] = useState(false);
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
+  const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
@@ -94,7 +98,14 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setStaleHighFanoutBlockerAgeThresholdMs(
         settings.staleHighFanoutBlockerAgeThresholdMs ?? 2 * 60 * 60 * 1000,
       );
-      setShowQuickChatFAB(settings.showQuickChatFAB === true);
+      const nextQuickChatButtonMode: QuickChatButtonMode =
+        settings.quickChatButtonMode === "floating" || settings.quickChatButtonMode === "footer" || settings.quickChatButtonMode === "off"
+          ? settings.quickChatButtonMode
+          : settings.showQuickChatFAB === true
+            ? "floating"
+            : "off";
+      setQuickChatButtonMode(nextQuickChatButtonMode);
+      setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
@@ -174,11 +185,13 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const toggleShowQuickChatFAB = useCallback(async () => {
     const next = !showQuickChatFAB;
     setShowQuickChatFAB(next);
+    setQuickChatButtonMode(next ? "floating" : "off");
 
     try {
-      await updateSettings({ showQuickChatFAB: next }, projectId);
+      await updateSettings({ quickChatButtonMode: next ? "floating" : "off", showQuickChatFAB: next }, projectId);
     } catch {
       setShowQuickChatFAB(!next);
+      setQuickChatButtonMode(!next ? "floating" : "off");
     }
   }, [showQuickChatFAB, projectId]);
 
@@ -207,6 +220,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
+    quickChatButtonMode,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,

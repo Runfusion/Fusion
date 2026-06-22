@@ -469,6 +469,7 @@ export const DEFAULT_PROJECT_SETTINGS = {
   reflectionIntervalMs: 3_600_000,
   reflectionAfterTask: true,
   // reviewHandoffPolicy MOVED to workflow settings (U4) — see MOVED_SETTINGS_KEYS.
+  quickChatButtonMode: "off",
   showQuickChatFAB: false,
   chatAutoCleanupDays: 0,
   mailAutoCleanupDays: 0,

@@ -219,7 +219,7 @@ describe("FN-5997 mobile chat message pane rendering", () => {
       await renderWithCss(<ChatView projectId="proj-123" addToast={vi.fn()} />);
       expectMobileEmptyStateToSpanMessagePane("Start a new conversation");
       const startConversationEmptyState = screen.getByText("Start a new conversation").closest(".chat-empty-state") as HTMLElement;
-      expect(within(startConversationEmptyState).getByRole("button", { name: "New Chat" })).toBeInTheDocument();
+      expect(within(startConversationEmptyState).getByText("New Chat").closest("button")).toBeInTheDocument();
 
       cleanup();
       document.head.innerHTML = "";

@@ -1,4 +1,8 @@
 /* === Header === */
+/*
+FNXC:DashboardHeader 2026-06-22-14:30:
+The dashboard top header should carry the same canonical bottom divider as Missions, Planning, and other view headers. Theme-level CSS may hide this divider for seamless themes such as Air and Shadcn, but the base header must expose the divider for themes that support visible separation.
+*/
 .header {
   display: flex;
   align-items: center;

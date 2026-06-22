@@ -657,6 +657,61 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
   flex-shrink: 0;
 }
 
+.chat-view-header-icon {
+  flex: 0 0 auto;
+}
+
+/*
+FNXC:ChatModal 2026-06-22-13:22:
+The old Quick Chat panel is replaced by the full ChatView inside a movable FloatingWindow. In floating mode ChatView's shared header is the only visible modal header and doubles as the drag handle, with minimize/close controls in the same action row.
+*/
+.chat-view--floating .view-header {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.chat-view--floating .view-header:active {
+  cursor: grabbing;
+}
+
+/*
+FNXC:ChatModal 2026-06-22-14:38:
+Floating Chat can become narrow while the browser viewport remains desktop-sized. Mirror the mobile one-pane layout with a class driven by the modal ResizeObserver so a narrow pop-out hides the sidebar and shows the mobile thread/list surfaces.
+*/
+.chat-view--narrow .chat-view__body {
+  flex-direction: column;
+}
+
+.chat-view--narrow .chat-sidebar {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: none;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+}
+
+.chat-view--narrow .chat-sidebar-header {
+  display: none;
+}
+
+.chat-view--narrow .chat-sidebar-search {
+  min-height: calc(var(--space-2xl) + var(--space-xs));
+}
+
+.chat-view--narrow .chat-sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-view--narrow .chat-sidebar:not(.chat-sidebar--hidden) + .chat-thread {
+  display: none;
+}
+
 .chat-rename-label {
   display: block;
   margin-bottom: var(--space-xs);
@@ -1415,11 +1470,6 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
   color: var(--text-muted);
   font-style: italic;
   font-size: 13px;
-}
-
-.quick-chat-panel-waiting {
-  color: var(--text-muted) !important;
-  font-style: italic;
 }
 
 /* Input area */

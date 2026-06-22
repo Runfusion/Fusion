@@ -1891,17 +1891,16 @@ describe("MailboxView", () => {
       const resizeHandleBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-resize-handle\s*\{([^}]*)\}/);
       expect(resizeHandleBlockMatch).toBeTruthy();
       const resizeHandleBlock = resizeHandleBlockMatch![1];
-      // FNXC:SidebarDivider 2026-06-23-01:45: handle mirrors the Chat sidebar divider — hit area var(--space-sm), transparent handle background, centered static 1px var(--border) line (tightened from var(--space-xs)) so List/Chat/Mailbox dividers read identically.
+      // FNXC:SidebarDivider 2026-06-22-13:26: handle mirrors the Chat sidebar divider — hit area var(--space-sm), transparent handle background, centered hover-only var(--space-xs) tint.
       expect(resizeHandleBlock).toContain("width: var(--space-sm);");
       expect(resizeHandleBlock).toContain("cursor: col-resize;");
       expect(resizeHandleBlock).toContain("background: transparent;");
 
       const resizeHandleTargetBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-resize-handle::before\s*\{([^}]*)\}/);
       expect(resizeHandleTargetBlockMatch).toBeTruthy();
-      // Static visible divider is a single 1px var(--border) line, matching Chat's sidebar border.
-      expect(resizeHandleTargetBlockMatch![1]).toContain("width: var(--btn-border-width);");
-      expect(resizeHandleTargetBlockMatch![1]).toContain("background: var(--border);");
-      expect(css).toMatch(/\.mailbox-view\s+\.mailbox-split-resize-handle:hover::before,\s*\n\.mailbox-view\s+\.mailbox-split-resize-handle:active::before\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\(--todo\)\s*35%,\s*transparent\);[^}]*\}/);
+      expect(resizeHandleTargetBlockMatch![1]).toContain("width: var(--space-xs);");
+      expect(resizeHandleTargetBlockMatch![1]).not.toContain("background: var(--border);");
+      expect(css).toMatch(/\.mailbox-view\s+\.mailbox-split-resize-handle:hover::before,\s*\n\.mailbox-view\s+\.mailbox-split-resize-handle:active::before\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\(--todo\)\s*30%,\s*transparent\);[^}]*\}/);
 
       const splitEmptyBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-empty\s*\{([^}]*)\}/);
       expect(splitEmptyBlockMatch).toBeTruthy();

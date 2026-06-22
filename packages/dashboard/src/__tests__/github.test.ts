@@ -1107,7 +1107,7 @@ describe("GitHubClient", () => {
         "--repo", "owner/repo",
         "--state", "open",
         "--limit", "30",
-        "--json", "number,title,body,url,labels,state,updatedAt",
+        "--json", "number,title,body,url,labels,state,updatedAt,author",
       ]);
       expect(result).toHaveLength(2);
       expect(result[0].number).toBe(1);

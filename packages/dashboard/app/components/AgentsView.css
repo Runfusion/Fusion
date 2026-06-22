@@ -577,6 +577,11 @@ FN-6774 removes the saturated top-edge status stripe from agent board cards. Age
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  /*
+  FNXC:AgentsView 2026-06-22-14:45:
+  The split-sidebar agent list needs a small top inset so the first agent card does not press directly against the sidebar/header edge.
+  */
+  padding-top: var(--space-sm);
 }
 
 /*
@@ -1582,4 +1587,3 @@ FN-6774 removes the saturated left-edge status stripe from split-sidebar agent c
     padding: var(--space-md) var(--space-md) calc(var(--space-md) + env(safe-area-inset-bottom, 0px) + var(--standalone-bottom-gap));
   }
 }
-

@@ -11,8 +11,8 @@ import type { ChatMessageInfo, FallbackInfo, ToolCallInfo } from "./chatTypes";
  * updates, and the SSE event → state-setter wiring. Caller-specific behaviour
  * for the terminal events (`onDone`, `onError`) and the optional
  * `onFallbackSession` model-swap is provided through callbacks so that
- * `useChat` and `useQuickChat` can plug in their own session-management
- * semantics without re-implementing the streaming machinery.
+ * `useChat` can plug in session-management semantics without re-implementing
+ * the streaming machinery.
  */
 export interface CreateChatStreamHandlersOptions {
   /** Active session id — used by `onFallbackSession` for parent-side updates. */
@@ -78,9 +78,9 @@ export interface CreateChatStreamHandlersResult {
 
 /**
  * Build the SSE handler bundle that `streamChatResponse` consumes. This is the
- * portion of the chat send/stream flow that was identical between `useChat`
- * and `useQuickChat`; extracting it keeps both hooks in sync when we tweak
- * coalescing, tool-call dedup, fallback toasts, etc. The terminal events
+ * portion of the chat send/stream flow that is easier to test as a focused
+ * seam; extracting it keeps coalescing, tool-call dedup, fallback toasts, etc.
+ * independent from the hook. The terminal events
  * (`onDone`/`onError`) and parent-side fallback bookkeeping stay caller-owned
  * because each hook handles message persistence and error recovery
  * differently.

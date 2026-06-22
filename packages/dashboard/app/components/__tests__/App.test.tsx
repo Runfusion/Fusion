@@ -1022,7 +1022,7 @@ describe("App backend-unreachable first-run flow", () => {
         await vi.advanceTimersByTimeAsync(1000);
       });
 
-      expect(screen.getByText("Welcome to Fusion")).toBeTruthy();
+      expect(screen.getByText("Set Up AI")).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
@@ -2838,6 +2838,10 @@ describe("Script run flow", () => {
 });
 
 describe("Script-to-terminal modal handoff", () => {
+  beforeEach(() => {
+    mockProjectsState.projects = [mockCurrentProjectState.currentProject!];
+  });
+
   it("closes ScriptsModal and opens TerminalModal when Run is clicked", async () => {
     render(<App />);
 

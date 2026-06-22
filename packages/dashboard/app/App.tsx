@@ -785,10 +785,10 @@ function AppInner() {
   }, [currentProject?.id, gitHubStarPromptShown, refreshMailboxUnreadCount]);
 
   useEffect(() => {
-    if (taskView === "chat") {
+    if (taskView === "chat" || quickChatOpen) {
       setChatHasUnreadResponse(false);
     }
-  }, [taskView]);
+  }, [quickChatOpen, taskView]);
 
   useEffect(() => {
     let cancelled = false;
@@ -821,7 +821,7 @@ function AppInner() {
           try {
             const payload = JSON.parse(event.data) as { role?: string; projectId?: string | null };
             if (payload.role !== "assistant") return;
-            if (taskView === "chat") return;
+            if (taskView === "chat" || quickChatOpen) return;
             if (payload.projectId && currentProject?.id && payload.projectId !== currentProject.id) return;
             setChatHasUnreadResponse(true);
           } catch {
@@ -832,7 +832,7 @@ function AppInner() {
           try {
             const payload = JSON.parse(event.data) as ChatRoomMessage & { projectId?: string | null };
             if (payload.role === "user") return;
-            if (taskView === "chat") return;
+            if (taskView === "chat" || quickChatOpen) return;
             if (payload.projectId && currentProject?.id && payload.projectId !== currentProject.id) return;
             setChatHasUnreadResponse(true);
           } catch {
@@ -841,7 +841,7 @@ function AppInner() {
         },
       },
     });
-  }, [currentProject?.id, taskView]);
+  }, [currentProject?.id, quickChatOpen, taskView]);
 
   const branchOptions = useMemo(() => {
     return Array.from(
@@ -993,7 +993,7 @@ function AppInner() {
     staleHighFanoutBlockerAgeThresholdMs,
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
-    showQuickChatFAB,
+    quickChatButtonMode,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
@@ -1680,6 +1680,7 @@ function AppInner() {
               addToast={addToast}
               projectId={currentProject?.id}
               experimentalFeatures={experimentalFeatures}
+              onPopOut={() => setQuickChatOpen(true)}
             />
           </Suspense>
         </PageErrorBoundary>
@@ -2448,6 +2449,8 @@ function AppInner() {
           keyboardOpen={footerKeyboardOpen}
           hideWhenKeyboardOpen={mobileKeyboardOpen}
           onToggleTerminal={toggleTerminalWithNav}
+          quickChatButtonMode={quickChatButtonMode}
+          onOpenQuickChat={() => setQuickChatOpen(true)}
           onOpenScripts={openScriptsWithNav}
           onRunScript={runScriptWithNav}
         />
@@ -2500,18 +2503,47 @@ function AppInner() {
           ) : undefined
         }
       />
-      {viewMode === "project" && currentProject && taskView !== "chat" && taskView !== "mailbox" && taskView !== "insights" && taskView !== "evals" && taskView !== "devserver" && taskView !== "dev-server" && taskView !== "graph" && !isPluginViewId(taskView) && (
+      {/*
+      FNXC:ChatModal 2026-06-22-13:24:
+      Quick Chat is replaced by the full ChatView in a movable/resizable FloatingWindow. The launcher icon is only the minimized entry point: clicking it opens the Chat modal, and the modal's minimize button closes the window back into that icon. Main Chat can also pop out into this same full Chat modal.
+
+      FNXC:ChatModal 2026-06-22-14:57:
+      Reopening Quick Chat from the FAB restores the last floating Chat window geometry through FloatingWindow's persisted/clamped geometry key. The modal's maximize button routes to the full Chat view and closes the floating modal without clearing ChatView's shared session selection state.
+      */}
+      {viewMode === "project" && currentProject && (
         <QuickChatFAB
-          projectId={currentProject.id}
-          addToast={addToast}
-          showFAB={showQuickChatFAB}
+          showFAB={quickChatButtonMode === "floating"}
           open={quickChatOpen}
           onOpenChange={setQuickChatOpen}
-          favoriteProviders={favoriteProviders}
-          favoriteModels={favoriteModels}
-          onToggleFavorite={handleToggleFavorite}
-          onToggleModelFavorite={handleToggleModelFavorite}
         />
+      )}
+      {quickChatOpen && currentProject && (
+        <FloatingWindow
+          windowKey="chat-modal"
+          title="Chat"
+          onClose={() => setQuickChatOpen(false)}
+          hideHeader
+          dragHandleSelector=".chat-view--floating .view-header"
+          className="floating-window--chat"
+          persistGeometryKey="kb-dashboard-chat-floating-window"
+          defaultSize={{ width: 980, height: 680 }}
+          minSize={{ width: 520, height: 420 }}
+        >
+          <Suspense fallback={null}>
+            <ChatView
+              addToast={addToast}
+              projectId={currentProject.id}
+              experimentalFeatures={experimentalFeatures}
+              floating
+              onMaximize={() => {
+                handleTaskViewChange("chat");
+                setQuickChatOpen(false);
+              }}
+              onMinimize={() => setQuickChatOpen(false)}
+              onClose={() => setQuickChatOpen(false)}
+            />
+          </Suspense>
+        </FloatingWindow>
       )}
       {/*
       FNXC:FloatingWindow 2026-06-22-20:45:

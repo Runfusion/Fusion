@@ -9642,7 +9642,7 @@ export interface ChatSessionResumeLookupInput {
 }
 
 /**
- * Fetch the most relevant active session for quick-chat resume semantics.
+ * Fetch the most relevant active session for chat resume semantics.
  * Returns at most one session for the provided target.
  */
 export async function fetchResumeChatSession(

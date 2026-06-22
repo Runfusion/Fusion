@@ -1,7 +1,7 @@
 import "./FileBrowser.css";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Folder, File, ChevronRight, Loader2, Copy, Move, Trash2, Pencil, Download, Archive, FilePlus2, FolderPlus } from "lucide-react";
+import { Folder, File, ChevronRight, Loader2, Copy, Move, Trash2, Pencil, Download, Archive, FilePlus2, FolderPlus, Plus, ChevronDown } from "lucide-react";
 import type { FileNode } from "../api";
 import { copyFile, createWorkspaceDirectory, createWorkspaceFile, moveFile, deleteFile, renameFile, downloadFileUrl, downloadZipUrl } from "../api";
 import { appendTokenQuery } from "../auth";
@@ -327,11 +327,13 @@ export function FileBrowser({
   const [operationError, setOperationError] = useState<string | null>(null);
   const [isLongPressing, setIsLongPressing] = useState(false);
   const [longPressTargetPath, setLongPressTargetPath] = useState<string | null>(null);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
 
   const longPressTimerRef = useRef<number | null>(null);
   const longPressFeedbackTimerRef = useRef<number | null>(null);
   const touchStartRef = useRef<TouchPoint | null>(null);
   const touchOpenHandledRef = useRef(false);
+  const newMenuRef = useRef<HTMLDivElement>(null);
 
   const clearLongPressTimers = useCallback(() => {
     if (longPressTimerRef.current !== null) {
@@ -356,6 +358,27 @@ export function FileBrowser({
       clearLongPressTimers();
     };
   }, [clearLongPressTimers]);
+
+  useEffect(() => {
+    if (!newMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!newMenuRef.current?.contains(event.target as Node)) {
+        setNewMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNewMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [newMenuOpen]);
 
   const openContextMenuAt = useCallback((x: number, y: number, entry: FileNode, fullPath: string) => {
     setContextMenu({
@@ -591,24 +614,52 @@ export function FileBrowser({
         )}
         <span className="file-browser-path">{currentPath === "." ? t("fileBrowser.root", "Root") : normalizeDisplayPath(currentPath)}</span>
         <div className="file-browser-header-actions">
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => openCreateDialog("create-file")}
-            disabled={!workspace}
-          >
-            <FilePlus2 size={14} />
-            {t("fileBrowser.newFile", "New File")}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm"
-            onClick={() => openCreateDialog("create-folder")}
-            disabled={!workspace}
-          >
-            <FolderPlus size={14} />
-            {t("fileBrowser.newFolder", "New Folder")}
-          </button>
+          <div className="file-browser-new-menu" ref={newMenuRef}>
+            {/*
+             * FNXC:FileBrowser 2026-06-22-15:24:
+             * The narrow file-browser sidebar cannot fit separate New File and New Folder buttons reliably, so both actions live behind one compact New menu without removing either create flow.
+             */}
+            <button
+              type="button"
+              className="btn btn-sm file-browser-new-menu-trigger"
+              onClick={() => setNewMenuOpen((open) => !open)}
+              disabled={!workspace}
+              aria-haspopup="menu"
+              aria-expanded={newMenuOpen}
+            >
+              <Plus size={14} />
+              {t("fileBrowser.new", "New")}
+              <ChevronDown size={14} />
+            </button>
+            {newMenuOpen && (
+              <div className="file-browser-new-menu-panel" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="file-browser-new-menu-item"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    openCreateDialog("create-file");
+                  }}
+                >
+                  <FilePlus2 size={14} />
+                  {t("fileBrowser.newFile", "New File")}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="file-browser-new-menu-item"
+                  onClick={() => {
+                    setNewMenuOpen(false);
+                    openCreateDialog("create-folder");
+                  }}
+                >
+                  <FolderPlus size={14} />
+                  {t("fileBrowser.newFolder", "New Folder")}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

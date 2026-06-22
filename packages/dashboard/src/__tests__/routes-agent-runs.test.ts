@@ -145,7 +145,7 @@ describe("Agent runs routes (without HeartbeatMonitor)", () => {
   });
 
   describe("POST /api/tasks/:id/pause and /unpause", () => {
-    it("returns 409 for pause on agent-assigned task", async () => {
+    it("allows pause on agent-assigned task for manual recovery", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: "FN-1", assignedAgentId: "agent-1" });
 
       const response = await request(
@@ -156,9 +156,8 @@ describe("Agent runs routes (without HeartbeatMonitor)", () => {
         { "content-type": "application/json" },
       );
 
-      expect(response.status).toBe(409);
-      expect((response.body as any).error).toContain("Cannot manually pause/unpause task assigned to agent agent-1");
-      expect(store.pauseTask).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(store.pauseTask).toHaveBeenCalledWith("FN-1", true);
     });
 
     it("allows pause for unassigned task", async () => {
@@ -176,7 +175,7 @@ describe("Agent runs routes (without HeartbeatMonitor)", () => {
       expect(store.pauseTask).toHaveBeenCalledWith("FN-2", true);
     });
 
-    it("returns 409 for unpause on agent-assigned task", async () => {
+    it("allows unpause on agent-assigned task for manual recovery", async () => {
       (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ id: "FN-3", assignedAgentId: "agent-2" });
 
       const response = await request(
@@ -187,9 +186,8 @@ describe("Agent runs routes (without HeartbeatMonitor)", () => {
         { "content-type": "application/json" },
       );
 
-      expect(response.status).toBe(409);
-      expect((response.body as any).error).toContain("Cannot manually pause/unpause task assigned to agent agent-2");
-      expect(store.pauseTask).not.toHaveBeenCalled();
+      expect(response.status).toBe(200);
+      expect(store.pauseTask).toHaveBeenCalledWith("FN-3", false);
     });
 
     it("allows unpause for unassigned task", async () => {

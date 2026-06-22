@@ -58,7 +58,6 @@ export function DependencyGraph({
   workflowStepNameLookup,
 }: DependencyGraphProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const initialFitDoneRef = useRef(false);
   const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const pointerDraggedRef = useRef(false);
   const nodeRefs = useRef(new Map<string, HTMLDivElement>());
@@ -259,9 +258,15 @@ export function DependencyGraph({
   2. Re-entering the view: this component stays mounted when the user navigates away and back,
      so a latched ref meant no re-fit on re-activation.
   Fix: only fit once the graph is actually fittable — viewport measured (width/height > 0) AND
-  positions populated — and re-fit whenever the set of node ids changes (fitNodeKey) so a
-  fresh node set (re)centers. Guard against fitting an empty graph. User-saved positions still
-  opt out of auto-fit (respect manual layout).
+  positions populated — and re-fit whenever the fitted geometry changes so a fresh or newly
+  settled node set centers. Guard against fitting an empty graph. User-saved positions preserve
+  relative node placement, but still fit into the visible viewport so the whole graph cannot load
+  off screen.
+
+  FNXC:Graph 2026-06-22-13:25:
+  Loading Graph view must always hit fit-to-graph after layout settles, including graphs with saved
+  manual node positions. The fit signature includes viewport size, bounds, and measured node heights
+  so a late height/ResizeObserver settle re-fits automatically instead of leaving cards off screen.
 
   FNXC:Graph 2026-06-23-02:45:
   Remaining "must click+drag once to recenter" bug was a coordinate-space + ordering race, NOT
@@ -287,23 +292,29 @@ export function DependencyGraph({
      effect keys on `viewportSize` so a fit is (re)attempted the moment a real non-zero size lands.
   First real paint now centers with zero user input, including navigating INTO the graph view.
   */
-  // Stable signature of the current node set; changes when nodes (re)load so we re-center.
+  // Stable signature of the current fitted geometry; changes when nodes, viewport,
+  // bounds, or measured heights settle so we re-center after the graph has its
+  // real box instead of latching an early off-screen layout.
   const fitNodeKey = useMemo(
     () => Array.from(normalizedPositions.keys()).sort().join("|"),
     [normalizedPositions],
   );
-  const lastFittedNodeKeyRef = useRef<string | null>(null);
+  const fitGeometryKey = useMemo(
+    () => [
+      fitNodeKey,
+      viewportSize.width,
+      viewportSize.height,
+      bounds.width,
+      bounds.height,
+      Array.from(measuredHeights.entries()).sort(([left], [right]) => left.localeCompare(right)).map(([id, height]) => `${id}:${Math.round(height)}`).join("|"),
+    ].join("::"),
+    [bounds.height, bounds.width, fitNodeKey, measuredHeights, viewportSize.height, viewportSize.width],
+  );
+  const lastFittedGeometryKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (filteredTasks.length === 0) return;
     if (normalizedPositions.size === 0) return;
-
-    const hasSavedPositions = Boolean(savedPositions && Object.keys(savedPositions).length > 0);
-    if (hasSavedPositions) {
-      initialFitDoneRef.current = true;
-      lastFittedNodeKeyRef.current = fitNodeKey;
-      return;
-    }
 
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -312,8 +323,10 @@ export function DependencyGraph({
     const viewportHeight = viewport.clientHeight || viewportSize.height;
     if (viewportWidth === 0 || viewportHeight === 0) return;
 
-    // Re-fit on initial load AND whenever the node set changes (async (re)load / view re-entry).
-    if (initialFitDoneRef.current && lastFittedNodeKeyRef.current === fitNodeKey) return;
+    // Re-fit on initial load and whenever layout geometry settles. This includes
+    // saved/manual positions: saved positions should preserve node placement, not
+    // allow the entire graph to load off screen.
+    if (lastFittedGeometryKeyRef.current === fitGeometryKey) return;
 
     // FNXC:Graph 2026-06-23-02:45: defer one paint so the committed normalized bounds are live in
     // graphBoundsRef before clampPan (inside fitToGraph) runs — otherwise pan mis-clamps to ±viewport.
@@ -330,8 +343,7 @@ export function DependencyGraph({
         nodeHeight: NODE_HEIGHT,
         measuredHeights,
       });
-      initialFitDoneRef.current = true;
-      lastFittedNodeKeyRef.current = fitNodeKey;
+      lastFittedGeometryKeyRef.current = fitGeometryKey;
     };
 
     if (typeof requestAnimationFrame === "function") {
@@ -347,7 +359,7 @@ export function DependencyGraph({
       if (frameOne) cancelAnimationFrame(frameOne);
       if (frameTwo) cancelAnimationFrame(frameTwo);
     };
-  }, [filteredTasks.length, fitNodeKey, fitToGraph, measuredHeights, normalizedPositions, savedPositions, viewportSize.height, viewportSize.width]);
+  }, [filteredTasks.length, fitGeometryKey, fitToGraph, measuredHeights, normalizedPositions, viewportSize.height, viewportSize.width]);
 
   const handleResetLayout = useCallback(() => {
     clearSavedPositions();

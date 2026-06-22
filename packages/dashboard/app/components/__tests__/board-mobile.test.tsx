@@ -614,6 +614,7 @@ describe("InlineCreateCard mobile", () => {
         onCancel={vi.fn()}
         addToast={vi.fn()}
         availableModels={[]}
+        onSubtaskBreakdown={vi.fn()}
       />,
     );
 

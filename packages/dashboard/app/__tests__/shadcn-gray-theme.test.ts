@@ -31,6 +31,18 @@ describe("Shadcn Gray color theme", () => {
     expect(`${darkBlock}\n${lightBlock}`).not.toContain("#60a5fa");
   });
 
+  it("hides header and modal title divider lines for seamless shadcn shells", () => {
+    const dividerBlock = extractGroupedRuleBlock(themeData, '[data-color-theme^="shadcn"] .view-header');
+
+    expect(dividerBlock).toContain('[data-color-theme^="shadcn"] .header');
+    expect(dividerBlock).toContain('[data-color-theme^="shadcn"] .modal-header');
+    expect(dividerBlock).toContain('[data-color-theme^="shadcn"] .floating-window-header');
+    expect(dividerBlock).toContain("border-top-color: transparent;");
+    expect(dividerBlock).toContain("border-bottom-color: transparent;");
+    expect(dividerBlock).not.toContain("border-right-color");
+    expect(dividerBlock).not.toContain("border-left-color");
+  });
+
   it("registers Shadcn Gray in core, dashboard options, and the dashboard bootstrap validator", () => {
     expect(CORE_COLOR_THEMES).toContain("shadcn-gray");
     expect(DASHBOARD_COLOR_THEMES).toContainEqual({
@@ -62,4 +74,26 @@ function extractSelectorBlock(css: string, selector: string): string {
   }
 
   return css.slice(startIdx, end + 1);
+}
+
+function extractGroupedRuleBlock(css: string, selector: string): string {
+  const selectorIdx = css.indexOf(selector);
+  if (selectorIdx === -1) {
+    throw new Error(`Could not find selector in grouped block: ${selector}`);
+  }
+
+  const openBraceIdx = css.indexOf("{", selectorIdx);
+  let depth = 1;
+  let end = openBraceIdx;
+  for (let i = openBraceIdx + 1; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    if (css[i] === "}") depth--;
+    if (depth === 0) {
+      end = i;
+      break;
+    }
+  }
+
+  const priorCloseIdx = css.lastIndexOf("}", selectorIdx);
+  return css.slice(priorCloseIdx + 1, end + 1);
 }

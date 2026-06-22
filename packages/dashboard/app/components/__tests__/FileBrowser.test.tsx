@@ -106,6 +106,18 @@ function touchStart(entryName: string, coords: { x: number; y: number } = { x: 2
   return entry;
 }
 
+function openNewMenu() {
+  fireEvent.click(screen.getByRole("button", { name: /^New$/i }));
+}
+
+function getNewFileAction() {
+  return screen.getByRole("menuitem", { name: /New File/i });
+}
+
+function getNewFolderAction() {
+  return screen.getByRole("menuitem", { name: /New Folder/i });
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 describe("FileBrowser", () => {
@@ -167,32 +179,30 @@ describe("FileBrowser", () => {
     expect(screen.getByText("(empty directory)")).toBeDefined();
   });
 
-  it("renders New File button in header when workspace is provided", () => {
+  it("renders New menu with file and folder actions when workspace is provided", () => {
     renderFileBrowser();
-    expect(screen.getByRole("button", { name: /New File/i })).toBeDefined();
+    openNewMenu();
+    expect(getNewFileAction()).toBeDefined();
+    expect(getNewFolderAction()).toBeDefined();
   });
 
-  it("renders New Folder button in header when workspace is provided", () => {
-    renderFileBrowser();
-    expect(screen.getByRole("button", { name: /New Folder/i })).toBeDefined();
-  });
-
-  it("disables create buttons when no workspace is provided", () => {
+  it("disables the create menu when no workspace is provided", () => {
     renderFileBrowser({ workspace: undefined });
-    expect(screen.getByRole("button", { name: /New File/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /New Folder/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^New$/i })).toBeDisabled();
   });
 
   it("clicking New File opens a dialog with name input", () => {
     renderFileBrowser();
-    fireEvent.click(screen.getByRole("button", { name: /New File/i }));
+    openNewMenu();
+    fireEvent.click(getNewFileAction());
     expect(document.querySelector(".file-browser-dialog-title")?.textContent).toBe("New File");
     expect(screen.getByPlaceholderText("File name")).toBeDefined();
   });
 
   it("clicking New Folder opens a dialog with name input", () => {
     renderFileBrowser();
-    fireEvent.click(screen.getByRole("button", { name: /New Folder/i }));
+    openNewMenu();
+    fireEvent.click(getNewFolderAction());
     expect(document.querySelector(".file-browser-dialog-title")?.textContent).toBe("New Folder");
     expect(screen.getByPlaceholderText("Folder name")).toBeDefined();
   });
@@ -202,7 +212,8 @@ describe("FileBrowser", () => {
     const onRefresh = vi.fn();
     const onSelectFile = vi.fn();
     renderFileBrowser({ currentPath: "docs", onRefresh, onSelectFile });
-    fireEvent.click(screen.getByRole("button", { name: /New File/i }));
+    openNewMenu();
+    fireEvent.click(getNewFileAction());
     fireEvent.change(screen.getByPlaceholderText("File name"), { target: { value: "notes.md" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
@@ -217,7 +228,8 @@ describe("FileBrowser", () => {
     mockCreateWorkspaceDirectory.mockResolvedValue({ success: true });
     const onRefresh = vi.fn();
     renderFileBrowser({ currentPath: "docs", onRefresh });
-    fireEvent.click(screen.getByRole("button", { name: /New Folder/i }));
+    openNewMenu();
+    fireEvent.click(getNewFolderAction());
     fireEvent.change(screen.getByPlaceholderText("Folder name"), { target: { value: "drafts" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
@@ -230,7 +242,8 @@ describe("FileBrowser", () => {
   it("shows create error state in dialog", async () => {
     mockCreateWorkspaceDirectory.mockRejectedValue(new Error("Already exists"));
     renderFileBrowser();
-    fireEvent.click(screen.getByRole("button", { name: /New Folder/i }));
+    openNewMenu();
+    fireEvent.click(getNewFolderAction());
     fireEvent.change(screen.getByPlaceholderText("Folder name"), { target: { value: "src" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
@@ -241,14 +254,16 @@ describe("FileBrowser", () => {
 
   it("cancels create dialog on Cancel", () => {
     renderFileBrowser();
-    fireEvent.click(screen.getByRole("button", { name: /New File/i }));
+    openNewMenu();
+    fireEvent.click(getNewFileAction());
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByPlaceholderText("File name")).toBeNull();
   });
 
   it("closes create dialog on Escape", () => {
     renderFileBrowser();
-    fireEvent.click(screen.getByRole("button", { name: /New Folder/i }));
+    openNewMenu();
+    fireEvent.click(getNewFolderAction());
     fireEvent.keyDown(screen.getByPlaceholderText("Folder name"), { key: "Escape" });
     expect(screen.queryByPlaceholderText("Folder name")).toBeNull();
   });
