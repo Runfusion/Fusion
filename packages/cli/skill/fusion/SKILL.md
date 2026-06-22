@@ -21,7 +21,7 @@ Fusion is an AI-orchestrated task board. You throw in rough ideas; AI specifies,
 **Missions** provide hierarchical planning above tasks:
 Mission → Milestone → Slice → Feature → Task
 
-**Available tools:** Fusion registers tools (prefixed `fn_*`). No CLI commands or Bash needed — use the registered tools directly.
+**Available tools:** When Fusion tools prefixed `fn_*` are registered, use them directly. When they are absent, use the global `fn` CLI described in `references/codex-cli-workflows.md`.
 
 **Naming boundary:** The published skill surface uses `fn_*` tool names (for example `fn_task_create`, `fn_mission_create`). Engine runtime sessions also inject additional `fn_*` tools (for example `fn_review_spec`, `fn_review_step`, `fn_spawn_agent`) that are not part of the published skill surface.
 
@@ -38,7 +38,7 @@ Mission → Milestone → Slice → Feature → Task
 - **Insight tools** — `fn_insight_list`, `fn_insight_show`, `fn_insight_run_list`, `fn_insight_run_show`
 - **Other tools** — `fn_web_fetch`, `fn_secret_get`, `fn_research_run`, `fn_research_list`, `fn_research_get`, `fn_research_cancel`, `fn_research_retry`, `fn_experiment_finalize`
 <!-- END: tool-categories -->
-- **Dashboard** — Use `/fn` command to start/stop the dashboard
+- **Dashboard** — Use `/fn` when that agent command exists; otherwise use `fn dashboard --paused` or `fn dashboard --no-engine`
 
 </essential_principles>
 
