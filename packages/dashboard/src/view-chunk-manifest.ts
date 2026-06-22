@@ -37,7 +37,6 @@ export const VIEW_SOURCE_MAP: Record<TaskViewId, string> = {
   "command-center": "components/command-center/CommandCenter.tsx",
   "dev-server": "components/DevServerView.tsx",
   goalsView: "components/GoalsView.tsx",
-  "stash-recovery": "components/StashRecoveryView.tsx",
 };
 
 type ManifestCacheEntry = {

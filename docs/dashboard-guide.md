@@ -394,6 +394,7 @@ Features:
 - One-click **Sync** action in Remotes (`git pull --rebase` followed by push; it stops and surfaces an error instead of pushing when the pull conflicts or fails)
 - Remote editing controls
 - Stash inspection (view stat + patch) before apply/pop/drop actions
+- Stash Recovery tab for orphaned merger-autostashes; orphan counts appear on Git Manager entry points instead of a standalone Stash Recovery view
 - Remotes tab keeps "Recent commits on {remote}" in sync immediately after successful push/pull actions
 
 ![Git manager](./screenshots/git-manager.png)
@@ -765,13 +766,13 @@ Features:
 
 For module-level behavior and API surfaces, see [Dev Server modules](./dev-server-modules.md).
 
-## Stash Recovery View
+## Stash Recovery in Git Manager
 
-Stash Recovery view helps recover orphaned merger autostashes (`fusion-merger-autostash:*`) left behind when merge restore could not fully complete.
+Stash Recovery helps recover orphaned merger autostashes (`fusion-merger-autostash:*`) left behind when merge restore could not fully complete. It now lives as the **Recovery** tab in **Git Manager**; the former standalone top-level Stash Recovery view is removed from desktop and mobile navigation.
 
 Navigation:
-- Desktop: **Header → More views → Stash Recovery**
-- Mobile: **More** sheet → **Stash Recovery**
+- Desktop: **Git Manager → Recovery**
+- Mobile: **More** sheet → **Git Manager → Recovery**
 
 Features:
 - Lists orphaned stash entries grouped by source task ID (or **Unknown source** when unavailable)

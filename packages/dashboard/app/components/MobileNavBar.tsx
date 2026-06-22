@@ -13,7 +13,6 @@ import {
   Gauge,
   GitBranch,
   Grid3X3,
-  History,
   LayoutGrid,
   Lightbulb,
   Loader2,
@@ -298,7 +297,6 @@ export function MobileNavBar({
     || (view === "todos" && todoViewEnabled)
     || (view === "skills" && !showSkillsTopLevel)
     || view === "graph"
-    || view === "stash-recovery"
     || (isPluginViewId(view) && !topLevelPrimaryPluginViews.some((entry) => buildPluginTaskViewId(entry.pluginId, entry.view.viewId) === view));
 
   return (
@@ -502,6 +500,7 @@ export function MobileNavBar({
             >
               <GitBranch />
               <span>{t("nav.gitManager", "Git Manager")}</span>
+              {stashOrphanCount > 0 ? <span className="mobile-more-item-badge">{formatCount(stashOrphanCount)}</span> : null}
             </button>
 
             <div className="mobile-more-split-row">
@@ -708,19 +707,6 @@ export function MobileNavBar({
                 <span>{t("nav.skills", "Skills")}</span>
               </button>
             )}
-
-
-
-            <button
-              type="button"
-              className="mobile-more-item"
-              data-testid="mobile-more-item-stash-recovery"
-              onClick={() => handleMoreAction(() => onChangeView("stash-recovery"))}
-            >
-              <History />
-              <span>{t("nav.stashRecovery", "Stash Recovery")}</span>
-              {stashOrphanCount > 0 ? <span className="mobile-more-item-badge">{formatCount(stashOrphanCount)}</span> : null}
-            </button>
 
             {experimentalFeatures?.researchView && (
               <button

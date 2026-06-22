@@ -25,7 +25,8 @@ describe("overflowViewRegistry", () => {
       todosEnabled: false,
     }).map((entry) => entry.key);
 
-    expect(disabled).toEqual(["files", "documents", "secrets", "stash-recovery"]);
+    expect(disabled).toEqual(["files", "documents", "secrets"]);
+    expect(disabled).not.toContain("stash-recovery");
 
     const enabled = getVisibleOverflowViewEntries({
       experimentalFeatures: {

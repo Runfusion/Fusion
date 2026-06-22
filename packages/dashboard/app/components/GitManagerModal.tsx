@@ -58,6 +58,7 @@ import {
   fetchRemoteCommits,
   fetchBranchCommits,
 } from "../api";
+import { StashRecoveryView } from "./StashRecoveryView";
 import {
   GitBranch as GitBranchIcon,
   GitCommit as GitCommitIcon,
@@ -91,11 +92,12 @@ import {
   Send,
   Pencil,
   Info,
+  History,
 } from "lucide-react";
 
 // ── Types & Constants ─────────────────────────────────────────────
 
-type SectionId = "status" | "changes" | "commits" | "branches" | "worktrees" | "stashes" | "remotes";
+type SectionId = "status" | "changes" | "commits" | "branches" | "worktrees" | "stashes" | "recovery" | "remotes";
 
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
@@ -105,6 +107,11 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ComponentType<{ size
   { id: "branches", label: "Branches", icon: GitBranchIcon },
   { id: "worktrees", label: "Worktrees", icon: HardDrive },
   { id: "stashes", label: "Stashes", icon: Archive },
+  /*
+  FNXC:GitManager 2026-06-21-00:00:
+  FN-6881 re-homes orphaned-autostash Stash Recovery from a standalone top-level view into a Git Manager section so users have one canonical recovery destination while the /stash-recovery API remains unchanged.
+  */
+  { id: "recovery", label: "Recovery", icon: History },
   { id: "remotes", label: "Remotes", icon: GitMerge },
 ];
 
@@ -331,6 +338,10 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           setStashDiff(null);
           setStashDiffError(null);
           stashDiffRequestIdRef.current += 1;
+          break;
+        }
+        case "recovery": {
+          // StashRecoveryView self-fetches /stash-recovery/orphans; this branch exists so selecting Recovery clears the modal loading state without issuing an unrelated git status request.
           break;
         }
         case "remotes": {
@@ -938,6 +949,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                 branches: t("git.sectionBranches", "Branches"),
                 worktrees: t("git.sectionWorktrees", "Worktrees"),
                 stashes: t("git.sectionStashes", "Stashes"),
+                recovery: t("git.sectionRecovery", "Recovery"),
                 remotes: t("git.sectionRemotes", "Remotes"),
               }[section.id] ?? section.label;
               return (
@@ -1074,6 +1086,11 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                 loadingStashDiff={loadingStashDiff}
                 stashDiffError={stashDiffError}
               />
+            )}
+
+            {/* ── Recovery Panel ── */}
+            {activeSection === "recovery" && !loading && (
+              <StashRecoveryView />
             )}
 
             {/* ── Remotes Panel ── */}

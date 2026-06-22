@@ -589,6 +589,7 @@ describe("MobileNavBar", () => {
     expect(screen.getByTestId("mobile-nav-tab-mailbox")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-activity")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-git")).toBeDefined();
+    expect(screen.queryByTestId("mobile-more-item-stash-recovery")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-terminal")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-files")).toBeDefined();
     expect(screen.getByTestId("mobile-more-item-planning")).toBeDefined();
@@ -602,6 +603,15 @@ describe("MobileNavBar", () => {
     expect(screen.queryByTestId("mobile-more-item-roadmaps")).toBeNull();
     expect(screen.queryByTestId("mobile-more-item-insights")).toBeNull();
     expect(screen.getByTestId("mobile-more-item-settings")).toBeDefined();
+  });
+
+  it("shows the stash orphan badge on the Git Manager item instead of a Stash Recovery item", () => {
+    render(<MobileNavBar {...createDefaultProps()} stashOrphanCount={8} />);
+    fireEvent.click(screen.getByTestId("mobile-nav-tab-more"));
+
+    const gitItem = screen.getByTestId("mobile-more-item-git");
+    expect(gitItem.querySelector(".mobile-more-item-badge")?.textContent).toBe("8");
+    expect(screen.queryByTestId("mobile-more-item-stash-recovery")).toBeNull();
   });
 
   it("does not show legacy roadmaps in more sheet", () => {

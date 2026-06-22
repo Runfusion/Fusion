@@ -122,7 +122,6 @@ const CommandCenter = lazy(() => import("./components/command-center/CommandCent
 const DevServerView = lazy(() => import("./components/DevServerView").then((m) => ({ default: m.DevServerView })));
 const TodoView = lazy(() => import("./components/TodoView").then((m) => ({ default: m.TodoView })));
 const GoalsView = lazy(() => import("./components/GoalsView").then((m) => ({ default: m.GoalsView })));
-const StashRecoveryView = lazy(() => import("./components/StashRecoveryView").then((m) => ({ default: m.StashRecoveryView })));
 const PullRequestView = lazy(() => import("./components/PullRequestView").then((m) => ({ default: m.PullRequestView })));
 
 // Warm lazy chunks during browser idle so first navigation to each view is
@@ -151,7 +150,6 @@ function prefetchLazyViews() {
     void import("./components/DevServerView");
     void import("./components/TodoView");
     void import("./components/GoalsView");
-    void import("./components/StashRecoveryView");
     void import("./components/PullRequestView");
   });
 }
@@ -1667,16 +1665,6 @@ function AppInner() {
       );
     }
 
-    if (taskView === "stash-recovery") {
-      return (
-        <PageErrorBoundary>
-          <Suspense fallback={null}>
-            <StashRecoveryView />
-          </Suspense>
-        </PageErrorBoundary>
-      );
-    }
-
     if (taskView === "pull-requests") {
       return (
         <PageErrorBoundary>
@@ -2162,7 +2150,6 @@ function AppInner() {
             mailboxUnreadCount={mailboxUnreadCount}
             mailboxPendingApprovalCount={mailboxPendingApprovalCount}
             chatHasUnreadResponse={chatHasUnreadResponse}
-            stashOrphanCount={stashOrphanCount}
             experimentalFeatures={{
               insights: insightsEnabled,
               memoryView: memoryEnabled,

@@ -133,6 +133,21 @@ describe("Header", () => {
     expect(onOpenGitHubImport).toHaveBeenCalled();
   });
 
+  it("shows the stash orphan badge on the desktop Git Manager button", () => {
+    renderHeader({ onOpenGitManager: noop, stashOrphanCount: 5 }, "desktop");
+    const button = screen.getByTestId("git-manager-btn");
+    expect(button).toHaveTextContent("5");
+    expect(button.querySelector(".btn-badge")?.textContent).toBe("5");
+  });
+
+  it("shows the stash orphan badge on the compact Git Manager overflow item", () => {
+    renderHeader({ onOpenGitManager: noop, stashOrphanCount: 6 }, "mobile");
+    fireEvent.click(screen.getByTitle("More header actions"));
+    const item = screen.getByTestId("overflow-git-btn");
+    expect(item).toHaveTextContent("Git Manager");
+    expect(item.querySelector(".btn-badge")?.textContent).toBe("6");
+  });
+
   describe("view toggle", () => {
     it("does not render view toggle when onChangeView is not provided", () => {
       renderHeader();
@@ -254,6 +269,12 @@ describe("Header", () => {
       renderHeader({ onChangeView: noop, todosEnabled: true });
       fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
       expect(screen.getByTestId("view-overflow-todos")).toBeInTheDocument();
+    });
+
+    it("does not render the retired Stash Recovery view overflow item", () => {
+      renderHeader({ onChangeView: noop, todosEnabled: true, stashOrphanCount: 4 });
+      fireEvent.click(screen.getByTestId("view-toggle-overflow-trigger"));
+      expect(screen.queryByTestId("view-overflow-stash-recovery")).toBeNull();
     });
 
     it.each(["desktop", "tablet"] as const)("routes More views to the right dock panel toggle on %s", (tier) => {

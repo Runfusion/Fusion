@@ -326,6 +326,10 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   border-color: var(--todo);
 }
 
+.header-git-manager-btn {
+  position: relative;
+}
+
 .btn-badge {
   position: absolute;
   top: -2px;
@@ -809,6 +813,11 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
 
 .mobile-overflow-item:hover {
   background: var(--card);
+}
+
+.mobile-overflow-item--with-badge .btn-badge {
+  position: static;
+  margin-left: auto;
 }
 
 .mobile-overflow-item svg {

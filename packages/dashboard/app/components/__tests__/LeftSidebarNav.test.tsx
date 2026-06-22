@@ -105,7 +105,6 @@ function renderSidebar(overrides: Partial<ComponentProps<typeof LeftSidebarNav>>
     mailboxUnreadCount: 3,
     mailboxPendingApprovalCount: 1,
     chatHasUnreadResponse: true,
-    stashOrphanCount: 2,
     experimentalFeatures: {
       insights: true,
       memoryView: true,
@@ -218,7 +217,6 @@ describe("LeftSidebarNav", () => {
       "sidebar-nav-mailbox",
       "sidebar-nav-evals",
       "sidebar-nav-goals",
-      "sidebar-nav-stash-recovery",
       "sidebar-nav-research",
       "sidebar-nav-insights",
       "sidebar-nav-skills",
@@ -233,6 +231,7 @@ describe("LeftSidebarNav", () => {
 
     expect(screen.getByTestId("sidebar-nav-documents")).toHaveTextContent("Artifacts");
     expect(screen.getByTestId("sidebar-nav-planning")).toHaveTextContent("Planning");
+    expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
 
     const primaryNav = screen.getByRole("navigation", { name: "Primary navigation" });
     const primaryButtons = within(primaryNav).getAllByRole("button");
@@ -285,7 +284,7 @@ describe("LeftSidebarNav", () => {
     });
 
     expect(screen.getByTestId("sidebar-nav-board")).toBeDefined();
-    expect(screen.getByTestId("sidebar-nav-stash-recovery")).toBeDefined();
+    expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-agents")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-research")).toBeNull();
     expect(screen.queryByTestId("sidebar-nav-insights")).toBeNull();
@@ -312,14 +311,13 @@ describe("LeftSidebarNav", () => {
     expect(screen.queryByRole("button", { name: /view$/i })).toBeNull();
   });
 
-  it("renders mailbox and stash badges", () => {
+  it("renders mailbox badges without the removed stash recovery destination", () => {
     renderSidebar();
 
     const mailboxBadge = screen.getByTestId("sidebar-nav-mailbox").querySelector(".left-sidebar-nav__badge");
-    const stashBadge = screen.getByTestId("sidebar-nav-stash-recovery").querySelector(".left-sidebar-nav__badge");
 
     expect(mailboxBadge?.textContent).toBe("3");
-    expect(stashBadge?.textContent).toBe("2");
+    expect(screen.queryByTestId("sidebar-nav-stash-recovery")).toBeNull();
   });
 
   it("renders zero plugin views and at least one primary and overflow plugin view", () => {

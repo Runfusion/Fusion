@@ -21,7 +21,6 @@ vi.mock("../SecretsView", () => ({ SecretsView: () => <div data-testid="mock-sec
 vi.mock("../DevServerView", () => ({ DevServerView: () => <div data-testid="mock-devserver-view" /> }));
 vi.mock("../TodoView", () => ({ TodoView: () => <div data-testid="mock-todos-view" /> }));
 vi.mock("../GoalsView", () => ({ GoalsView: () => <div data-testid="mock-goals-view" /> }));
-vi.mock("../StashRecoveryView", () => ({ StashRecoveryView: () => <div data-testid="mock-stash-recovery-view" /> }));
 
 const renderProps = {
   addToast: vi.fn(),
@@ -80,7 +79,7 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-tab-documents")).toHaveAttribute("aria-label", "Artifacts");
     expect(screen.getByTestId("right-dock-tab-documents")).toHaveAttribute("title", "Artifacts");
     expect(screen.getByTestId("right-dock-tab-secrets")).toBeInTheDocument();
-    expect(screen.getByTestId("right-dock-tab-stash-recovery")).toBeInTheDocument();
+    expect(screen.queryByTestId("right-dock-tab-stash-recovery")).toBeNull();
     expect(screen.queryByTestId("right-dock-tab-research")).toBeNull();
     expect(screen.queryByTestId("right-dock-tab-insights")).toBeNull();
   });
@@ -140,7 +139,6 @@ describe("RightDock", () => {
       ["right-dock-tab-skills", "mock-skills-view"],
       ["right-dock-tab-memory", "mock-memory-view"],
       ["right-dock-tab-secrets", "mock-secrets-view"],
-      ["right-dock-tab-stash-recovery", "mock-stash-recovery-view"],
       ["right-dock-tab-evals", "mock-evals-view"],
       ["right-dock-tab-goals", "mock-goals-view"],
       ["right-dock-tab-todos", "mock-todos-view"],

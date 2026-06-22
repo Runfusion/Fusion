@@ -1108,7 +1108,7 @@ export function Header({
               <>
                 <button
                   ref={viewOverflowTriggerRef}
-                  className={`view-toggle-btn${!shouldRouteMoreViewsToRightDock && (["research", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph", "stash-recovery", "todos"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
+                  className={`view-toggle-btn${!shouldRouteMoreViewsToRightDock && (["research", "skills", "insights", "memory", "secrets", "dev-server", "devserver", "graph", "todos"].includes(view) || (isTablet && view === "documents") || (experimentalFeatures?.evalsView && view === "evals") || (experimentalFeatures?.goalsView && view === "goalsView") || isPluginViewId(view)) ? " active" : ""}`}
                   onClick={() => {
                     if (shouldRouteMoreViewsToRightDock) {
                       setIsViewOverflowOpen(false);
@@ -1165,20 +1165,6 @@ export function Header({
                         <span>{t("header.goalsView", "Goals")}</span>
                       </button>
                     )}
-                    <button
-                      className={`view-toggle-overflow-item${view === "stash-recovery" ? " active" : ""}`}
-                      onClick={() => {
-                        onChangeView("stash-recovery");
-                        setIsViewOverflowOpen(false);
-                      }}
-                      role="menuitem"
-                      data-testid="view-overflow-stash-recovery"
-                    >
-                      <History size={14} />
-                      <span>{t("header.stashRecoveryView", "Stash Recovery")}</span>
-                      {stashOrphanCount > 0 ? <span className="btn-badge">{stashOrphanCount}</span> : null}
-                    </button>
-
                     {experimentalFeatures?.researchView && (
                       <button
                         className={`view-toggle-overflow-item${view === "research" ? " active" : ""}`}
@@ -1477,12 +1463,13 @@ export function Header({
         {/* Git Manager button - desktop only (moved to overflow on mobile/tablet) */}
         {!isCompact && onOpenGitManager && (
           <button
-            className="btn-icon"
+            className="btn-icon header-git-manager-btn"
             onClick={onOpenGitManager}
             title={t("header.gitManager", "Git Manager")}
             data-testid="git-manager-btn"
           >
             <GitBranch size={16} />
+            {stashOrphanCount > 0 ? <span className="btn-badge">{stashOrphanCount}</span> : null}
           </button>
         )}
 
@@ -1600,13 +1587,14 @@ export function Header({
             {/* Git Manager - in overflow on mobile */}
             {onOpenGitManager && (
               <button
-                className="mobile-overflow-item"
+                className="mobile-overflow-item mobile-overflow-item--with-badge"
                 onClick={() => handleOverflowAction(onOpenGitManager)}
                 role="menuitem"
                 data-testid="overflow-git-btn"
               >
                 <GitBranch size={16} />
                 <span>{t("header.gitManager", "Git Manager")}</span>
+                {stashOrphanCount > 0 ? <span className="btn-badge">{stashOrphanCount}</span> : null}
               </button>
             )}
             {!isDesktopShell && (

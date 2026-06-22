@@ -311,7 +311,58 @@ describe("GitManagerModal", () => {
       expect(screen.getByRole("tab", { name: /branches/i })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /worktrees/i })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /stashes/i })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /recovery/i })).toBeInTheDocument();
       expect(screen.getByRole("tab", { name: /remotes/i })).toBeInTheDocument();
+    });
+  });
+
+  it("renders Stash Recovery inside the Recovery section", async () => {
+    (api as any).mockImplementation((path: string) => {
+      if (path === "/stash-recovery/orphans") {
+        return Promise.resolve({
+          records: [
+            {
+              sha: "abcdef1234567890",
+              sourceTaskId: "FN-100",
+              createdAt: "2026-06-21T00:00:00Z",
+              classification: "unknown",
+              changedPaths: ["src/file.ts"],
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ events: [] });
+    });
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /recovery/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Stash Recovery" })).toBeInTheDocument();
+      expect(screen.getByText("1 orphans")).toBeInTheDocument();
+      expect(screen.getByText("FN-100")).toBeInTheDocument();
+    });
+  });
+
+  it("renders the empty Stash Recovery state inside the Recovery section", async () => {
+    (api as any).mockImplementation((path: string) => {
+      if (path === "/stash-recovery/orphans") {
+        return Promise.resolve({ records: [] });
+      }
+      return Promise.resolve({ events: [] });
+    });
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+
+    fireEvent.click(await screen.findByRole("tab", { name: /recovery/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No orphaned merger autostashes found.")).toBeInTheDocument();
     });
   });
 

@@ -221,7 +221,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 
 ### Lazy-Loaded Heavy Views
 
-These 21 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
+These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
 Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`), and `packages/dashboard/app/__tests__/lazy-loaded-views-docs.test.ts`.
 
 - `AgentsView`
@@ -237,7 +237,6 @@ Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal i
 - `EvalsView`
 - `TodoView`
 - `GoalsView`
-- `StashRecoveryView`
 - `PullRequestView`
 - `SetupWizardModal`
 - `SettingsModal`

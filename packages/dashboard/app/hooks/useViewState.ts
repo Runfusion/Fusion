@@ -5,7 +5,7 @@ import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 import { getPluginViewId, isPluginViewId, isPluginViewRegistered } from "../plugins/pluginViewRegistry";
 
 export type ViewMode = "overview" | "project";
-export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "stash-recovery" | "pull-requests";
+export type BuiltInTaskView = "board" | "list" | "graph" | "agents" | "missions" | "chat" | "documents" | "research" | "evals" | "goalsView" | "todos" | "planning" | "skills" | "mailbox" | "insights" | "memory" | "command-center" | "secrets" | "devserver" | "dev-server" | "pull-requests";
 export type PluginTaskView = `plugin:${string}:${string}`;
 export type TaskView = BuiltInTaskView | PluginTaskView;
 
@@ -39,7 +39,6 @@ const BUILT_IN_TASK_VIEWS: readonly BuiltInTaskView[] = [
   "secrets",
   "devserver",
   "dev-server",
-  "stash-recovery",
   "pull-requests",
 ];
 
@@ -70,6 +69,14 @@ FN-6702 removed the top-level Reliability task view after moving the page into C
 */
 function migrateLegacyReliabilityView(value: string | null): TaskView | null {
   return value === "reliability" ? "command-center" : null;
+}
+
+/*
+FNXC:ViewState 2026-06-21-00:00:
+FN-6881 removed the standalone Stash Recovery task view after moving recovery into Git Manager. Persisted or linked `stash-recovery` values must land on Board instead of restoring an orphaned route.
+*/
+function migrateRetiredStashRecoveryView(value: string | null): TaskView | null {
+  return value === "stash-recovery" ? "board" : null;
 }
 
 interface UseViewStateOptions {
@@ -118,6 +125,8 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
     const saved = getScopedItem("kb-dashboard-task-view");
     const legacyReliabilityView = migrateLegacyReliabilityView(saved);
     if (legacyReliabilityView) return legacyReliabilityView;
+    const retiredStashRecoveryView = migrateRetiredStashRecoveryView(saved);
+    if (retiredStashRecoveryView) return retiredStashRecoveryView;
     if (saved === "roadmaps") return migrateLegacyRoadmapsView(saved);
     if (isTaskView(saved)) return saved;
     return "board";
@@ -131,8 +140,11 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
   useEffect(() => {
     const saved = getScopedItem("kb-dashboard-task-view", currentProject?.id);
     const legacyReliabilityView = migrateLegacyReliabilityView(saved);
+    const retiredStashRecoveryView = migrateRetiredStashRecoveryView(saved);
     if (legacyReliabilityView) {
       setTaskView(legacyReliabilityView);
+    } else if (retiredStashRecoveryView) {
+      setTaskView(retiredStashRecoveryView);
     } else if (saved === "roadmaps") {
       setTaskView(migrateLegacyRoadmapsView(saved));
     } else if (isTaskView(saved)) {
@@ -160,8 +172,11 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
 
     const viewParam = new URLSearchParams(window.location.search).get("view");
     const legacyReliabilityView = migrateLegacyReliabilityView(viewParam);
+    const retiredStashRecoveryView = migrateRetiredStashRecoveryView(viewParam);
     if (legacyReliabilityView) {
       setTaskView(legacyReliabilityView);
+    } else if (retiredStashRecoveryView) {
+      setTaskView(retiredStashRecoveryView);
     } else if (viewParam && isTaskView(viewParam)) {
       setTaskView(normalizeTaskView(viewParam));
     }

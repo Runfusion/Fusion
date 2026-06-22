@@ -4,7 +4,6 @@ import {
   CheckSquare,
   FileText,
   Folder,
-  History,
   Lock,
   Monitor,
   Search,
@@ -34,7 +33,6 @@ const SecretsView = lazy(() => import("./SecretsView").then((m) => ({ default: m
 const DevServerView = lazy(() => import("./DevServerView").then((m) => ({ default: m.DevServerView })));
 const TodoView = lazy(() => import("./TodoView").then((m) => ({ default: m.TodoView })));
 const GoalsView = lazy(() => import("./GoalsView").then((m) => ({ default: m.GoalsView })));
-const StashRecoveryView = lazy(() => import("./StashRecoveryView").then((m) => ({ default: m.StashRecoveryView })));
 
 export type OverflowViewKey =
   | "files"
@@ -44,7 +42,6 @@ export type OverflowViewKey =
   | "skills"
   | "memory"
   | "secrets"
-  | "stash-recovery"
   | "evals"
   | "goalsView"
   | "todos"
@@ -216,13 +213,6 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     icon: Lock,
     testId: "right-dock-tab-secrets",
     render: (props) => wrapOverflowView(<SecretsView addToast={props.addToast} />),
-  },
-  {
-    key: "stash-recovery",
-    label: "Stash Recovery",
-    icon: History,
-    testId: "right-dock-tab-stash-recovery",
-    render: () => wrapOverflowView(<StashRecoveryView />),
   },
   {
     key: "evals",

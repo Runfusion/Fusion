@@ -13,7 +13,6 @@ import {
   ChevronRight,
   FileText,
   Gauge,
-  History,
   Lightbulb,
   LayoutGrid,
   List,
@@ -108,7 +107,6 @@ export interface LeftSidebarNavProps {
   mailboxUnreadCount?: number;
   mailboxPendingApprovalCount?: number;
   chatHasUnreadResponse?: boolean;
-  stashOrphanCount?: number;
   experimentalFeatures?: LeftSidebarExperimentalFeatures;
   pluginDashboardViews?: PluginDashboardViewEntry[];
   showAgentsTab?: boolean;
@@ -156,7 +154,6 @@ export function LeftSidebarNav({
   mailboxUnreadCount = 0,
   mailboxPendingApprovalCount = 0,
   chatHasUnreadResponse = false,
-  stashOrphanCount = 0,
   experimentalFeatures,
   pluginDashboardViews = [],
   showAgentsTab = false,
@@ -355,7 +352,6 @@ export function LeftSidebarNav({
     ...(experimentalFeatures?.goalsView
       ? [{ id: "goals", label: t("header.goalsView", "Goals"), view: "goalsView" as TaskView, isActive: view === "goalsView", icon: Target, testId: "sidebar-nav-goals", onSelect: () => onChangeView("goalsView") }]
       : []),
-    { id: "stash-recovery", label: t("header.stashRecoveryView", "Stash Recovery"), view: "stash-recovery", isActive: view === "stash-recovery", icon: History, testId: "sidebar-nav-stash-recovery", badge: stashOrphanCount > 0 ? stashOrphanCount : undefined, onSelect: () => onChangeView("stash-recovery") },
     ...(experimentalFeatures?.researchView
       ? [{ id: "research", label: t("header.researchView", "Research"), view: "research" as TaskView, isActive: view === "research", icon: Search, testId: "sidebar-nav-research", onSelect: () => onChangeView("research") }]
       : []),

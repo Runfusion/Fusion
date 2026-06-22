@@ -93,6 +93,34 @@ describe("useViewState", () => {
     }
   });
 
+  it("migrates retired stash recovery taskView from localStorage to board", async () => {
+    localStorage.setItem("kb-dashboard-task-view", "stash-recovery");
+
+    const { result } = renderHook(() => useViewState(createOptions()));
+
+    await waitFor(() => {
+      expect(result.current.taskView).toBe("board");
+    });
+    expect(localStorage.getItem("kb-dashboard-task-view")).toBe("board");
+  });
+
+  it("migrates retired stash recovery URL param to board", async () => {
+    const originalUrl = `${window.location.pathname}${window.location.search}`;
+    localStorage.setItem("kb-dashboard-task-view", "list");
+    window.history.replaceState({}, "", "?view=stash-recovery");
+
+    try {
+      const { result } = renderHook(() => useViewState(createOptions()));
+
+      await waitFor(() => {
+        expect(result.current.taskView).toBe("board");
+      });
+      expect(localStorage.getItem("kb-dashboard-task-view")).toBe("board");
+    } finally {
+      window.history.replaceState({}, "", originalUrl || "/");
+    }
+  });
+
   it("migrates legacy roadmaps state to plugin view when registered", async () => {
     vi.spyOn(pluginViewRegistry, "isPluginViewRegistered").mockReturnValue(true);
     localStorage.setItem("kb-dashboard-task-view", "roadmaps");
