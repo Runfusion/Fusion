@@ -1149,6 +1149,54 @@ a.github-import-pr-check-name:hover {
     overscroll-behavior: contain;
   }
 
+  /*
+  FNXC:GitHubImport 2026-06-23-02:45:
+  Narrow-mobile (viewport <= 640px) EMBEDDED scroll fix. isMobile is viewport-derived, so at <= 640px the
+  embedded Import Tasks view also enters mobile single-pane mode and inherits the @640 nested-scroll design
+  intended for the dialog (workspace/pane `overflow: hidden`, pane-content `overflow-y: auto`). But the
+  embedded block (later in source) flips the preview pane + its content to natural height + `overflow-y: visible`
+  so the VIEW BODY is meant to be the scroll owner — leaving the @640 `overflow: hidden` on the workspace and
+  the active preview pane as orphaned clips with no inner scroll owner, so a tall preview (body, checks, comments)
+  was cut off with no way to reach it.
+  Fix: in narrow embedded mode make `.github-import-modal__body` the single scroll owner (flex:1; overflow-y:auto)
+  and give every ancestor in the chain (workspace, the active list/preview panes, pane-content) natural height with
+  `overflow: visible` so nothing traps or clips the growing content. The list keeps its own `.issues-list`
+  internal scroll. Wide (>=720px container) two-pane behavior and the dialog (non-embedded) path are untouched —
+  this rule is scoped to `.github-import-modal--embedded`.
+  */
+  .github-import-modal--embedded .github-import-modal__body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .github-import-modal--embedded .github-import-workspace {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .github-import-modal--embedded .github-import-list-pane.mobile.active,
+  .github-import-modal--embedded .github-import-preview-pane.mobile.active {
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* Single scroll owner: let the list grow with the page instead of owning a nested scroll. */
+  .github-import-modal--embedded .github-import-list-pane.mobile.active .issues-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .github-import-modal--embedded .github-import-preview-pane.mobile.active .github-import-pane-content {
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow-y: visible;
+    overscroll-behavior: auto;
+  }
+
   /* Back button styles */
   .github-import-back-button {
     display: inline-flex;
