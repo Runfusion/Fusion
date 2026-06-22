@@ -7416,7 +7416,15 @@ export class TaskExecutor {
       if (this.workspaceConfig === undefined) {
         this.workspaceConfig = await loadWorkspaceConfig(this.rootDir);
       }
-      if (!this.workspaceConfig && !await isGitRepository(this.rootDir)) {
+      /*
+      FNXC:Workspace 2026-06-22-00:00:
+      Workspace mode is only meaningful with at least one usable sub-repo. An empty `{ repos: [] }`
+      must NOT bypass the git-repository guard, inject workspace instructions, or expose the
+      workspace tool — otherwise a non-git directory with an empty config would skip validation
+      and enable a workspace with nothing to work on. Gate every workspace check on repos.length > 0.
+      */
+      const hasWorkspaceRepos = (this.workspaceConfig?.repos.length ?? 0) > 0;
+      if (!hasWorkspaceRepos && !await isGitRepository(this.rootDir)) {
         await this.store.logEntry(
           task.id,
           "Cannot execute task: project directory is not a Git repository. Fusion requires a Git repository for worktree-based task execution.",
@@ -8351,7 +8359,7 @@ export class TaskExecutor {
         ...getEnabledPluginTools(this.options.pluginRunner),
       ];
 
-      if (this.workspaceConfig) {
+      if (this.workspaceConfig && this.workspaceConfig.repos.length > 0) {
         customTools.push(createAcquireRepoWorktreeTool({
           workspaceRootDir: this.rootDir,
           workspaceRepos: this.workspaceConfig.repos,
@@ -8361,6 +8369,11 @@ export class TaskExecutor {
           logger: executorLog,
           secretsStore: this.options.secretsStore,
           runContext: engineRunContext,
+          audit,
+          taskEnv,
+          // FNXC:Workspace 2026-06-22 — forward the configured worktree-init runner so sub-repo worktrees run configured setup.
+          runConfiguredCommand: (command, cwd, timeoutMs, env) =>
+            runConfiguredCommand(command, cwd, timeoutMs, env, audit),
         }));
       }
 
@@ -15940,7 +15953,7 @@ Use \`fn_task_create\` for truly separate follow-up work, including unrelated/pr
 If lint is configured and failing, fix that too before completion.
 Do not repeatedly rerun a broad failing or hanging workspace command without a new hypothesis and a narrower confirming command.`;
 
-  if (workspaceConfig) {
+  if (workspaceConfig && workspaceConfig.repos.length > 0) {
     return executionPrompt + `\n\n## Workspace mode\n` +
       `This project is a workspace containing multiple git repositories.\n` +
       `Available repos:\n` +

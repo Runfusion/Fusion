@@ -604,20 +604,63 @@ export interface AcquireWorkspaceRepoWorktreeOptions {
   settings: Partial<Settings>;
   logger?: { log: (m: string) => void; warn: (m: string) => void; error?: (m: string) => void };
   secretsStore?: Pick<SecretsStore, "listEnvExportable">;
+  runContext?: RunMutationContext;
+  audit?: Pick<RunAuditor, "git" | "filesystem">;
+  runConfiguredCommand?: AcquireTaskWorktreeOptions["runConfiguredCommand"];
+  taskEnv?: NodeJS.ProcessEnv;
+}
+
+/*
+FNXC:WorkspaceWorktree 2026-06-22-00:00:
+`repoRelPath` is an exported, caller-trusted parameter that is joined onto `workspaceRootDir`.
+An absolute path or a `..` escape (`../outside`) would resolve a worktree outside the workspace
+root. Validate it is a normalized, relative, in-root path before resolving the absolute path.
+*/
+function assertInRootRepoRelPath(repoRelPath: string, sep: string, isAbsolute: (p: string) => boolean, normalize: (p: string) => string): void {
+  if (typeof repoRelPath !== "string" || repoRelPath.length === 0 || isAbsolute(repoRelPath)) {
+    throw new Error(`Invalid workspace repo path (must be relative and in-root): ${String(repoRelPath)}`);
+  }
+  const normalized = normalize(repoRelPath);
+  if (normalized === ".." || normalized.startsWith(`..${sep}`) || normalized.startsWith("../")) {
+    throw new Error(`Invalid workspace repo path (escapes workspace root): ${repoRelPath}`);
+  }
 }
 
 export async function acquireWorkspaceRepoWorktree(
   opts: AcquireWorkspaceRepoWorktreeOptions,
 ): Promise<{ worktreePath: string; branch: string; alreadyAcquired: boolean }> {
-  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore } = opts;
-  const { join } = await import("node:path");
+  const { repoRelPath, workspaceRootDir, task, store, settings, logger, secretsStore, runContext, audit, runConfiguredCommand, taskEnv } = opts;
+  const { join, isAbsolute, normalize, sep } = await import("node:path");
 
+  // FNXC:WorkspaceWorktree 2026-06-22 — reject absolute / `..`-escaping repo paths before resolving.
+  assertInRootRepoRelPath(repoRelPath, sep, isAbsolute, normalize);
+  const repoAbsPath = join(workspaceRootDir, repoRelPath);
+
+  /*
+  FNXC:WorkspaceWorktree 2026-06-22-00:00:
+  A remembered per-repo worktree is only reusable if it still exists and is a registered git
+  worktree. A pruned/deleted worktree path would otherwise be reported as "ready" without the
+  resume/classification checks that `acquireTaskWorktree` runs on the singular path. Verify the
+  remembered path passes the same liveness check (existence + git work-tree classification);
+  if it is dead, drop it and fall through to re-acquire a fresh worktree.
+  */
   const existing = task.workspaceWorktrees?.[repoRelPath];
   if (existing) {
-    return { ...existing, alreadyAcquired: true };
+    let live = existsSync(existing.worktreePath);
+    if (live) {
+      try {
+        const classification = await classifyTaskWorktree(repoAbsPath, existing.worktreePath);
+        live = classification.ok;
+      } catch {
+        live = false;
+      }
+    }
+    if (live) {
+      return { ...existing, alreadyAcquired: true };
+    }
+    logger?.warn(`${task.id}: remembered workspace worktree for ${repoRelPath} is missing/unusable (${existing.worktreePath}); re-acquiring`);
+    await store.logEntry(task.id, `Remembered workspace worktree for ${repoRelPath} is no longer usable; re-acquiring`, existing.worktreePath, runContext);
   }
-
-  const repoAbsPath = join(workspaceRootDir, repoRelPath);
 
   /*
   FNXC:WorkspaceWorktree 2026-06-21-00:00:
@@ -629,6 +672,11 @@ export async function acquireWorkspaceRepoWorktree(
   contamination. Clear the singular worktree/branch fields on the copy handed to the single-repo
   helper so each sub-repo always gets a fresh worktree; per-repo state is tracked in
   `task.workspaceWorktrees`, not the singular column.
+
+  FNXC:WorkspaceWorktree 2026-06-22-00:00:
+  `acquireTaskWorktree` only runs the configured worktree-init command when `runConfiguredCommand`
+  is threaded through. Forward it (plus runContext/audit/taskEnv) so workspace sub-repos run the
+  same configured setup as the non-workspace acquire path instead of silently skipping it.
   */
   const result = await acquireTaskWorktree({
     task: { ...task, worktree: undefined, branch: undefined },
@@ -637,6 +685,10 @@ export async function acquireWorkspaceRepoWorktree(
     settings,
     logger,
     secretsStore,
+    runContext,
+    audit,
+    runConfiguredCommand,
+    taskEnv,
     runInitCommand: true,
   });
 
@@ -644,7 +696,14 @@ export async function acquireWorkspaceRepoWorktree(
     ...(task.workspaceWorktrees ?? {}),
     [repoRelPath]: { worktreePath: result.worktreePath, branch: result.branch },
   };
-  await store.updateTask(task.id, { workspaceWorktrees: updated });
+  /*
+  FNXC:WorkspaceWorktree 2026-06-22-00:00:
+  `acquireTaskWorktree` persists the singular `task.worktree`/`task.branch` on the task row.
+  For a workspace task that pointer would end up referencing whichever sub-repo was acquired last,
+  violating the contract that per-repo state lives only in `workspaceWorktrees`. Clear the singular
+  fields in the same update so a workspace task never carries a misleading singular worktree pointer.
+  */
+  await store.updateTask(task.id, { workspaceWorktrees: updated, worktree: null, branch: null });
 
   return { worktreePath: result.worktreePath, branch: result.branch, alreadyAcquired: false };
 }

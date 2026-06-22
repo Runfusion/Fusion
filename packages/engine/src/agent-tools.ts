@@ -3601,8 +3601,12 @@ export function createAcquireRepoWorktreeTool(opts: {
   logger?: { log: (m: string) => void; warn: (m: string) => void };
   secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
   runContext?: RunMutationContext;
+  audit?: Pick<RunAuditor, "git" | "filesystem">;
+  // FNXC:Workspace 2026-06-22 — thread the configured worktree-init runner so sub-repo worktrees run configured setup.
+  runConfiguredCommand?: import("./worktree-acquisition.js").AcquireWorkspaceRepoWorktreeOptions["runConfiguredCommand"];
+  taskEnv?: NodeJS.ProcessEnv;
 }): ToolDefinition {
-  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext } = opts;
+  const { workspaceRootDir, workspaceRepos, task, store, settings, logger, secretsStore, runContext, audit, runConfiguredCommand, taskEnv } = opts;
   return {
     name: "fn_acquire_repo_worktree",
     label: "Acquire Repo Worktree",
@@ -3629,6 +3633,10 @@ export function createAcquireRepoWorktreeTool(opts: {
         settings,
         logger,
         secretsStore,
+        runContext,
+        audit,
+        runConfiguredCommand,
+        taskEnv,
       });
       await store.logEntry(
         task.id,
