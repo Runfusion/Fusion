@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { GitHubImportModal } from "../GitHubImportModal";
 import {
   apiFetchGitHubIssues,
@@ -294,6 +294,64 @@ describe("GitHubImportModal", () => {
   });
 
   describe("with single remote", () => {
+    it("loads remotes using the active project id", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
+      render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-1" />);
+
+      await waitFor(() => {
+        expect(fetchGitRemotes).toHaveBeenCalledWith("project-1");
+      });
+    });
+
+    it("ignores stale remote responses after the active project changes", async () => {
+      const projectARemote: GitRemote[] = [
+        { name: "origin", owner: "project-a", repo: "old-repo", url: "https://github.com/project-a/old-repo.git" },
+      ];
+      const projectBRemote: GitRemote[] = [
+        { name: "origin", owner: "project-b", repo: "new-repo", url: "https://github.com/project-b/new-repo.git" },
+      ];
+      let resolveProjectA!: (value: GitRemote[]) => void;
+      let resolveProjectB!: (value: GitRemote[]) => void;
+      vi.mocked(fetchGitRemotes)
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolveProjectA = resolve;
+        }))
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolveProjectB = resolve;
+        }));
+
+      const { rerender } = render(
+        <GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-a" />,
+      );
+
+      await waitFor(() => {
+        expect(fetchGitRemotes).toHaveBeenCalledWith("project-a");
+      });
+
+      rerender(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} projectId="project-b" />);
+
+      await waitFor(() => {
+        expect(fetchGitRemotes).toHaveBeenCalledWith("project-b");
+      });
+
+      await act(async () => {
+        resolveProjectB(projectBRemote);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("project-b/new-repo")).toBeTruthy();
+      });
+
+      await act(async () => {
+        resolveProjectA(projectARemote);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText("project-b/new-repo")).toBeTruthy();
+        expect(screen.queryByText("project-a/old-repo")).toBeNull();
+      });
+    });
+
     it("auto-selects the remote and shows compact pill", async () => {
       vi.mocked(fetchGitRemotes).mockResolvedValueOnce(singleRemote);
       render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
