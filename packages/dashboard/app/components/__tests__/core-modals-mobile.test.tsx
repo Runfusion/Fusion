@@ -243,7 +243,10 @@ describe("core modals mobile css coverage", () => {
     const sidebarRules = getRuleBlocks(mobileBlock, ".gm-sidebar");
     expect(sidebarRules.length).toBeGreaterThan(0);
     for (const sidebarRule of sidebarRules) {
+      expect(sidebarRule).toContain("flex: 0 0 auto;");
+      expect(sidebarRule).toContain("min-height: calc(var(--space-2xl) + var(--space-md));");
       expect(sidebarRule).toContain("overflow-x: auto;");
+      expect(sidebarRule).toContain("overflow-y: hidden;");
       expect(sidebarRule).toContain("touch-action: pan-x pan-y;");
       expect(sidebarRule).toContain("-webkit-overflow-scrolling: touch;");
     }
@@ -255,12 +258,12 @@ describe("core modals mobile css coverage", () => {
     }
   });
 
-  it("GitManagerModal: nav items keep 36px touch target on mobile", () => {
+  it("GitManagerModal: nav items keep a token-sized touch target on mobile", () => {
     const css = loadAllAppCss();
     const mobileBlock = getMainMobileBlock(css);
 
     expect(mobileBlock).toContain(".gm-nav-item {");
-    expect(mobileBlock).toContain("min-height: 36px;");
+    expect(mobileBlock).toContain("min-height: calc(var(--space-xl) + var(--space-sm));");
   });
 
   it("GitManagerModal: panel allows content scrolling on mobile", () => {

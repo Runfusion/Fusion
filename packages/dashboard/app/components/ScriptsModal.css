@@ -3755,14 +3755,20 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
   FNXC:GitManager 2026-06-21-11:27:
   The mobile global `* { touch-action: pan-y; }` lock from FN-6365 blocks horizontal swipes unless the actual overflowing scroller opts back into pan-x.
   The Git Manager section toolbar must keep all fixed section tabs reachable on touch viewports, so mirror the FN-6450 tab-strip treatment and prevent tab compression (FN-6857).
+
+  FNXC:GitManager 2026-06-21-18:00:
+  FN-6900 requires the Git Manager section tabs to remain visible and switchable on touch viewports. In the mobile column layout, the content pane is the flexible sibling, so the tab strip must be `flex: 0 0 auto` with a token-sized minimum height instead of shrinking to a zero-height row.
   */
   .gm-sidebar {
+    flex: 0 0 auto;
     flex-direction: row;
     width: 100%;
-    min-width: unset;
+    min-width: 0;
+    min-height: calc(var(--space-2xl) + var(--space-md));
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
+    overflow-y: hidden;
     touch-action: pan-x pan-y;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
@@ -3777,8 +3783,9 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
     padding: var(--space-xs) var(--space-sm);
     border-left: none;
     border-bottom: 2px solid transparent;
-    font-size: 10px;
-    min-width: 56px;
+    font-size: var(--font-size-xs);
+    min-width: calc(var(--space-2xl) + var(--space-xl));
+    min-height: calc(var(--space-xl) + var(--space-sm));
     text-align: center;
     justify-content: center;
   }
@@ -4206,47 +4213,9 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
 }
 
 @media (max-width: 768px) {
-  /* Git manager: align breakpoint behavior with global 768px mobile modal rules */
-  .gm-layout {
-    flex-direction: column;
-  }
-
-  .gm-sidebar {
-    flex-direction: row;
-    width: 100%;
-    min-width: unset;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    touch-action: pan-x pan-y;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior-x: contain;
-    padding: var(--space-xs) var(--space-sm);
-    gap: var(--space-xs);
-  }
-
-  .gm-nav-item {
-    flex: 0 0 auto;
-    border-left: none;
-    border-bottom: 2px solid transparent;
-    text-align: center;
-    justify-content: center;
-    min-height: 36px;
-  }
-
-  .gm-nav-item.active {
-    border-left-color: transparent;
-    border-bottom-color: var(--todo);
-  }
-
+  /* Git manager: extend the canonical mobile rules above with safe-area and panel scroll behavior only. */
   .gm-content {
-    min-height: 200px;
-    padding: var(--space-md);
     padding-bottom: max(var(--space-md), env(safe-area-inset-bottom, 0px));
-  }
-
-  .gm-status-grid {
-    grid-template-columns: 1fr;
   }
 
   .gm-panel {

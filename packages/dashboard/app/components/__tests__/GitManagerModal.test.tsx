@@ -120,6 +120,41 @@ function expectLatestCallStartsWith(mockFn: { mock: { calls: unknown[][] } }, ..
   expect(mockFn.mock.calls.at(-1)?.slice(0, expectedArgs.length)).toEqual(expectedArgs);
 }
 
+function getMediaBlocks(css: string, pattern: RegExp): string[] {
+  const matches = [...css.matchAll(pattern)];
+  expect(matches.length).toBeGreaterThan(0);
+
+  return matches.map((match) => {
+    const start = match.index!;
+    const open = css.indexOf("{", start);
+    let depth = 1;
+    let i = open + 1;
+    while (i < css.length && depth > 0) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+      i++;
+    }
+    return css.slice(start, i);
+  });
+}
+
+function getRuleBlocks(css: string, selector: string): string[] {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"))]
+    .map((match) => match[1]);
+}
+
+const gitManagerSectionLabels = [
+  "Status",
+  "Changes",
+  "Commits",
+  "Branches",
+  "Worktrees",
+  "Stashes",
+  "Recovery",
+  "Remotes",
+];
+
 const mockAddToast = vi.fn();
 
 const mockTasks: Task[] = [
@@ -305,14 +340,59 @@ describe("GitManagerModal", () => {
       <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
     );
     await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /status/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /changes/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /commits/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /branches/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /worktrees/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /stashes/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /recovery/i })).toBeInTheDocument();
-      expect(screen.getByRole("tab", { name: /remotes/i })).toBeInTheDocument();
+      for (const label of gitManagerSectionLabels) {
+        expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
+      }
+    });
+  });
+
+  it.each([
+    ["null status and no file changes", null, []],
+    ["populated status and populated file changes", {
+      branch: "main",
+      commit: "abc1234",
+      isDirty: true,
+      ahead: 1,
+      behind: 0,
+    }, [
+      { file: "src/app.ts", status: "modified", staged: false },
+      { file: "src/index.ts", status: "added", staged: true },
+    ]],
+  ])("renders the mobile tablist and all static section tabs with %s", async (_name, statusResult, fileChangeResult) => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    (fetchGitStatus as any).mockResolvedValue(statusResult);
+    (fetchFileChanges as any).mockResolvedValue(fileChangeResult);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+
+    const tablist = await screen.findByRole("tablist", { name: /git manager sections/i });
+    const tabs = within(tablist).getAllByRole("tab");
+    expect(tabs).toHaveLength(gitManagerSectionLabels.length);
+    for (const label of gitManagerSectionLabels) {
+      expect(within(tablist).getByRole("tab", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("switches sections from the tab strip on mobile", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+
+    const tablist = await screen.findByRole("tablist", { name: /git manager sections/i });
+    const statusTab = within(tablist).getByRole("tab", { name: "Status" });
+    const branchesTab = within(tablist).getByRole("tab", { name: "Branches" });
+    expect(statusTab).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.click(branchesTab);
+
+    await waitFor(() => {
+      expect(branchesTab).toHaveAttribute("aria-selected", "true");
+      expect(statusTab).toHaveAttribute("aria-selected", "false");
+      expect(screen.getByTestId("branches-panel")).toBeInTheDocument();
     });
   });
 
@@ -3320,6 +3400,28 @@ describe("GitManagerModal", () => {
       expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-section-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?flex:\s*1 1 100%;/);
       expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-item\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?flex-wrap:\s*wrap;/);
       expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-section\s*\{[\s\S]*?max-width:\s*100%;/);
+    });
+
+    it("keeps the mobile Git Manager tab strip non-shrinking at 768px and 720px breakpoints", () => {
+      const css = loadAllAppCss();
+      const mobile768 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*768px\)[^{]*\{/g).join("\n");
+      const mobile720 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*720px\)[^{]*\{/g).join("\n");
+
+      const sidebarRules = getRuleBlocks(mobile768, ".gm-sidebar");
+      expect(sidebarRules).toHaveLength(1);
+      expect(sidebarRules[0]).toContain("flex: 0 0 auto;");
+      expect(sidebarRules[0]).toContain("min-height: calc(var(--space-2xl) + var(--space-md));");
+      expect(sidebarRules[0]).toContain("overflow-x: auto;");
+      expect(sidebarRules[0]).toContain("overflow-y: hidden;");
+      expect(sidebarRules[0]).toContain("touch-action: pan-x pan-y;");
+
+      const navItemRules = getRuleBlocks(mobile768, ".gm-nav-item");
+      expect(navItemRules).toHaveLength(1);
+      expect(navItemRules[0]).toContain("flex: 0 0 auto;");
+      expect(navItemRules[0]).toContain("min-height: calc(var(--space-xl) + var(--space-sm));");
+
+      expect(mobile720).not.toContain(".gm-sidebar");
+      expect(mobile720).not.toContain(".gm-nav-item");
     });
   });
 });
