@@ -4,7 +4,7 @@ import "./LeftSidebarNav.css";
 FNXC:Navigation 2026-06-19-00:00:
 When the leftSidebarNav experiment is active, this component owns the non-mobile primary navigation destinations that Header previously exposed through inline and overflow view controls. Mobile remains owned by MobileNavBar, so this sidebar keeps the desktop/tablet contract only.
 */
-import { useCallback, useMemo, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Bot,
@@ -165,6 +165,14 @@ export function LeftSidebarNav({
   const { t } = useTranslation("app");
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
   const [isCollapsed, setIsCollapsed] = useState(readStoredCollapsed);
+  /*
+  FNXC:Navigation 2026-06-23-02:15:
+  Optimistic active highlight: when a nav item is clicked, paint the active color IMMEDIATELY instead of waiting for the (possibly lazy-loaded via Suspense) target view to mount and flip `isActive`. Without this the clicked row lingers on the hover/highlight color until the view swaps. `optimisticView` is set on click and cleared once the real `view` prop catches up.
+  */
+  const [optimisticView, setOptimisticView] = useState<string | null>(null);
+  useEffect(() => {
+    setOptimisticView(null);
+  }, [view]);
 
   const toggleCollapsed = useCallback(() => {
     setIsCollapsed((current) => {
@@ -427,16 +435,21 @@ export function LeftSidebarNav({
 
   const renderEntry = (entry: SidebarNavEntry) => {
     const Icon = entry.icon;
+    // Active the moment it's clicked (optimistic), then the real `view` confirms it.
+    const isActive = entry.isActive || (optimisticView !== null && entry.view === optimisticView);
     return (
       <button
         key={entry.id}
         type="button"
-        className={`left-sidebar-nav__item${entry.isActive ? " left-sidebar-nav__item--active" : ""}`}
+        className={`left-sidebar-nav__item${isActive ? " left-sidebar-nav__item--active" : ""}`}
         aria-label={entry.label}
-        aria-current={entry.isActive && entry.view ? "page" : undefined}
+        aria-current={isActive && entry.view ? "page" : undefined}
         title={entry.label}
         data-testid={entry.testId}
-        onClick={entry.onSelect}
+        onClick={() => {
+          if (entry.view) setOptimisticView(entry.view);
+          entry.onSelect();
+        }}
       >
         <span className="left-sidebar-nav__icon-wrap">
           <Icon size={16} />

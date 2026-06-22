@@ -222,7 +222,7 @@ const renderListView = (
 
   const result = render(<ListView {...defaultProps} {...props} />);
   if (options.openViewOptions ?? true) {
-    const viewOptionsToggle = screen.queryByRole("button", { name: /view options/i });
+    const viewOptionsToggle = screen.queryByRole("button", { name: /^view$/i });
     if (viewOptionsToggle) {
       act(() => {
         fireEvent.click(viewOptionsToggle);
@@ -362,7 +362,7 @@ describe("ListView", () => {
   it("renders without crashing", () => {
     renderListView();
     // The search/filter is now in the header, not in the list view toolbar
-    expect(screen.getByText("View options")).toBeDefined();
+    expect(screen.getByText("View")).toBeDefined();
   });
 
   it("falls back malformed task columns to Planning group instead of crashing", () => {
@@ -383,7 +383,7 @@ describe("ListView", () => {
   it("keeps view options collapsed by default on desktop", () => {
     renderListView({}, { openViewOptions: false });
 
-    const toggle = screen.getByRole("button", { name: /view options/i });
+    const toggle = screen.getByRole("button", { name: /^view$/i });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(document.getElementById("list-view-options-panel")).toBeNull();
   });
@@ -597,7 +597,7 @@ describe("ListView", () => {
 
     renderListView({}, { openViewOptions: false });
 
-    const toggle = screen.getByRole("button", { name: /view options/i });
+    const toggle = screen.getByRole("button", { name: /^view$/i });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(document.getElementById("list-view-options-panel-mobile")).toBeNull();
 
@@ -2153,14 +2153,14 @@ describe("ListView Column Visibility", () => {
   it("renders view options toggle button", () => {
     renderListView();
 
-    const columnsButton = screen.getByRole("button", { name: /view options/i });
+    const columnsButton = screen.getByRole("button", { name: /^view$/i });
     expect(columnsButton).toBeDefined();
   });
 
   it("opens column dropdown when toggle clicked", () => {
     renderListView({}, { openViewOptions: false });
 
-    const columnsButton = screen.getByRole("button", { name: /view options/i });
+    const columnsButton = screen.getByRole("button", { name: /^view$/i });
     fireEvent.click(columnsButton);
 
     expect(columnsButton).toHaveAttribute("aria-expanded", "true");

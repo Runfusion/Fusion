@@ -1934,7 +1934,7 @@ export function ListView({
               aria-controls="list-view-options-panel-mobile"
             >
               <Columns3 size={14} />
-              {t("listView.viewOptions", "View options")}
+              {t("listView.viewOptions", "View")}
             </button>
             {onNewTask ? (
               <button className="btn btn-task-create btn-sm list-new-task-action" onClick={onNewTask}>
@@ -1998,7 +1998,7 @@ export function ListView({
                         aria-controls="list-view-options-panel"
                       >
                         <Columns3 size={14} />
-                        {t("listView.viewOptions", "View options")}
+                        {t("listView.viewOptions", "View")}
                       </button>
                       {onNewTask ? (
                         <button className="btn btn-task-create btn-sm list-new-task-action" onClick={onNewTask}>
