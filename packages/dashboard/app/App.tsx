@@ -2067,7 +2067,8 @@ function AppInner() {
                 Board-card detail (full main panel) renders its "Back to board" affordance inside TaskDetailContent's gray header (far right, across from the task id) instead of a separate back-row above the content. The prop only renders the header back button when both embedded and onBackToBoard are present, so ListView split-pane and modal usages stay unaffected.
                 */
                 onBackToBoard={closeTaskDetailMainPanel}
-                onPopOut={popOutTaskDetail}
+                /* FNXC:FloatingWindow 2026-06-22-21:10: Popping out from the board's full-panel detail also returns the main panel to the board, so the board (not the emptied detail) sits behind the floating window. */
+                onPopOut={(task) => { popOutTaskDetail(task); closeTaskDetailMainPanel(); }}
                 onOpenDetail={(value) => setMainPanelDetailTask(value)}
                 onMoveTask={moveTask}
                 onDeleteTask={deleteTask}

@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import "./FloatingWindow.css";
 
@@ -268,7 +269,11 @@ export function FloatingWindow({
     zIndex,
   } as CSSProperties;
 
-  return (
+  /*
+  FNXC:FloatingWindow 2026-06-22-21:10:
+  Rendered via a portal to document.body so the window escapes every ancestor stacking context (board card badges, the List view's sticky sort header + column divider, transformed columns, etc.). Without the portal the panel's z-index battles inside whatever subtree mounted it, letting card dependency/overlap tags and the list divider/sort header paint over the modal. At document.body the 4000+ z-index wins over all page content.
+  */
+  return createPortal(
     <div
       className="floating-window-overlay"
       role="dialog"
@@ -312,6 +317,7 @@ export function FloatingWindow({
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
