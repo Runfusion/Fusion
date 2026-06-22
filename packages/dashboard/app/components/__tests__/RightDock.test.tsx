@@ -74,6 +74,22 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-selected", "true");
   });
 
+  /*
+  FNXC:RightDockFiles 2026-06-23-00:50:
+  Deterministic dock two-pane decision: the dock threads its measured width to the Files registry render as `dockWidth`, and the Files entry forces DockFilesView layout="two-pane" once that width crosses 640px (no @container gate). A narrow dock (default 360px) stays layout="auto" (stacked single-panel). Assert both via the data-layout attribute the view exposes.
+  */
+  it("forces the Files two-pane layout when the dock is dragged wide, and stays stacked when narrow", () => {
+    // Narrow default width (360px) -> stacked single-panel.
+    const { unmount } = render(<RightDock open={true} renderProps={renderProps} />);
+    expect(screen.getByTestId("right-dock-files-view")).toHaveAttribute("data-layout", "auto");
+    unmount();
+
+    // Wide persisted width (>= 640px) -> deterministic LEFT|RIGHT two-pane.
+    window.localStorage.setItem(RIGHT_DOCK_WIDTH_STORAGE_KEY, "900");
+    render(<RightDock open={true} renderProps={renderProps} />);
+    expect(screen.getByTestId("right-dock-files-view")).toHaveAttribute("data-layout", "two-pane");
+  });
+
   it("falls back to Files when storage points at a removed right-dock view", () => {
     window.localStorage.setItem(RIGHT_DOCK_VIEW_STORAGE_KEY, "documents");
     render(<RightDock open={true} renderProps={renderProps} />);
@@ -160,17 +176,21 @@ describe("RightDock", () => {
     expect(screen.getByTestId("right-dock-files-view")).toBeInTheDocument();
   });
 
+  /*
+  FNXC:RightDock 2026-06-23-00:50:
+  The resize clamp + persisted-width read both funnel through RIGHT_DOCK_MAX_WIDTH, raised to 1280 so the dock drags MUCH wider. Drag far past the cap (startWidth 360 + 2000 px of leftward travel) and assert it clamps to the new 1280 max, then a keyboard step down lands one shift-step (48px) below the cap. This proves the new cap governs both the pointer drag and the keyboard path.
+  */
   it("clamps then persists resize width while open", () => {
     render(<RightDock open={true} renderProps={renderProps} />);
 
     const handle = screen.getByTestId("right-dock-resize-handle");
-    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 900 });
+    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 2000 });
     fireEvent.pointerMove(document, { pointerId: 1, clientX: 0 });
     fireEvent.pointerUp(document, { pointerId: 1, clientX: 0 });
-    expect(window.localStorage.getItem(RIGHT_DOCK_WIDTH_STORAGE_KEY)).toBe("720");
+    expect(window.localStorage.getItem(RIGHT_DOCK_WIDTH_STORAGE_KEY)).toBe("1280");
 
     fireEvent.keyDown(handle, { key: "ArrowRight", shiftKey: true });
-    expect(window.localStorage.getItem(RIGHT_DOCK_WIDTH_STORAGE_KEY)).toBe("672");
+    expect(window.localStorage.getItem(RIGHT_DOCK_WIDTH_STORAGE_KEY)).toBe("1232");
   });
 
   it("restores persisted width on mount", () => {

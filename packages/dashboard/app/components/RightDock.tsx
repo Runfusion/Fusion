@@ -12,7 +12,11 @@ import "./RightDock.css";
 
 export const RIGHT_DOCK_DEFAULT_WIDTH = 360;
 export const RIGHT_DOCK_MIN_WIDTH = 280;
-export const RIGHT_DOCK_MAX_WIDTH = 720;
+/*
+FNXC:RightDock 2026-06-23-00:50:
+The right-dock resize cap was raised 720 -> 1280 so the user can drag the dock MUCH wider (e.g. to run the Files view as a true two-pane tree|viewer split). The clamp and the persisted-width read both funnel through clampRightDockWidth/RIGHT_DOCK_MAX_WIDTH, so a single constant governs the drag clamp, the keyboard-step clamp, the stored-width read, and the resize-handle aria-valuemax. The CSS still wraps the rendered width in min(100%, ...), so the dock can never exceed the viewport even at the larger cap.
+*/
+export const RIGHT_DOCK_MAX_WIDTH = 1280;
 export const RIGHT_DOCK_WIDTH_STORAGE_KEY = "fusion:right-dock-width";
 export const RIGHT_DOCK_VIEW_STORAGE_KEY = "fusion:right-dock-view";
 export const RIGHT_DOCK_OPEN_STORAGE_KEY = "fusion:right-dock-open";
@@ -261,7 +265,11 @@ export function RightDock({
             <div className="right-dock__title" role="heading" aria-level={3}>{selectedEntry.label}</div>
           </div>
           <div className="right-dock__body" role="tabpanel" aria-label={selectedEntry.label} data-testid="right-dock-body">
-            {selectedEntry.render?.(renderProps)}
+            {/*
+            FNXC:RightDockFiles 2026-06-23-00:50:
+            Thread the live dock width down to registry render functions as `dockWidth` (alongside surface="dock") so a view can deterministically choose its wide layout from the actual dock size. The Files entry uses this to force two-pane when the dock is wide enough, sidestepping the @container query that never reliably fired in the narrow-vs-wide dock body.
+            */}
+            {selectedEntry.render?.({ ...renderProps, surface: "dock", dockWidth: width })}
           </div>
         </>
       ) : null}

@@ -15,7 +15,11 @@ The right dock OVERLAYS the page content (floats over the right edge) instead of
   display: flex;
   flex-direction: column;
   min-width: min(100%, var(--right-dock-min-width, calc(var(--space-2xl) * 8)));
-  max-width: min(100%, var(--right-dock-max-width, calc(var(--space-2xl) * 22)));
+  /*
+  FNXC:RightDock 2026-06-23-00:50:
+  Raised the right-dock max-width default from calc(var(--space-2xl) * 22) (~704px) to calc(var(--space-2xl) * 40) (~1280px) so the dock can be dragged MUCH wider (matching the raised RIGHT_DOCK_MAX_WIDTH JS clamp) and the Files view has room for its tree|viewer two-pane split. The min(100%, ...) wrapper is kept so the dock can never exceed the viewport regardless of the larger cap.
+  */
+  max-width: min(100%, var(--right-dock-max-width, calc(var(--space-2xl) * 40)));
   min-height: 0;
   background: var(--surface);
   border-left: thin solid var(--border);
