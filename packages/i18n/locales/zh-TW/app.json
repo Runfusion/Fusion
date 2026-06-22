@@ -2213,7 +2213,11 @@
     "openTaskAria": "Open task {{taskId}}: {{title}}",
     "searchArtifacts": "Search artifacts…",
     "showArtifacts": "Show artifacts",
-    "untitledArtifact": "Untitled artifact"
+    "untitledArtifact": "Untitled artifact",
+    "closeLightbox": "Close artifact preview",
+    "expandArtifact": "Expand {{title}}",
+    "expandArtifactHint": "Click to expand",
+    "lightboxLabel": "Artifact media preview"
   },
   "droidCli": {
     "active": "活躍",

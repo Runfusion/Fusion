@@ -617,38 +617,88 @@
   font-family: var(--font-primary);
 }
 
+/*
+FNXC:ArtifactRegistry 2026-06-21-23:15:
+The artifacts tab is a thumbnail-first responsive media gallery for agent-created images and videos, while audio, document, and generic artifacts keep coherent card previews in the same grid.
+*/
 .documents-artifact-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-  gap: var(--space-md);
-  align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: var(--space-lg);
+  align-items: stretch;
 }
 
 .documents-artifact-card {
   display: flex;
   flex-direction: column;
   min-height: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.documents-artifact-card:hover,
+.documents-artifact-card:focus-within {
+  transform: translateY(calc(-1 * var(--space-xs) / 2));
+  border-color: var(--todo);
+  box-shadow: var(--shadow-lg);
+  background: var(--card-hover);
 }
 
 .documents-artifact-preview {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 12rem;
+  aspect-ratio: 16 / 10;
+  min-height: 0;
+  overflow: hidden;
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  border-bottom: thin solid var(--border);
+}
+
+.documents-artifact-preview--expandable {
+  position: relative;
+  cursor: zoom-in;
+  border: 0;
+}
+
+.documents-artifact-preview--expandable:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring-strong);
 }
 
 .documents-artifact-media {
   display: block;
   width: 100%;
-  max-height: 18rem;
-  object-fit: contain;
+  height: 100%;
+  object-fit: cover;
   background: var(--bg);
 }
 
+.documents-artifact-expand-hint {
+  position: absolute;
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  border-radius: var(--radius-pill);
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(var(--space-xs));
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.documents-artifact-preview--expandable:hover .documents-artifact-expand-hint,
+.documents-artifact-preview--expandable:focus-visible .documents-artifact-expand-hint {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .documents-artifact-audio {
-  width: calc(100% - var(--space-lg));
+  width: calc(100% - var(--space-xl));
 }
 
 .documents-artifact-document,
@@ -659,10 +709,12 @@
   justify-content: center;
   gap: var(--space-sm);
   width: 100%;
-  min-height: 12rem;
+  height: 100%;
+  min-height: 100%;
   padding: var(--space-lg);
   color: var(--text-muted);
   text-align: center;
+  background: linear-gradient(135deg, var(--surface), var(--bg));
 }
 
 .documents-artifact-document p {
@@ -677,13 +729,15 @@
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.documents-artifact-generic:hover {
+.documents-artifact-generic:hover,
+.documents-artifact-generic:focus-visible {
   color: var(--todo);
   background: var(--card-hover);
 }
 
 .documents-artifact-body {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: var(--space-sm);
   padding: var(--space-md);
@@ -702,7 +756,7 @@
 .documents-artifact-type-badge {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--border);
+  border: thin solid var(--border);
   border-radius: var(--radius-pill);
   padding: var(--space-xs) var(--space-sm);
   color: var(--todo);
@@ -712,6 +766,7 @@
 }
 
 .documents-artifact-author {
+  min-width: 0;
   font-family: var(--font-mono);
   color: var(--text-muted);
   overflow: hidden;
@@ -735,6 +790,59 @@
 
 .documents-artifact-task-link {
   align-self: flex-start;
+  margin-top: auto;
+}
+
+.documents-artifact-lightbox-overlay {
+  padding: var(--space-xl);
+}
+
+.documents-artifact-lightbox {
+  display: flex;
+  flex-direction: column;
+  width: min(90vw, 72rem);
+  max-height: min(90vh, 48rem);
+  overflow: hidden;
+  border: thin solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.documents-artifact-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: thin solid var(--border);
+}
+
+.documents-artifact-lightbox-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.documents-artifact-lightbox-media-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--space-lg);
+  background: var(--bg);
+}
+
+.documents-artifact-lightbox-media {
+  display: block;
+  max-width: 100%;
+  max-height: calc(90vh - var(--space-2xl) - var(--space-xl));
+  object-fit: contain;
+  border-radius: var(--radius-md);
 }
 
 
@@ -856,6 +964,32 @@
   .documents-artifact-document,
   .documents-artifact-generic {
     min-height: 10rem;
+  }
+
+  .documents-artifact-expand-hint {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .documents-artifact-lightbox-overlay {
+    padding: var(--space-sm);
+  }
+
+  .documents-artifact-lightbox {
+    width: 100%;
+    max-height: calc(100vh - var(--space-lg));
+  }
+
+  .documents-artifact-lightbox-header {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .documents-artifact-lightbox-media-frame {
+    padding: var(--space-sm);
+  }
+
+  .documents-artifact-lightbox-media {
+    max-height: calc(100vh - var(--space-2xl) - var(--space-xl));
   }
 
   .documents-artifact-meta,

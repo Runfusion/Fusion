@@ -1,5 +1,5 @@
 import "./DocumentsView.css";
-import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef, type ChangeEvent, type KeyboardEvent, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, FileText, ChevronDown, ChevronUp, ChevronRight, RefreshCw, Search, X, Eye, EyeOff } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -45,6 +45,7 @@ interface ArtifactCardProps {
   artifact: ArtifactWithTask;
   projectId?: string;
   onOpenTask: (taskId: string) => void;
+  onExpandMedia: (artifact: ArtifactWithTask) => void;
 }
 
 function formatTimestamp(iso?: string): string {
@@ -184,18 +185,43 @@ function TaskGroup({ taskId, taskTitle, documents, onOpenTask, renderMarkdownSta
   );
 }
 
-function ArtifactCard({ artifact, projectId, onOpenTask }: ArtifactCardProps) {
+function ArtifactCard({ artifact, projectId, onOpenTask, onExpandMedia }: ArtifactCardProps) {
   const { t } = useTranslation("app");
   const mediaUrl = artifactMediaUrl(artifact.id, projectId);
   const typeLabel = getArtifactTypeLabel(t, artifact.type);
   const preview = artifact.content ? getContentPreview(artifact.content, 320) : artifact.description;
   const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const isExpandableMedia = artifact.type === "image" || artifact.type === "video";
+  const handleExpandKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onExpandMedia(artifact);
+    }
+  }, [artifact, onExpandMedia]);
 
   return (
     <article className="document-card documents-artifact-card" aria-label={t("documents.artifactCardLabel", "Artifact {{title}}", { title })}>
-      <div className="documents-artifact-preview">
-        <ArtifactMedia artifact={artifact} mediaUrl={mediaUrl} title={title} preview={preview} t={t} />
-      </div>
+      {isExpandableMedia ? (
+        <div
+          className="documents-artifact-preview documents-artifact-preview--expandable"
+          role="button"
+          tabIndex={0}
+          aria-label={t("documents.expandArtifact", "Expand {{title}}", { title })}
+          onClick={() => onExpandMedia(artifact)}
+          onKeyDown={handleExpandKeyDown}
+        >
+          {artifact.type === "image" ? (
+            <img className="documents-artifact-media" src={mediaUrl} alt={title} loading="lazy" />
+          ) : (
+            <video className="documents-artifact-media" src={mediaUrl} muted preload="metadata" aria-label={t("documents.artifactVideoLabel", "Video artifact: {{title}}", { title })} />
+          )}
+          <span className="documents-artifact-expand-hint">{t("documents.expandArtifactHint", "Click to expand")}</span>
+        </div>
+      ) : (
+        <div className="documents-artifact-preview">
+          <ArtifactMedia artifact={artifact} mediaUrl={mediaUrl} title={title} preview={preview} t={t} />
+        </div>
+      )}
       <div className="documents-artifact-body">
         <div className="documents-artifact-header">
           <span className="documents-artifact-type-badge">{typeLabel}</span>
@@ -239,6 +265,13 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
   const [renderProjectMarkdown, setRenderProjectMarkdown] = useState(false);
   // Markdown render toggles per task document card (scoped by doc ID)
   const [taskDocMarkdownStates, setTaskDocMarkdownStates] = useState<Map<string, boolean>>(new Map());
+  /*
+  FNXC:ArtifactRegistry 2026-06-21-23:22:
+  Image and video artifacts open in a dismissible lightbox, but audio, document, and generic artifacts remain normal cards so non-previewable media never receive orphaned expand targets.
+  */
+  const [lightboxArtifact, setLightboxArtifact] = useState<ArtifactWithTask | null>(null);
+  const lightboxCloseRef = useRef<HTMLButtonElement>(null);
+  const lightboxReturnFocusRef = useRef<HTMLElement | null>(null);
   const [selectionCommentOpen, setSelectionCommentOpen] = useState(false);
   const markdownSelection = useSelectionComment(markdownPreviewRef, { locked: selectionCommentOpen });
   const plainSelection = useSelectionComment(plainPreviewRef, { locked: selectionCommentOpen });
@@ -298,6 +331,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
     setFileLoading(false);
     setRenderProjectMarkdown(false);
     setTaskDocMarkdownStates(new Map());
+    setLightboxArtifact(null);
   }, [projectId]);
 
   useEffect(() => {
@@ -430,6 +464,46 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
       return next;
     });
   }, []);
+
+  const handleExpandArtifact = useCallback((artifact: ArtifactWithTask) => {
+    lightboxReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setLightboxArtifact(artifact);
+  }, []);
+
+  const handleCloseLightbox = useCallback(() => {
+    setLightboxArtifact(null);
+    lightboxReturnFocusRef.current?.focus();
+    lightboxReturnFocusRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!lightboxArtifact) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    lightboxCloseRef.current?.focus();
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handleCloseLightbox();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleCloseLightbox, lightboxArtifact]);
+
+  const handleLightboxOverlayClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      handleCloseLightbox();
+    }
+  }, [handleCloseLightbox]);
 
   const activeError = activeTab === "project" ? projectFilesError : activeTab === "tasks" ? documentsError : artifactsError;
 
@@ -685,6 +759,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
                   artifact={artifact}
                   projectId={projectId}
                   onOpenTask={handleOpenTask}
+                  onExpandMedia={handleExpandArtifact}
                 />
               ))}
             </div>
@@ -725,6 +800,42 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onSendSelecti
           </div>
         )}
       </div>
+      {lightboxArtifact && (
+        <div
+          className="modal-overlay open documents-artifact-lightbox-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("documents.lightboxLabel", "Artifact media preview")}
+          onClick={handleLightboxOverlayClick}
+        >
+          {/* FNXC:ArtifactRegistry 2026-06-21-23:22: The lightbox reuses the shared modal overlay pattern so image/video artifacts can expand full-size and dismiss by close button, backdrop, or Escape on desktop and mobile. */}
+          <div className="documents-artifact-lightbox" onClick={(event) => event.stopPropagation()}>
+            <div className="documents-artifact-lightbox-header">
+              <h3 className="documents-artifact-lightbox-title">{lightboxArtifact.title || t("documents.untitledArtifact", "Untitled artifact")}</h3>
+              <button ref={lightboxCloseRef} className="modal-close" onClick={handleCloseLightbox} aria-label={t("documents.closeLightbox", "Close artifact preview")}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="documents-artifact-lightbox-media-frame">
+              {lightboxArtifact.type === "image" ? (
+                <img
+                  className="documents-artifact-lightbox-media"
+                  src={artifactMediaUrl(lightboxArtifact.id, projectId)}
+                  alt={lightboxArtifact.title || t("documents.untitledArtifact", "Untitled artifact")}
+                />
+              ) : (
+                <video
+                  className="documents-artifact-lightbox-media"
+                  src={artifactMediaUrl(lightboxArtifact.id, projectId)}
+                  controls
+                  autoPlay
+                  aria-label={t("documents.artifactVideoLabel", "Video artifact: {{title}}", { title: lightboxArtifact.title || t("documents.untitledArtifact", "Untitled artifact") })}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

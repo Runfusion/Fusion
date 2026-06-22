@@ -486,6 +486,8 @@ Features:
 - Search documents across tasks
 - Open project markdown files with inline preview
 - Browse the **Artifacts** tab for media registered by agents, users, or the system across tasks
+- Use the responsive media gallery to scan thumbnail-first image and video cards with consistent framing, while audio, document, and generic artifacts remain readable cards in the same grid
+- Expand image and video artifact thumbnails into a full-size lightbox; dismiss it with the close button, backdrop click, or Escape while non-previewable artifact cards keep their normal controls and links
 - Preview artifact images inline, play video and audio with native controls, read document previews, and open generic artifacts through their media URL
 - Jump directly from a document group or artifact card to the owning task detail modal when a task is linked; inside task detail, the **Artifacts** tab shows that task's documents and registered media artifacts together
 - Toggle between raw text and rendered markdown using the **Markdown/Plain** button
@@ -831,7 +833,7 @@ Inspect task definition, logs, review feedback, comments, artifacts, workflow ou
 - The **Create Pull Request** modal now offers in-app remediation for every blocking preflight check. If `branchOnRemote` is false, use **Push branch to remote** and Fusion will publish `fusion/<task-id-lower>` to `origin` and refresh preflight. If `conflictsWithBase` is true, use **Resolve conflicts with AI** and Fusion will use an AI coding agent to resolve merge markers on the task branch, commit and push real merge changes, or report success without an empty commit when the selected base is already merged; preflight then refreshes so normal PR creation can continue once all checks pass.
 - The modal shell renders immediately: preflight checks and PR options load independently of AI-generated title/body metadata, so slow AI suggestions no longer block base-branch selection, diagnostics, or manual PR authoring.
 - AI title/body generation is bounded to 60 seconds and is canceled if the dialog request disconnects; on timeout/cancel, Fusion falls back to deterministic task-based PR title/body content instead of leaving the spinner stuck forever.
-- The **Artifacts** tab combines task documents written by agents or users with task-scoped registered media artifacts. Images preview inline, video and audio use native controls, document artifacts show text previews, and generic artifacts open through their media URL.
+- The **Artifacts** tab combines task documents written by agents or users with task-scoped registered media artifacts. The gallery uses thumbnail-first image/video cards, image and video previews can expand into a dismissible full-size lightbox, video and audio use native controls, document artifacts show text previews, and generic artifacts open through their media URL.
 - The **Review** tab is separate from **Comments**: Review shows actionable PR/reviewer feedback and same-task revision controls, while Comments remains the general collaboration thread.
 - **Request revision** in Review resumes work on the same task ID (no refinement task): `in-progress` tasks get steering injection, while `in-review` tasks are moved back to `in-progress` for the same branch/worktree revision pass.
 - Review supports a manual **Refresh** action in-place: PR mode pulls latest GitHub review state/decision, while direct mode rehydrates reviewer-agent feedback from persisted task data (no GitHub call).

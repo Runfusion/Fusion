@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import { DocumentsView } from "../DocumentsView";
 import { fetchTaskDetail, fetchWorkspaceFileContent } from "../../api";
@@ -274,7 +274,7 @@ describe("DocumentsView", () => {
     expect(screen.queryByRole("button", { name: "Open README.md" })).not.toBeInTheDocument();
   });
 
-  it("renders artifacts tab counts and all media card paths", async () => {
+  it("renders artifacts tab counts and all media card paths without non-media expand shells", async () => {
     mockUseArtifacts.mockReturnValue({
       artifacts: mockArtifacts,
       loading: false,
@@ -293,6 +293,8 @@ describe("DocumentsView", () => {
 
     expect(screen.getByRole("tab", { name: /show artifacts/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
+    expect(screen.getByRole("button", { name: "Expand Image artifact" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand Video artifact" })).toBeInTheDocument();
     expect(screen.getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
     expect(screen.getByLabelText("Audio artifact: Audio artifact").tagName).toBe("AUDIO");
     expect(screen.getByTestId("artifact-document-preview")).toHaveTextContent("Inline document preview");
@@ -300,12 +302,52 @@ describe("DocumentsView", () => {
     expect(screen.getByText("agent-image")).toBeInTheDocument();
     expect(screen.getByText("Image")).toBeInTheDocument();
 
+    for (const title of ["Audio artifact", "Document artifact", "Other artifact"]) {
+      const card = screen.getByRole("article", { name: `Artifact ${title}` });
+      expect(within(card).queryByRole("button", { name: `Expand ${title}` })).not.toBeInTheDocument();
+    }
+
     fireEvent.click(screen.getByRole("button", { name: /open task KB-001/i }));
     await waitFor(() => {
       expect(mockFetchTaskDetail).toHaveBeenCalledWith("KB-001", undefined);
       expect(onOpenDetail).toHaveBeenCalledWith({ id: "KB-001" });
     });
     expect(screen.getAllByRole("button", { name: /open task/i })).toHaveLength(1);
+  });
+
+  it("opens and dismisses the image and video artifact lightbox by click keyboard close backdrop and escape", () => {
+    mockUseArtifacts.mockReturnValue({
+      artifacts: mockArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { container } = render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand Image artifact" }));
+    let dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
+    expect(within(dialog).getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
+    expect(document.body.style.overflow).toBe("hidden");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close artifact preview" }));
+    expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Expand Image artifact" }), { key: "Enter" });
+    dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
+    expect(within(dialog).getByRole("img", { name: "Image artifact" })).toBeInTheDocument();
+    fireEvent.click(dialog);
+    expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Expand Video artifact" }), { key: " " });
+    dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
+    expect(within(dialog).getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
+    expect(container.querySelector(".documents-artifact-lightbox-media-frame video")).toHaveAttribute("controls");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
+    expect(document.body.style.overflow).toBe("");
   });
 
   it("renders artifacts empty loading error retry and mobile gallery states", async () => {
