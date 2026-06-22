@@ -3069,7 +3069,11 @@ export function TaskDetailContent({
               {/* FNXC:Workspace 2026-06-21-00:00: workspace tasks have no singular
                   task.worktree/task.branch; surface their acquired per-sub-repo worktrees
                   as a flat read-only list so the detail view isn't blank (U3/KTD5). */}
-              {isWorkspaceTask(task) && <WorkspaceWorktreesSummary task={task} />}
+              {/* FNXC:Workspace 2026-06-22-09:00: gate/render off the hydrated
+                  workingTask, not the sparse task row. workspaceWorktrees is only
+                  present in fetched detail, so keying off task renders blank on the
+                  optimistic-open path before the detail fetch resolves. */}
+              {isWorkspaceTask(workingTask) && <WorkspaceWorktreesSummary task={workingTask} />}
             </>
           )}
           {task.status === "failed" && task.error && (

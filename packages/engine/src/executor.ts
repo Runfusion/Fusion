@@ -14554,10 +14554,18 @@ You have access to the file system to review changes.${verdictBlock}`;
       const tasks = await this.store.listTasks({ slim: true, includeArchived: false });
       for (const t of tasks) {
         if (t.id === requestingTaskId) continue;
-        if (t.worktree !== worktreePath) continue;
         if (t.column !== "in-progress") continue;
         if (t.paused === true) continue;
-        return t.id;
+        if (t.worktree === worktreePath) return t.id;
+        // FNXC:Workspace 2026-06-22-09:00: workspace tasks hold their worktrees in
+        // task.workspaceWorktrees, not the singular task.worktree column. The DB liveness
+        // fallback must check those per-sub-repo paths too — otherwise a conflict against a
+        // sub-repo worktree owned by an in-progress workspace task is missed, especially
+        // before its in-memory activeWorktrees entry is (re)registered after restart.
+        const wsEntries = t.workspaceWorktrees;
+        if (wsEntries && Object.values(wsEntries).some((entry) => entry.worktreePath === worktreePath)) {
+          return t.id;
+        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

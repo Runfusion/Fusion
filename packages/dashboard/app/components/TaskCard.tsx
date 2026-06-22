@@ -631,8 +631,12 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     // F7 — compare the sorted key SETS, not just the count: a same-count repo swap (one
     // repo released, a different one acquired) keeps the count but must still re-render,
     // otherwise the placeholder shows a stale repo set.
-    JSON.stringify(Object.keys(previousTask.workspaceWorktrees ?? {}).sort()) ===
-      JSON.stringify(Object.keys(nextTask.workspaceWorktrees ?? {}).sort()) &&
+    // FNXC:Workspace 2026-06-22-09:00: compare full VALUES, not only the key set. A
+    // pool-reclaim re-acquire keeps the same repo key but produces a different
+    // worktreePath/branch; a key-set-only check would leave the card showing stale path
+    // text. Whole-map JSON compare covers keys and values at negligible cost for small N.
+    JSON.stringify(previousTask.workspaceWorktrees ?? null) ===
+      JSON.stringify(nextTask.workspaceWorktrees ?? null) &&
     previousTask.branch === nextTask.branch &&
     previousTask.baseBranch === nextTask.baseBranch &&
     previousTask.breakIntoSubtasks === nextTask.breakIntoSubtasks &&

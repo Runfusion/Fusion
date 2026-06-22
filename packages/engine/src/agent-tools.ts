@@ -3669,10 +3669,14 @@ export function createAcquireRepoWorktreeTool(opts: {
           isError: true,
         };
       }
-      // FNXC:Workspace 2026-06-21-22:30: F2 — register a freshly-acquired sub-repo worktree in the executor's activeWorktrees Set (skip the already-acquired short-circuit; that path was registered on its original fresh acquire).
-      if (!result.alreadyAcquired) {
-        onAcquired?.(result.worktreePath);
-      }
+      // FNXC:Workspace 2026-06-21-22:30: F2 — register a freshly-acquired sub-repo worktree in the executor's activeWorktrees Set (KTD2) so owner/liveness checks see live per-repo worktrees, not just the browse-only root.
+      // FNXC:Workspace 2026-06-22-09:00: register UNCONDITIONALLY, including the
+      // already-acquired short-circuit. After an executor restart activeWorktrees is an
+      // empty Map; a resumed workspace task with pre-existing task.workspaceWorktrees hits
+      // the alreadyAcquired path, so skipping onAcquired left the sub-repo path unregistered
+      // in-memory and conflict/liveness checks missed it. Set.add is idempotent, so re-firing
+      // on a fresh acquire is a harmless no-op.
+      onAcquired?.(result.worktreePath);
       await store.logEntry(
         task.id,
         result.alreadyAcquired

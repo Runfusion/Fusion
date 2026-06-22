@@ -39,10 +39,19 @@ export async function resolveCapturedBaseCommitSha(
   integrationBranch: string = "main",
 ): Promise<string | undefined> {
   const branch = integrationBranch.trim() || "main";
-  // Shell-quote defensively; integration branch names are normalized upstream
-  // but may carry slashes (e.g. "release/2026-06") that are valid in refs.
-  const localRef = JSON.stringify(branch);
-  const originRef = JSON.stringify(`origin/${branch}`);
+  /*
+  FNXC:Workspace 2026-06-22-09:00:
+  Shell-quote with a real single-quoted POSIX literal, NOT JSON.stringify. A
+  JSON double-quoted string still lets bash expand `$(...)`, backticks, and `$VAR`
+  inside it; JSON.stringify is not a shell-quoting function. Git ref names can't
+  legally contain backticks so there's no live injection path today, but
+  single-quoting is the idiomatic safe form and stays correct if a caller ever
+  passes a less-constrained string. A single quote inside the value is escaped as
+  the standard `'\''` close-reopen sequence.
+  */
+  const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+  const localRef = shellSingleQuote(branch);
+  const originRef = shellSingleQuote(`origin/${branch}`);
   let baseCommitSha: string | undefined;
   try {
     const { stdout } = await execAsync(

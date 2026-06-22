@@ -644,6 +644,24 @@ export async function acquireWorkspaceRepoWorktree(
   const repoAbsPath = join(workspaceRootDir, repoRelPath);
 
   /*
+  FNXC:Workspace 2026-06-22-09:00:
+  Run best-effort observability (task log + audit) for the NON-FATAL post-acquire
+  steps without letting their own awaited writes escape. logEntry/audit can throw
+  (DB hiccup, audit sink failure); an unsuppressed throw inside a non-fatal catch
+  would re-escalate guard/base-capture failures into fatal acquisition errors that
+  strand the already-created worktree. Mirrors the busy-path swallow above.
+  */
+  const safeObserve = async (fn: () => Promise<void>): Promise<void> => {
+    try {
+      await fn();
+    } catch (obsErr) {
+      logger?.warn(
+        `${task.id}: workspace acquisition observability failed (suppressed): ${obsErr instanceof Error ? obsErr.message : String(obsErr)}`,
+      );
+    }
+  };
+
+  /*
   FNXC:Workspace 2026-06-21-20:10:
   Same-sub-repo exclusivity (KTD4): register the sub-repo absolute path in the
   path-keyed activeSessionRegistry BEFORE acquiring so two concurrent workspace
@@ -748,11 +766,17 @@ export async function acquireWorkspaceRepoWorktree(
       // FNXC:Workspace 2026-06-21-22:30: F3 — identity-guard install is non-fatal; worktree is usable without it.
       const message = guardErr instanceof Error ? guardErr.message : String(guardErr);
       logger?.warn(`${task.id}: identity-guard install failed for sub-repo ${repoRelPath} (non-fatal): ${message}`);
-      await store.logEntry(task.id, `Workspace sub-repo identity-guard install failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
-      await audit?.git({
-        type: "worktree:workspace-repo-acquire-failed",
-        target: repoAbsPath,
-        metadata: { repoRelPath, taskId: task.id, error: message, stage: "identity-guard" },
+      // FNXC:Workspace 2026-06-22-09:00: the observability writes (store.logEntry / audit.git)
+      // are themselves awaited and can throw; an unwrapped throw here would escape the catch
+      // and re-escalate this deliberately NON-FATAL step into a fatal acquisition error,
+      // stranding the already-created worktree. Suppress observability failures via safeObserve.
+      await safeObserve(async () => {
+        await store.logEntry(task.id, `Workspace sub-repo identity-guard install failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
+        await audit?.git({
+          type: "worktree:workspace-repo-acquire-failed",
+          target: repoAbsPath,
+          metadata: { repoRelPath, taskId: task.id, error: message, stage: "identity-guard" },
+        });
       });
     }
 
@@ -779,11 +803,15 @@ export async function acquireWorkspaceRepoWorktree(
       // FNXC:Workspace 2026-06-21-22:30: F3 — base-SHA capture is non-fatal; an undefined baseCommitSha is an accepted state.
       const message = baseErr instanceof Error ? baseErr.message : String(baseErr);
       logger?.warn(`${task.id}: base-SHA capture failed for sub-repo ${repoRelPath} (non-fatal): ${message}`);
-      await store.logEntry(task.id, `Workspace sub-repo base-SHA capture failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
-      await audit?.git({
-        type: "worktree:workspace-repo-acquire-failed",
-        target: repoAbsPath,
-        metadata: { repoRelPath, taskId: task.id, error: message, stage: "base-sha-capture" },
+      // FNXC:Workspace 2026-06-22-09:00: same non-fatal contract as the identity-guard catch —
+      // the awaited observability writes must not re-escalate a non-fatal base-capture failure.
+      await safeObserve(async () => {
+        await store.logEntry(task.id, `Workspace sub-repo base-SHA capture failed for ${repoRelPath} (non-fatal): ${message}`, undefined, runContext);
+        await audit?.git({
+          type: "worktree:workspace-repo-acquire-failed",
+          target: repoAbsPath,
+          metadata: { repoRelPath, taskId: task.id, error: message, stage: "base-sha-capture" },
+        });
       });
     }
 
@@ -802,7 +830,19 @@ export async function acquireWorkspaceRepoWorktree(
       ...(latest.workspaceWorktrees ?? {}),
       [repoRelPath]: { worktreePath: result.worktreePath, branch: result.branch, baseCommitSha },
     };
-    await store.updateTask(task.id, { workspaceWorktrees: updated });
+    /*
+    FNXC:Workspace 2026-06-22-09:00:
+    F10 — reset the singular worktree/branch columns to null in the SAME write that
+    persists workspaceWorktrees. The single-repo `acquireTaskWorktree` above wrote
+    `task.worktree`/`task.branch` (the sub-repo path/branch) to the real task row;
+    clearing the in-memory copy passed in only stops the NEXT sub-repo from resuming
+    into this one's worktree — the DB row stays polluted. A non-null `task.worktree`
+    makes `isWorkspaceTask(task)` return false (its first guard), so the dashboard
+    stops rendering WorkspaceWorktreesSummary and instead shows the sub-repo branch in
+    the standard chip — the blank/wrong-card state U10 prevents. Nulling them here
+    keeps `task.worktree` null for the workspace task's whole lifetime.
+    */
+    await store.updateTask(task.id, { workspaceWorktrees: updated, worktree: null, branch: null });
 
     return { worktreePath: result.worktreePath, branch: result.branch, baseCommitSha, alreadyAcquired: false };
   } catch (err) {
