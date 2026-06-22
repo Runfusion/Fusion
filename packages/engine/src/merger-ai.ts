@@ -1403,7 +1403,48 @@ The partial-land retry/park policy (consume a mergeRetry, auto-retry skipping la
 repos up to MAX, then operator-park) is wired at the engine dispatch (project-engine.ts),
 NOT here: this function reports the partial via `allLanded:false` and the dispatch drives
 the retry seam.
+
+FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4):
+Per-repo LAND lease. Before each `landOneRepo` we register the sub-repo ABSOLUTE
+path in the path-keyed activeSessionRegistry under kind "workspace-repo-land" and
+release it in a per-repo `finally` (so the lease is freed on land success OR land
+failure — no stuck lock). If another task already holds the land lease for that
+sub-repo path we FAST-FAIL the whole `landWorkspaceTask` with a retryable
+`WorkspaceRepoLandBusyError`, which the U2 partial-land retry/park machinery
+(project-engine dispatch) already handles — reusing that path instead of
+reimplementing a waiting lock. The lease serializes same-sub-repo lands so two
+tasks' clean-room ai-merge worktrees do not collide; it is NOT what makes the
+interleaved `update-ref` correct — `advanceIntegrationBranchRef`'s CAS already
+guarantees ref correctness (concurrent-advance → rebuild). Disjoint sub-repos lease
+DIFFERENT paths, so they never serialize against each other (no false contention).
+This lease is a DIFFERENT scope/kind from the execution-phase
+"workspace-repo-acquire" lease and from `landOneRepo`'s own inner "ai-merge"
+clean-room registration on the temp worktree path — none of the three collide.
 */
+
+/** FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4): ownerKey for the land-time lease. */
+const WORKSPACE_REPO_LAND_OWNER_KEY = "workspace-repo-land";
+
+/*
+FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4):
+Thrown when a second workspace task tries to land a sub-repo already inside another
+task's land critical section. Distinct from a generic land failure so the engine
+dispatch (and tests) can tell "serialized, retry later" apart from "this land is
+broken". Carries `retryable = true` so the existing partial-land auto-retry/park
+path treats it as a transient contention, not a terminal failure.
+*/
+export class WorkspaceRepoLandBusyError extends Error {
+  public readonly retryable = true;
+  constructor(
+    public readonly repoRel: string,
+    public readonly holderTaskId: string,
+    public readonly requestingTaskId: string,
+  ) {
+    super(`workspace sub-repo ${repoRel} land is in progress for task ${holderTaskId}`);
+    this.name = "WorkspaceRepoLandBusyError";
+  }
+}
+
 export async function landWorkspaceTask(
   store: TaskStore,
   task: Task,
@@ -1476,6 +1517,32 @@ export async function landWorkspaceTask(
       continue;
     }
 
+    /*
+    FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4):
+    Same-sub-repo LAND lease. Register the sub-repo absolute path BEFORE landing so
+    two tasks landing the SAME sub-repo are serialized (their clean-room ai-merge
+    worktrees would otherwise collide). The lookupByPath → registerPath pair stays in
+    ONE synchronous slice (no `await` between them) so the claim is atomic — an
+    interleaved await would let a second task pass the gate before we register. If
+    another task holds the land lease we FAST-FAIL with a retryable busy error; the
+    U2 dispatch auto-retry/park path handles it (no waiting lock reimplemented here).
+    We only treat a HELD entry of OUR OWN land ownerKey as contention, so a stale
+    entry of a different kind on this path (e.g. a leftover acquire entry) is ignored.
+    */
+    const landLeaseHolder = activeSessionRegistry.lookupByPath(repoRootDir);
+    if (
+      landLeaseHolder &&
+      landLeaseHolder.ownerKey === WORKSPACE_REPO_LAND_OWNER_KEY &&
+      landLeaseHolder.taskId !== taskId
+    ) {
+      throw new WorkspaceRepoLandBusyError(repoRel, landLeaseHolder.taskId, taskId);
+    }
+    activeSessionRegistry.registerPath(repoRootDir, {
+      taskId,
+      kind: "workspace-repo-land",
+      ownerKey: WORKSPACE_REPO_LAND_OWNER_KEY,
+    });
+
     try {
       const landResult = await landOneRepo(store, repoRootDir, entry.branch, integrationBranch, {
         taskId, settings, audit, log, setStatus, maxPasses,
@@ -1505,6 +1572,18 @@ export async function landWorkspaceTask(
       // `landedSha` is persisted, so the engine dispatch's auto-retry re-runs this
       // loop and the landed predicate above skips them (only the failed repo retries).
       break;
+    } finally {
+      /*
+      FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4):
+      Release the land lease — on land SUCCESS or land FAILURE — but ONLY when WE hold
+      it (own taskId + own ownerKey), so a future-acquire path's entry on this path is
+      never yanked. The fast-fail busy throw above happens BEFORE registerPath, so a
+      serialized loser never unregisters the winner's lease.
+      */
+      const held = activeSessionRegistry.lookupByPath(repoRootDir);
+      if (held && held.taskId === taskId && held.ownerKey === WORKSPACE_REPO_LAND_OWNER_KEY) {
+        activeSessionRegistry.unregisterPath(repoRootDir);
+      }
     }
   }
 

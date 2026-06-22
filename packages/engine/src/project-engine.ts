@@ -2471,8 +2471,18 @@ export class ProjectEngine {
           // — mirroring the conflict-retry seam below. Detect by err.name (robust across
           // the package boundary). Manual merges fall through to rejectMergeResolvers at
           // the hasManualResolver early-return below (no auto-retry for manual).
+          /*
+          FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4):
+          A `WorkspaceRepoLandBusyError` (a second task holds the same sub-repo's
+          land lease) is ALSO retryable here — it is transient contention, not a
+          terminal failure. Route it through the SAME auto-retry-then-park seam (it
+          consumes a mergeRetry and re-enqueues with backoff; a re-run skips
+          already-landed repos and finds the lease freed). Detect by err.name across
+          the package boundary, same as the partial-land error.
+          */
           const isWorkspacePartialLand =
-            err instanceof Error && err.name === "WorkspacePartialLandError";
+            err instanceof Error &&
+            (err.name === "WorkspacePartialLandError" || err.name === "WorkspaceRepoLandBusyError");
           if (isWorkspacePartialLand && !hasManualResolver) {
             const wsSettings = await store.getSettings().catch(() => ({ maxAutoMergeRetries: undefined }));
             const wsTask = await store.getTask(taskId).catch(() => null);

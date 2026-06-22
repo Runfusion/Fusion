@@ -6,8 +6,21 @@ sub-repo absolute path (NOT the worktree path) so two concurrent workspace tasks
 contending for the SAME sub-repo are serialized. Keeping it distinct from
 "executor"/"step-session" means it does not collide with the executor's later
 session registration on the produced worktree path.
+
+FNXC:Workspace 2026-06-22-02:10 (Phase C U3, KTD4):
+"workspace-repo-land" is a DISTINCT registry kind for the LAND-time (merge phase)
+same-sub-repo lease. Like the acquire kind it is keyed by the sub-repo ABSOLUTE
+path, but it guards a different lifecycle scope: two workspace tasks landing the
+SAME sub-repo onto its local integration ref are serialized so their clean-room
+ai-merge worktrees do not collide. This lease is for SERIALIZATION / clean-room-
+collision avoidance only — it is NOT what makes the interleaved `update-ref`
+correct. `advanceIntegrationBranchRef`'s CAS already makes a concurrent advance
+safe by construction (concurrent-advance → rebuild). The acquire lease (execution
+phase) and the land lease (merge phase) never overlap in time on the same path, so
+keeping them distinct kinds (each released in its own `finally`) means a stale
+entry of one kind can never be mistaken for a live hold of the other.
 */
-export type ActiveSessionKind = "executor" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire";
+export type ActiveSessionKind = "executor" | "step-session" | "workflow-step" | "step-session-parallel" | "ai-merge" | "workspace-repo-acquire" | "workspace-repo-land";
 
 export interface ActiveSessionRegistration {
   taskId: string;
