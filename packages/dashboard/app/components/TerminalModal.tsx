@@ -1798,7 +1798,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   // Once a tab exists we keep the xterm container visible while UI init runs,
   // avoiding a retry-loop spinner flash after bootstrap recovery.
   const isLoading = !isReady || (!activeTab && !bootstrapError);
-  const overlayClassName = `modal-overlay open${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
+  // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
+  const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
   const modalClassName = `modal terminal-modal${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}`;
   const modalStyle = {
     ...(keyboardOverlap > 0

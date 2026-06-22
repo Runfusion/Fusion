@@ -34,6 +34,15 @@ The docked/floating terminal must not blur or dim the page behind it, and the pa
 FNXC:Terminal 2026-06-22-00:45:
 The override MUST out-specify the base `.modal-overlay` (which sets a dimmed background + blur). Both are single-class selectors, so if styles.css loads after this file the dim/blur wins and the page still fades. Qualify with `.modal-overlay` (two classes) so the docked/floating terminal reliably keeps a transparent, non-blurring, click-through backdrop regardless of stylesheet order.
 */
+/*
+FNXC:Terminal 2026-06-23-04:30:
+The terminal must NEVER dim or blur the page behind it, in ANY mode. The base .modal-overlay applies a dimmed background + blur; the docked/floating overrides killed it, but a terminal that is NEITHER (the mobile/default sheet) still fell back to the dim. This base terminal-overlay rule removes the dim+blur for every terminal state.
+*/
+.modal-overlay.terminal-modal-overlay {
+  background: transparent;
+  backdrop-filter: none;
+}
+
 .modal-overlay.terminal-modal-overlay--docked,
 .modal-overlay.terminal-modal-overlay--floating {
   align-items: stretch;
