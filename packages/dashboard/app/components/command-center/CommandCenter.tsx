@@ -246,12 +246,10 @@ function OverviewTab({
       subLabel: costLabel,
     },
     { id: "autonomy", label: t("commandCenter.overview.autonomy", "Autonomy ratio"), value: autonomyLabel },
-    { id: "nodes", label: t("commandCenter.overview.activeNodes", "Active nodes"), value: formatCount(activeNodes) },
     /*
-    FNXC:CommandCenter 2026-06-19-00:00:
-    Session counts were already present on ActivityAnalytics for the selected date range but missing from the Overview stat grid. Surface the existing value here without adding a new endpoint.
+    FNXC:CommandCenter 2026-06-23-01:30:
+    The "Active nodes" and "Sessions" Overview stat cards were removed to declutter the stat grid; the underlying activeNodes/sessionsCount values are still fetched and reused by the activity-trend sparkline and hasActivityData guard, so the data wiring stays. The grid uses auto-fill, so the remaining cards reflow without an orphan column.
     */
-    { id: "sessions", label: t("commandCenter.overview.sessions", "Sessions"), value: formatCount(sessionsCount) },
     { id: "agentRuns", label: t("commandCenter.overview.agentRuns", "Agent runs"), value: formatCount(agentRunsTotal) },
     { id: "tasksDone", label: t("commandCenter.overview.tasksDone", "Tasks done"), value: formatCount(tasksDone) },
     { id: "models", label: t("commandCenter.overview.uniqueModels", "Unique models"), value: formatCount(uniqueModels) },

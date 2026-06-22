@@ -128,13 +128,17 @@ FN-6726 required large comma-grouped token totals to wrap instead of forcing sta
 
 FNXC:CommandCenterStyling 2026-06-19-22:18:
 FN-6784 requires stat and live-metric numbers to stay on one line and shrink by card/container width across desktop, tablet, and mobile. jsdom cannot prove pixel fit, so the CSS-rule contract guards nowrap plus container-query font clamps instead of wrapping.
+
+FNXC:CommandCenter 2026-06-23-01:30:
+The stat number must render as large as possible while never overflowing the card. Approach: pure-CSS container-query clamp. The card is the query container (container-type: inline-size on .cc-stat-card), so the value's font scales with the card's inline size via the cqi-based preferred term. A wider card or shorter number renders larger (up to the max); the preferred term shrinks proportionally as the card narrows, and a long value can never overflow because white-space: nowrap + overflow: hidden + min-width: 0 clip-without-wrap and the clamp floor caps the minimum. The cqi factor is tuned so a typical short value reaches the max while still fitting a single short card column; the min floor keeps very long comma-grouped totals legible without spilling. CSS-only is chosen over a JS measure-and-shrink because the markup is a single nowrap line in a fixed-padding container where cqi tracks fit deterministically, and it avoids ResizeObserver layout thrash. The cqi term inherently caps font growth at the card's width budget, so an extreme value shrinks until it fits.
 */
 .cc-stat-value {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  font-size: clamp(0.8rem, 7cqi, 1.5rem);
+  font-size: clamp(0.95rem, 16cqi, 2.4rem);
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
@@ -587,10 +591,15 @@ The "AI Engine" panel is a bordered card that hosts the "View Board"/"View Agent
   color: var(--text-muted);
 }
 
+/*
+FNXC:CommandCenter 2026-06-23-01:30:
+Add a deliberate vertical gap between the Start/Stop AI Engine action and the View Board/View Agents nav row so the primary engine action and the navigation shortcuts read as two intentionally separated groups rather than a cramped stack. The engine card is plain block flow (no parent gap), so margin-top on the nav row is the tokenized seam.
+*/
 .cc-overview-engine-nav {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
+  margin-top: var(--space-lg);
 }
 
 /* FNXC:CommandCenter 2026-06-22-23:30: View Board / View Agents match the Stop AI Engine button (btn btn-secondary, full-row, centered) — taller than the old btn-sm and visually consistent in the AI engine card. */

@@ -381,7 +381,9 @@ describe("CommandCenter shell", () => {
     expect(screen.queryByTestId("command-center-overview-chart-activity")).toBeNull();
     await screen.findByTestId("command-center-empty");
     expectThroughputLastAfter("command-center-empty");
+    // FNXC:CommandCenter 2026-06-23-01:30: Sessions/Active-nodes cards were removed — neither renders in the empty-data branch (the empty state has no stat grid at all).
     expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
+    expect(screen.queryByTestId("command-center-stat-nodes")).toBeNull();
     expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
     expect(screen.queryByTestId("cc-overview-pie")).toBeNull();
     expect(screen.queryByTestId("cc-overview-line")).toBeNull();
@@ -426,37 +428,43 @@ describe("CommandCenter shell", () => {
     expect(statValue("command-center-stat-agentRuns")).toBe("5");
   });
 
-  it("renders the date-range Sessions stat card when sessions exist", async () => {
+  /*
+  FNXC:CommandCenter 2026-06-23-01:30:
+  The "Active nodes" and "Sessions" Overview stat cards were removed. These cases preserve the prior session-data-state coverage (sessions present / other activity keeps Overview populated / sessions omitted) but now assert the Sessions (and Active nodes) cards are absent across those states, while Overview stays populated and other cards still render.
+  */
+  it("omits the Sessions and Active nodes cards even when sessions exist", async () => {
     mockOverviewApi({
       tokens: tokenFixture(0),
       tools: toolsFixture(0),
-      activity: activityFixture({ sessions: 3, messages: 0, activeNodes: 0, activeAgents: 0, agentRuns: 0, doneInRange: 0 }),
+      activity: activityFixture({ sessions: 3, messages: 0, activeNodes: 2, activeAgents: 0, agentRuns: 1, doneInRange: 0 }),
       signals: signalsFixture(0),
       live: liveFixture([{ column: "in-progress", count: 0 }]),
     });
     render(<CommandCenter />);
 
-    await screen.findByTestId("command-center-stat-sessions");
-    expect(statValue("command-center-stat-sessions")).toBe("3");
+    await screen.findByTestId("command-center-stat-agentRuns");
+    expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
+    expect(screen.queryByTestId("command-center-stat-nodes")).toBeNull();
     expect(screen.queryByTestId("command-center-empty")).toBeNull();
   });
 
-  it("renders zero in the Sessions card when other activity keeps Overview populated", async () => {
+  it("omits the Sessions and Active nodes cards when other activity keeps Overview populated", async () => {
     mockOverviewApi({
       tokens: tokenFixture(0),
       tools: toolsFixture(0),
-      activity: activityFixture({ sessions: 0, messages: 4, activeNodes: 0, activeAgents: 0, agentRuns: 0, doneInRange: 0 }),
+      activity: activityFixture({ sessions: 0, messages: 4, activeNodes: 0, activeAgents: 0, agentRuns: 1, doneInRange: 0 }),
       signals: signalsFixture(0),
       live: liveFixture([{ column: "in-progress", count: 0 }]),
     });
     render(<CommandCenter />);
 
-    await screen.findByTestId("command-center-stat-sessions");
-    expect(statValue("command-center-stat-sessions")).toBe("0");
+    await screen.findByTestId("command-center-stat-agentRuns");
+    expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
+    expect(screen.queryByTestId("command-center-stat-nodes")).toBeNull();
     expect(screen.queryByTestId("command-center-empty")).toBeNull();
   });
 
-  it("defaults the Sessions stat card to zero when activity payload omits sessions", async () => {
+  it("omits the Sessions card when activity payload omits sessions", async () => {
     const { sessions: _omitted, ...activityWithoutSessions } = activityFixture({
       messages: 5,
       activeNodes: 0,
@@ -473,8 +481,8 @@ describe("CommandCenter shell", () => {
     });
     render(<CommandCenter />);
 
-    await screen.findByTestId("command-center-stat-sessions");
-    expect(statValue("command-center-stat-sessions")).toBe("0");
+    await screen.findByTestId("command-center-stat-tokens");
+    expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
   });
 
   it("renders live Overview headline values when analytics data exists", async () => {
@@ -487,8 +495,9 @@ describe("CommandCenter shell", () => {
     expect(statValue("command-center-stat-tokens")).toBe("1,500");
     expect(screen.getByTestId("command-center-stat-tokens").textContent).toContain("$12.50");
     expect(statValue("command-center-stat-autonomy")).toBe("10.0:1");
-    expect(statValue("command-center-stat-nodes")).toBe("3");
-    expect(statValue("command-center-stat-sessions")).toBe("4");
+    // FNXC:CommandCenter 2026-06-23-01:30: The "Active nodes" and "Sessions" Overview stat cards were removed; assert they no longer render.
+    expect(screen.queryByTestId("command-center-stat-nodes")).toBeNull();
+    expect(screen.queryByTestId("command-center-stat-sessions")).toBeNull();
     expect(statValue("command-center-stat-agentRuns")).toBe("8");
     expect(statValue("command-center-stat-tasksDone")).toBe("7");
     expect(statValue("command-center-stat-models")).toBe("2");
@@ -632,11 +641,12 @@ describe("CommandCenter shell", () => {
     mockOverviewApi({ tokens: tokenFixture(0), tools: toolsFixture(0), activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 1, activeAgents: 0, agentRuns: 0, doneInRange: 0 }), signals: signalsFixture(0) });
     render(<CommandCenter />);
 
-    await screen.findByTestId("command-center-stat-nodes");
+    // FNXC:CommandCenter 2026-06-23-01:30: activeNodes>0 still keeps Overview populated (hasActivityData) even though the Active-nodes card was removed; assert via a remaining card and that the removed card is absent.
+    await screen.findByTestId("command-center-stat-tokens");
     expect(screen.queryByTestId("command-center-empty")).toBeNull();
     expect(statValue("command-center-stat-tokens")).toBe("0");
     expect(liveMetricValue("command-center-live-tokens")).toBe("0");
-    expect(statValue("command-center-stat-nodes")).toBe("1");
+    expect(screen.queryByTestId("command-center-stat-nodes")).toBeNull();
     expect(screen.queryByTestId("command-center-overview-charts")).toBeNull();
     expect(screen.queryByTestId("command-center-overview-loading")).toBeNull();
     expect(screen.queryByTestId("command-center-overview-error")).toBeNull();
