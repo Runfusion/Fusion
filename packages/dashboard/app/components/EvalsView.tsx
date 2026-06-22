@@ -40,13 +40,20 @@ export function EvalsView({ projectId, onOpenSettings, onOpenTaskDetail }: Evals
 
   if (!scheduledEnabled) {
     return (
-      <section className="evals-view card" data-testid="evals-disabled">
-        <h2 className="evals-title">{t("evals.disabledTitle", "Scheduled evals are disabled")}</h2>
-        <p className="evals-empty-copy">{t("evals.enablePrompt", "Enable Scheduled Evals to review scored tasks, evidence, and follow-up recommendations.")}</p>
-        <button className="btn btn-primary" type="button" onClick={() => onOpenSettings?.("scheduled-evals")}>
-          <Settings size={16} />
-          {t("evals.openSettings", "Open Scheduled Evals Settings")}
-        </button>
+      /*
+      FNXC:Evals 2026-06-23-04:15:
+      The disabled state shares the standard ViewHeader (matching InsightsView/ResearchView) and centers its empty-state copy/CTA in the full-width pane. Previously it rendered as a headerless `evals-view card`, which collapsed to a ~70px min-content column and lacked a view header.
+      */
+      <section className="evals-view" data-testid="evals-disabled">
+        <ViewHeader icon={Target} title={t("evals.title", "Evals")} />
+        <div className="evals-view__empty">
+          <h2 className="evals-title">{t("evals.disabledTitle", "Scheduled evals are disabled")}</h2>
+          <p className="evals-empty-copy">{t("evals.enablePrompt", "Enable Scheduled Evals to review scored tasks, evidence, and follow-up recommendations.")}</p>
+          <button className="btn btn-primary" type="button" onClick={() => onOpenSettings?.("scheduled-evals")}>
+            <Settings size={16} />
+            {t("evals.openSettings", "Open Scheduled Evals Settings")}
+          </button>
+        </div>
       </section>
     );
   }

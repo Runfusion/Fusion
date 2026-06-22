@@ -2,9 +2,18 @@
 FNXC:Navigation 2026-06-22-01:10:
 The shared .view-header sits at the top of the Evals view; the two-column results/detail grid moves into .evals-view__body so the header keeps the standard --space-lg inset while the body retains its side/bottom padding.
 */
+/*
+FNXC:Evals 2026-06-23-04:15:
+Root must fill the main-content pane (full width + height) like InsightsView/ResearchView; previously it was a bare flex column with no sizing, so the column collapsed to min-content (~70px) and the empty-state text wrapped one word per line. `height: 100%; min-width: 0; min-height: 0` makes it occupy the flex/grid host cell; `overflow: hidden` lets the scrollable body own its own scroll.
+*/
 .evals-view {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .evals-view__body {
@@ -12,6 +21,25 @@ The shared .view-header sits at the top of the Evals view; the two-column result
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-lg);
   padding: 0 var(--space-lg) var(--space-lg);
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/*
+FNXC:Evals 2026-06-23-04:15:
+Disabled/empty state now centers in the full-width pane beneath the shared ViewHeader instead of rendering as a min-content `card` column. The body fills remaining height and centers its content both axes.
+*/
+.evals-view__empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  text-align: center;
 }
 
 .evals-list,
