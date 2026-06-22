@@ -148,6 +148,13 @@ export class InProcessRuntime
   ) => Promise<import("@fusion/core").MergeResult>;
   private clearMergeActive?: (taskId: string) => void;
   private activeMergeTaskIdProvider?: () => string | null;
+  /**
+   * FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU): predicate that reports whether a task is
+   * anywhere in ProjectEngine's in-memory merge pipeline (queued OR dequeued-and-merging). Set by
+   * ProjectEngine before `start()` via `setMergePendingProvider`. Used by the workspace
+   * self-healing reconcilers to avoid re-dispatching / reclaiming a task mid-dequeue→rawMerge.
+   */
+  private mergePendingProvider?: (taskId: string) => boolean;
   /** Tracks whether startup recovery was intentionally deferred due to pause state. */
   private startupRecoveryDeferred = false;
   /** Prevent duplicate unpause recovery dispatches from racing each other. */
@@ -797,6 +804,9 @@ export class InProcessRuntime
         isTaskActive: (taskId: string) => this.executor.isTaskActive(taskId),
         clearMergeActive: this.clearMergeActive ? (taskId: string) => this.clearMergeActive?.(taskId) : undefined,
         getActiveMergeTaskId: () => this.activeMergeTaskIdProvider?.() ?? null,
+        // FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU): undefined provider → "not pending"
+        // (graceful when unwired; existing guards still apply). In production it is always wired.
+        isMergePending: this.mergePendingProvider ? (taskId: string) => this.mergePendingProvider?.(taskId) ?? false : undefined,
         leaseManager: this.leaseManager,
         hasActiveAgentExecution: (agentId: string) => this.heartbeatMonitor?.getTrackedAgents().includes(agentId) ?? false,
         resumeAssignedTaskForAgent: (agentId: string) => this.executor.resumeTaskForAgent(agentId),
@@ -1165,6 +1175,10 @@ export class InProcessRuntime
 
   setActiveMergeTaskIdProvider(getActiveMergeTaskId: () => string | null): void {
     this.activeMergeTaskIdProvider = getActiveMergeTaskId;
+  }
+
+  setMergePendingProvider(isMergePending: (taskId: string) => boolean): void {
+    this.mergePendingProvider = isMergePending;
   }
 
   /**

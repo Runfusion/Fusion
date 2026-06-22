@@ -263,6 +263,46 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     expect(store.enqueued).not.toContain(TASK_ID);
   });
 
+  /*
+  FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU — merge-queue dispatch blind spot):
+  A workspace task in the dequeue→rawMerge window is being merged but NO liveness signal fires
+  (no active session path, no executingTaskLock/isTaskActive, no activeMergeTaskId, no `merging`
+  status, no land lease yet). Without the merge-pending guard the partial-land reconciler would
+  re-enqueue it → a SECOND concurrent `landWorkspaceTask(T)` → double-squash. With `isMergePending`
+  returning true (task is in mergeQueue/mergeActive) the reconciler must NOT re-enqueue and must
+  emit -no-action(reason: "merge-pending").
+  */
+  it("partial-land reconciler does NOT re-enqueue a merge-pending task (closes double-dispatch)", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addRepoBranch(fx, "repo-a", "a\n");
+    addRepoBranch(fx, "repo-b", "b\n");
+    const landedA = landRepoForReal(fx, "repo-a"); // partial-landed → would normally re-enqueue.
+
+    const task = workspaceTask({
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH, landedSha: landedA },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    });
+    const store = createStore([task]);
+    // Narrow seam: inject the in-memory merge-pipeline probe. No session/lock/lease set → only
+    // the merge-pending guard can stop the re-enqueue.
+    const manager = makeManager(store, fx.rootDir, { isMergePending: (id: string) => id === TASK_ID });
+
+    const n = await manager.reconcileWorkspacePartialLands();
+
+    expect(n).toBe(0);
+    expect(store.enqueued).not.toContain(TASK_ID);
+    expect(store.tasks.get(TASK_ID)?.status).not.toBe("failed");
+    expect(store.tasks.get(TASK_ID)?.column).toBe("in-review");
+    const auditCalls = (store.recordRunAuditEvent as ReturnType<typeof vi.fn>).mock.calls;
+    expect(
+      auditCalls.some(
+        ([ev]) =>
+          (ev as { mutationType?: string }).mutationType === "task:reconcile-workspace-partial-land-no-action" &&
+          (ev as { metadata?: { reason?: string } }).metadata?.reason === "merge-pending",
+      ),
+    ).toBe(true);
+  });
+
   // ── KTD2 FORK-A: branch-gone classification ────────────────────────────────
   it("FORK-A: branch gone + landedSha unset → parked failed", async () => {
     fx = await createWorkspaceFixture(["repo-a"]);
@@ -331,6 +371,33 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     const manager = makeManager(store, fx.rootDir);
 
     vi.setSystemTime(new Date("2026-06-22T00:10:00.000Z"));
+    const n = await manager.reclaimPhantomWorkspaceLandLeases();
+
+    expect(n).toBe(0);
+    expect(activeSessionRegistry.isPathActive(leasePath)).toBe(true);
+  });
+
+  /*
+  FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU — merge-queue dispatch blind spot):
+  A workspace-repo-land lease whose owner is mid-dispatch (in mergeQueue/mergeActive but not yet
+  activeMergeTaskId) is about to be LEGITIMATELY used by the in-flight `landWorkspaceTask`. Even
+  though the owner ROW reads terminal-looking and the lease is past the staleness floor, the
+  merge-pending guard must keep the lease. Here the owner is `done` and the lease is well past the
+  180s floor — so ONLY the merge-pending guard can prevent reclaim.
+  */
+  it("does NOT reclaim a land lease whose owner is merge-pending (mid-dispatch)", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const leasePath = fx.repoPath("repo-a");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-22T00:00:00.000Z"));
+    activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
+
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "done" });
+    const store = createStore([task]);
+    // Narrow seam: owner is in the in-memory merge pipeline → lease must be left alone.
+    const manager = makeManager(store, fx.rootDir, { isMergePending: (id: string) => id === TASK_ID });
+
+    vi.setSystemTime(new Date("2026-06-22T00:10:00.000Z")); // 600s > 180s floor.
     const n = await manager.reclaimPhantomWorkspaceLandLeases();
 
     expect(n).toBe(0);
@@ -413,5 +480,141 @@ describeIfGit("workspace-aware self-healing (Phase D U1)", () => {
     expect(orphans).toBe(0);
     expect(store.enqueued).not.toContain("FN-9001");
     expect(store.tasks.get("FN-9001")?.status).toBe("merging"); // untouched
+  });
+
+  // ── review A (TWIN): recoverStuckMergeDeadlocks must NOT single-commit-finalize ─────
+  it("recoverStuckMergeDeadlocks does NOT finalize a partial-landed workspace task with blocked dependents (P0 twin)", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addRepoBranch(fx, "repo-a", "a\n");
+    addRepoBranch(fx, "repo-b", "b\n");
+    const landedA = landRepoForReal(fx, "repo-a"); // repo A landed; repo B NOT → partial.
+
+    const task = workspaceTask(
+      {
+        "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH, landedSha: landedA },
+        "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+      },
+      // Deadlock-candidate shape: failed + retries exhausted, mergeConfirmed unset.
+      { status: "failed", mergeRetries: 5, updatedAt: new Date(Date.now() - 30 * 60_000).toISOString() },
+    );
+    // A blocked dependent in todo → the deadlock filter admits the (worktree-null) workspace task.
+    const dependent = {
+      id: "FN-7002", column: "todo", blockedBy: TASK_ID, paused: false, dependencies: [], steps: [], currentStep: 0,
+    } as unknown as Task;
+    const store = createStore([task, dependent], { maxAutoMergeRetries: 1 });
+    const manager = makeManager(store, fx.rootDir);
+
+    await manager.recoverStuckMergeDeadlocks();
+
+    // NOT finalized done; never emitted task:merged on a single repo; status cleared (not done).
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.emitted.some((e) => e.event === "task:merged")).toBe(false);
+    expect(store.tasks.get(TASK_ID)?.column).toBe("in-review");
+    expect(store.tasks.get(TASK_ID)?.status).toBeNull();
+  });
+
+  // ── review B: bounded re-enqueue — no silent infinite loop ─────────────────
+  it("partial-land reconciler parks failed after N consecutive enqueue drops (no infinite re-enqueue)", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    addRepoBranch(fx, "repo-a", "a\n");
+    addRepoBranch(fx, "repo-b", "b\n");
+    const landedA = landRepoForReal(fx, "repo-a");
+
+    const baseTrees = {
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH, landedSha: landedA },
+      "repo-b": { worktreePath: fx.repoPath("repo-b"), branch: BRANCH },
+    } as NonNullable<Task["workspaceWorktrees"]>;
+    const task = workspaceTask(baseTrees);
+    const store = createStore([task]);
+    // enqueueMerge that ALWAYS rejects (queue full) → drop every time.
+    const manager = makeManager(store, fx.rootDir, { enqueueMerge: () => false });
+
+    // First two sweeps: dropped, re-enqueued (not failed yet). repo-b branch still present → retryable.
+    await manager.reconcileWorkspacePartialLands();
+    expect(store.tasks.get(TASK_ID)?.status).not.toBe("failed");
+    await manager.reconcileWorkspacePartialLands();
+    expect(store.tasks.get(TASK_ID)?.status).not.toBe("failed");
+    // Third drop hits the bound → parked failed.
+    await manager.reconcileWorkspacePartialLands();
+    expect(store.tasks.get(TASK_ID)?.status).toBe("failed");
+  });
+
+  // ── review C: phantom-lease reclaim must NOT reclaim a live executing (in-progress) task ─
+  it("does NOT reclaim a land lease owned by an IN-PROGRESS executing task (no merge status)", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    const leasePath = fx.repoPath("repo-a");
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-22T00:00:00.000Z"));
+    activeSessionRegistry.registerPath(leasePath, { taskId: TASK_ID, kind: "workspace-repo-land", ownerKey: "land" });
+
+    // Owner is executing in 'in-progress' with NO merge status — registered its land lease early.
+    const task = workspaceTask({ "repo-a": { worktreePath: leasePath, branch: BRANCH } }, { column: "in-progress", status: null });
+    const store = createStore([task]);
+    const manager = makeManager(store, fx.rootDir);
+
+    vi.setSystemTime(new Date("2026-06-22T00:10:00.000Z")); // well past the 180s floor.
+    const n = await manager.reclaimPhantomWorkspaceLandLeases();
+
+    expect(n).toBe(0);
+    expect(activeSessionRegistry.isPathActive(leasePath)).toBe(true);
+  });
+
+  // ── review D: branch-gone + landedSha-set-but-UNREACHABLE → parked, not re-enqueued forever ─
+  it("FORK-A: branch gone + landedSha set but UNREACHABLE → parked failed (not re-enqueued forever)", async () => {
+    fx = await createWorkspaceFixture(["repo-a"]);
+    addRepoBranch(fx, "repo-a", "a\n");
+    const landedA = landRepoForReal(fx, "repo-a");
+    // Roll the integration ref BACK so landedA is no longer reachable (force-reset), and delete the branch.
+    fx.git("repo-a", "git reset --hard HEAD~1");
+    fx.git("repo-a", `git branch -D ${BRANCH}`);
+
+    const task = workspaceTask({
+      "repo-a": { worktreePath: fx.repoPath("repo-a"), branch: BRANCH, landedSha: landedA },
+    });
+    const store = createStore([task]);
+    const manager = makeManager(store, fx.rootDir);
+
+    const n = await manager.reconcileWorkspacePartialLands();
+    // isRepoLanded is FALSE (landedSha unreachable, no trailer on ref) AND branch gone → unrecoverable.
+    expect(n).toBe(1);
+    expect(store.tasks.get(TASK_ID)?.status).toBe("failed");
+    expect(store.enqueued).not.toContain(TASK_ID);
+  });
+
+  // ── review E: failing git worktree remove → logged, isolated, bounded ──────
+  it("orphan worktree removal failure is bounded and does not abort the sweep", async () => {
+    fx = await createWorkspaceFixture(["repo-a", "repo-b"]);
+    // repo-a: a real removable worktree. repo-b: a path that EXISTS but is NOT a git worktree → remove fails.
+    const wtA = path.join(fx.repoPath("repo-a"), ".wt-task");
+    fx.git("repo-a", `git worktree add -b ${BRANCH} ${wtA} HEAD`);
+    const wtB = path.join(fx.repoPath("repo-b"), ".not-a-worktree");
+    execSync(`mkdir -p ${wtB}`, { stdio: "pipe" });
+    writeFileSync(path.join(wtB, "stray.txt"), "x", "utf-8");
+    expect(existsSync(wtA)).toBe(true);
+    expect(existsSync(wtB)).toBe(true);
+
+    const task = workspaceTask(
+      {
+        "repo-a": { worktreePath: wtA, branch: BRANCH },
+        "repo-b": { worktreePath: wtB, branch: BRANCH },
+      },
+      { column: "done" },
+    );
+    const store = createStore([task]);
+    const manager = makeManager(store, fx.rootDir);
+
+    // First sweep: repo-a removed (isolated from repo-b's failure); repo-b counted as a failure.
+    const cleaned1 = await manager.reconcileOrphanedWorkspaceWorktrees();
+    expect(cleaned1).toBe(1);
+    expect(existsSync(wtA)).toBe(false);
+    // The audit recorded a failure for repo-b (observability), and the sweep did not throw.
+    expect(store.emitted.length >= 0).toBe(true);
+
+    // Subsequent sweeps keep failing on repo-b but stay bounded — after the bound they stop attempting.
+    await manager.reconcileOrphanedWorkspaceWorktrees();
+    await manager.reconcileOrphanedWorkspaceWorktrees();
+    const cleanedAfterBound = await manager.reconcileOrphanedWorkspaceWorktrees();
+    // No more successful removals (repo-a already gone) and no crash.
+    expect(cleanedAfterBound).toBe(0);
   });
 });

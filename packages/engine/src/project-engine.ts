@@ -493,6 +493,10 @@ export class ProjectEngine {
     this.runtime.setMergeActiveClearer?.((taskId) => {
       this.mergeActive.delete(taskId);
     });
+    // FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU): expose the in-memory merge pipeline
+    // (mergeQueue + mergeActive) to the workspace self-healing reconcilers so they don't
+    // re-dispatch / reclaim a task that is mid-dequeue→rawMerge.
+    this.runtime.setMergePendingProvider?.((taskId) => this.isMergePending(taskId));
     // Workflow-graph interpreter merge seam: routes through the auto-merge
     // eligibility gate (requestInterpreterMerge), NOT the human "merge now"
     // bypass, so a graph merge node can't override an autoMerge-off project.
@@ -501,6 +505,26 @@ export class ProjectEngine {
 
   getActiveMergeTaskId(): string | null {
     return this.activeMergeTaskId;
+  }
+
+  /*
+  FNXC:Workspace 2026-06-22-16:40 (Phase D P1 TOCTOU — merge-queue dispatch blind spot):
+  A workspace task is "merge-pending" if it sits ANYWHERE in this engine's in-memory merge
+  pipeline: still queued in `mergeQueue`, OR already dequeued-and-dispatching / actively merging
+  (tracked by `mergeActive`). `mergeActive.add(taskId)` happens at enqueue time and is only removed
+  when the merge fully settles (try/finally, stale-merge recovery, or stop()), so it — unlike the
+  liveness signals the workspace reconcilers consult (session registry, executingTaskLock,
+  isTaskActive, getActiveMergeTaskId, setStatus("merging"), the workspace-repo-land lease) — covers
+  the WHOLE dequeue→rawMerge window. In that window `pickNextMergeTaskId` has shifted the id out of
+  `mergeQueue` but `activeMergeTaskId` / `merging` status / the land lease are not yet set (they fire
+  later inside the post-semaphore `landWorkspaceTask`). The workspace self-healing reconcilers
+  (reconcileWorkspacePartialLands / reclaimPhantomWorkspaceLandLeases) call this as a guard so they
+  never re-dispatch (double-squash) or reclaim the not-yet-registered land lease of a task that is
+  legitimately mid-dispatch. Because `mergeActive` lingers across the entire dequeue→rawMerge
+  window, checking it in addition to `mergeQueue` closes that TOCTOU gap.
+  */
+  isMergePending(taskId: string): boolean {
+    return this.mergeActive.has(taskId) || this.mergeQueue.includes(taskId);
   }
 
   /**
