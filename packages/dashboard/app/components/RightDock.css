@@ -170,6 +170,11 @@ The right-dock pop-out is a FLOATING, DRAGGABLE, RESIZABLE, NON-BLOCKING window.
   background: transparent;
   backdrop-filter: none;
   pointer-events: none;
+  /*
+  FNXC:FloatingWindow 2026-06-22-21:30:
+  Reset the base `.modal-overlay` z-index:100 to auto so this click-through overlay does NOT establish a stacking context. The floating panel carries an inline z-index from the SHARED floatingWindowStack (4000+); without this reset that inline z would be clamped inside the overlay's own stacking context and could never interleave with the other floating modal types (terminal, New Task, FloatingWindow) that all draw from the same stack.
+  */
+  z-index: auto;
 }
 
 .right-dock-expand-modal {

@@ -1,0 +1,148 @@
+/*
+FNXC:FloatingWindow 2026-06-22-20:45:
+FloatingWindow is a non-blocking floating window (generalized from RightDockExpandModal). The overlay is a full-viewport, transparent, NON-dimming, NON-blurring, click-through layer: `pointer-events: none` lets every click pass through to the app and to other windows behind it. Only the panel re-enables `pointer-events: auto`. Because the overlay never intercepts clicks there is no overlay click-to-dismiss; the header close button is the only dismissal. Multiple overlays/panels coexist with no mutual blocking — z-stacking is driven by inline `z-index` from the component's per-window counter.
+*/
+.floating-window-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+/*
+FNXC:FloatingWindow 2026-06-22-20:45:
+Floating panel positioned by state-driven inline `left/top/width/height` and stacked by inline `z-index`. min/max keep the panel usable and on-screen. `resize: none` because resizing is handled by the corner/edge handles. `pointer-events: auto` re-enables interaction on the panel only.
+*/
+.floating-window {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-2xl) * 7.5);
+  min-height: calc(var(--space-2xl) * 5.83);
+  max-width: calc(100vw - (var(--space-lg) * 2));
+  max-height: calc(100dvh - (var(--space-lg) * 2));
+  overflow: hidden;
+  background: var(--surface);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  color: var(--text);
+  resize: none;
+  pointer-events: auto;
+}
+
+/*
+FNXC:FloatingWindow 2026-06-22-20:45:
+Header is the drag handle. `touch-action: none` (matching the resize handles) hands the whole gesture to the pointer handlers so touch dragging stays smooth and never scrolls the page behind it. A comfortable min-height makes a forgiving touch target. `user-select: none` protects the drag from selecting header text.
+*/
+.floating-window__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: thin solid var(--border);
+  background: var(--surface-elevated, var(--surface));
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.floating-window__header:active {
+  cursor: grabbing;
+}
+
+.floating-window__title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floating-window__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-xs);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.floating-window__close:hover {
+  background: var(--status-todo-bg, var(--surface));
+  color: var(--text);
+}
+
+/*
+FNXC:FloatingWindow 2026-06-22-20:45:
+Body is a flex host that lets its single child stretch to the full panel width/height (min-width/min-height:0 so a wide child cannot collapse the flex line, and the child's own overflow can engage).
+*/
+.floating-window__body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.floating-window__body > * {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  min-block-size: 0;
+}
+
+/*
+FNXC:FloatingWindow 2026-06-22-20:45:
+Edge + corner resize handles. touch-action:none keeps the drag from being hijacked by scroll/gestures so resizing stays smooth.
+*/
+.floating-window__resize-handle {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+
+.floating-window__resize-handle--n,
+.floating-window__resize-handle--s {
+  left: var(--space-sm);
+  right: var(--space-sm);
+  height: var(--space-sm);
+  cursor: ns-resize;
+}
+
+.floating-window__resize-handle--n { top: 0; }
+.floating-window__resize-handle--s { bottom: 0; }
+
+.floating-window__resize-handle--e,
+.floating-window__resize-handle--w {
+  top: var(--space-sm);
+  bottom: var(--space-sm);
+  width: var(--space-sm);
+  cursor: ew-resize;
+}
+
+.floating-window__resize-handle--e { right: 0; }
+.floating-window__resize-handle--w { left: 0; }
+
+.floating-window__resize-handle--ne,
+.floating-window__resize-handle--nw,
+.floating-window__resize-handle--se,
+.floating-window__resize-handle--sw {
+  width: var(--space-lg);
+  height: var(--space-lg);
+}
+
+.floating-window__resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
+.floating-window__resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
+.floating-window__resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
+.floating-window__resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }

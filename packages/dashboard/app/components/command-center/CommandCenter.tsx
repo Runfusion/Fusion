@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Cpu, Gauge } from "lucide-react";
+import { AlertCircle, Gauge } from "lucide-react";
 import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics } from "@fusion/core";
 import { api } from "../../api/legacy";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
@@ -268,45 +268,9 @@ function OverviewTab({
   // its own empty state, so it renders even when the stat-card aggregates have no
   // data yet.
   /*
-  FNXC:CommandCenter 2026-06-22-18:00:
-  The "AI Engine" panel hosts the "View Board"/"View Agents" navigation shortcuts and lives inside controlsSection, which renders in EVERY Overview branch (loading/error/empty/populated), so the panel is always visible regardless of data state. It previously rendered only inside the populated return as the .cc-overview-engine-nav row, leaving loading/empty/error states with no shortcuts. The optional status line reuses already-fetched live-snapshot (inProgressTasks) and activity (activeAgents) data — no new endpoint — and is skipped while the live snapshot is still loading. Navigation is owned by App (onChangeView), so the button row only renders when wired up.
+  FNXC:CommandCenter 2026-06-22-20:55:
+  The Overview's AI-engine controls are a SINGLE instance: the CommandCenterControls "AI engine" card (Stop AI Engine) now also hosts the "View Board"/"View Agents" shortcuts (threaded onChangeView). The earlier duplicate `.cc-overview-engine-panel` (a second AI Engine row) was removed — the buttons moved into the first instance.
   */
-  const enginePanel = (
-    <div className="cc-overview-engine-panel" data-testid="command-center-engine-panel">
-      <div className="cc-overview-engine-panel-header">
-        <Cpu size={18} aria-hidden="true" />
-        <span className="cc-overview-engine-panel-title">
-          {t("commandCenter.overview.aiEngine", "AI Engine")}
-        </span>
-      </div>
-      {!liveSnapshotLoading ? (
-        <p className="cc-overview-engine-panel-status" data-testid="command-center-engine-panel-status">
-          {t("commandCenter.overview.aiEngineStatus", "{{agents}} agents working · {{tasks}} tasks in progress", {
-            agents: formatCount(activeAgents),
-            tasks: formatCount(inProgressTasks),
-          })}
-        </p>
-      ) : null}
-      {onChangeView ? (
-        <div className="cc-overview-engine-nav">
-          <button
-            type="button"
-            className="btn btn-sm cc-overview-engine-nav-btn"
-            onClick={() => onChangeView("board")}
-          >
-            {t("commandCenter.controls.engine.viewBoard", "View Board")}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm cc-overview-engine-nav-btn"
-            onClick={() => onChangeView("agents")}
-          >
-            {t("commandCenter.controls.engine.viewAgents", "View Agents")}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
   const controlsSection = (
     <>
       <CommandCenterControls
@@ -318,8 +282,8 @@ function OverviewTab({
         onColorThemeChange={onColorThemeChange}
         onThemeModeChange={onThemeModeChange}
         onShadcnCustomColorsChange={onShadcnCustomColorsChange}
+        onChangeView={onChangeView}
       />
-      {enginePanel}
     </>
   );
   const throughputSection = (

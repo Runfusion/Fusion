@@ -3,6 +3,107 @@
   min-height: min(520px, 80vh);
 }
 
+/*
+FNXC:NewTask 2026-06-22-20:30:
+The New Task dialog is a FLOATING, DRAGGABLE, RESIZABLE, NON-BLOCKING window (mirrors the right-dock pop-out). The overlay MUST out-specify the base `.modal-overlay` (which dims + blurs the page). Both base and override are single-class, so a two-class selector (`.modal-overlay.new-task-modal-overlay`) guarantees the transparent, non-blurring, click-through backdrop regardless of stylesheet order. `pointer-events: none` lets behind-clicks pass through to the app; the floating panel re-enables `pointer-events: auto`. No overlay click-to-dismiss — the header X / Cancel / Escape are the only dismissals.
+*/
+.modal-overlay.new-task-modal-overlay {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+/*
+FNXC:FloatingWindow 2026-06-22-21:30:
+Only the desktop FLOATING New Task dialog joins the shared cross-type floating stack. When the overlay hosts the floating panel, reset the base `.modal-overlay` z-index:100 to auto so it does NOT establish a stacking context; the panel's inline z-index (from floatingWindowStack, 4000+) then interleaves at the root with the terminal, the right-dock pop-out, and FloatingWindow. The mobile full-screen sheet (no `--floating` panel) keeps the base overlay z-index:100 so it still paints above page content.
+*/
+.modal-overlay.new-task-modal-overlay:has(.new-task-modal--floating) {
+  z-index: auto;
+}
+
+/*
+FNXC:NewTask 2026-06-22-20:30:
+Floating panel positioned by state-driven inline left/top/width/height. min/max keep content usable and the panel on-screen; `resize: none` because the corner/edge handles own resizing (the native grip conflicts with the pointer handlers). `pointer-events: auto` re-enables interaction on the panel only. Desktop only — mobile keeps the full-screen keyboard-aware sheet.
+*/
+.new-task-modal--floating {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  min-width: calc(var(--space-2xl) * 8.75);
+  min-height: calc(var(--space-2xl) * 7.5);
+  max-width: calc(100vw - (var(--space-lg) * 2));
+  max-height: calc(100dvh - (var(--space-lg) * 2));
+  resize: none;
+  pointer-events: auto;
+  box-shadow: var(--shadow-xl);
+}
+
+.new-task-modal--floating .modal-body {
+  max-height: none;
+}
+
+/*
+FNXC:NewTask 2026-06-22-20:30:
+Header is the drag handle. `touch-action: none` (matching the resize handles) hands the whole gesture to our pointer handlers so a finger drag stays smooth and never scrolls the page behind it. `cursor: grab/grabbing` is desktop-only signal.
+*/
+.new-task-modal__header--draggable {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.new-task-modal__header--draggable:active {
+  cursor: grabbing;
+}
+
+/*
+FNXC:NewTask 2026-06-22-20:30:
+Edge + corner resize handles. touch-action:none keeps the drag from being hijacked by scroll/gestures so resizing stays smooth.
+*/
+.new-task-resize-handle {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+
+.new-task-resize-handle--n,
+.new-task-resize-handle--s {
+  left: var(--space-sm);
+  right: var(--space-sm);
+  height: var(--space-sm);
+  cursor: ns-resize;
+}
+
+.new-task-resize-handle--n { top: 0; }
+.new-task-resize-handle--s { bottom: 0; }
+
+.new-task-resize-handle--e,
+.new-task-resize-handle--w {
+  top: var(--space-sm);
+  bottom: var(--space-sm);
+  width: var(--space-sm);
+  cursor: ew-resize;
+}
+
+.new-task-resize-handle--e { right: 0; }
+.new-task-resize-handle--w { left: 0; }
+
+.new-task-resize-handle--ne,
+.new-task-resize-handle--nw,
+.new-task-resize-handle--se,
+.new-task-resize-handle--sw {
+  width: var(--space-lg);
+  height: var(--space-lg);
+}
+
+.new-task-resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
+.new-task-resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
+.new-task-resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
+.new-task-resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
+
 .new-task-modal .modal-body {
   padding: var(--space-xl);
   overflow-y: auto;

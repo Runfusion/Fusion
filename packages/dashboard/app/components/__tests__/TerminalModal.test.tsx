@@ -261,12 +261,14 @@ describe("TerminalModal", () => {
     expect(modal).not.toHaveClass("terminal-modal--floating");
 
     const fitCallBaseline = mockFitAddonFit.mock.calls.length;
-    const handle = screen.getByTestId("terminal-docked-resize-handle") as HTMLElement & { setPointerCapture: (pointerId: number) => void };
+    // FNXC:Terminal 2026-06-22-19:50: The resize handlers now capture the pointer and listen on the CAPTURED handle element (not document), so move/up are fired on the handle with the matching pointerId; stub setPointerCapture/releasePointerCapture (jsdom no-ops).
+    const handle = screen.getByTestId("terminal-docked-resize-handle") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
     handle.setPointerCapture = vi.fn();
+    handle.releasePointerCapture = vi.fn();
 
     fireEvent.pointerDown(handle, { pointerId: 1, clientY: 500 });
-    fireEvent.pointerMove(document, { clientY: 420 });
-    fireEvent.pointerUp(document, { pointerId: 1 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientY: 420 });
+    fireEvent.pointerUp(handle, { pointerId: 1 });
 
     await waitFor(() => {
       expect(window.localStorage.getItem(`fusion:terminal-docked-height-${projectId}`)).toBe("440");
@@ -312,23 +314,26 @@ describe("TerminalModal", () => {
     expect(screen.getByTestId("terminal-floating-resize-se")).toBeInTheDocument();
 
     const fitCallBaseline = mockFitAddonFit.mock.calls.length;
-    const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & { setPointerCapture: (pointerId: number) => void };
+    // FNXC:Terminal 2026-06-22-19:50: Floating resize/drag now capture the pointer and listen on the CAPTURED element (not document); fire move/up on that element with the matching pointerId and stub set/releasePointerCapture.
+    const resizeHandle = screen.getByTestId("terminal-floating-resize-se") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
     resizeHandle.setPointerCapture = vi.fn();
+    resizeHandle.releasePointerCapture = vi.fn();
 
     fireEvent.pointerDown(resizeHandle, { pointerId: 1, clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(document, { clientX: 140, clientY: 130 });
-    fireEvent.pointerUp(document, { pointerId: 1 });
+    fireEvent.pointerMove(resizeHandle, { pointerId: 1, clientX: 140, clientY: 130 });
+    fireEvent.pointerUp(resizeHandle, { pointerId: 1 });
 
     await waitFor(() => {
       expect(window.localStorage.getItem(`fusion:terminal-modal-size-${projectId}`)).toBe(JSON.stringify({ width: 992, height: 590 }));
       expect(mockFitAddonFit.mock.calls.length).toBeGreaterThan(fitCallBaseline);
     });
 
-    const header = modal.querySelector(".terminal-header") as HTMLElement & { setPointerCapture: (pointerId: number) => void };
+    const header = modal.querySelector(".terminal-header") as HTMLElement & { setPointerCapture: (pointerId: number) => void; releasePointerCapture: (pointerId: number) => void };
     header.setPointerCapture = vi.fn();
+    header.releasePointerCapture = vi.fn();
     fireEvent.pointerDown(header, { pointerId: 2, clientX: 100, clientY: 100 });
-    fireEvent.pointerMove(document, { clientX: 125, clientY: 135 });
-    fireEvent.pointerUp(document, { pointerId: 2 });
+    fireEvent.pointerMove(header, { pointerId: 2, clientX: 125, clientY: 135 });
+    fireEvent.pointerUp(header, { pointerId: 2 });
 
     await waitFor(() => {
       expect(window.localStorage.getItem(`fusion:terminal-float-pos-${projectId}`)).toBeTruthy();

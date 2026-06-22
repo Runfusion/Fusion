@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { Maximize2, X } from "lucide-react";
 import { findOverflowViewEntry, type OverflowViewEntry, type OverflowViewKey, type OverflowViewRenderProps, type OverflowViewVisibilityOptions } from "./overflowViewRegistry";
+import { nextFloatingZ, currentFloatingZ } from "./floatingWindowStack";
 import "./RightDock.css";
 
 const RIGHT_DOCK_EXPAND_MODAL_SIZE_STORAGE_KEY = "fusion:right-dock-expand-modal-size";
@@ -124,6 +126,11 @@ export function RightDockExpandModal({
 
   const [size, setSizeState] = useState<ExpandSize>(() => readExpandSize());
   const [position, setPositionState] = useState<ExpandPosition>(() => readExpandPosition(readExpandSize()));
+  // FNXC:FloatingWindow 2026-06-22-21:30: The right-dock pop-out shares the SINGLE cross-type floating z-index stack (floatingWindowStack). Mounting claims the front; tapping the panel (pointerdown/focus capture) raises it above every other floating modal regardless of type.
+  const [zIndex, setZIndex] = useState<number>(() => nextFloatingZ());
+  const bringToFront = useCallback(() => {
+    setZIndex((current) => (current >= currentFloatingZ() ? current : nextFloatingZ()));
+  }, []);
 
   /*
   FNXC:RightDock 2026-06-22-17:40:
@@ -294,11 +301,18 @@ export function RightDockExpandModal({
     top: `${position.y}px`,
     width: `${size.width}px`,
     height: `${size.height}px`,
+    zIndex,
   } as CSSProperties;
 
-  return (
-    <div className="modal-overlay open right-dock-expand-modal-overlay" role="dialog" aria-modal="false" aria-label={`${entry.label} expanded`} data-testid="right-dock-expand-modal">
-      <div className="modal right-dock-expand-modal right-dock-expand-modal--floating" style={panelStyle}>
+  // FNXC:FloatingWindow 2026-06-22-22:30: Portaled to document.body so this floating modal shares the ONE root stacking context with the other floating modals (FloatingWindow/terminal/New Task) — the shared 10100+ z stack only orders correctly across types when they all live at the document root.
+  return createPortal(
+    <div className="modal-overlay open right-dock-expand-modal-overlay" role="dialog" aria-modal="false" aria-label={`${entry.label} expanded`} data-testid="right-dock-expand-modal" style={{ zIndex }}>
+      <div
+        className="modal right-dock-expand-modal right-dock-expand-modal--floating"
+        style={panelStyle}
+        onPointerDownCapture={bringToFront}
+        onFocusCapture={bringToFront}
+      >
         {EXPAND_RESIZE_DIRECTIONS.map((direction) => (
           <div
             key={direction}
@@ -331,6 +345,7 @@ export function RightDockExpandModal({
           {entry.render({ ...renderProps, surface: "expand" })}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

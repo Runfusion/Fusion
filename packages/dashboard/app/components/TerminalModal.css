@@ -44,6 +44,14 @@ The override MUST out-specify the base `.modal-overlay` (which sets a dimmed bac
   pointer-events: none;
 }
 
+/*
+FNXC:FloatingWindow 2026-06-22-21:30:
+Only the FLOATING terminal joins the shared cross-type floating stack. Reset the base `.modal-overlay` z-index:100 to auto so this click-through overlay does NOT establish a stacking context; the floating panel's inline z-index (from floatingWindowStack, 4000+) then interleaves at the root with the right-dock pop-out, the floating New Task dialog, and FloatingWindow. Docked mode keeps the base overlay stacking (full-width bottom panel) and is intentionally excluded.
+*/
+.modal-overlay.terminal-modal-overlay--floating {
+  z-index: auto;
+}
+
 .modal.terminal-modal {
   /* Initial dimensions are applied only when no persisted size has been
      restored — see :not([style*=...]) selectors below. */
@@ -124,9 +132,14 @@ Larger grab target for the docked terminal top resize handle: it straddles the p
   box-shadow: var(--shadow-xl);
 }
 
+/*
+FNXC:Terminal 2026-06-22-19:50:
+The floating-mode header is the move grip. `touch-action: none` is required so a touch-drag on it is delivered as a continuous pointermove stream (paired with setPointerCapture on the captured element) instead of being hijacked by the browser into page scroll/pan. Without it the floating drag stutters on touch — same fix the right-dock pop-out drag handle uses. cursor: grab/grabbing signals the move affordance on desktop.
+*/
 .terminal-header--draggable {
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .terminal-header--draggable:active {
@@ -820,6 +833,13 @@ The shortcut bar (modifier keys + arrow keys) must sit on ONE line, not stack in
   background: var(--surface);
   border-top: 1px solid var(--border);
   overflow-x: auto;
+  /*
+  FNXC:Terminal 2026-06-22-22:00:
+  On a narrow folded phone the modifier/arrow/letter keys exceed the viewport width, so the bar MUST scroll horizontally to keep every button reachable. touch-action: pan-x lets a horizontal swipe scroll the row (instead of the browser hijacking it as a page gesture), overscroll-behavior-x: contain stops the swipe from bleeding into page/back-navigation at the ends, and -webkit-overflow-scrolling: touch gives momentum scroll on iOS.
+  */
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .terminal-shortcut-modifier-row,
@@ -834,6 +854,11 @@ The shortcut bar (modifier keys + arrow keys) must sit on ONE line, not stack in
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /*
+  FNXC:Terminal 2026-06-22-22:00:
+  Keys keep their intrinsic width and never shrink/grow, so the row's total width exceeds a narrow viewport and the panel's overflow-x: auto produces a real horizontal scroll reaching the rightmost buttons. flex:1 / width:100% here would collapse every key to fit the viewport and defeat the scroll.
+  */
+  flex: 0 0 auto;
   min-width: calc(var(--space-xl) + var(--space-xs));
   min-height: calc(var(--space-xl) + var(--space-xs));
   padding: 0 var(--space-xs);

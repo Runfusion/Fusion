@@ -5,6 +5,7 @@ import { DEFAULT_PROJECT_SETTINGS, type ColorTheme, type ThemeMode } from "@fusi
 import { fetchConfig, fetchSettings, updateSettings } from "../../api/legacy";
 import { useAppSettings } from "../../hooks/useAppSettings";
 import { ThemeDropdown } from "../ThemeDropdown";
+import type { TaskView } from "../../hooks/useViewState";
 import "./CommandCenterControls.css";
 
 export interface CommandCenterControlsProps {
@@ -16,6 +17,8 @@ export interface CommandCenterControlsProps {
   onColorThemeChange: (theme: ColorTheme) => void;
   onThemeModeChange: (mode: ThemeMode) => void;
   onShadcnCustomColorsChange?: (colors: Record<string, string>) => void;
+  /* FNXC:CommandCenter 2026-06-22-20:55: View Board / View Agents shortcuts live in the AI engine card (under Stop AI Engine), so this is the single AI-engine instance on Overview — the duplicate cc-overview-engine-panel was removed. */
+  onChangeView?: (view: TaskView) => void;
 }
 
 type AsyncState<T> =
@@ -66,7 +69,7 @@ function StatusPill({ paused, label }: { paused: boolean; label: string }) {
   );
 }
 
-export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcnCustomColors = {}, resolvedThemeMode = themeMode === "light" ? "light" : "dark", onColorThemeChange, onThemeModeChange, onShadcnCustomColorsChange = () => {} }: CommandCenterControlsProps) {
+export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcnCustomColors = {}, resolvedThemeMode = themeMode === "light" ? "light" : "dark", onColorThemeChange, onThemeModeChange, onShadcnCustomColorsChange = () => {}, onChangeView }: CommandCenterControlsProps) {
   const { t } = useTranslation("app");
   const {
     globalPaused,
@@ -179,6 +182,24 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
                 : t("header.stopAiEngine", "Stop AI Engine")}
             </span>
           </button>
+          {onChangeView ? (
+            <div className="cc-overview-engine-nav" data-testid="command-center-engine-panel">
+              <button
+                type="button"
+                className="btn btn-sm cc-overview-engine-nav-btn"
+                onClick={() => onChangeView("board")}
+              >
+                {t("commandCenter.controls.engine.viewBoard", "View Board")}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm cc-overview-engine-nav-btn"
+                onClick={() => onChangeView("agents")}
+              >
+                {t("commandCenter.controls.engine.viewAgents", "View Agents")}
+              </button>
+            </div>
+          ) : null}
         </section>
 
         <section className="card cc-controls-card" data-testid="cc-controls-theme">

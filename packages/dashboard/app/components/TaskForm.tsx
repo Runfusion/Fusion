@@ -146,6 +146,11 @@ export interface TaskFormProps {
   hideDependencies?: boolean;
   /** When true (default), More options auto-expands when non-default advanced selections are present. */
   autoExpandMoreOptionsOnSelection?: boolean;
+  /**
+   * FNXC:NewTask 2026-06-22-20:30:
+   * When true, the advanced ("More options") controls are always shown — the collapsible disclosure is force-open and its toggle is hidden. The New Task dialog sets this so every quick-add control QuickEntryBox exposes (priority, execution-mode/Fast toggle, model selectors, attachments, node, GitHub tracking, etc.) is visible without a click. Other surfaces keep the default collapsed disclosure.
+   */
+  forceMoreOptionsOpen?: boolean;
 }
 
 export function TaskForm({
@@ -200,6 +205,7 @@ export function TaskForm({
   renderBelowModelConfiguration,
   hideDependencies,
   autoExpandMoreOptionsOnSelection = true,
+  forceMoreOptionsOpen = false,
   reviewLevel,
   onReviewLevelChange,
   autoMerge,
@@ -234,6 +240,8 @@ export function TaskForm({
   const [showMoreOptions, setShowMoreOptions] = useState(
     autoExpandMoreOptionsOnSelection ? hasInitialMoreOptions : false,
   );
+  // FNXC:NewTask 2026-06-22-20:30: When force-open (New Task dialog), the advanced section is always expanded regardless of the local disclosure toggle.
+  const moreOptionsOpen = forceMoreOptionsOpen || showMoreOptions;
   const [depSearch, setDepSearch] = useState("");
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [favoriteProviders, setFavoriteProviders] = useState<string[]>([]);
@@ -435,10 +443,10 @@ export function TaskForm({
 
   // Keep dependency dropdown state clean when advanced options are collapsed.
   useEffect(() => {
-    if (showMoreOptions) return;
+    if (moreOptionsOpen) return;
     setShowDepDropdown(false);
     setDepSearch("");
-  }, [showMoreOptions]);
+  }, [moreOptionsOpen]);
 
   // Auto-select title input text in edit mode (focus is handled by autoFocus)
   useEffect(() => {
@@ -876,24 +884,27 @@ export function TaskForm({
 
       {renderBelowPrimary}
 
-      <button
-        type="button"
-        className="task-form-more-options-toggle"
-        onClick={() => setShowMoreOptions((prev) => !prev)}
-        aria-expanded={showMoreOptions}
-        aria-controls="task-form-more-options"
-        disabled={disabled}
-        data-testid="task-form-more-options-toggle"
-      >
-        <span>{t("taskForm.moreOptions", "More options")}</span>
-        {showMoreOptions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-      </button>
+      {/* FNXC:NewTask 2026-06-22-20:30: Hide the disclosure toggle entirely when force-open — there is nothing to collapse, so the New Task dialog shows every advanced control without a click. */}
+      {!forceMoreOptionsOpen && (
+        <button
+          type="button"
+          className="task-form-more-options-toggle"
+          onClick={() => setShowMoreOptions((prev) => !prev)}
+          aria-expanded={showMoreOptions}
+          aria-controls="task-form-more-options"
+          disabled={disabled}
+          data-testid="task-form-more-options-toggle"
+        >
+          <span>{t("taskForm.moreOptions", "More options")}</span>
+          {showMoreOptions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      )}
 
       <div
         id="task-form-more-options"
-        className={`task-form-more-options${showMoreOptions ? "" : " collapsed"}`}
-        aria-hidden={!showMoreOptions}
-        hidden={!showMoreOptions}
+        className={`task-form-more-options${moreOptionsOpen ? "" : " collapsed"}`}
+        aria-hidden={!moreOptionsOpen}
+        hidden={!moreOptionsOpen}
         data-testid="task-form-more-options"
       >
       {/* Attachments */}

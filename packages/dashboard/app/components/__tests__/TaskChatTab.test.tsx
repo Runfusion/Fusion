@@ -168,11 +168,9 @@ function expectTranscriptTextOrder(...texts: string[]) {
 }
 
 function expectIdleSessionHint() {
-  const idleHint = screen.getByTestId("task-chat-idle-hint");
-  expect(idleHint).toBeVisible();
-  expect(idleHint).toHaveTextContent(/no agent is working on this task right now/i);
-  expect(idleHint).toHaveTextContent(/saved as guidance/i);
-  expect(idleHint).toHaveTextContent(/next time this task runs/i);
+  // FNXC:TaskDetailChat 2026-06-22-21:20: The idle "No agent is working…" banner was removed per user request — idle chats stay sendable with no hint shown.
+  expect(screen.queryByTestId("task-chat-idle-hint")).not.toBeInTheDocument();
+  expect(screen.queryByText(/no agent is working on this task right now/i)).not.toBeInTheDocument();
   expect(screen.getByPlaceholderText("Steer the currently executing agent")).toBeInTheDocument();
 }
 
@@ -672,7 +670,7 @@ describe("TaskChatTab", () => {
 
     expect(toolGroup).toHaveAttribute("open");
     const invocation = screen.getByTestId("task-chat-tool-invocation");
-    const kicker = screen.getByText("Tool call → result");
+    const kicker = screen.getByText("Tool call → Result");
     expect(invocation).toHaveClass("task-chat-tool-entry", "task-chat-tool-invocation");
     expect(kicker).toHaveClass("task-chat-entry-kicker");
     expect(kicker).toBeVisible();
@@ -729,7 +727,7 @@ describe("TaskChatTab", () => {
 
     await user.click(within(summary as HTMLElement).getByText("1 tool call"));
 
-    expect(screen.getByText("Tool call → error")).toBeVisible();
+    expect(screen.getByText("Tool call → Error")).toBeVisible();
     expect(screen.getByText("Error")).toBeVisible();
     expect(screen.getByText("stderr")).toBeVisible();
   });

@@ -13,7 +13,9 @@ import { Header, useViewportMode } from "./components/Header";
 import { Board } from "./components/Board";
 import { TaskCard } from "./components/TaskCard";
 import { ListView } from "./components/ListView";
+import { Maximize2 } from "lucide-react";
 import { TaskDetailContent } from "./components/TaskDetailModal";
+import { FloatingWindow } from "./components/FloatingWindow";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { MissionManager } from "./components/MissionManager";
 import { MailboxView } from "./components/MailboxView";
@@ -552,6 +554,18 @@ function AppInner() {
   Snapshot of the task whose detail is shown in the main panel (Board card click → full-panel detail). Kept as a snapshot so the view survives a tasks revalidation; renderMainContent prefers the live row from `tasks` by id and falls back to this snapshot.
   */
   const [mainPanelDetailTask, setMainPanelDetailTask] = useState<Task | TaskDetail | null>(null);
+
+  /*
+  FNXC:FloatingWindow 2026-06-22-20:45:
+  Open popped-out task-detail windows. Each entry is a task snapshot rendered inside its own movable, resizable, non-blocking FloatingWindow. Several can be open at once and coexist with the right-dock pop-out and terminal (all click-through overlays). Snapshots survive a tasks revalidation; rendering prefers the live row by id and falls back to the snapshot. Pop-out dedupes by task id — re-popping an already-open task is a no-op (its window stays; focus-to-front in FloatingWindow handles re-raising on click).
+  */
+  const [poppedOutTasks, setPoppedOutTasks] = useState<Array<Task | TaskDetail>>([]);
+  const popOutTaskDetail = useCallback((task: Task | TaskDetail) => {
+    setPoppedOutTasks((current) => (current.some((entry) => entry.id === task.id) ? current : [...current, task]));
+  }, []);
+  const closePoppedOutTask = useCallback((taskId: string) => {
+    setPoppedOutTasks((current) => current.filter((entry) => entry.id !== taskId));
+  }, []);
 
   const previousTaskViewRef = useRef<TaskView>(taskView);
 
@@ -2053,6 +2067,8 @@ function AppInner() {
                 Board-card detail (full main panel) renders its "Back to board" affordance inside TaskDetailContent's gray header (far right, across from the task id) instead of a separate back-row above the content. The prop only renders the header back button when both embedded and onBackToBoard are present, so ListView split-pane and modal usages stay unaffected.
                 */
                 onBackToBoard={closeTaskDetailMainPanel}
+                /* FNXC:FloatingWindow 2026-06-22-21:10: Popping out from the board's full-panel detail also returns the main panel to the board, so the board (not the emptied detail) sits behind the floating window. */
+                onPopOut={(task) => { popOutTaskDetail(task); closeTaskDetailMainPanel(); }}
                 onOpenDetail={(value) => setMainPanelDetailTask(value)}
                 onMoveTask={moveTask}
                 onDeleteTask={deleteTask}
@@ -2148,6 +2164,7 @@ function AppInner() {
           onResetTask={resetTask}
           onDuplicateTask={duplicateTask}
           onOpenDetail={(task, options) => openDetailTask(task, undefined, options)}
+          onPopOut={popOutTaskDetail}
           addToast={addToast}
           globalPaused={globalPaused}
           onNewTask={openNewTaskWithNav}
@@ -2496,6 +2513,45 @@ function AppInner() {
           onToggleModelFavorite={handleToggleModelFavorite}
         />
       )}
+      {/*
+      FNXC:FloatingWindow 2026-06-22-20:45:
+      One movable, resizable, non-blocking FloatingWindow per popped-out task. Each hosts the same embedded TaskDetailContent List/Board use, wired to the same App task handlers. Live row preferred by id; falls back to the snapshot. Terminal/destructive actions and the window close button both remove the entry. Multiple entries → multiple coexisting windows; FloatingWindow's per-window z-counter handles focus-to-front so the clicked one comes on top.
+      */}
+      {poppedOutTasks.map((snapshot) => {
+        const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
+        const close = () => closePoppedOutTask(snapshot.id);
+        return (
+          <FloatingWindow
+            key={snapshot.id}
+            windowKey={`task-detail-${snapshot.id}`}
+            title={
+              <>
+                <Maximize2 size={14} aria-hidden="true" />
+                <span>{liveTask.id}</span>
+              </>
+            }
+            onClose={close}
+          >
+            <TaskDetailContent
+              task={liveTask}
+              projectId={currentProject?.id}
+              tasks={tasks}
+              embedded
+              onOpenDetail={popOutTaskDetail}
+              onMoveTask={moveTask}
+              onDeleteTask={deleteTask}
+              onMergeTask={mergeTask}
+              onRetryTask={retryTask}
+              onResetTask={resetTask}
+              onDuplicateTask={duplicateTask}
+              onRequestClose={close}
+              addToast={addToast}
+              prAuthAvailable={prAuthAvailable}
+              autoMergeEnabled={autoMerge}
+            />
+          </FloatingWindow>
+        );
+      })}
       <AppModals
         projectId={currentProject?.id}
         tasks={tasks}

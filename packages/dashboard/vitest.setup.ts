@@ -16,7 +16,29 @@ await i18next.use(initReactI18next).init({
   // Each namespace present (empty) so hasLoadedNamespace() is true — an
   // unloaded namespace makes useTranslation() suspend (no Suspense boundary
   // in component tests) even with useSuspense disabled belt-and-braces below.
-  resources: { en: { common: {}, app: {}, errors: {} } },
+  //
+  // FNXC:TestI18n 2026-06-22-21:40:
+  // Pluralized count keys must resolve from resources, not the singular inline
+  // default. t("taskChat.entryCount", "{{count}} entry", { count }) renders the
+  // singular default for ALL counts when the key is absent — so count=2 became
+  // "2 entry". Provide the _one/_other forms (as the real en locale does) so the
+  // correct plural ("2 entries", "7 tool calls") renders in tests too. Only these
+  // keys resolve from the bundle; every other key still falls back to its inline
+  // default, preserving existing assertions.
+  resources: {
+    en: {
+      common: {},
+      app: {
+        taskChat: {
+          entryCount_one: "{{count}} entry",
+          entryCount_other: "{{count}} entries",
+          toolCallCount_one: "{{count}} tool call",
+          toolCallCount_other: "{{count}} tool calls",
+        },
+      },
+      errors: {},
+    },
+  },
   ns: ["common", "app", "errors"],
   defaultNS: "common",
   interpolation: { escapeValue: false },

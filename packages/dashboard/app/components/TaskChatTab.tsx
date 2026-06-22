@@ -509,12 +509,15 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
   /**
    * FNXC:TaskDetailChat 2026-06-19-22:54:
    * The task-detail chat must never silently accept a question when no agent session will consume it. Keep idle chats sendable, but surface that the message is saved as guidance for the next task run instead of implying a live reply.
+   *
+   * FNXC:TaskDetailChat 2026-06-22-21:20:
+   * The idle "No agent is working on this task right now…" hint is suppressed (empty) per user request — idle chats stay sendable but no longer show the banner. Done/active hints remain. The render gates on a truthy sessionHint, so the empty idle case renders nothing.
    */
   const sessionHint = isDoneTask
     ? t("taskChat.doneSessionHint", "Send a message to start a refinement task for this completed task.")
     : activeSession
       ? t("taskChat.activeSessionHint", "Message the active agent session. Guidance is delivered to the running session in real time.")
-      : t("taskChat.idleSessionHint", "No agent is working on this task right now. Your message is saved as guidance and will reach an agent the next time this task runs.");
+      : "";
   const composerPlaceholder = isDoneTask
     ? t("taskChat.donePlaceholder", "Start a refinement task for this completed task")
     : t("taskChat.activePlaceholder", "Steer the currently executing agent");

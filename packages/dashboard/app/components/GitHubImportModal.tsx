@@ -86,6 +86,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const [loadingRemotes, setLoadingRemotes] = useState(false);
   const [selectedRemoteName, setSelectedRemoteName] = useState<string>("");
   const mountedRef = useRef(false);
+  const remoteLoadRequestIdRef = useRef(0);
   const modalRef = useRef<HTMLDivElement>(null);
   useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:github-modal-size");
   const overlayDismissProps = useOverlayDismiss(onClose);
@@ -153,11 +154,22 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       autoLoadedRef.current = null;
 
       mountedRef.current = true;
+      const remoteLoadRequestId = remoteLoadRequestIdRef.current + 1;
+      remoteLoadRequestIdRef.current = remoteLoadRequestId;
+      let cancelled = false;
 
-      // Fetch git remotes
-      fetchGitRemotes()
+      /*
+      FNXC:GitHubImport 2026-06-22-09:08:
+      Import from GitHub must detect remotes for the active project, not the dashboard process fallback.
+      The remotes API returns an empty list without projectId in multi-project mode, which incorrectly shows "No GitHub remotes detected" for configured repositories.
+
+      FNXC:GitHubImport 2026-06-22-09:22:
+      Project changes can happen while the modal stays open, so remote discovery must ignore stale responses from earlier projectId requests.
+      A mounted-only guard is insufficient because the next effect marks the component mounted again before the older request resolves.
+      */
+      fetchGitRemotes(projectId)
         .then((fetchedRemotes) => {
-          if (!mountedRef.current) return;
+          if (cancelled || !mountedRef.current || remoteLoadRequestId !== remoteLoadRequestIdRef.current) return;
 
           setRemotes(fetchedRemotes);
           setLoadingRemotes(false);
@@ -179,16 +191,17 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
           // If no remotes, owner/repo remain empty
         })
         .catch(() => {
-          if (mountedRef.current) {
+          if (!cancelled && mountedRef.current && remoteLoadRequestId === remoteLoadRequestIdRef.current) {
             setLoadingRemotes(false);
           }
         });
 
       return () => {
+        cancelled = true;
         mountedRef.current = false;
       };
     }
-  }, [isOpen]);
+  }, [isOpen, projectId]);
 
   // Handle remote selection change
   const handleRemoteChange = useCallback((remoteName: string) => {
@@ -453,7 +466,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         setImporting(false);
       }
     }
-  }, [activeTab, selectedIssueNumber, selectedPullNumber, owner, repo, onImport, isMobile, mobileView]);
+  }, [activeTab, selectedIssueNumber, selectedPullNumber, owner, repo, projectId, onImport, isMobile, mobileView]);
 
   const selectedIssue = issues.find((i) => i.number === selectedIssueNumber);
   const selectedPull = pulls.find((p) => p.number === selectedPullNumber);

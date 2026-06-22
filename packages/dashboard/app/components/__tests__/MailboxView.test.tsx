@@ -1884,13 +1884,14 @@ describe("MailboxView", () => {
       const resizeHandleBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-resize-handle\s*\{([^}]*)\}/);
       expect(resizeHandleBlockMatch).toBeTruthy();
       const resizeHandleBlock = resizeHandleBlockMatch![1];
-      expect(resizeHandleBlock).toContain("width: var(--space-xs);");
+      // FNXC:Mailbox 2026-06-22-18:20: handle mirrors the Chat sidebar divider — hit area var(--space-sm), transparent until hover, centered var(--space-xs) line.
+      expect(resizeHandleBlock).toContain("width: var(--space-sm);");
       expect(resizeHandleBlock).toContain("cursor: col-resize;");
-      expect(resizeHandleBlock).toContain("background: color-mix(in srgb, var(--border) 70%, transparent);");
+      expect(resizeHandleBlock).toContain("background: transparent;");
 
       const resizeHandleTargetBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-resize-handle::before\s*\{([^}]*)\}/);
       expect(resizeHandleTargetBlockMatch).toBeTruthy();
-      expect(resizeHandleTargetBlockMatch![1]).toContain("width: var(--space-sm);");
+      expect(resizeHandleTargetBlockMatch![1]).toContain("width: var(--space-xs);");
       expect(css).toMatch(/\.mailbox-view\s+\.mailbox-split-resize-handle:hover::before,\s*\n\.mailbox-view\s+\.mailbox-split-resize-handle:active::before\s*\{[^}]*background:\s*color-mix\(in srgb,\s*var\(--todo\)\s*35%,\s*transparent\);[^}]*\}/);
 
       const splitEmptyBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-empty\s*\{([^}]*)\}/);

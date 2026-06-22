@@ -3417,8 +3417,9 @@ describe("GitManagerModal", () => {
 
       const navItemRules = getRuleBlocks(mobile768, ".gm-nav-item");
       expect(navItemRules).toHaveLength(1);
+      // Mobile tabs are compact ICON-ONLY in one scrolling row: non-shrinking via flex:0 0 auto + intrinsic width:auto (overrides the base .gm-nav-item width:100% that otherwise made one tab fill the row).
       expect(navItemRules[0]).toContain("flex: 0 0 auto;");
-      expect(navItemRules[0]).toContain("min-height: calc(var(--space-xl) + var(--space-sm));");
+      expect(navItemRules[0]).toContain("width: auto;");
 
       expect(mobile720).not.toContain(".gm-sidebar");
       expect(mobile720).not.toContain(".gm-nav-item");

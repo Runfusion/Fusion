@@ -208,6 +208,11 @@ interface ListViewProps {
   onResetTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
   onOpenDetail: (task: Task | TaskDetail, options?: { origin?: "list-mobile" }) => void;
+  /*
+  FNXC:FloatingWindow 2026-06-22-20:45:
+  onPopOut pops the split-pane task detail into a movable, resizable, non-blocking FloatingWindow managed at App level. Wired to the Maximize2 "Pop out" button in TaskDetailContent's header.
+  */
+  onPopOut?: (task: Task | TaskDetail) => void;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onNewTask?: () => void;
@@ -291,6 +296,7 @@ export function ListView({
   onMergeTask,
   onResetTask,
   onDuplicateTask,
+  onPopOut,
   onOpenDetail,
   addToast,
   globalPaused,
@@ -2473,6 +2479,7 @@ export function ListView({
                       onRetryTask={onRetryTask}
                       onResetTask={onResetTask}
                       onDuplicateTask={onDuplicateTask}
+                      onPopOut={onPopOut ? () => onPopOut(selectedTaskSnapshot) : undefined}
                       onTaskUpdated={(updatedTask) => {
                         setSelectedTaskSnapshot((previous) => {
                           if (!previous || previous.id !== updatedTask.id) return previous;

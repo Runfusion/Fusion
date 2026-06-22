@@ -17,6 +17,14 @@
   resize: both;
 }
 
+/*
+FNXC:TaskDetail 2026-06-22-20:00:
+The gray top header band (task id + column badge) was over-padded. Trim its vertical padding for a more compact band, scoped to the task-detail header so the shared global .modal-header (used by other modals) is unaffected. Keep horizontal padding from --modal-padding; only the block padding shrinks.
+*/
+.task-detail-content > .modal-header {
+  padding-block: var(--space-sm);
+}
+
 .detail-title-row {
   display: flex;
   align-items: center;
@@ -121,16 +129,22 @@
   overflow: hidden;
 }
 
+/*
+FNXC:TaskDetail 2026-06-22-20:00:
+Summarize-as-title is an in-field affordance, not a separate full-width row: it sits inline with the title, pinned to the far right and bottom of the title area. Use a nowrap flex row where the title flexes to fill and the button is pushed right (margin-left:auto) and bottom-aligned (align-self:flex-end). The button shrinks to its content so it never steals title space.
+*/
 .detail-heading-row {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
+  align-items: flex-end;
+  flex-wrap: nowrap;
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
 
 .detail-heading-row .detail-title {
   margin-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .detail-summarize-title-btn {
@@ -143,7 +157,11 @@
   font-size: 0.8125rem;
   padding: 0;
   cursor: pointer;
-  text-align: left;
+  text-align: right;
+  margin-left: auto;
+  align-self: flex-end;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .detail-summarize-title-btn:hover:not(:disabled) {
@@ -257,8 +275,12 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
 }
 
 @media (max-width: 768px) {
+  /*
+  FNXC:TaskDetail 2026-06-22-20:00:
+  Keep summarize-as-title pinned bottom-right inline with the title on mobile too (no wrap to a separate row), matching the desktop in-field affordance.
+  */
   .detail-heading-row {
-    align-items: flex-start;
+    align-items: flex-end;
   }
 
   .detail-summarize-title-btn {
@@ -291,7 +313,11 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
 }
 
 .detail-meta-inline-controls {
-  --detail-priority-control-min-height: calc(var(--space-2xl) + var(--space-xs));
+  /*
+  FNXC:TaskDetail 2026-06-22-20:00:
+  Priority chip and speed (execution-mode) toggle share one min-height token so they render at identical, equal height. Reduced from the old calc(space-2xl + space-xs) (~too tall) to a compact 30px that stays legible and tappable. Both controls also get trimmed vertical padding to match.
+  */
+  --detail-priority-control-min-height: 30px;
 
   display: flex;
   align-items: stretch;
@@ -302,6 +328,7 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
 .detail-priority-chip {
   gap: var(--space-xs);
   min-height: var(--detail-priority-control-min-height);
+  padding-block: var(--space-xs);
   box-sizing: border-box;
 }
 
@@ -342,6 +369,7 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   align-items: center;
   gap: var(--space-xs);
   min-height: var(--detail-priority-control-min-height);
+  padding-block: var(--space-xs);
   box-sizing: border-box;
 }
 
@@ -1115,10 +1143,14 @@ FNXC:TaskDetail 2026-06-22-18:40:
   background: var(--card-hover);
 }
 
+/*
+FNXC:TaskDetail 2026-06-22-20:15:
+The footer Actions/Move dropdown buttons sit at the BOTTOM of the embedded panel, so the menus must open UPWARD (above the button). The earlier embedded rule opened them downward (top:100%), which dropped the menu off the panel bottom where the body's overflow clipped it — the popups appeared to vanish. Anchor to bottom:100% so they always open above the trigger and stay on-screen.
+*/
 .task-detail-content--embedded .detail-actions-menu,
 .task-detail-content--embedded .detail-move-menu {
-  top: calc(100% + var(--space-xs));
-  bottom: auto;
+  bottom: calc(100% + var(--space-xs));
+  top: auto;
 }
 
 .detail-refine-title {

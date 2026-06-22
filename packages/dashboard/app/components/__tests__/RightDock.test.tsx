@@ -347,15 +347,17 @@ describe("RightDock", () => {
 
     render(<Harness />);
 
-    // Pop out the currently selected (Files) view from the open dock.
+    // Pop out the currently selected (Files) view: the floating modal appears AND
+    // popping out closes the dock (pop-out dismisses the dock so the full-width app
+    // sits behind the movable modal). The dock unmounts; the floating modal survives.
     fireEvent.click(screen.getByTestId("right-dock-expand"));
     expect(screen.getByTestId("right-dock-expand-modal")).toBeInTheDocument();
-
-    // Toggle the dock closed: the dock itself unmounts, the floating modal MUST survive.
-    fireEvent.click(screen.getByTestId("harness-toggle-dock"));
     expect(screen.queryByTestId("right-dock")).toBeNull();
-    expect(screen.getByTestId("right-dock-expand-modal")).toBeInTheDocument();
     expect(screen.getByTestId("right-dock-expand-body")).toBeInTheDocument();
+
+    // Re-opening the dock does not disturb the independent floating modal.
+    fireEvent.click(screen.getByTestId("harness-toggle-dock"));
+    expect(screen.getByTestId("right-dock-expand-modal")).toBeInTheDocument();
 
     // Its own close button still dismisses it.
     fireEvent.click(screen.getByTestId("right-dock-expand-close"));
