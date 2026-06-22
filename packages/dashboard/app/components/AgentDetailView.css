@@ -75,23 +75,30 @@
   color: var(--text-muted);
 }
 
+/*
+FNXC:Agents 2026-06-22-18:00:
+The agent-detail header lays out the identity block (avatar + name + active/Healthy badges) and the action cluster (Pause/Stop/Run Now + kebab + refresh + close) on one row.
+Previously both sides were `flex-shrink: 0` with no `flex-wrap`, so when a long agent name plus the full button cluster exceeded the modal width neither side shrank and the actions overflowed ON TOP OF the title/badges (visual overlap).
+Fix: allow the header to wrap, let the identity block shrink (`flex: 1 1 auto; min-width: 0`) so the name ellipsizes, and let the action cluster wrap below the identity at narrow widths instead of overlaying it. Buttons stay reachable; title/badges stay fully visible at every width.
+*/
 .agent-detail-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-md);
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
   padding: var(--space-md) calc(var(--space-lg) + var(--space-xs));
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   flex-shrink: 0;
 }
 
-/* Identity area: icon + name + badges */
+/* Identity area: icon + name + badges. Shrinks (name ellipsizes) so it never collides with the actions. */
 .agent-detail-identity {
   display: flex;
   align-items: center;
   gap: var(--space-md);
-  flex-shrink: 0;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -133,13 +140,17 @@
   margin-top: calc(var(--space-xs) * 0.5);
 }
 
-/* Unified right-side header action cluster */
+/*
+FNXC:Agents 2026-06-22-18:00:
+The action cluster sits beside the identity block and wraps below it (as a whole) when the row runs out of room, rather than growing to overlay the title. `flex-wrap` lets its own buttons reflow on extremely narrow widths so every control stays reachable.
+*/
 .agent-detail-header-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-sm);
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -147,6 +158,7 @@
 .agent-detail-controls {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: calc(var(--space-xs) + var(--space-sm) * 0.25);
   flex-shrink: 0;
 }

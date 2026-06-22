@@ -251,8 +251,9 @@ export function SkillsView({ projectId, addToast, onClose }: SkillsViewProps) {
             >
               <X size={16} />
             </button>
+            {/* FNXC:Skills 2026-06-22-17:35: Refresh uses plain btn btn-sm (no touch-target min-height) so it matches the Mailbox Compose button height (also btn btn-sm). */}
             <button
-              className="btn btn-sm touch-target"
+              className="btn btn-sm"
               onClick={() => void loadDiscoveredSkills()}
               disabled={isLoadingDiscovered}
             >

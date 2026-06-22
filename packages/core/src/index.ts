@@ -47,6 +47,7 @@ export type {
   TaskCommitAssociation,
   TaskCommitAssociationConfidence,
   TaskCommitAssociationMatchSource,
+  CommitAssociationDiffBackfillReport,
   PluginActivation,
   PluginActivationInput,
 } from "./types.js";

@@ -167,8 +167,20 @@ vi.mock("../../components/TaskDetailModal", () => ({
     </div>
   ),
   // FNXC:Navigation 2026-06-22-00:00: Board card clicks now open task detail in the full main panel via TaskDetailContent (not the modal). The mock exposes a stable testid so the embedded-panel popstate tests can assert on the new surface.
-  TaskDetailContent: ({ task }: { task: { id: string; title?: string } }) => (
+  // FNXC:TaskDetail 2026-06-22-18:40: "Back to board" moved into TaskDetailContent's gray header (rendered when embedded && onBackToBoard). The mock surfaces that button via onBackToBoard so the panel-dismiss popstate tests still drive the same affordance.
+  TaskDetailContent: ({
+    task,
+    onBackToBoard,
+  }: {
+    task: { id: string; title?: string };
+    onBackToBoard?: () => void;
+  }) => (
     <div data-testid="task-detail-main-panel-content">
+      {onBackToBoard && (
+        <button type="button" onClick={onBackToBoard}>
+          Back to board
+        </button>
+      )}
       <h2>{task.title ?? task.id}</h2>
     </div>
   ),
@@ -181,7 +193,7 @@ vi.mock("../../components/SettingsModal", () => ({
       <button type="button" data-testid="settings-close-btn" onClick={onClose}>Close</button>
     </div>
   ),
-  // FNXC:Settings 2026-06-22: Settings now opens as an embedded main-content view (presentation="embedded").
+  // FNXC:Settings 2026-06-22-12:00: Settings now opens as an embedded main-content view (presentation="embedded").
   SettingsView: ({ onClose }: { onClose: () => void }) => (
     <div data-testid="settings-view">
       <h2>Settings</h2>
@@ -429,7 +441,7 @@ describe("Navigation history integration", () => {
   }
 
   // 1. Desktop: opening Settings pushes a history entry
-  // FNXC:Settings 2026-06-22: Settings opens as an embedded main-content view (settings-view), not a modal overlay.
+  // FNXC:Settings 2026-06-22-12:00: Settings opens as an embedded main-content view (settings-view), not a modal overlay.
   it("pushes history entry when opening Settings view on desktop", async () => {
     await renderAppAndWait();
 

@@ -408,6 +408,32 @@ describe("QuickEntryBox", () => {
     expect((textarea as HTMLTextAreaElement).rows).toBe(2);
   });
 
+  // FNXC:QuickEntry 2026-06-22-19:25: List view passes singleLine so quick-add is a compact one-line input (not the tall 80px auto-grow variant).
+  describe("singleLine (List view compact mode)", () => {
+    it("renders a one-line textarea that is not expanded and does not grow on focus/typing", () => {
+      renderQuickEntryBox({ singleLine: true });
+      const box = screen.getByTestId("quick-entry-box");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+
+      expect(box.className).toContain("quick-entry--single-line");
+      expect(textarea.rows).toBe(1);
+      // Never the tall expanded variant — even after focus (which auto-expands when not singleLine).
+      expect(textarea.className).not.toContain("quick-entry-input--expanded");
+      fireEvent.focus(textarea);
+      expect(textarea.className).not.toContain("quick-entry-input--expanded");
+      fireEvent.change(textarea, { target: { value: "line one\nline two\nline three" } });
+      expect(textarea.className).not.toContain("quick-entry-input--expanded");
+    });
+
+    it("keeps the default tall/expandable behavior when singleLine is not passed (Board/columns)", () => {
+      renderQuickEntryBox({ singleLine: false });
+      const box = screen.getByTestId("quick-entry-box");
+      const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
+      expect(box.className).not.toContain("quick-entry--single-line");
+      expect(textarea.rows).toBe(2);
+    });
+  });
+
   describe("post-submission focus restoration (FN-6217)", () => {
     it("does not auto-focus the quick-entry textarea on empty desktop mount", async () => {
       mockDesktopViewport();

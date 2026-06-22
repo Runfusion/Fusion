@@ -73,6 +73,14 @@ function normalizeTaskView(value: TaskView): TaskView {
   return value === "devserver" ? "dev-server" : value;
 }
 
+/*
+FNXC:ViewState 2026-06-22-15:30:
+Fusion must land on the Board on load, never the Command Center "Dashboard" view. A persisted/normalized `command-center` value resolves to `board` for the auto-restored landing view only (initializer + project-hydration effect). Deep links (`?view=command-center`) and explicit user navigation still reach the Command Center — this only governs the restored landing surface.
+*/
+function resolveLandingTaskView(value: TaskView): TaskView {
+  return value === "command-center" ? "board" : value;
+}
+
 function migrateLegacyRoadmapsView(value: string): TaskView {
   if (value !== "roadmaps") {
     return "board";
@@ -145,7 +153,7 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
     const retiredStashRecoveryView = migrateRetiredStashRecoveryView(saved);
     if (retiredStashRecoveryView) return retiredStashRecoveryView;
     if (saved === "roadmaps") return migrateLegacyRoadmapsView(saved);
-    if (isTaskView(saved)) return saved;
+    if (isTaskView(saved)) return resolveLandingTaskView(normalizeTaskView(saved));
     return "board";
   });
   const hasHydratedScopedTaskViewRef = useRef(false);
@@ -168,7 +176,9 @@ export function useViewState(options: UseViewStateOptions): UseViewStateResult {
       const preserveLegacyOnFirstScopedHydration =
         !hasHydratedScopedTaskViewRef.current && saved === "devserver";
 
-      setTaskView(preserveLegacyOnFirstScopedHydration ? "devserver" : normalizeTaskView(saved));
+      setTaskView(
+        preserveLegacyOnFirstScopedHydration ? "devserver" : resolveLandingTaskView(normalizeTaskView(saved)),
+      );
     } else {
       setTaskView("board");
     }

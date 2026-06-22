@@ -18,6 +18,7 @@ import { RoutineEditor } from "./RoutineEditor";
 import type { ToastType } from "../hooks/useToast";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
+import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 
 /** Polling interval for auto-refreshing the schedule/routine list (30 seconds). */
 const POLL_INTERVAL_MS = 30_000;
@@ -39,12 +40,12 @@ interface ScheduledTasksModalProps {
   /** Optional project ID for project-scoped scheduling. When provided, scope defaults to "project". */
   projectId?: string;
   /** Presentation surface. "modal" (default) renders a fixed overlay; "embedded" renders inline in the main content area. */
-  presentation?: "modal" | "embedded";
+  presentation?: ModalPresentation;
 }
 
 export function ScheduledTasksModal({ onClose, addToast, projectId, presentation = "modal" }: ScheduledTasksModalProps) {
   const { t } = useTranslation("app");
-  const isEmbedded = presentation === "embedded";
+  const { isEmbedded, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
   // Scope state: defaults to "project" when projectId exists, else "global"
   const [activeScope, setActiveScope] = useState<SchedulingScope>(() => projectId ? "project" : "global");
 
@@ -59,7 +60,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
 
   const modalRef = useRef<HTMLDivElement>(null);
   // Resize-persist is a modal-only affordance; the embedded view fills its host and never resizes.
-  useModalResizePersist(modalRef, !isEmbedded, "fusion:automation-modal-size");
+  useModalResizePersist(modalRef, resizePersistEnabled, "fusion:automation-modal-size");
 
   // Build scope options for API calls
   const scopeOptions = useMemo(() => ({
@@ -108,7 +109,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
   // Close on Escape (only when not in a sub-form).
   // FNXC:AutomationsEmbedded 2026-06-22-00:00: Escape-to-close is a modal-only affordance; the embedded view lives in the main content area and must not hijack Escape.
   useEffect(() => {
-    if (isEmbedded) return;
+    if (!escapeEnabled) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (routineView !== "list") {
@@ -121,7 +122,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose, routineView, isEmbedded]);
+  }, [onClose, routineView, escapeEnabled]);
 
   const overlayDismissProps = useOverlayDismiss(onClose);
 

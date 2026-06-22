@@ -677,6 +677,81 @@
   word-break: break-word;
 }
 
+/*
+FNXC:GitHubImport 2026-06-22-18:30:
+Full-body preview metadata row (state badge, author, GitHub link) plus the markdown body wrapper.
+The markdown variant must NOT pre-wrap/clamp — MailboxMessageContent emits real block elements (p, ul, pre, table), so reset the plain-text white-space and let the body take full height; the preview pane already owns the vertical scroll.
+*/
+.preview-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.preview-state-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.preview-state-badge--open {
+  color: var(--success, var(--accent));
+  border-color: color-mix(in srgb, var(--success, var(--accent)) 40%, transparent);
+}
+
+.preview-state-badge--closed {
+  color: var(--danger, var(--text-muted));
+  border-color: color-mix(in srgb, var(--danger, var(--text-muted)) 40%, transparent);
+}
+
+.preview-state-badge--merged {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.preview-author {
+  color: var(--text-muted);
+}
+
+.preview-url {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.preview-url:hover {
+  text-decoration: underline;
+}
+
+.preview-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.preview-body--markdown {
+  white-space: normal;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.preview-body--markdown :where(p, ul, ol, pre, table, blockquote, h1, h2, h3, h4) {
+  margin: 0 0 var(--space-sm);
+}
+
+.preview-body--markdown :where(p, ul, ol, pre, table, blockquote, h1, h2, h3, h4):last-child {
+  margin-bottom: 0;
+}
+
 /* Back button - hidden on desktop by default */
 .github-import-back-button {
   display: none;

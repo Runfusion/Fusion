@@ -4542,6 +4542,15 @@ export interface TaskCommitAssociation {
   updatedAt: string;
 }
 
+export interface CommitAssociationDiffBackfillReport {
+  scannedRows: number;
+  distinctCommits: number;
+  updatedRows: number;
+  skippedUnavailableCommits: number;
+  skippedInvalidShas: number;
+  dryRun: boolean;
+}
+
 export const COLUMN_LABELS: Record<Column, string> = {
   triage: "Planning",
   todo: "Todo",

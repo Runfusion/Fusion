@@ -14,7 +14,6 @@ import { Board } from "./components/Board";
 import { TaskCard } from "./components/TaskCard";
 import { ListView } from "./components/ListView";
 import { TaskDetailContent } from "./components/TaskDetailModal";
-import { ArrowLeft } from "lucide-react";
 import { ProjectOverview } from "./components/ProjectOverview";
 import { MissionManager } from "./components/MissionManager";
 import { MailboxView } from "./components/MailboxView";
@@ -2043,22 +2042,17 @@ function AppInner() {
       return (
         <PageErrorBoundary>
           <div className="task-detail-main-panel">
-            <div className="task-detail-main-panel-back-row">
-              <button
-                type="button"
-                className="task-detail-main-panel-back-btn"
-                onClick={closeTaskDetailMainPanel}
-              >
-                <ArrowLeft size={16} aria-hidden="true" />
-                <span>{t("app.taskDetail.backToBoard", "Back to board")}</span>
-              </button>
-            </div>
             <div className="task-detail-main-panel-body">
               <TaskDetailContent
                 task={liveDetailTask}
                 projectId={currentProject?.id}
                 tasks={tasks}
                 embedded
+                /*
+                FNXC:TaskDetail 2026-06-22-18:40:
+                Board-card detail (full main panel) renders its "Back to board" affordance inside TaskDetailContent's gray header (far right, across from the task id) instead of a separate back-row above the content. The prop only renders the header back button when both embedded and onBackToBoard are present, so ListView split-pane and modal usages stay unaffected.
+                */
+                onBackToBoard={closeTaskDetailMainPanel}
                 onOpenDetail={(value) => setMainPanelDetailTask(value)}
                 onMoveTask={moveTask}
                 onDeleteTask={deleteTask}
@@ -2066,6 +2060,11 @@ function AppInner() {
                 onRetryTask={retryTask}
                 onResetTask={resetTask}
                 onDuplicateTask={duplicateTask}
+                /*
+                FNXC:Navigation 2026-06-22-09:00:
+                The full-panel task-detail must dismiss back to the board when a destructive/terminal action (delete/merge/archive/retry/reset/duplicate) fires, mirroring the modal path. Without onRequestClose the panel kept showing a ghost of the just-acted-on task.
+                */
+                onRequestClose={closeTaskDetailMainPanel}
                 onTaskUpdated={(updatedTask) => {
                   setMainPanelDetailTask((previous) => {
                     if (!previous || previous.id !== updatedTask.id) return previous;

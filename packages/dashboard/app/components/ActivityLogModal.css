@@ -1,0 +1,117 @@
+/*
+FNXC:RightDockEmbedded 2026-06-22-12:00:
+Activity Log embedded (right-dock) styles live here with the ActivityLogModal component. These rules were previously appended to ScriptsModal.css by mistake; the gm/automation rules stay in ScriptsModal.css. The base .activity-log-* modal rules still live in ScriptsModal.css (imported by ActivityLogModal.tsx) pending a full extraction.
+*/
+
+/*
+FNXC:RightDockEmbedded 2026-06-22-00:00:
+Right-dock redesign renders the activity log inline inside the dock container instead of as a fixed popup overlay.
+The embedded root is a plain flow box that fills the dock; the inner panel sheds overlay chrome (fixed sizing, shadow, radius, resize) and fills 100% of the host so the dock owns the frame and its own header/close.
+*/
+.activity-log-embedded.right-dock-embedded-view {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.activity-log-modal--embedded {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  box-shadow: none;
+  border-radius: 0;
+  resize: none;
+  /*
+  FNXC:RightDockEmbedded 2026-06-22-00:00:
+  The dock is narrow (~280-420px) while the viewport stays desktop, so the view's @media (max-width:768px) mobile
+  rules never fire. Make the embedded panel an inline-size query container so the dock width — not the viewport —
+  drives the mobile single-column layout below. See the @container activity-log-embedded block below.
+  */
+  container-type: inline-size;
+  container-name: activity-log-embedded;
+}
+
+/*
+FNXC:RightDockEmbedded 2026-06-22-19:05:
+In the right dock the tab strip already labels the view, and in the pop-out the RightDockExpandModal supplies its own header — so the embedded variant's inner "Activity Log" header row (.activity-log-header) is redundant chrome there. Hide it by default in the embedded variant. The header stays in the DOM (not unmounted) so query-by-text/test hooks still resolve; only display is suppressed. The body's flex column fills the freed space since the header was flex-shrink:0.
+*/
+.activity-log-modal--embedded .activity-log-header {
+  display: none;
+}
+
+/*
+FNXC:RightDockEmbedded 2026-06-22-19:05:
+On real mobile-narrow the view goes full-screen with no dock tab strip or pop-out header, so it must own its own title again. The viewport @media (max-width:768px) fires only on a true narrow viewport (never inside the desktop dock/pop-out, where the @container query drives layout instead), so restoring the header here brings the title back exactly when the chrome is gone.
+*/
+@media (max-width: 768px) {
+  .activity-log-modal--embedded .activity-log-header {
+    display: flex;
+  }
+}
+
+/*
+FNXC:RightDockEmbedded 2026-06-22-00:00:
+Mirror the phone-width (@media max-width:768px) activity-log layout-stacking rules for the narrow dock, scoped to the
+embedded variant. Header wraps (title + close on top row, actions/filters stack full-width), filters/selects go 100%,
+the active-filters bar wraps, and entry headers/details/text wrap instead of overflowing horizontally. Only layout
+stacking is mirrored; behavior and the real @media rules are untouched.
+*/
+@container activity-log-embedded (max-width: 560px) {
+  .activity-log-modal--embedded .activity-log-header {
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  .activity-log-modal--embedded .activity-log-title {
+    flex: 1 1 auto;
+    order: 0;
+  }
+
+  .activity-log-modal--embedded .activity-log-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    order: 2;
+  }
+
+  .activity-log-modal--embedded .activity-log-filter,
+  .activity-log-modal--embedded .activity-log-filter--project {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .activity-log-modal--embedded .activity-log-filter-select {
+    width: 100%;
+  }
+
+  .activity-log-modal--embedded .activity-log-active-filters {
+    flex-wrap: wrap;
+    padding: var(--space-sm) var(--space-lg);
+    gap: var(--space-xs);
+  }
+
+  .activity-log-modal--embedded .activity-log-clear-filters {
+    margin-left: 0;
+  }
+
+  .activity-log-modal--embedded .activity-log-content {
+    padding: var(--space-md) var(--space-lg);
+  }
+
+  .activity-log-modal--embedded .activity-log-entry-header {
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+  }
+
+  .activity-log-modal--embedded .activity-log-entry-details {
+    flex-wrap: wrap;
+    word-break: break-word;
+  }
+
+  .activity-log-modal--embedded .activity-log-entry-text {
+    word-break: break-word;
+  }
+}

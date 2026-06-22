@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { existsSync, watch, type Dirent, type FSWatcher } from "node:fs";
-import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrEntityState, PrThreadState, PrThreadOutcome, PrConflictState, PrChecksRollup, PrReviewDecision, PluginActivation, PluginActivationInput } from "./types.js";
+import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrEntityState, PrThreadState, PrThreadOutcome, PrConflictState, PrChecksRollup, PrReviewDecision, PluginActivation, PluginActivationInput } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
 import { VALID_TRANSITIONS, COLUMNS, DEFAULT_SETTINGS, isColumn, isGlobalOnlySettingsKey, WORKFLOW_STEP_TEMPLATES, validateDocumentKey } from "./types.js";
 import { DEFAULT_PROJECT_SETTINGS } from "./settings-schema.js";
@@ -567,6 +567,11 @@ interface TaskCommitAssociationRow {
   deletions: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface CommitAssociationDiffBackfillCandidateRow {
+  commitSha: string;
+  rowCount: number;
 }
 
 interface TaskDocumentRow {
@@ -16845,6 +16850,75 @@ ${notificationsSection}`;
       additions: row.additions ?? undefined,
       deletions: row.deletions ?? undefined,
     }));
+  }
+
+  /**
+   * FNXC:CommandCenterLocBackfill 2026-06-19-12:30:
+   * Historical LOC backfill is an explicit operator action that fills only rows where both diff-stat columns are NULL. FN-6704 writes additions/deletions atomically, so candidate selection and updates guard on both columns to stay idempotent and avoid overwriting already-captured stats. Stored SHAs are untrusted; validate them before git interpolation. Unavailable commit objects remain NULL because NULL means "stats unknown" while 0 is a real zero-line stat. Dry-run reports the rows that would be updated without writing them.
+   */
+  async backfillCommitAssociationDiffStats(
+    options: { dryRun?: boolean } = {},
+  ): Promise<CommitAssociationDiffBackfillReport> {
+    const dryRun = options.dryRun === true;
+    const candidates = this.db.prepare(
+      `SELECT commitSha, COUNT(*) AS rowCount
+       FROM task_commit_associations
+       WHERE additions IS NULL AND deletions IS NULL
+       GROUP BY commitSha
+       ORDER BY commitSha`,
+    ).all() as CommitAssociationDiffBackfillCandidateRow[];
+
+    const report: CommitAssociationDiffBackfillReport = {
+      scannedRows: candidates.reduce((sum, row) => sum + row.rowCount, 0),
+      distinctCommits: candidates.length,
+      updatedRows: 0,
+      skippedUnavailableCommits: 0,
+      skippedInvalidShas: 0,
+      dryRun,
+    };
+
+    const validShaPattern = /^[0-9a-fA-F]{7,64}$/;
+    const updateStats = this.db.prepare(
+      `UPDATE task_commit_associations
+       SET additions = ?, deletions = ?, updatedAt = ?
+       WHERE commitSha = ? AND additions IS NULL AND deletions IS NULL`,
+    );
+
+    for (const candidate of candidates) {
+      const commitSha = candidate.commitSha;
+      if (!validShaPattern.test(commitSha)) {
+        report.skippedInvalidShas += 1;
+        continue;
+      }
+
+      const verify = await this.runGitCommand(`git cat-file -e ${commitSha}^{commit}`);
+      if (verify.exitCode !== 0) {
+        report.skippedUnavailableCommits += 1;
+        continue;
+      }
+
+      const statsResult = await this.runGitCommand(`git show --shortstat --format= ${commitSha}`);
+      if (statsResult.exitCode !== 0) {
+        report.skippedUnavailableCommits += 1;
+        continue;
+      }
+
+      const normalized = statsResult.stdout.trim().replace(/\n/g, " ");
+      const insertionsMatch = normalized.match(/(\d+) insertions?\(\+\)/);
+      const deletionsMatch = normalized.match(/(\d+) deletions?\(-\)/);
+      const additions = insertionsMatch ? Number.parseInt(insertionsMatch[1], 10) : 0;
+      const deletions = deletionsMatch ? Number.parseInt(deletionsMatch[1], 10) : 0;
+
+      if (dryRun) {
+        report.updatedRows += candidate.rowCount;
+        continue;
+      }
+
+      const result = updateStats.run(additions, deletions, new Date().toISOString(), commitSha);
+      report.updatedRows += Number(result.changes);
+    }
+
+    return report;
   }
 
   async replaceLegacyTaskCommitAssociations(

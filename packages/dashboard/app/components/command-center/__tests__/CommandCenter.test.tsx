@@ -388,6 +388,30 @@ describe("CommandCenter shell", () => {
     expect(screen.queryByTestId("command-center-overview-chart-activity")).toBeNull();
   });
 
+  /*
+  FNXC:CommandCenter 2026-06-22-18:00:
+  The "AI Engine" panel (with "View Board"/"View Agents" shortcuts) lives in controlsSection and must render in every Overview branch — including the empty-data state — and its buttons must call onChangeView. Previously the shortcuts rendered only inside the populated return, so loading/empty/error states had no navigation.
+  */
+  it("renders the AI Engine panel with working shortcuts even in the empty-data state", async () => {
+    mockEmptyOverviewApi();
+    const onChangeView = vi.fn();
+    render(<CommandCenter onChangeView={onChangeView} />);
+
+    // Panel + buttons present immediately (controlsSection renders in the loading branch).
+    expect(screen.getByTestId("command-center-engine-panel")).toBeTruthy();
+    const board = screen.getByRole("button", { name: "View Board" });
+    const agents = screen.getByRole("button", { name: "View Agents" });
+
+    // Still present after the empty-data branch resolves.
+    await screen.findByTestId("command-center-empty");
+    expect(screen.getByTestId("command-center-engine-panel")).toBeTruthy();
+
+    fireEvent.click(board);
+    expect(onChangeView).toHaveBeenCalledWith("board");
+    fireEvent.click(agents);
+    expect(onChangeView).toHaveBeenCalledWith("agents");
+  });
+
   it("renders the Overview agent-runs card when run data is the only activity", async () => {
     mockOverviewApi({
       tokens: tokenFixture(0),

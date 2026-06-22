@@ -443,8 +443,9 @@ export function GoalsView({ initialGoals, anchorGoalId, onNavigateToMission }: G
             <p className="goals-count" data-testid="goals-active-count">
               {t("goals.activeCount", "{{count}} active goals", { count: activeCount })}
             </p>
+            {/* FNXC:Goals 2026-06-22-16:30: Plus icon is sized 18 (was unsized → lucide 24px default) so the Add Goal button matches the height of the Compound Engineering stage-launcher button, which uses an 18px icon on the same .btn base. */}
             <button type="button" className="btn btn-primary goals-add-button" onClick={openAddForm} data-testid="goals-add-button">
-              <Plus aria-hidden="true" />
+              <Plus size={18} aria-hidden="true" />
               {t("goals.addGoal", "Add Goal")}
             </button>
           </>

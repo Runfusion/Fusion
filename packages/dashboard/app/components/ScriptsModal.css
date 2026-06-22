@@ -1194,99 +1194,9 @@ Non-Command-Center dashboard CSS must use the canonical --text token. The legacy
 }
 
 /*
-FNXC:RightDockEmbedded 2026-06-22-00:00:
-Right-dock redesign renders the activity log inline inside the dock container instead of as a fixed popup overlay.
-The embedded root is a plain flow box that fills the dock; the inner panel sheds overlay chrome (fixed sizing, shadow, radius, resize) and fills 100% of the host so the dock owns the frame and its own header/close.
+FNXC:RightDockEmbedded 2026-06-22-12:00:
+The activity-log embedded (.activity-log-embedded / .activity-log-modal--embedded) rules and their @container block were moved to ActivityLogModal.css, next to the component. The base .activity-log-* modal rules remain here pending a full extraction.
 */
-.activity-log-embedded.right-dock-embedded-view {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-}
-
-.activity-log-modal--embedded {
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  max-height: none;
-  box-shadow: none;
-  border-radius: 0;
-  resize: none;
-  /*
-  FNXC:RightDockEmbedded 2026-06-22-00:00:
-  The dock is narrow (~280-420px) while the viewport stays desktop, so the view's @media (max-width:768px) mobile
-  rules never fire. Make the embedded panel an inline-size query container so the dock width — not the viewport —
-  drives the mobile single-column layout below. See the @container activity-log-embedded block below.
-  */
-  container-type: inline-size;
-  container-name: activity-log-embedded;
-}
-
-/*
-FNXC:RightDockEmbedded 2026-06-22-00:00:
-Mirror the phone-width (@media max-width:768px) activity-log layout-stacking rules for the narrow dock, scoped to the
-embedded variant. Header wraps (title + close on top row, actions/filters stack full-width), filters/selects go 100%,
-the active-filters bar wraps, and entry headers/details/text wrap instead of overflowing horizontally. Only layout
-stacking is mirrored; behavior and the real @media rules are untouched.
-*/
-@container activity-log-embedded (max-width: 560px) {
-  .activity-log-modal--embedded .activity-log-header {
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-    padding: var(--space-md) var(--space-lg);
-  }
-
-  .activity-log-modal--embedded .activity-log-title {
-    flex: 1 1 auto;
-    order: 0;
-  }
-
-  .activity-log-modal--embedded .activity-log-actions {
-    flex: 1 1 100%;
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-    order: 2;
-  }
-
-  .activity-log-modal--embedded .activity-log-filter,
-  .activity-log-modal--embedded .activity-log-filter--project {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .activity-log-modal--embedded .activity-log-filter-select {
-    width: 100%;
-  }
-
-  .activity-log-modal--embedded .activity-log-active-filters {
-    flex-wrap: wrap;
-    padding: var(--space-sm) var(--space-lg);
-    gap: var(--space-xs);
-  }
-
-  .activity-log-modal--embedded .activity-log-clear-filters {
-    margin-left: 0;
-  }
-
-  .activity-log-modal--embedded .activity-log-content {
-    padding: var(--space-md) var(--space-lg);
-  }
-
-  .activity-log-modal--embedded .activity-log-entry-header {
-    flex-wrap: wrap;
-    gap: var(--space-xs);
-  }
-
-  .activity-log-modal--embedded .activity-log-entry-details {
-    flex-wrap: wrap;
-    word-break: break-word;
-  }
-
-  .activity-log-modal--embedded .activity-log-entry-text {
-    word-break: break-word;
-  }
-}
 
 /*
 FNXC:AutomationsEmbedded 2026-06-22-00:00:
@@ -2115,40 +2025,71 @@ The previous bespoke rules here hid the tab labels (icon-only) and used a crampe
     flex-direction: column;
   }
 
+  /*
+  FNXC:GitManager 2026-06-22-19:20:
+  The dock tab strip is ONE ROW that scrolls left-right when needed, showing as many section icons as fit. Tabs are compact ICON-ONLY (labels are sr-only; the button title gives a tooltip) so the maximum number of sections is visible before horizontal scroll kicks in. width:auto overrides the base .gm-nav-item width:100% that otherwise made each tab fill the row (one per swipe).
+  */
   .gm-modal--embedded .gm-sidebar {
     flex: 0 0 auto;
     flex-direction: row;
+    flex-wrap: nowrap;
     width: 100%;
     min-width: 0;
-    min-height: calc(var(--space-2xl) + var(--space-md));
     border-right: none;
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
     overflow-y: hidden;
-    touch-action: pan-x pan-y;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    touch-action: pan-x;
     padding: var(--space-xs) var(--space-sm);
     gap: var(--space-xs);
   }
 
   .gm-modal--embedded .gm-nav-item {
     flex: 0 0 auto;
-    flex-direction: column;
-    gap: calc(var(--space-xs) / 2);
-    padding: var(--space-xs) var(--space-sm);
+    width: auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: var(--space-xs);
     border-left: none;
     border-bottom: 2px solid transparent;
-    font-size: var(--font-size-xs);
-    min-width: calc(var(--space-2xl) + var(--space-xl));
-    min-height: calc(var(--space-xl) + var(--space-sm));
-    text-align: center;
-    justify-content: center;
+    min-width: calc(var(--space-xl) + var(--space-xs));
+  }
+
+  /* Icon-only: hide the section label (kept for screen readers); the button title is the tooltip. */
+  .gm-modal--embedded .gm-nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .gm-modal--embedded .gm-nav-item.active {
     border-left-color: transparent;
     border-bottom-color: var(--todo);
+  }
+
+  /*
+  FNXC:GitManager 2026-06-22-19:20:
+  In the one-row scrolling strip the refresh is a compact icon button matching .gm-nav-item, pinned as the last item. Drop the desktop margin-top:auto so it stays inline.
+  */
+  .gm-modal--embedded .gm-nav-refresh {
+    flex: 0 0 auto;
+    width: auto;
+    margin-top: 0;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xs);
+    border-left: none;
+    min-width: calc(var(--space-xl) + var(--space-xs));
   }
 
   .gm-modal--embedded .gm-content {
@@ -2319,6 +2260,37 @@ The previous bespoke rules here hid the tab labels (icon-only) and used a crampe
   background: color-mix(in srgb, var(--todo) 8%, transparent);
   border-left-color: var(--todo);
   font-weight: 500;
+}
+
+/*
+FNXC:GitManager 2026-06-22-19:00:
+Refresh button pinned at the end of the section nav strip (replaces the removed duplicate internal gray .modal-header refresh). In the desktop vertical sidebar margin-top:auto pins it to the bottom; in the dock wrapping/mobile horizontal strip it sits as the last tab. Shares the .gm-nav-item visual language; theme tokens only.
+*/
+.gm-nav-refresh {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  margin-top: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  width: 100%;
+  border-left: 3px solid transparent;
+}
+
+.gm-nav-refresh:hover:not(:disabled) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.gm-nav-refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* ── Header Actions ── */
@@ -4271,23 +4243,56 @@ The previous bespoke rules here hid the tab labels (icon-only) and used a crampe
     gap: var(--space-xs);
   }
 
+  /*
+  FNXC:GitManager 2026-06-22-19:35:
+  Mobile (<=768px) nav strip: ICON-ONLY compact tabs in one horizontally-scrolling row so multiple sections are visible at once. width:auto overrides the base .gm-nav-item width:100% that otherwise made each tab fill the row (one tab, swipe-only). Labels are sr-only (button title is the tooltip).
+  */
   .gm-nav-item {
     flex: 0 0 auto;
-    flex-direction: column;
-    gap: calc(var(--space-xs) / 2);
-    padding: var(--space-xs) var(--space-sm);
+    width: auto;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: var(--space-xs);
     border-left: none;
     border-bottom: 2px solid transparent;
-    font-size: var(--font-size-xs);
-    min-width: calc(var(--space-2xl) + var(--space-xl));
-    min-height: calc(var(--space-xl) + var(--space-sm));
-    text-align: center;
-    justify-content: center;
+    min-width: calc(var(--space-xl) + var(--space-xs));
+  }
+
+  .gm-nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .gm-nav-item.active {
     border-left-color: transparent;
     border-bottom-color: var(--todo);
+  }
+
+  /*
+  FNXC:GitManager 2026-06-22-19:00:
+  Mobile standalone modal horizontal nav strip: refresh mirrors the mobile .gm-nav-item (column, intrinsic width) as the last tab; drop desktop margin-top:auto.
+  */
+  .gm-nav-refresh {
+    flex: 0 0 auto;
+    width: auto;
+    margin-top: 0;
+    flex-direction: column;
+    gap: calc(var(--space-xs) / 2);
+    padding: var(--space-xs) var(--space-sm);
+    border-left: none;
+    font-size: var(--font-size-xs);
+    min-width: calc(var(--space-2xl) + var(--space-xl));
+    min-height: calc(var(--space-xl) + var(--space-sm));
+    text-align: center;
+    justify-content: center;
   }
 
   .gm-content {
@@ -4407,6 +4412,11 @@ The previous bespoke rules here hid the tab labels (icon-only) and used a crampe
 }
 
 [data-theme="light"] .gm-nav-item:hover {
+  background: var(--surface-hover);
+}
+
+/* FNXC:GitManager 2026-06-22-19:00: relocated refresh hover matches nav-item in light theme. */
+[data-theme="light"] .gm-nav-refresh:hover:not(:disabled) {
   background: var(--surface-hover);
 }
 

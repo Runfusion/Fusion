@@ -312,22 +312,31 @@ Team owns the Agent org chart and Heartbeat control. Org nodes must be self-styl
 }
 
 /*
-FNXC:CommandCenter 2026-06-22-00:00:
-AI engine card (Team Heartbeat control) gains a heartbeat-speed multiplier and View Board / View Agents shortcuts. Space the multiplier from the pause control and lay the nav buttons in a wrapping row using theme tokens only.
+FNXC:CommandCenter 2026-06-22-15:30:
+AI engine card (Team Heartbeat control) gains a heartbeat-speed multiplier slider. The View Board / View Agents shortcuts moved to the Command Center Overview tab (see CommandCenter.css .cc-overview-engine-nav). Item 3: the Heartbeat card spans the full Team grid width and its controls space out and wrap.
 */
-.cc-team-heartbeat-multiplier {
-  margin-block-start: var(--space-sm);
+.cc-team-ops-card--heartbeat {
+  grid-column: 1 / -1;
 }
 
-.cc-team-engine-nav {
+.cc-team-heartbeat-multiplier {
+  margin-block-start: var(--space-md);
+}
+
+/*
+FNXC:CommandCenter 2026-06-22-15:30:
+Within the full-width Heartbeat card, space the heartbeat controls (label, slider, value, preset) further apart and let them wrap on narrow widths; the slider grows to take the slack. Scoped under .cc-team-heartbeat-multiplier so the shared AgentsView .heartbeat-multiplier-controls layout is untouched.
+*/
+.cc-team-heartbeat-multiplier .heartbeat-multiplier-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-xs);
-  margin-block-start: var(--space-sm);
+  align-items: center;
+  gap: var(--space-md);
 }
 
-.cc-team-engine-nav-btn {
-  flex: 1 1 auto;
+.cc-team-heartbeat-multiplier .heartbeat-multiplier-slider {
+  flex: 1 1 calc(var(--space-2xl) * 5);
+  min-inline-size: calc(var(--space-2xl) * 4);
 }
 
 /*
@@ -567,6 +576,7 @@ Tablet Command Center areas share the FN-6679 overflow fix with the shell: area 
   }
 
   .cc-team-ops-card--org,
+  .cc-team-ops-card--heartbeat,
   .cc-team-spark-panel {
     grid-column: auto;
   }

@@ -11,12 +11,10 @@ import {
   ChevronLeft,
   Loader2,
   ListChecks,
-  CheckSquare,
   Bot,
   PlusCircle,
   Lightbulb,
 } from "lucide-react";
-import { ViewHeader } from "./ViewHeader";
 import { getErrorMessage, type Task, type TaskCreateInput, type TodoItem, type TodoList } from "@fusion/core";
 import { createTask, fetchAgents } from "../api";
 import type { Agent } from "../api";
@@ -319,18 +317,10 @@ export function TodoView({
   }, [projectId, addToast, agents, onTaskCreated, t]);
 
   /*
-  FNXC:Todos 2026-06-22-01:00:
-  Migrated to the shared ViewHeader (CheckSquare icon, matching the left-sidebar nav) so Todos reads consistently with the other main-content views. The descriptive subtitle moves into the actions slot so it stays visible while the icon + 1.125rem title come from ViewHeader. The header sits above the two-pane/stack layout (flex-shrink:0); the layout owns its own scroll.
+  FNXC:Todos 2026-06-22-17:45:
+  The redundant "Todos" title + "Manage reusable todo lists" subtitle are removed — Todos lives in the right dock (and left-sidebar nav) which already labels the view, so a repeated in-view header is noise. The list/detail layout owns the full height with no header above it.
   */
-  const header = (
-    <ViewHeader
-      icon={CheckSquare}
-      title={t("todo.todos", "Todos")}
-      actions={(
-        <p className="todo-view-subtitle">{t("todo.manageDescription", "Manage reusable todo lists for your project.")}</p>
-      )}
-    />
-  );
+  const header = null;
 
   if (loading) {
     return (

@@ -60,10 +60,14 @@ interface MailboxViewProps {
 
 const ALL_AGENTS_MAILBOX_ID = "__all_agents__";
 
-const MAILBOX_SIDEBAR_MIN_WIDTH = 280;
+/*
+FNXC:Mailbox 2026-06-22-16:00:
+The mailbox message-list pane defaults narrow and can be dragged narrower than before. Lowered min 280->180 and default 320->220 so the conversation list takes less horizontal room by default while the active-message pane gets more; users can still widen via the resize handle (persisted per project).
+*/
+const MAILBOX_SIDEBAR_MIN_WIDTH = 180;
 const MAILBOX_SIDEBAR_MAX_RATIO = 0.65;
 const MAILBOX_SIDEBAR_KEYBOARD_STEP = 16;
-const MAILBOX_SIDEBAR_DEFAULT_WIDTH = 320;
+const MAILBOX_SIDEBAR_DEFAULT_WIDTH = 220;
 
 function getMailboxSidebarMaxWidth(containerWidth: number): number {
   return Math.max(MAILBOX_SIDEBAR_MIN_WIDTH, containerWidth * MAILBOX_SIDEBAR_MAX_RATIO);
@@ -246,6 +250,11 @@ export function MailboxView({
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readMailboxSidebarWidth(projectId));
   const splitLayoutRef = useRef<HTMLDivElement>(null);
   const mailboxContentRef = useRef<HTMLDivElement>(null);
+  /*
+  FNXC:Mailbox 2026-06-22-18:05:
+  Teardown ref for the pointer-driven divider drag. The pointer move/up/cancel listeners and the captured pointer must be released exactly once on pointerup, pointercancel, or unmount; storing the cleanup here guarantees we never leak a global listener or a stuck pointer capture if the component unmounts mid-drag.
+  */
+  const splitResizeTeardownRef = useRef<(() => void) | null>(null);
   const pendingScrollTopRef = useRef<number | null>(null);
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({ enabled: isMobile });
   const containerKeyboardStyle = useMemo<CSSProperties | undefined>(() => {
@@ -281,26 +290,55 @@ export function MailboxView({
     }
   }, [isSplitPane, projectId, sidebarWidth]);
 
-  const handleSplitResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+  /*
+  FNXC:Mailbox 2026-06-22-18:05:
+  Divider drag uses pointer events + setPointerCapture so the drag keeps tracking even when the cursor leaves the thin handle. Each move maps the pointer's X to a list-pane width relative to the split-layout left edge, clamped to [MIN, container * MAX_RATIO]. setSidebarWidth feeds the pane's inline `width`, which the flex row now honors, so the resize is live; the existing persistence effect writes the final width to scoped storage. The teardown (release capture + remove listeners) runs once on pointerup/pointercancel and is parked in splitResizeTeardownRef for unmount safety.
+  */
+  const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!isSplitPane) return;
     event.preventDefault();
     const container = splitLayoutRef.current;
     if (!container) return;
 
+    splitResizeTeardownRef.current?.();
+
+    const handle = event.currentTarget;
     const rect = container.getBoundingClientRect();
-    const onMouseMove = (moveEvent: MouseEvent) => {
+    const pointerId = event.pointerId;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
       const proposedWidth = moveEvent.clientX - rect.left;
       setSidebarWidth(clampMailboxSidebarWidth(proposedWidth, rect.width));
     };
 
-    const onMouseUp = () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+    const teardown = () => {
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", teardown);
+      handle.removeEventListener("pointercancel", teardown);
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {
+        // Pointer capture may already be released; ignore.
+      }
+      splitResizeTeardownRef.current = null;
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    splitResizeTeardownRef.current = teardown;
+
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // setPointerCapture can throw in non-DOM test environments; drag still works via listeners.
+    }
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", teardown);
+    handle.addEventListener("pointercancel", teardown);
   }, [isSplitPane]);
+
+  useEffect(() => () => {
+    splitResizeTeardownRef.current?.();
+  }, []);
 
   const handleSplitResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!isSplitPane) return;
@@ -1301,7 +1339,7 @@ export function MailboxView({
               aria-valuemin={MAILBOX_SIDEBAR_MIN_WIDTH}
               aria-valuemax={Math.round(getMailboxSidebarMaxWidth(splitLayoutRef.current?.clientWidth ?? sidebarWidth / MAILBOX_SIDEBAR_MAX_RATIO))}
               aria-valuenow={Math.round(sidebarWidth)}
-              onMouseDown={handleSplitResizeStart}
+              onPointerDown={handleSplitResizeStart}
               onKeyDown={handleSplitResizeKeyDown}
             />
             <div className="mailbox-split-detail-pane" data-testid="mailbox-split-detail-pane">

@@ -56,6 +56,7 @@ import { appendTokenQuery, OAUTH_RELOGIN_SUCCESS_EVENT } from "../auth";
 import { useConfirm } from "../hooks/useConfirm";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { useNodes } from "../hooks/useNodes";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useWorktrunkInstallStatus } from "../hooks/useWorktrunkInstallStatus";
@@ -382,7 +383,7 @@ interface SettingsModalProps {
   FNXC:Settings 2026-06-22-00:00:
   Settings renders both as a dialog overlay (presentation="modal", default) and as an embedded main-content view (presentation="embedded"). Embedded mode drops the fixed overlay backdrop and modal close button, fills the host pane, and disables modal-only behaviors (scroll lock, escape-to-close, resize-persist, overlay click-dismiss). The modal path is kept byte-identical for non-navigation callers (e.g. mobile/right-dock).
   */
-  presentation?: "modal" | "embedded";
+  presentation?: ModalPresentation;
 }
 
 /** Adapter descriptor served by GET /api/cli-agents (U15). */
@@ -631,14 +632,14 @@ export function SettingsModal({
   onOpenWorkflowSettings,
   presentation = "modal",
 }: SettingsModalProps) {
-  const isEmbedded = presentation === "embedded";
+  const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled, overlayDismissEnabled } = useEmbeddedPresentation(presentation);
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const worktrunkInstall = useWorktrunkInstallStatus(projectId);
   const worktrunkInstallVerified = worktrunkInstall.status === "installed";
   const viewportMode = useViewportMode();
   // Modal-only: lock background scroll on mobile. Embedded view owns its own scroll region.
-  useMobileScrollLock(!isEmbedded);
+  useMobileScrollLock(scrollLockEnabled);
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: viewportMode === "mobile",
   });
@@ -656,7 +657,7 @@ export function SettingsModal({
     workflowLaneSaverRef.current = saver;
   }, []);
   // Modal-only: persist user-resized dialog dimensions. Embedded view fills its host and is not resizable.
-  useModalResizePersist(modalRef, !isEmbedded, "fusion:settings-modal-size");
+  useModalResizePersist(modalRef, resizePersistEnabled, "fusion:settings-modal-size");
   const sessionBannersHidden = useSessionBannersHidden();
   const [form, setForm] = useState<SettingsFormState>({
     maxConcurrent: 2,
@@ -2004,17 +2005,17 @@ export function SettingsModal({
 
   // Modal-only: Escape dismisses the dialog. Embedded view is navigated away via the left sidebar, not Escape.
   useEffect(() => {
-    if (isEmbedded) return;
+    if (!escapeEnabled) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose, isEmbedded]);
+  }, [onClose, escapeEnabled]);
 
   // Modal-only: backdrop click dismisses. Embedded view has no overlay backdrop.
   const modalOverlayDismissProps = useOverlayDismiss(onClose);
-  const overlayDismissProps = isEmbedded ? {} : modalOverlayDismissProps;
+  const overlayDismissProps = overlayDismissEnabled ? modalOverlayDismissProps : {};
 
   /**
    * Lane status types:

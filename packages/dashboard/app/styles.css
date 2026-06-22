@@ -3844,42 +3844,27 @@ Toast text must contrast its status background across every dashboard theme and 
 
 /*
 FNXC:Navigation 2026-06-22-00:00:
-Board card clicks open task detail as a full main-content view that replaces the board ("Full main panel" design). This layout fills the main content area: a fixed Back-to-board row over a scrollable embedded TaskDetailContent body. Theme tokens only; mobile shell renders it unchanged because the panel just fills its host.
+Board card clicks open task detail as a full main-content view that replaces the board ("Full main panel" design). This layout fills the main content area with a scrollable embedded TaskDetailContent body. Theme tokens only; mobile shell renders it unchanged because the panel just fills its host.
+
+FNXC:TaskDetail 2026-06-22-18:40:
+The panel and its body must be width-bounded (width:100%; min-width:0; max-width:100%) so the embedded detail content cannot exceed the full-width host and get clipped on the right; the body scrolls vertically only (overflow-x:hidden). The separate back-row was removed; "Back to board" now lives inside TaskDetailContent's gray header (see .task-detail-header-back-btn).
 */
 .task-detail-main-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.task-detail-main-panel-back-row {
-  flex: 0 0 auto;
-  padding: var(--space-lg);
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.task-detail-main-panel-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-  font-size: 13px;
-  color: var(--text-muted);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.task-detail-main-panel-back-btn:hover {
-  color: var(--text);
-  background: var(--card-hover);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .task-detail-main-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
 }

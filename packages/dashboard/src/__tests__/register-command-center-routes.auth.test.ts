@@ -56,19 +56,31 @@ class MockStore extends EventEmitter {
   async listTasks(): Promise<Task[]> {
     return [];
   }
+
+  async backfillCommitAssociationDiffStats() {
+    return {
+      scannedRows: 0,
+      distinctCommits: 0,
+      updatedRows: 0,
+      skippedUnavailableCommits: 0,
+      skippedInvalidShas: 0,
+      dryRun: true,
+    };
+  }
 }
 
 const TOKEN = "fn_cc_test1234567890abcdef";
-const ENDPOINTS = [
-  "/api/command-center/tokens",
-  "/api/command-center/tools",
-  "/api/command-center/activity",
-  "/api/command-center/productivity",
-  "/api/command-center/plugin-activations",
-  "/api/command-center/team",
-  "/api/command-center/github",
-  "/api/command-center/signals",
-  "/api/command-center/live",
+const ENDPOINTS: Array<{ method?: "GET" | "POST"; path: string }> = [
+  { path: "/api/command-center/tokens" },
+  { path: "/api/command-center/tools" },
+  { path: "/api/command-center/activity" },
+  { path: "/api/command-center/productivity" },
+  { method: "POST", path: "/api/command-center/productivity/backfill-loc" },
+  { path: "/api/command-center/plugin-activations" },
+  { path: "/api/command-center/team" },
+  { path: "/api/command-center/github" },
+  { path: "/api/command-center/signals" },
+  { path: "/api/command-center/live" },
 ];
 
 describe("Command Center routes — auth", () => {
@@ -80,9 +92,10 @@ describe("Command Center routes — auth", () => {
     const app = createServer(new MockStore() as unknown as TaskStore, {
       daemon: { token: TOKEN },
     });
-    for (const path of ENDPOINTS) {
-      const res = await request(app, "GET", path);
-      expect(res.status, `${path} should be 401 unauthenticated`).toBe(401);
+    for (const endpoint of ENDPOINTS) {
+      const method = endpoint.method ?? "GET";
+      const res = await request(app, method, endpoint.path);
+      expect(res.status, `${method} ${endpoint.path} should be 401 unauthenticated`).toBe(401);
     }
   });
 
@@ -90,11 +103,14 @@ describe("Command Center routes — auth", () => {
     const app = createServer(new MockStore() as unknown as TaskStore, {
       daemon: { token: TOKEN },
     });
-    for (const path of ENDPOINTS) {
-      const res = await request(app, "GET", path, undefined, {
+    for (const endpoint of ENDPOINTS) {
+      const method = endpoint.method ?? "GET";
+      const body = method === "POST" ? JSON.stringify({}) : undefined;
+      const res = await request(app, method, endpoint.path, body, {
         Authorization: `Bearer ${TOKEN}`,
+        ...(method === "POST" ? { "content-type": "application/json" } : {}),
       });
-      expect(res.status, `${path} should be 200 with token`).toBe(200);
+      expect(res.status, `${method} ${endpoint.path} should be 200 with token`).toBe(200);
     }
   });
 });

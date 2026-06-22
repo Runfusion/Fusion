@@ -61,8 +61,6 @@ export function ProductivityArea({ range }: { range: DateRange }) {
     [data?.byLanguage],
   );
 
-  const loc = data?.loc ?? { value: null, unavailable: true };
-  const hoursSaved = data?.hoursSaved ?? { value: null, unavailable: true };
   const taskDuration = data?.taskDuration ?? {
     completedTasks: 0,
     averageMs: null,
@@ -71,6 +69,12 @@ export function ProductivityArea({ range }: { range: DateRange }) {
     totalMs: null,
     unavailable: true,
   };
+  /*
+  FNXC:CommandCenterProductivity 2026-06-22-00:32:
+  Backfill-era dashboard tests and cached clients can render ProductivityArea with legacy productivity payloads that predate LOC and hours-saved summaries. Treat missing nested summaries as unavailable sentinels so the whole Command Center remains mounted instead of crashing during responsive-layout verification.
+  */
+  const loc = data?.loc ?? { value: null, unavailable: true };
+  const hoursSaved = data?.hoursSaved ?? { value: null, unavailable: true };
   const isEmpty =
     !data ||
     (data.modifiedFiles === 0 &&

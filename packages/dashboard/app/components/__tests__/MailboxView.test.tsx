@@ -1794,11 +1794,12 @@ describe("MailboxView", () => {
       const afterRight = Number(handle.getAttribute("aria-valuenow"));
       expect(afterRight).toBeGreaterThanOrEqual(afterLeft);
 
+      // FNXC:Mailbox 2026-06-22-18:05: Home clamps to MAILBOX_SIDEBAR_MIN_WIDTH (locked at 180); End clamps to the container max ratio.
       fireEvent.keyDown(handle, { key: "Home" });
-      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(280);
+      expect(Number(handle.getAttribute("aria-valuenow"))).toBe(180);
 
       fireEvent.keyDown(handle, { key: "End" });
-      expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(280);
+      expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThanOrEqual(180);
     });
 
     it("persists and restores scoped mailbox sidebar width", async () => {
@@ -1859,7 +1860,8 @@ describe("MailboxView", () => {
     it("defines desktop/tablet split-pane selectors under .mailbox-view scope", async () => {
       const css = loadAllAppCss();
 
-      expect(css).toMatch(/\.mailbox-view\s+\.mailbox-split-layout\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*auto\s+auto\s+minmax\(0,\s*1fr\);[^}]*gap:\s*0;[^}]*min-height:\s*0;[^}]*\}/);
+      // FNXC:Mailbox 2026-06-22-18:05: split layout is a flex row so the list pane's inline width is honored (drag-resizable); grid `auto` tracks ignored it.
+      expect(css).toMatch(/\.mailbox-view\s+\.mailbox-split-layout\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*row;[^}]*gap:\s*0;[^}]*min-height:\s*0;[^}]*\}/);
 
       const splitPaneBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-list-pane,\s*\n\.mailbox-view\s+\.mailbox-split-detail-pane\s*\{([^}]*)\}/);
       expect(splitPaneBlockMatch).toBeTruthy();
@@ -1867,6 +1869,17 @@ describe("MailboxView", () => {
       expect(splitPaneBlock).toContain("overflow-y: auto;");
       expect(splitPaneBlock).toContain("border: var(--btn-border-width) solid var(--border);");
       expect(splitPaneBlock).toContain("background: var(--surface);");
+
+      // FNXC:Mailbox 2026-06-22-18:05: list pane fixed to inline width; detail pane fills remainder and may shrink below content.
+      const listPaneBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-list-pane\s*\{([^}]*)\}/);
+      expect(listPaneBlockMatch).toBeTruthy();
+      expect(listPaneBlockMatch![1]).toContain("flex: 0 0 auto;");
+
+      // Match the standalone detail-pane rule (the one declaring `display: flex;`), not the shared border/background block.
+      const detailPaneBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-detail-pane\s*\{([^}]*display:\s*flex;[^}]*)\}/);
+      expect(detailPaneBlockMatch).toBeTruthy();
+      expect(detailPaneBlockMatch![1]).toContain("flex: 1 1 auto;");
+      expect(detailPaneBlockMatch![1]).toContain("min-width: 0;");
 
       const resizeHandleBlockMatch = css.match(/\.mailbox-view\s+\.mailbox-split-resize-handle\s*\{([^}]*)\}/);
       expect(resizeHandleBlockMatch).toBeTruthy();

@@ -554,3 +554,45 @@ The Command Center subtree previously had no tablet tier, so at 769px–1024px t
     opacity: 0.9;
   }
 }
+
+/*
+FNXC:CommandCenter 2026-06-22-18:00:
+The "AI Engine" panel is a bordered card that hosts the "View Board"/"View Agents" shortcuts plus an optional one-line engine status. It lives in controlsSection so it renders in every Overview branch (loading/error/empty/populated) and is always visible. Self-styled here (OverviewTab does not pull in areas.css) using theme tokens only. The button row reuses .cc-overview-engine-nav / .cc-overview-engine-nav-btn: buttons grow to share the row and wrap on narrow widths.
+*/
+.cc-overview-engine-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+}
+
+.cc-overview-engine-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text);
+}
+
+.cc-overview-engine-panel-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.cc-overview-engine-panel-status {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.cc-overview-engine-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.cc-overview-engine-nav-btn {
+  flex: 1 1 auto;
+}

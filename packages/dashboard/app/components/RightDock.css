@@ -148,23 +148,113 @@ container. NOTE: the wide right-dock expand modal is NOT this container, so its 
   container-name: right-dock-body;
 }
 
+/*
+FNXC:RightDockEmbedded 2026-06-22-15:30:
+The hosted view is a flex child of the dock body; without min-height:0 it cannot shrink below its content height, so a tall view (e.g. DevServerView) blows past the dock and its own overflow-y:auto never engages. min-height:0 + min-block-size:0 lets the child bound itself so the view (or the dock body) actually scrolls vertically.
+*/
 .right-dock__body > * {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  min-block-size: 0;
+}
+
+/*
+FNXC:RightDock 2026-06-22-17:40:
+The right-dock pop-out is a FLOATING, DRAGGABLE, RESIZABLE, NON-BLOCKING window. The user positions it anywhere on screen and keeps using the app behind it. This overlay MUST out-specify the base `.modal-overlay` (which dims the page with a backdrop + blur). Both base and override are single-class selectors, so if styles.css loads after this file the dim/blur would win and the page would fade; qualify with `.modal-overlay` (two classes) so the pop-out reliably keeps a transparent, non-blurring, click-through backdrop regardless of stylesheet order. `pointer-events: none` lets behind-clicks pass through to the app; the floating panel re-enables `pointer-events: auto`.
+*/
+.modal-overlay.right-dock-expand-modal-overlay {
+  align-items: stretch;
+  justify-content: flex-start;
+  padding: 0;
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
 }
 
 .right-dock-expand-modal {
   display: flex;
   flex-direction: column;
-  width: min(90vw, calc(var(--space-2xl) * 36));
-  height: min(85vh, calc(var(--space-2xl) * 24));
-  min-width: min(90vw, calc(var(--space-2xl) * 12));
-  min-height: min(85vh, calc(var(--space-2xl) * 10));
-  max-width: 95vw;
-  max-height: 90vh;
-  resize: both;
   overflow: hidden;
 }
+
+/*
+FNXC:RightDock 2026-06-22-17:40:
+Floating panel positioned by state-driven inline `left/top/width/height`. min/max keep content usable and the panel on-screen. `resize: none` because resizing is handled by the corner/edge handles (the native grip conflicts with the drag/resize pointer handlers). `pointer-events: auto` re-enables interaction on the panel only.
+*/
+.right-dock-expand-modal--floating {
+  position: fixed;
+  min-width: calc(var(--space-2xl) * 7.5);
+  min-height: calc(var(--space-2xl) * 5.83);
+  max-width: calc(100vw - (var(--space-lg) * 2));
+  max-height: calc(100dvh - (var(--space-lg) * 2));
+  resize: none;
+  pointer-events: auto;
+  box-shadow: var(--shadow-xl);
+}
+
+/*
+FNXC:RightDock 2026-06-22-17:40:
+Header is the drag handle; grab/grabbing cursor and non-selectable text signal and protect the drag.
+
+FNXC:RightDock 2026-06-22-18:50:
+Touch dragging was janky because the browser claimed the header's touch stream for scroll/pan gestures. `touch-action: none` on the drag handle (matching the resize handles) hands the whole gesture to our pointer handlers so a finger drag stays smooth and never scrolls the page behind it. `cursor: grab/grabbing` is desktop-only signal; `touch-action` is what makes touch work. A comfortable `min-height` makes the header a forgiving touch target.
+*/
+.right-dock-expand-modal__header--draggable {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  min-height: 44px;
+}
+
+.right-dock-expand-modal__header--draggable:active {
+  cursor: grabbing;
+}
+
+/*
+FNXC:RightDock 2026-06-22-17:40:
+Edge + corner resize handles. touch-action:none keeps the drag from being hijacked by scroll/gestures so resizing stays smooth.
+*/
+.right-dock-expand-resize-handle {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+
+.right-dock-expand-resize-handle--n,
+.right-dock-expand-resize-handle--s {
+  left: var(--space-sm);
+  right: var(--space-sm);
+  height: var(--space-sm);
+  cursor: ns-resize;
+}
+
+.right-dock-expand-resize-handle--n { top: 0; }
+.right-dock-expand-resize-handle--s { bottom: 0; }
+
+.right-dock-expand-resize-handle--e,
+.right-dock-expand-resize-handle--w {
+  top: var(--space-sm);
+  bottom: var(--space-sm);
+  width: var(--space-sm);
+  cursor: ew-resize;
+}
+
+.right-dock-expand-resize-handle--e { right: 0; }
+.right-dock-expand-resize-handle--w { left: 0; }
+
+.right-dock-expand-resize-handle--ne,
+.right-dock-expand-resize-handle--nw,
+.right-dock-expand-resize-handle--se,
+.right-dock-expand-resize-handle--sw {
+  width: var(--space-lg);
+  height: var(--space-lg);
+}
+
+.right-dock-expand-resize-handle--ne { top: 0; right: 0; cursor: nesw-resize; }
+.right-dock-expand-resize-handle--nw { top: 0; left: 0; cursor: nwse-resize; }
+.right-dock-expand-resize-handle--se { bottom: 0; right: 0; cursor: nwse-resize; }
+.right-dock-expand-resize-handle--sw { bottom: 0; left: 0; cursor: nesw-resize; }
 
 .right-dock-expand-modal__header,
 .right-dock-expand-modal__title {
@@ -199,6 +289,8 @@ wide child cannot collapse the flex line.
 .right-dock-expand-modal__body > * {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  min-block-size: 0;
 }
 
 @media (max-width: 768px) {

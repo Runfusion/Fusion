@@ -1248,6 +1248,62 @@ describe("WorkflowNodeEditor", () => {
   });
 });
 
+// FNXC:EmbeddedPresentation 2026-06-22-12:00:
+// presentation="embedded" was a zero-coverage branch. These assert the embedded contract via useEmbeddedPresentation:
+// no fixed .modal-overlay backdrop, Escape does NOT dismiss (escapeEnabled is false), and the embedded root class renders.
+describe("WorkflowNodeEditor — embedded presentation", () => {
+  beforeEach(() => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([]);
+    vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
+    vi.mocked(fetchStepParsers).mockResolvedValue(["step-headings", "json-steps"]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [] });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("renders the embedded root class and no modal overlay", async () => {
+    const { container } = render(
+      <WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} presentation="embedded" />,
+    );
+
+    expect(await screen.findByText("Workflows")).toBeInTheDocument();
+    expect(container.querySelector(".workflow-editor-embedded")).not.toBeNull();
+    expect(container.querySelector(".wf-editor-modal--embedded")).not.toBeNull();
+    // No fixed full-screen overlay host in embedded mode.
+    expect(container.querySelector(".modal-overlay")).toBeNull();
+    expect(container.querySelector(".wf-editor-overlay")).toBeNull();
+  });
+
+  it("does not dismiss on Escape in embedded mode", async () => {
+    const onClose = vi.fn();
+    const { container } = render(
+      <WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} presentation="embedded" />,
+    );
+
+    expect(await screen.findByText("Workflows")).toBeInTheDocument();
+    // Escape is handled on the modal element (onKeyDown), so fire it there — not on document.
+    const embeddedModal = container.querySelector(".wf-editor-modal--embedded")!;
+    fireEvent.keyDown(embeddedModal, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the modal overlay and Escape-to-close in modal mode", async () => {
+    const onClose = vi.fn();
+    const { container } = render(<WorkflowNodeEditor isOpen onClose={onClose} addToast={() => {}} />);
+
+    expect(await screen.findByText("Workflows")).toBeInTheDocument();
+    expect(container.querySelector(".wf-editor-overlay")).not.toBeNull();
+    expect(container.querySelector(".wf-editor-modal--embedded")).toBeNull();
+    // Modal-mode Escape is handled on the modal element (onKeyDown), not document.
+    const modal = container.querySelector(".wf-editor-modal")!;
+    fireEvent.keyDown(modal, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
+});
+
 describe("WorkflowNodeEditor — U1 card-style nodes", () => {
   beforeEach(() => {
     vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);

@@ -48,23 +48,33 @@ export interface RightDockController {
 /*
 FNXC:Navigation 2026-06-21-23:40:
 The right dock is visible by default and collapses from inside the dock. Keep the persisted open/collapsed state in this controller so App and Header do not need duplicate right-dock toggle wiring.
+
+FNXC:RightDock 2026-06-22-18:50:
+The popped-out expand modal is INDEPENDENT of the dock's open state. `expandedView` and the modal it drives live at the controller level (a sibling of `dock`, NOT a child of RightDock — which early-returns null when closed). Toggling the dock closed must therefore NOT clear `expandedView`: once a view is popped out it stays open and interactive even with the dock hidden, and only its own close button (`onClose -> setExpandedView(null)`) dismisses it. We still clear `expandedView` when the surface becomes inactive (project change/teardown) because that unmounts the whole controller surface, not a user dock-hide.
 */
 export function useRightDockController(input: RightDockControllerInput): RightDockController {
   const [open, setOpen] = useState(readStoredRightDockOpen);
   const [expandedView, setExpandedView] = useState<OverflowViewKey | null>(null);
 
-  const setPersistedOpen = useCallback((nextOpen: boolean) => {
-    setOpen(nextOpen);
-    persistRightDockOpen(nextOpen);
-    if (!nextOpen) setExpandedView(null);
-  }, []);
   const toggle = useCallback(() => {
     setOpen((current) => {
       const next = !current;
       persistRightDockOpen(next);
-      if (!next) setExpandedView(null);
+      // FNXC:RightDock 2026-06-22-18:50: Do NOT clear expandedView on dock-hide; the floating pop-out is independent and survives the dock closing.
       return next;
     });
+  }, []);
+
+  /*
+  FNXC:RightDock 2026-06-22-19:25:
+  Popping a view out CLOSES the right dock but KEEPS the floating modal open. The modal is independent of dock open state (see expandedView note above), so collapsing the dock on pop-out gives the user the full-width app behind the movable, non-blocking modal. Clearing the pop-out (viewKey null) leaves the dock as-is.
+  */
+  const handleExpand = useCallback((viewKey: OverflowViewKey | null) => {
+    setExpandedView(viewKey);
+    if (viewKey) {
+      setOpen(false);
+      persistRightDockOpen(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -130,7 +140,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
   return {
     open,
     toggle,
-    dock: input.active ? <RightDock open={open} onOpenChange={setPersistedOpen} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} onExpand={setExpandedView} /> : null,
+    dock: input.active ? <RightDock open={open} renderProps={renderProps} visibilityOptions={input.visibilityOptions} footerVisible={input.footerVisible} onExpand={handleExpand} /> : null,
     modal: input.active ? <RightDockExpandModal viewKey={expandedView} renderProps={renderProps} visibilityOptions={input.visibilityOptions} onClose={() => setExpandedView(null)} /> : null,
   };
 }

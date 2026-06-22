@@ -245,6 +245,8 @@ Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal i
 - `PiExtensionsManager`
 - `AgentDetailView`
 
+Note: the embedded main-content views ImportTasks (`_ImportTasksView`) and Automations (`_AutomationsView`) in App.tsx are `_`-prefixed lazy splits that reuse the GitHubImportModal/ScheduledTasksModal chunks. They are intentionally excluded from the curated list above and from the count; `lazy-loaded-views-docs.test.ts` filters out `_`-prefixed lazy consts (`extractAppLazyViews`), so do not add them as bullets.
+
 ## FNXC_LOG comments:
    - Please whenever you're working on a codebase. I want you to add comments describing the date of the change (must be in this format yyyy-MM-dd-hh:mm) and describing the requirements or the change in requirements that made you implement certain functionality.
    - I want you to write FNXC:Area-of-product in front of all your comments so they can be grepped.

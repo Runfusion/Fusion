@@ -244,6 +244,26 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
   });
 
   /**
+   * POST /api/command-center/productivity/backfill-loc
+   * Explicit operator action to backfill historical commit-association LOC stats.
+   *
+   * FNXC:CommandCenterLocBackfill 2026-06-21-00:00:
+   * The LOC backfill must never run during render-time analytics reads. Keep it an authenticated operator POST, resolve the project-scoped store before invoking the git-backed store method, and default to dry-run so operators can preview historical NULL-only updates before writing.
+   */
+  router.post("/command-center/productivity/backfill-loc", async (req, res) => {
+    try {
+      const store = await getScopedStore(req);
+      const body = (req.body ?? {}) as { dryRun?: unknown };
+      const dryRun = typeof body.dryRun === "boolean" ? body.dryRun : true;
+      const result = await store.backfillCommitAssociationDiffStats({ dryRun });
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err, "Failed to backfill productivity LOC stats");
+    }
+  });
+
+  /**
    * GET /api/command-center/team
    * Per-agent store-derived tokens/cost, files changed, task counts, and live identity.
    *

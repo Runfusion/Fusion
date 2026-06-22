@@ -77,18 +77,40 @@ After the header migrated to the shared .view-header (which is flex-shrink:0), t
   overflow-y: auto;
 }
 
-.memory-editor-section {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
+/*
+FNXC:Memory 2026-06-22-18:10:
+REAL ROOT CAUSE of the "Working Memory" overlap (char-count over the MEMORY FILE label, a line struck through the <select>, the section header on top of its card): a CSS cascade collision, NOT vertical flex compression.
+
+`.memory-editor-section`, `.memory-editor-form-group`, and `.memory-file-summary` are defined in THREE stylesheets — styles.css, SettingsModal.css, and this file — because the SettingsModal MemorySection reuses the same class names. MemoryView.tsx imports BOTH ./MemoryView.css AND ./SettingsModal.css (in that order), so SettingsModal.css's copies (single-class, equal specificity) are injected LAST and WIN. Its `.memory-editor-section { flex: 1 1 auto }` made the editor section greedily claim the tab height while its child `.memory-editor-container` carried a large fixed `min-height` (the CodeMirror floor). On a constrained viewport the section box shrank to its flex allotment but the fixed-min-height editor frame could NOT, so the frame overflowed the (overflow:visible) section and BLED downward, painting on top of the next siblings — that bleed is the overlap, not shrunken siblings. The earlier flex-shrink:0 patch failed because the siblings were never the ones shrinking; the editor frame was overflowing onto them.
+
+Fix: scope the working-tab layout under `.memory-working-tab` so these rules out-specify the SettingsModal.css copies regardless of import order, and let the editor block size to its content (flex:0 0 auto). The tab itself (`.memory-working-tab`, overflow-y:auto) is the sole scroll owner, so every block flows in a clean intrinsic-height vertical stack and the tab scrolls instead of any box overflowing onto the next.
+*/
+.memory-action-bar,
+.memory-config-section {
+  flex-shrink: 0;
 }
 
-.memory-editor-form-group {
-  flex: 1;
-  min-height: 0;
+.memory-working-tab .memory-editor-section {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+/*
+FNXC:Memory 2026-06-22-18:10:
+Inside the working-tab editor section every block keeps its intrinsic height (flex:0 0 auto) so the file <select>, its hint, the layer summary, and the editor each occupy their own row with no overlap. The CodeMirror frame holds a fixed visible floor via .memory-editor-container's min-height; the surrounding tab scrolls.
+*/
+.memory-working-tab .memory-editor-section > .form-group,
+.memory-working-tab .memory-editor-section > .memory-file-summary {
+  flex: 0 0 auto;
+}
+
+.memory-working-tab .memory-editor-form-group {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 .memory-editor-container {

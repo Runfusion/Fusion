@@ -37,6 +37,7 @@ import {
 } from "../api";
 import { subscribeSse } from "../sse-bus";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import {
   savePlanningDescription,
   getPlanningDescription,
@@ -72,7 +73,7 @@ interface PlanningModeModalProps {
   /** When set, reconnect to a persisted background session instead of starting fresh */
   resumeSessionId?: string;
   /** Render without the full-screen modal chrome when Planning Mode is mounted as a top-level app view. */
-  presentation?: "modal" | "embedded";
+  presentation?: ModalPresentation;
 }
 
 interface QuestionResponse {
@@ -197,7 +198,10 @@ function parseModelSelection(value: string): { provider?: string; modelId?: stri
 
 export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreated, tasks, initialPlan: initialPlanProp, projectId, workflowId, resumeSessionId, presentation = "modal" }: PlanningModeModalProps) {
   const { t } = useTranslation("app");
-  const isEmbedded = presentation === "embedded";
+  // FNXC:EmbeddedPresentation 2026-06-22-12:00: shared hook supplies isEmbedded (DOM branching) plus the modal-only gates.
+  // Note: the Escape handler intentionally does NOT gate on embedded here — embedded planning preserves its historical
+  // Escape-to-close behavior (the back-stack/onClose path), so escapeEnabled is deliberately not wired below.
+  const { isEmbedded, scrollLockEnabled, resizePersistEnabled } = useEmbeddedPresentation(presentation);
   const [initialPlan, setInitialPlan] = useState("");
   const [view, setView] = useState<ViewState>({ type: "initial" });
   const [error, setError] = useState<string | null>(null);
@@ -301,7 +305,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
     modelId?: string;
   } | null>(null);
 
-  useModalResizePersist(modalRef, isOpen && !isEmbedded, "fusion:planning-modal-size");
+  useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:planning-modal-size");
   const viewportMode = useViewportMode();
   const isMobile = viewportMode === "mobile";
   const { addToast } = useToast();
@@ -309,7 +313,7 @@ export function PlanningModeModal({ isOpen, onClose, onTaskCreated, onTasksCreat
 
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } =
     useMobileKeyboard({ enabled: viewportMode === "mobile" });
-  useMobileScrollLock(viewportMode === "mobile" && isOpen && !isEmbedded);
+  useMobileScrollLock(viewportMode === "mobile" && isOpen && scrollLockEnabled);
 
   // Drive --vv-height / --keyboard-overlap / --vv-offset-top imperatively
   // rather than via React's style prop. Reason: when React removes a CSS

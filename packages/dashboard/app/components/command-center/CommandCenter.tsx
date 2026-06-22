@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AlertCircle, Gauge } from "lucide-react";
+import { AlertCircle, Cpu, Gauge } from "lucide-react";
 import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics } from "@fusion/core";
 import { api } from "../../api/legacy";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
@@ -108,8 +108,8 @@ interface CommandCenterProps {
   addToast?: (message: string, type?: ToastType) => void;
   nodesEnabled?: boolean;
   /*
-  FNXC:CommandCenter 2026-06-22-00:00:
-  The AI engine card (Team-tab Heartbeat control) offers "View Board"/"View Agents" shortcuts. Navigation is owned by App's view router, so thread an optional onChangeView down to TeamArea rather than letting the Command Center mutate routing state itself.
+  FNXC:CommandCenter 2026-06-22-15:30:
+  The Overview (Command Center landing) surfaces "View Board"/"View Agents" shortcuts directly under the Live activity snapshot (the engine-activity strip, the closest "AI engine" element on Overview). Navigation is owned by App's view router, so thread an optional onChangeView down to OverviewTab rather than letting the Command Center mutate routing state itself. Moved here from the Team-tab Heartbeat card (FN earlier).
   */
   onChangeView?: (view: TaskView) => void;
 }
@@ -124,6 +124,7 @@ function OverviewTab({
   onColorThemeChange = () => {},
   onThemeModeChange = () => {},
   onShadcnCustomColorsChange = () => {},
+  onChangeView,
 }: { range: DateRange } & CommandCenterProps) {
   const { t } = useTranslation("app");
   const tokens = useAnalyticsArea<TokenAnalytics>("/command-center/tokens?groupBy=model", range, {
@@ -266,17 +267,60 @@ function OverviewTab({
   // The throughput funnel reads its own data (activityLog transitions) and shows
   // its own empty state, so it renders even when the stat-card aggregates have no
   // data yet.
+  /*
+  FNXC:CommandCenter 2026-06-22-18:00:
+  The "AI Engine" panel hosts the "View Board"/"View Agents" navigation shortcuts and lives inside controlsSection, which renders in EVERY Overview branch (loading/error/empty/populated), so the panel is always visible regardless of data state. It previously rendered only inside the populated return as the .cc-overview-engine-nav row, leaving loading/empty/error states with no shortcuts. The optional status line reuses already-fetched live-snapshot (inProgressTasks) and activity (activeAgents) data — no new endpoint — and is skipped while the live snapshot is still loading. Navigation is owned by App (onChangeView), so the button row only renders when wired up.
+  */
+  const enginePanel = (
+    <div className="cc-overview-engine-panel" data-testid="command-center-engine-panel">
+      <div className="cc-overview-engine-panel-header">
+        <Cpu size={18} aria-hidden="true" />
+        <span className="cc-overview-engine-panel-title">
+          {t("commandCenter.overview.aiEngine", "AI Engine")}
+        </span>
+      </div>
+      {!liveSnapshotLoading ? (
+        <p className="cc-overview-engine-panel-status" data-testid="command-center-engine-panel-status">
+          {t("commandCenter.overview.aiEngineStatus", "{{agents}} agents working · {{tasks}} tasks in progress", {
+            agents: formatCount(activeAgents),
+            tasks: formatCount(inProgressTasks),
+          })}
+        </p>
+      ) : null}
+      {onChangeView ? (
+        <div className="cc-overview-engine-nav">
+          <button
+            type="button"
+            className="btn btn-sm cc-overview-engine-nav-btn"
+            onClick={() => onChangeView("board")}
+          >
+            {t("commandCenter.controls.engine.viewBoard", "View Board")}
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm cc-overview-engine-nav-btn"
+            onClick={() => onChangeView("agents")}
+          >
+            {t("commandCenter.controls.engine.viewAgents", "View Agents")}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
   const controlsSection = (
-    <CommandCenterControls
-      projectId={projectId}
-      colorTheme={colorTheme}
-      themeMode={themeMode}
-      shadcnCustomColors={shadcnCustomColors}
-      resolvedThemeMode={resolvedThemeMode}
-      onColorThemeChange={onColorThemeChange}
-      onThemeModeChange={onThemeModeChange}
-      onShadcnCustomColorsChange={onShadcnCustomColorsChange}
-    />
+    <>
+      <CommandCenterControls
+        projectId={projectId}
+        colorTheme={colorTheme}
+        themeMode={themeMode}
+        shadcnCustomColors={shadcnCustomColors}
+        resolvedThemeMode={resolvedThemeMode}
+        onColorThemeChange={onColorThemeChange}
+        onThemeModeChange={onThemeModeChange}
+        onShadcnCustomColorsChange={onShadcnCustomColorsChange}
+      />
+      {enginePanel}
+    </>
   );
   const throughputSection = (
     <div className="cc-overview-throughput" data-testid="command-center-throughput">
@@ -528,6 +572,7 @@ export function CommandCenter({
             onColorThemeChange={onColorThemeChange}
             onThemeModeChange={onThemeModeChange}
             onShadcnCustomColorsChange={onShadcnCustomColorsChange}
+            onChangeView={onChangeView}
           />
         );
       case "tokens":
@@ -539,7 +584,7 @@ export function CommandCenter({
       case "productivity":
         return <ProductivityArea range={range} />;
       case "team":
-        return <TeamArea range={range} projectId={projectId} addToast={addToast} onChangeView={onChangeView} />;
+        return <TeamArea range={range} projectId={projectId} addToast={addToast} />;
       case "ecosystem":
         return <EcosystemArea range={range} />;
       case "github":

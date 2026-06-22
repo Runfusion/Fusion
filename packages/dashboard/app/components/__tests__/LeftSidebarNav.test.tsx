@@ -420,9 +420,9 @@ describe("LeftSidebarNav", () => {
     expect(primaryPlugin).toHaveAttribute("title", "Primary Plugin");
     expect(primaryPlugin).toHaveTextContent("Primary Plugin");
     expect(primaryPlugin).not.toHaveTextContent("view");
-    expect(compoundPlugin).toHaveAccessibleName("Compound");
-    expect(compoundPlugin).toHaveAttribute("title", "Compound");
-    expect(compoundPlugin).toHaveTextContent("Compound");
+    expect(compoundPlugin).toHaveAccessibleName("Compound Eng");
+    expect(compoundPlugin).toHaveAttribute("title", "Compound Eng");
+    expect(compoundPlugin).toHaveTextContent("Compound Eng");
     expect(compoundPlugin).not.toHaveTextContent("Compound Engineering");
   });
 

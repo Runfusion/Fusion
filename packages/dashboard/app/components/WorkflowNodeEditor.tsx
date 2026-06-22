@@ -51,6 +51,7 @@ FNXC:i18n-Localize 2026-06-20-00:00:
 FN-6770 localizes this workflow surface through t() and authored en catalog keys so hardcoded user-facing copy does not need a lint.ignore deferral.
 */
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { useAppSettings } from "../hooks/useAppSettings";
 import { isMobileViewport, useViewportMode } from "../hooks/useViewportMode";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
@@ -207,7 +208,7 @@ interface WorkflowNodeEditorProps {
   click) so it reads as a persistent view rather than a dismissible dialog.
   The modal path stays byte-identical when presentation is "modal"/undefined.
   */
-  presentation?: "modal" | "embedded";
+  presentation?: ModalPresentation;
 }
 
 let nodeSeq = 0;
@@ -4657,11 +4658,11 @@ export function WorkflowNodeEditor({
   presentation = "modal",
 }: WorkflowNodeEditorProps) {
   const modalRef = useRef<HTMLDivElement>(null);
-  const isEmbedded = presentation === "embedded";
+  const { isEmbedded, resizePersistEnabled } = useEmbeddedPresentation(presentation);
   // FNXC:WorkflowEditorEmbedding 2026-06-22-00:00:
   // Size persistence + native resize are modal-only; an embedded view fills its
   // host panel (width/height:100%) so persisting a saved pixel size is wrong.
-  useModalResizePersist(modalRef, isOpen && !isEmbedded, "fusion:workflow-node-editor-size");
+  useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:workflow-node-editor-size");
   if (!isOpen) return null;
   return (
     <ReactFlowProvider>

@@ -7,15 +7,15 @@ import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { fetchWorkflowSteps, fetchBoardWorkflows, promoteTask, type ModelInfo, type BoardWorkflowDefinition, type BoardWorkflowsPayload } from "../api";
+import { fetchWorkflowSteps, promoteTask, type ModelInfo, type BoardWorkflowsPayload } from "../api";
 import { useBlockerFanout } from "../hooks/useBlockerFanout";
 import { MOBILE_MEDIA_QUERY } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { subscribeSse } from "../sse-bus";
 import { getBoardCanDropTaskRejection } from "./boardCanDropTask";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
-import { readBoardWorkflowsCache, writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
+import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
+import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 
 interface BoardProps {
   tasks: Task[];
@@ -365,75 +365,21 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
   /*
   FNXC:BoardWorkflows 2026-06-20-08:58:
   Workflow-columns-enabled users must never see the legacy single-lane board while board-workflows metadata is still loading. Hydrate metadata from the project-scoped session cache, reset it on project switches, and show a neutral skeleton while settings or uncached workflow metadata are unknown.
+
+  FNXC:Workflows 2026-06-22-17:00:
+  The board-workflows fetch/cache/SSE/selection loop now lives in `useBoardWorkflows`, shared verbatim with the Planning header slot. Board gates cache hydration on `workflowColumnsEnabled === true || settingsLoaded === false` so workflow-columns users never flash the legacy board, and consumes the exposed raw state setter for optimistic task→workflow assignment. When the flag is OFF the server returns `{ flagEnabled: false }` and we render the legacy single-lane board below.
   */
-  // Fetch board-workflows metadata. When the flag is OFF the server returns
-  // { flagEnabled: false } and we render the legacy single-lane board below.
   const shouldHydrateBoardWorkflowsCache = workflowColumnsEnabled === true || settingsLoaded === false;
-  const [boardWorkflowsState, setBoardWorkflowsState] = useState<{ projectId?: string; payload: BoardWorkflowsPayload } | null>(() => {
-    const cached = shouldHydrateBoardWorkflowsCache ? readBoardWorkflowsCache(projectId) : null;
-    return cached ? { projectId, payload: cached } : null;
-  });
-  const boardWorkflows = boardWorkflowsState?.projectId === projectId && boardWorkflowsState ? boardWorkflowsState.payload : null;
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const {
+    boardWorkflows,
+    workflowMode,
+    workflowOptions,
+    selectedWorkflow,
+    setSelectedWorkflowId,
+    refreshBoardWorkflows,
+    setBoardWorkflowsState,
+  } = useBoardWorkflows({ projectId, shouldHydrateCache: shouldHydrateBoardWorkflowsCache });
   const draggingTaskIdRef = useRef<string | null>(null);
-
-  // Fetch board workflow lanes for the project. Deliberately NOT keyed on
-  // `tasks` — that refetched on every SSE tick. Instead we refetch on project
-  // change and when the tab regains visibility/focus. A stale-response guard
-  // (monotonic sequence ref) drops out-of-order responses.
-  // A `workflow:updated` (and create/delete) SSE event now drives invalidation
-  // when a definition's lanes / column traits change. The visibility/focus
-  // refetch below is retained as a stopgap for missed events / reconnects.
-  const boardWorkflowsFetchSeqRef = useRef(0);
-  useEffect(() => {
-    const cached = shouldHydrateBoardWorkflowsCache ? readBoardWorkflowsCache(projectId) : null;
-    setBoardWorkflowsState(cached ? { projectId, payload: cached } : null);
-  }, [projectId, shouldHydrateBoardWorkflowsCache]);
-
-  /*
-  FNXC:WorkflowControls 2026-06-21-00:00:
-  Opening the workflow switcher must refresh the board-workflows payload because task workflow assignment changes do not emit workflow definition SSE events.
-  Share this path with mount, visibility/focus, and workflow-definition SSE refetches so the stale-response guard and cache writes remain identical.
-  */
-  const refreshBoardWorkflows = useCallback(() => {
-    const seq = ++boardWorkflowsFetchSeqRef.current;
-    fetchBoardWorkflows(projectId)
-      .then((payload) => {
-        if (seq === boardWorkflowsFetchSeqRef.current) {
-          setBoardWorkflowsState({ projectId, payload });
-          writeBoardWorkflowsCache(projectId, payload);
-        }
-      })
-      .catch(() => {
-        if (seq === boardWorkflowsFetchSeqRef.current) {
-          setBoardWorkflowsState({ projectId, payload: { flagEnabled: false, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} } });
-        }
-      });
-  }, [projectId]);
-
-  useEffect(() => {
-    refreshBoardWorkflows();
-    const onVisible = () => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") refreshBoardWorkflows();
-    };
-    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
-    if (typeof window !== "undefined") window.addEventListener("focus", onVisible);
-    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-    const unsubscribe = subscribeSse(`/api/events${query}`, {
-      events: {
-        "workflow:created": refreshBoardWorkflows,
-        "workflow:updated": refreshBoardWorkflows,
-        "workflow:deleted": refreshBoardWorkflows,
-      },
-    });
-    return () => {
-      // Advance the seq so any in-flight response is dropped on cleanup.
-      boardWorkflowsFetchSeqRef.current++;
-      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
-      if (typeof window !== "undefined") window.removeEventListener("focus", onVisible);
-      unsubscribe();
-    };
-  }, [projectId, refreshBoardWorkflows]);
 
   const handlePromote = useCallback(async (taskId: string) => {
     await promoteTask(taskId, projectId);
@@ -448,40 +394,10 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
 
   const getDraggingTaskId = useCallback(() => draggingTaskIdRef.current, []);
 
-  const flagOn = boardWorkflows?.flagEnabled === true;
-
-  const workflowMode = flagOn && Boolean(boardWorkflows?.workflows.length);
-  const workflowOptions = useMemo<BoardWorkflowDefinition[]>(() => {
-    if (!workflowMode || !boardWorkflows) return [];
-    return [...boardWorkflows.workflows].sort((a, b) => {
-      if (a.id === boardWorkflows.defaultWorkflowId) return -1;
-      if (b.id === boardWorkflows.defaultWorkflowId) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [boardWorkflows, workflowMode]);
-
-  const selectedWorkflow = useMemo<BoardWorkflowDefinition | null>(() => {
-    if (!workflowMode) return null;
-    return workflowOptions.find((workflow) => workflow.id === selectedWorkflowId)
-      ?? workflowOptions.find((workflow) => workflow.id === boardWorkflows?.defaultWorkflowId)
-      ?? workflowOptions[0]
-      ?? null;
-  }, [boardWorkflows?.defaultWorkflowId, selectedWorkflowId, workflowMode, workflowOptions]);
-
   const workflowStatusCounts = useMemo(
     () => computeWorkflowStatusCounts(tasks, boardWorkflows),
     [boardWorkflows, tasks],
   );
-
-  useEffect(() => {
-    if (!workflowMode) {
-      setSelectedWorkflowId(null);
-      return;
-    }
-    if (selectedWorkflow && selectedWorkflow.id !== selectedWorkflowId) {
-      setSelectedWorkflowId(selectedWorkflow.id);
-    }
-  }, [selectedWorkflow, selectedWorkflowId, workflowMode]);
 
   const selectedWorkflowTasks = useMemo(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return [];

@@ -1057,8 +1057,62 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
   margin: 0;
 }
 
+/*
+FNXC:TaskDetail 2026-06-22-18:40:
+Embedded in the full-width board-card panel the detail content must be width-bounded so it cannot overflow and get clipped on the right. Constrain the embedded root and its header/body to the host width (width:100%; min-width:0; max-width:100%); min-width:0 lets inner flex rows (header title row, tabs, action bars) shrink and wrap instead of forcing horizontal overflow. Vertical scroll stays on .detail-body.
+*/
 .task-detail-content--embedded {
   height: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-detail-content--embedded .modal-header,
+.task-detail-content--embedded .detail-body,
+.task-detail-content--embedded .detail-tabs,
+.task-detail-content--embedded .modal-actions {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The gray header row must wrap (task id left, Back-to-board right) instead of overflowing on narrow panels. */
+.task-detail-content--embedded .modal-header {
+  flex-wrap: wrap;
+  row-gap: var(--space-xs);
+}
+
+.task-detail-content--embedded .detail-title-row {
+  min-width: 0;
+}
+
+.task-detail-content--embedded .modal-header-actions {
+  min-width: 0;
+}
+
+/*
+FNXC:TaskDetail 2026-06-22-18:40:
+"Back to board" affordance inside the gray header. margin-left:auto pushes it to the far right (across from the task id on the left); it shares the header-actions row but stays pinned right and wraps when space is tight. Theme tokens only.
+*/
+.task-detail-header-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 13px;
+  color: var(--text-muted);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.task-detail-header-back-btn:hover {
+  color: var(--text);
+  background: var(--card-hover);
 }
 
 .task-detail-content--embedded .detail-actions-menu,

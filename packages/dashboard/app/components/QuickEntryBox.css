@@ -32,6 +32,26 @@
   min-height: 80px;
 }
 
+/*
+FNXC:QuickEntry 2026-06-22-19:25:
+List view renders quick-add as a COMPACT single-line input so the box isn't tall.
+Clamp the textarea to exactly one line (min-height == max-height == one line), forbid auto-grow/manual resize, and scroll overflow instead of growing.
+Tighten container vertical padding so the overall box is just the one-line input height.
+Board/columns omit `.quick-entry--single-line`, keeping the tall 80px + auto-grow behavior.
+*/
+.quick-entry--single-line {
+  padding-top: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
+.quick-entry-box.quick-entry--single-line .quick-entry-input,
+.quick-entry-box.quick-entry--single-line .quick-entry-input--expanded {
+  min-height: 36px;
+  max-height: 36px;
+  overflow-y: auto;
+  resize: none;
+}
+
 @media (max-width: 768px) {
   .quick-entry-input--expanded {
     min-height: 60px;

@@ -409,6 +409,11 @@ export interface TaskDetailModalProps {
 export type TaskDetailContentProps = Omit<TaskDetailModalProps, "onClose"> & {
   embedded?: boolean;
   onRequestClose?: () => void;
+  /*
+  FNXC:TaskDetail 2026-06-22-18:40:
+  onBackToBoard powers the board-card full-panel "Back to board" affordance rendered in the gray header (far right). It is only honored when embedded is also true, so ListView split-pane and modal usages never show it.
+  */
+  onBackToBoard?: () => void;
 };
 
 function truncate(s: string, max: number): string {
@@ -583,6 +588,7 @@ export function TaskDetailContent({
   mobileHeaderMode = "close",
   embedded = false,
   onRequestClose,
+  onBackToBoard,
   workflowFieldDefs: workflowFieldDefsProp,
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
@@ -2734,6 +2740,20 @@ export function TaskDetailContent({
             </span>
           </div>
           <div className="modal-header-actions">
+            {/*
+            FNXC:TaskDetail 2026-06-22-18:40:
+            Board-card full-panel "Back to board" affordance lives here on the far right of the gray header (across from the task id on the left), pushed by margin-left:auto so it never overlaps the id and wraps on narrow widths. Only rendered when embedded AND onBackToBoard are supplied (board-card detail), never in ListView split-pane or modal usages.
+            */}
+            {embedded && onBackToBoard && (
+              <button
+                type="button"
+                className="task-detail-header-back-btn"
+                onClick={onBackToBoard}
+              >
+                <ArrowLeft size={14} aria-hidden="true" />
+                <span>{t("app.taskDetail.backToBoard", "Back to board")}</span>
+              </button>
+            )}
             {!isEditing && canEdit && (
               <button
                 className="modal-edit-btn"

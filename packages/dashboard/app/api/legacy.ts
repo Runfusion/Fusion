@@ -92,6 +92,7 @@ import type {
   WorkflowSettingOption,
   WorkflowSettingRender,
   WorkflowSettingRejection,
+  CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
 import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
@@ -113,6 +114,7 @@ export type FetchOptions = DedupeOptions;
 
 // Re-export skills types for use by hooks and components
 export type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry };
+export type { CommitAssociationDiffBackfillReport };
 
 export class ApiRequestError extends Error {
   readonly status: number;
@@ -2337,12 +2339,19 @@ export function clearApiKey(provider: string): Promise<{ success: boolean }> {
 // --- GitHub Import API ---
 
 /** GitHub issue returned by the fetch endpoint */
+/*
+FNXC:GitHubImport 2026-06-22-18:30:
+The Import Tasks preview pane renders the FULL issue (full body + metadata), so the list response carries the complete body plus author/state.
+The GitHub issue-list endpoint already returns the full (untruncated) `body`; no per-item detail fetch is needed. `author`/`state` are surfaced for the preview metadata row.
+*/
 export interface GitHubIssue {
   number: number;
   title: string;
   body: string | null;
   html_url: string;
   labels: Array<{ name: string }>;
+  state?: "open" | "closed";
+  author?: string | null;
 }
 
 /** Fetch open GitHub issues from a repository */
@@ -2392,7 +2401,10 @@ export function apiBatchImportGitHubIssues(
 
 // --- GitHub Pull Request Import API ---
 
-/** GitHub pull request returned by the fetch endpoint */
+/*
+FNXC:GitHubImport 2026-06-22-18:30:
+The PR-list endpoint already returns the full (untruncated) `body`; the import preview renders it in full with no per-item detail fetch. `state`/`author` surface PR metadata in the preview.
+*/
 export interface GitHubPull {
   number: number;
   title: string;
@@ -2400,6 +2412,8 @@ export interface GitHubPull {
   html_url: string;
   headBranch: string;
   baseBranch: string;
+  state?: "open" | "closed" | "merged";
+  author?: string | null;
 }
 
 /** Fetch open GitHub pull requests from a repository */
@@ -7666,6 +7680,20 @@ export function backfillMissionAssertions(
 ): Promise<MissionAssertionBackfillReport> {
   return api<MissionAssertionBackfillReport>(
     withProjectId(`/missions/${encodeURIComponent(missionId)}/backfill-assertions`, projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({ dryRun: options?.dryRun ?? true }),
+    },
+  );
+}
+
+/** Backfill historical Command Center LOC stats for commit associations. Defaults to dry-run. */
+export function backfillCommitAssociationDiffStats(
+  options?: { dryRun?: boolean },
+  projectId?: string,
+): Promise<CommitAssociationDiffBackfillReport> {
+  return api<CommitAssociationDiffBackfillReport>(
+    withProjectId("/command-center/productivity/backfill-loc", projectId),
     {
       method: "POST",
       body: JSON.stringify({ dryRun: options?.dryRun ?? true }),

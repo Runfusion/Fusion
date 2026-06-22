@@ -3055,6 +3055,7 @@ export class GitHubClient {
     labels: Array<{ name: string }>;
     state?: "open" | "closed";
     updatedAt?: string;
+    author?: string | null;
   }>> {
     if (this.hasGhAuth()) {
       try {
@@ -3085,6 +3086,7 @@ export class GitHubClient {
     labels: Array<{ name: string }>;
     state?: "open" | "closed";
     updatedAt?: string;
+    author?: string | null;
   }>> {
     const limit = options?.limit ?? 30;
     const state = options?.state ?? "open";
@@ -3098,12 +3100,14 @@ export class GitHubClient {
       labels: Array<{ name: string }>;
       state: "OPEN" | "CLOSED";
       updatedAt: string;
+      author?: { login?: string } | null;
     }>>([
       "issue", "list",
       "--repo", `${owner}/${repo}`,
       "--state", state,
       "--limit", String(Math.min(limit, 100)),
-      "--json", "number,title,body,url,labels,state,updatedAt",
+      // FNXC:GitHubImport 2026-06-22-18:30: Request `author` so the import preview pane can show full issue metadata (author/state alongside the already-present full body) without a per-item detail fetch.
+      "--json", "number,title,body,url,labels,state,updatedAt,author",
     ]);
 
     let result = issues.map((issue) => ({
@@ -3114,6 +3118,7 @@ export class GitHubClient {
       labels: issue.labels,
       state: this.mapGhIssueState(issue.state),
       updatedAt: issue.updatedAt,
+      author: issue.author?.login ?? null,
     }));
 
     // Filter by labels if specified (client-side filtering)
@@ -3140,6 +3145,7 @@ export class GitHubClient {
     labels: Array<{ name: string }>;
     state?: "open" | "closed";
     updatedAt?: string;
+    author?: string | null;
   }>> {
     const limit = options?.limit ?? 30;
     const state = options?.state ?? "open";
@@ -3171,6 +3177,7 @@ export class GitHubClient {
       labels: Array<{ name: string }>;
       state: string;
       updated_at: string;
+      user?: { login?: string } | null;
       pull_request?: unknown;
     }>;
 
@@ -3185,6 +3192,7 @@ export class GitHubClient {
         labels: issue.labels,
         state: this.mapIssueState(issue.state),
         updatedAt: issue.updated_at,
+        author: issue.user?.login ?? null,
       }))
       .slice(0, limit);
   }
@@ -3443,6 +3451,8 @@ export class GitHubClient {
     html_url: string;
     headBranch: string;
     baseBranch: string;
+    state?: "open" | "closed" | "merged";
+    author?: string | null;
   }>> {
     if (this.hasGhAuth()) {
       try {
@@ -3472,6 +3482,8 @@ export class GitHubClient {
     html_url: string;
     headBranch: string;
     baseBranch: string;
+    state?: "open" | "closed" | "merged";
+    author?: string | null;
   }>> {
     const limit = options?.limit ?? 30;
 
@@ -3482,12 +3494,15 @@ export class GitHubClient {
       url: string;
       headRefName: string;
       baseRefName: string;
+      state?: "OPEN" | "CLOSED" | "MERGED";
+      author?: { login?: string } | null;
     }>>([
       "pr", "list",
       "--repo", `${owner}/${repo}`,
       "--state", "open",
       "--limit", String(Math.min(limit, 100)),
-      "--json", "number,title,body,url,headRefName,baseRefName",
+      // FNXC:GitHubImport 2026-06-22-18:30: Request `state,author` so the import preview pane shows full PR metadata (author/state with the already-present full body) without a per-item detail fetch.
+      "--json", "number,title,body,url,headRefName,baseRefName,state,author",
     ]);
 
     return pulls.map((pr) => ({
@@ -3497,6 +3512,8 @@ export class GitHubClient {
       html_url: pr.url,
       headBranch: pr.headRefName,
       baseBranch: pr.baseRefName,
+      state: pr.state ? (pr.state.toLowerCase() as "open" | "closed" | "merged") : undefined,
+      author: pr.author?.login ?? null,
     }));
   }
 
@@ -3511,6 +3528,8 @@ export class GitHubClient {
     html_url: string;
     headBranch: string;
     baseBranch: string;
+    state?: "open" | "closed" | "merged";
+    author?: string | null;
   }>> {
     const limit = options?.limit ?? 30;
 
@@ -3537,6 +3556,8 @@ export class GitHubClient {
       html_url: string;
       head: { ref: string };
       base: { ref: string };
+      state?: string;
+      user?: { login?: string } | null;
     }>;
 
     return data.slice(0, limit).map((pr) => ({
@@ -3546,6 +3567,8 @@ export class GitHubClient {
       html_url: pr.html_url,
       headBranch: pr.head.ref,
       baseBranch: pr.base.ref,
+      state: pr.state === "open" || pr.state === "closed" ? pr.state : undefined,
+      author: pr.user?.login ?? null,
     }));
   }
 

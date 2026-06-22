@@ -1,41 +1,20 @@
 /* === Skills View === */
+/*
+FNXC:SkillsView 2026-06-22-16:15:
+Skills mounts as a flex child of the flex-row .project-content. A flex item with no flex-grow collapses to its intrinsic content width, so the Skills content rendered narrow instead of spanning the main panel. Grow into available space, zero the min-width floor, and pin width:100% — mirroring the GoalsView/SecretsView (FN-6446/FN-6789) fix — so the view fills the full panel width.
+*/
 .skills-view {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  width: 100%;
   overflow: hidden;
-}
-
-.skills-view-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-lg);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-}
-
-.skills-view-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
-.skills-view-title h2 {
-  font-weight: 600;
-  margin: 0;
 }
 
 .skills-view-count {
   color: var(--text-muted);
-}
-
-.skills-view-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
 }
 
 /*
@@ -375,19 +354,9 @@ The shared ViewHeader already supplies the top + side --space-lg padding, so the
 }
 
 @media (max-width: 768px) {
-  .skills-view-header {
-    padding: var(--space-sm) var(--space-md);
-  }
-
   .skills-view-content {
     padding: var(--space-md);
   }
-
-  .skills-view-title h2 {
-    }
-
-  .skills-view-count {
-    }
 
   .skills-view-section {
     margin-bottom: var(--space-md);

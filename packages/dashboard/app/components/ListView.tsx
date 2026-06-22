@@ -405,6 +405,8 @@ export function ListView({
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readSidebarWidth(projectId));
   const splitLayoutRef = useRef<HTMLDivElement>(null);
   const splitSidebarRef = useRef<HTMLDivElement>(null);
+  // FNXC:ListView 2026-06-22-18:00: Holds the active pointer-drag teardown so move/up/cancel/unmount all detach the same listeners — prevents the "window mousemove with no cleanup" leak called out by the frontend-races review.
+  const splitResizeTeardownRef = useRef<(() => void) | null>(null);
   const previousStorageProjectIdRef = useRef(projectId);
   const boardWorkflowsFetchSeqRef = useRef(0);
 
@@ -515,8 +517,16 @@ export function ListView({
     if (!container) return;
 
     const applyClamp = () => {
+      /*
+      FNXC:ListView 2026-06-22-18:00:
+      A zero/unmeasurable container width must NOT clamp the persisted sidebar width down to the 64px
+      min — that collapse made the resize handle appear broken (drag snapped the pane to the minimum
+      and refused to widen). Only re-clamp when the container reports a real width.
+      */
+      const containerWidth = container.clientWidth;
+      if (containerWidth <= 0) return;
       // Keep width valid when viewport/container size changes.
-      const clamped = clampSidebarWidth(sidebarWidth, container.clientWidth);
+      const clamped = clampSidebarWidth(sidebarWidth, containerWidth);
       if (clamped !== sidebarWidth) {
         setSidebarWidth(clamped);
       }
@@ -1529,26 +1539,60 @@ export function ListView({
     setDragOverColumn(null);
   }, []);
 
-  const handleSplitResizeStart = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+  /*
+  FNXC:ListView 2026-06-22-18:00:
+  Pointer-based split resize. setPointerCapture keeps move/up events flowing to the handle even when
+  the cursor leaves it, and a single teardown ref (cleared on pointerup/pointercancel/unmount) detaches
+  every listener exactly once. Width is measured from a live rect per move (re-reading rect.left/width
+  each frame) and clamped between LIST_SIDEBAR_MIN_WIDTH (64) and 65% of the container so the inline
+  style={{ width }} — which wins over the grid `auto` track — updates live and persists.
+  */
+  const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (isMobile) return;
-    event.preventDefault();
     const container = splitLayoutRef.current;
     if (!container) return;
+    event.preventDefault();
 
-    const rect = container.getBoundingClientRect();
-    const onMouseMove = (moveEvent: MouseEvent) => {
+    // Detach any prior drag (defensive against a missed pointerup).
+    splitResizeTeardownRef.current?.();
+
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // setPointerCapture is best-effort (e.g. synthetic events in tests).
+    }
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const rect = container.getBoundingClientRect();
+      // Guard against an unmeasurable container so a drag never collapses the pane to the min.
+      const containerWidth = rect.width > 0 ? rect.width : container.clientWidth;
+      if (containerWidth <= 0) return;
       const proposedWidth = moveEvent.clientX - rect.left;
-      setSidebarWidth(clampSidebarWidth(proposedWidth, rect.width));
+      setSidebarWidth(clampSidebarWidth(proposedWidth, containerWidth));
     };
 
-    const onMouseUp = () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+    const teardown = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", teardown);
+      window.removeEventListener("pointercancel", teardown);
+      try {
+        handle.releasePointerCapture(pointerId);
+      } catch {
+        // Capture may already be released.
+      }
+      splitResizeTeardownRef.current = null;
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    splitResizeTeardownRef.current = teardown;
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", teardown);
+    window.addEventListener("pointercancel", teardown);
   }, [isMobile]);
+
+  // FNXC:ListView 2026-06-22-18:00: Tear down any in-flight resize drag on unmount so window pointer listeners never leak.
+  useEffect(() => () => splitResizeTeardownRef.current?.(), []);
 
   const handleSplitResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (isMobile) return;
@@ -1988,6 +2032,7 @@ export function ListView({
                 projectId={projectId}
                 autoExpand={false}
                 defaultExpanded={false}
+                singleLine /* FNXC:QuickEntry 2026-06-22-19:25: List view uses the compact single-line quick-add so the box stays one line tall. */
                 favoriteProviders={favoriteProviders}
                 favoriteModels={favoriteModels}
                 onToggleFavorite={onToggleFavorite}
@@ -2394,7 +2439,7 @@ export function ListView({
               <div
                 className="list-split-resize-handle"
                 data-testid="list-split-resize-handle"
-                onMouseDown={handleSplitResizeStart}
+                onPointerDown={handleSplitResizeStart}
                 onKeyDown={handleSplitResizeKeyDown}
                 role="separator"
                 tabIndex={0}

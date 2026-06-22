@@ -14,7 +14,7 @@ vi.mock("lucide-react", () => ({
   Link: () => <span data-testid="icon-link" />,
   Plus: () => <span data-testid="icon-plus" />,
   Sparkles: () => <span data-testid="icon-sparkles" />,
-  // Target backs the shared ViewHeader icon for the Goals view header (FNXC:Navigation 2026-06-22).
+  // Target backs the shared ViewHeader icon for the Goals view header (FNXC:Navigation 2026-06-22-12:00).
   Target: () => <span data-testid="icon-target" />,
   X: () => <span data-testid="icon-x" />,
 }));

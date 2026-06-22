@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import express, { type NextFunction, type Request, type Response } from "express";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -196,10 +196,11 @@ function buildApp(stores: Record<string, TaskStore>, fallback: TaskStore) {
   return app;
 }
 
-/** A minimal TaskStore exposing only getDatabase(), which is all the routes use. */
-function storeFor(db: Database): TaskStore {
+/** A minimal TaskStore exposing only the methods Command Center routes use. */
+function storeFor(db: Database, overrides: Partial<TaskStore> = {}): TaskStore {
   const store = new EventEmitter() as unknown as TaskStore & { getDatabase(): Database };
   store.getDatabase = () => db;
+  Object.assign(store, overrides);
   return store;
 }
 
@@ -355,6 +356,48 @@ describe("register-command-center-routes", () => {
     expect(signals.body).toHaveProperty("mttr");
     expect(signals.body).toHaveProperty("bySource");
     expect(signals.body).toHaveProperty("bySeverity");
+  });
+
+  it("runs the productivity LOC backfill route as a dry-run by default and respects writes", async () => {
+    const backfill = vi.fn(async (options?: { dryRun?: boolean }) => ({
+      scannedRows: 3,
+      distinctCommits: 2,
+      updatedRows: options?.dryRun === false ? 3 : 0,
+      skippedUnavailableCommits: 1,
+      skippedInvalidShas: 0,
+      dryRun: options?.dryRun ?? true,
+    }));
+    const scopedStore = storeFor(dbA, { backfillCommitAssociationDiffStats: backfill } as unknown as Partial<TaskStore>);
+    const scopedApp = buildApp({ "proj-a": scopedStore }, scopedStore);
+
+    const preview = await request(
+      scopedApp,
+      "POST",
+      "/api/command-center/productivity/backfill-loc?projectId=proj-a",
+      JSON.stringify({}),
+      { "content-type": "application/json" },
+    );
+    expect(preview.status).toBe(200);
+    expect(preview.body).toMatchObject({
+      scannedRows: 3,
+      distinctCommits: 2,
+      updatedRows: 0,
+      skippedUnavailableCommits: 1,
+      skippedInvalidShas: 0,
+      dryRun: true,
+    });
+    expect(backfill).toHaveBeenLastCalledWith({ dryRun: true });
+
+    const write = await request(
+      scopedApp,
+      "POST",
+      "/api/command-center/productivity/backfill-loc?projectId=proj-a",
+      JSON.stringify({ dryRun: false }),
+      { "content-type": "application/json" },
+    );
+    expect(write.status).toBe(200);
+    expect(write.body).toMatchObject({ updatedRows: 3, dryRun: false });
+    expect(backfill).toHaveBeenLastCalledWith({ dryRun: false });
   });
 
   it("returns the live snapshot shape", async () => {

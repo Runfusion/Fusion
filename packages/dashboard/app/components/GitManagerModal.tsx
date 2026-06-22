@@ -10,6 +10,7 @@ import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
+import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { useViewportMode } from "../hooks/useViewportMode";
 import type {
   GitStatus,
@@ -206,7 +207,7 @@ interface GitManagerModalProps {
   Default stays "modal" so all existing overlay call sites keep byte-identical behavior.
   Embedded mode must disable modal-only behaviors (scroll lock, resize persistence, Escape-to-close, overlay click dismiss) since they break the host page.
   */
-  presentation?: "modal" | "embedded";
+  presentation?: ModalPresentation;
 }
 
 // ── Main Component ────────────────────────────────────────────────
@@ -215,9 +216,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const { t } = useTranslation("app");
   const confirmContext = useConfirm();
   const viewportMode = useViewportMode();
-  // FNXC:RightDockEmbedding 2026-06-22-00:00: embedded mode gates modal-only behaviors below.
-  const isEmbedded = presentation === "embedded";
-  useMobileScrollLock(isOpen && !isEmbedded);
+  // FNXC:RightDockEmbedding 2026-06-22-00:00: embedded mode gates modal-only behaviors below (shared hook).
+  const { isEmbedded, scrollLockEnabled, resizePersistEnabled, escapeEnabled } = useEmbeddedPresentation(presentation);
+  useMobileScrollLock(isOpen && scrollLockEnabled);
   const { keyboardOverlap, viewportHeight, viewportOffsetTop, keyboardOpen } = useMobileKeyboard({
     enabled: viewportMode === "mobile",
   });
@@ -246,7 +247,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const [sectionError, setSectionError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   // FNXC:RightDockEmbedding 2026-06-22-00:00: skip modal resize persist/restore when embedded inline.
-  useModalResizePersist(modalRef, isOpen && !isEmbedded, "fusion:git-modal-size");
+  useModalResizePersist(modalRef, isOpen && resizePersistEnabled, "fusion:git-modal-size");
   const overlayDismissProps = useOverlayDismiss(handleClose);
   const copyToClipboard = useCopyToClipboard(addToast);
 
@@ -379,7 +380,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
   useEffect(() => {
     // FNXC:RightDockEmbedding 2026-06-22-00:00: embedded mode has no overlay to dismiss; a global Escape listener would hijack page keys.
-    if (!isOpen || isEmbedded) return;
+    if (!isOpen || !escapeEnabled) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         handleClose();
@@ -398,7 +399,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [isOpen, isEmbedded, handleClose, activeSection]);
+  }, [isOpen, escapeEnabled, handleClose, activeSection]);
 
   // ── Changes Handlers ────────────────────────────────────────────
 
@@ -958,6 +959,21 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                     </button>
                   );
                 })}
+                {/*
+                FNXC:GitManager 2026-06-22-19:00:
+                Refresh relocated from the (now-removed) internal gray .modal-header into the section nav strip so it is reachable on every section ("each page") in BOTH the right-dock embedded view (wrapping tab strip) and the popped-out modal. The dock tab strip and RightDockExpandModal already supply a header, so the internal title+refresh row was a duplicate header and is removed. Same fetchSectionData + loading spinner state as before.
+                */}
+                <button
+                  type="button"
+                  className="gm-nav-refresh"
+                  onClick={fetchSectionData}
+                  disabled={loading}
+                  title={t("git.refresh", "Refresh")}
+                  aria-label={t("git.refresh", "Refresh")}
+                >
+                  <RefreshCw size={16} className={loading ? "spin" : ""} />
+                  <span className="gm-nav-label">{t("git.refresh", "Refresh")}</span>
+                </button>
               </nav>
 
               {/* Content Area */}
@@ -1120,23 +1136,6 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     return (
       <div className="git-manager-embedded right-dock-embedded-view">
         <div className="gm-modal gm-modal--embedded" ref={modalRef} style={keyboardStyle}>
-          <div className="modal-header">
-            <h3>
-              <FolderGit2 size={18} style={{ marginRight: 8, verticalAlign: "middle" }} />
-              {t("git.modalTitle", "Git Manager")}
-            </h3>
-            <div className="gm-header-actions">
-              <button
-                className="btn btn-sm"
-                onClick={fetchSectionData}
-                disabled={loading}
-                title={t("git.refresh", "Refresh")}
-              >
-                <RefreshCw size={14} className={loading ? "spin" : ""} />
-              </button>
-            </div>
-          </div>
-
           <div className="gm-layout">
             {gitBody}
           </div>
@@ -1154,14 +1153,6 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
             {t("git.modalTitle", "Git Manager")}
           </h3>
           <div className="gm-header-actions">
-            <button
-              className="btn btn-sm"
-              onClick={fetchSectionData}
-              disabled={loading}
-              title={t("git.refresh", "Refresh")}
-            >
-              <RefreshCw size={14} className={loading ? "spin" : ""} />
-            </button>
             <button className="modal-close" onClick={handleClose} aria-label={t("git.close", "Close")}>
               <X size={18} />
             </button>

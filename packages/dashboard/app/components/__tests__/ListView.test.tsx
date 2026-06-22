@@ -1122,25 +1122,72 @@ describe("ListView", () => {
   it("supports keyboard resizing on the desktop split-pane handle", async () => {
     const viewportSpy = mockDesktopViewport();
     const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "80");
+    // Persisted below the 64px min clamps up to 64.
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "40");
     const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
 
     renderListView({ tasks });
-    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "120px" }));
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "64px" }));
 
     const handle = screen.getByTestId("list-split-resize-handle");
     const startWidth = Number(handle.getAttribute("aria-valuenow"));
 
     expect(handle).toHaveAttribute("tabindex", "0");
-    expect(handle).toHaveAttribute("aria-valuemin", "120");
-    expect(Number(handle.getAttribute("aria-valuemax"))).toBeGreaterThanOrEqual(120);
+    expect(handle).toHaveAttribute("aria-valuemin", "64");
+    expect(Number(handle.getAttribute("aria-valuemax"))).toBeGreaterThanOrEqual(64);
 
     fireEvent.keyDown(handle, { key: "ArrowRight" });
     expect(Number(handle.getAttribute("aria-valuenow"))).toBeGreaterThan(startWidth);
     fireEvent.keyDown(handle, { key: "Home" });
-    expect(handle).toHaveAttribute("aria-valuenow", "120");
-    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "120px" });
+    expect(handle).toHaveAttribute("aria-valuenow", "64");
+    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "64px" });
     clientWidthSpy.mockRestore();
+    viewportSpy.mockRestore();
+  });
+
+  it("resizes the desktop split sidebar by dragging the handle (pointer)", async () => {
+    // FNXC:ListView 2026-06-22-18:00: Regression guard — dragging the resize handle must change the
+    // sidebar width live and not collapse to the min when the container measures non-zero.
+    const viewportSpy = mockDesktopViewport();
+    const rectSpy = vi
+      .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue({ left: 0, width: 1000, top: 0, right: 1000, bottom: 300, height: 300, x: 0, y: 0, toJSON() {} } as DOMRect);
+    const cwSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "300");
+    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
+
+    renderListView({ tasks });
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "300px" }));
+
+    const handle = screen.getByTestId("list-split-resize-handle");
+    // Narrow the pane.
+    fireEvent.pointerDown(handle, { clientX: 300, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientX: 250, pointerId: 1 });
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "250px" }));
+    // Widen the pane.
+    fireEvent.pointerMove(window, { clientX: 420, pointerId: 1 });
+    await waitFor(() => expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "420px" }));
+    fireEvent.pointerUp(window, { pointerId: 1 });
+
+    rectSpy.mockRestore();
+    cwSpy.mockRestore();
+    viewportSpy.mockRestore();
+  });
+
+  it("does not collapse the split sidebar to the min when the container width is unmeasurable", async () => {
+    // FNXC:ListView 2026-06-22-18:00: A zero/unreliable container measurement must not force the
+    // persisted width down to the min clamp — that was the resize regression (pane snapped to 64px).
+    const viewportSpy = mockDesktopViewport();
+    const cwSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(0);
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "300");
+    const tasks = [createMockTask({ id: "FN-001", title: "Task" })];
+
+    renderListView({ tasks });
+    // Width must be preserved (not collapsed to 64) while the container reports 0.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(screen.getByTestId("list-split-sidebar")).toHaveStyle({ width: "300px" });
+
+    cwSpy.mockRestore();
     viewportSpy.mockRestore();
   });
 

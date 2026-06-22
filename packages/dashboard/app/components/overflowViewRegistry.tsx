@@ -52,6 +52,12 @@ export interface OverflowViewFeatureState {
 
 export interface OverflowViewRenderProps {
   projectId?: string;
+  /*
+  FNXC:RightDockFiles 2026-06-22-15:00:
+  `surface` tells a registry render function which host it is mounting into so it can pick a deterministic layout instead of relying on a fragile CSS container query.
+  The compact right-dock body leaves this undefined ("dock"); the RightDockExpandModal sets `surface="expand"` so DockFilesView forces its LEFT|RIGHT two-pane layout regardless of measured container width.
+  */
+  surface?: "dock" | "expand";
   addToast: (message: string, type?: ToastType) => void;
   settingsLoaded?: boolean;
   readinessVersion?: number;
@@ -120,7 +126,17 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
     label: "Files",
     icon: Folder,
     testId: "right-dock-tab-files",
-    render: (props) => wrapOverflowView(<DockFilesView projectId={props.projectId} openFile={props.openFile} />),
+    /*
+    FNXC:RightDockFiles 2026-06-22-15:00:
+    Map the host surface to a deterministic DockFilesView layout. The expand pop-out gets `layout="two-pane"` so the tree+viewer render LEFT|RIGHT without depending on the @container query matching inside the modal body. The compact dock keeps `layout="auto"` (the container-query single-panel stack).
+    */
+    render: (props) => wrapOverflowView(
+      <DockFilesView
+        projectId={props.projectId}
+        openFile={props.openFile}
+        layout={props.surface === "expand" ? "two-pane" : "auto"}
+      />,
+    ),
   },
   {
     key: "activity-log",

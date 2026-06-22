@@ -807,15 +807,19 @@ FN-6659 keeps the loaded symbols @font-face out of xterm's measured font option 
   }
 }
 
+/*
+FNXC:Terminal 2026-06-22-17:15:
+The shortcut bar (modifier keys + arrow keys) must sit on ONE line, not stack into separate rows. The panel no longer wraps; the modifier-row and arrow-row are inline (intrinsic width, no 100% / margin-bottom), and the panel scrolls horizontally if the buttons exceed the width.
+*/
 .terminal-shortcut-panel {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: var(--space-xs);
   padding: var(--space-xs) var(--space-sm);
   background: var(--surface);
   border-top: 1px solid var(--border);
-  max-height: calc(var(--space-2xl) + var(--space-xl) + var(--space-lg));
-  overflow-y: auto;
+  overflow-x: auto;
 }
 
 .terminal-shortcut-modifier-row,
@@ -823,12 +827,7 @@ FN-6659 keeps the loaded symbols @font-face out of xterm's measured font option 
   display: flex;
   align-items: center;
   gap: var(--space-xs);
-  width: 100%;
-  margin-bottom: var(--space-xs);
-}
-
-.terminal-shortcut-arrow-row {
-  justify-content: center;
+  flex: 0 0 auto;
 }
 
 .terminal-shortcut-btn {

@@ -662,9 +662,13 @@
   max-height: none;
 }
 
+/*
+FNXC:Mailbox 2026-06-22-18:05:
+The full-page Messages split layout must let the user drag the divider to resize the left message-list pane. The previous `display: grid` with `grid-template-columns: auto auto minmax(0, 1fr)` sized the list-pane track to its content (`auto` track) and ignored the inline `style={{ width }}` set by the drag handler, so dragging the handle updated state but never changed the rendered pane width. Use a flex row so the list pane's inline `width` is authoritative: the pane is `flex: 0 0 auto` (honor its `width`, never grow/shrink) and the detail pane is `flex: 1 1 auto; min-width: 0` (fill the remainder, allow shrinking below content). The resize handle stays `flex-shrink: 0` with a real `col-resize` hit area.
+*/
 .mailbox-view .mailbox-split-layout {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: row;
   gap: 0;
   height: 100%;
   min-height: 0;
@@ -674,12 +678,17 @@
 FNXC:DashboardStyling 2026-06-21-23:40:
 FN-6912 requires the full-page Messages divider to read thinner between the message list and detail panes while preserving resize discoverability. Keep the visible handle narrow, but leave the hover/active pseudo-element wider so the drag and focus affordances do not become an un-grabbable sliver.
 */
+/*
+FNXC:Mailbox 2026-06-22-18:20:
+The mailbox resize divider mirrors the Chat sidebar divider exactly — handle hit area var(--space-sm), centered visible line var(--space-xs), transparent until hover — so the two views' dividers read identically (the widths were previously swapped + the mailbox handle had an always-on background).
+*/
 .mailbox-view .mailbox-split-resize-handle {
   position: relative;
-  width: var(--space-xs);
+  width: var(--space-sm);
   flex-shrink: 0;
   cursor: col-resize;
-  background: color-mix(in srgb, var(--border) 70%, transparent);
+  pointer-events: auto;
+  background: transparent;
   touch-action: none;
   transition: background var(--transition-fast);
 }
@@ -690,7 +699,7 @@ FN-6912 requires the full-page Messages divider to read thinner between the mess
   top: 0;
   bottom: 0;
   left: 50%;
-  width: var(--space-sm);
+  width: var(--space-xs);
   transform: translateX(-50%);
 }
 
@@ -714,8 +723,18 @@ FN-6912 requires the full-page Messages divider to read thinner between the mess
   padding: var(--space-md);
 }
 
+/*
+FNXC:Mailbox 2026-06-22-18:05:
+The list pane is fixed to its inline `width` (`flex: 0 0 auto`) so the divider drag is the single source of truth for its size; the detail pane fills the rest (`flex: 1 1 auto`) and `min-width: 0` lets it shrink below its content's intrinsic width so the list pane can grow to the clamped max ratio.
+*/
+.mailbox-view .mailbox-split-list-pane {
+  flex: 0 0 auto;
+}
+
 .mailbox-view .mailbox-split-detail-pane {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   flex-direction: column;
   gap: var(--space-md);
 }

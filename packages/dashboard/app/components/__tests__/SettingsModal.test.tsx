@@ -357,6 +357,44 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
   });
 
+  // FNXC:EmbeddedPresentation 2026-06-22-12:00:
+  // presentation="embedded" (SettingsView) was a zero-coverage branch. Assert the embedded contract via
+  // useEmbeddedPresentation: embedded root class present, region role (not dialog), no fixed .modal-overlay
+  // backdrop / modal close button, and Escape does NOT dismiss (navigated away via the left sidebar instead).
+  describe("embedded presentation", () => {
+    it("renders the embedded root class with region role and no modal overlay or close button", async () => {
+      const { container } = renderModal({ presentation: "embedded" });
+      await waitForSettingsModalReady();
+
+      expect(container.querySelector(".settings-embedded")).not.toBeNull();
+      expect(container.querySelector(".settings-modal--embedded")).not.toBeNull();
+      expect(screen.getByRole("region", { name: "Settings" })).toBeInTheDocument();
+      // No fixed full-screen overlay backdrop and no dialog role in embedded mode.
+      expect(container.querySelector(".settings-modal-overlay")).toBeNull();
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+
+    it("does not dismiss on Escape in embedded mode", async () => {
+      const onClose = vi.fn();
+      renderModal({ presentation: "embedded", onClose });
+      await waitForSettingsModalReady();
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("keeps the overlay and Escape-to-close in modal mode", async () => {
+      const onClose = vi.fn();
+      const { container } = renderModal({ onClose });
+      await waitForSettingsModalReady();
+
+      expect(container.querySelector(".settings-modal-overlay")).not.toBeNull();
+      expect(container.querySelector(".settings-modal--embedded")).toBeNull();
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
   it("maps the legacy pi-extensions initialSection alias to Plugins", async () => {
     renderModal({ initialSection: "pi-extensions" });
     await waitForSettingsModalReady();
