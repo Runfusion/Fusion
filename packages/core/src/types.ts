@@ -512,8 +512,15 @@ export const MERGER_MODES = ["ai", "deterministic"] as const;
  *    an AI agent merges the task branch and an AI reviewer audits it (with
  *    corrective retries) before a fast-forward landing. Bypasses the legacy
  *    scaffolding entirely.
- *  - "deterministic": the legacy `aiMergeTask` pipeline (prerebase /
- *    conflict-strategy ladder / post-merge audit / transient self-heal).
+ *  - "deterministic": **DEPRECATED (master-plan U0, 2026-06-21) and INERT.** Once
+ *    routed to the legacy `aiMergeTask` pipeline; now ignored — every merge uses
+ *    the unified "ai" path (`runAiMerge`). The value is retained (not removed) to
+ *    avoid a breaking `@runfusion/fusion` type change, and the engine logs a
+ *    one-time deprecation warning when it observes a resolved "deterministic".
+ *
+ * FNXC:MergerUnification 2026-06-21-19:05: `merger.mode` is published surface, so
+ * the type and the `MergerSettings.mode` field stay; only the "deterministic"
+ * VALUE is deprecated/inert. Removing the type is a separate breaking change.
  */
 export type MergerMode = (typeof MERGER_MODES)[number];
 
@@ -525,7 +532,12 @@ export function normalizeMergerMode(value: unknown): MergerMode {
 
 /** Settings for the AI merge path (FN-5633). */
 export interface MergerSettings {
-  /** Which merge path to use. Default: "ai". */
+  /**
+   * Which merge path to use. Default: "ai".
+   * @deprecated master-plan U0 (2026-06-21): the value is inert — every merge now
+   * uses the unified AI merge path (`runAiMerge`). Field retained as published
+   * surface; "deterministic" only triggers a one-time deprecation warning.
+   */
   mode?: MergerMode;
   /** How many AI corrective rounds before landing the best result (advisory) or
    *  hard-failing (blocking). Default: 3. The reviewer uses the project's
@@ -2596,6 +2608,50 @@ export interface Task {
   allowResurrection?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/*
+FNXC:Workspace 2026-06-21-19:05:
+R7 workspace merge-boundary guard (master-plan U0). Workspace-mode tasks populate
+`task.workspaceWorktrees` (one git worktree per sub-repo); their merge must run a
+per-repo loop that does NOT exist yet — it lands in master-plan U6. Until then, a
+workspace task reaching ANY merge entry point (engine dispatch, store.mergeTask,
+the CLI `onMergeImpl` / `runTaskMerge` callers) would run git operations against
+the NON-GIT workspace root and crash. This single shared predicate is called at the
+top of every merge door, BEFORE any git work, so the task is held with a clear,
+actionable error instead. It lives in @fusion/core so all four call sites — including
+store.mergeTask, which cannot import from @fusion/engine — share ONE implementation.
+The guard throws a NAMED `WorkspaceTaskMergeError` so callers (e.g. the engine merge
+dispatch catch) can distinguish this permanent config error from a transient merge
+failure and avoid burning mergeRetries. Master-plan U6 REMOVES this guard when the
+per-repo merge loop becomes the gate.
+*/
+
+/**
+ * Error thrown by {@link assertNotWorkspaceTaskMerge} when a workspace-mode task
+ * reaches a merge path. Named so callers can branch on it (e.g. park without
+ * burning mergeRetries) rather than treating it as a transient merge failure.
+ */
+export class WorkspaceTaskMergeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceTaskMergeError";
+  }
+}
+
+/**
+ * Throws {@link WorkspaceTaskMergeError} when `task.workspaceWorktrees` has at least
+ * one entry (a workspace-mode task). No-op for single-repo tasks. See the
+ * FNXC:Workspace note above.
+ * @param task the task about to enter a merge path
+ */
+export function assertNotWorkspaceTaskMerge(task: Pick<Task, "id" | "workspaceWorktrees">): void {
+  const worktrees = task.workspaceWorktrees;
+  if (worktrees && Object.keys(worktrees).length > 0) {
+    throw new WorkspaceTaskMergeError(
+      `Workspace task ${task.id} cannot merge until per-repo merge support (master-plan U6) lands`,
+    );
+  }
 }
 
 export type RetrySummary = {

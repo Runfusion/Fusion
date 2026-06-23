@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@fusion/core";
-import { ProjectEngine } from "../project-engine.js";
+import { ProjectEngine, __resetDeterministicMergerModeDeprecationWarned } from "../project-engine.js";
 import { runtimeLog } from "../logger.js";
 import { TunnelProcessManager } from "../remote-access/tunnel-process-manager.js";
 import { NtfyNotifier } from "../notifier.js";
@@ -18,7 +18,7 @@ const mocks = vi.hoisted(() => ({
   runtimeStart: vi.fn(async () => undefined),
   runtimeStop: vi.fn(async () => undefined),
   runtimeResumeAfterUnpause: vi.fn(async () => undefined),
-  aiMergeTask: vi.fn(),
+  runAiMerge: vi.fn(),
   execFile: vi.fn(),
   currentStore: null as Record<string, unknown> | null,
   notifierStart: vi.fn(async () => undefined),
@@ -61,8 +61,16 @@ vi.mock("../cron-runner.js", () => {
   };
 });
 
+// FNXC:MergerUnification 2026-06-21-19:05: master-plan U0 unified the merge
+// dispatch onto runAiMerge (merger-ai.js). project-engine no longer imports
+// aiMergeTask; the merge seam these tests mock/assert is now runAiMerge.
 vi.mock("../merger.js", () => ({
-  aiMergeTask: mocks.aiMergeTask,
+  sweepStaleAutostashes: vi.fn(async () => undefined),
+  VerificationError: class VerificationError extends Error {},
+}));
+
+vi.mock("../merger-ai.js", () => ({
+  runAiMerge: mocks.runAiMerge,
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -253,8 +261,10 @@ const baseSettings: Record<string, unknown> = {
   globalPause: false,
   enginePaused: false,
   pollIntervalMs: 15_000,
-  // onMerge tests mock + assert aiMergeTask (legacy path); pin legacy mode.
-  merger: { mode: "deterministic" },
+  // FNXC:MergerUnification 2026-06-21-19:05: U0 unified merges onto runAiMerge;
+  // the onMerge tests mock/assert runAiMerge. The old `merger.mode` pin is gone
+  // (the dispatch ignores it) — a dedicated test below covers the inert-mode +
+  // one-time deprecation-warning behavior.
   taskStuckTimeoutMs: undefined,
   memoryAutoSummarizeEnabled: false,
   memoryAutoSummarizeThresholdChars: 50_000,
@@ -411,7 +421,8 @@ describe("ProjectEngine PR monitoring wiring", () => {
     await engine.start();
 
     expect(mocks.runtimeConfigurePrMonitoring).toHaveBeenCalled();
-    const configArg = mocks.runtimeConfigurePrMonitoring.mock.calls.at(-1)?.[0] as {
+    const calls = mocks.runtimeConfigurePrMonitoring.mock.calls;
+    const configArg = calls[calls.length - 1]?.[0] as {
       onClosedPrFeedback?: (taskId: string, prInfo: Record<string, unknown>, comments: unknown[]) => Promise<void> | void;
     };
     expect(typeof configArg.onClosedPrFeedback).toBe("function");
@@ -437,7 +448,7 @@ describe("ProjectEngine auto-summarize wiring", () => {
     vi.clearAllMocks();
     const mockStore = createMockStore(baseSettings);
     mocks.currentStore = mockStore.store;
-    mocks.aiMergeTask.mockResolvedValue({
+    mocks.runAiMerge.mockResolvedValue({
       task: { id: "FN-001", column: "done" },
       branch: "fusion/fn-001",
       merged: true,
@@ -1130,7 +1141,7 @@ describe("ProjectEngine shutdown merge handling", () => {
     };
 
     let capturedSignal: AbortSignal | undefined;
-    mocks.aiMergeTask.mockImplementationOnce(async (...args: unknown[]) => {
+    mocks.runAiMerge.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[3] as { signal?: AbortSignal } | undefined;
       capturedSignal = options?.signal;
       await new Promise<never>((_, reject) => {
@@ -1146,7 +1157,7 @@ describe("ProjectEngine shutdown merge handling", () => {
     engine.enqueueMerge("FN-queued");
 
     await vi.waitFor(() => {
-      expect(mocks.aiMergeTask).toHaveBeenCalledTimes(1);
+      expect(mocks.runAiMerge).toHaveBeenCalledTimes(1);
     });
 
     expect(capturedSignal?.aborted).toBe(false);
@@ -1164,10 +1175,10 @@ describe("ProjectEngine shutdown merge handling", () => {
     });
     expect(privateEngine.mergeAbortController).toBeNull();
 
-    const mergeCallsBeforeRequeue = mocks.aiMergeTask.mock.calls.length;
+    const mergeCallsBeforeRequeue = mocks.runAiMerge.mock.calls.length;
     engine.enqueueMerge("FN-after-stop");
     expect(privateEngine.mergeQueue).toHaveLength(0);
-    expect(mocks.aiMergeTask).toHaveBeenCalledTimes(mergeCallsBeforeRequeue);
+    expect(mocks.runAiMerge).toHaveBeenCalledTimes(mergeCallsBeforeRequeue);
   });
 });
 
@@ -1185,21 +1196,164 @@ describe("ProjectEngine manual merge plumbing", () => {
     mocks.currentStore = mockStore.store;
   });
 
-  it("passes manual=true to aiMergeTask for onMerge requests", async () => {
-    mocks.aiMergeTask.mockResolvedValue({ merged: true, task: { id: "FN-5438" } } as any);
+  it("passes manual=true to runAiMerge for onMerge requests", async () => {
+    mocks.runAiMerge.mockResolvedValue({ merged: true, task: { id: "FN-5438" } } as any);
 
     const engine = createEngine();
     await engine.start();
 
     await engine.onMerge("FN-5438");
 
-    expect(mocks.aiMergeTask).toHaveBeenCalledWith(
+    expect(mocks.runAiMerge).toHaveBeenCalledWith(
       expect.anything(),
       expect.any(String),
       "FN-5438",
       expect.objectContaining({ manual: true }),
     );
 
+    await engine.stop();
+  });
+});
+
+// FNXC:MergerUnification 2026-06-21-19:05: master-plan U0 made runAiMerge the
+// sole merge path. These tests pin the unified dispatch: every merger.mode value
+// routes to runAiMerge, "deterministic" warns exactly once (never errors), and
+// the R7 workspace guard rejects populated-workspaceWorktrees tasks at the engine
+// merge entry point before any merge runs.
+describe("ProjectEngine U0 merge unification dispatch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // FNXC:MergerUnification 2026-06-21-19:05: the deterministic-mode deprecation
+    // warning is gated by a per-project module-level ledger. Reset it before each
+    // test so the once-per-project-per-process assertion is deterministic regardless
+    // of which sibling test populated the ledger first (createEngine always uses the
+    // same project root, so without this a prior deterministic merge would suppress
+    // the warning here and the "fires once" test would see zero emissions).
+    __resetDeterministicMergerModeDeprecationWarned();
+  });
+
+  async function runOnMergeWithMode(mode: string | undefined) {
+    const settings = { ...baseSettings, autoMerge: true } as Record<string, unknown>;
+    if (mode === undefined) {
+      delete settings.merger;
+    } else {
+      settings.merger = { mode };
+    }
+    const mockStore = createMockStore(settings);
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-U0",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: "queued",
+    } as any);
+    mocks.currentStore = mockStore.store;
+    mocks.runAiMerge.mockResolvedValue({ merged: true, task: { id: "FN-U0" } } as any);
+
+    const engine = createEngine();
+    await engine.start();
+    await engine.onMerge("FN-U0");
+    await engine.stop();
+  }
+
+  it.each([
+    ["unset", undefined],
+    ["ai", "ai"],
+    ["deterministic", "deterministic"],
+  ])("routes merger.mode=%s to runAiMerge (never aiMergeTask)", async (_label, mode) => {
+    await runOnMergeWithMode(mode as string | undefined);
+    expect(mocks.runAiMerge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      "FN-U0",
+      expect.anything(),
+    );
+  });
+
+  it('logs the merger.mode "deterministic" deprecation warning exactly once per project per process (warn, not error)', async () => {
+    const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => undefined);
+    const deprecationWarnings = () =>
+      warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes("merger.mode") && String(call[0]).includes("deprecated"),
+      );
+    try {
+      // First deterministic merge: the warning must fire EXACTLY once.
+      await runOnMergeWithMode("deterministic");
+      expect(deprecationWarnings()).toHaveLength(1);
+
+      // A SECOND deterministic merge in the same process (same project root) must
+      // NOT warn again — the per-project ledger suppresses the repeat. Total stays 1.
+      await runOnMergeWithMode("deterministic");
+      expect(deprecationWarnings()).toHaveLength(1);
+
+      // The warning is a warn (never an error), and the merge still proceeds via
+      // runAiMerge despite the deprecated value.
+      expect(deprecationWarnings()).toHaveLength(1);
+      expect(mocks.runAiMerge).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("R7 guard: rejects a workspace-mode task at the engine merge entry point before any merge", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-WS",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: "queued",
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: "/tmp/a", branch: "fusion/fn-ws-a" },
+        "repo-b": { worktreePath: "/tmp/b", branch: "fusion/fn-ws-b" },
+      },
+    } as any);
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+    await expect(engine.onMerge("FN-WS")).rejects.toThrow(
+      /Workspace task FN-WS cannot merge until per-repo merge support \(master-plan U6\) lands/,
+    );
+    expect(mocks.runAiMerge).not.toHaveBeenCalled();
+    await engine.stop();
+  });
+
+  // Regression: the auto-merge park for a WorkspaceTaskMergeError must set status:"failed",
+  // not status:null. status:null + mergeRetries:0 passes every eligibility gate, so the
+  // cooldown sweep re-enqueues the task every tick → tight re-throw/re-park loop. status:"failed"
+  // makes canMergeTask short-circuit; manual retry still works (it bypasses canMergeTask).
+  it("R7 auto-merge park: workspace task is parked status:'failed' so it is not re-enqueued", async () => {
+    const mockStore = createMockStore({ ...baseSettings, autoMerge: true });
+    mockStore.store.getTask.mockResolvedValue({
+      id: "FN-WS-AUTO",
+      column: "in-review",
+      paused: false,
+      mergeRetries: 0,
+      status: "queued",
+      workspaceWorktrees: {
+        "repo-a": { worktreePath: "/tmp/a", branch: "fusion/fn-ws-a" },
+      },
+    } as any);
+    mocks.currentStore = mockStore.store;
+
+    const engine = createEngine();
+    await engine.start();
+    // Auto-merge path (no manual resolver): the R7 door guard throws before runAiMerge,
+    // and the dispatch catch parks the task.
+    engine.enqueueMerge("FN-WS-AUTO");
+    await vi.waitFor(() => {
+      expect(mockStore.store.updateTask).toHaveBeenCalledWith(
+        "FN-WS-AUTO",
+        expect.objectContaining({ status: "failed", mergeRetries: 0 }),
+      );
+    });
+    expect(mocks.runAiMerge).not.toHaveBeenCalled();
+    // Guard against regression to the re-enqueue loop (status:null park):
+    expect(mockStore.store.updateTask).not.toHaveBeenCalledWith(
+      "FN-WS-AUTO",
+      expect.objectContaining({ status: null }),
+    );
     await engine.stop();
   });
 });
@@ -1244,7 +1398,7 @@ describe("ProjectEngine merge queue priority ordering", () => {
     mocks.currentStore = mockStore.store;
 
     const mergeOrder: string[] = [];
-    mocks.aiMergeTask.mockImplementation(async (...args: unknown[]) => {
+    mocks.runAiMerge.mockImplementation(async (...args: unknown[]) => {
       mergeOrder.push(args[2] as string);
       return { merged: true } as never;
     });
@@ -1317,7 +1471,7 @@ describe("ProjectEngine merge queue priority ordering", () => {
     mocks.currentStore = mockStore.store;
 
     const mergeOrder: string[] = [];
-    mocks.aiMergeTask.mockImplementation(async (...args: unknown[]) => {
+    mocks.runAiMerge.mockImplementation(async (...args: unknown[]) => {
       mergeOrder.push(args[2] as string);
       return { merged: true } as never;
     });
@@ -1887,7 +2041,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     await vi.waitFor(() => {
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("Auto-merge skipping FN-paused — task is paused"));
     });
-    expect(mocks.aiMergeTask).not.toHaveBeenCalled();
+    expect(mocks.runAiMerge).not.toHaveBeenCalled();
 
     logSpy.mockRestore();
     await engine.stop();
@@ -1906,7 +2060,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
     let capturedSignal: AbortSignal | undefined;
     const disposeSession = vi.fn();
-    mocks.aiMergeTask.mockImplementationOnce(async (...args: unknown[]) => {
+    mocks.runAiMerge.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[3] as { signal?: AbortSignal; onSession?: (session: { dispose: () => void }) => void };
       capturedSignal = options.signal;
       options.onSession?.({ dispose: disposeSession });
@@ -1936,7 +2090,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
     engine.enqueueMerge("FN-active");
 
     await vi.waitFor(() => {
-      expect(mocks.aiMergeTask).toHaveBeenCalledTimes(1);
+      expect(mocks.runAiMerge).toHaveBeenCalledTimes(1);
     });
 
     const taskUpdatedHandler = mockStore.store.on.mock.calls.find((c: unknown[]) => c[0] === "task:updated")?.[1] as

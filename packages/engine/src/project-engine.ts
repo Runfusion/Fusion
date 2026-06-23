@@ -13,7 +13,7 @@ import type {
   ResearchSynthesisRequest,
   ResearchSynthesisResult,
 } from "@fusion/core";
-import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, normalizeMergerMode, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
+import { allowsAutoMergeProcessing, assertNotWorkspaceTaskMerge, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, normalizeMergerMode, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -30,7 +30,7 @@ import { GridlockDetector } from "./gridlock-detector.js";
 import { createFusionAuthStorage, getFusionOAuthAlertStatePath } from "./auth-storage.js";
 import { CronRunner, createAiPromptExecutor } from "./cron-runner.js";
 import type { RoutineRunner } from "./routine-runner.js";
-import { aiMergeTask, sweepStaleAutostashes, VerificationError } from "./merger.js";
+import { sweepStaleAutostashes, VerificationError } from "./merger.js";
 import { runAiMerge } from "./merger-ai.js";
 import { promoteBranchGroup, type BranchGroupPromotionResult, type CreateGroupPrFn, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { PRIORITY_MERGE } from "./concurrency.js";
@@ -80,6 +80,25 @@ const execFileAsync = promisify(execFile);
  * FN-2910 for the observed overlap symptom.
  */
 const MERGE_HANDOFF_GRACE_MS = 300;
+
+/*
+FNXC:MergerUnification 2026-06-21-19:05:
+Master-plan U0 made `runAiMerge` the SOLE merge path; `merger.mode` is now inert
+(the type/field are retained as published surface — see types.ts MergerMode). When a
+project still resolves `merger.mode === "deterministic"` we WARN (never error) once
+per project per process and proceed via `runAiMerge` anyway. The warning is keyed by
+project root so EACH project with the stale setting warns once — a single module-level
+boolean would suppress the warning for all other projects after the first emission.
+*/
+const deterministicMergerModeDeprecationWarnedProjects = new Set<string>();
+
+/**
+ * Test-only: clears the per-project deprecation-warning ledger so a test can assert
+ * the warning fires exactly once per project per process. Not used by production code.
+ */
+export function __resetDeterministicMergerModeDeprecationWarned(): void {
+  deterministicMergerModeDeprecationWarnedProjects.clear();
+}
 
 interface RemoteLifecycleEvaluation {
   provider: TunnelProvider;
@@ -1929,7 +1948,7 @@ export class ProjectEngine {
 
                 // FN-5627 auto-recovery: clear the poisoned mergeDetails,
                 // increment the merge retry counter, and re-enqueue. The next
-                // dequeue runs a fresh `aiMergeTask` against the task branch —
+                // dequeue runs a fresh `runAiMerge` against the task branch —
                 // because the merger's TOCTOU is now fixed, the redo either
                 // lands cleanly or fails with a real merger error that surfaces
                 // through normal lifecycle. We don't need an executor to be
@@ -1983,7 +2002,7 @@ export class ProjectEngine {
                 // Re-enqueue this task for the next cycle. We continue past
                 // the current iteration because `task` is a stale snapshot;
                 // the re-enqueued tick reads fresh state with mergeConfirmed=false
-                // and falls through to the normal `aiMergeTask` path.
+                // and falls through to the normal `runAiMerge` path.
                 this.internalEnqueueMerge(taskId);
                 continue;
               }
@@ -2283,18 +2302,41 @@ export class ProjectEngine {
                   this.activeMergeSession = session;
                 },
               };
-              // FN-5633: "ai" mode (default) uses the standalone AI merge path
-              // (clean-room worktree + AI merge + AI reviewer); "deterministic"
-              // keeps the legacy aiMergeTask pipeline.
+              // FNXC:Workspace 2026-06-21-19:40:
+              // R7 merge-boundary guard (master-plan U0). Reject workspace-mode
+              // tasks BEFORE any git work — they need the per-repo merge loop that
+              // lands in master-plan U6 (which removes this guard). Load the task
+              // here so the dispatch shares the one predicate in @fusion/core.
+              // This door is a FAST-FAIL only: a getTask failure is swallowed to null
+              // and the guard is skipped, but the unconditional chokepoint guard inside
+              // runAiMerge (which re-reads the task) is the authoritative enforcement,
+              // so a transient read failure here cannot let a workspace task reach git work.
+              const mergeTask = await store.getTask(taskId).catch(() => null);
+              if (mergeTask) assertNotWorkspaceTaskMerge(mergeTask);
+
+              // FNXC:MergerUnification 2026-06-21-19:05:
+              // Master-plan U0 collapsed the merge dispatch: `runAiMerge` (the
+              // FN-5633 clean-room AI merge path) is the SOLE merge path. The
+              // `merger.mode` setting is inert — we no longer branch on it. A
+              // resolved "deterministic" value only triggers a once-per-project
+              // deprecation warning (warn, never error) before proceeding via
+              // `runAiMerge`; the warning is keyed by project root (cwd) so each
+              // stale project warns once rather than just the first project seen.
               const settings = await store.getSettings().catch(() => ({}) as Settings);
-              const mergerMode = normalizeMergerMode(settings.merger?.mode);
+              if (
+                normalizeMergerMode(settings.merger?.mode) === "deterministic"
+                && !deterministicMergerModeDeprecationWarnedProjects.has(cwd)
+              ) {
+                deterministicMergerModeDeprecationWarnedProjects.add(cwd);
+                runtimeLog.warn(
+                  'merger.mode "deterministic" is deprecated and inert: all merges now use the unified AI merge path (runAiMerge). Remove the setting; the legacy aiMergeTask pipeline is soft-deprecated.',
+                );
+              }
               const mergeOptionsWithSettings = {
                 ...mergerOptions,
                 allowDirtyLocalCheckoutSync: settings.merger?.allowDirtyLocalCheckoutSync === true,
               };
-              return mergerMode === "ai"
-                ? runAiMerge(store, cwd, taskId, mergeOptionsWithSettings)
-                : aiMergeTask(store, cwd, taskId, mergerOptions);
+              return runAiMerge(store, cwd, taskId, mergeOptionsWithSettings);
             };
 
             let result: MergeResult;
@@ -2331,6 +2373,38 @@ export class ProjectEngine {
               this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
             } else {
               await store.updateTask(taskId, { status: null }).catch(() => undefined);
+            }
+            continue;
+          }
+
+          // FNXC:Workspace 2026-06-21-19:40:
+          // R7 workspace merge-boundary park (master-plan U0). A WorkspaceTaskMergeError
+          // is a PERMANENT config error (workspace task hit a merge door before the
+          // per-repo merge loop exists — master-plan U6), NOT a transient merge failure.
+          // Park with status:"failed" so the auto-merge cooldown sweep STOPS re-attempting:
+          // `canMergeTask` short-circuits on status==="failed". (Parking with status:null +
+          // mergeRetries:0 passes every eligibility gate, so the sweep re-enqueues every tick
+          // → tight WorkspaceTaskMergeError re-throw/re-park loop.) Keep mergeRetries:0 (not
+          // the cap) so a human's manual merge after the config is addressed is not blocked by
+          // exhausted retries — and manual merge flows through the manual-resolver branch
+          // (rejectMergeResolvers), which bypasses canMergeTask, so "failed" never blocks it.
+          // Detect by err.name (matches the VerificationError/MergeAbortedError convention and
+          // is robust across the @fusion/core→@fusion/engine package boundary).
+          const isWorkspaceMergeError =
+            err instanceof Error && err.name === "WorkspaceTaskMergeError";
+          if (isWorkspaceMergeError) {
+            runtimeLog.error(
+              `${hasManualResolver ? "Manual" : "Auto"}-merge blocked for ${taskId}: workspace-mode tasks cannot merge until per-repo merge support (master-plan U6) lands; parking as failed (manual retry still works) without exhausting mergeRetries: ${errorMsg}`,
+            );
+            await store
+              .logEntry(taskId, `Merge blocked: ${errorMsg}`, "WorkspaceTaskMergeError")
+              .catch(() => undefined);
+            if (hasManualResolver) {
+              this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
+            } else {
+              await store
+                .updateTask(taskId, { status: "failed", mergeRetries: 0, error: errorMsg })
+                .catch(() => undefined);
             }
             continue;
           }

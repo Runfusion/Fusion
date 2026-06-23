@@ -723,7 +723,7 @@ export async function acquireWorkspaceRepoWorktree(
   }
 
   /*
-  FNXC:WorkspaceWorktree 2026-06-21-00:00:
+  FNXC:WorkspaceWorktree 2026-06-21-19:05:
   Workspace mode acquires one worktree per sub-repo for a single task. `acquireTaskWorktree`
   is single-repo: it reads `task.worktree`/`task.branch` to decide resume-vs-fresh and rewrites
   those singular fields on the task row after each acquisition. Passing the live task straight

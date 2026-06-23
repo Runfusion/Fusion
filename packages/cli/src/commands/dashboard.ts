@@ -9,6 +9,7 @@ import {
   CentralCore,
   AgentStore,
   PluginLoader,
+  assertNotWorkspaceTaskMerge,
   getTaskMergeBlocker,
   getEnabledPiExtensionPaths,
   isEphemeralAgent,
@@ -41,7 +42,7 @@ import {
   type RuntimeLogger,
 } from "@fusion/dashboard";
 import {
-  aiMergeTask,
+  runAiMerge,
   MissionAutopilot,
   MissionExecutionLoop,
   HeartbeatMonitor,
@@ -1295,11 +1296,21 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // wrapper function while the underlying implementation is swapped when the
   // engine starts in engine mode.
   //
-  // In UI-only mode: calls aiMergeTask directly (no engine, no semaphore).
+  // In UI-only mode: calls runAiMerge directly (no engine, no semaphore).
   // In engine mode: replaced by engine.onMerge() after ProjectEngine starts
   // (semaphore-gated via the engine's InProcessRuntime).
   //
+  // FNXC:MergerUnification 2026-06-21-19:05: master-plan U0 unified all merge
+  // entry points onto runAiMerge (the FN-5633 clean-room AI merge path);
+  // aiMergeTask is soft-deprecated.
+  //
   const onMergeImpl = async (taskId: string) => {
+    // FNXC:Workspace 2026-06-21-19:05: R7 merge-boundary guard (master-plan U0).
+    // Reject workspace-mode tasks before any merge work; per-repo merge lands in
+    // master-plan U6, which removes this guard.
+    const mergeTask = await store.getTask(taskId).catch(() => null);
+    if (mergeTask) assertNotWorkspaceTaskMerge(mergeTask);
+
     const settings = await store.getSettings();
     if (getMergeStrategy(settings) === "pull-request") {
       const githubClient = new GitHubClient();
@@ -1327,7 +1338,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     );
 
     try {
-      return await aiMergeTask(store, cwd, taskId, {
+      return await runAiMerge(store, cwd, taskId, {
         agentStore,
         onAgentText: (delta) => streamedMergeLog.push(delta),
       });
