@@ -15607,7 +15607,18 @@ You have access to the file system to review changes.${verdictBlock}`;
       const errorMessage = err instanceof Error ? err.message : String(err);
       executorLog.warn(`Child agent ${agentId} failed: ${errorMessage}`);
     } finally {
-      this.childSessions.delete(agentId);
+      /*
+      FNXC:AgentSpawning 2026-06-23-12:25:
+      Server memory must return to baseline after spawned child execution. A normally completed child session owns provider/runtime state until disposed; deleting it from childSessions first makes later parent cleanup unable to reach it.
+      */
+      if (this.childSessions.get(agentId) === childSession) {
+        try {
+          childSession.dispose();
+        } catch (disposeErr) {
+          executorLog.warn(`Child agent ${agentId} session dispose failed: ${disposeErr instanceof Error ? disposeErr.message : String(disposeErr)}`);
+        }
+        this.childSessions.delete(agentId);
+      }
       this.totalSpawnedCount = Math.max(0, this.totalSpawnedCount - 1);
     }
   }

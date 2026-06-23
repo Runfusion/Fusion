@@ -709,7 +709,8 @@ describe("Agent Spawning - runSpawnedChild", () => {
     // Should transition: running → active
     expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "running");
     expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "active");
-    // Should clean up
+    // Should clean up and release session resources
+    expect(mockSession.dispose).toHaveBeenCalledOnce();
     expect(internals.childSessions.has("agent-test")).toBe(false);
     expect(internals.totalSpawnedCount).toBe(0);
   });
@@ -732,7 +733,8 @@ describe("Agent Spawning - runSpawnedChild", () => {
 
     expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "running");
     expect(agentStore.updateAgentState).toHaveBeenCalledWith("agent-test", "error");
-    // Should still clean up
+    // Should still clean up and release session resources
+    expect(mockSession.dispose).toHaveBeenCalledOnce();
     expect(internals.childSessions.has("agent-test")).toBe(false);
     expect(internals.totalSpawnedCount).toBe(0);
   });
@@ -751,6 +753,7 @@ describe("Agent Spawning - runSpawnedChild", () => {
     // Should not throw even when state updates fail
     await internals.runSpawnedChild("agent-test", mockSession, "Do the research");
 
+    expect(mockSession.dispose).toHaveBeenCalledOnce();
     expect(internals.childSessions.has("agent-test")).toBe(false);
     expect(internals.totalSpawnedCount).toBe(0);
   });
