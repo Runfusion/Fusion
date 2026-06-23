@@ -1890,6 +1890,10 @@ export class TriageProcessor {
               // Project-level validator fallback
               projectValidatorFallbackProvider: currentSettings.validatorFallbackProvider,
               projectValidatorFallbackModelId: currentSettings.validatorFallbackModelId,
+              // FNXC:SpecReviewerFallback 2026-06-23-08:50:
+              // Spec review must inherit global/default fallback reviewer model settings when no validator-specific fallback is configured, plus the project settings/prompt payload that reviewer sessions use for memory and custom prompt behavior.
+              fallbackProvider: currentSettings.fallbackProvider,
+              fallbackModelId: currentSettings.fallbackModelId,
               // Global validator lane
               globalValidatorProvider: currentSettings.validatorGlobalProvider,
               globalValidatorModelId: currentSettings.validatorGlobalModelId,
@@ -1901,8 +1905,10 @@ export class TriageProcessor {
               taskId,
               task: currentDetail,
               userComments: currentUserComments.length > 0 ? currentUserComments : undefined,
+              agentPrompts: currentSettings.agentPrompts,
               agentStore: this.options.agentStore,
               rootDir,
+              settings: currentSettings,
               // Track the spec reviewer's session under this task so it's
               // disposed alongside the main triage session on global pause.
               onSessionCreated: (s) => this.registerSubagentSession(taskId, s),

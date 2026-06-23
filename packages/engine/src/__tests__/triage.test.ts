@@ -1010,6 +1010,67 @@ describe("fast-mode triage", () => {
     }
   });
 
+  it("threads global fallback model settings into spec reviewer sessions", async () => {
+    const rootDir = await createTriageFixtureRoot("fusion-triage-review-fallback-");
+    try {
+      const taskId = "FN-REVIEW-FALLBACK";
+      await mkdir(join(rootDir, ".fusion", "tasks", taskId), { recursive: true });
+      await writeFile(
+        join(rootDir, ".fusion", "tasks", taskId, "PROMPT.md"),
+        "# Task\n\n## Mission\n\nDo the work.\n\n## Steps\n\n### Step 0: Implement\n\nShip it.",
+      );
+      mockReviewStep.mockResolvedValue({ verdict: "APPROVE", review: "ok", summary: "ok" });
+
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue({ ...mockTaskDetail, id: taskId, comments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultProvider: "anthropic",
+          defaultModelId: "claude-opus-4-8",
+          defaultProviderOverride: "openai-codex",
+          defaultModelIdOverride: "gpt-5.5",
+          fallbackProvider: "openai-codex",
+          fallbackModelId: "gpt-5.5",
+          memoryEnabled: false,
+          agentPrompts: { roleAssignments: { reviewer: "custom-reviewer" } },
+        } as Settings),
+      });
+      const processor = new TriageProcessor(store, rootDir);
+      const tool = (processor as any).createReviewSpecTool(
+        taskId,
+        `.fusion/tasks/${taskId}/PROMPT.md`,
+        { current: null },
+        { current: null },
+        { current: null },
+        { current: "" },
+        {},
+        false,
+      );
+
+      await tool.execute({});
+
+      const reviewOptions = mockReviewStep.mock.calls[0]?.[7];
+      expect(reviewOptions).toMatchObject({
+        projectDefaultOverrideProvider: "openai-codex",
+        projectDefaultOverrideModelId: "gpt-5.5",
+        fallbackProvider: "openai-codex",
+        fallbackModelId: "gpt-5.5",
+        agentPrompts: { roleAssignments: { reviewer: "custom-reviewer" } },
+      });
+      expect(reviewOptions.settings).toMatchObject({
+        memoryEnabled: false,
+        agentPrompts: { roleAssignments: { reviewer: "custom-reviewer" } },
+      });
+    } finally {
+      mockReviewStep.mockReset();
+      await cleanupTriageFixtureRoot(rootDir);
+    }
+  });
+
   it("passes post-session gate in fast mode after fn_review_spec auto-approval", async () => {
     const rootDir = await createTriageFixtureRoot("fusion-triage-fast-gate-");
     try {
