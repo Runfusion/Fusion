@@ -12747,6 +12747,9 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
   /**
    * FNXC:ArtifactRegistry 2026-06-19-22:04:
    * Cross-agent registry query path for filtering artifacts across tasks, authors, and media types. LEFT JOIN keeps task-less registry artifacts visible while excluding artifacts attached to soft-deleted tasks.
+   *
+   * FNXC:ArtifactRegistry 2026-06-23-12:48:
+   * Agent execution can list artifacts frequently while large generated outputs are stored inline. The registry list is metadata-only, so avoid selecting artifact content here and require callers to use getArtifact for the full payload.
    */
   async listArtifacts(options?: {
     type?: ArtifactType;
@@ -12760,7 +12763,24 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     const offset = Math.max(0, options?.offset ?? 0);
 
     let sql = `
-      SELECT a.*, t.title as taskTitle, t.description as taskDescription, t.column as taskColumn
+      SELECT
+        a.id,
+        a.type,
+        a.title,
+        a.description,
+        a.mimeType,
+        a.sizeBytes,
+        a.uri,
+        NULL as content,
+        a.authorId,
+        a.authorType,
+        a.taskId,
+        a.metadata,
+        a.createdAt,
+        a.updatedAt,
+        t.title as taskTitle,
+        t.description as taskDescription,
+        t.column as taskColumn
       FROM artifacts a
       LEFT JOIN tasks t ON a.taskId = t.id
       WHERE (a.taskId IS NULL OR t.${TaskStore.ACTIVE_TASKS_WHERE})

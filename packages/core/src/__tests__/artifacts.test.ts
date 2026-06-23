@@ -172,6 +172,7 @@ describe("TaskStore artifacts", () => {
     expect(all.map((artifact) => artifact.id)).toEqual([third.id, second.id, first.id]);
     expect(all.find((artifact) => artifact.id === first.id)?.taskTitle).toBe("Alpha task");
     expect(all.find((artifact) => artifact.id === second.id)?.taskTitle).toBe("Beta task");
+    expect(all.every((artifact) => artifact.content === undefined)).toBe(true);
 
     await expect(store.listArtifacts({ type: "image" })).resolves.toMatchObject([{ id: second.id }]);
     expect((await store.listArtifacts({ authorId: "agent-alpha" })).map((artifact) => artifact.id)).toEqual([
