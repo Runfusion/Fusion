@@ -468,6 +468,24 @@ describe("TaskChatTab", () => {
     expect(document.querySelector(".task-chat-provider-icon [data-provider='anthropic']")).toBeTruthy();
   });
 
+  it("renders provider icons for task chat roles from effective default models", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", text: "executor output without model marker" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask()}
+        active
+        addToast={vi.fn()}
+        effectiveModels={{ executor: { provider: "openai-codex", modelId: "gpt-5.5" } }}
+      />,
+    );
+
+    expect(document.querySelector(".task-chat-provider-icon [data-provider='openai-codex']")).toBeTruthy();
+    expect(screen.queryByLabelText("Executor: model provider unknown")).not.toBeInTheDocument();
+  });
+
   it("groups consecutive entries by agent role", () => {
     mockLogs([
       makeEntry({ agent: "executor", text: "first" }),

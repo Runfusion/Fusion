@@ -263,6 +263,11 @@ function resolveEffectivePlanning(
   return resolveTaskPlanningModel(task, settings);
 }
 
+function toTaskChatModelInfo(model: ModelSelection): { provider: string; modelId?: string } | null {
+  if (!model.provider) return null;
+  return model.modelId ? { provider: model.provider, modelId: model.modelId } : { provider: model.provider };
+}
+
 function getStepStatusColor(status: string): string {
   switch (status) {
     case "done":
@@ -3304,6 +3309,12 @@ export function TaskDetailContent({
                 onTaskUpdated={handleChatTaskUpdated}
                 expanded={chatExpanded}
                 onToggleExpanded={() => setChatExpanded((value) => !value)}
+                effectiveModels={{
+                  triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
+                  executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings)),
+                  reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
+                  merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
+                }}
               />
             </div>
           ) : activeTab === "logs" ? (

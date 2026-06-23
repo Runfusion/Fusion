@@ -25,6 +25,7 @@ interface TaskChatTabProps {
   onTaskUpdated?: (task: Task) => void;
   expanded?: boolean;
   onToggleExpanded?: () => void;
+  effectiveModels?: Partial<Record<"triage" | "executor" | "reviewer" | "merger", TaskChatModelInfo | null>>;
 }
 
 type AgentLogRole = AgentRole | undefined;
@@ -122,12 +123,28 @@ function getRuntimeModelForRole(entries: readonly AgentLogEntry[], role: AgentLo
   return null;
 }
 
-function getModelForRole(task: Task | TaskDetail, role: AgentLogRole, entries: readonly AgentLogEntry[]): TaskChatModelInfo | null {
+function getEffectiveModelForRole(
+  effectiveModels: TaskChatTabProps["effectiveModels"] | undefined,
+  role: AgentLogRole,
+): TaskChatModelInfo | null {
+  if (!role) return null;
+  return effectiveModels?.[role] ?? null;
+}
+
+function getModelForRole(
+  task: Task | TaskDetail,
+  role: AgentLogRole,
+  entries: readonly AgentLogEntry[],
+  effectiveModels?: TaskChatTabProps["effectiveModels"],
+): TaskChatModelInfo | null {
   /*
   FNXC:TaskDetailChat 2026-06-23-21:18:
   Task-detail chat agent headers should identify the AI provider actually backing each role, not a generic/role avatar. Prefer explicit task model overrides because they are stable before logs stream, then fall back to the runtime "using model" log marker emitted by active planner/executor/reviewer sessions. Merger output uses the validator/reviewer lane provider because merge-fix/review flows share that model family in the UI.
+
+  FNXC:TaskDetailChat 2026-06-23-00:54:
+  Default executor models such as OpenAI Codex GPT-5.5 can resolve through settings rather than task overrides or log markers. Task chat receives the same effective model resolution used by the task-detail model header so role icons match Chat and Agent Log instead of falling back to CPU for default-backed agents.
   */
-  return getExplicitModelForRole(task, role) ?? getRuntimeModelForRole(entries, role);
+  return getExplicitModelForRole(task, role) ?? getRuntimeModelForRole(entries, role) ?? getEffectiveModelForRole(effectiveModels, role);
 }
 
 function TaskChatAgentIcon({ label, modelInfo, role }: { label: string; modelInfo: TaskChatModelInfo | null; role: AgentLogRole }) {
@@ -532,7 +549,7 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
   );
 }
 
-export function TaskChatTab({ task, projectId, active, addToast, sessionLive, onTaskUpdated, expanded = false, onToggleExpanded }: TaskChatTabProps) {
+export function TaskChatTab({ task, projectId, active, addToast, sessionLive, onTaskUpdated, expanded = false, onToggleExpanded, effectiveModels }: TaskChatTabProps) {
   const { t } = useTranslation("app");
   const { entries, loading, loadMore, hasMore, loadingMore } = useAgentLogs(task.id, active, projectId);
   const [draft, setDraft] = useState("");
@@ -868,7 +885,7 @@ export function TaskChatTab({ task, projectId, active, addToast, sessionLive, on
             const segments = segmentGroupEntries(item.entries);
             const latestEntryTimestamp = item.entries[item.entries.length - 1]?.timestamp ?? "";
             const relativeTime = formatRelativeTimeAgo(latestEntryTimestamp);
-            const modelInfo = getModelForRole(task, item.role, item.entries);
+            const modelInfo = getModelForRole(task, item.role, item.entries, effectiveModels);
             return (
               <section className="task-chat-group" key={`${item.role ?? "agent"}-${itemIndex}`} aria-label={t("taskChat.agentMessages", "{{label}} messages", { label: item.label })}>
                 <header className="task-chat-group-header">
