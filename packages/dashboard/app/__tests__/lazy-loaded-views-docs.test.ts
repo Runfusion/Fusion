@@ -14,6 +14,9 @@ FN-6717 removes NodesView from the App-level lazy inventory because Nodes now mo
 
 FNXC:GitManager 2026-06-21-00:00:
 FN-6881 removes StashRecoveryView from the App-level lazy inventory because Stash Recovery now mounts through the lazy GitManagerModal chunk.
+
+FNXC:DashboardLazyViews 2026-06-22-00:00:
+The navigation reshuffle promotes Workflows, Import Tasks, Automations, and Settings as embedded views that reuse existing lazy chunks. Their underscore-prefixed App consts stay out of the curated inventory so the docs count each heavy chunk once.
 */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -118,6 +121,8 @@ describe("AGENTS lazy-loaded views inventory", () => {
     expect(section).toContain("`TodoView`");
     expect(section).toContain("`SettingsModal`");
     expect(section).toContain("`WorkflowNodeEditor`");
+    expect(section).toContain("`_ImportTasksView`");
+    expect(section).toContain("`_AutomationsView`");
     expect((section.match(/`AgentDetailView`/g) ?? []).length).toBe(1);
 
     const appLevelViews = extractAppLazyViews(appSource);

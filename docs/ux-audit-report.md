@@ -57,8 +57,9 @@ This audit acknowledges and does not duplicate the following existing backlog it
 ### 1.1 Header Overload on Desktop
 
 - **Component:** `packages/dashboard/app/components/Header.tsx` (lines ~200-650)
-- **Current behavior:** The header displays 15+ icon buttons without labels on desktop, including: Usage, Activity Log, Mailbox, GitHub Import, Planning, Automation, Terminal, Files, Git Manager, Nodes, Workflow Steps, Scripts, Pause, Stop, Settings, plus view toggle buttons and project selector. Users must hover over each icon to discover its function.
-- **Recommended fix:** Group related actions into collapsible sections or a hamburger menu. Primary actions (Settings, Planning, Usage) should remain visible; secondary actions (Nodes, Workflow Steps, Scripts) should move to an overflow menu. Consider a "compact mode" toggle for users who want maximum screen space.
+- **Behavior observed at audit time:** The header displayed 15+ icon buttons without labels on desktop, including: Usage, Activity Log, Mailbox, GitHub Import, Planning, Automation, Terminal, Files, Git Manager, Nodes, Workflow Steps, Scripts, Pause, Stop, Settings, plus view toggle buttons and project selector. Users had to hover over each icon to discover its function.
+- **Status after navigation reshuffle:** This historical finding has been partially addressed: primary content navigation moved to the left sidebar, Workflows / Import Tasks / Automations render as sidebar main-content destinations, the terminal launcher moved to the footer status bar, and Activity / Activity Log / Git Manager / Files live in the right dock. Remaining header crowding should be evaluated against the current sidebar/right-dock layout rather than the old icon list.
+- **Recommended fix:** Group any remaining related actions into collapsible sections or a hamburger menu. Primary actions should remain visible; secondary actions should move to an overflow or docked surface. Consider a "compact mode" toggle for users who want maximum screen space.
 - **Impact:** All users are affected. New users cannot discover functionality, and power users waste time finding actions.
 - **Effort estimate:** M
 

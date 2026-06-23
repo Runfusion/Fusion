@@ -20,7 +20,7 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | Guide | Description |
 |---|---|
 | [Getting Started](./getting-started.md) | Installation, first-run, first task, and daily workflow basics |
-| [Dashboard Guide](./dashboard-guide.md) | Board/list views, chat, workflow selection/editor, terminal, git manager, files, planning, and UI tools |
+| [Dashboard Guide](./dashboard-guide.md) | Board/list views, left/right sidebar navigation, Artifacts, Import Tasks, chat, workflow selection/editor, terminal, git manager, files, planning, and UI tools |
 | [CLI Reference](./cli-reference.md) | Complete `fn` command reference with subcommands, flags, and examples |
 | [Remote Access](./remote-access.md) | Operator runbook for Tailscale/Cloudflare setup, tokenized login links, security caveats, and troubleshooting |
 | [Native Shell Connection Guide](./native-shell.md) | Canonical mobile/desktop shell onboarding, profile management, QR/manual setup, and remote handoff behavior |
