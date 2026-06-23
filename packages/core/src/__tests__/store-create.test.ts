@@ -67,6 +67,19 @@ describe("TaskStore", () => {
     });
   });
 
+  describe("startup watch recovery", () => {
+    it("does not crash done-task backfill when a DB row has no task.json mirror", async () => {
+      const task = await store.createTask({ description: "done task with missing mirror" });
+      (store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } }).db
+        .prepare(`UPDATE tasks SET "column" = ?, updatedAt = ? WHERE id = ?`)
+        .run("done", new Date().toISOString(), task.id);
+      await deleteTaskDir(task.id);
+
+      await expect(store.watch()).resolves.toBeUndefined();
+      await store.close();
+    });
+  });
+
   describe("breakIntoSubtasks task creation flag", () => {
     it("persists breakIntoSubtasks=true when explicitly requested", async () => {
       const task = await store.createTask({

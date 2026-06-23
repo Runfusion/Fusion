@@ -11712,7 +11712,24 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         if (cachedTask.column !== "done") continue;
 
         const taskDir = this.taskDir(taskId);
-        const raw = await readFile(join(taskDir, "task.json"), "utf-8");
+        let raw: string;
+        try {
+          raw = await readFile(join(taskDir, "task.json"), "utf-8");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+            /*
+             * FNXC:StartupRecovery 2026-06-23-05:02:
+             * A recovered or corrupt SQLite index can retain done-task rows whose legacy task.json mirror was already removed. Startup watch must not crash while running the one-time done-pause backfill; skip the missing mirror and keep the dashboard available so operators can inspect or repair the project.
+             */
+            storeLog.warn("Skipping done-task pause metadata backfill for missing task.json", {
+              phase: "watch:done-pause-backfill",
+              taskId,
+              taskJsonPath: join(taskDir, "task.json"),
+            });
+            continue;
+          }
+          throw error;
+        }
         const diskTask = JSON.parse(raw) as Task;
         if (!this.clearDoneTransientFields(diskTask)) continue;
 
