@@ -18,6 +18,14 @@ function tuiDebug(tag: string, data: Record<string, unknown>): void {
   }
 }
 
+function drainTuiPerformanceTimeline(): void {
+  const perf = globalThis.performance;
+  if (!perf) return;
+  perf.clearMeasures?.();
+  perf.clearMarks?.();
+  perf.clearResourceTimings?.();
+}
+
 // Open a URL in the user's default browser. Uses the platform-native opener
 // (macOS `open`, Windows `start`, Linux `xdg-open`). Detached + ignored stdio
 // so the spawned process doesn't block the TUI's input loop.
@@ -4132,6 +4140,14 @@ export function DashboardApp({ controller }: DashboardAppProps) {
   const { t } = useTranslation("cli");
   const { exit } = useApp();
   const { stdout } = useStdout();
+
+  useEffect(() => {
+    /*
+     * FNXC:DashboardTuiHeap 2026-06-23-12:14:
+     * React/Ink development renders emit User Timing measures for every committed component. Clear them after each TUI commit so long-running execution does not retain render diagnostics in the dashboard server heap.
+     */
+    drainTuiPerformanceTimeline();
+  });
 
   // Bump a state counter on resize so React re-renders with the latest
   // dimensions. (The controller separately calls inkInstance.clear() to

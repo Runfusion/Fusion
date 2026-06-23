@@ -36,43 +36,6 @@ import type { CliSessionManager } from "./session-manager.js";
 
 /** Maximum bytes of output retained for diagnostics on a failed one-shot. */
 export const ONE_SHOT_STDERR_CAP_BYTES = 8 * 1024;
-/*
- * FNXC:CliAgentHeap 2026-06-23-11:46:
- * One-shot sessions may run validators/tests that emit large terminal output. The terminal scrollback already gives users a bounded live view, so the result parser must retain only a bounded tail instead of buffering the full PTY stream in V8 heap until process exit.
- */
-export const ONE_SHOT_OUTPUT_PARSE_CAP_BYTES = 2 * 1024 * 1024;
-
-class BoundedOutputCollector {
-  private chunks: Buffer[] = [];
-  private size = 0;
-
-  append(chunk: Buffer): void {
-    if (chunk.byteLength === 0) return;
-    if (chunk.byteLength >= ONE_SHOT_OUTPUT_PARSE_CAP_BYTES) {
-      this.chunks = [chunk.subarray(chunk.byteLength - ONE_SHOT_OUTPUT_PARSE_CAP_BYTES)];
-      this.size = ONE_SHOT_OUTPUT_PARSE_CAP_BYTES;
-      return;
-    }
-
-    this.chunks.push(chunk);
-    this.size += chunk.byteLength;
-    while (this.size > ONE_SHOT_OUTPUT_PARSE_CAP_BYTES && this.chunks.length > 0) {
-      const overflow = this.size - ONE_SHOT_OUTPUT_PARSE_CAP_BYTES;
-      const head = this.chunks[0];
-      if (head.byteLength <= overflow) {
-        this.chunks.shift();
-        this.size -= head.byteLength;
-      } else {
-        this.chunks[0] = head.subarray(overflow);
-        this.size -= overflow;
-      }
-    }
-  }
-
-  toString(): string {
-    return Buffer.concat(this.chunks, this.size).toString("utf8");
-  }
-}
 
 // ── One-shot launch (non-interactive command builder) ───────────────────────
 
@@ -314,14 +277,14 @@ export async function runOneShotSession(opts: RunOneShotOptions): Promise<OneSho
 
   // Attach to collect output (also exercises the read-only terminal stream).
   const attachment = manager.attach(sessionId);
-  const output = new BoundedOutputCollector();
+  const chunks: Buffer[] = [];
   // Replay scrollback captured at attach (usually empty for a fresh spawn).
   if (attachment.scrollback.byteLength > 0) {
-    output.append(Buffer.from(attachment.scrollback));
+    chunks.push(Buffer.from(attachment.scrollback));
   }
   const drainPromise = (async () => {
     for await (const bytes of attachment.stream) {
-      output.append(Buffer.from(bytes));
+      chunks.push(Buffer.from(bytes));
     }
   })();
 
@@ -357,7 +320,7 @@ export async function runOneShotSession(opts: RunOneShotOptions): Promise<OneSho
   attachment.detach();
   await drainPromise.catch(() => undefined);
 
-  const rawOutput = output.toString();
+  const rawOutput = Buffer.concat(chunks).toString("utf8");
   const boundedTail = boundedStderrTail(rawOutput);
 
   if (exit.exitCode !== 0 || timedOut) {

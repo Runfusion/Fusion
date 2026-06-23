@@ -62,13 +62,15 @@ function configurePiPackage(): void {
 
 configurePiPackage();
 
-// Drain Node's User Timing buffer. Ink (react-reconciler) in dev mode emits
-// performance.mark()/measure() on every render; entries accumulate forever
-// without an observer, retaining ~600MB after 20-30min of TUI rendering.
+/*
+ * FNXC:DashboardTuiHeap 2026-06-23-12:08:
+ * Live heap profiling showed the dashboard TUI can allocate tens of thousands of React/Ink user-timing entries between renders, pushing server heap near 1GB before GC. Drain the performance timeline frequently so execution memory reflects active work instead of retained dev-mode render diagnostics.
+ */
 setInterval(() => {
   performance.clearMeasures();
   performance.clearMarks();
-}, 30_000).unref();
+  performance.clearResourceTimings();
+}, 1_000).unref();
 
 /**
  * Load `.env` (and `.env.local`) from the current working directory into

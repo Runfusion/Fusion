@@ -13,7 +13,6 @@ import {
   extractJsonObjects,
   buildOneShotSettings,
   boundedStderrTail,
-  ONE_SHOT_OUTPUT_PARSE_CAP_BYTES,
   ONE_SHOT_STDERR_CAP_BYTES,
 } from "../one-shot-session.js";
 
@@ -248,27 +247,6 @@ describe("one-shot session lifecycle", () => {
       expect(result.reason).toBe("nonzero-exit");
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("boom: fatal error");
-    }
-  });
-
-  it("retains only a bounded output tail while still parsing trailing JSON", async () => {
-    const h = newHarness(["codex"]);
-    const trailingJson = '{"text":"tail-ok"}';
-    const result = await runWith(
-      h,
-      "codex",
-      "validator",
-      `${"x".repeat(ONE_SHOT_OUTPUT_PARSE_CAP_BYTES + 1024)}\n${trailingJson}`,
-      0,
-    );
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(Buffer.byteLength(result.rawOutput)).toBeLessThanOrEqual(
-        ONE_SHOT_OUTPUT_PARSE_CAP_BYTES,
-      );
-      expect(result.text).toBe("tail-ok");
-      expect(result.rawOutput).toContain(trailingJson);
     }
   });
 
