@@ -63,11 +63,11 @@ export async function ensureGitRepositoryForProjectPath(
   FNXC:Workspace 2026-06-24-14:30:
   Fallback workspace detection: when workspace.json is missing (e.g. project added via
   dashboard or `fn project add`, which don't run the interactive workspace detection flow),
-  probe for git sub-repos. If found, persist workspace.json so future calls hit the fast
-  loadWorkspaceConfig path, and skip git init. This covers all registration surfaces: the
-  CLI interactive setup writes workspace.json explicitly, but dashboard POST /api/projects
-  and `fn project add` do not — without this fallback they would create a stray .git at the
-  workspace root because loadWorkspaceConfig returned null.
+  probe for git sub-repos. If found, persist workspace.json AND set workspaceMode: true in
+  config.json so the dashboard toggle reflects the actual state. This covers all registration
+  surfaces: the CLI interactive setup writes workspace.json explicitly, but dashboard POST
+  /api/projects and `fn project add` do not — without this fallback they would create a stray
+  .git at the workspace root because loadWorkspaceConfig returned null.
 
   FNXC:Workspace 2026-06-24-17:00:
   If the user has explicitly disabled workspace mode (workspaceMode: false in config.json),
@@ -78,12 +78,8 @@ export async function ensureGitRepositoryForProjectPath(
   if (!(await isWorkspaceModeExplicitlyDisabled(projectPath))) {
     const detectedRepos = await detectWorkspaceRepos(projectPath, runner, timeout);
     if (detectedRepos.length > 0) {
-      try {
-        await saveWorkspaceConfig(projectPath, { repos: detectedRepos });
-      } catch {
-        // Best-effort: persist for the fast path on future calls, but don't fail
-        // the current registration if the write fails (permissions, disk full, etc.).
-      }
+      await saveWorkspaceConfig(projectPath, { repos: detectedRepos });
+      await setWorkspaceModeInConfig(projectPath, true);
       return "existing";
     }
   }
@@ -218,6 +214,29 @@ async function isWorkspaceModeExplicitlyDisabled(projectPath: string): Promise<b
   } catch {
     return false;
   }
+}
+
+/**
+ * FNXC:Workspace 2026-06-24-17:15:
+ * Writes `workspaceMode: true` into .fusion/config.json so the dashboard toggle
+ * reflects that workspace mode is active after auto-detection. Reads-merges-writes
+ * to avoid clobbering existing config settings.
+ */
+async function setWorkspaceModeInConfig(projectPath: string, value: boolean): Promise<void> {
+  const { readFile, writeFile, mkdir } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const configPath = join(projectPath, ".fusion", "config.json");
+  let config: Record<string, unknown> = {};
+  try {
+    config = JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>;
+  } catch {
+    // config.json may not exist yet; start with empty object
+  }
+  const settings = (config.settings ?? {}) as Record<string, unknown>;
+  settings.workspaceMode = value;
+  config.settings = settings;
+  await mkdir(join(projectPath, ".fusion"), { recursive: true });
+  await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
 }
 
 /*

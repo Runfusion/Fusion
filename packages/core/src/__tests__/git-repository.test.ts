@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -140,6 +140,11 @@ describe("ensureGitRepositoryForProjectPath", () => {
     expect(existsSync(join(projectPath, ".git"))).toBe(false);
     // workspace.json should be auto-persisted so future calls hit the fast path
     expect(existsSync(join(projectPath, ".fusion", "workspace.json"))).toBe(true);
+    // config.json should reflect workspaceMode: true so the dashboard toggle is correct
+    const configPath = join(projectPath, ".fusion", "config.json");
+    expect(existsSync(configPath)).toBe(true);
+    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    expect(config.settings?.workspaceMode).toBe(true);
   });
 
   it("does not misclassify node_modules git dirs as workspace sub-repos", async () => {
