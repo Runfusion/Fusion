@@ -1,5 +1,5 @@
 import { type NextFunction, type Request, type Response } from "express";
-import { isAbsolute, resolve, relative, join } from "node:path";
+import { isAbsolute, resolve, relative } from "node:path";
 import { realpathSync } from "node:fs";
 import { exec as execCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -17,7 +17,7 @@ import type {
   Task,
   TaskStore,
 } from "@fusion/core";
-import { classifyGhError, getCurrentRepo, isGhAuthenticated } from "@fusion/core";
+import { classifyGhError, getCurrentRepo, isGhAuthenticated, loadWorkspaceConfig } from "@fusion/core";
 import {
   dropAutostashHandle,
   generateSyntheticRunId,
@@ -2474,11 +2474,25 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   In workspace mode (multi-repo), git operations target a specific sub-repo.
   The `repoPath` query param selects which sub-repo. When absent, the project
   root directory is used (existing single-repo behavior).
+
+  FNXC:Workspace 2026-06-24-22:30:
+  `repoPath` is caller-supplied and untrusted. It must resolve to a directory
+  contained within the project root; a `../`-prefixed or absolute value would
+  otherwise redirect every git endpoint (read remote URLs, commit/push/discard)
+  at an arbitrary repo on disk. Resolve to an absolute path and reject anything
+  that escapes `projectRoot` via the shared `isPathWithin` containment check
+  (the empty / `.` / exact-root case stays allowed — that is the root itself).
   */
   function resolveGitDir(req: Request, projectRoot: string): string {
     const repoPath = req.query.repoPath;
     if (typeof repoPath === "string" && repoPath.trim()) {
-      return join(projectRoot, repoPath.trim());
+      const resolved = resolve(projectRoot, repoPath.trim());
+      if (!isPathWithin(projectRoot, resolved)) {
+        throw new ApiError(400, "Invalid repoPath: resolves outside the project root", {
+          reason: "repo-path-escape",
+        });
+      }
+      return resolved;
     }
     return projectRoot;
   }
@@ -2492,7 +2506,6 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const rootDir = resolveGitDir(req, scopedStore.getRootDir());
-      const { loadWorkspaceConfig } = await import("@fusion/core");
       const config = await loadWorkspaceConfig(rootDir);
       res.json({ repos: config?.repos ?? [] });
     } catch (err: unknown) {

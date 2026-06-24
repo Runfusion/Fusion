@@ -102,6 +102,25 @@ describe("TaskStore", () => {
       expect(detail.workspaceWorktrees).toEqual(sampleMap);
     });
 
+    // Surface enumeration (PR #1747 review): rowToTask reads row.workspaceWorktrees, but the
+    // explicit slim and activity-log-limited SELECT lists are separate from `*` — if the column is
+    // omitted there, slim/limited reads silently drop the field even though getTask("*") works.
+    it("survives the activity-log-limited read (explicit limited SELECT clause)", async () => {
+      const task = await harness.store().createTask({ description: "Workspace task limited read" });
+      await harness.store().updateTask(task.id, { workspaceWorktrees: sampleMap });
+
+      const detail = await harness.store().getTask(task.id, { activityLogLimit: 1 });
+      expect(detail.workspaceWorktrees).toEqual(sampleMap);
+    });
+
+    it("survives the slim search read (explicit slim SELECT clause)", async () => {
+      const task = await harness.store().createTask({ description: "Workspace slimsearchmarker task" });
+      await harness.store().updateTask(task.id, { workspaceWorktrees: sampleMap });
+
+      const found = (await harness.store().searchTasks("slimsearchmarker", { slim: true })).find((t) => t.id === task.id);
+      expect(found?.workspaceWorktrees).toEqual(sampleMap);
+    });
+
     it("normalizes an empty map to undefined so isWorkspaceTask stays false", async () => {
       const task = await harness.store().createTask({ description: "Empty workspace map" });
       const updated = await harness.store().updateTask(task.id, { workspaceWorktrees: {} });

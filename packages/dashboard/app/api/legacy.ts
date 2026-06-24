@@ -3128,10 +3128,16 @@ export function pullBranch(
   projectId?: string,
   repoPath?: string,
 ): Promise<GitPullResult> {
-  const options = typeof optionsOrProjectId === "string" ? undefined : optionsOrProjectId;
-  const resolvedProjectId = typeof optionsOrProjectId === "string" ? optionsOrProjectId : projectId;
+  // FNXC:DashboardGitApi 2026-06-24-00:00:
+  // pullBranch has two overloads. In the string-arg style pullBranch(projectId, repoPath),
+  // the second positional carries repoPath (not the 3rd parameter), so resolve it from `projectId`
+  // to avoid dropping repoPath; otherwise multi-repo workspace pulls hit the wrong repo.
+  const isStringForm = typeof optionsOrProjectId === "string";
+  const options = isStringForm ? undefined : optionsOrProjectId;
+  const resolvedProjectId = isStringForm ? optionsOrProjectId : projectId;
+  const resolvedRepoPath = isStringForm ? projectId : repoPath;
 
-  return api<GitPullResult>(withRepoPath(withProjectId("/git/pull", resolvedProjectId), repoPath), {
+  return api<GitPullResult>(withRepoPath(withProjectId("/git/pull", resolvedProjectId), resolvedRepoPath), {
     method: "POST",
     body: JSON.stringify({ rebase: options?.rebase ?? false }),
   });

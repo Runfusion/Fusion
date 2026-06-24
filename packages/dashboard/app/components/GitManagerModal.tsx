@@ -898,16 +898,30 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   }, [projectId]);
 
   // Fetch workspace repos on mount to determine if this is a multi-repo project.
+  /*
+  FNXC:Workspace 2026-06-24-21:30:
+  Revalidate selectedRepo against the freshly fetched repo list. When projectId
+  changes (or a project has no workspace repos), a stale selection from the prior
+  project would otherwise persist and keep sending a stale repoPath to git
+  endpoints. Keep the current selection only if it still exists in the new list;
+  otherwise fall back to repos[0], or clear to null when the list is empty (and on
+  fetch error). The functional updater lets us revalidate without depending on
+  selectedRepo in the effect deps, preserving the projectId-keyed intent.
+  */
   useEffect(() => {
     fetchWorkspaceRepos(projectId)
       .then((result) => {
-        setWorkspaceRepos(result.repos);
-        if (result.repos.length > 0 && !selectedRepo) {
-          setSelectedRepo(result.repos[0]!);
-        }
+        const repos = result.repos;
+        setWorkspaceRepos(repos);
+        setSelectedRepo((current) =>
+          current && repos.includes(current) ? current : (repos[0] ?? null),
+        );
       })
-      .catch(() => setWorkspaceRepos([]));
-  }, [projectId]); // intentionally omit selectedRepo to avoid resetting on repo switch
+      .catch(() => {
+        setWorkspaceRepos([]);
+        setSelectedRepo(null);
+      });
+  }, [projectId]); // keyed on projectId; selectedRepo is revalidated via the functional updater
 
   const handleSyncIntegrationTip = useCallback(async () => {
     if (!status?.integrationBranch || status.isOnIntegrationBranch === false) return;
