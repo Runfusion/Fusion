@@ -696,13 +696,16 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
   }
 }
 
+/*
+FNXC:SettingsMobile 2026-06-23-09:02:
+Settings section headings should preserve hierarchy through spacing and type only. Avoid per-heading divider borders so mobile and desktop shared Settings sections keep the lighter scrollbar-focused chrome contract.
+*/
 .settings-section-heading {
   font-size: 14px;
   font-weight: 600;
   padding: var(--space-lg) 0 var(--space-md);
   margin: 0 0 var(--space-md);
   color: var(--text);
-  border-bottom: 1px solid var(--border);
 }
 
 /* First heading inside the section drops top padding to remove a redundant

@@ -51,10 +51,25 @@ describe("DevServerView mobile CSS/structure", () => {
     const mobileBlockMatch = css.match(/@media[^{]*\(max-width: 768px\)[^{]*\{([\s\S]*?)\n\}/g) ?? [];
     const mobileCss = mobileBlockMatch.join("\n");
 
-    const headerRuleCount = (mobileCss.match(/\.devserver-preview-header\s*\{/g) ?? []).length;
+    const headerRuleCount = (mobileCss.match(/\.devserver-preview-header,\s*\.devserver-preview-modal-launcher__copy\s*\{/g) ?? []).length;
     expect(headerRuleCount).toBe(1);
     expect(mobileCss).toMatch(/\.devserver-preview-url-badge\s*\{[\s\S]*max-width:\s*100%/);
     expect(mobileCss).toMatch(/\.dev-server-header-title\s*\{[\s\S]*flex-wrap:\s*wrap/);
+  });
+
+  it("defines narrow right-dock launcher and modal rules without duplicating mobile media rules", () => {
+    const css = loadAllAppCss();
+    const containerStart = css.indexOf("@container right-dock-body (max-width: 768px)");
+    expect(containerStart).toBeGreaterThan(-1);
+    const containerCss = css.slice(containerStart);
+
+    expect(containerCss).toMatch(/\.devserver-preview-panel,\s*\.devserver-preview-modal-launcher\s*\{[\s\S]*grid-column:\s*auto/);
+    expect(containerCss).toMatch(/\.devserver-preview-modal\s*\{[\s\S]*width:\s*min\(calc\(var\(--space-2xl\) \* 20\), calc\(100vw - var\(--space-md\) \* 2\)\)/);
+    expect(containerCss).toMatch(/\.devserver-preview-panel \.devserver-preview-container/);
+    expect(containerCss).not.toMatch(/\.dev-server-logs,\s*\.devserver-preview-container,\s*\.devserver-preview-iframe/);
+
+    expect(css).toMatch(/@media[^{]*\(max-width: 768px\)/);
+    expect(css).toMatch(/@container right-dock-body \(max-width: 768px\)/);
   });
 
   it("renders preview header elements and keeps URL badge outside preview actions", () => {

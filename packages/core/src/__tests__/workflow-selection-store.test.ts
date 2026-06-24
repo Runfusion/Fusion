@@ -176,6 +176,130 @@ describe("TaskStore workflow selection (U3)", () => {
     expect(store.getTaskWorkflowSelection(task.id)?.workflowId).toBe(wf.id);
   });
 
+  // FNXC:WorkflowOptionalGroup 2026-06-21-14:30: a new task seeds
+  // `enabledWorkflowSteps` with exactly the defaultOn:true optional-group ids of
+  // its selected workflow (U3, R3), alongside the compiled workflow step ids.
+  describe("optional-group defaultOn seeding (U3/R3)", () => {
+    /** v2 workflow whose success path threads through two optional-group nodes. */
+    function optionalGroupIr(): WorkflowIr {
+      const groupTemplate = (id: string) => ({
+        nodes: [{ id: `${id}-inner`, kind: "prompt" as const, config: { prompt: "x" } }],
+        edges: [],
+      });
+      return {
+        version: "v2",
+        name: "og-wf",
+        columns: [{ id: "todo", name: "Todo", traits: [] }],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          {
+            id: "og-on",
+            kind: "optional-group",
+            column: "todo",
+            config: { name: "On Group", defaultOn: true, template: groupTemplate("og-on") },
+          },
+          {
+            id: "og-off",
+            kind: "optional-group",
+            column: "todo",
+            config: { name: "Off Group", defaultOn: false, template: groupTemplate("og-off") },
+          },
+          { id: "end", kind: "end", column: "todo" },
+        ],
+        edges: [
+          { from: "start", to: "og-on", condition: "success" },
+          { from: "og-on", to: "og-off", condition: "success" },
+          { from: "og-off", to: "end", condition: "success" },
+        ],
+      };
+    }
+
+    it("seeds the defaultOn:true group id at creation from the default workflow", async () => {
+      const wf = await store.createWorkflowDefinition({ name: "OG Default", ir: optionalGroupIr() });
+      await store.setDefaultWorkflowId(wf.id);
+
+      const task = await store.createTask({ description: "seeded" });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps).toContain("og-on");
+      expect(detail.enabledWorkflowSteps).not.toContain("og-off");
+    });
+
+    it("seeds an empty set when the workflow has no optional groups", async () => {
+      const wf = await store.createWorkflowDefinition({ name: "No OG", ir: linearIr() });
+      await store.setDefaultWorkflowId(wf.id);
+
+      const task = await store.createTask({ description: "no groups" });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps ?? []).not.toContain("og-on");
+    });
+
+    it("a stale optional-group id in enabledWorkflowSteps does not crash resolution", async () => {
+      // Group since removed from the workflow: the toggle resolver ignores the
+      // stale id rather than throwing, keeping create/edit surfaces alive.
+      const task = await store.createTask({
+        description: "stale",
+        enabledWorkflowSteps: ["og-removed"],
+      });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps).toContain("og-removed");
+    });
+
+    // FNXC:WorkflowOptionalGroup 2026-06-21-16:30: code-review P1 regression. A
+    // built-in optional-group id deliberately equals a WORKFLOW_STEP_TEMPLATES id
+    // (the browser-verification migration). Enabling it on a task must keep the
+    // RAW group node id in enabledWorkflowSteps — not a materialized WorkflowStep
+    // row id — or the executor's `enabledWorkflowSteps.includes(node.id)` check
+    // silently bypasses the group. (The og-on/og-off ids above don't collide, so
+    // only a colliding id exercises the remap bug.)
+    function collidingGroupIr(): WorkflowIr {
+      return {
+        version: "v2",
+        name: "bv-wf",
+        columns: [{ id: "todo", name: "Todo", traits: [] }],
+        nodes: [
+          { id: "start", kind: "start", column: "todo" },
+          {
+            id: "browser-verification",
+            kind: "optional-group",
+            column: "todo",
+            config: {
+              name: "Browser Verification",
+              defaultOn: false,
+              template: { nodes: [{ id: "bv-inner", kind: "prompt", config: { prompt: "verify" } }], edges: [] },
+            },
+          },
+          { id: "end", kind: "end", column: "todo" },
+        ],
+        edges: [
+          { from: "start", to: "browser-verification", condition: "success" },
+          { from: "browser-verification", to: "end", condition: "success" },
+        ],
+      };
+    }
+
+    it("keeps a built-in-colliding optional-group id unremapped on create-with-enable", async () => {
+      const wf = await store.createWorkflowDefinition({ name: "BV", ir: collidingGroupIr() });
+      await store.setDefaultWorkflowId(wf.id);
+
+      const task = await store.createTask({
+        description: "enable bv",
+        enabledWorkflowSteps: ["browser-verification"],
+      });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps).toContain("browser-verification");
+    });
+
+    it("keeps a built-in-colliding optional-group id unremapped on update/toggle", async () => {
+      const wf = await store.createWorkflowDefinition({ name: "BV", ir: collidingGroupIr() });
+      await store.setDefaultWorkflowId(wf.id);
+
+      const task = await store.createTask({ description: "toggle bv" });
+      await store.updateTask(task.id, { enabledWorkflowSteps: ["browser-verification"] });
+      const detail = await store.getTask(task.id);
+      expect(detail.enabledWorkflowSteps).toContain("browser-verification");
+    });
+  });
+
   it("explicit enabledWorkflowSteps overrides the project default", async () => {
     const wf = await store.createWorkflowDefinition({ name: "Default", ir: linearIr() });
     await store.setDefaultWorkflowId(wf.id);

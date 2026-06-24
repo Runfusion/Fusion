@@ -4895,6 +4895,54 @@ describe("SettingsModal", () => {
       });
     });
 
+    it("sends unsaved ntfy form config before saving", async () => {
+      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: false, ntfyTopic: undefined });
+      renderModal();
+      await waitForSettingsModalReady();
+      await openNotificationsSection();
+
+      await user.click(screen.getByLabelText("Enable"));
+      await user.type(screen.getByLabelText("ntfy Topic"), "fresh-topic");
+      await user.click(screen.getByText("Advanced"));
+      await user.type(screen.getByLabelText("Custom ntfy server URL (optional)"), "https://ntfy.override.example//");
+      await user.type(screen.getByLabelText("Access token (optional)"), "override-token");
+      await user.click(screen.getByRole("button", { name: /Test notification/ }));
+
+      await waitFor(() => {
+        expect(mockTestNotification).toHaveBeenCalledWith(
+          "ntfy",
+          expect.objectContaining({
+            ntfyEnabled: true,
+            ntfyTopic: "fresh-topic",
+            ntfyBaseUrl: "https://ntfy.override.example//",
+            ntfyAccessToken: "override-token",
+          }),
+          undefined,
+        );
+      });
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("keeps ntfy test disabled until the current form has a valid topic", async () => {
+      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, ntfyEnabled: false, ntfyTopic: undefined });
+      renderModal();
+      await waitForSettingsModalReady();
+      await openNotificationsSection();
+
+      await user.click(screen.getByLabelText("Enable"));
+      const testButton = screen.getByRole("button", { name: /Test notification/ });
+      expect(testButton).toBeDisabled();
+
+      await user.type(screen.getByLabelText("ntfy Topic"), "bad topic!");
+      expect(testButton).toBeDisabled();
+      expect(mockTestNotification).not.toHaveBeenCalled();
+
+      await user.clear(screen.getByLabelText("ntfy Topic"));
+      await user.type(screen.getByLabelText("ntfy Topic"), "fresh-topic");
+      expect(testButton).toBeEnabled();
+    });
+
     it("clears a saved ntfy access token via global null-as-delete semantics", async () => {
       mockFetchSettings.mockResolvedValueOnce({
         ...defaultSettings,
@@ -4929,7 +4977,11 @@ describe("SettingsModal", () => {
       await waitFor(() => {
         expect(mockTestNotification).toHaveBeenCalledWith(
           "ntfy",
-          { messageEventType: "message:agent-to-user" },
+          expect.objectContaining({
+            messageEventType: "message:agent-to-user",
+            ntfyEnabled: true,
+            ntfyTopic: "test-topic",
+          }),
           undefined,
         );
       });
@@ -4953,7 +5005,11 @@ describe("SettingsModal", () => {
       await waitFor(() => {
         expect(mockTestNotification).toHaveBeenCalledWith(
           "ntfy",
-          { messageEventType: "message:room" },
+          expect.objectContaining({
+            messageEventType: "message:room",
+            ntfyEnabled: true,
+            ntfyTopic: "test-topic",
+          }),
           undefined,
         );
       });

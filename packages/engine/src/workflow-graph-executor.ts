@@ -38,7 +38,7 @@ import {
   type ForeachEnvironment,
   type WorkflowStepInstancePersistence,
 } from "./workflow-graph-foreach.js";
-import { runLoop } from "./workflow-graph-loop.js";
+import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
 
 export type WorkflowNodeOutcome = "success" | "failure";
 
@@ -467,6 +467,52 @@ export class WorkflowGraphExecutor {
           const result: WorkflowNodeResult = {
             outcome: loopResult.outcome,
             value: loopResult.value,
+          };
+          context[`node:${node.id}:outcome`] = result.outcome;
+          if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;
+          return await traverseChildren(node, result);
+        }
+
+        if (node.kind === "optional-group") {
+          /*
+           * FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
+           * Run-once-or-bypass dispatch. The enable decision is read from the
+           * per-task `enabledWorkflowSteps` facet, keyed by THIS group node's id
+           * (KTD-2). Enabled → walk the template subgraph EXACTLY ONCE via
+           * `runOptionalGroup` (single pass, no iteration/rework). Disabled →
+           * pass through: traverse the group's children with a synthetic
+           * success result WITHOUT executing any template node, so a disabled
+           * group is byte-inert vs the group not being there. Two tasks
+           * identical except `enabledWorkflowSteps` therefore diverge here:
+           * the enabled one runs the body, the disabled one runs none and
+           * still reaches the same downstream node.
+           */
+          const enabled = task.enabledWorkflowSteps?.includes(node.id) ?? false;
+          if (!enabled) {
+            // FNXC:WorkflowOptionalGroup 2026-06-21-16:30: record the group's own
+            // outcome on bypass too (mirrors the enabled path + every other node
+            // kind), so a downstream node reading `node:<id>:outcome` from context
+            // sees "success" rather than undefined — disabled is fully inert, not
+            // just edge-routing-inert.
+            context[`node:${node.id}:outcome`] = "success";
+            // FNXC:WorkflowOptionalGroup 2026-06-22-09:00: route a disabled group
+            // as a plain success with NO distinguishing value — a non-empty value
+            // could let an `outcome:*` edge preempt the success edge in
+            // traverseChildren, breaking the "disabled == node absent" inertness
+            // invariant. (Code review: CodeRabbit.)
+            return await traverseChildren(node, { outcome: "success" });
+          }
+          const groupResult = await runOptionalGroup(node, {
+            context,
+            runTemplateNode: (tNode, sig, contextOverride) =>
+              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig),
+            shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
+            signal: this.deps.signal,
+          });
+          visitedNodeIds.push(...groupResult.visitedNodeIds);
+          const result: WorkflowNodeResult = {
+            outcome: groupResult.outcome,
+            value: groupResult.value,
           };
           context[`node:${node.id}:outcome`] = result.outcome;
           if (result.value !== undefined) context[`node:${node.id}:value`] = result.value;

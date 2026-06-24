@@ -67,8 +67,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  /* Must sit above floating dashboard panels. */
-  z-index: 1200;
+  /* Must sit above floating dashboard panels and the shared floating-window stack (10100+). */
+  z-index: 11000;
   max-height: 320px;
   display: flex;
   flex-direction: column;

@@ -47,7 +47,6 @@ import {
 import {
   buildSessionSkillContextSync,
   createFnAgent as engineCreateFnAgent,
-  getActiveNotificationService,
   probeWorktrunk,
   resolveWorktrunkBinary,
 } from "@fusion/engine";
@@ -2044,84 +2043,160 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
    * Returns the user's global pi extension settings from ~/.pi/agent/settings.json.
    * Includes packages, extension paths, skill paths, prompt template paths, and theme paths.
    */
-  router.post("/settings/test-ntfy", async (req, res) => {
-    const normalizeNtfyBaseUrl = (value: string, source: "request" | "settings"): string => {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        throw badRequest("ntfy server URL cannot be empty");
-      }
+  const normalizeHttpUrl = (value: string, fieldName: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw badRequest(`${fieldName} cannot be empty`);
+    }
 
-      let parsed: URL;
-      try {
-        parsed = new URL(trimmed);
-      } catch {
-        throw badRequest(`ntfy server URL from ${source} must be a valid URL`);
-      }
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw badRequest(`${fieldName} must be a valid URL`);
+    }
 
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw badRequest("ntfy server URL must use http:// or https://");
-      }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw badRequest(`${fieldName} must use http:// or https://`);
+    }
 
-      return trimmed.replace(/\/+$/, "");
+    return trimmed;
+  };
+
+  const normalizeNtfyBaseUrl = (value: string, source: "request" | "settings"): string => {
+    const normalized = normalizeHttpUrl(value, `ntfy server URL from ${source}`);
+    return normalized.replace(/\/+$/, "");
+  };
+
+  const getOwnValue = (source: Record<string, unknown>, key: string): unknown => (
+    Object.prototype.hasOwnProperty.call(source, key) ? source[key] : undefined
+  );
+
+  const getRequestNtfyValue = (body: Record<string, unknown>, config: Record<string, unknown>, key: string): unknown => {
+    const configValue = getOwnValue(config, key);
+    return configValue !== undefined ? configValue : getOwnValue(body, key);
+  };
+
+  type NtfyTestMessageEventType = "message:agent-to-user" | "message:agent-to-agent" | "message:room";
+
+  function resolveEffectiveNtfyTestConfig(
+    settings: Record<string, unknown>,
+    body: Record<string, unknown>,
+    config: Record<string, unknown> = {},
+  ): { topic: string; ntfyBaseUrl: string; ntfyAccessToken?: string } {
+    /*
+    FNXC:Notifications 2026-06-23-08:34:
+    Test sends must honor unsaved Settings form state because users enable ntfy, enter a topic/server/token, and test before saving. Resolve request-scoped values ahead of persisted settings without persisting or logging tokens.
+
+    FNXC:Notifications 2026-06-23-10:21:
+    Every ntfy test affordance, including message and room tests, must publish with the request-scoped topic/server/token instead of the active notification service's persisted provider state.
+    */
+    const enabledOverride = getRequestNtfyValue(body, config, "ntfyEnabled");
+    if (enabledOverride !== undefined && enabledOverride !== null && typeof enabledOverride !== "boolean") {
+      throw badRequest("ntfy enabled must be a boolean");
+    }
+    const ntfyEnabled = typeof enabledOverride === "boolean" ? enabledOverride : settings.ntfyEnabled === true;
+    if (!ntfyEnabled) {
+      throw badRequest("ntfy notifications are not enabled");
+    }
+
+    const topicOverride = getRequestNtfyValue(body, config, "ntfyTopic");
+    if (topicOverride !== undefined && topicOverride !== null && typeof topicOverride !== "string") {
+      throw badRequest("ntfy topic must be a string");
+    }
+    const topic = typeof topicOverride === "string" ? topicOverride : settings.ntfyTopic;
+    if (typeof topic !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(topic)) {
+      throw badRequest("ntfy topic is not configured or invalid");
+    }
+
+    const baseUrlOverride = getRequestNtfyValue(body, config, "ntfyBaseUrl");
+    if (baseUrlOverride !== undefined && baseUrlOverride !== null && typeof baseUrlOverride !== "string") {
+      throw badRequest("ntfy server URL must be a string");
+    }
+    const requestBaseUrl = typeof baseUrlOverride === "string" && baseUrlOverride.trim()
+      ? normalizeNtfyBaseUrl(baseUrlOverride, "request")
+      : undefined;
+    const storedBaseUrl = typeof settings.ntfyBaseUrl === "string" && settings.ntfyBaseUrl.trim()
+      ? normalizeNtfyBaseUrl(settings.ntfyBaseUrl, "settings")
+      : undefined;
+
+    const tokenOverride = getRequestNtfyValue(body, config, "ntfyAccessToken");
+    if (tokenOverride !== undefined && tokenOverride !== null && typeof tokenOverride !== "string") {
+      throw badRequest("ntfy access token must be a string");
+    }
+    const requestToken = typeof tokenOverride === "string" && tokenOverride.trim()
+      ? tokenOverride.trim()
+      : undefined;
+    const storedToken = typeof settings.ntfyAccessToken === "string" && settings.ntfyAccessToken.trim()
+      ? settings.ntfyAccessToken.trim()
+      : undefined;
+
+    return {
+      topic,
+      ntfyBaseUrl: requestBaseUrl ?? storedBaseUrl ?? "https://ntfy.sh",
+      ntfyAccessToken: requestToken ?? storedToken,
     };
+  }
+
+  async function sendNtfyTestNotification(
+    options: { topic: string; ntfyBaseUrl: string; ntfyAccessToken?: string; messageEventType?: NtfyTestMessageEventType },
+  ): Promise<void> {
+    const contentByEvent: Record<NtfyTestMessageEventType | "default", { title: string; message: string; priority: "default" | "high" }> = {
+      default: {
+        title: "Fusion test notification",
+        message: "Fusion test notification — your notifications are working!",
+        priority: "default",
+      },
+      "message:agent-to-user": {
+        title: "New message from Fusion",
+        message: "Fusion → you: Fusion test message notification",
+        priority: "high",
+      },
+      "message:agent-to-agent": {
+        title: "Fusion → recipient",
+        message: "Fusion messaged recipient: Fusion test message notification",
+        priority: "default",
+      },
+      "message:room": {
+        title: "#Test Room — Fusion",
+        message: "Fusion in #Test Room: Fusion test room notification",
+        priority: "default",
+      },
+    };
+    const content = contentByEvent[options.messageEventType ?? "default"];
+    const headers: Record<string, string> = {
+      Title: content.title,
+      Priority: content.priority,
+      "Content-Type": "text/plain",
+    };
+    if (options.ntfyAccessToken) {
+      headers.Authorization = `Bearer ${options.ntfyAccessToken}`;
+    }
+
+    const response = await fetch(`${options.ntfyBaseUrl}/${options.topic}`, {
+      method: "POST",
+      headers,
+      body: content.message,
+    });
+
+    if (!response.ok) {
+      throw new ApiError(502, `ntfy server returned ${response.status}: ${response.statusText}`);
+    }
+  }
+
+  router.post("/settings/test-ntfy", async (req, res) => {
 
     try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const configValue = body.config;
+      if (configValue !== undefined && (typeof configValue !== "object" || configValue === null || Array.isArray(configValue))) {
+        throw badRequest("config must be an object when provided");
+      }
+      const config = (configValue ?? {}) as Record<string, unknown>;
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
-
-      // Validate ntfy is enabled
-      if (!settings.ntfyEnabled) {
-        throw badRequest("ntfy notifications are not enabled");
-      }
-
-      // Validate topic exists and matches required format
-      const topic = settings.ntfyTopic;
-      if (!topic || !/^[a-zA-Z0-9_-]{1,64}$/.test(topic)) {
-        throw badRequest("ntfy topic is not configured or invalid");
-      }
-
-      const overrideValue = req.body?.ntfyBaseUrl;
-      if (overrideValue !== undefined && overrideValue !== null && typeof overrideValue !== "string") {
-        throw badRequest("ntfy server URL must be a string");
-      }
-
-      const requestOverride = typeof overrideValue === "string" && overrideValue.trim()
-        ? normalizeNtfyBaseUrl(overrideValue, "request")
-        : undefined;
-      const storedServer = typeof settings.ntfyBaseUrl === "string" && settings.ntfyBaseUrl.trim()
-        ? normalizeNtfyBaseUrl(settings.ntfyBaseUrl, "settings")
-        : undefined;
-      const tokenOverride = req.body?.ntfyAccessToken;
-      if (tokenOverride !== undefined && tokenOverride !== null && typeof tokenOverride !== "string") {
-        throw badRequest("ntfy access token must be a string");
-      }
-      const requestToken = typeof tokenOverride === "string" && tokenOverride.trim()
-        ? tokenOverride.trim()
-        : undefined;
-      const storedToken = typeof settings.ntfyAccessToken === "string" && settings.ntfyAccessToken.trim()
-        ? settings.ntfyAccessToken.trim()
-        : undefined;
-      const ntfyBaseUrl = requestOverride ?? storedServer ?? "https://ntfy.sh";
-      const url = `${ntfyBaseUrl}/${topic}`;
-      const headers: Record<string, string> = {
-        "Title": "Fusion test notification",
-        "Priority": "default",
-        "Content-Type": "text/plain",
-      };
-      const ntfyAccessToken = requestToken ?? storedToken;
-      if (ntfyAccessToken) {
-        headers.Authorization = `Bearer ${ntfyAccessToken}`;
-      }
-
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: "Fusion test notification — your notifications are working!",
-      });
-
-      if (!response.ok) {
-        throw new ApiError(502, `ntfy server returned ${response.status}: ${response.statusText}`);
-      }
+      const configForTest = resolveEffectiveNtfyTestConfig(settings as Record<string, unknown>, body, config);
+      await sendNtfyTestNotification(configForTest);
 
       res.json({ success: true });
     } catch (err: unknown) {
@@ -2133,31 +2208,6 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
   });
 
   router.post("/settings/test-notification", async (req, res) => {
-    const normalizeHttpUrl = (value: string, fieldName: string): string => {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        throw badRequest(`${fieldName} cannot be empty`);
-      }
-
-      let parsed: URL;
-      try {
-        parsed = new URL(trimmed);
-      } catch {
-        throw badRequest(`${fieldName} must be a valid URL`);
-      }
-
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-        throw badRequest(`${fieldName} must use http:// or https://`);
-      }
-
-      return trimmed;
-    };
-
-    const normalizeNtfyBaseUrl = (value: string, source: "request" | "settings"): string => {
-      const normalized = normalizeHttpUrl(value, `ntfy server URL from ${source}`);
-      return normalized.replace(/\/+$/, "");
-    };
-
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const providerId = body.providerId;
@@ -2176,112 +2226,19 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
 
       if (providerId === "ntfy") {
         const requestedMessageEventType = config.messageEventType ?? body.messageEventType;
-        if (requestedMessageEventType !== undefined) {
-          if (
-            requestedMessageEventType !== "message:agent-to-user"
-            && requestedMessageEventType !== "message:agent-to-agent"
-            && requestedMessageEventType !== "message:room"
-          ) {
-            throw badRequest("messageEventType must be message:agent-to-user, message:agent-to-agent, or message:room");
-          }
-
-          const notificationService = getActiveNotificationService();
-          if (!notificationService) {
-            throw new ApiError(502, "Notification service is not active");
-          }
-
-          try {
-            const messageId = `test-${crypto.randomUUID()}`;
-            if (requestedMessageEventType === "message:room") {
-              await notificationService.dispatch(requestedMessageEventType, {
-                taskId: undefined,
-                taskTitle: undefined,
-                event: requestedMessageEventType,
-                metadata: {
-                  messageId,
-                  roomId: "test-room",
-                  roomName: "Test Room",
-                  senderAgentId: "system",
-                  senderName: "Fusion",
-                  preview: "Fusion test room notification",
-                  type: "room-assistant",
-                },
-              });
-            } else {
-              const messageType = requestedMessageEventType.split(":")[1] ?? "agent-to-user";
-              await notificationService.dispatch(requestedMessageEventType, {
-                taskId: undefined,
-                taskTitle: undefined,
-                event: requestedMessageEventType,
-                metadata: {
-                  messageId,
-                  fromId: "system",
-                  fromType: "agent",
-                  toId: "user",
-                  toType: "user",
-                  type: messageType,
-                  preview: "Fusion test message notification",
-                },
-              });
-            }
-            res.json({ success: true });
-            return;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            throw new ApiError(502, `Failed to dispatch message notification: ${message}`);
-          }
+        if (
+          requestedMessageEventType !== undefined
+          && requestedMessageEventType !== "message:agent-to-user"
+          && requestedMessageEventType !== "message:agent-to-agent"
+          && requestedMessageEventType !== "message:room"
+        ) {
+          throw badRequest("messageEventType must be message:agent-to-user, message:agent-to-agent, or message:room");
         }
-        if (!settings.ntfyEnabled) {
-          throw badRequest("ntfy notifications are not enabled");
-        }
-
-        const topic = settings.ntfyTopic;
-        if (!topic || !/^[a-zA-Z0-9_-]{1,64}$/.test(topic)) {
-          throw badRequest("ntfy topic is not configured or invalid");
-        }
-
-        const overrideValue = config.ntfyBaseUrl ?? body.ntfyBaseUrl;
-        if (overrideValue !== undefined && overrideValue !== null && typeof overrideValue !== "string") {
-          throw badRequest("ntfy server URL must be a string");
-        }
-
-        const requestOverride = typeof overrideValue === "string" && overrideValue.trim()
-          ? normalizeNtfyBaseUrl(overrideValue, "request")
-          : undefined;
-        const storedServer = typeof settings.ntfyBaseUrl === "string" && settings.ntfyBaseUrl.trim()
-          ? normalizeNtfyBaseUrl(settings.ntfyBaseUrl, "settings")
-          : undefined;
-        const tokenOverride = config.ntfyAccessToken ?? body.ntfyAccessToken;
-        if (tokenOverride !== undefined && tokenOverride !== null && typeof tokenOverride !== "string") {
-          throw badRequest("ntfy access token must be a string");
-        }
-        const requestToken = typeof tokenOverride === "string" && tokenOverride.trim()
-          ? tokenOverride.trim()
-          : undefined;
-        const storedToken = typeof settings.ntfyAccessToken === "string" && settings.ntfyAccessToken.trim()
-          ? settings.ntfyAccessToken.trim()
-          : undefined;
-        const ntfyBaseUrl = requestOverride ?? storedServer ?? "https://ntfy.sh";
-        const url = `${ntfyBaseUrl}/${topic}`;
-        const headers: Record<string, string> = {
-          "Title": "Fusion test notification",
-          "Priority": "default",
-          "Content-Type": "text/plain",
-        };
-        const ntfyAccessToken = requestToken ?? storedToken;
-        if (ntfyAccessToken) {
-          headers.Authorization = `Bearer ${ntfyAccessToken}`;
-        }
-
-        const response = await fetch(url, {
-          method: "POST",
-          headers,
-          body: "Fusion test notification — your notifications are working!",
+        const configForTest = resolveEffectiveNtfyTestConfig(settings as Record<string, unknown>, body, config);
+        await sendNtfyTestNotification({
+          ...configForTest,
+          messageEventType: requestedMessageEventType as NtfyTestMessageEventType | undefined,
         });
-
-        if (!response.ok) {
-          throw new ApiError(502, `ntfy server returned ${response.status}: ${response.statusText}`);
-        }
 
         res.json({ success: true });
         return;

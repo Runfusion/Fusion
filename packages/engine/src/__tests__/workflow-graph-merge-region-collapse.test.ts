@@ -19,6 +19,10 @@ const mergeRegionEntries: Array<{ id: string; kind: WorkflowIrNodeKind }> = [
 ];
 const rawMergeRegionNodeIds = mergeRegionEntries.map((entry) => entry.id);
 
+// U6: the task carries no `enabledWorkflowSteps`, so the pre-merge
+// browser-verification optional-group is BYPASSED — its node is visited but its
+// body never runs. The legacy `workflowStep` seam is retained here only for shape
+// (it is no longer reached by the migrated coding IR).
 function createSeams(overrides: Partial<WorkflowLegacySeams> = {}): WorkflowLegacySeams {
   return {
     planning: async () => ({ outcome: "success" }),
@@ -62,7 +66,7 @@ describe("WorkflowGraphExecutor merge-region collapse", () => {
     expect(result.outcome).toBe("success");
     expect(merge).toHaveBeenCalledOnce();
     expect(calls).toEqual(["merge"]);
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step", "review", "merge"]);
+    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "browser-verification", "review", "merge"]);
     expect(result.context["node:merge:outcome"]).toBe("success");
     expectNoRawMergeRegionVisits(result.visitedNodeIds);
   });
@@ -75,7 +79,7 @@ describe("WorkflowGraphExecutor merge-region collapse", () => {
 
     expect(result.outcome).toBe("failure");
     expect(merge).toHaveBeenCalledOnce();
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step", "review", "merge"]);
+    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "browser-verification", "review", "merge"]);
     expect(result.context["node:merge:outcome"]).toBe("failure");
     expect(result.context["node:merge:value"]).toBe("FileScopeViolationError");
     expectNoRawMergeRegionVisits(result.visitedNodeIds);
@@ -94,7 +98,7 @@ describe("WorkflowGraphExecutor merge-region collapse", () => {
 
     expect(result.outcome).toBe("failure");
     expect(merge).not.toHaveBeenCalled();
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step", "review"]);
+    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "browser-verification", "review"]);
     expect(result.visitedNodeIds).not.toContain("merge");
     expectNoRawMergeRegionVisits(result.visitedNodeIds);
   });
@@ -109,7 +113,7 @@ describe("WorkflowGraphExecutor merge-region collapse", () => {
 
       expect(result.outcome).toBe("success");
       expect(merge).toHaveBeenCalledOnce();
-      expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step", "review", "merge"]);
+      expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "browser-verification", "review", "merge"]);
       expectNoRawMergeRegionVisits(result.visitedNodeIds);
     },
   );

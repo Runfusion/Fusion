@@ -1,4 +1,4 @@
-import type { WorkflowIrEdge, WorkflowIrNode, WorkflowLoopConfig } from "@fusion/core";
+import type { WorkflowIrEdge, WorkflowIrNode, WorkflowLoopConfig, WorkflowOptionalGroupConfig } from "@fusion/core";
 import { WorkflowIrError } from "@fusion/core";
 
 import type { WorkflowNodeOutcome, WorkflowNodeResult } from "./workflow-graph-executor.js";
@@ -207,4 +207,88 @@ export async function runLoop(
     history: iterationSummaries,
   };
   return { outcome: "failure", value: "loop-iteration-exhausted", visitedNodeIds };
+}
+
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
+An enabled `optional-group` runs its `template` subgraph EXACTLY ONCE (single pass — no iteration, no rework budget; rework edges are validation-forbidden inside the template). This reuses the loop's template-walk primitives (`buildOutgoing`, `findTemplateEntry`, `shouldTraverseEdge`) but caps the walk at one pass. The disabled/bypass decision lives in the executor branch (read from per-task `enabledWorkflowSteps`); this helper only runs the body when enabled.
+A template-node failure surfaces as the group's outcome so the group's `failure`/`outcome:` edges route, mirroring `runLoop`'s node-failure short-circuit.
+*/
+export interface OptionalGroupEnvironment {
+  context: Record<string, unknown>;
+  runTemplateNode: (
+    node: WorkflowIrNode,
+    signal?: AbortSignal,
+    contextOverride?: Record<string, unknown>,
+  ) => Promise<WorkflowNodeResult>;
+  shouldTraverseEdge: (edge: WorkflowIrEdge, source: WorkflowNodeResult) => boolean;
+  signal?: AbortSignal;
+}
+
+export interface OptionalGroupRunResult {
+  outcome: WorkflowNodeOutcome;
+  value?: string;
+  visitedNodeIds: string[];
+}
+
+function resolveOptionalGroupTemplate(
+  node: WorkflowIrNode,
+): { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] } {
+  const cfg = (node.config ?? {}) as Partial<WorkflowOptionalGroupConfig>;
+  if (!cfg.template || !Array.isArray(cfg.template.nodes) || !Array.isArray(cfg.template.edges)) {
+    throw new WorkflowIrError(`optional-group node '${node.id}' has no template subgraph`);
+  }
+  return cfg.template;
+}
+
+/**
+ * Walk an enabled optional-group's template subgraph once. Mirrors a single
+ * loop iteration: entry → follow matching edges → stop at the template exit (no
+ * outgoing matching edge). Materialized visited ids use a `<groupId>::<templateNodeId>`
+ * scheme so they are distinguishable from top-level ids and parseable back to the
+ * template node. The group's own outcome is the last template node's outcome.
+ */
+export async function runOptionalGroup(
+  groupNode: WorkflowIrNode,
+  env: OptionalGroupEnvironment,
+): Promise<OptionalGroupRunResult> {
+  const template = resolveOptionalGroupTemplate(groupNode);
+  const templateById = new Map(template.nodes.map((n) => [n.id, n]));
+  const outgoing = buildOutgoing(template.edges);
+  const entry = findTemplateEntry(template.nodes, template.edges, groupNode.id);
+  const visitedNodeIds: string[] = [];
+
+  const groupContext: Record<string, unknown> = { ...env.context };
+  let current: WorkflowIrNode | undefined = entry;
+  let lastResult: WorkflowNodeResult = { outcome: "success" };
+
+  while (current) {
+    if (env.signal?.aborted) {
+      return { outcome: "failure", value: "aborted", visitedNodeIds };
+    }
+
+    const materializedId = `${groupNode.id}::${current.id}`;
+    visitedNodeIds.push(materializedId);
+    lastResult = await env.runTemplateNode(current, env.signal, groupContext);
+    if (lastResult.contextPatch) Object.assign(groupContext, lastResult.contextPatch);
+    groupContext[`node:${current.id}:outcome`] = lastResult.outcome;
+    if (lastResult.value !== undefined) groupContext[`node:${current.id}:value`] = lastResult.value;
+
+    if (lastResult.outcome === "failure") {
+      // Publish accumulated template context, then surface the failure as the
+      // group's outcome so its failure/outcome: edges route.
+      Object.assign(env.context, groupContext);
+      return { outcome: "failure", value: lastResult.value, visitedNodeIds };
+    }
+
+    const edges: WorkflowIrEdge[] = outgoing.get(current.id) ?? [];
+    const matching: WorkflowIrEdge[] = edges.filter((edge: WorkflowIrEdge) =>
+      env.shouldTraverseEdge(edge, lastResult),
+    );
+    current = matching.length > 0 ? templateById.get(matching[0].to) : undefined;
+  }
+
+  // Single pass complete: publish the template's context onto the shared context.
+  Object.assign(env.context, groupContext);
+  return { outcome: lastResult.outcome, value: lastResult.value, visitedNodeIds };
 }

@@ -27,9 +27,14 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.outcome).toBe("success");
     expect(executeCalls).toBe(2);
     expect(result.context["node:execute:outcome"]).toBe("success");
+    // U6: the legacy `workflow-step` seam is gone; the pre-merge browser-verification
+    // optional-group is bypassed here (task has no enabledWorkflowSteps), so its
+    // group node is visited but its template body is not.
     expect(result.visitedNodeIds).toEqual(
-      expect.arrayContaining(["execute", "workflow-step", "review", "merge"]),
+      expect.arrayContaining(["execute", "browser-verification", "review", "merge"]),
     );
+    expect(result.visitedNodeIds).not.toContain("workflow-step");
+    expect(result.visitedNodeIds).not.toContain("browser-verification::browser-verification-step");
   });
 
   it("exhausts execute node retries and routes failure to end", async () => {
@@ -52,7 +57,7 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.outcome).toBe("failure");
     expect(BUILTIN_CODING_WORKFLOW_IR.edges).toContainEqual({ from: "execute", to: "end", condition: "failure" });
     expect(result.visitedNodeIds).toEqual(["start", "planning", "execute"]);
-    expect(result.visitedNodeIds).not.toContain("workflow-step");
+    expect(result.visitedNodeIds).not.toContain("browser-verification");
   });
 
   it("does not retry when the execute node returns a clean failure outcome", async () => {
@@ -95,7 +100,9 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.context["node:review:value"]).toBe("exception");
     expect(result.context["node:review:error"]).toBe("review seam failed");
     expect(result.outcome).toBe("failure");
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step", "review"]);
+    // U6: with browser-verification disabled (bypassed), the group node sits
+    // between execute and review where the workflow-step seam used to.
+    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "browser-verification", "review"]);
   });
 
   it("respects a per-node maxRetries override", async () => {

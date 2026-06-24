@@ -38,9 +38,31 @@ describe("builtin coding workflow ir", () => {
     const seams = BUILTIN_CODING_WORKFLOW_IR.nodes
       .map((node) => String(node.config?.seam ?? ""))
       .filter((seam) => seam.length > 0);
-    expect(seams).toEqual(expect.arrayContaining(["execute", "workflow-step", "review"]));
+    expect(seams).toEqual(expect.arrayContaining(["execute", "review"]));
+    // U6: the `workflow-step` seam was replaced by the browser-verification
+    // optional-group; no node declares the legacy seam anymore.
+    expect(seams).not.toContain("workflow-step");
     expect(seams).not.toContain("merge");
     expect(seams).not.toContain("triage");
+  });
+
+  it("expresses pre-merge browser-verification as a default-off optional-group (U6)", () => {
+    const byId = new Map(BUILTIN_CODING_WORKFLOW_IR.nodes.map((n) => [n.id, n]));
+    expect(byId.get("workflow-step")).toBeUndefined();
+    const group = byId.get("browser-verification");
+    expect(group?.kind).toBe("optional-group");
+    expect(group?.config?.name).toBe("Browser Verification");
+    expect(group?.config?.defaultOn).toBe(false);
+    // execute → browser-verification → review on the success path; failure → end.
+    expect(BUILTIN_CODING_WORKFLOW_IR.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "execute", to: "browser-verification", condition: "success" }),
+        expect.objectContaining({ from: "browser-verification", to: "review", condition: "success" }),
+        expect.objectContaining({ from: "browser-verification", to: "end", condition: "failure" }),
+      ]),
+    );
+    // The legacy optionalSteps declaration is gone (the group replaces it).
+    expect("optionalSteps" in BUILTIN_CODING_WORKFLOW_IR).toBe(false);
   });
 
   it("defines the six legacy columns in legacy order (KTD-1)", () => {
@@ -73,16 +95,17 @@ describe("builtin coding workflow ir", () => {
   it("places seam nodes in their columns", () => {
     const byId = new Map(BUILTIN_CODING_WORKFLOW_IR.nodes.map((n) => [n.id, n]));
     expect(byId.get("execute")?.column).toBe("in-progress");
-    expect(byId.get("workflow-step")?.column).toBe("in-progress");
+    // U6: browser-verification optional-group replaces the workflow-step seam.
+    expect(byId.get("browser-verification")?.column).toBe("in-progress");
     expect(byId.get("review")?.column).toBe("in-review");
     expect(byId.get("merge-gate")?.column).toBe("in-review");
     expect(byId.get("merge-attempt")?.column).toBe("in-review");
   });
 
-  it("assigns descriptive names to execute/workflow-step/review/merge seam nodes", () => {
+  it("assigns descriptive names to execute/review seam nodes and the browser-verification group", () => {
     const byId = new Map(BUILTIN_CODING_WORKFLOW_IR.nodes.map((n) => [n.id, n]));
     expect(byId.get("execute")?.config?.name).toBe("Execute");
-    expect(byId.get("workflow-step")?.config?.name).toBe("Pre-merge workflow steps");
+    expect(byId.get("browser-verification")?.config?.name).toBe("Browser Verification");
     expect(byId.get("review")?.config?.name).toBe("Review");
   });
 
@@ -94,9 +117,8 @@ describe("builtin coding workflow ir", () => {
     expect(config.maxRetries).toBeLessThanOrEqual(10);
 
     const byId = new Map(BUILTIN_CODING_WORKFLOW_IR.nodes.map((n) => [n.id, n]));
-    expect(byId.get("workflow-step")?.config?.name).toBe("Pre-merge workflow steps");
+    expect(byId.get("browser-verification")?.config?.name).toBe("Browser Verification");
     expect(byId.get("review")?.config?.name).toBe("Review");
-    expect(byId.get("workflow-step")?.config?.maxRetries).toBeUndefined();
     expect(byId.get("review")?.config?.maxRetries).toBeUndefined();
     expect(byId.get("merge-attempt")?.config?.maxReworkCycles).toBe(3);
   });

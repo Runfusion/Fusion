@@ -1851,17 +1851,22 @@ export function SettingsModal({
       return next;
     });
     try {
+      /*
+      FNXC:Notifications 2026-06-23-08:49:
+      Settings notification tests must send the current unsaved ntfy form values for every ntfy test affordance. Users validate the exact topic/server/token they just typed before saving, so message/room test requests carry the same request-scoped config as the general ntfy test.
+      */
+      const currentNtfyConfig = {
+        ntfyEnabled: form.ntfyEnabled,
+        ntfyTopic: form.ntfyTopic,
+        ...(form.ntfyBaseUrl?.trim() ? { ntfyBaseUrl: form.ntfyBaseUrl.trim() } : {}),
+        ...(form.ntfyAccessToken?.trim() ? { ntfyAccessToken: form.ntfyAccessToken.trim() } : {}),
+      };
       const config = providerId === "ntfy"
-        ? {
-          ntfyEnabled: form.ntfyEnabled,
-          ntfyTopic: form.ntfyTopic,
-          ...(form.ntfyBaseUrl?.trim() ? { ntfyBaseUrl: form.ntfyBaseUrl.trim() } : {}),
-          ...(form.ntfyAccessToken?.trim() ? { ntfyAccessToken: form.ntfyAccessToken.trim() } : {}),
-        }
+        ? currentNtfyConfig
         : providerId === "ntfy-message"
-          ? { messageEventType: "message:agent-to-user" }
+          ? { ...currentNtfyConfig, messageEventType: "message:agent-to-user" }
           : providerId === "ntfy-room"
-            ? { messageEventType: "message:room" }
+            ? { ...currentNtfyConfig, messageEventType: "message:room" }
             : {
               webhookUrl: form.webhookUrl,
               webhookFormat: form.webhookFormat || "generic",

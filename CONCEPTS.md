@@ -264,6 +264,11 @@ A workflow graph node that reads a declared Artifact and runs a registry parser 
 ### Custom task field
 A workflow-declared, typed task field (`string | text | number | boolean | enum | multi-enum | date | url`, with enum options and render hints) whose values live in `tasks.customFields`, keyed by field id. The task model is thereby recast as core fields (title, description) + standard metadata + these workflow-defined fields. Writes pass through a single store authority (`updateTaskCustomFields`) that validates each value against the resolving workflow's schema and returns typed rejections (offending `fieldId` + `code`); agents write them via `fn_task_update`'s `custom_fields` patch. Editing a workflow's fields or switching a task's workflow orphans (never destroys) values for removed or type-incompatible ids — orphans are retained and surfaced under a detail disclosure, excluded from cards. Same id means the same field within a project; there is no cross-workflow shared field namespace.
 
+### Optional step group
+A workflow graph container node (alongside `foreach`/`loop`) whose template subgraph runs once when a task has enabled it and is bypassed otherwise — the graph-native way to make a step optional per task. Enablement is a per-task toggle set seeded from the group's workflow-level default; the group's own node id is the toggle key. It replaces the earlier execution-inert *declaration* model (a separate optional-step list run through a hidden seam), so optional steps are now real, placeable nodes rather than an out-of-graph facet.
+
+Single pass — no iteration or rework inside the template (this is what distinguishes it from `foreach`/`loop`). Because the toggle key is the node id, renaming or recreating a group resets its per-task enablement; and because that id may deliberately equal a built-in step-template id, the per-task enable set must keep group ids identity-stable rather than round-tripping them through legacy step-template materialization (which would remap the key and silently bypass the group).
+
 ## Persistence & migrations
 
 ### Schema-Version Sweep

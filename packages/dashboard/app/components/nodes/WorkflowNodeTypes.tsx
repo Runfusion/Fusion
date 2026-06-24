@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Play, Flag, MessageSquare, Terminal, Shield, GitMerge, PauseCircle, Split, Merge, AlertTriangle, Repeat, ClipboardCheck, ListChecks, Code2, Bell } from "lucide-react";
+import { Play, Flag, MessageSquare, Terminal, Shield, GitMerge, PauseCircle, Split, Merge, AlertTriangle, Repeat, ClipboardCheck, ListChecks, Code2, Bell, ToggleRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { nodeConfigSummary } from "./node-summary";
 import { useWorkflowEditorCatalogs } from "./WorkflowEditorCatalogContext";
@@ -28,6 +28,7 @@ export type WorkflowEditorNodeKind =
   | "join"
   | "foreach"
   | "loop"
+  | "optional-group"
   | WorkflowNodeKindStepReview
   | WorkflowNodeKindParseSteps
   | "code"
@@ -65,6 +66,7 @@ const KIND_ICON: Record<WorkflowEditorNodeKind, typeof Play> = {
   join: Merge,
   foreach: Repeat,
   loop: Repeat,
+  "optional-group": ToggleRight,
   [WORKFLOW_NODE_KIND_STEP_REVIEW]: ClipboardCheck,
   [WORKFLOW_NODE_KIND_PARSE_STEPS]: ListChecks,
   code: Code2,
@@ -197,6 +199,42 @@ function LoopGroupNode({ data }: { data: WorkflowFlowNodeData }) {
   );
 }
 
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-11:30:
+An `optional-group` renders as a React Flow group container (mirroring `ForeachGroupNode`/`LoopGroupNode`): template nodes are children (parentId = group id). The header shows the group name plus a `defaultOn` badge ("default on" / "default off") so an author can see, at a glance, whether new tasks enable this group. An unregistered kind falls back to `react-flow__node-default` with missing children — registration in `workflowNodeTypes` (below) is what keeps the container rendering with its body.
+*/
+function OptionalGroupNode({ data }: { data: WorkflowFlowNodeData }) {
+  const { t } = useTranslation("app");
+  const defaultOn = data.config?.defaultOn === true;
+  const isEmpty = data.templateEmpty === true;
+  return (
+    <div
+      className={`wf-foreach-group wf-optional-group${data.errorBadge ? " wf-node--error" : ""}`}
+      data-testid="wf-node-optional-group"
+    >
+      <Handle type="target" position={Position.Left} />
+      <div className="wf-foreach-header">
+        <span className="wf-node-icon">
+          <ToggleRight size={14} aria-hidden />
+        </span>
+        <span className="wf-node-label">{data.label || "optional-group"}</span>
+        <span className="wf-node-badge" data-testid="wf-optional-group-default-badge">
+          {defaultOn
+            ? t("workflowNodes.optionalGroupDefaultOn", "default on")
+            : t("workflowNodes.optionalGroupDefaultOff", "default off")}
+        </span>
+      </div>
+      {isEmpty && (
+        <div className="wf-foreach-empty" data-testid="wf-optional-group-empty">
+          {data.emptyHint || "Drag optional steps here"}
+        </div>
+      )}
+      {data.errorBadge && <WorkflowNodeErrorBadge message={data.errorBadge} />}
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
 export const workflowNodeTypes = {
   start: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="start" />,
   end: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="end" />,
@@ -209,6 +247,7 @@ export const workflowNodeTypes = {
   join: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="join" />,
   foreach: ({ data }: NodeProps) => <ForeachGroupNode data={data as WorkflowFlowNodeData} />,
   loop: ({ data }: NodeProps) => <LoopGroupNode data={data as WorkflowFlowNodeData} />,
+  "optional-group": ({ data }: NodeProps) => <OptionalGroupNode data={data as WorkflowFlowNodeData} />,
   "step-review": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="step-review" />,
   "parse-steps": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="parse-steps" />,
   code: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="code" />,

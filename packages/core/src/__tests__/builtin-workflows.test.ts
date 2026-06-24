@@ -152,7 +152,11 @@ describe("built-in workflows", () => {
 
     const byId = new Map(ir.nodes.map((node) => [node.id, node]));
     expect(byId.get("execute")?.column).toBe("in-progress");
-    expect(byId.get("workflow-step")?.column).toBe("in-progress");
+    // U6: the legacy `workflow-step` seam is replaced by the pre-merge
+    // `browser-verification` optional-group, placed in the implementation column.
+    expect(byId.get("workflow-step")).toBeUndefined();
+    expect(byId.get("browser-verification")?.kind).toBe("optional-group");
+    expect(byId.get("browser-verification")?.column).toBe("in-progress");
     expect(byId.get("review")?.column).toBe("in-review");
     // Merge is the native primitive region (FN-6035), placed in in-review.
     expect(byId.get("merge")).toBeUndefined();
@@ -312,9 +316,12 @@ describe("built-in workflows", () => {
       expect(executeConfig?.maxRetries).toBeLessThanOrEqual(10);
 
       const byId = new Map(candidate.nodes.map((node) => [node.id, node]));
-      expect(byId.get("workflow-step")?.config?.name).toBe("Pre-merge workflow steps");
+      // U6: pre-merge browser-verification is an optional-group (default OFF),
+      // not the legacy `workflow-step` seam.
+      expect(byId.get("workflow-step")).toBeUndefined();
+      expect(byId.get("browser-verification")?.kind).toBe("optional-group");
+      expect(byId.get("browser-verification")?.config?.name).toBe("Browser Verification");
       expect(byId.get("review")?.config?.name).toBe("Review");
-      expect(byId.get("workflow-step")?.config?.maxRetries).toBeUndefined();
       expect(byId.get("review")?.config?.maxRetries).toBeUndefined();
       // The merge lifecycle is no longer a single `merge` seam node (FN-6035): it
       // is expressed as the merge-gate/merge-attempt/branch-group primitive region.
@@ -600,17 +607,22 @@ describe("built-in workflows", () => {
         description: "implicit builtin default",
       });
 
+      // U6: builtin:coding now carries the `browser-verification` optional-group
+      // (an interpreter-deferred construct), so its DEFAULT-workflow materialization
+      // falls back to no legacy WorkflowStep rows and records no selection row —
+      // identical to the stepwise built-in below. The group is defaultOn:false, so
+      // enabledWorkflowSteps stays empty.
       await store.setDefaultWorkflowId("builtin:coding");
       const codingTask = await store.createTask({ description: "default builtin coding" });
       expect((await store.getTask(codingTask.id)).enabledWorkflowSteps ?? []).toEqual([]);
-      expect(store.getTaskWorkflowSelection(codingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: [] });
+      expect(store.getTaskWorkflowSelection(codingTask.id)).toBeUndefined();
 
       const reservedCodingTask = await store.createTaskWithReservedId(
         { description: "reserved default builtin coding" },
         { taskId: "reserved-default-builtin-coding" },
       );
       expect((await store.getTask(reservedCodingTask.id)).enabledWorkflowSteps ?? []).toEqual([]);
-      expect(store.getTaskWorkflowSelection(reservedCodingTask.id)).toEqual({ workflowId: "builtin:coding", stepIds: [] });
+      expect(store.getTaskWorkflowSelection(reservedCodingTask.id)).toBeUndefined();
 
       await store.setDefaultWorkflowId("builtin:stepwise-coding");
       const stepwiseTask = await store.createTask({ description: "default builtin stepwise" });

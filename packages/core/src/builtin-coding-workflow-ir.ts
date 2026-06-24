@@ -2,6 +2,7 @@ import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
+import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 
 /**
  * The built-in default workflow as a v2 IR. Its six columns have ids that are
@@ -20,9 +21,16 @@ import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
  *
  * The lifecycle seam nodes are placed in their columns. Planning is explicit so
  * the built-in workflow owns the specification phase rather than relying on
- * triage code that runs outside the graph; workflow-step keeps the legacy
- * pre-merge quality gate between implementation and review; execute/review/
- * merge keep the same observable pipeline and failure routing.
+ * triage code that runs outside the graph; execute/review/merge keep the same
+ * observable pipeline and failure routing.
+ *
+ * FNXC:WorkflowOptionalGroup 2026-06-21-15:10:
+ * The pre-merge optional `browser-verification` step is now an `optional-group`
+ * container node (default OFF) sitting on the success path between execute and
+ * review — REPLACING the legacy `workflow-step` seam node + the execution-inert
+ * `optionalSteps: [{ templateId: "browser-verification" }]` declaration (U6). A
+ * task whose `enabledWorkflowSteps` includes the group id runs browser
+ * verification pre-merge exactly as before; a task with it off bypasses it.
  */
 const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
@@ -65,12 +73,8 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
       column: "in-progress",
       config: { ...builtinPromptConfig("execute", "Execute"), maxRetries: 2 },
     },
-    {
-      id: "workflow-step",
-      kind: "prompt",
-      column: "in-progress",
-      config: builtinPromptConfig("workflow-step", "Pre-merge workflow steps"),
-    },
+    // Pre-merge optional browser-verification (optional-group, default OFF).
+    browserVerificationOptionalGroupNode("in-progress"),
     { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
@@ -94,10 +98,10 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
   edges: [
     { from: "start", to: "planning" },
     { from: "planning", to: "execute", condition: "success" },
-    { from: "execute", to: "workflow-step", condition: "success" },
-    { from: "workflow-step", to: "review", condition: "success" },
-    { from: "workflow-step", to: "end", condition: "outcome:remediation-scheduled" },
-    { from: "workflow-step", to: "end", condition: "outcome:deferred-paused" },
+    // execute → browser-verification (optional-group) → review. When the group is
+    // disabled it passes through with outcome=success and routes straight to review.
+    { from: "execute", to: "browser-verification", condition: "success" },
+    { from: "browser-verification", to: "review", condition: "success" },
     { from: "review", to: "merge-gate", condition: "success" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },
@@ -113,14 +117,13 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },
     { from: "planning", to: "end", condition: "failure" },
     { from: "execute", to: "end", condition: "failure" },
-    { from: "workflow-step", to: "end", condition: "failure" },
+    { from: "browser-verification", to: "end", condition: "failure" },
     { from: "review", to: "end", condition: "failure" },
     { from: "merge-attempt", to: "end", condition: "failure" },
   ],
   // Workflow-settings (U1, R4): declare the full moved-key catalog with defaults
   // byte-equal to today's DEFAULT_PROJECT_SETTINGS literals. Inert until U3.
   settings: BUILTIN_WORKFLOW_SETTINGS,
-  optionalSteps: [{ templateId: "browser-verification" }],
 };
 
 export const BUILTIN_CODING_WORKFLOW_IR = parseWorkflowIr(RAW_BUILTIN_CODING_WORKFLOW_IR);

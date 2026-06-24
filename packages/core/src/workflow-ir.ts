@@ -9,11 +9,11 @@ import type {
   WorkflowHoldRelease,
   WorkflowForeachConfig,
   WorkflowLoopConfig,
+  WorkflowOptionalGroupConfig,
   WorkflowFieldDefinition,
   WorkflowFieldType,
   WorkflowSettingDefinition,
   WorkflowSettingType,
-  WorkflowOptionalStep,
 } from "./workflow-ir-types.js";
 import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
@@ -602,6 +602,120 @@ function validateLoop(
   }
 }
 
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-11:00:
+Validate an `optional-group` container template, mirroring `validateLoop` minus the loop's exit/iteration config.
+The template runs once when enabled, so rework edges (and any cycles) are forbidden inside, single entry/exit is required, and nested foreach/loop groups are rejected — keeping the single-pass guarantee unambiguous.
+`defaultOn` must be boolean when present; `name` must be a string when present.
+*/
+function validateOptionalGroup(
+  node: WorkflowIrNode,
+  topLevelNodeIds: Set<string>,
+  columnIds: Set<string>,
+): void {
+  const cfg = node.config as Partial<WorkflowOptionalGroupConfig> | undefined;
+  const template = cfg?.template;
+  if (
+    !cfg ||
+    !template ||
+    !Array.isArray(template.nodes) ||
+    !Array.isArray(template.edges)
+  ) {
+    throw new WorkflowIrError(
+      `optional-group node '${node.id}' must declare a template with nodes and edges arrays`,
+    );
+  }
+  if (template.nodes.length === 0) {
+    throw new WorkflowIrError(`optional-group node '${node.id}' template must be non-empty`);
+  }
+  if (cfg.defaultOn !== undefined && typeof cfg.defaultOn !== "boolean") {
+    throw new WorkflowIrError(`optional-group node '${node.id}' defaultOn must be a boolean`);
+  }
+  if (cfg.name !== undefined && typeof cfg.name !== "string") {
+    throw new WorkflowIrError(`optional-group node '${node.id}' name must be a string`);
+  }
+
+  const templateNodes = template.nodes;
+  const templateIds = new Set(templateNodes.map((n) => n.id));
+  if (templateIds.size !== templateNodes.length) {
+    throw new WorkflowIrError(`optional-group node '${node.id}' template has duplicate node ids`);
+  }
+  for (const inner of templateNodes) {
+    if (inner.kind === "loop" || inner.kind === "foreach" || inner.kind === "optional-group") {
+      throw new WorkflowIrError(
+        `optional-group node '${node.id}' template may not contain nested loop/foreach/optional-group ('${inner.id}')`,
+      );
+    }
+    if (isStepExecuteNode(inner)) {
+      throw new WorkflowIrError(
+        `step-execute seam node '${inner.id}' is only legal inside a foreach template`,
+      );
+    }
+    if (inner.column !== undefined && !columnIds.has(inner.column)) {
+      throw new WorkflowIrError(
+        `Workflow node '${inner.id}' references undefined column '${inner.column}'`,
+      );
+    }
+  }
+  for (const edge of template.edges) {
+    const fromInside = templateIds.has(edge.from);
+    const toInside = templateIds.has(edge.to);
+    if (!fromInside || !toInside) {
+      throw new WorkflowIrError(
+        `optional-group node '${node.id}' template edge '${edge.from}' -> '${edge.to}' references a node outside the template`,
+      );
+    }
+    if (isReworkEdge(edge)) {
+      throw new WorkflowIrError(`optional-group node '${node.id}' template may not contain rework edges`);
+    }
+    // FNXC:WorkflowOptionalGroup 2026-06-22-09:00: the single-pass walk
+    // (runOptionalGroup) surfaces a template-node failure as the GROUP's outcome
+    // and bails before evaluating that node's edges — so a `failure`-condition
+    // edge inside the template would silently never execute. Reject it as a typed
+    // authoring error; failure routing belongs on the group's OUTER edges.
+    // (Code review: Greptile P2.)
+    if (edge.condition === "failure") {
+      throw new WorkflowIrError(
+        `optional-group node '${node.id}' template may not contain failure-condition edges — ` +
+          `a template-node failure surfaces as the group's outcome and routes the group's outer failure edge`,
+      );
+    }
+  }
+
+  const incoming = new Map<string, number>();
+  const outgoingCount = new Map<string, number>();
+  for (const edge of template.edges) {
+    incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
+    outgoingCount.set(edge.from, (outgoingCount.get(edge.from) ?? 0) + 1);
+  }
+  const entries = templateNodes.filter((n) => (incoming.get(n.id) ?? 0) === 0);
+  const exits = templateNodes.filter((n) => (outgoingCount.get(n.id) ?? 0) === 0);
+  if (entries.length !== 1) {
+    throw new WorkflowIrError(
+      `optional-group node '${node.id}' template must have exactly one entry node (found ${entries.length})`,
+    );
+  }
+  if (exits.length !== 1) {
+    throw new WorkflowIrError(
+      `optional-group node '${node.id}' template must have exactly one exit node (found ${exits.length})`,
+    );
+  }
+
+  const templateById = new Map(templateNodes.map((n) => [n.id, n]));
+  const templateOutgoing = buildOutgoing(template.edges);
+  validateNoIllegalCycles(templateNodes, templateOutgoing);
+  validateParallelism(templateNodes, templateOutgoing, templateById);
+  validateStepReviewRouting(templateNodes, templateOutgoing, templateById, false);
+
+  for (const id of templateIds) {
+    if (topLevelNodeIds.has(id)) {
+      throw new WorkflowIrError(
+        `optional-group node '${node.id}' template node id '${id}' collides with a top-level node id`,
+      );
+    }
+  }
+}
+
 /** step-execute seam nodes are legal ONLY inside a foreach template (KTD-4):
  *  reject any at the top level. (Inside-split-branch rejection is handled by
  *  SEAM_FORBIDDEN_IN_BRANCH within validateParallelism.) */
@@ -1071,29 +1185,6 @@ function validateSettings(settings: WorkflowSettingDefinition[] | undefined): vo
   }
 }
 
-function validateOptionalSteps(optionalSteps: WorkflowOptionalStep[] | undefined): void {
-  if (optionalSteps === undefined) return;
-  if (!Array.isArray(optionalSteps)) {
-    throw new WorkflowIrError("Workflow IR optionalSteps must be an array");
-  }
-  for (const optionalStep of optionalSteps) {
-    if (!optionalStep || typeof optionalStep !== "object" || Array.isArray(optionalStep)) {
-      throw new WorkflowIrError("Workflow optional step must be an object");
-    }
-    if (typeof optionalStep.templateId !== "string" || optionalStep.templateId === "") {
-      throw new WorkflowIrError("Workflow optional step must have a non-empty templateId");
-    }
-    if (
-      optionalStep.defaultOn !== undefined &&
-      typeof optionalStep.defaultOn !== "boolean"
-    ) {
-      throw new WorkflowIrError(
-        `Workflow optional step '${optionalStep.templateId}' defaultOn must be a boolean`,
-      );
-    }
-  }
-}
-
 function validateColumns(ir: WorkflowIrV2): void {
   if (!Array.isArray(ir.columns)) {
     throw new WorkflowIrError("Workflow IR v2 columns must be an array");
@@ -1265,6 +1356,7 @@ function validateV2(ir: WorkflowIrV2): void {
   for (const node of ir.nodes) {
     if (node.kind === "foreach") validateForeach(node, topLevelIds, columnIds);
     if (node.kind === "loop") validateLoop(node, topLevelIds, columnIds);
+    if (node.kind === "optional-group") validateOptionalGroup(node, topLevelIds, columnIds);
   }
   validateStepReviewRouting(ir.nodes, outgoing, nodesById, false);
   validateParseStepsNodes(ir);
@@ -1272,7 +1364,11 @@ function validateV2(ir: WorkflowIrV2): void {
   validateNotifyNodes(ir.nodes);
   validateFields(ir.fields);
   validateSettings(ir.settings);
-  validateOptionalSteps(ir.optionalSteps);
+  // FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+  // The legacy `optionalSteps` declaration field is retired (optional steps are
+  // now graph-native `optional-group` nodes). A legacy persisted `optionalSteps`
+  // key on an old v2 row is TOLERATED — no longer validated/required — so old
+  // rows still parse as v2.
 
   // Rework edges are legal intra-template (foreach, KTD-5) and — since U6
   // generalized the bounded-rework mechanism to the top-level walk — for a
@@ -1381,12 +1477,20 @@ export function downgradeIrToV1IfPure(ir: WorkflowIr): WorkflowIr {
   }
 
   // Step-inversion declarations (artifacts/fields), workflow settings (U1), and
-  // optional workflow-step declarations are v2-only features.
+  // any legacy persisted optional-step declarations are v2-only features.
+  // FNXC:WorkflowOptionalGroup 2026-06-21-18:00 (updated 2026-06-22-09:00):
+  // `optionalSteps` is no longer a typed IR field (retired declaration model), but
+  // a legacy v2 row may still carry the key. Read it via an untyped cast so such a
+  // row is still treated as v2 (kept on v2, never silently downgraded). The mere
+  // PRESENCE of the key — including an empty `[]` — is the v2 signal: an author
+  // who wrote the key intended v2, and downgrading an `optionalSteps: []` row to
+  // v1 would still mutate its persisted shape. (Code review: CodeRabbit.)
+  const legacyOptionalSteps = (ir as { optionalSteps?: unknown }).optionalSteps;
   if (
     (ir.artifacts && ir.artifacts.length > 0) ||
     (ir.fields && ir.fields.length > 0) ||
     (ir.settings && ir.settings.length > 0) ||
-    (ir.optionalSteps && ir.optionalSteps.length > 0)
+    legacyOptionalSteps !== undefined
   ) {
     return ir;
   }

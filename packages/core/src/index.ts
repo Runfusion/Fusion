@@ -86,13 +86,13 @@ export type {
   WorkflowForeachConfig,
   WorkflowLoopConfig,
   WorkflowLoopExitCondition,
+  WorkflowOptionalGroupConfig,
   WorkflowIrArtifact,
   WorkflowFieldDefinition,
   WorkflowFieldType,
   WorkflowFieldOption,
   WorkflowFieldRender,
   // Workflow-settings (U1): typed setting declaration IR types.
-  WorkflowOptionalStep,
   WorkflowSettingDefinition,
   WorkflowSettingType,
   WorkflowSettingOption,
@@ -119,7 +119,10 @@ export type {
 } from "./column-agent-resolver.js";
 export { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 export { BUILTIN_MARKETING_WORKFLOW_IR } from "./builtin-marketing-workflow-ir.js";
-export { resolveWorkflowOptionalSteps } from "./workflow-optional-steps.js";
+export {
+  resolveWorkflowOptionalSteps,
+  resolveDefaultOnOptionalGroupIds,
+} from "./workflow-optional-steps.js";
 export type { ResolvedWorkflowOptionalStep } from "./workflow-optional-steps.js";
 export {
   applyPromptOverridesToIr,

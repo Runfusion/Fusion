@@ -2,6 +2,7 @@ import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
+import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 
 /**
  * The built-in **stepwise** coding workflow (KTD-9) — the demonstration of step
@@ -123,16 +124,16 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     },
     // KTD-5: rework exhaustion escalates to a manual hold (a human releases it).
     { id: "rework-hold", kind: "hold", column: "in-progress", config: { release: "manual" } },
-    // FNXC:WorkflowOptionalSteps 2026-06-21-00:00:
-    // The stepwise workflow must actually run a task's enabled optional steps (e.g.
-    // browser verification), so it needs the same pre-merge workflow-step seam the
-    // coding workflow has — declaring the optional step without this node would be a
-    // dead toggle. Pre-merge workflow-step seam (parity with builtin-coding-workflow-ir):
-    // the ONLY node that makes the graph invoke `runWorkflowSteps`, so a per-task
-    // `enabledWorkflowSteps` (e.g. the optional browser-verification step declared
-    // below) actually executes. Runs ONCE after the foreach completes, between
-    // implementation and review — not per step-instance.
-    { id: "workflow-step", kind: "prompt", column: "in-progress", config: builtinPromptConfig("workflow-step", "Pre-merge workflow steps") },
+    // FNXC:WorkflowOptionalGroup 2026-06-21-15:10:
+    // Pre-merge optional browser-verification as an `optional-group` container
+    // (default OFF), parity with builtin-coding-workflow-ir (U6). It REPLACES the
+    // prior `workflow-step` seam + `optionalSteps` declaration. R-3 run-once
+    // guarantee: the group sits on the post-foreach success path (steps → here →
+    // review), so when enabled the browser-verification step runs EXACTLY ONCE
+    // after every step-instance completes — never per step-instance — and when
+    // disabled the group passes through inert. Both the normal foreach-success path
+    // and the rework-exhausted manual-release path flow through this node.
+    browserVerificationOptionalGroupNode("in-progress"),
     { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
@@ -163,17 +164,16 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "parse", to: "steps", condition: "outcome:no-steps" },
     { from: "parse", to: "end", condition: "failure" },
     { from: "parse", to: "end", condition: "outcome:parse-error" },
-    // Implementation complete → pre-merge workflow-step seam → review. Both the
-    // normal foreach-success path and the rework-exhausted manual-release path flow
-    // through the seam so enabled workflow steps run regardless of route.
-    { from: "steps", to: "workflow-step", condition: "success" },
-    // KTD-5: bounded rework exhaustion → manual hold; release re-enters the seam.
+    // Implementation complete → pre-merge browser-verification optional-group →
+    // review. Both the normal foreach-success path and the rework-exhausted
+    // manual-release path flow through the group so an enabled task runs the step
+    // ONCE after the foreach (R-3), and a disabled task passes through to review.
+    { from: "steps", to: "browser-verification", condition: "success" },
+    // KTD-5: bounded rework exhaustion → manual hold; release re-enters the group.
     { from: "steps", to: "rework-hold", condition: "outcome:rework-exhausted" },
-    { from: "rework-hold", to: "workflow-step", condition: "success" },
-    { from: "workflow-step", to: "review", condition: "success" },
-    { from: "workflow-step", to: "end", condition: "outcome:remediation-scheduled" },
-    { from: "workflow-step", to: "end", condition: "outcome:deferred-paused" },
-    { from: "workflow-step", to: "end", condition: "failure" },
+    { from: "rework-hold", to: "browser-verification", condition: "success" },
+    { from: "browser-verification", to: "review", condition: "success" },
+    { from: "browser-verification", to: "end", condition: "failure" },
     { from: "steps", to: "end", condition: "failure" },
     { from: "review", to: "merge-gate", condition: "success" },
     { from: "review", to: "end", condition: "failure" },
@@ -193,9 +193,6 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   ],
   // Workflow-settings (U1, R4): same moved-key catalog as the default builtin.
   settings: BUILTIN_WORKFLOW_SETTINGS,
-  // Optional browser-verification step, parity with builtin-coding-workflow-ir.
-  // Default OFF; runnable because the workflow-step seam node above is present.
-  optionalSteps: [{ templateId: "browser-verification" }],
 };
 
 export const BUILTIN_STEPWISE_CODING_WORKFLOW_IR = parseWorkflowIr(

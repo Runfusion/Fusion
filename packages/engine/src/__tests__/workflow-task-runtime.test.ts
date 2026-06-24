@@ -229,7 +229,9 @@ describe("WorkflowTaskRuntime", () => {
     const result = await runtime.run(attachmentTask, flagOff);
 
     expect(result.disposition).toBe("completed");
-    expect(calls).toEqual(["planning", "prepare-worktree", "execute", "workflow-step", "review", "merge"]);
+    // U6: the coding built-in no longer runs a `workflow-step` seam; the pre-merge
+    // browser-verification optional-group is default-OFF and bypassed (no call).
+    expect(calls).toEqual(["planning", "prepare-worktree", "execute", "review", "merge"]);
     expect(observed.executedTasks).toHaveLength(1);
     expect(observed.executedTasks[0]?.attachments).toEqual(attachments);
   });
@@ -293,31 +295,52 @@ describe("WorkflowTaskRuntime", () => {
     const result = await runtime.run(task, flagOff);
 
     expect(result.disposition).toBe("completed");
-    expect(calls).toEqual(["planning", "prepare-worktree", "execute", "workflow-step", "review", "merge"]);
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step", "review", "merge"]);
+    // U6: no `workflow-step` seam; the bypassed browser-verification group node
+    // sits between execute and review in the visited sequence.
+    expect(calls).toEqual(["planning", "prepare-worktree", "execute", "review", "merge"]);
+    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "browser-verification", "review", "merge"]);
   });
 
-  it("stops the built-in workflow before review when workflow-step remediation is scheduled", async () => {
+  it("runs the pre-merge browser-verification optional-group once when enabled, before review", async () => {
+    // U6: replaces the prior workflow-step-remediation test. With the group ENABLED
+    // (task.enabledWorkflowSteps includes "browser-verification"), the inner
+    // browser-verification-step prompt node runs once pre-merge, recorded as a
+    // custom-node call; the group then routes success → review → merge.
     const calls: string[] = [];
     const runtime = new WorkflowTaskRuntime({
       store: {
         getTaskWorkflowSelection: () => undefined,
         getWorkflowDefinition: async () => undefined,
       },
-      primitives: recordingPrimitives(calls, {
-        workflowStep: { outcome: "success", value: "remediation-scheduled" },
-      }),
+      primitives: recordingPrimitives(calls),
       runCustomNode: async (node) => {
         calls.push(`custom:${node.id}`);
         return { outcome: "success" };
       },
     });
 
-    const result = await runtime.run(task, flagOff);
+    const enabledTask = { ...task, enabledWorkflowSteps: ["browser-verification"] } as TaskDetail;
+    const result = await runtime.run(enabledTask, flagOff);
 
     expect(result.disposition).toBe("completed");
-    expect(calls).toEqual(["planning", "prepare-worktree", "execute", "workflow-step"]);
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute", "workflow-step"]);
+    expect(calls).toEqual([
+      "planning",
+      "prepare-worktree",
+      "execute",
+      "custom:browser-verification-step",
+      "review",
+      "merge",
+    ]);
+    expect(result.visitedNodeIds).toEqual([
+      "start",
+      "planning",
+      "execute",
+      // The group container node, then its inner template step (run once).
+      "browser-verification",
+      "browser-verification::browser-verification-step",
+      "review",
+      "merge",
+    ]);
   });
 
   it("fails selected workflow lookup misses instead of running the built-in workflow", async () => {

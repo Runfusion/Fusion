@@ -155,7 +155,12 @@ describe("parseWorkflowIr — v2 columns & placement", () => {
   });
 });
 
-describe("parseWorkflowIr — optionalSteps", () => {
+// FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+// The legacy `optionalSteps` declaration field is retired. A legacy persisted
+// `optionalSteps` key on an old v2 row is now TOLERATED — no longer validated or
+// required — so old rows still parse as v2 (optional steps are graph-native
+// `optional-group` nodes now).
+describe("parseWorkflowIr — legacy optionalSteps tolerated", () => {
   const columns = DEFAULT_WORKFLOW_COLUMN_IDS.map((id) => ({ id, name: id, traits: [] }));
   const base = (): WorkflowIrV2 => v2(
     columns,
@@ -166,25 +171,23 @@ describe("parseWorkflowIr — optionalSteps", () => {
     [{ from: "start", to: "end" }],
   );
 
-  it("parses and serializes optionalSteps deterministically", () => {
-    const ir: WorkflowIrV2 = {
+  it("parses a legacy v2 row carrying an optionalSteps key without throwing", () => {
+    const ir = {
       ...base(),
+      // Legacy declaration shapes — including ones the old validator rejected —
+      // are now ignored, not validated.
       optionalSteps: [
         { templateId: "browser-verification" },
-        { templateId: "plugin:example:step", defaultOn: true },
+        { defaultOn: "yes" },
+        "nope",
       ],
-    };
+    } as unknown as WorkflowIr;
 
+    expect(() => parseWorkflowIr(ir)).not.toThrow();
     const parsed = parseWorkflowIr(ir);
-    expect(parsed).toEqual(ir);
+    expect(parsed.version).toBe("v2");
+    // The key passes through untouched (round-trips through serialize/parse).
     expect(JSON.parse(serializeWorkflowIr(parsed))).toEqual(ir);
-  });
-
-  it("rejects malformed optionalSteps", () => {
-    expect(() => parseWorkflowIr({ ...base(), optionalSteps: "nope" } as unknown as WorkflowIr)).toThrow(WorkflowIrError);
-    expect(() => parseWorkflowIr({ ...base(), optionalSteps: [{}] } as unknown as WorkflowIr)).toThrow(/non-empty templateId/);
-    expect(() => parseWorkflowIr({ ...base(), optionalSteps: [{ templateId: "" }] } as unknown as WorkflowIr)).toThrow(/non-empty templateId/);
-    expect(() => parseWorkflowIr({ ...base(), optionalSteps: [{ templateId: "browser-verification", defaultOn: "yes" }] } as unknown as WorkflowIr)).toThrow(/defaultOn must be a boolean/);
   });
 
   it("upgrades v1 graphs without optionalSteps", () => {
@@ -196,7 +199,7 @@ describe("parseWorkflowIr — optionalSteps", () => {
     });
     expect(parsed.version).toBe("v2");
     if (parsed.version !== "v2") throw new Error("expected v2");
-    expect(parsed.optionalSteps).toBeUndefined();
+    expect((parsed as { optionalSteps?: unknown }).optionalSteps).toBeUndefined();
   });
 });
 

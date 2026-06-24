@@ -6,10 +6,10 @@ import {
   irToFlow,
   flowToIr,
   insertFragment,
+  optionalGroupFragmentIr,
   fragmentSeamConflicts,
   copyIrWithFreshIds,
   columnsOf,
-  optionalStepsOf,
   columnForY,
   bandTop,
   columnsToBandNodes,
@@ -766,6 +766,104 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
     expect(template.edges).toEqual([{ from: "try", to: "check", condition: "success" }]);
   });
 
+  // FNXC:WorkflowOptionalGroup 2026-06-21-11:30: An optional-group's template
+  // subgraph must round-trip through the editor's parentId-child rendering exactly
+  // like foreach/loop — irToFlow renders the template as parented children;
+  // flowToIr reassembles them into config.template, preserving defaultOn/name.
+  it("round-trips an optional-group template (children partitioned by parentId) losslessly", () => {
+    const optionalIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "optional",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            defaultOn: true,
+            name: "Browser verification",
+            template: {
+              nodes: [
+                { id: "verify", kind: "prompt", config: { prompt: "verify in browser" } },
+                { id: "check", kind: "gate", config: { prompt: "ok?" } },
+              ],
+              edges: [{ from: "verify", to: "check", condition: "success" }],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+    const def = makeDef(optionalIr);
+    const { nodes, edges } = irToFlow(def);
+    const columns = columnsOf(def);
+
+    // The optional-group renders via the registered group component (type
+    // "optional-group", NOT react-flow__node-default) with parented children.
+    const group = nodes.find((n) => n.id === "opt");
+    expect(group?.type).toBe("optional-group");
+    expect(group?.data.kind).toBe("optional-group");
+    // The group node keeps defaultOn/name; the template is stripped onto children.
+    expect(group?.data.config?.defaultOn).toBe(true);
+    expect((group?.data.config as Record<string, unknown>)?.template).toBeUndefined();
+    const children = nodes.filter((n) => n.parentId === "opt");
+    expect(children.map((c) => templateNodeIdFromChild("opt", c.id)).sort()).toEqual(["check", "verify"]);
+
+    const { ir: out } = flowToIr("optional", nodes, edges, columns);
+    if (out.version !== "v2") throw new Error("expected v2");
+    const opt = out.nodes.find((n) => n.id === "opt");
+    expect(opt?.kind).toBe("optional-group");
+    const cfg = opt?.config as Record<string, unknown>;
+    expect(cfg.defaultOn).toBe(true);
+    expect(cfg.name).toBe("Browser verification");
+    const template = cfg.template as { nodes: { id: string }[]; edges: { from: string; to: string }[] };
+    expect(template.nodes.map((n) => n.id)).toEqual(["verify", "check"]);
+    expect(template.edges).toEqual([{ from: "verify", to: "check", condition: "success" }]);
+    // Top-level edges exclude the intra-template ones.
+    expect(out.edges.map((e) => `${e.from}->${e.to}`)).toEqual(["start->opt", "opt->end"]);
+  });
+
+  // FNXC:WorkflowOptionalGroup 2026-06-21-11:30: Deleting an optional-group must
+  // cascade its parentId children (no orphans) — same rule foreach/loop follow.
+  it("cascade-deletes an optional-group's template children", () => {
+    const optionalIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "optional-del",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            defaultOn: false,
+            template: {
+              nodes: [{ id: "verify", kind: "prompt", config: { prompt: "verify" } }],
+              edges: [],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+    const { nodes, edges } = irToFlow(makeDef(optionalIr));
+    expect(nodes.some((n) => n.parentId === "opt")).toBe(true);
+    const result = cascadeDelete(nodes, edges, ["opt"]);
+    expect(result.nodes.some((n) => n.id === "opt")).toBe(false);
+    expect(result.nodes.some((n) => n.parentId === "opt")).toBe(false);
+  });
+
   it("inserts loop fragments with their template children intact", () => {
     const fragment: WorkflowDefinition["ir"] = {
       version: "v2",
@@ -1338,6 +1436,46 @@ describe("insertFragment", () => {
     expect(template?.nodes).toHaveLength(2);
     expect(template?.edges).toHaveLength(1);
   });
+
+  // FNXC:WorkflowOptionalGroup 2026-06-21-14:55: optionalGroupFragmentIr wraps a
+  // projected add-on node in an optional-group; insertFragment must expand its
+  // template child and round-trip it via flowToIr, and two inserts must not collide.
+  it("wraps an add-on node in an optional-group fragment that round-trips with defaultOn", () => {
+    const fragmentIr = optionalGroupFragmentIr(
+      { kind: "prompt", config: { name: "Security Audit", prompt: "audit it" } },
+      { name: "Security Audit", defaultOn: true },
+    );
+
+    const existing = irToFlow(u8ChainDef());
+    const first = insertFragment(existing.nodes, existing.edges, fragmentIr, { x: 400, y: 200 });
+    const second = insertFragment(first.nodes, first.edges, fragmentIr, { x: 700, y: 200 });
+
+    // Two optional-group containers, each with its template child expanded.
+    const groups = second.nodes.filter((n) => n.data.kind === "optional-group");
+    expect(groups).toHaveLength(2);
+    for (const g of groups) {
+      expect(second.nodes.some((n) => n.parentId === g.id)).toBe(true);
+    }
+    // All ids disjoint across both inserts.
+    const allIds = second.nodes.map((n) => n.id);
+    expect(new Set(allIds).size).toBe(allIds.length);
+
+    // Round-trip: BOTH inserted groups carry defaultOn + a single-node template,
+    // so a regression that breaks the second insert can't pass on the first.
+    const { ir: out } = flowToIr("wf", second.nodes, second.edges);
+    // An optional-group is a v2-only kind: its presence forces v2 serialization
+    // even with no columns/fields/settings, or it would serialize as v1 and fail
+    // parse. (Code review: CodeRabbit.)
+    expect(out.version).toBe("v2");
+    const ogs = out.nodes.filter((n) => n.kind === "optional-group");
+    expect(ogs).toHaveLength(2);
+    for (const og of ogs) {
+      expect(og.config?.defaultOn).toBe(true);
+      const template = (og.config as { template?: { nodes: { config?: Record<string, unknown> }[] } }).template;
+      expect(template?.nodes).toHaveLength(1);
+      expect(template?.nodes[0].config?.name).toBe("Security Audit");
+    }
+  });
 });
 
 describe("fragmentSeamConflicts", () => {
@@ -1505,58 +1643,12 @@ describe("copyIrWithFreshIds", () => {
   });
 });
 
-describe("optionalSteps round-trip (U2)", () => {
-  const v2WithOptional = (optionalSteps?: { templateId: string; defaultOn?: boolean }[]) =>
-    makeDef(
-      parseWorkflowIr({
-        version: "v2",
-        name: "wf-opt",
-        columns: [
-          { id: "triage", name: "Triage", traits: [] },
-          { id: "done", name: "Done", traits: [{ trait: "complete" }] },
-        ],
-        nodes: [
-          { id: "start", kind: "start", column: "triage" },
-          { id: "end", kind: "end", column: "done" },
-        ],
-        edges: [{ from: "start", to: "end" }],
-        ...(optionalSteps ? { optionalSteps } : {}),
-      }),
-    );
-
-  it("optionalStepsOf reads declarations from a v2 IR and returns a copy", () => {
-    const def = v2WithOptional([{ templateId: "browser-verification", defaultOn: true }]);
-    const read = optionalStepsOf(def);
-    expect(read).toEqual([{ templateId: "browser-verification", defaultOn: true }]);
-    // mutating the result does not mutate the source IR
-    read[0].defaultOn = false;
-    expect(optionalStepsOf(def)).toEqual([{ templateId: "browser-verification", defaultOn: true }]);
-  });
-
-  it("optionalStepsOf returns [] for v1 and for v2 without optionalSteps", () => {
-    const v1 = makeDef({
-      version: "v1",
-      name: "legacy",
-      nodes: [
-        { id: "start", kind: "start" },
-        { id: "end", kind: "end" },
-      ],
-      edges: [{ from: "start", to: "end" }],
-    });
-    expect(optionalStepsOf(v1)).toEqual([]);
-    expect(optionalStepsOf(v2WithOptional())).toEqual([]);
-  });
-
-  it("flowToIr preserves optionalSteps across a full irToFlow round-trip", () => {
-    const def = v2WithOptional([{ templateId: "browser-verification", defaultOn: true }]);
-    const { nodes, edges } = irToFlow(def);
-    const { ir: out } = flowToIr("wf-opt", nodes, edges, columnsOf(def), [], [], optionalStepsOf(def));
-    expect((out as { optionalSteps?: unknown }).optionalSteps).toEqual([
-      { templateId: "browser-verification", defaultOn: true },
-    ]);
-  });
-
-  it("serializes as v2 when optionalSteps present but no custom columns/fields/settings", () => {
+// FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+// The legacy optional-step DECLARATION authoring surface is retired: `optionalStepsOf`
+// is removed and `flowToIr` no longer accepts/emits an `optionalSteps` array. Optional
+// steps are graph-native `optional-group` nodes carried by the normal node/edge mapping.
+describe("optionalSteps declaration authoring removed (U7)", () => {
+  it("flowToIr never emits a legacy optionalSteps key", () => {
     const { ir: out } = flowToIr(
       "opt-only",
       [
@@ -1567,21 +1659,7 @@ describe("optionalSteps round-trip (U2)", () => {
       [],
       [],
       [],
-      [{ templateId: "browser-verification" }],
     );
-    expect(out.version).toBe("v2");
-    expect((out as { optionalSteps?: unknown }).optionalSteps).toEqual([
-      { templateId: "browser-verification" },
-    ]);
-  });
-
-  it("omits the optionalSteps key entirely when empty (R6 byte-identity)", () => {
-    const def = v2WithOptional();
-    const { nodes, edges } = irToFlow(def);
-    const { ir: out } = flowToIr("wf-opt", nodes, edges, columnsOf(def), [], [], []);
     expect("optionalSteps" in out).toBe(false);
-    // and with the arg omitted entirely
-    const { ir: out2 } = flowToIr("wf-opt", nodes, edges, columnsOf(def));
-    expect("optionalSteps" in out2).toBe(false);
   });
 });

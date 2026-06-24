@@ -245,7 +245,9 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     const result = await runner.run(task, flagOn);
 
     expect(result.disposition).toBe("completed");
-    expect(calls).toEqual(["planning", "execute", "workflow-step", "review", "merge"]);
+    // U6: the coding built-in no longer carries a `workflow-step` seam; its
+    // pre-merge browser-verification optional-group is default-OFF and bypassed.
+    expect(calls).toEqual(["planning", "execute", "review", "merge"]);
     expect(result.reason).toBeUndefined();
     expect(getWorkflowDefinition).not.toHaveBeenCalled();
   });

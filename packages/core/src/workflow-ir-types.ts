@@ -23,6 +23,7 @@ export type WorkflowIrNodeKind =
   | "join"
   | "foreach"
   | "loop"
+  | "optional-group"
   | "step-review"
   | "parse-steps"
   | "code"
@@ -158,6 +159,26 @@ export interface WorkflowLoopConfig {
   maxIterations?: number;
   timeoutMs?: number;
   exitWhen: WorkflowLoopExitCondition;
+  template: {
+    nodes: WorkflowIrNode[];
+    edges: WorkflowIrEdge[];
+  };
+}
+
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-11:00:
+An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs ONCE when the group is enabled for the task and passes through (skips) when disabled.
+Enable state reuses the per-task `enabledWorkflowSteps` facet keyed by the group node id, seeded from `defaultOn` at task creation — this replaces the execution-inert declaration-based optional-steps model (`WorkflowOptionalStep`/`optionalSteps`).
+Single pass only: no iteration, no rework budget. Rework edges are forbidden inside the template so the single-pass guarantee is unambiguous (validated in `validateOptionalGroup`).
+*/
+/** Config for an `optional-group` container node. `defaultOn` seeds the per-task
+ *  enable set at creation; the `template` is the subgraph run once when enabled.
+ *  Unlike `foreach`/`loop`, there is no iteration or rework — a single pass. */
+export interface WorkflowOptionalGroupConfig {
+  /** Workflow-author default for whether new tasks enable this group. */
+  defaultOn?: boolean;
+  /** Display name for the group (editor + per-task toggle surfaces). */
+  name?: string;
   template: {
     nodes: WorkflowIrNode[];
     edges: WorkflowIrEdge[];
@@ -311,13 +332,10 @@ export interface WorkflowIrV1 {
   edges: WorkflowIrEdge[];
 }
 
-/** Workflow-declared optional step backed by a workflow-step template.
- *  Execution-inert: consumed by create/edit UI to seed per-task
- *  `enabledWorkflowSteps`, never by the graph executor. Absent on legacy graphs. */
-export interface WorkflowOptionalStep {
-  templateId: string;
-  defaultOn?: boolean;
-}
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+Retired the legacy declaration-based optional-steps model. The `WorkflowOptionalStep` interface and the `WorkflowIrV2.optionalSteps` field are removed — optional steps are now graph-native `optional-group` NODES (see `WorkflowOptionalGroupConfig` above), resolved by `resolveWorkflowOptionalSteps`. A legacy persisted `optionalSteps` key on an old v2 row is TOLERATED at parse (ignored, not validated) so old rows still load as v2.
+*/
 
 /** A v2 workflow IR graph: v1 plus workflow-defined columns and node placement.
  *  Step-inversion adds optional `artifacts` (KTD-12) and `fields` (KTD-13)
@@ -333,9 +351,6 @@ export interface WorkflowIrV2 {
   /** Workflow-settings (U1, R1): typed setting declarations. Additive; absent on
    *  legacy graphs. Values persist per-`(workflowId, projectId)` (U2), not here. */
   settings?: WorkflowSettingDefinition[];
-  /** Optional workflow-step templates tasks may independently enable/disable via
-   *  `enabledWorkflowSteps`. Execution-inert; the graph executor ignores this facet. */
-  optionalSteps?: WorkflowOptionalStep[];
 }
 
 /** Either IR version. v1 graphs upgrade to v2 on parse (see parseWorkflowIr). */

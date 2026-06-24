@@ -582,6 +582,65 @@ exactly when the surrounding chrome is gone.
   margin: 0;
 }
 
+.devserver-preview-modal-launcher {
+  align-items: stretch;
+}
+
+.devserver-preview-modal-launcher__copy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.devserver-preview-modal-launcher__copy .devserver-preview-url-badge {
+  max-width: none;
+}
+
+.devserver-preview-modal-launcher__description {
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.devserver-preview-modal-overlay {
+  align-items: center;
+  padding: var(--space-xl);
+}
+
+.devserver-preview-modal {
+  width: min(calc(var(--space-2xl) * 28), calc(100vw - var(--space-xl) * 2));
+  max-height: calc(100vh - var(--space-xl) * 2);
+}
+
+.devserver-preview-modal__titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+
+.devserver-preview-modal__titlebar h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.devserver-preview-modal__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.devserver-preview-modal__body .devserver-preview-container {
+  flex: 1;
+  min-height: min(60vh, calc(var(--space-2xl) * 14));
+  max-height: none;
+}
+
 /* Legacy selector compatibility for static CSS tests */
 .dev-server-preview-fallback {
   border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
@@ -655,7 +714,8 @@ exactly when the surrounding chrome is gone.
     max-width: none;
   }
 
-  .devserver-preview-header {
+  .devserver-preview-header,
+  .devserver-preview-modal-launcher__copy {
     flex-wrap: wrap;
   }
 
@@ -701,6 +761,20 @@ exactly when the surrounding chrome is gone.
 
   .dev-server-task-description {
     max-height: calc(var(--space-2xl) * 3);
+  }
+
+  .devserver-preview-modal-overlay {
+    align-items: stretch;
+    padding: var(--space-md);
+  }
+
+  .devserver-preview-modal {
+    width: 100%;
+    max-height: calc(100vh - var(--space-md) * 2);
+  }
+
+  .devserver-preview-modal__body .devserver-preview-container {
+    min-height: calc(var(--space-2xl) * 7);
   }
 
   .dev-server-config {
@@ -852,7 +926,8 @@ vertically (.dev-server-view overflow-y:auto), so each panel just needs to be fu
     flex-direction: column;
   }
 
-  .devserver-preview-panel {
+  .devserver-preview-panel,
+  .devserver-preview-modal-launcher {
     grid-column: auto;
     grid-row: auto;
   }
@@ -862,8 +937,23 @@ vertically (.dev-server-view overflow-y:auto), so each panel just needs to be fu
     max-width: none;
   }
 
-  .devserver-preview-header {
+  .devserver-preview-header,
+  .devserver-preview-modal-launcher__copy {
     flex-wrap: wrap;
+  }
+
+  .devserver-preview-modal-overlay {
+    align-items: stretch;
+    padding: var(--space-md);
+  }
+
+  .devserver-preview-modal {
+    width: min(calc(var(--space-2xl) * 20), calc(100vw - var(--space-md) * 2));
+    max-height: calc(100vh - var(--space-md) * 2);
+  }
+
+  .devserver-preview-modal__body .devserver-preview-container {
+    min-height: calc(var(--space-2xl) * 7);
   }
 
   .devserver-preview-url-badge {
@@ -915,8 +1005,8 @@ vertically (.dev-server-view overflow-y:auto), so each panel just needs to be fu
   }
 
   .dev-server-logs,
-  .devserver-preview-container,
-  .devserver-preview-iframe {
+  .devserver-preview-panel .devserver-preview-container,
+  .devserver-preview-panel .devserver-preview-iframe {
     min-height: calc(var(--space-2xl) * 4 + var(--space-md));
     max-height: none;
   }

@@ -1,10 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // PARITY SUBJECT (test-file ownership, U7 / KTD-9):
 //   This suite owns DEFAULT-WORKFLOW BYTE-IDENTITY parity — it proves the graph
-//   executor reproduces the workflow-native planning → execute → workflow-step
-//   → review → merge seam
-//   sequence exactly (the parity ORACLE per KTD-1). It deliberately does NOT
+//   executor reproduces the workflow-native planning → execute → review → merge
+//   seam sequence exactly (the parity ORACLE per KTD-1). It deliberately does NOT
 //   cover per-step / updateStep-trajectory parity.
+//
+//   FNXC:WorkflowOptionalGroup 2026-06-21-15:10 (U6): the legacy `workflow-step`
+//   seam was retired from the coding built-in; pre-merge browser-verification is
+//   now a default-OFF `optional-group`. With no `enabledWorkflowSteps` on the task
+//   the group is BYPASSED, so the lifecycle seam sequence is planning → execute →
+//   review → merge (no workflow-step seam).
 //
 //   The stepwise per-step trajectory + merge-blocker-window parity (legacy
 //   step-session path vs the stepwise foreach graph) is owned by the sibling
@@ -41,9 +46,7 @@ function runLegacy(seams: WorkflowLegacySeams) {
     const execute = await seams.execute(task, {});
     events.push(`execute:${execute.outcome}`);
     if (execute.outcome !== "success") return events;
-    const workflowStep = await seams.workflowStep?.(task, {}) ?? { outcome: "success" as const };
-    events.push(`workflow-step:${workflowStep.outcome}`);
-    if (workflowStep.outcome !== "success") return events;
+    // U6: no workflow-step seam — browser-verification is a bypassed optional-group.
     const review = await seams.review(task, {});
     events.push(`review:${review.outcome}`);
     if (review.outcome !== "success") return events;
@@ -98,7 +101,7 @@ describe("WorkflowGraphExecutor interpreter-parity", () => {
     const executor = new WorkflowGraphExecutor({ seams });
     const result = await executor.run(task, { experimentalFeatures: { workflowGraphExecutor: true } });
     expect(result.outcome).toBe("failure");
-    expect(legacyEvents).toEqual(["planning:success", "execute:success", "workflow-step:success", "review:success", "merge:failure"]);
+    expect(legacyEvents).toEqual(["planning:success", "execute:success", "review:success", "merge:failure"]);
   });
 
   it("preserves autoMerge:false terminal in-review semantics via review failure", async () => {
@@ -198,11 +201,11 @@ describe("column-agent feature is invisible when unbound (U7 / R9)", () => {
     // Bind the invariant to actual executor behavior (PR #1432 review): the
     // observation below derives from the run-captured seam sequence, so seam
     // drift fails here instead of being masked by a hard-coded literal.
-    expect(stages).toEqual(["planning", "execute", "workflow-step", "review", "merge"]);
+    expect(stages).toEqual(["planning", "execute", "review", "merge"]);
 
     // Legacy authoritative observation: a clean run that lands in `done`/merged.
     const legacyObs = buildWorkflowObservation({
-      stageTransitions: ["triage", "planning", "execute", "workflow-step", "review", "merge"],
+      stageTransitions: ["triage", "planning", "execute", "review", "merge"],
       terminalColumn: "done",
       terminalStatus: "done",
       reviewVerdict: "approve",

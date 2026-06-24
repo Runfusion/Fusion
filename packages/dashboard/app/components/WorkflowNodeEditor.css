@@ -1171,6 +1171,80 @@ Built-in workflow prompts need visible override state and a reset action without
   color: var(--ws-warning);
 }
 
+/* ── Per-node Help (FNXC:WorkflowEditor 2026-06-21-10:00) ───────────
+ *  Collapsible <details> teaching what the selected node does, how to
+ *  configure it, and its inputs/outputs/edges. Sits under the heading,
+ *  collapsed by default so it never pushes config fields below the fold. */
+.wf-inspector-help {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+
+.wf-inspector-help-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.78rem;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.wf-inspector-help-summary::-webkit-details-marker {
+  display: none;
+}
+
+.wf-inspector-help-summary:hover {
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+/* Engine-managed badge for graph-only policy nodes (read-only lifecycle). */
+.wf-inspector-help-badge {
+  margin-left: auto;
+  padding: 1px var(--space-xs);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.wf-inspector-help-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: 0 var(--space-sm) var(--space-sm);
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.wf-inspector-help-summary-text {
+  margin: 0;
+  color: var(--text);
+}
+
+.wf-inspector-help-dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 2px var(--space-sm);
+  margin: 0;
+}
+
+.wf-inspector-help-dl dt {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.wf-inspector-help-dl dd {
+  margin: 0;
+  color: var(--text-muted);
+}
+
 .wf-field--checkbox {
   flex-direction: row;
   align-items: center;

@@ -9,7 +9,6 @@ import type {
   WorkflowDefinition,
   WorkflowFieldDefinition,
   WorkflowSettingDefinition,
-  WorkflowOptionalStep,
 } from "@fusion/core";
 import type { WorkflowFlowNodeData, WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 
@@ -35,6 +34,16 @@ interface WorkflowLoopConfig {
     pattern?: string;
     flags?: string;
   };
+  template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] };
+}
+
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-11:30:
+An `optional-group` is a third container kind alongside `foreach`/`loop`. It carries `defaultOn`/`name` plus a `template:{nodes,edges}` subgraph authored inline as React Flow `parentId` children (reusing the `foreachChildFlowId` namespacing). It is special-cased everywhere foreach/loop are: group-template detection, child reassembly in flowToIr, intra-template edge folding, cascade delete, and condition-editability. Single-pass, no rework/iteration — but the editor mapping treats its template identically to foreach/loop.
+*/
+interface WorkflowOptionalGroupConfig {
+  defaultOn?: boolean;
+  name?: string;
   template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] };
 }
 
@@ -170,6 +179,7 @@ const SAME_KIND_EDITOR_NODE_KINDS = new Set<WorkflowIrNodeKind>([
   "join",
   "foreach",
   "loop",
+  "optional-group",
   "step-review",
   "parse-steps",
   "code",
@@ -263,10 +273,17 @@ function loopConfigOf(node: WorkflowIrNode): WorkflowLoopConfig | undefined {
   return cfg as WorkflowLoopConfig;
 }
 
+function optionalGroupConfigOf(node: WorkflowIrNode): WorkflowOptionalGroupConfig | undefined {
+  if (node.kind !== "optional-group") return undefined;
+  const cfg = node.config as Partial<WorkflowOptionalGroupConfig> | undefined;
+  if (!cfg || !cfg.template) return undefined;
+  return cfg as WorkflowOptionalGroupConfig;
+}
+
 function groupTemplateConfigOf(
   node: WorkflowIrNode,
-): WorkflowForeachConfig | WorkflowLoopConfig | undefined {
-  return foreachConfigOf(node) ?? loopConfigOf(node);
+): WorkflowForeachConfig | WorkflowLoopConfig | WorkflowOptionalGroupConfig | undefined {
+  return foreachConfigOf(node) ?? loopConfigOf(node) ?? optionalGroupConfigOf(node);
 }
 
 /** CSS class for an edge given its condition + rework kind. Rework takes
@@ -435,7 +452,6 @@ export function flowToIr(
   columns?: WorkflowIrColumn[],
   fields?: WorkflowFieldDefinition[],
   settings?: WorkflowSettingDefinition[],
-  optionalSteps?: WorkflowOptionalStep[],
 ): { ir: WorkflowIr; layout: Record<string, { x: number; y: number }> } {
   const realNodes = nodes.filter((n) => !isColumnBandNode(n.id));
   // Partition by parentId: foreach group children reassemble into that group's
@@ -451,19 +467,25 @@ export function flowToIr(
     }
   }
   const groupIds = new Set(
-    topNodes.filter((n) => n.data.kind === "foreach" || n.data.kind === "loop").map((n) => n.id),
+    topNodes
+      .filter((n) => n.data.kind === "foreach" || n.data.kind === "loop" || n.data.kind === "optional-group")
+      .map((n) => n.id),
   );
   const hasFields = Array.isArray(fields) && fields.length > 0;
   const hasSettings = Array.isArray(settings) && settings.length > 0;
-  const hasOptionalSteps = Array.isArray(optionalSteps) && optionalSteps.length > 0;
-  // FNXC:WorkflowOptionalSteps 2026-06-21-00:00:
-  // Optional steps must round-trip through the node editor without data loss, yet
-  // must never upgrade a legacy v1 graph. Fields, settings, and optional steps are
-  // v2-only declarations: a workflow with any of them but no custom columns still
-  // serializes as v2 (with the synthesized default columns). Empty/absent → not a
-  // v2 signal, and the key is omitted entirely (R6 byte-identity for legacy graphs).
+  // FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+  // The editor no longer AUTHORS legacy `optionalSteps` declarations — optional
+  // steps are graph-native `optional-group` nodes carried through the normal
+  // node/edge mapping. Fields and settings remain v2-only declarations: a workflow
+  // with either but no custom columns still serializes as v2 (with the synthesized
+  // default columns). Empty/absent → not a v2 signal (R6 byte-identity for legacy).
+  // FNXC:WorkflowOptionalGroup 2026-06-22-09:00: a container/group node
+  // (foreach/loop/optional-group) is a v2-ONLY kind — its presence must force v2,
+  // or an inserted optional-group on an otherwise-plain workflow would serialize
+  // as v1 and fail parse (validateOptionalGroup runs only on v2). (Code review:
+  // CodeRabbit — corroborated by the pre-merge correctness review's residual risk.)
   const v2 =
-    (Array.isArray(columns) && columns.length > 0) || hasFields || hasSettings || hasOptionalSteps;
+    (Array.isArray(columns) && columns.length > 0) || hasFields || hasSettings || groupIds.size > 0;
   const layout: Record<string, { x: number; y: number }> = {};
 
   /** Project one flow node (top-level or template child) into an IR node. */
@@ -477,8 +499,19 @@ export function flowToIr(
       }
       return { id: localId, kind: "prompt", config: { ...(config ?? {}), seam: "merge" } };
     }
-    if (data.kind === "foreach" || data.kind === "loop" || originalKind === "retry-backoff") {
-      if (originalKind && originalKind !== "foreach" && originalKind !== "loop" && originalKind !== "retry-backoff") {
+    if (
+      data.kind === "foreach" ||
+      data.kind === "loop" ||
+      data.kind === "optional-group" ||
+      originalKind === "retry-backoff"
+    ) {
+      if (
+        originalKind &&
+        originalKind !== "foreach" &&
+        originalKind !== "loop" &&
+        originalKind !== "optional-group" &&
+        originalKind !== "retry-backoff"
+      ) {
         return { id: localId, kind: originalKind, config: config && Object.keys(config).length ? config : undefined };
       }
       // Reassemble the template from this group's children.
@@ -564,12 +597,6 @@ export function flowToIr(
         render: s.render ? { ...s.render } : undefined,
       }));
     }
-    if (hasOptionalSteps) {
-      // Optional-step DECLARATIONS round-trip through the editor opaquely (they are
-      // not graph nodes; the resolver + server validator are the source of truth).
-      // Omitted entirely when empty so legacy graphs stay byte-identical (R6).
-      (ir as { optionalSteps?: unknown }).optionalSteps = optionalSteps!.map((o) => ({ ...o }));
-    }
     return { ir, layout };
   }
 
@@ -608,9 +635,10 @@ function isProtectedFromDelete(node: FlowNode<WorkflowFlowNodeData>): boolean {
  * Delete the requested node and/or edge ids from the flow graph, applying R6's
  * cascade rules:
  *   - Deleting a node removes ALL edges incident to it (no auto-bridging).
- *   - Deleting a `foreach`/`loop` group node also deletes its template children
- *     (nodes with `parentId === groupId`) and every edge incident to those
- *     children (React Flow does not cascade parents — handled explicitly).
+ *   - Deleting a `foreach`/`loop`/`optional-group` group node also deletes its
+ *     template children (nodes with `parentId === groupId`) and every edge
+ *     incident to those children (React Flow does not cascade parents — handled
+ *     explicitly).
  *   - `start`/`end` nodes and column band nodes are never deleted: they are
  *     filtered out of the requested ids up front (and their incident edges are
  *     therefore preserved).
@@ -633,7 +661,7 @@ export function cascadeDelete(
     const node = nodeById.get(id);
     if (!node || isProtectedFromDelete(node)) continue;
     deleteNodeIds.add(id);
-    if (node.data.kind === "foreach" || node.data.kind === "loop") {
+    if (node.data.kind === "foreach" || node.data.kind === "loop" || node.data.kind === "optional-group") {
       for (const child of nodes) {
         if (child.parentId === id) deleteNodeIds.add(child.id);
       }
@@ -660,7 +688,7 @@ export function cascadeDelete(
 
 /** Editor node kinds whose edges expose a success/failure condition select
  *  (KTD-2). step-review uses verdict controls; all other kinds are read-only. */
-const CONDITION_EDITABLE_KINDS = new Set<string>(["prompt", "script", "gate", "code", "foreach", "loop"]);
+const CONDITION_EDITABLE_KINDS = new Set<string>(["prompt", "script", "gate", "code", "foreach", "loop", "optional-group"]);
 
 /** Decide what the edge inspector renders for an edge sourced from `sourceKind`:
  *  - "verdicts": step-review verdict select + rework checkbox (existing);
@@ -981,15 +1009,11 @@ export function settingsOf(def: WorkflowDefinition): WorkflowSettingDefinition[]
   }));
 }
 
-/** Extract the editor's working optional-step declaration list from a definition.
- *  v2 with `optionalSteps` → a shallow copy; v1 or none → empty. Display metadata
- *  (name/icon/phase) is NOT carried here — it is resolved from the step-template
- *  catalog at render time so the resolver stays the single source of truth. */
-export function optionalStepsOf(def: WorkflowDefinition): WorkflowOptionalStep[] {
-  const ir = def.ir as { optionalSteps?: WorkflowOptionalStep[] };
-  if (!isV2(def.ir) || !Array.isArray(ir.optionalSteps)) return [];
-  return ir.optionalSteps.map((o) => ({ ...o }));
-}
+/* FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+   `optionalStepsOf` (the editor's legacy `optionalSteps` declaration extractor)
+   is removed. Optional steps are graph-native `optional-group` nodes now; the
+   editor reads/writes them through the normal node/edge mapping, and the per-task
+   toggle surfaces resolve them via `resolveWorkflowOptionalSteps`. */
 
 /** Seed graph for a brand-new workflow: start → end with room to insert steps. */
 export function emptyWorkflowIr(name: string): WorkflowIr {
@@ -1215,6 +1239,52 @@ export function insertFragment(
     nodes: [...nodes, ...newNodes, ...childNodes],
     edges: [...edges, ...newEdges, ...childEdges],
     insertedNodeIds,
+  };
+}
+
+/*
+FNXC:WorkflowOptionalGroup 2026-06-21-14:30:
+"Insert as optional group" (U5/R5) wraps a single projected add-on node in an `optional-group`
+container so an author can drop e.g. "Security Audit (optional)" in one action. The wrapper is built
+as a v1-shaped fragment IR (start → optional-group → end) and handed to the EXISTING `insertFragment`
+path, which strips start/end, remaps the group id, and expands the group's `config.template` child as a
+`parentId` flow node — so no new insertion engine is needed and ids never collide across repeated inserts.
+KTD-5: the add-on catalog stays FLAT; projection to a node is done by the caller via `stepTemplateToNode`,
+and only the wrap-in-container step lives here.
+*/
+
+/** Wrap a single projected add-on node in an `optional-group` fragment IR ready
+ *  for `insertFragment`. `defaultOn` seeds the group's per-task enable default
+ *  (from the source template's `defaultOn`). The group's `name` labels it in the
+ *  editor and the per-task toggle surfaces. The inner node uses a template-local
+ *  id; `insertFragment` remaps the group id and namespaces the child, so this id
+ *  need only be unique WITHIN the template. */
+export function optionalGroupFragmentIr(
+  addOnNode: { kind: WorkflowIrNodeKind; config?: Record<string, unknown> },
+  opts: { name?: string; defaultOn?: boolean },
+): WorkflowIr {
+  const innerId = "addon";
+  const optionalGroupId = "optional-group";
+  const config: WorkflowOptionalGroupConfig & Record<string, unknown> = {
+    defaultOn: opts.defaultOn ?? false,
+    template: {
+      nodes: [{ id: innerId, kind: addOnNode.kind, config: addOnNode.config }],
+      edges: [],
+    },
+  };
+  if (opts.name) config.name = opts.name;
+  return {
+    version: "v1",
+    name: opts.name ?? "optional-group",
+    nodes: [
+      { id: "start", kind: "start" },
+      { id: optionalGroupId, kind: "optional-group", config },
+      { id: "end", kind: "end" },
+    ],
+    edges: [
+      { from: "start", to: optionalGroupId, condition: "success" },
+      { from: optionalGroupId, to: "end", condition: "success" },
+    ],
   };
 }
 

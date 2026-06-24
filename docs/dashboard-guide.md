@@ -866,6 +866,9 @@ Features:
 - Start, stop, and restart the current server session
 - Manage preview URLs with embedded preview and **Open in new tab** fallback
 - Tail live logs, load older history, and refresh session status
+- When Dev Server is hosted in a very narrow right sidebar, open the preview from the compact **Open preview** launcher; the modal keeps preview actions available while configuration and logs stay usable in the sidebar.
+
+<!-- FNXC:DevServerDocs 2026-06-23-00:00: The narrow right-sidebar Dev Server host must describe the preview modal launcher so users do not expect the preview iframe to remain inline when the dock is too constrained for logs and preview together. -->
 
 For module-level behavior and API surfaces, see [Dev Server modules](./dev-server-modules.md).
 

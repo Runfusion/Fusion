@@ -44,6 +44,7 @@ vi.mock("lucide-react", () => ({
   Search: () => <span data-testid="icon-search" />,
   ShieldAlert: () => <span data-testid="icon-shield-alert" />,
   Square: () => <span data-testid="icon-square" />,
+  X: () => <span data-testid="icon-x" />,
 }));
 
 function createState(overrides: Partial<DevServerState> = {}): DevServerState {
@@ -201,6 +202,153 @@ describe("DevServerView preview panel", () => {
 
   afterEach(() => {
     window.open = originalWindowOpen;
+    vi.unstubAllGlobals();
+  });
+
+  function renderInRightDock(width: number) {
+    const host = document.createElement("div");
+    host.className = "right-dock__body";
+    Object.defineProperty(host, "clientWidth", { configurable: true, value: width });
+    document.body.appendChild(host);
+
+    return render(<DevServerView addToast={addToast} projectId="project-a" />, { container: host });
+  }
+
+  it("activates narrow right-dock preview mode only below the dock threshold", async () => {
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({ serverState: createState({ status: "running", previewUrl: "http://localhost:3000" }) }),
+    );
+
+    const narrow = renderInRightDock(420);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dev-server-view")).toHaveAttribute("data-narrow-right-dock-preview", "true");
+    });
+
+    narrow.unmount();
+    document.body.innerHTML = "";
+
+    renderInRightDock(640);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dev-server-view")).toHaveAttribute("data-narrow-right-dock-preview", "false");
+    });
+    expect(screen.queryByTestId("devserver-preview-modal-launcher")).not.toBeInTheDocument();
+    expect(screen.getByTestId("devserver-preview-panel")).toBeInTheDocument();
+  });
+
+  it("replaces the narrow right-dock inline preview with an accessible modal launcher", async () => {
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({ serverState: createState({ status: "running", previewUrl: "http://localhost:3000" }) }),
+    );
+    mockUseDevServerLogs.mockReturnValue(createDevServerLogsHookState({
+      entries: [{ id: "log-1", timestamp: "2026-06-23T00:00:00.000Z", stream: "stdout", text: "ready" }],
+      total: 1,
+    }));
+    previewEmbedState = createPreviewEmbedState({ embedStatus: "embedded", isEmbedded: true });
+
+    renderInRightDock(420);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dev-server-view")).toHaveAttribute("data-narrow-right-dock-preview", "true");
+    });
+
+    expect(screen.getByTestId("dev-server-logs-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("devserver-preview-panel")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Dev server preview")).not.toBeInTheDocument();
+    expect(screen.getByTestId("devserver-preview-modal-launcher")).toHaveTextContent("http://localhost:3000");
+    expect(screen.getByTestId("devserver-preview-url-badge")).toHaveTextContent("http://localhost:3000");
+
+    fireEvent.click(screen.getByTestId("devserver-preview-modal-open"));
+
+    const modal = await screen.findByTestId("devserver-preview-modal");
+    expect(modal).toHaveAttribute("role", "dialog");
+    expect(modal).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByTitle("Dev server preview")).toBeInTheDocument();
+    expect(screen.getByTestId("devserver-preview-open-tab")).toBeInTheDocument();
+    expect(screen.getByTestId("devserver-preview-refresh")).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("devserver-preview-modal")).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps preview modes and fallback actions inside the narrow dock modal", async () => {
+    const retry = vi.fn();
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({ serverState: createState({ status: "running", previewUrl: "http://localhost:3000" }) }),
+    );
+    previewEmbedState = createPreviewEmbedState({ embedStatus: "embedded", isEmbedded: true });
+
+    const { rerender } = renderInRightDock(420);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dev-server-view")).toHaveAttribute("data-narrow-right-dock-preview", "true");
+    });
+
+    fireEvent.click(screen.getByTestId("devserver-preview-modal-open"));
+
+    previewEmbedState = createPreviewEmbedState({
+      embedStatus: "blocked",
+      isBlocked: true,
+      embedContext: "The server may block iframe embedding...",
+      retry,
+    });
+    rerender(<DevServerView addToast={addToast} projectId="project-a" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("devserver-preview-fallback")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Preview blocked")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("devserver-preview-fallback-retry"));
+    expect(retry).toHaveBeenCalledTimes(1);
+
+    previewEmbedState = createPreviewEmbedState({ embedStatus: "embedded", isEmbedded: true });
+    rerender(<DevServerView addToast={addToast} projectId="project-a" />);
+    fireEvent.click(screen.getByTestId("devserver-preview-mode-toggle"));
+
+    expect(screen.getByTestId("devserver-preview-external-only")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("devserver-preview-external-open-tab"));
+    expect(window.open).toHaveBeenCalledWith("http://localhost:3000", "_blank", "noopener,noreferrer");
+  });
+
+  it("keeps inline preview mode for true mobile viewport and expanded right-dock hosts", async () => {
+    vi.stubGlobal("matchMedia", vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(max-width: 768px)",
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })));
+    mockUseDevServer.mockReturnValue(
+      createDevServerHookState({ serverState: createState({ status: "running", previewUrl: "http://localhost:3000" }) }),
+    );
+
+    const mobile = renderInRightDock(420);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dev-server-view")).toHaveAttribute("data-narrow-right-dock-preview", "false");
+    });
+
+    mobile.unmount();
+    document.body.innerHTML = "";
+    vi.unstubAllGlobals();
+
+    const expandedHost = document.createElement("div");
+    expandedHost.className = "right-dock-expand-modal__body";
+    Object.defineProperty(expandedHost, "clientWidth", { configurable: true, value: 420 });
+    document.body.appendChild(expandedHost);
+
+    render(<DevServerView addToast={addToast} projectId="project-a" />, { container: expandedHost });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dev-server-view")).toHaveAttribute("data-narrow-right-dock-preview", "false");
+    });
   });
 
   it("shows start-empty state when server is not configured", () => {

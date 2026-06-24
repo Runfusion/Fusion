@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, cleanup, within } from "@testing-library/react";
-import { parseWorkflowIr, type WorkflowDefinition, type Settings } from "@fusion/core";
+import { parseWorkflowIr, WORKFLOW_STEP_TEMPLATES, type WorkflowDefinition, type Settings } from "@fusion/core";
 import type { Agent } from "../../api";
 import {
   irToFlow,
@@ -170,13 +170,9 @@ function v2Def(): WorkflowDefinition {
   };
 }
 
-function v2DefWithOptional(): WorkflowDefinition {
-  const base = v2Def();
-  return {
-    ...base,
-    ir: { ...(base.ir as object), optionalSteps: [{ templateId: "browser-verification" }] } as WorkflowDefinition["ir"],
-  };
-}
+// FNXC:WorkflowOptionalGroup 2026-06-21-18:00: `v2DefWithOptional` and its
+// optional-step DECLARATION hydration/save test are removed — the declaration
+// authoring panel is retired (optional-group nodes now).
 
 function builtinDef(): WorkflowDefinition {
   return {
@@ -392,12 +388,13 @@ describe("workflow-flow-mapping", () => {
   it("preserves duplicate and parallel built-in edges with valid endpoints and hit targets", () => {
     const { edges } = edgeRenderableAssertion(builtinDef());
     const failuresToEnd = edges.filter((edge) => edge.target === "end" && edge.data?.condition === "failure");
+    // FNXC:WorkflowOptionalGroup 2026-06-21-15:30: the coding built-in's pre-merge `workflow-step` seam was migrated to a `browser-verification` optional-group (U6), which now carries the failure->end edge in its place.
     expect(failuresToEnd.map((edge) => edge.source).sort()).toEqual([
+      "browser-verification",
       "execute",
       "merge-attempt",
       "planning",
       "review",
-      "workflow-step",
     ]);
     expect(new Set(failuresToEnd.map((edge) => edge.id)).size).toBe(failuresToEnd.length);
     expect(failuresToEnd.every((edge) => edge.interactionWidth === WF_EDGE_INTERACTION_WIDTH)).toBe(true);
@@ -806,34 +803,6 @@ describe("WorkflowNodeEditor", () => {
     expect(start?.column).toBe("done");
   });
 
-  it("hydrates declared optional steps and preserves them through a dirty save (round-trip)", async () => {
-    vi.mocked(fetchWorkflows).mockResolvedValue([v2DefWithOptional()]);
-    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({
-      ...v2DefWithOptional(),
-      ...(updates as object),
-    }));
-    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
-
-    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
-
-    await screen.findByText("Save");
-    // The declared optional step is hydrated into the panel (optionalStepsOf).
-    const row = await screen.findByTestId("wf-optional-step-browser-verification");
-    expect(within(row).getByText("Browser Verification")).toBeTruthy();
-
-    // Toggling defaultOn must mark the editor dirty (serializeGraph threading) so
-    // the Save button enables and persists the change.
-    fireEvent.click(within(row).getByRole("checkbox"));
-    fireEvent.click(screen.getByText("Save").closest("button")!);
-
-    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
-    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
-    const ir = (updates as { ir: WorkflowDefinition["ir"] }).ir as {
-      optionalSteps?: { templateId: string; defaultOn?: boolean }[];
-    };
-    expect(ir.optionalSteps).toEqual([{ templateId: "browser-verification", defaultOn: true }]);
-  });
-
   it("renders the start inspector without the entry-column select for v1 workflows", async () => {
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
 
@@ -848,6 +817,25 @@ describe("WorkflowNodeEditor", () => {
     );
     expect(within(inspector).queryByTestId("wf-start-entry-column")).not.toBeInTheDocument();
     expect(within(inspector).queryByLabelText("Name")).not.toBeInTheDocument();
+  });
+
+  // FNXC:WorkflowEditor 2026-06-21-10:00: Every node's detail pane carries a Help section describing what it does and its inputs/outputs/edges.
+  it("renders a Help section in the node detail pane", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(await screen.findByTestId("wf-node-start"));
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    const help = within(inspector).getByTestId("wf-node-help");
+    expect(help).toHaveTextContent("What does this node do?");
+    expect(help).toHaveTextContent("Inputs");
+    expect(help).toHaveTextContent("Outputs");
+    expect(help).toHaveTextContent("Edges");
+    // Editor (non-policy) nodes are not flagged engine-managed.
+    expect(within(inspector).queryByTestId("wf-node-help-engine-managed")).not.toBeInTheDocument();
   });
 
   it("keeps built-in start node entry-column controls read-only", async () => {
@@ -1696,6 +1684,51 @@ function stepwiseDef(): WorkflowDefinition {
   };
 }
 
+/** A v2 workflow with an optional-group container (defaultOn:false) holding one
+ *  template child, so the editor's optional-group surfaces have something to
+ *  render, toggle, and delete. */
+function optionalGroupDef(): WorkflowDefinition {
+  return {
+    id: "WF-OPT",
+    kind: "workflow",
+    name: "Optional",
+    description: "",
+    ir: {
+      version: "v2",
+      name: "Optional",
+      columns: [
+        { id: "plan", name: "Plan", traits: [{ trait: "intake" }] },
+        { id: "in-progress", name: "In progress", traits: [] },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            defaultOn: false,
+            name: "Browser verification",
+            template: {
+              nodes: [{ id: "verify", kind: "prompt", config: { prompt: "verify in browser" } }],
+              edges: [],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    },
+    layout: {},
+    createdAt: "2026-06-04T00:00:00.000Z",
+    updatedAt: "2026-06-04T00:00:00.000Z",
+  };
+}
+
 describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
   beforeEach(() => {
     vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
@@ -1750,6 +1783,80 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     const template = foreach!.config!.template as { nodes: { config?: Record<string, unknown> }[] };
     expect(template.nodes).toHaveLength(1);
     expect(template.nodes[0].config?.seam).toBe("step-execute");
+  });
+
+  // FNXC:WorkflowOptionalGroup 2026-06-21-11:30: An optional-group must be
+  // authorable like a foreach/loop — added from the palette as a registered group
+  // container (not react-flow__node-default), filled with nodes, named, toggled
+  // for defaultOn, and deleted with its children cascaded.
+  it("adds an optional-group from the palette and round-trips its template on save", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...v2Def(), ...(updates as object) }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByText("Save");
+    expect(await screen.findByTestId("wf-column-panel")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Optional group").closest("button")!);
+    // Renders via the registered group component (wf-node-optional-group), NOT
+    // React Flow's default fallback.
+    await waitFor(() => expect(screen.getByTestId("wf-node-optional-group")).toBeInTheDocument(), { timeout: 5000 });
+    // No empty hint — the palette seeded an optional step inside.
+    expect(screen.queryByTestId("wf-optional-group-empty")).not.toBeInTheDocument();
+
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: { id: string; kind: string; config?: Record<string, unknown> }[] } }).ir;
+    const group = ir.nodes.find((n) => n.kind === "optional-group");
+    expect(group).toBeTruthy();
+    const template = group!.config!.template as { nodes: unknown[] };
+    expect(template.nodes).toHaveLength(1);
+  });
+
+  it("toggles optional-group defaultOn, marks the editor dirty, and persists on save", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([optionalGroupDef()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...optionalGroupDef(), ...(updates as object) }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByText("Save");
+    const group = await screen.findByTestId("wf-node-optional-group");
+    fireEvent.click(group);
+
+    const toggle = await screen.findByTestId("wf-optional-group-default-on");
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(toggle);
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+
+    await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: { kind: string; config?: Record<string, unknown> }[] } }).ir;
+    const opt = ir.nodes.find((n) => n.kind === "optional-group");
+    expect(opt!.config!.defaultOn).toBe(true);
+  });
+
+  it("deletes an optional-group and removes its parentId children (no orphans)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([optionalGroupDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    const group = await screen.findByTestId("wf-node-optional-group");
+    // The seeded template child renders as a parented flow node.
+    await waitFor(() =>
+      expect(
+        document.querySelector(`.react-flow__node[data-id="${foreachChildFlowId("opt", "verify")}"]`),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(group);
+    fireEvent.click(await screen.findByTestId("wf-delete-node"));
+    await waitFor(() => expect(screen.queryByTestId("wf-node-optional-group")).not.toBeInTheDocument());
+    // The template child is gone too (cascade) — no orphaned parentId node.
+    expect(
+      document.querySelector(`.react-flow__node[data-id="${foreachChildFlowId("opt", "verify")}"]`),
+    ).not.toBeInTheDocument();
   });
 
   it("edits foreach mode/isolation/concurrency/maxReworkCycles inspector fields", async () => {
@@ -2995,11 +3102,13 @@ describe("WorkflowNodeEditor — U9 palette Templates section", () => {
     await screen.findByTestId("wf-palette-templates");
 
     const filter = await screen.findByTestId("wf-template-filter");
-    // All 8 step entries present pre-filter.
-    expect(screen.getAllByTestId(/^wf-tpl-step-/).length).toBe(8);
+    // All 8 step entries present pre-filter. Match only the primary "insert as
+    // node" buttons, excluding the sibling "-optional-group" insert variant.
+    const primaryStep = /^wf-tpl-step-(?!.*-optional-group$).*/;
+    expect(screen.getAllByTestId(primaryStep).length).toBe(8);
     // Filter to "Step 3" → only that step survives.
     fireEvent.change(filter, { target: { value: "Step 3" } });
-    await waitFor(() => expect(screen.getAllByTestId(/^wf-tpl-step-/).length).toBe(1));
+    await waitFor(() => expect(screen.getAllByTestId(primaryStep).length).toBe(1));
     expect(screen.getByTestId("wf-tpl-step-s-3")).toBeInTheDocument();
     // Fragment (name "Lint fragment") no longer matches.
     expect(screen.queryByTestId("wf-tpl-fragment-WF-FRAG-A")).not.toBeInTheDocument();
@@ -3037,6 +3146,123 @@ describe("WorkflowNodeEditor — U9 palette Templates section", () => {
     expect(screen.getByTestId("wf-tpl-fragment-WF-FRAG-A")).toBeDisabled();
     expect(screen.getByTestId("wf-tpl-step-qa-check")).toBeDisabled();
     expect(screen.getByTestId("wf-tpl-plugin-acme-scan")).toBeDisabled();
+  });
+
+  // FNXC:WorkflowOptionalGroup 2026-06-21-14:50: All seven built-in add-ons must
+  // surface in the palette and insert two ways — as a single node (today's
+  // behavior, reusing stepTemplateToNode) and wrapped in an optional-group
+  // container (reusing insertFragment). These tests pin U5/R5.
+  it("surfaces all seven built-in add-ons in the palette", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: WORKFLOW_STEP_TEMPLATES,
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+
+    // Every add-on id is present as a primary "insert as node" button AND offers
+    // the "as optional group" sibling variant.
+    for (const tpl of WORKFLOW_STEP_TEMPLATES) {
+      expect(screen.getByTestId(`wf-tpl-step-${tpl.id}`)).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`wf-tpl-step-${tpl.id}-optional-group`),
+      ).toBeInTheDocument();
+    }
+    expect(WORKFLOW_STEP_TEMPLATES).toHaveLength(7);
+  });
+
+  it("inserts an add-on as a single node carrying its template config", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: WORKFLOW_STEP_TEMPLATES,
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+    await screen.findByTestId("wf-node-gate", undefined, { timeout: 3000 });
+
+    const before = screen.queryAllByTestId("wf-node-prompt").length;
+    fireEvent.click(screen.getByTestId("wf-tpl-step-documentation-review"));
+    await waitFor(
+      () => expect(screen.queryAllByTestId("wf-node-prompt").length).toBe(before + 1),
+      { timeout: 3000 },
+    );
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: { kind: string; config?: Record<string, unknown> }[] } }).ir;
+    const docTpl = WORKFLOW_STEP_TEMPLATES.find((tpl) => tpl.id === "documentation-review")!;
+    const inserted = ir.nodes.find((n) => n.config?.name === docTpl.name);
+    expect(inserted).toBeTruthy();
+    expect(inserted!.kind).toBe(docTpl.mode === "script" ? "script" : "prompt");
+  });
+
+  it("inserts an add-on as an optional-group whose template holds the projected node and defaultOn matches", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: WORKFLOW_STEP_TEMPLATES,
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+    await screen.findByTestId("wf-node-gate", undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("wf-tpl-step-security-audit-optional-group"));
+    // The wrapped add-on renders as a registered optional-group container.
+    await waitFor(
+      () => expect(screen.getByTestId("wf-node-optional-group")).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: { kind: string; config?: Record<string, unknown> }[] } }).ir;
+    const secTpl = WORKFLOW_STEP_TEMPLATES.find((tpl) => tpl.id === "security-audit")!;
+    const group = ir.nodes.find((n) => n.kind === "optional-group");
+    expect(group).toBeTruthy();
+    expect(group!.config!.defaultOn).toBe(secTpl.defaultOn ?? false);
+    const template = group!.config!.template as { nodes: { kind: string; config?: Record<string, unknown> }[] };
+    expect(template.nodes).toHaveLength(1);
+    expect(template.nodes[0].config?.name).toBe(secTpl.name);
+  });
+
+  it("remaps ids when the same add-on subgraph is inserted twice (no collision)", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...def(), ...(updates as object) }));
+    vi.mocked(compileWorkflow).mockResolvedValue({ steps: [] });
+    vi.mocked(fetchWorkflowStepTemplates).mockResolvedValue({
+      templates: WORKFLOW_STEP_TEMPLATES,
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    await screen.findByTestId("wf-palette-templates");
+    await screen.findByTestId("wf-node-gate", undefined, { timeout: 3000 });
+
+    fireEvent.click(screen.getByTestId("wf-tpl-step-security-audit-optional-group"));
+    await waitFor(
+      () => expect(screen.queryAllByTestId("wf-node-optional-group").length).toBe(1),
+      { timeout: 5000 },
+    );
+    fireEvent.click(screen.getByTestId("wf-tpl-step-security-audit-optional-group"));
+    await waitFor(
+      () => expect(screen.queryAllByTestId("wf-node-optional-group").length).toBe(2),
+      { timeout: 5000 },
+    );
+
+    fireEvent.click(screen.getByText("Save").closest("button")!);
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    const [, updates] = vi.mocked(updateWorkflow).mock.calls[0];
+    const ir = (updates as { ir: { nodes: { id: string; kind: string }[] } }).ir;
+    const groupIds = ir.nodes.filter((n) => n.kind === "optional-group").map((n) => n.id);
+    expect(groupIds).toHaveLength(2);
+    expect(new Set(groupIds).size).toBe(2);
   });
 });
 

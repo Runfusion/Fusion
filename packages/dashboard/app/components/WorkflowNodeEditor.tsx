@@ -16,8 +16,8 @@ import {
 } from "@xyflow/react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2 } from "lucide-react";
-import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowOptionalStep } from "@fusion/core";
+import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2 } from "lucide-react";
+import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
   fetchWorkflows,
@@ -56,6 +56,7 @@ import { isMobileViewport, useViewportMode } from "../hooks/useViewportMode";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { WorkflowEditorCatalogContext } from "./nodes/WorkflowEditorCatalogContext";
 import { bareSkillName, type NodeSummaryCatalogs } from "./nodes/node-summary";
+import { nodeHelpForData } from "./nodes/node-help";
 import {
   irToFlow,
   flowToIr,
@@ -63,11 +64,11 @@ import {
   emptyWorkflowLayout,
   copyIrWithFreshIds,
   insertFragment,
+  optionalGroupFragmentIr,
   fragmentSeamConflicts,
   columnsOf,
   fieldsOf,
   settingsOf,
-  optionalStepsOf,
   columnsToBandNodes,
   reconcileNodeColumns,
   strictColumnForY,
@@ -91,7 +92,6 @@ import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
 import { WorkflowColumnPanel } from "./WorkflowColumnPanel";
 import { WorkflowFieldsPanel } from "./WorkflowFieldsPanel";
 import { WorkflowSettingsPanel } from "./WorkflowSettingsPanel";
-import { WorkflowOptionalStepsPanel } from "./WorkflowOptionalStepsPanel";
 import type { WorkflowFieldDefinition, WorkflowSettingDefinition } from "../api";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { MobileWorkflowGraphView } from "./MobileWorkflowGraphView";
@@ -103,7 +103,9 @@ import {
 } from "./workflow-mobile-graph";
 
 type ExecutorKind = "model" | "agent" | "skill" | "cli" | "cli-agent";
-type MobileWorkflowPanel = "graph" | "add" | "settings" | "fields" | "optional-steps" | "columns" | "actions";
+// FNXC:WorkflowOptionalGroup 2026-06-21-18:00: dropped the "optional-steps" mobile
+// panel — the declaration authoring surface is retired (optional-group nodes now).
+type MobileWorkflowPanel = "graph" | "add" | "settings" | "fields" | "columns" | "actions";
 
 function builtinSeamPrompt(config: Record<string, unknown> | undefined): string {
   const seam = typeof config?.seam === "string" ? config.seam : "";
@@ -190,7 +192,6 @@ function serializeGraph(
   columns: WorkflowIrColumn[],
   fields: WorkflowFieldDefinition[],
   settings: WorkflowSettingDefinition[],
-  optionalSteps: WorkflowOptionalStep[],
 ): string {
   const { ir, layout } = flowToIr(
     name,
@@ -199,7 +200,6 @@ function serializeGraph(
     columns.length ? columns : undefined,
     fields.length ? fields : undefined,
     settings.length ? settings : undefined,
-    optionalSteps.length ? optionalSteps : undefined,
   );
   return JSON.stringify({ name, description, ir, layout });
 }
@@ -269,6 +269,8 @@ const PALETTE: Array<{ kind: WorkflowEditorNodeKind; label: string; icon: typeof
   // Step-inversion (KTD-3/4/12/15).
   { kind: "foreach", label: "For-each step", icon: Repeat, presetConfig: { source: "task-steps" } },
   { kind: "loop", label: "Loop", icon: Repeat, presetConfig: { maxIterations: 3, exitWhen: { type: "output-contains", value: "DONE" } } },
+  // FNXC:WorkflowOptionalGroup 2026-06-21-11:30: An optional-group container holds a template subgraph run once when the task enables it (per-task `enabledWorkflowSteps`, seeded from `defaultOn`) and skipped otherwise.
+  { kind: "optional-group", label: "Optional group", icon: ToggleRight, presetConfig: { defaultOn: false } },
   { kind: "step-review", label: "Step review", icon: ClipboardCheck, presetConfig: { type: "code" } },
   { kind: "parse-steps", label: "Parse steps", icon: ListChecks, presetConfig: { artifact: "PROMPT.md", parser: "step-headings" } },
   { kind: "code", label: "Code", icon: Code2, presetConfig: { source: "" } },
@@ -320,6 +322,7 @@ const USER_NODE_KINDS: ReadonlySet<WorkflowEditorNodeKind> = new Set<WorkflowEdi
   "join",
   "foreach",
   "loop",
+  "optional-group",
   "step-review",
   "parse-steps",
   "notify",
@@ -783,7 +786,10 @@ function InnerEditor({
   // VALUES live per-project in the workflow_settings table (KTD-2) and are
   // managed by the panel's Values tab, not this declaration array.
   const [settings, setSettings] = useState<WorkflowSettingDefinition[]>([]);
-  const [optionalSteps, setOptionalSteps] = useState<WorkflowOptionalStep[]>([]);
+  /* FNXC:WorkflowOptionalGroup 2026-06-21-18:00:
+     The legacy optional-step DECLARATION authoring state/panel is removed. Optional
+     steps are graph-native `optional-group` nodes authored through the canvas; the
+     editor no longer carries a separate `optionalSteps` declaration array. */
   // FNXC:WorkflowEditor 2026-06-21-20:06:
   // Built-in workflow graph structure remains read-only, but prompt/gate node prompts need a separate per-project override state so editing prompts does not mark structural graph edits dirty or use the read-only workflow PATCH authority.
   const [promptOverrides, setPromptOverrides] = useState<WorkflowPromptOverridesPayload | null>(null);
@@ -834,7 +840,6 @@ function InnerEditor({
   const columnsCollapsedStorageKey = "fusion:wf-sidebar-columns-collapsed";
   const fieldsCollapsedStorageKey = "fusion:wf-sidebar-fields-collapsed";
   const settingsCollapsedStorageKey = "fusion:wf-sidebar-settings-collapsed";
-  const optionalStepsCollapsedStorageKey = "fusion:wf-sidebar-optional-steps-collapsed";
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(sidebarCollapsedStorageKey) === "1";
@@ -859,13 +864,6 @@ function InnerEditor({
   const [settingsCollapsed, setSettingsCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(settingsCollapsedStorageKey) === "1";
-    } catch {
-      return false;
-    }
-  });
-  const [optionalStepsCollapsed, setOptionalStepsCollapsed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(optionalStepsCollapsedStorageKey) === "1";
     } catch {
       return false;
     }
@@ -898,13 +896,6 @@ function InnerEditor({
       // localStorage unavailable (private mode / SSR): non-fatal.
     }
   }, [settingsCollapsed]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(optionalStepsCollapsedStorageKey, optionalStepsCollapsed ? "1" : "0");
-    } catch {
-      // localStorage unavailable (private mode / SSR): non-fatal.
-    }
-  }, [optionalStepsCollapsed]);
   // React Flow instance for programmatic viewport control (auto-layout on load).
   const { setViewport } = useReactFlow();
   // Wrapper around <ReactFlow> so keyboard deletion can return focus to the
@@ -1092,10 +1083,10 @@ function InnerEditor({
     if (isBuiltin) return false;
     if (!activeWorkflow || loadedSnapshotRef.current === null) return false;
     return (
-      serializeGraph(name, description, nodes, edges, columns, fields, settings, optionalSteps) !==
+      serializeGraph(name, description, nodes, edges, columns, fields, settings) !==
       loadedSnapshotRef.current
     );
-  }, [isBuiltin, activeWorkflow, name, description, nodes, edges, columns, fields, settings, optionalSteps]);
+  }, [isBuiltin, activeWorkflow, name, description, nodes, edges, columns, fields, settings]);
 
   const loadWorkflows = useCallback(async () => {
     setLoading(true);
@@ -1243,7 +1234,6 @@ function InnerEditor({
       setColumns([]);
       setFields([]);
       setSettings([]);
-      setOptionalSteps([]);
       setPromptOverrides(null);
       setPromptOverrideSavingNodeId(null);
       setName("");
@@ -1255,7 +1245,6 @@ function InnerEditor({
     const loadedColumns = columnsOf(activeWorkflow);
     const loadedFields = fieldsOf(activeWorkflow);
     const loadedSettings = settingsOf(activeWorkflow);
-    const loadedOptionalSteps = optionalStepsOf(activeWorkflow);
     // Auto-layout on load: compute tidy positions and apply them before the
     // first render so nodes are visible in the top-left viewport.
     const layoutPositions = autoLayout(flow.nodes, flow.edges, loadedColumns);
@@ -1265,7 +1254,6 @@ function InnerEditor({
     setColumns(loadedColumns);
     setFields(loadedFields);
     setSettings(loadedSettings);
-    setOptionalSteps(loadedOptionalSteps);
     setName(activeWorkflow.name);
     setDescription(activeWorkflow.description ?? "");
     setEditingName(false);
@@ -1280,7 +1268,6 @@ function InnerEditor({
       loadedColumns,
       loadedFields,
       loadedSettings,
-      loadedOptionalSteps,
     );
     setSelectedNodeId(null);
     setSelectedEdgeId(null);
@@ -1455,16 +1442,19 @@ function InnerEditor({
       const baseConfig = kind === "gate" ? { gateMode: "gate" } : {};
       const config = presetConfig ? { ...baseConfig, ...presetConfig } : baseConfig;
 
-      if (kind === "foreach" || kind === "loop") {
+      if (kind === "foreach" || kind === "loop" || kind === "optional-group") {
         // Template groups render as React Flow group nodes. Foreach seeds the
-        // required step-execute seam; loop seeds a regular prompt so authors can
-        // wire the repeated body immediately. The group node must precede its
-        // child for React Flow's parent extent to apply.
+        // required step-execute seam; loop + optional-group seed a regular prompt
+        // so authors can wire the body immediately. The group node must precede
+        // its child for React Flow's parent extent to apply.
+        // FNXC:WorkflowOptionalGroup 2026-06-21-11:30: An optional-group is authored exactly like a foreach/loop region — drop nodes inside; the subgraph runs once when the task enables the group.
         const childId = foreachChildFlowId(id, newNodeId());
         const childLabel =
           kind === "foreach"
             ? t("workflowNodes.stepExecuteLabel", "Step execute")
-            : t("workflowNodes.loopStepLabel", "Loop step");
+            : kind === "optional-group"
+              ? t("workflowNodes.optionalGroupStepLabel", "Optional step")
+              : t("workflowNodes.loopStepLabel", "Loop step");
         const childConfig = kind === "foreach" ? { seam: "step-execute" } : { prompt: "" };
         setNodes((ns) => [
           ...ns,
@@ -1519,6 +1509,34 @@ function InnerEditor({
       addNode(kind, label, config);
     },
     [isBuiltin, addNode],
+  );
+
+  /*
+  FNXC:WorkflowOptionalGroup 2026-06-21-14:32:
+  "Insert as optional group" (U5/R5): drop an add-on already wrapped in an `optional-group` container in
+  one action, seeding the group's `defaultOn` from the template's `defaultOn`. Reuses `stepTemplateToNode`
+  (KTD-5 — the catalog stays flat) to project the add-on to a prompt/script node, then `optionalGroupFragmentIr`
+  to wrap it and the EXISTING `insertFragment` path to remap ids + expand the group's template child — so two
+  inserts of the same add-on never collide. The group name carries the template name so the per-task toggle
+  surfaces label it.
+  */
+  const handleInsertStepTemplateAsOptionalGroup = useCallback(
+    (tpl: WorkflowStepTemplate) => {
+      if (isBuiltin) return;
+      const { kind, config } = stepTemplateToNode(tpl);
+      const fragmentIr = optionalGroupFragmentIr(
+        { kind: kind as WorkflowIrNodeKind, config },
+        { name: tpl.name, defaultOn: tpl.defaultOn ?? false },
+      );
+      const result = insertFragment(nodes, edges, fragmentIr, {
+        x: 240,
+        y: 200 + (nodes.length % 4) * 40,
+      });
+      setNodes(result.nodes);
+      setEdges(result.edges);
+      setSelectedNodeId(result.insertedNodeIds[0] ?? null);
+    },
+    [isBuiltin, nodes, edges, setNodes, setEdges],
   );
 
   // U9/R8: insert a fragment definition's body into the active graph. Pre-validates
@@ -1619,11 +1637,12 @@ function InnerEditor({
       setEdges(flow.edges);
       setColumns(columnsOf({ ...targetWorkflow, ir: result.ir }));
       setFields(fieldsOf({ ...targetWorkflow, ir: result.ir }));
-      // Hydrate settings + optionalSteps on the fragment/generate path too — it
-      // previously dropped both, which silently lost the declarations on the next
-      // save (the round-trip data loss U2 fixes for the primary load path).
+      // Hydrate settings on the fragment/generate path too — it previously dropped
+      // them, which silently lost the declarations on the next save (the round-trip
+      // data loss U2 fixes for the primary load path). Optional steps need no
+      // separate hydration: they are graph-native `optional-group` nodes carried by
+      // the node/edge mapping above (FNXC:WorkflowOptionalGroup 2026-06-21-18:00).
       setSettings(settingsOf({ ...targetWorkflow, ir: result.ir }));
-      setOptionalSteps(optionalStepsOf({ ...targetWorkflow, ir: result.ir }));
       setSelectedNodeId(null);
       setSelectedEdgeId(null);
       setValidationError(null);
@@ -1996,7 +2015,6 @@ function InnerEditor({
         columns.length ? columns : undefined,
         fields.length ? fields : undefined,
         settings.length ? settings : undefined,
-        optionalSteps.length ? optionalSteps : undefined,
       );
       // Include name/description in the PATCH only when they changed from the
       // loaded workflow (KTD-10 inline rename/description persist here).
@@ -2014,7 +2032,6 @@ function InnerEditor({
           columns,
           fields,
           settings,
-          optionalSteps,
         );
         setName(updated.name);
         setDescription(updated.description ?? "");
@@ -2084,7 +2101,7 @@ function InnerEditor({
     } finally {
       setSaving(false);
     }
-  }, [activeWorkflow, name, description, nodes, edges, columns, fields, settings, optionalSteps, unplaced, blockingViolationCount, projectId, addToast, t]);
+  }, [activeWorkflow, name, description, nodes, edges, columns, fields, settings, unplaced, blockingViolationCount, projectId, addToast, t]);
 
   // Stamp the shared error-state badge onto offending nodes: unplaced step
   // nodes and any node the server flagged (seam-in-branch). One component
@@ -2101,11 +2118,14 @@ function InnerEditor({
       let errorBadge: string | undefined;
       if (unplacedSet.has(n.id)) errorBadge = t("workflowColumns.nodeUnplaced", "Not placed in a column");
       if (serverNodeError?.nodeId === n.id) errorBadge = serverNodeError.message;
-      const isTemplateGroup = n.data.kind === "foreach" || n.data.kind === "loop";
+      const isTemplateGroup =
+        n.data.kind === "foreach" || n.data.kind === "loop" || n.data.kind === "optional-group";
       const emptyHint =
         n.data.kind === "loop"
           ? t("workflowNodes.loopEmptyHint", "Drag loop steps here")
-          : t("workflowNodes.foreachEmptyHint", "Drag a step-execute node here");
+          : n.data.kind === "optional-group"
+            ? t("workflowNodes.optionalGroupEmptyHint", "Drag optional steps here")
+            : t("workflowNodes.foreachEmptyHint", "Drag a step-execute node here");
       const templateEmpty = isTemplateGroup ? (childCount.get(n.id) ?? 0) === 0 : undefined;
       if (
         errorBadge === n.data.errorBadge &&
@@ -2129,6 +2149,8 @@ function InnerEditor({
    * The structural start node needs an inspector because its entry column is editable and persisted in the workflow IR. Keep end structural-only until it has a meaningful editable property.
    */
   const selectedNodeHasInspector = selectedNode !== null && selectedNode.data.kind !== "end";
+  // FNXC:WorkflowEditor 2026-06-21-10:00: Help content for the inspector, keyed by the node's effective kind (preserved IR kind when a graph-only policy node collapsed onto a generic merge/gate/hold shape).
+  const selectedNodeHelp = selectedNode !== null ? nodeHelpForData(selectedNode.data) : null;
   const selectedEdge = edges.find((e) => e.id === selectedEdgeId) ?? null;
   const mobileNodeDetailStage = isMobileMode && selectedNodeHasInspector && !inspectorCollapsed;
   const mobileEdgeDetailStage = isMobileMode && selectedEdge !== null;
@@ -2726,26 +2748,9 @@ function InnerEditor({
                   )}
                 </section>
 
-                <section className="wf-sidebar-section" data-testid="wf-sidebar-optional-steps-section">
-                  <button
-                    type="button"
-                    className="wf-sidebar-section-toggle"
-                    aria-expanded={!optionalStepsCollapsed}
-                    data-testid="wf-sidebar-optional-steps-toggle"
-                    onClick={() => setOptionalStepsCollapsed((c) => !c)}
-                  >
-                    {optionalStepsCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-                    <span>{t("workflowOptionalSteps.title", "Optional steps")}</span>
-                  </button>
-                  {!optionalStepsCollapsed && (
-                    <WorkflowOptionalStepsPanel
-                      optionalSteps={optionalSteps}
-                      onChange={setOptionalSteps}
-                      readOnly={isBuiltin}
-                      pluginTemplates={pluginTemplates.map((p) => p.template)}
-                    />
-                  )}
-                </section>
+                {/* FNXC:WorkflowOptionalGroup 2026-06-21-18:00: The optional-step
+                    DECLARATION authoring sidebar section is removed. Optional steps
+                    are authored as graph-native `optional-group` nodes on the canvas. */}
               </div>
             )}
           </aside>
@@ -2881,7 +2886,6 @@ function InnerEditor({
                         ["add", t("workflowNodes.mobileAdd", "Add")],
                         ["settings", t("workflowSettings.title", "Settings")],
                         ["fields", t("workflowFields.title", "Fields")],
-                        ["optional-steps", t("workflowOptionalSteps.title", "Optional steps")],
                         ["columns", t("workflowColumns.title", "Columns")],
                         ["actions", t("workflowNodes.mobileActions", "Actions")],
                       ] as Array<[MobileWorkflowPanel, string]>).map(([panel, label]) => (
@@ -2992,19 +2996,37 @@ function InnerEditor({
                                   {templateGroups.stepEntries.length > 0 && (
                                     <div className="wf-mobile-template-group">
                                       <h4>{t("workflowNodes.templatesBuiltinSteps", "Built-in steps")}</h4>
+                                      {/* FNXC:WorkflowOptionalGroup 2026-06-21-14:38: mobile mirrors the desktop two-variant insert (node / optional group). */}
                                       {templateGroups.stepEntries.map((s) => (
-                                        <button
-                                          key={s.id}
-                                          type="button"
-                                          className="wf-mobile-template-option"
-                                          data-testid={`wf-mobile-tpl-step-${s.id}`}
-                                          onClick={() => {
-                                            handleInsertStepTemplate(s);
-                                            setMobilePanel("graph");
-                                          }}
-                                        >
-                                          {s.name}
-                                        </button>
+                                        <div key={s.id} className="wf-mobile-template-option-row">
+                                          <button
+                                            type="button"
+                                            className="wf-mobile-template-option"
+                                            data-testid={`wf-mobile-tpl-step-${s.id}`}
+                                            onClick={() => {
+                                              handleInsertStepTemplate(s);
+                                              setMobilePanel("graph");
+                                            }}
+                                          >
+                                            {s.name}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            className="wf-mobile-template-option-optional"
+                                            data-testid={`wf-mobile-tpl-step-${s.id}-optional-group`}
+                                            aria-label={t(
+                                              "workflowNodes.insertTemplateAsOptionalGroup",
+                                              "Insert {{name}} as optional group",
+                                              { name: s.name },
+                                            )}
+                                            onClick={() => {
+                                              handleInsertStepTemplateAsOptionalGroup(s);
+                                              setMobilePanel("graph");
+                                            }}
+                                          >
+                                            {t("workflowNodes.asOptionalGroup", "as optional group")}
+                                          </button>
+                                        </div>
                                       ))}
                                     </div>
                                   )}
@@ -3060,16 +3082,6 @@ function InnerEditor({
                         </div>
                       )}
 
-                      {mobilePanel === "optional-steps" && (
-                        <div className="wf-mobile-destination">
-                          <WorkflowOptionalStepsPanel
-                            optionalSteps={optionalSteps}
-                            onChange={setOptionalSteps}
-                            readOnly={isBuiltin}
-                            pluginTemplates={pluginTemplates.map((p) => p.template)}
-                          />
-                        </div>
-                      )}
 
                       {mobilePanel === "columns" && (
                         <div className="wf-mobile-destination">
@@ -3396,22 +3408,48 @@ function InnerEditor({
                               {t("workflowNodes.templatesBuiltinSteps", "Built-in steps")}
                             </h4>
                             <div className="wf-templates-entries">
+                              {/*
+                              FNXC:WorkflowOptionalGroup 2026-06-21-14:36:
+                              Each built-in add-on surfaces TWO insert variants: the row inserts as a single node
+                              (today's behavior), and a small secondary "as optional group" affordance wraps it in
+                              an `optional-group` container (U5/R5). Both keep the established `wf-tpl-step-*` testid
+                              convention (the wrap variant suffixes `-optional-group`).
+                              */}
                               {templateGroups.stepEntries.map((s) => (
-                                <button
-                                  key={s.id}
-                                  type="button"
-                                  className="wf-templates-entry"
-                                  data-testid={`wf-tpl-step-${s.id}`}
-                                  disabled={isBuiltin}
-                                  aria-label={t(
-                                    "workflowNodes.insertTemplate",
-                                    "Insert template {{name}}",
-                                    { name: s.name },
-                                  )}
-                                  onClick={() => handleInsertStepTemplate(s)}
-                                >
-                                  {s.name}
-                                </button>
+                                <div key={s.id} className="wf-templates-entry-row">
+                                  <button
+                                    type="button"
+                                    className="wf-templates-entry"
+                                    data-testid={`wf-tpl-step-${s.id}`}
+                                    disabled={isBuiltin}
+                                    aria-label={t(
+                                      "workflowNodes.insertTemplate",
+                                      "Insert template {{name}}",
+                                      { name: s.name },
+                                    )}
+                                    onClick={() => handleInsertStepTemplate(s)}
+                                  >
+                                    {s.name}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="wf-templates-entry-optional"
+                                    data-testid={`wf-tpl-step-${s.id}-optional-group`}
+                                    disabled={isBuiltin}
+                                    title={t(
+                                      "workflowNodes.insertAsOptionalGroup",
+                                      "Insert as optional group",
+                                    )}
+                                    aria-label={t(
+                                      "workflowNodes.insertTemplateAsOptionalGroup",
+                                      "Insert {{name}} as optional group",
+                                      { name: s.name },
+                                    )}
+                                    onClick={() => handleInsertStepTemplateAsOptionalGroup(s)}
+                                  >
+                                    {t("workflowNodes.asOptionalGroup", "as optional group")}
+                                  </button>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -3587,7 +3625,8 @@ function InnerEditor({
             !(compactLayoutEnabled && !isMobileMode) && (
             <aside className="wf-editor-inspector" data-testid="wf-node-inspector">
               <div className="wf-inspector-heading">
-                <h3>{t("workflowNodes.nodeInspector", "Node")}</h3>
+                {/* FNXC:WorkflowEditor 2026-06-21-10:00: Heading shows the node-kind title (from the help registry) so the pane names what is selected, falling back to the generic "Node" label. */}
+                <h3>{selectedNodeHelp?.title ?? t("workflowNodes.nodeInspector", "Node")}</h3>
                 {isMobileMode && (
                   <button
                     type="button"
@@ -3607,6 +3646,37 @@ function InnerEditor({
                   </button>
                 )}
               </div>
+              {/* FNXC:WorkflowEditor 2026-06-21-10:00: Per-node Help — what the node does, how to configure it, and its inputs/outputs/edges. Collapsed by default so it never pushes config fields below the fold; remembered open/closed within the session is intentionally not persisted (cheap to reopen). Engine-managed graph-only nodes (merge gate, branch-group integration/promotion, PR/recovery nodes) get an "Engine-managed" badge since they are read-only. */}
+              {selectedNodeHelp && (
+                <details className="wf-inspector-help" data-testid="wf-node-help">
+                  <summary className="wf-inspector-help-summary">
+                    <HelpCircle size={13} aria-hidden />
+                    <span>{t("workflowNodes.helpTitle", "What does this node do?")}</span>
+                    {selectedNodeHelp.graphOnly && (
+                      <span className="wf-inspector-help-badge" data-testid="wf-node-help-engine-managed">
+                        {t("workflowNodes.helpEngineManaged", "Engine-managed")}
+                      </span>
+                    )}
+                  </summary>
+                  <div className="wf-inspector-help-body">
+                    <p className="wf-inspector-help-summary-text">{selectedNodeHelp.summary}</p>
+                    <dl className="wf-inspector-help-dl">
+                      {selectedNodeHelp.configure && (
+                        <>
+                          <dt>{t("workflowNodes.helpConfigure", "Configure")}</dt>
+                          <dd>{selectedNodeHelp.configure}</dd>
+                        </>
+                      )}
+                      <dt>{t("workflowNodes.helpInputs", "Inputs")}</dt>
+                      <dd>{selectedNodeHelp.inputs}</dd>
+                      <dt>{t("workflowNodes.helpOutputs", "Outputs")}</dt>
+                      <dd>{selectedNodeHelp.outputs}</dd>
+                      <dt>{t("workflowNodes.helpEdges", "Edges")}</dt>
+                      <dd>{selectedNodeHelp.edges}</dd>
+                    </dl>
+                  </div>
+                </details>
+              )}
               {isBuiltin && (
                 <p className="wf-inspector-note wf-inspector-note--info">
                   {t("workflowNodes.readOnlyDuplicateToEdit", "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here.")}
@@ -4369,6 +4439,27 @@ function InnerEditor({
                     </>
                   );
                 })()
+              ) : null}
+
+              {/* FNXC:WorkflowOptionalGroup 2026-06-21-11:30: The optional-group inspector exposes the workflow-author `defaultOn` default (whether new tasks enable the group). The group name reuses the shared Name field above; the body is authored by dropping nodes inside, identical to foreach/loop. */}
+              {selectedNode.data.kind === "optional-group" ? (
+                <>
+                  <label className="wf-field wf-field--checkbox">
+                    <input
+                      type="checkbox"
+                      data-testid="wf-optional-group-default-on"
+                      checked={Boolean(selectedNode.data.config?.defaultOn)}
+                      onChange={(e) => updateSelectedData({ config: { defaultOn: e.target.checked } })}
+                    />
+                    <span>{t("workflowNodes.optionalGroupDefaultOn", "Enabled by default for new tasks")}</span>
+                  </label>
+                  <p className="wf-inspector-note wf-inspector-note--info">
+                    {t(
+                      "workflowNodes.optionalGroupNote",
+                      "Runs the steps inside this group once when the task enables it (seeded from this default), and skips them when disabled. Drop the optional steps into the region.",
+                    )}
+                  </p>
+                </>
               ) : null}
 
               {selectedNode.data.kind === "step-review" ? (

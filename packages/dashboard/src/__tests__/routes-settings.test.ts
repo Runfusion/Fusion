@@ -1772,6 +1772,37 @@ describe("POST /settings/test-ntfy", () => {
     expect(url).toBe("https://ntfy.override.example/my-topic");
   });
 
+  it("uses unsaved request ntfy config when saved settings are disabled", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: false,
+      ntfyTopic: undefined,
+      ntfyBaseUrl: "https://ntfy.saved.example",
+      ntfyAccessToken: "saved-token",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/settings/test-ntfy",
+      JSON.stringify({
+        ntfyEnabled: true,
+        ntfyTopic: "fresh-topic",
+        ntfyBaseUrl: "https://ntfy.override.example//",
+        ntfyAccessToken: "override-token",
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).not.toHaveBeenCalled();
+    expect(store.updateGlobalSettings).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const url = fetchSpy.mock.calls[0]?.[0] as string;
+    const options = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(url).toBe("https://ntfy.override.example/fresh-topic");
+    expect(options.headers).toHaveProperty("Authorization", "Bearer override-token");
+  });
+
   it("falls back to saved ntfyBaseUrl when request override is blank", async () => {
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
       ntfyEnabled: true,
@@ -1973,69 +2004,82 @@ describe("POST /settings/test-notification", () => {
     );
   });
 
-  it("ntfy provider dispatches a message-event pipeline test when messageEventType is provided", async () => {
-    const dispatchSpy = vi.fn().mockResolvedValue(undefined);
-    mockGetActiveNotificationService.mockReturnValue({ dispatch: dispatchSpy });
+  it("ntfy provider sends a message-event test with unsaved config when messageEventType is provided", async () => {
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ntfyEnabled: true,
-      ntfyTopic: "test-topic",
+      ntfyEnabled: false,
+      ntfyTopic: "saved-topic",
+      ntfyBaseUrl: "https://ntfy.saved.example",
+      ntfyAccessToken: "saved-token",
     });
 
     const res = await REQUEST(
       buildApp(),
       "POST",
       "/api/settings/test-notification",
-      JSON.stringify({ providerId: "ntfy", messageEventType: "message:agent-to-user" }),
+      JSON.stringify({
+        providerId: "ntfy",
+        config: {
+          messageEventType: "message:agent-to-user",
+          ntfyEnabled: true,
+          ntfyTopic: "fresh-message-topic",
+          ntfyBaseUrl: "https://ntfy.message.example//",
+          ntfyAccessToken: "message-token",
+        },
+      }),
       { "content-type": "application/json" },
     );
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true });
-    expect(dispatchSpy).toHaveBeenCalledWith(
-      "message:agent-to-user",
-      expect.objectContaining({
-        event: "message:agent-to-user",
-        metadata: expect.objectContaining({
-          fromId: "system",
-          toId: "user",
-          preview: "Fusion test message notification",
-        }),
-      }),
-    );
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockGetActiveNotificationService).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const options = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://ntfy.message.example/fresh-message-topic");
+    expect(options.headers).toMatchObject({
+      Title: "New message from Fusion",
+      Priority: "high",
+      Authorization: "Bearer message-token",
+    });
+    expect(options.body).toBe("Fusion → you: Fusion test message notification");
   });
 
-  it("ntfy provider dispatches a room message-event pipeline test when messageEventType is message:room", async () => {
-    const dispatchSpy = vi.fn().mockResolvedValue(undefined);
-    mockGetActiveNotificationService.mockReturnValue({ dispatch: dispatchSpy });
+  it("ntfy provider sends a room message-event test with unsaved config when messageEventType is message:room", async () => {
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ntfyEnabled: true,
-      ntfyTopic: "test-topic",
+      ntfyEnabled: false,
+      ntfyTopic: "saved-topic",
+      ntfyBaseUrl: "https://ntfy.saved.example",
+      ntfyAccessToken: "saved-token",
     });
 
     const res = await REQUEST(
       buildApp(),
       "POST",
       "/api/settings/test-notification",
-      JSON.stringify({ providerId: "ntfy", messageEventType: "message:room" }),
+      JSON.stringify({
+        providerId: "ntfy",
+        config: {
+          messageEventType: "message:room",
+          ntfyEnabled: true,
+          ntfyTopic: "fresh-room-topic",
+          ntfyBaseUrl: "https://ntfy.room.example//",
+          ntfyAccessToken: "room-token",
+        },
+      }),
       { "content-type": "application/json" },
     );
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true });
-    expect(dispatchSpy).toHaveBeenCalledWith(
-      "message:room",
-      expect.objectContaining({
-        event: "message:room",
-        metadata: expect.objectContaining({
-          roomId: "test-room",
-          roomName: "Test Room",
-          senderName: "Fusion",
-          preview: "Fusion test room notification",
-        }),
-      }),
-    );
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockGetActiveNotificationService).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const options = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://ntfy.room.example/fresh-room-topic");
+    expect(options.headers).toMatchObject({
+      Title: "#Test Room — Fusion",
+      Priority: "default",
+      Authorization: "Bearer room-token",
+    });
+    expect(options.body).toBe("Fusion in #Test Room: Fusion test room notification");
   });
 
   it("ntfy provider uses config override for baseUrl", async () => {
@@ -2055,6 +2099,69 @@ describe("POST /settings/test-notification", () => {
 
     expect(res.status).toBe(200);
     expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://ntfy.override.example/my-topic");
+  });
+
+  it("ntfy provider sends with unsaved config when saved settings are disabled", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: false,
+      ntfyTopic: undefined,
+      ntfyBaseUrl: "https://ntfy.saved.example",
+      ntfyAccessToken: "saved-token",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/settings/test-notification",
+      JSON.stringify({
+        providerId: "ntfy",
+        config: {
+          ntfyEnabled: true,
+          ntfyTopic: "fresh-topic",
+          ntfyBaseUrl: "https://ntfy.override.example//",
+          ntfyAccessToken: "override-token",
+        },
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(store.updateSettings).not.toHaveBeenCalled();
+    expect(store.updateGlobalSettings).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const options = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://ntfy.override.example/fresh-topic");
+    expect(options.headers).toHaveProperty("Authorization", "Bearer override-token");
+  });
+
+  it("ntfy provider ignores blank request baseUrl and token overrides", async () => {
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ntfyEnabled: true,
+      ntfyTopic: "saved-topic",
+      ntfyBaseUrl: "https://ntfy.saved.example",
+      ntfyAccessToken: "saved-token",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/settings/test-notification",
+      JSON.stringify({
+        providerId: "ntfy",
+        config: {
+          ntfyEnabled: true,
+          ntfyTopic: "fresh-topic",
+          ntfyBaseUrl: "   ",
+          ntfyAccessToken: "   ",
+        },
+      }),
+      { "content-type": "application/json" },
+    );
+
+    expect(res.status).toBe(200);
+    const options = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe("https://ntfy.saved.example/fresh-topic");
+    expect(options.headers).toHaveProperty("Authorization", "Bearer saved-token");
   });
 
   it("ntfy provider sends Authorization header from saved or override token", async () => {

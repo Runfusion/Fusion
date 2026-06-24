@@ -4,7 +4,6 @@ import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
 import {
   compileWorkflowToSteps,
-  MERGE_REGION_NODE_KINDS,
   validateLinearity,
   WorkflowCompileError,
   WORKFLOW_INTERPRETER_DEFERRED_SUFFIX,
@@ -127,33 +126,25 @@ describe("compileWorkflowToSteps (U2)", () => {
     expect(() => compileWorkflowToSteps(ir)).toThrow(/interpreter \(deferred\)/i);
   });
 
-  it("validates builtin workflow linearity while preserving stepwise interpreter deferral", () => {
-    expect(validateLinearity(BUILTIN_CODING_WORKFLOW_IR)).toBeNull();
+  it("defers both builtin coding and stepwise to the interpreter (U6: coding now carries an optional-group)", () => {
+    // U6: builtin:coding gained the `browser-verification` optional-group on its
+    // pre-merge path — a branching, single-pass container the linear WorkflowStep
+    // runner cannot lower. Like stepwise, coding is now interpreter-deferred.
+    const codingErr = validateLinearity(BUILTIN_CODING_WORKFLOW_IR);
+    expect(codingErr).toBeInstanceOf(WorkflowCompileError);
+    expect(codingErr?.message).toContain(WORKFLOW_INTERPRETER_DEFERRED_SUFFIX);
 
     const stepwiseErr = validateLinearity(BUILTIN_STEPWISE_CODING_WORKFLOW_IR);
     expect(stepwiseErr).toBeInstanceOf(WorkflowCompileError);
     expect(stepwiseErr?.message).toContain(WORKFLOW_INTERPRETER_DEFERRED_SUFFIX);
   });
 
-  it("compiles the builtin coding workflow without merge-region steps", () => {
-    const steps = compileWorkflowToSteps(BUILTIN_CODING_WORKFLOW_IR);
-    const mergeRegionNodeIds = BUILTIN_CODING_WORKFLOW_IR.nodes
-      .filter((node) => MERGE_REGION_NODE_KINDS.has(node.kind))
-      .map((node) => node.id);
-
-    expect(steps.map((step) => step.name)).toEqual([]);
-    expect(mergeRegionNodeIds).toEqual(
-      expect.arrayContaining([
-        "merge-gate",
-        "merge-retry",
-        "merge-manual-hold",
-        "branch-group-member-integration",
-        "branch-group-promotion",
-        "merge-attempt",
-        "recovery-router",
-      ]),
-    );
-    expect(steps.some((step) => mergeRegionNodeIds.includes(step.name))).toBe(false);
+  it("defers compiling the builtin coding workflow to the interpreter (U6)", () => {
+    // The browser-verification optional-group makes the graph non-linear, so
+    // compileWorkflowToSteps throws the interpreter-deferred error rather than
+    // producing a (previously empty) linear pre-merge step list.
+    expect(() => compileWorkflowToSteps(BUILTIN_CODING_WORKFLOW_IR)).toThrow(WorkflowCompileError);
+    expect(() => compileWorkflowToSteps(BUILTIN_CODING_WORKFLOW_IR)).toThrow(/interpreter \(deferred\)/i);
   });
 
   it("compiles a workflow whose post-review merge region branches into primitives (FN-6035)", () => {

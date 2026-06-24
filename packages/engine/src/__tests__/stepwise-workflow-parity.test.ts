@@ -30,7 +30,7 @@ import {
   type WorkflowIr,
 } from "@fusion/core";
 
-import { WorkflowGraphExecutor } from "../workflow-graph-executor.js";
+import { WorkflowGraphExecutor, type WorkflowNodeResult } from "../workflow-graph-executor.js";
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
@@ -81,13 +81,17 @@ function makeFakeStore(steps: TaskStep[]) {
   };
 }
 
-/** Build a TaskDetail with N pending steps. */
-function taskWithSteps(n: number): TaskDetail {
+/** Build a TaskDetail with N pending steps and an optional enabled-group set. */
+function taskWithSteps(n: number, enabledWorkflowSteps?: string[]): TaskDetail {
   const steps: TaskStep[] = Array.from({ length: n }, (_, i) => ({
     name: `Step ${i + 1}`,
     status: "pending" as const,
   }));
-  return { id: "FN-STEPWISE", steps } as unknown as TaskDetail;
+  return {
+    id: "FN-STEPWISE",
+    steps,
+    ...(enabledWorkflowSteps ? { enabledWorkflowSteps } : {}),
+  } as unknown as TaskDetail;
 }
 
 /**
@@ -157,9 +161,15 @@ async function runStepwiseGraph(
     onReset?: (active: ForeachActiveContext) => void;
     captureResetResult?: (ok: boolean, reason?: string) => void;
     workflowStep?: WorkflowLegacySeams["workflowStep"];
+    // U6: ids of optional-group nodes enabled for this task (e.g.
+    // "browser-verification"); seeds task.enabledWorkflowSteps.
+    enabledWorkflowSteps?: string[];
+    // U6: handler for non-seam custom nodes — the browser-verification
+    // optional-group's inner prompt node runs through this.
+    runCustomNode?: (nodeId: string) => Promise<WorkflowNodeResult>;
   } = {},
 ): Promise<{ trajectory: TrajectoryEntry[]; outcome: string; result: Awaited<ReturnType<WorkflowGraphExecutor["run"]>> }> {
-  const task = taskWithSteps(stepCount);
+  const task = taskWithSteps(stepCount, opts.enabledWorkflowSteps);
   const fake = makeFakeStore(task.steps as TaskStep[]);
   const reviewCursor = new Map<number, number>();
 
@@ -211,6 +221,10 @@ async function runStepwiseGraph(
   const executor = new WorkflowGraphExecutor({
     seams,
     signal: opts.signal,
+    // U6: non-seam custom nodes (the browser-verification optional-group's inner
+    // prompt node) route here. Default: success no-op.
+    runCustomNode: async (node) =>
+      opts.runCustomNode ? opts.runCustomNode(node.id) : { outcome: "success" },
     getTaskSteps: () => task.steps as TaskStep[],
     // parse-steps reads PROMPT.md; produce headings matching the step count so the
     // real builtin chain runs end-to-end. writeSteps is a no-op (steps pre-set).
@@ -578,44 +592,57 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
     expect(result.visitedNodeIds).toContain("merge");
   });
 
-  // ── Pre-merge workflow-step seam (optional-step execution, R1) ─────────────
+  // ── Pre-merge browser-verification optional-group (U6, R-3 run-once) ────────
 
-  it("runs the pre-merge workflow-step seam exactly once after the foreach (enabled steps execute)", async () => {
-    // This is the dead-toggle guard: without a workflow-step seam node on the
-    // success path, a stepwise task's enabledWorkflowSteps (e.g. browser
-    // verification) would never run. Wire a workflowStep spy and assert the graph
-    // invokes it once, between the foreach and review.
-    let workflowStepCalls = 0;
+  const BROWSER_VERIFICATION_STEP_VISITED_ID = "browser-verification::browser-verification-step";
+
+  it("runs the pre-merge browser-verification optional-group EXACTLY ONCE after the foreach when enabled", async () => {
+    // R-3 run-once guarantee + dead-toggle guard: the optional-group sits on the
+    // post-foreach success path. A stepwise task whose enabledWorkflowSteps
+    // includes the group id runs the inner browser-verification prompt node ONCE
+    // after all step instances complete — never per step-instance.
+    let browserVerificationCalls = 0;
     const { outcome, result } = await runStepwiseGraph(
       3,
       [["APPROVE"], ["APPROVE"], ["APPROVE"]],
       {
-        workflowStep: async () => {
-          workflowStepCalls++;
+        enabledWorkflowSteps: ["browser-verification"],
+        runCustomNode: async (nodeId) => {
+          if (nodeId === "browser-verification-step") browserVerificationCalls++;
           return { outcome: "success" };
         },
       },
     );
 
     expect(outcome).toBe("success");
-    // The seam ran ONCE post-foreach — not per step-instance (3 steps here).
-    expect(workflowStepCalls).toBe(1);
-    expect(result.visitedNodeIds).toContain("workflow-step");
-    // Ordering: all step instances complete before the workflow-step seam, which
+    // ONCE post-foreach — not per step-instance (3 steps here).
+    expect(browserVerificationCalls).toBe(1);
+    expect(result.visitedNodeIds).toContain("browser-verification");
+    expect(result.visitedNodeIds).toContain(BROWSER_VERIFICATION_STEP_VISITED_ID);
+    // Ordering: all step instances complete before the group's inner step, which
     // precedes review.
-    const seamIdx = result.visitedNodeIds.indexOf("workflow-step");
+    const groupStepIdx = result.visitedNodeIds.indexOf(BROWSER_VERIFICATION_STEP_VISITED_ID);
     const reviewIdx = result.visitedNodeIds.indexOf("review");
     const lastStepIdx = result.visitedNodeIds.map((id) => id.startsWith("steps#")).lastIndexOf(true);
-    expect(lastStepIdx).toBeLessThan(seamIdx);
-    expect(seamIdx).toBeLessThan(reviewIdx);
+    expect(lastStepIdx).toBeLessThan(groupStepIdx);
+    expect(groupStepIdx).toBeLessThan(reviewIdx);
   });
 
-  it("treats the workflow-step seam as a no-op pass-through when no steps are enabled", async () => {
-    // No workflowStep seam wired → the handler skips to success and routes to
-    // review, leaving the trajectory identical to the pre-seam behavior.
-    const { outcome, result } = await runStepwiseGraph(2, [["APPROVE"], ["APPROVE"]]);
+  it("bypasses the browser-verification optional-group (inert) when it is not enabled", async () => {
+    // Disabled (no enabledWorkflowSteps): the group node is traversed but its
+    // template body never runs — the inner prompt node is not visited and the
+    // custom-node runner is never invoked for it. Routes straight to review.
+    let browserVerificationCalls = 0;
+    const { outcome, result } = await runStepwiseGraph(2, [["APPROVE"], ["APPROVE"]], {
+      runCustomNode: async (nodeId) => {
+        if (nodeId === "browser-verification-step") browserVerificationCalls++;
+        return { outcome: "success" };
+      },
+    });
     expect(outcome).toBe("success");
-    expect(result.visitedNodeIds).toContain("workflow-step");
+    expect(browserVerificationCalls).toBe(0);
+    expect(result.visitedNodeIds).toContain("browser-verification");
+    expect(result.visitedNodeIds).not.toContain(BROWSER_VERIFICATION_STEP_VISITED_ID);
     expect(result.visitedNodeIds).toContain("review");
   });
 });
