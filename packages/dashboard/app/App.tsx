@@ -12,20 +12,7 @@ import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
-import { SessionNotificationBanner, type CliActionId } from "./components/SessionNotificationBanner";
-import { CliBinaryInstallBanner } from "./components/CliBinaryInstallBanner";
-import { SetupWarningBanner } from "./components/SetupWarningBanner";
-import { TestModeBanner } from "./components/TestModeBanner";
-import { EngineUnavailableBanner } from "./components/EngineUnavailableBanner";
-import { OAuthReloginBanner } from "./components/OAuthReloginBanner";
-import { TaskIdIntegrityBanner } from "./components/TaskIdIntegrityBanner";
-import { DbCorruptionBanner } from "./components/DbCorruptionBanner";
-import { UpdateAvailableBanner } from "./components/UpdateAvailableBanner";
-import MergeAdvanceNotice from "./components/MergeAdvanceNotice";
-import { ApprovalNotificationBanner } from "./components/ApprovalNotificationBanner";
-import { GitHubStarPrompt } from "./components/GitHubStarPrompt";
-import { OnboardingResumeCard } from "./components/OnboardingResumeCard";
-import { PostOnboardingRecommendations } from "./components/PostOnboardingRecommendations";
+import { type CliActionId } from "./components/SessionNotificationBanner";
 import {
   isOnboardingCompleted,
   isOnboardingResumable,
@@ -120,7 +107,8 @@ export {
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";
 import { MainContent } from "./components/dashboard/MainContent";
-import type { MainContentProps } from "./components/dashboard/types";
+import { DashboardBanners } from "./components/dashboard/DashboardBanners";
+import type { DashboardBannersProps, MainContentProps } from "./components/dashboard/types";
 
 // ChatView's CSS is imported eagerly so the styles bundle into the main
 // CSS file. Without this, the lazy ChatView JS chunk loaded its own CSS
@@ -1254,6 +1242,50 @@ function AppInner() {
   // Top progress bar reflects any in-flight revalidation: projects, current-project, or tasks.
   // Add new sources here, not inside TopProgressBar.
   const isRevalidating = projectsLoading || currentProjectLoading || isStale;
+
+  // Props for the extracted <DashboardBanners> cluster (see components/dashboard/DashboardBanners.tsx).
+  // Every value is passed by its App name; the cluster renders the same banners as before.
+  const dashboardBannersProps: DashboardBannersProps = {
+    viewMode,
+    currentProject,
+    isTestMode,
+    dashboardHealth,
+    setDashboardHealth,
+    taskView,
+    modalManager,
+    sessionBannersHidden,
+    sessionsNeedingInput,
+    handleOpenBackgroundSession,
+    handleDismissNeedingInputSession,
+    handleDismissAllNeedingInputSessions,
+    handleCliAction,
+    getCliActionDisabledReasonForBanner,
+    openSettingsWithNav,
+    showOnboardingResumeCard,
+    showPostOnboardingRecommendations,
+    updateAvailable,
+    latestVersion,
+    currentVersion,
+    updateBannerDismissed,
+    dismissUpdateBanner,
+    refreshDbCorruptionHealth,
+    dbCorruptionRefreshing,
+    dbCorruptionRefreshError,
+    setupReadinessLoading,
+    hasWarnings,
+    setupWarningDismissed,
+    handleDismissSetupWarning,
+    hasAiProvider,
+    hasGithub,
+    approvalBannerCandidate,
+    dismissApproval,
+    mailboxPendingApprovalCount,
+    handleTaskViewChange,
+    showGitHubStarPrompt,
+    gitHubStarPromptShown,
+    markGitHubStarPromptShown,
+    setShowGitHubStarPrompt,
+  };
   const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openFileInBrowser, openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), workflowStepNameLookup, prAuthAvailable, autoMerge, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   return (
@@ -1339,107 +1371,7 @@ function AppInner() {
           ) : undefined
         }
       />
-      {viewMode === "project" && currentProject && (
-        <>
-          <TestModeBanner isActive={isTestMode} />
-          <EngineUnavailableBanner isVisible={dashboardHealth?.engine?.available === false} />
-          <OAuthReloginBanner
-            onReLogin={(_providerId) => openSettingsWithNav("authentication" as SectionId)}
-          />
-        </>
-      )}
-      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
-        <SessionNotificationBanner
-          sessions={sessionsNeedingInput}
-          onResumeSession={handleOpenBackgroundSession}
-          onDismissSession={handleDismissNeedingInputSession}
-          onDismissAll={handleDismissAllNeedingInputSessions}
-          onCliAction={handleCliAction}
-          getCliActionDisabledReason={getCliActionDisabledReasonForBanner}
-        />
-      )}
-      {viewMode === "project" && currentProject && (
-        <CliBinaryInstallBanner
-          onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
-        />
-      )}
-      {viewMode === "project" && currentProject && showOnboardingResumeCard && (
-        <OnboardingResumeCard onResume={modalManager.openModelOnboarding} />
-      )}
-      {viewMode === "project" && currentProject && showPostOnboardingRecommendations && (
-        <PostOnboardingRecommendations
-          onOpenModelOnboarding={modalManager.openModelOnboarding}
-          onOpenSettings={(section) => openSettingsWithNav(section as SectionId)}
-        />
-      )}
-      {viewMode === "project" && currentProject && updateAvailable && latestVersion && currentVersion && !updateBannerDismissed && (
-        <UpdateAvailableBanner
-          latestVersion={latestVersion}
-          currentVersion={currentVersion}
-          onDismiss={dismissUpdateBanner}
-        />
-      )}
-      {viewMode === "project" && currentProject && (
-        <MergeAdvanceNotice projectId={currentProject.id} />
-      )}
-      {viewMode === "project" && currentProject && dashboardHealth?.taskIdIntegrity?.status === "anomaly" && dashboardHealth.taskIdIntegrity.recommendedAction && (
-        <TaskIdIntegrityBanner
-          report={dashboardHealth.taskIdIntegrity}
-          recommendedAction={dashboardHealth.taskIdIntegrity.recommendedAction}
-          onRefresh={(report, recommendedAction) => {
-            setDashboardHealth((current) => {
-              if (!current) {
-                return null;
-              }
-              return {
-                ...current,
-                status:
-                  report.status === "anomaly"
-                  || !current.database.healthy
-                  || current.database.corruptionDetected
-                    ? "degraded"
-                    : "ok",
-                taskIdIntegrity: {
-                  ...report,
-                  recommendedAction,
-                },
-              };
-            });
-          }}
-        />
-      )}
-      {viewMode === "project" && currentProject && dashboardHealth?.database?.corruptionDetected === true && (
-        <DbCorruptionBanner
-          errors={dashboardHealth.database.corruptionErrors}
-          lastCheckedAt={dashboardHealth.database.lastCheckedAt}
-          onRefresh={refreshDbCorruptionHealth}
-          refreshing={dbCorruptionRefreshing}
-          refreshError={dbCorruptionRefreshError}
-        />
-      )}
-      {viewMode === "project" && currentProject && !setupReadinessLoading && hasWarnings && !setupWarningDismissed && (
-        <SetupWarningBanner
-          hasAiProvider={hasAiProvider}
-          hasGithub={hasGithub}
-          onDismiss={handleDismissSetupWarning}
-        />
-      )}
-      {viewMode === "project" && currentProject && approvalBannerCandidate && (
-        <ApprovalNotificationBanner
-          pendingCount={Math.max(mailboxPendingApprovalCount, 1)}
-          onOpenMailbox={() => handleTaskViewChange("mailbox")}
-          onDismiss={() => dismissApproval(approvalBannerCandidate)}
-        />
-      )}
-      {/* FNXC:Onboarding 2026-06-22-03:11: The one-time GitHub star prompt stays tied to first completed task, but first-run setup must finish the optional persistent-agent create/skip step before any star ask can surface. Do not add a second setup-specific star prompt. */}
-      {viewMode === "project" && currentProject && showGitHubStarPrompt && !gitHubStarPromptShown && !modalManager.setupWizardOpen && (
-        <GitHubStarPrompt
-          onDismiss={() => {
-            markGitHubStarPromptShown();
-            setShowGitHubStarPrompt(false);
-          }}
-        />
-      )}
+      <DashboardBanners {...dashboardBannersProps} />
       <div className={`dashboard-project-shell${sidebarActive ? " dashboard-project-shell--with-sidebar" : ""}${rightDockActive ? " dashboard-project-shell--with-right-dock" : ""}`} data-testid="dashboard-project-shell">
         {sidebarActive && (
           <LeftSidebarNav

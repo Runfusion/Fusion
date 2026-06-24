@@ -1,0 +1,168 @@
+/*
+FNXC:DashboardBanners 2026-06-24-00:00:
+DashboardBanners is the conditional banner cluster rendered above the dashboard-project-shell, extracted verbatim from AppInner's main return JSX. It is a pure render of the same gated banners (every condition, prop, FNXC comment, and the TaskIdIntegrityBanner setDashboardHealth updater preserved byte-for-byte); the banner components are imported directly from their siblings.
+*/
+import type { DashboardBannersProps } from "./types";
+import type { SectionId } from "../SettingsModal";
+import { TestModeBanner } from "../TestModeBanner";
+import { EngineUnavailableBanner } from "../EngineUnavailableBanner";
+import { OAuthReloginBanner } from "../OAuthReloginBanner";
+import { SessionNotificationBanner } from "../SessionNotificationBanner";
+import { CliBinaryInstallBanner } from "../CliBinaryInstallBanner";
+import { OnboardingResumeCard } from "../OnboardingResumeCard";
+import { PostOnboardingRecommendations } from "../PostOnboardingRecommendations";
+import { UpdateAvailableBanner } from "../UpdateAvailableBanner";
+import MergeAdvanceNotice from "../MergeAdvanceNotice";
+import { TaskIdIntegrityBanner } from "../TaskIdIntegrityBanner";
+import { DbCorruptionBanner } from "../DbCorruptionBanner";
+import { SetupWarningBanner } from "../SetupWarningBanner";
+import { ApprovalNotificationBanner } from "../ApprovalNotificationBanner";
+import { GitHubStarPrompt } from "../GitHubStarPrompt";
+
+export function DashboardBanners({
+  viewMode,
+  currentProject,
+  isTestMode,
+  dashboardHealth,
+  setDashboardHealth,
+  taskView,
+  modalManager,
+  sessionBannersHidden,
+  sessionsNeedingInput,
+  handleOpenBackgroundSession,
+  handleDismissNeedingInputSession,
+  handleDismissAllNeedingInputSessions,
+  handleCliAction,
+  getCliActionDisabledReasonForBanner,
+  openSettingsWithNav,
+  showOnboardingResumeCard,
+  showPostOnboardingRecommendations,
+  updateAvailable,
+  latestVersion,
+  currentVersion,
+  updateBannerDismissed,
+  dismissUpdateBanner,
+  refreshDbCorruptionHealth,
+  dbCorruptionRefreshing,
+  dbCorruptionRefreshError,
+  setupReadinessLoading,
+  hasWarnings,
+  setupWarningDismissed,
+  handleDismissSetupWarning,
+  hasAiProvider,
+  hasGithub,
+  approvalBannerCandidate,
+  dismissApproval,
+  mailboxPendingApprovalCount,
+  handleTaskViewChange,
+  showGitHubStarPrompt,
+  gitHubStarPromptShown,
+  markGitHubStarPromptShown,
+  setShowGitHubStarPrompt,
+}: DashboardBannersProps) {
+  return (
+    <>
+      {viewMode === "project" && currentProject && (
+        <>
+          <TestModeBanner isActive={isTestMode} />
+          <EngineUnavailableBanner isVisible={dashboardHealth?.engine?.available === false} />
+          <OAuthReloginBanner
+            onReLogin={(_providerId) => openSettingsWithNav("authentication" as SectionId)}
+          />
+        </>
+      )}
+      {viewMode === "project" && currentProject && taskView !== "missions" && !modalManager.isPlanningOpen && !sessionBannersHidden && (
+        <SessionNotificationBanner
+          sessions={sessionsNeedingInput}
+          onResumeSession={handleOpenBackgroundSession}
+          onDismissSession={handleDismissNeedingInputSession}
+          onDismissAll={handleDismissAllNeedingInputSessions}
+          onCliAction={handleCliAction}
+          getCliActionDisabledReason={getCliActionDisabledReasonForBanner}
+        />
+      )}
+      {viewMode === "project" && currentProject && (
+        <CliBinaryInstallBanner
+          onOpenSettings={() => openSettingsWithNav("general" as SectionId)}
+        />
+      )}
+      {viewMode === "project" && currentProject && showOnboardingResumeCard && (
+        <OnboardingResumeCard onResume={modalManager.openModelOnboarding} />
+      )}
+      {viewMode === "project" && currentProject && showPostOnboardingRecommendations && (
+        <PostOnboardingRecommendations
+          onOpenModelOnboarding={modalManager.openModelOnboarding}
+          onOpenSettings={(section) => openSettingsWithNav(section as SectionId)}
+        />
+      )}
+      {viewMode === "project" && currentProject && updateAvailable && latestVersion && currentVersion && !updateBannerDismissed && (
+        <UpdateAvailableBanner
+          latestVersion={latestVersion}
+          currentVersion={currentVersion}
+          onDismiss={dismissUpdateBanner}
+        />
+      )}
+      {viewMode === "project" && currentProject && (
+        <MergeAdvanceNotice projectId={currentProject.id} />
+      )}
+      {viewMode === "project" && currentProject && dashboardHealth?.taskIdIntegrity?.status === "anomaly" && dashboardHealth.taskIdIntegrity.recommendedAction && (
+        <TaskIdIntegrityBanner
+          report={dashboardHealth.taskIdIntegrity}
+          recommendedAction={dashboardHealth.taskIdIntegrity.recommendedAction}
+          onRefresh={(report, recommendedAction) => {
+            setDashboardHealth((current) => {
+              if (!current) {
+                return null;
+              }
+              return {
+                ...current,
+                status:
+                  report.status === "anomaly"
+                  || !current.database.healthy
+                  || current.database.corruptionDetected
+                    ? "degraded"
+                    : "ok",
+                taskIdIntegrity: {
+                  ...report,
+                  recommendedAction,
+                },
+              };
+            });
+          }}
+        />
+      )}
+      {viewMode === "project" && currentProject && dashboardHealth?.database?.corruptionDetected === true && (
+        <DbCorruptionBanner
+          errors={dashboardHealth.database.corruptionErrors}
+          lastCheckedAt={dashboardHealth.database.lastCheckedAt}
+          onRefresh={refreshDbCorruptionHealth}
+          refreshing={dbCorruptionRefreshing}
+          refreshError={dbCorruptionRefreshError}
+        />
+      )}
+      {viewMode === "project" && currentProject && !setupReadinessLoading && hasWarnings && !setupWarningDismissed && (
+        <SetupWarningBanner
+          hasAiProvider={hasAiProvider}
+          hasGithub={hasGithub}
+          onDismiss={handleDismissSetupWarning}
+        />
+      )}
+      {viewMode === "project" && currentProject && approvalBannerCandidate && (
+        <ApprovalNotificationBanner
+          pendingCount={Math.max(mailboxPendingApprovalCount, 1)}
+          onOpenMailbox={() => handleTaskViewChange("mailbox")}
+          onDismiss={() => dismissApproval(approvalBannerCandidate)}
+        />
+      )}
+      {/* FNXC:Onboarding 2026-06-22-03:11: The one-time GitHub star prompt stays tied to first completed task, but first-run setup must finish the optional persistent-agent create/skip step before any star ask can surface. Do not add a second setup-specific star prompt. */}
+      {viewMode === "project" && currentProject && showGitHubStarPrompt && !gitHubStarPromptShown && !modalManager.setupWizardOpen && (
+        <GitHubStarPrompt
+          onDismiss={() => {
+            markGitHubStarPromptShown();
+            setShowGitHubStarPrompt(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
