@@ -2297,6 +2297,27 @@ The previous bespoke rules here hid the tab labels (icon-only) and used a crampe
   overflow-y: auto;
 }
 
+/* ── Workspace repo selector ── */
+.gm-repo-selector-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.gm-repo-selector {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .gm-nav-item {
   display: flex;
   align-items: center;

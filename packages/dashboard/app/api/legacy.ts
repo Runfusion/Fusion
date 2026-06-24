@@ -2502,8 +2502,8 @@ export interface GitRemote {
 }
 
 /** Fetch GitHub remotes from the current git repository */
-export function fetchGitRemotes(projectId?: string): Promise<GitRemote[]> {
-  return api<GitRemote[]>(withProjectId("/git/remotes", projectId));
+export function fetchGitRemotes(projectId?: string, repoPath?: string): Promise<GitRemote[]> {
+  return api<GitRemote[]>(withRepoPath(withProjectId("/git/remotes", projectId), repoPath));
 }
 
 /** Detailed git remote info with fetch and push URLs */
@@ -2514,36 +2514,36 @@ export interface GitRemoteDetailed {
 }
 
 /** Fetch all git remotes with their fetch and push URLs */
-export function fetchGitRemotesDetailed(projectId?: string): Promise<GitRemoteDetailed[]> {
-  return api<GitRemoteDetailed[]>(withProjectId("/git/remotes/detailed", projectId));
+export function fetchGitRemotesDetailed(projectId?: string, repoPath?: string): Promise<GitRemoteDetailed[]> {
+  return api<GitRemoteDetailed[]>(withRepoPath(withProjectId("/git/remotes/detailed", projectId), repoPath));
 }
 
 /** Add a new git remote */
-export function addGitRemote(name: string, url: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId("/git/remotes", projectId), {
+export function addGitRemote(name: string, url: string, projectId?: string, repoPath?: string): Promise<void> {
+  return api<void>(withRepoPath(withProjectId("/git/remotes", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ name, url }),
   });
 }
 
 /** Remove a git remote */
-export function removeGitRemote(name: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/git/remotes/${encodeURIComponent(name)}`, projectId), {
+export function removeGitRemote(name: string, projectId?: string, repoPath?: string): Promise<void> {
+  return api<void>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(name)}`, projectId), repoPath), {
     method: "DELETE",
   });
 }
 
 /** Rename a git remote */
-export function renameGitRemote(name: string, newName: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/git/remotes/${encodeURIComponent(name)}`, projectId), {
+export function renameGitRemote(name: string, newName: string, projectId?: string, repoPath?: string): Promise<void> {
+  return api<void>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(name)}`, projectId), repoPath), {
     method: "PATCH",
     body: JSON.stringify({ newName }),
   });
 }
 
 /** Update the URL for a git remote */
-export function updateGitRemoteUrl(name: string, url: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/git/remotes/${encodeURIComponent(name)}/url`, projectId), {
+export function updateGitRemoteUrl(name: string, url: string, projectId?: string, repoPath?: string): Promise<void> {
+  return api<void>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(name)}/url`, projectId), repoPath), {
     method: "PUT",
     body: JSON.stringify({ url }),
   });
@@ -3041,104 +3041,105 @@ export interface GitPushResult {
  *  resolution, ahead/behind vs both local and origin integration tip, dirty
  *  breakdown, stash count, index-stale detection, and recent merge-advance
  *  audit events for the project-root worktree. */
-export function fetchGitStatus(projectId?: string, opts?: { extended?: boolean }): Promise<GitStatus> {
-  const base = withProjectId("/git/status", projectId);
+export function fetchGitStatus(projectId?: string, opts?: { extended?: boolean }, repoPath?: string): Promise<GitStatus> {
+  const base = withRepoPath(withProjectId("/git/status", projectId), repoPath);
   if (!opts?.extended) return api<GitStatus>(base);
   const sep = base.includes("?") ? "&" : "?";
   return api<GitStatus>(`${base}${sep}extended=1`);
 }
 
 /** Fetch recent commits */
-export function fetchGitCommits(limit?: number, projectId?: string): Promise<GitCommit[]> {
+export function fetchGitCommits(limit?: number, projectId?: string, repoPath?: string): Promise<GitCommit[]> {
   const query = limit ? `?limit=${limit}` : "";
-  return api<GitCommit[]>(withProjectId(`/git/commits${query}`, projectId));
+  return api<GitCommit[]>(withRepoPath(withProjectId(`/git/commits${query}`, projectId), repoPath));
 }
 
 /** Fetch diff for a specific commit */
-export function fetchCommitDiff(hash: string, projectId?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withProjectId(`/git/commits/${hash}/diff`, projectId));
+export function fetchCommitDiff(hash: string, projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId(`/git/commits/${hash}/diff`, projectId), repoPath));
 }
 
 /** Fetch local commits ahead of the upstream tracking branch (commits to push) */
-export function fetchAheadCommits(projectId?: string): Promise<GitCommit[]> {
-  return api<GitCommit[]>(withProjectId("/git/commits/ahead", projectId));
+export function fetchAheadCommits(projectId?: string, repoPath?: string): Promise<GitCommit[]> {
+  return api<GitCommit[]>(withRepoPath(withProjectId("/git/commits/ahead", projectId), repoPath));
 }
 
 /** Fetch recent commits for a specific remote */
-export function fetchRemoteCommits(remote: string, ref?: string, limit?: number, projectId?: string): Promise<GitCommit[]> {
+export function fetchRemoteCommits(remote: string, ref?: string, limit?: number, projectId?: string, repoPath?: string): Promise<GitCommit[]> {
   const params = new URLSearchParams();
   if (ref) params.set("ref", ref);
   if (limit) params.set("limit", String(limit));
   const query = params.size > 0 ? `?${params.toString()}` : "";
-  return api<GitCommit[]>(withProjectId(`/git/remotes/${encodeURIComponent(remote)}/commits${query}`, projectId));
+  return api<GitCommit[]>(withRepoPath(withProjectId(`/git/remotes/${encodeURIComponent(remote)}/commits${query}`, projectId), repoPath));
 }
 
 /** Fetch all local branches */
-export function fetchGitBranches(projectId?: string): Promise<GitBranch[]> {
-  return api<GitBranch[]>(withProjectId("/git/branches", projectId));
+export function fetchGitBranches(projectId?: string, repoPath?: string): Promise<GitBranch[]> {
+  return api<GitBranch[]>(withRepoPath(withProjectId("/git/branches", projectId), repoPath));
 }
 
 /** Fetch recent commits for a specific branch */
-export function fetchBranchCommits(branchName: string, limit?: number, projectId?: string): Promise<GitCommit[]> {
+export function fetchBranchCommits(branchName: string, limit?: number, projectId?: string, repoPath?: string): Promise<GitCommit[]> {
   const query = limit ? `?limit=${limit}` : "";
-  return api<GitCommit[]>(withProjectId(`/git/branches/${encodeURIComponent(branchName)}/commits${query}`, projectId));
+  return api<GitCommit[]>(withRepoPath(withProjectId(`/git/branches/${encodeURIComponent(branchName)}/commits${query}`, projectId), repoPath));
 }
 
 /** Fetch all worktrees */
-export function fetchGitWorktrees(projectId?: string): Promise<GitWorktree[]> {
-  return api<GitWorktree[]>(withProjectId("/git/worktrees", projectId));
+export function fetchGitWorktrees(projectId?: string, repoPath?: string): Promise<GitWorktree[]> {
+  return api<GitWorktree[]>(withRepoPath(withProjectId("/git/worktrees", projectId), repoPath));
 }
 
 /** Create a new branch */
-export function createBranch(name: string, base?: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId("/git/branches", projectId), {
+export function createBranch(name: string, base?: string, projectId?: string, repoPath?: string): Promise<void> {
+  return api<void>(withRepoPath(withProjectId("/git/branches", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ name, base }),
   });
 }
 
 /** Checkout an existing branch */
-export function checkoutBranch(name: string, projectId?: string): Promise<void> {
-  return api<void>(withProjectId(`/git/branches/${encodeURIComponent(name)}/checkout`, projectId), {
+export function checkoutBranch(name: string, projectId?: string, repoPath?: string): Promise<void> {
+  return api<void>(withRepoPath(withProjectId(`/git/branches/${encodeURIComponent(name)}/checkout`, projectId), repoPath), {
     method: "POST",
   });
 }
 
 /** Delete a branch */
-export function deleteBranch(name: string, force?: boolean, projectId?: string): Promise<void> {
+export function deleteBranch(name: string, force?: boolean, projectId?: string, repoPath?: string): Promise<void> {
   const query = force ? "?force=true" : "";
-  return api<void>(withProjectId(`/git/branches/${encodeURIComponent(name)}${query}`, projectId), {
+  return api<void>(withRepoPath(withProjectId(`/git/branches/${encodeURIComponent(name)}${query}`, projectId), repoPath), {
     method: "DELETE",
   });
 }
 
 /** Fetch from remote */
-export function fetchRemote(remote?: string, projectId?: string): Promise<GitFetchResult> {
-  return api<GitFetchResult>(withProjectId("/git/fetch", projectId), {
+export function fetchRemote(remote?: string, projectId?: string, repoPath?: string): Promise<GitFetchResult> {
+  return api<GitFetchResult>(withRepoPath(withProjectId("/git/fetch", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ remote }),
   });
 }
 
 /** Pull current branch */
-export function pullBranch(options?: { rebase?: boolean }, projectId?: string): Promise<GitPullResult>;
-export function pullBranch(projectId?: string): Promise<GitPullResult>;
+export function pullBranch(options?: { rebase?: boolean }, projectId?: string, repoPath?: string): Promise<GitPullResult>;
+export function pullBranch(projectId?: string, repoPath?: string): Promise<GitPullResult>;
 export function pullBranch(
   optionsOrProjectId?: { rebase?: boolean } | string,
   projectId?: string,
+  repoPath?: string,
 ): Promise<GitPullResult> {
   const options = typeof optionsOrProjectId === "string" ? undefined : optionsOrProjectId;
   const resolvedProjectId = typeof optionsOrProjectId === "string" ? optionsOrProjectId : projectId;
 
-  return api<GitPullResult>(withProjectId("/git/pull", resolvedProjectId), {
+  return api<GitPullResult>(withRepoPath(withProjectId("/git/pull", resolvedProjectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ rebase: options?.rebase ?? false }),
   });
 }
 
 /** Push current branch */
-export function pushBranch(projectId?: string): Promise<GitPushResult> {
-  return api<GitPushResult>(withProjectId("/git/push", projectId), {
+export function pushBranch(projectId?: string, repoPath?: string): Promise<GitPushResult> {
+  return api<GitPushResult>(withRepoPath(withProjectId("/git/push", projectId), repoPath), {
     method: "POST",
   });
 }
@@ -3160,83 +3161,83 @@ export interface GitFileChange {
 }
 
 /** Fetch stash list */
-export function fetchGitStashList(projectId?: string): Promise<GitStash[]> {
-  return api<GitStash[]>(withProjectId("/git/stashes", projectId));
+export function fetchGitStashList(projectId?: string, repoPath?: string): Promise<GitStash[]> {
+  return api<GitStash[]>(withRepoPath(withProjectId("/git/stashes", projectId), repoPath));
 }
 
 /** Create a new stash */
-export function createStash(message?: string, projectId?: string): Promise<{ message: string }> {
-  return api<{ message: string }>(withProjectId("/git/stashes", projectId), {
+export function createStash(message?: string, projectId?: string, repoPath?: string): Promise<{ message: string }> {
+  return api<{ message: string }>(withRepoPath(withProjectId("/git/stashes", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ message }),
   });
 }
 
 /** Apply a stash entry */
-export function applyStash(index: number, drop?: boolean, projectId?: string): Promise<{ message: string }> {
-  return api<{ message: string }>(withProjectId(`/git/stashes/${index}/apply`, projectId), {
+export function applyStash(index: number, drop?: boolean, projectId?: string, repoPath?: string): Promise<{ message: string }> {
+  return api<{ message: string }>(withRepoPath(withProjectId(`/git/stashes/${index}/apply`, projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ drop }),
   });
 }
 
 /** Drop a stash entry */
-export function dropStash(index: number, projectId?: string): Promise<{ message: string }> {
-  return api<{ message: string }>(withProjectId(`/git/stashes/${index}`, projectId), {
+export function dropStash(index: number, projectId?: string, repoPath?: string): Promise<{ message: string }> {
+  return api<{ message: string }>(withRepoPath(withProjectId(`/git/stashes/${index}`, projectId), repoPath), {
     method: "DELETE",
   });
 }
 
 /** Fetch stash diff (stat + patch) */
-export function fetchStashDiff(index: number, projectId?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withProjectId(`/git/stashes/${index}/diff`, projectId));
+export function fetchStashDiff(index: number, projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId(`/git/stashes/${index}/diff`, projectId), repoPath));
 }
 
 /** Fetch unstaged diff (working directory changes) */
-export function fetchUnstagedDiff(projectId?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withProjectId("/git/diff", projectId));
+export function fetchUnstagedDiff(projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId("/git/diff", projectId), repoPath));
 }
 
 /** Fetch diff for a specific file in staged or unstaged mode */
-export function fetchGitFileDiff(path: string, staged: boolean, projectId?: string): Promise<{ stat: string; patch: string }> {
+export function fetchGitFileDiff(path: string, staged: boolean, projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
   const params = new URLSearchParams();
   params.set("path", path);
   params.set("staged", String(staged));
-  return api<{ stat: string; patch: string }>(withProjectId(`/git/diff/file?${params.toString()}`, projectId));
+  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId(`/git/diff/file?${params.toString()}`, projectId), repoPath));
 }
 
 /** Fetch file changes (staged and unstaged) */
-export function fetchFileChanges(projectId?: string): Promise<GitFileChange[]> {
-  return api<GitFileChange[]>(withProjectId("/git/changes", projectId));
+export function fetchFileChanges(projectId?: string, repoPath?: string): Promise<GitFileChange[]> {
+  return api<GitFileChange[]>(withRepoPath(withProjectId("/git/changes", projectId), repoPath));
 }
 
 /** Stage specific files */
-export function stageFiles(files: string[], projectId?: string): Promise<{ staged: string[] }> {
-  return api<{ staged: string[] }>(withProjectId("/git/stage", projectId), {
+export function stageFiles(files: string[], projectId?: string, repoPath?: string): Promise<{ staged: string[] }> {
+  return api<{ staged: string[] }>(withRepoPath(withProjectId("/git/stage", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ files }),
   });
 }
 
 /** Unstage specific files */
-export function unstageFiles(files: string[], projectId?: string): Promise<{ unstaged: string[] }> {
-  return api<{ unstaged: string[] }>(withProjectId("/git/unstage", projectId), {
+export function unstageFiles(files: string[], projectId?: string, repoPath?: string): Promise<{ unstaged: string[] }> {
+  return api<{ unstaged: string[] }>(withRepoPath(withProjectId("/git/unstage", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ files }),
   });
 }
 
 /** Create a commit */
-export function createCommit(message: string, projectId?: string): Promise<{ hash: string; message: string }> {
-  return api<{ hash: string; message: string }>(withProjectId("/git/commit", projectId), {
+export function createCommit(message: string, projectId?: string, repoPath?: string): Promise<{ hash: string; message: string }> {
+  return api<{ hash: string; message: string }>(withRepoPath(withProjectId("/git/commit", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ message }),
   });
 }
 
 /** Discard changes in working directory for specific files */
-export function discardChanges(files: string[], projectId?: string): Promise<{ discarded: string[] }> {
-  return api<{ discarded: string[] }>(withProjectId("/git/discard", projectId), {
+export function discardChanges(files: string[], projectId?: string, repoPath?: string): Promise<{ discarded: string[] }> {
+  return api<{ discarded: string[] }>(withRepoPath(withProjectId("/git/discard", projectId), repoPath), {
     method: "POST",
     body: JSON.stringify({ files }),
   });
@@ -5879,6 +5880,18 @@ function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}projectId=${encodeURIComponent(projectId)}`;
+}
+
+/** Append repoPath query param for workspace-mode sub-repo targeting */
+function withRepoPath(path: string, repoPath?: string): string {
+  if (!repoPath) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}repoPath=${encodeURIComponent(repoPath)}`;
+}
+
+/** Fetch workspace sub-repos for a project */
+export function fetchWorkspaceRepos(projectId?: string): Promise<{ repos: string[] }> {
+  return api<{ repos: string[] }>(withProjectId("/git/workspace-repos", projectId));
 }
 
 /**

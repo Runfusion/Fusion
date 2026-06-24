@@ -1,5 +1,5 @@
 import { type NextFunction, type Request, type Response } from "express";
-import { isAbsolute, resolve, relative } from "node:path";
+import { isAbsolute, resolve, relative, join } from "node:path";
 import { realpathSync } from "node:fs";
 import { exec as execCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -2468,6 +2468,39 @@ export async function refreshIssueInBackground(
 
 export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   const { router, getProjectContext, rethrowAsApiError, store } = ctx;
+
+  /*
+  FNXC:Workspace 2026-06-24-21:00:
+  In workspace mode (multi-repo), git operations target a specific sub-repo.
+  The `repoPath` query param selects which sub-repo. When absent, the project
+  root directory is used (existing single-repo behavior).
+  */
+  function resolveGitDir(req: Request, projectRoot: string): string {
+    const repoPath = req.query.repoPath;
+    if (typeof repoPath === "string" && repoPath.trim()) {
+      return join(projectRoot, repoPath.trim());
+    }
+    return projectRoot;
+  }
+
+  /**
+   * GET /api/git/workspace-repos
+   * Returns the list of sub-repos for a workspace-mode project.
+   * Non-workspace projects return an empty array.
+   */
+  router.get("/git/workspace-repos", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
+      const { loadWorkspaceConfig } = await import("@fusion/core");
+      const config = await loadWorkspaceConfig(rootDir);
+      res.json({ repos: config?.repos ?? [] });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
   const githubToken = ctx.options?.githubToken ?? process.env.GITHUB_TOKEN;
   if (typeof (store as Partial<{ on: unknown; off: unknown }>).on === "function" &&
       typeof (store as Partial<{ off: unknown }>).off === "function") {
@@ -2649,7 +2682,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/remotes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       const remotes = await getGitHubRemotes(rootDir);
       res.json(remotes);
     } catch (err: unknown) {
@@ -2668,7 +2701,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/remotes/detailed", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2690,7 +2723,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/remotes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       const { name, url } = req.body;
       if (!name || typeof name !== "string") {
         throw badRequest("name is required");
@@ -2732,7 +2765,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.delete("/git/remotes/:name", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2761,7 +2794,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.patch("/git/remotes/:name", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2796,7 +2829,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.put("/git/remotes/:name/url", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2834,7 +2867,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/status", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2878,7 +2911,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/commits", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2901,7 +2934,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/commits/:hash/diff", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2931,7 +2964,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/commits/ahead", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2955,7 +2988,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/remotes/:name/commits", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3024,7 +3057,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/branches", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3047,7 +3080,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/branches/:name/commits", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3074,7 +3107,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/worktrees", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3100,7 +3133,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/branches", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3131,7 +3164,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/branches/:name/checkout", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3160,7 +3193,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.delete("/git/branches/:name", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3192,7 +3225,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/fetch", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3220,7 +3253,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/pull", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3416,7 +3449,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/push", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3445,7 +3478,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/stashes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3467,7 +3500,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/stashes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3494,7 +3527,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/stashes/:index/apply", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3520,7 +3553,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/stashes/:index/diff", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3551,7 +3584,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.delete("/git/stashes/:index", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3576,7 +3609,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/diff", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3598,7 +3631,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/diff/file", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3633,7 +3666,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/changes", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3655,7 +3688,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/stage", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3681,7 +3714,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/unstage", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3707,7 +3740,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/commit", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3737,7 +3770,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.post("/git/discard", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -3764,7 +3797,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/github/issues/recent", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = scopedStore.getRootDir();
+      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
       const remotes = await getGitHubRemotes(rootDir);
       const remote = remotes.find((item) => item.name === "origin") ?? remotes[0];
 

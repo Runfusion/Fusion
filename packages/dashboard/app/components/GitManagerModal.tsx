@@ -58,6 +58,7 @@ import {
   fetchAheadCommits,
   fetchRemoteCommits,
   fetchBranchCommits,
+  fetchWorkspaceRepos,
 } from "../api";
 import { StashRecoveryView } from "./StashRecoveryView";
 import {
@@ -256,6 +257,17 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
   const [rootDir, setRootDir] = useState<string | null>(null);
 
+  // ── Workspace repo selector state
+  /*
+  FNXC:Workspace 2026-06-24-21:00:
+  In workspace mode (multi-repo), the git manager shows a repo selector so the
+  user can pick which sub-repo to inspect. selectedRepo is the relative path
+  (e.g. "openvide"); gitRepoPath is passed as repoPath to all git API calls.
+  */
+  const [workspaceRepos, setWorkspaceRepos] = useState<string[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(null);
+  const gitRepoPath = selectedRepo ?? undefined;
+
   // ── Changes state
   const [fileChanges, setFileChanges] = useState<GitFileChange[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
@@ -313,12 +325,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     try {
       switch (activeSection) {
         case "status": {
-          const statusData = await fetchGitStatus(projectId, { extended: true });
+          const statusData = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
           setStatus(statusData);
           break;
         }
         case "changes": {
-          const [statusData, changes] = await Promise.all([fetchGitStatus(projectId, { extended: true }), fetchFileChanges(projectId)]);
+          const [statusData, changes] = await Promise.all([fetchGitStatus(projectId, { extended: true }, gitRepoPath), fetchFileChanges(projectId, gitRepoPath)]);
           setStatus(statusData);
           setFileChanges(changes);
           setSelectedFiles(new Set());
@@ -328,23 +340,23 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           break;
         }
         case "commits": {
-          const commitsData = await fetchGitCommits(commitsLimit, projectId);
+          const commitsData = await fetchGitCommits(commitsLimit, projectId, gitRepoPath);
           setCommits(commitsData);
           break;
         }
         case "branches": {
-          const [branchesData, statusForBranch] = await Promise.all([fetchGitBranches(projectId), fetchGitStatus(projectId, { extended: true })]);
+          const [branchesData, statusForBranch] = await Promise.all([fetchGitBranches(projectId, gitRepoPath), fetchGitStatus(projectId, { extended: true }, gitRepoPath)]);
           setBranches(branchesData);
           setStatus(statusForBranch);
           break;
         }
         case "worktrees": {
-          const worktreesData = await fetchGitWorktrees(projectId);
+          const worktreesData = await fetchGitWorktrees(projectId, gitRepoPath);
           setWorktrees(worktreesData);
           break;
         }
         case "stashes": {
-          const stashesData = await fetchGitStashList(projectId);
+          const stashesData = await fetchGitStashList(projectId, gitRepoPath);
           setStashes(stashesData);
           setExpandedStashIndex(null);
           setStashDiff(null);
@@ -357,7 +369,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           break;
         }
         case "remotes": {
-          const remoteStatus = await fetchGitStatus(projectId, { extended: true });
+          const remoteStatus = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
           setStatus(remoteStatus);
           break;
         }
@@ -368,7 +380,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setLoading(false);
     }
-  }, [activeSection, isOpen, commitsLimit, addToast, projectId]);
+  }, [activeSection, isOpen, commitsLimit, addToast, projectId, gitRepoPath]);
 
   useEffect(() => {
     if (isOpen) {
@@ -405,9 +417,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
   const handleStageFiles = useCallback(async (files: string[]) => {
     try {
-      await stageFiles(files, projectId);
+      await stageFiles(files, projectId, gitRepoPath);
       addToast(t("git.stagedFiles", "Staged {{count}} file(s)", { count: files.length }), "success");
-      const changes = await fetchFileChanges(projectId);
+      const changes = await fetchFileChanges(projectId, gitRepoPath);
       setFileChanges(changes);
       setSelectedFiles(new Set());
       setSelectedDiffTarget(null);
@@ -420,9 +432,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
   const handleUnstageFiles = useCallback(async (files: string[]) => {
     try {
-      await unstageFiles(files, projectId);
+      await unstageFiles(files, projectId, gitRepoPath);
       addToast(t("git.unstagedFiles", "Unstaged {{count}} file(s)", { count: files.length }), "success");
-      const changes = await fetchFileChanges(projectId);
+      const changes = await fetchFileChanges(projectId, gitRepoPath);
       setFileChanges(changes);
       setSelectedFiles(new Set());
       setSelectedDiffTarget(null);
@@ -441,9 +453,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     });
     if (!shouldDiscard) return;
     try {
-      await discardChanges(files, projectId);
+      await discardChanges(files, projectId, gitRepoPath);
       addToast(t("git.discardedFiles", "Discarded changes to {{count}} file(s)", { count: files.length }), "success");
-      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId, { extended: true })]);
+      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId, gitRepoPath), fetchGitStatus(projectId, { extended: true }, gitRepoPath)]);
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedFiles(new Set());
@@ -460,11 +472,11 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     if (!commitMessage.trim()) return;
     setCommitting(true);
     try {
-      const result = await createCommit(commitMessage.trim(), projectId);
+      const result = await createCommit(commitMessage.trim(), projectId, gitRepoPath);
       addToast(t("git.committedHash", "Committed: {{hash}}", { hash: result.hash }), "success");
       setCommitMessage("");
       // Refresh changes and status
-      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId, { extended: true })]);
+      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId, gitRepoPath), fetchGitStatus(projectId, { extended: true }, gitRepoPath)]);
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedDiffTarget(null);
@@ -483,12 +495,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     try {
       const unstaged = fileChanges.filter((f) => !f.staged).map((f) => f.file);
       if (unstaged.length > 0) {
-        await stageFiles(unstaged, projectId);
+        await stageFiles(unstaged, projectId, gitRepoPath);
       }
-      const result = await createCommit(commitMessage.trim(), projectId);
+      const result = await createCommit(commitMessage.trim(), projectId, gitRepoPath);
       addToast(t("git.committedHash", "Committed: {{hash}}", { hash: result.hash }), "success");
       setCommitMessage("");
-      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId), fetchGitStatus(projectId, { extended: true })]);
+      const [changes, statusData] = await Promise.all([fetchFileChanges(projectId, gitRepoPath), fetchGitStatus(projectId, { extended: true }, gitRepoPath)]);
       setFileChanges(changes);
       setStatus(statusData);
       setSelectedDiffTarget(null);
@@ -509,7 +521,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     changeDiffRequestIdRef.current = requestId;
 
     try {
-      const diff = await fetchGitFileDiff(file, staged, projectId);
+      const diff = await fetchGitFileDiff(file, staged, projectId, gitRepoPath);
       if (changeDiffRequestIdRef.current !== requestId) {
         return;
       }
@@ -552,7 +564,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setSelectedCommit(hash);
     setLoadingDiff(true);
     try {
-      const diff = await fetchCommitDiff(hash, projectId);
+      const diff = await fetchCommitDiff(hash, projectId, gitRepoPath);
       setCommitDiff(diff);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.failedToLoadDiff", "Failed to load diff"), "error");
@@ -584,11 +596,11 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     if (!newBranchName.trim()) return;
     setLoading(true);
     try {
-      await createBranch(newBranchName.trim(), branchBase.trim() || undefined, projectId);
+      await createBranch(newBranchName.trim(), branchBase.trim() || undefined, projectId, gitRepoPath);
       addToast(t("git.createdBranch", "Created branch {{name}}", { name: newBranchName }), "success");
       setNewBranchName("");
       setBranchBase("");
-      const branchesData = await fetchGitBranches(projectId);
+      const branchesData = await fetchGitBranches(projectId, gitRepoPath);
       setBranches(branchesData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.failedToCreateBranch", "Failed to create branch"), "error");
@@ -600,9 +612,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const handleCheckoutBranch = useCallback(async (name: string) => {
     setLoading(true);
     try {
-      await checkoutBranch(name, projectId);
+      await checkoutBranch(name, projectId, gitRepoPath);
       addToast(t("git.switchedToBranch", "Switched to {{name}}", { name }), "success");
-      const [statusData, branchesData] = await Promise.all([fetchGitStatus(projectId, { extended: true }), fetchGitBranches(projectId)]);
+      const [statusData, branchesData] = await Promise.all([fetchGitStatus(projectId, { extended: true }, gitRepoPath), fetchGitBranches(projectId, gitRepoPath)]);
       setStatus(statusData);
       setBranches(branchesData);
     } catch (err) {
@@ -621,9 +633,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     if (!shouldDelete) return;
     setLoading(true);
     try {
-      await deleteBranch(name, undefined, projectId);
+      await deleteBranch(name, undefined, projectId, gitRepoPath);
       addToast(t("git.deletedBranch", "Deleted branch {{name}}", { name }), "success");
-      const branchesData = await fetchGitBranches(projectId);
+      const branchesData = await fetchGitBranches(projectId, gitRepoPath);
       setBranches(branchesData);
     } catch (err) {
       if (getErrorMessage(err).includes("not fully merged")) {
@@ -634,9 +646,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
         });
         if (shouldForceDelete) {
           try {
-            await deleteBranch(name, true, projectId);
+            await deleteBranch(name, true, projectId, gitRepoPath);
             addToast(t("git.forceDeletedBranch", "Force deleted branch {{name}}", { name }), "success");
-            const branchesData = await fetchGitBranches(projectId);
+            const branchesData = await fetchGitBranches(projectId, gitRepoPath);
             setBranches(branchesData);
           } catch (forceErr) {
             addToast(getErrorMessage(forceErr) || t("git.failedToDeleteBranch", "Failed to delete branch"), "error");
@@ -674,7 +686,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setBranchCommitDiff(null);
     setLoadingBranchCommits(true);
     try {
-      const data = await fetchBranchCommits(name, 10, projectId);
+      const data = await fetchBranchCommits(name, 10, projectId, gitRepoPath);
       setBranchCommits(data);
     } catch {
       setBranchCommits([]);
@@ -694,7 +706,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setBranchCommitDiff(null);
     setLoadingBranchCommitDiff(true);
     try {
-      const diff = await fetchCommitDiff(hash, projectId);
+      const diff = await fetchCommitDiff(hash, projectId, gitRepoPath);
       setBranchCommitDiff(diff);
     } catch {
       setBranchCommitDiff(null);
@@ -726,10 +738,10 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setStashLoading("create");
     resetStashDiffState();
     try {
-      await createStash(stashMessage.trim() || undefined, projectId);
+      await createStash(stashMessage.trim() || undefined, projectId, gitRepoPath);
       addToast(t("git.changesStashed", "Changes stashed"), "success");
       setStashMessage("");
-      const stashesData = await fetchGitStashList(projectId);
+      const stashesData = await fetchGitStashList(projectId, gitRepoPath);
       setStashes(stashesData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.failedToStashChanges", "Failed to stash changes"), "error");
@@ -742,9 +754,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setStashLoading(`apply-${index}`);
     resetStashDiffState();
     try {
-      await applyStash(index, drop, projectId);
+      await applyStash(index, drop, projectId, gitRepoPath);
       addToast(drop ? t("git.stashPopped", "Stash popped") : t("git.stashApplied", "Stash applied"), "success");
-      const stashesData = await fetchGitStashList(projectId);
+      const stashesData = await fetchGitStashList(projectId, gitRepoPath);
       setStashes(stashesData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.failedToApplyStash", "Failed to apply stash"), "error");
@@ -763,9 +775,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setStashLoading(`drop-${index}`);
     resetStashDiffState();
     try {
-      await dropStash(index, projectId);
+      await dropStash(index, projectId, gitRepoPath);
       addToast(t("git.stashDropped", "Stash dropped"), "success");
-      const stashesData = await fetchGitStashList(projectId);
+      const stashesData = await fetchGitStashList(projectId, gitRepoPath);
       setStashes(stashesData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.failedToDropStash", "Failed to drop stash"), "error");
@@ -787,7 +799,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     setStashDiffError(null);
     setLoadingStashDiff(true);
     try {
-      const diff = await fetchStashDiff(index, projectId);
+      const diff = await fetchStashDiff(index, projectId, gitRepoPath);
       if (stashDiffRequestIdRef.current !== requestId) {
         return;
       }
@@ -810,10 +822,10 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const handleFetch = useCallback(async () => {
     setRemoteLoading("fetch");
     try {
-      const result = await fetchRemote(undefined, projectId);
+      const result = await fetchRemote(undefined, projectId, gitRepoPath);
       setLastRemoteResult(result);
       addToast(result.message || t("git.fetchCompleted", "Fetch completed"), result.fetched ? "success" : "info");
-      const statusData = await fetchGitStatus(projectId, { extended: true });
+      const statusData = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.fetchFailed", "Fetch failed"), "error");
@@ -825,7 +837,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const handlePull = useCallback(async (options?: { rebase?: boolean }) => {
     setRemoteLoading("pull");
     try {
-      const result = await pullBranch(options, projectId);
+      const result = await pullBranch(options, projectId, gitRepoPath);
       setLastRemoteResult(result);
       if (result.conflict) {
         addToast(t("git.mergeConflictDetected", "Merge conflict detected. Resolve manually."), "error");
@@ -833,7 +845,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
         const fallbackMessage = options?.rebase ? t("git.pullRebaseCompleted", "Pull --rebase completed") : t("git.pullCompleted", "Pull completed");
         addToast(result.message || fallbackMessage, "success");
       }
-      const statusData = await fetchGitStatus(projectId, { extended: true });
+      const statusData = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.pullFailed", "Pull failed"), "error");
@@ -845,10 +857,10 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const handlePush = useCallback(async () => {
     setRemoteLoading("push");
     try {
-      const result = await pushBranch(projectId);
+      const result = await pushBranch(projectId, gitRepoPath);
       setLastRemoteResult(result);
       addToast(result.message || t("git.pushCompleted", "Push completed"), "success");
-      const statusData = await fetchGitStatus(projectId, { extended: true });
+      const statusData = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.pushFailed", "Push failed"), "error");
@@ -860,17 +872,17 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const handleSyncWithOrigin = useCallback(async () => {
     setRemoteLoading("sync");
     try {
-      const pullResult = await pullBranch({ rebase: true }, projectId);
+      const pullResult = await pullBranch({ rebase: true }, projectId, gitRepoPath);
       setLastRemoteResult(pullResult);
       if (pullResult.conflict) {
         addToast(t("git.mergeConflictDetected", "Merge conflict detected. Resolve manually."), "error");
         return;
       }
 
-      const pushResult = await pushBranch(projectId);
+      const pushResult = await pushBranch(projectId, gitRepoPath);
       setLastRemoteResult(pushResult);
       addToast(t("git.syncedWithOrigin", "Synced with origin (pull --rebase + push)"), "success");
-      const statusData = await fetchGitStatus(projectId, { extended: true });
+      const statusData = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.syncWithOriginFailed", "Sync with origin failed"), "error");
@@ -884,6 +896,18 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   useEffect(() => {
     fetchConfig(projectId).then((cfg) => setRootDir(cfg.rootDir)).catch(() => setRootDir(null));
   }, [projectId]);
+
+  // Fetch workspace repos on mount to determine if this is a multi-repo project.
+  useEffect(() => {
+    fetchWorkspaceRepos(projectId)
+      .then((result) => {
+        setWorkspaceRepos(result.repos);
+        if (result.repos.length > 0 && !selectedRepo) {
+          setSelectedRepo(result.repos[0]!);
+        }
+      })
+      .catch(() => setWorkspaceRepos([]));
+  }, [projectId]); // intentionally omit selectedRepo to avoid resetting on repo switch
 
   const handleSyncIntegrationTip = useCallback(async () => {
     if (!status?.integrationBranch || status.isOnIntegrationBranch === false) return;
@@ -909,7 +933,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
         }),
       });
       addToast(t("git.syncedWorktreeToIntegrationTip", "Synced worktree to local integration tip"), "success");
-      const statusData = await fetchGitStatus(projectId, { extended: true });
+      const statusData = await fetchGitStatus(projectId, { extended: true }, gitRepoPath);
       setStatus(statusData);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.syncFailed", "Sync failed"), "error");
@@ -932,6 +956,29 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     <>
               {/* Sidebar Navigation */}
               <nav className="gm-sidebar" role="tablist" aria-label={t("git.sidebarAriaLabel", "Git Manager Sections")}>
+                {/*
+                FNXC:Workspace 2026-06-24-21:00:
+                Repo selector for workspace-mode (multi-repo) projects. Placed at the top
+                of the sidebar so it's visible in both modal and embedded presentations.
+                */}
+                {workspaceRepos.length > 0 && (
+                  <div className="gm-repo-selector-wrap">
+                    <FolderGit2 size={14} />
+                    <select
+                      className="gm-repo-selector"
+                      value={selectedRepo ?? ""}
+                      onChange={(e) => {
+                        setSelectedRepo(e.target.value || null);
+                      }}
+                      title={t("git.selectRepo", "Select repository")}
+                      aria-label={t("git.selectRepo", "Select repository")}
+                    >
+                      {workspaceRepos.map((repo) => (
+                        <option key={repo} value={repo}>{repo}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 {SECTIONS.map((section) => {
                   const Icon = section.icon;
                   const sectionLabel = {
