@@ -3,9 +3,22 @@ import { lazy, Suspense, useState, useCallback, useMemo, useRef, useEffect, type
 import { X, Loader2, CheckCircle, ChevronRight, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { AgentOnboardingSummary, ProjectInfo, ProjectCreateInput } from "../api";
-import { createAgent, registerProject } from "../api";
+import { createAgent, registerProject, detectWorkspace } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { suggestProjectName } from "../utils/projectDetection";
+
+/*
+FNXC:TaskPrefix 2026-06-24-19:00:
+Derive a task prefix from a project name in the browser. Mirrors the logic in
+@fusion/core's suggestTaskPrefix: strip non-alpha, uppercase, take 2-4 chars,
+fall back to "FN". Duplicated because @fusion/core is server-only.
+*/
+function suggestTaskPrefixFromName(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z]/g, "").toUpperCase();
+  if (cleaned.length >= 2 && cleaned.length <= 4) return cleaned;
+  if (cleaned.length > 4) return cleaned.slice(0, 4);
+  return "FN";
+}
 import { useNodes } from "../hooks/useNodes";
 import { AgentAvatar } from "./AgentAvatar";
 import { ErrorBoundary } from "./ErrorBoundary";
@@ -44,6 +57,10 @@ interface WizardState {
   manualName: string;
   manualIsolationMode: "in-process" | "child-process";
   manualNodeId: string;
+  manualTaskPrefix: string;
+  detectedRepos: string[];
+  workspaceMode: boolean;
+  isDetectingWorkspace: boolean;
   registeredProject: ProjectInfo | null;
   selectedPresetId: string;
   agentDraft: AgentDraftValues;
@@ -90,6 +107,10 @@ export function SetupWizardModal({
     manualName: "",
     manualIsolationMode: "in-process",
     manualNodeId: "",
+    manualTaskPrefix: "",
+    detectedRepos: [],
+    workspaceMode: false,
+    isDetectingWorkspace: false,
     registeredProject: null,
     selectedPresetId: ceoPreset.id,
     agentDraft: mapPresetToAgentDraft(ceoPreset),
@@ -125,16 +146,48 @@ export function SetupWizardModal({
     }
   }, [state.agentError]);
 
+  const detectWorkspaceRequestId = useRef(0);
+
   const handlePathChange = useCallback((path: string) => {
     setState((prev) => {
-      const updates: Partial<WizardState> = { manualPath: path };
+      const updates: Partial<WizardState> = { manualPath: path, detectedRepos: [], workspaceMode: false };
       // Auto-suggest name when path changes and name is empty or was previously auto-suggested
       if (path && (!prev.manualName || prev.manualName === suggestProjectName(prev.manualPath))) {
         updates.manualName = suggestProjectName(path);
       }
+      // Auto-suggest prefix when name changes and prefix is empty or was previously auto-suggested
+      const suggestedName = updates.manualName ?? prev.manualName;
+      if (suggestedName && (!prev.manualTaskPrefix || prev.manualTaskPrefix === suggestTaskPrefixFromName(suggestProjectName(prev.manualPath)))) {
+        updates.manualTaskPrefix = suggestTaskPrefixFromName(suggestedName);
+      }
       return { ...prev, ...updates };
     });
-  }, []);
+
+    /*
+    FNXC:Workspace 2026-06-24-21:00:
+    Detect workspace sub-repos only in existing-directory mode (clone mode creates a fresh
+    directory with a single repo). A monotonic request ID guards against stale responses
+    overwriting state from a newer path entry (race condition on rapid typing).
+    */
+    if (state.manualMode === "existing" && path.trim() && path.trim() !== "/") {
+      const requestId = ++detectWorkspaceRequestId.current;
+      setState((prev) => ({ ...prev, isDetectingWorkspace: true }));
+      detectWorkspace(path.trim())
+        .then((result) => {
+          if (requestId !== detectWorkspaceRequestId.current) return;
+          setState((prev) => ({
+            ...prev,
+            isDetectingWorkspace: false,
+            detectedRepos: result.repos,
+            workspaceMode: result.isWorkspace,
+          }));
+        })
+        .catch(() => {
+          if (requestId !== detectWorkspaceRequestId.current) return;
+          setState((prev) => ({ ...prev, isDetectingWorkspace: false }));
+        });
+    }
+  }, [state.manualMode]);
 
   const handleManualRegister = useCallback(async () => {
     const trimmedPath = state.manualPath.trim();
@@ -153,6 +206,8 @@ export function SetupWizardModal({
         isolationMode: state.manualIsolationMode,
         nodeId: state.manualNodeId || undefined,
         cloneUrl: state.manualMode === "clone" ? trimmedCloneUrl : undefined,
+        workspaceMode: state.workspaceMode,
+        taskPrefix: state.manualTaskPrefix.trim() || undefined,
       };
 
       const result = await registerProject(input);
@@ -179,7 +234,7 @@ export function SetupWizardModal({
         error: err instanceof Error ? err.message : "Failed to register project",
       }));
     }
-  }, [includeAgentStep, onProjectRegistered, state.manualPath, state.manualName, state.manualCloneUrl, state.manualMode, state.manualIsolationMode, state.manualNodeId]);
+  }, [includeAgentStep, onProjectRegistered, state.manualPath, state.manualName, state.manualCloneUrl, state.manualMode, state.manualIsolationMode, state.manualNodeId, state.workspaceMode, state.manualTaskPrefix]);
 
   const handlePresetSelect = useCallback((presetId: string) => {
     const preset = getPresetById(presetId);
@@ -366,6 +421,64 @@ export function SetupWizardModal({
                   {isCloneMode
                     ? t("setup.clonePathHint", "Select or type an absolute destination path. Fusion will clone into this directory.")
                     : t("setup.projectPathHint", "Select or type the absolute path to your project")}
+                </p>
+              </div>
+
+              {/*
+                FNXC:Workspace 2026-06-24-19:00:
+                Workspace mode detection: when the selected directory contains git sub-repos,
+                show a checkbox letting the user opt into workspace mode. In workspace mode,
+                tasks run per-sub-repo and no git repo is created at the root.
+              */}
+              {isExistingMode && state.manualPath.trim() && (
+                <div className="form-group">
+                  <label htmlFor="workspace-mode" className="checkbox-label">
+                    <input
+                      id="workspace-mode"
+                      type="checkbox"
+                      checked={state.workspaceMode}
+                      onChange={(e) => setState((prev) => ({ ...prev, workspaceMode: e.target.checked }))}
+                    />
+                    {t("setup.workspaceMode", "Workspace mode (multi-repo)")}
+                  </label>
+                  {state.isDetectingWorkspace && (
+                    <p className="form-hint">
+                      <Loader2 size={12} className="animate-spin" style={{ display: "inline-block", verticalAlign: "middle", marginRight: 4 }} />
+                      {t("setup.detectingWorkspace", "Detecting sub-repositories...")}
+                    </p>
+                  )}
+                  {!state.isDetectingWorkspace && state.detectedRepos.length > 0 && (
+                    <p className="form-hint">
+                      {t("setup.detectedRepos", "Found {{count}} repositories:", { count: state.detectedRepos.length })}
+                      {" "}
+                      {state.detectedRepos.join(", ")}
+                    </p>
+                  )}
+                  {!state.isDetectingWorkspace && state.detectedRepos.length === 0 && state.workspaceMode === false && state.manualPath.trim() && (
+                    <p className="form-hint">
+                      {t("setup.noSubReposDetected", "No sub-repositories detected. Enable if this is a multi-repo workspace.")}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/*
+                FNXC:TaskPrefix 2026-06-24-19:00:
+                Task prefix field: auto-derived from the project name. The prefix is used
+                for task IDs (e.g. "MYPR-1"). Users can override it.
+              */}
+              <div className="form-group">
+                <label htmlFor="task-prefix">{t("setup.taskPrefix", "Task Prefix")}</label>
+                <input
+                  id="task-prefix"
+                  type="text"
+                  value={state.manualTaskPrefix}
+                  onChange={(e) => setState((prev) => ({ ...prev, manualTaskPrefix: e.target.value.toUpperCase() }))}
+                  placeholder={suggestTaskPrefixFromName(state.manualName || "FN")}
+                  maxLength={5}
+                />
+                <p className="form-hint">
+                  {t("setup.taskPrefixHint", "Used for task IDs (e.g. \"{{prefix}}-1\"). Derived from project name.", { prefix: state.manualTaskPrefix || "FN" })}
                 </p>
               </div>
 

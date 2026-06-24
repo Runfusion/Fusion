@@ -77,16 +77,16 @@ function getConfiguredPrefixAndLegacyNextId(db: Database): { prefix: string; nex
       .prepare("SELECT nextId, settings FROM config WHERE id = 1")
       .get() as { nextId: number | null; settings: string | null } | undefined;
     if (!row) {
-      return { prefix: "KB", nextId: null };
+      return { prefix: "FN", nextId: null };
     }
 
     const settings = row.settings ? (JSON.parse(row.settings) as { taskPrefix?: string }) : null;
     return {
-      prefix: (settings?.taskPrefix ?? "KB").trim().toUpperCase(),
+      prefix: (settings?.taskPrefix ?? "FN").trim().toUpperCase(),
       nextId: typeof row.nextId === "number" ? row.nextId : null,
     };
   } catch {
-    return { prefix: "KB", nextId: null };
+    return { prefix: "FN", nextId: null };
   }
 }
 

@@ -65,8 +65,8 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         <input id="taskPrefix" type="text" placeholder={t("settings.general.fN", "FN")} value={form.taskPrefix || ""} onChange={(e) => {
             const val = e.target.value;
             setForm((f) => ({ ...f, taskPrefix: val || undefined }));
-            if (val && !/^[A-Z]{1,10}$/.test(val)) {
-                setPrefixError(t("settings.general.prefixMustBe110UppercaseLetters", "Prefix must be 1–10 uppercase letters"));
+            if (val && !/^[A-Z]{1,5}$/.test(val)) {
+                setPrefixError(t("settings.general.prefixMustBe15UppercaseLetters", "Prefix must be 1–5 uppercase letters"));
             }
             else {
                 setPrefixError(null);

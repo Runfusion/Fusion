@@ -6770,6 +6770,8 @@ export interface ProjectCreateInput {
   isolationMode?: "in-process" | "child-process";
   nodeId?: string;
   cloneUrl?: string;
+  workspaceMode?: boolean;
+  taskPrefix?: string;
 }
 
 export type DockerNodeConfigInfo = DockerNodeConfig;
@@ -7234,6 +7236,13 @@ export function registerProject(input: ProjectCreateInput): Promise<ProjectInfo>
   return api<ProjectInfo>("/projects", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+/** Detect git sub-repos in a directory (workspace mode detection) */
+export function detectWorkspace(path: string): Promise<{ repos: string[]; isWorkspace: boolean }> {
+  return api<{ repos: string[]; isWorkspace: boolean }>("/projects/detect-workspace", {
+    method: "POST",
+    body: JSON.stringify({ path }),
   });
 }
 

@@ -680,14 +680,17 @@ export async function registerProjectInteractive(
         // Initialize the project (create .fusion/)
         const { TaskStore } = await import("@fusion/core");
         const store = new TaskStore(absPath);
-        await store.init();
-        if (detectedSubRepos) {
-          await saveWorkspaceConfig(absPath, { repos: detectedSubRepos });
-          // Persist workspaceMode in config.json so it's visible/toggleable in the dashboard
-          await store.updateSettings({ workspaceMode: true });
+        try {
+          await store.init();
+          if (detectedSubRepos) {
+            await saveWorkspaceConfig(absPath, { repos: detectedSubRepos });
+            // Persist workspaceMode in config.json so it's visible/toggleable in the dashboard
+            await store.updateSettings({ workspaceMode: true });
+          }
+          console.log(`  ✓ Initialized fn at ${absPath}`);
+        } finally {
+          await store.close();
         }
-        await store.close();
-        console.log(`  ✓ Initialized fn at ${absPath}`);
       } else {
         throw new ProjectResolutionError(
           "Cannot register project without .fusion/ directory. Run `fn init` first.",
@@ -747,29 +750,32 @@ export async function registerProjectInteractive(
 
   /*
   FNXC:Onboarding 2026-06-24-18:00:
-  After registration, prompt the user to confirm a task prefix and default workflow.
-  The prefix defaults to the first 2-4 chars of the project name so each project gets
-  recognizable task IDs (e.g., "MYPR" for "my-project"). The workflow defaults to coding.
-  Both are persisted to config.json via the TaskStore.
+  After registration, set a task prefix and default workflow. The prefix defaults to
+  the first 2-4 chars of the project name so each project gets recognizable task IDs
+  (e.g., "MYPR" for "my-project"). The workflow defaults to coding. Both are persisted
+  to config.json via the TaskStore.
   */
-  if (interactive) {
+  {
     const { TaskStore } = await import("@fusion/core");
     const store = new TaskStore(absPath);
-    await store.init();
-
-    const suggestedPrefix = suggestTaskPrefix(name);
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const prefixInput = await rl.question(`\n  Task prefix [${suggestedPrefix}]: `);
-    rl.close();
-    const rawPrefix = prefixInput.trim().toUpperCase().replace(/[^A-Z]/g, "");
-    const prefix = rawPrefix.length >= 2 && rawPrefix.length <= 5 ? rawPrefix : suggestedPrefix;
-
-    await store.updateSettings({
-      taskPrefix: prefix,
-      defaultWorkflowId: "builtin:coding",
-    });
-    await store.close();
-    console.log(`  ✓ Task prefix set to "${prefix}", default workflow: coding`);
+    try {
+      await store.init();
+      let prefix = suggestTaskPrefix(name);
+      if (interactive) {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const prefixInput = await rl.question(`\n  Task prefix [${prefix}]: `);
+        rl.close();
+        const rawPrefix = prefixInput.trim().toUpperCase().replace(/[^A-Z]/g, "");
+        if (rawPrefix.length >= 1 && rawPrefix.length <= 5) prefix = rawPrefix;
+      }
+      await store.updateSettings({
+        taskPrefix: prefix,
+        defaultWorkflowId: "builtin:coding",
+      });
+      console.log(`  ✓ Task prefix set to "${prefix}", default workflow: coding`);
+    } finally {
+      await store.close();
+    }
   }
 
   return createResolvedProject(project);

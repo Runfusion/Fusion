@@ -211,6 +211,39 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
   });
 
   /**
+   * POST /api/projects/detect-workspace
+   * Probe a directory for git sub-repos (workspace mode detection).
+   * Body: { path: string }
+   * Returns: { repos: string[], isWorkspace: boolean }
+   */
+  router.post("/projects/detect-workspace", async (req, res) => {
+    try {
+      const { path } = req.body;
+      if (!path || typeof path !== "string" || !path.trim()) {
+        throw badRequest("path is required");
+      }
+      const normalizedPath = path.trim();
+      if (!isAbsolute(normalizedPath)) {
+        throw badRequest("path must be an absolute path");
+      }
+
+      try {
+        await access(normalizedPath);
+      } catch {
+        throw badRequest("Project path does not exist");
+      }
+
+      const { detectWorkspaceRepos } = await import("@fusion/core");
+      const repos = await detectWorkspaceRepos(normalizedPath);
+
+      res.json({ repos, isWorkspace: repos.length > 0 });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /**
    * POST /api/projects
    * Register a new project.
    * Body: {
@@ -218,13 +251,15 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
    *   path: string,
    *   isolationMode?: "in-process" | "child-process",
    *   nodeId?: string,
-   *   cloneUrl?: string
+   *   cloneUrl?: string,
+   *   workspaceMode?: boolean,
+   *   taskPrefix?: string
    * }
    * Returns: RegisteredProject
    */
   router.post("/projects", async (req, res) => {
     try {
-      const { name, path, isolationMode = "in-process", nodeId, cloneUrl } = req.body;
+      const { name, path, isolationMode = "in-process", nodeId, cloneUrl, workspaceMode, taskPrefix } = req.body;
 
       if (!name || typeof name !== "string" || !name.trim()) {
         throw badRequest("name is required and must be a non-empty string");
@@ -376,21 +411,47 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
 
       /*
       FNXC:Onboarding 2026-06-24-18:00:
-      For new registrations (not reattachments), set a derived task prefix and default
-      workflow via the per-project TaskStore config.json so the project is immediately
-      usable without manual settings configuration.
+      For new registrations (not reattachments), configure workspace mode (if specified or
+      auto-detected), set a task prefix, and default workflow via the per-project TaskStore
+      config.json so the project is immediately usable without manual settings configuration.
       */
       if (activeProjectWithOutcome.outcome === "registered") {
         try {
-          const { TaskStore, suggestTaskPrefix } = await import("@fusion/core");
+          const { TaskStore, suggestTaskPrefix, detectWorkspaceRepos, saveWorkspaceConfig } = await import("@fusion/core");
           const store = new TaskStore(normalizedPath);
-          await store.init();
-          const prefix = suggestTaskPrefix(normalizedName);
-          await store.updateSettings({
-            taskPrefix: prefix,
-            defaultWorkflowId: "builtin:coding",
-          });
-          await store.close();
+          try {
+            await store.init();
+
+            /*
+            FNXC:Workspace 2026-06-24-19:00:
+            Workspace mode: if the client explicitly requested it (workspaceMode: true from the
+            wizard checkbox), detect and persist sub-repos. If the client didn't specify and
+            auto-detection finds sub-repos, also apply it. This mirrors the CLI interactive flow.
+            */
+            if (workspaceMode === true) {
+              const repos = await detectWorkspaceRepos(normalizedPath);
+              if (repos.length > 0) {
+                await saveWorkspaceConfig(normalizedPath, { repos });
+                await store.updateSettings({ workspaceMode: true });
+              }
+            } else if (workspaceMode === undefined) {
+              const repos = await detectWorkspaceRepos(normalizedPath);
+              if (repos.length > 0) {
+                await saveWorkspaceConfig(normalizedPath, { repos });
+                await store.updateSettings({ workspaceMode: true });
+              }
+            }
+
+            const rawPrefix = typeof taskPrefix === "string" ? taskPrefix.trim().toUpperCase() : "";
+            const validPrefix = /^[A-Z]{1,5}$/.test(rawPrefix) ? rawPrefix : "";
+            const prefix = validPrefix || suggestTaskPrefix(normalizedName);
+            await store.updateSettings({
+              taskPrefix: prefix,
+              defaultWorkflowId: "builtin:coding",
+            });
+          } finally {
+            await store.close();
+          }
         } catch {
           // Non-fatal: project registration succeeded; settings can be configured later
         }
