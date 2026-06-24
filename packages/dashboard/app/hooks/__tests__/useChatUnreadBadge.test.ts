@@ -80,4 +80,39 @@ describe("useChatUnreadBadge", () => {
     rerender({ taskView: "chat" });
     expect(result.current.chatHasUnreadResponse).toBe(false);
   });
+  it("marks unread on a non-user chat:room:message:added", () => {
+    const { result } = renderHook(() =>
+      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+    );
+
+    act(() => {
+      handlers["chat:room:message:added"]?.(message({ role: "assistant" }));
+    });
+
+    expect(result.current.chatHasUnreadResponse).toBe(true);
+  });
+
+  it("ignores user-role chat:room:message:added events", () => {
+    const { result } = renderHook(() =>
+      useChatUnreadBadge(undefined, { taskView: "board", quickChatOpen: false }),
+    );
+
+    act(() => {
+      handlers["chat:room:message:added"]?.(message({ role: "user" }));
+    });
+
+    expect(result.current.chatHasUnreadResponse).toBe(false);
+  });
+
+  it("ignores assistant messages scoped to a different project", () => {
+    const { result } = renderHook(() =>
+      useChatUnreadBadge("p1", { taskView: "board", quickChatOpen: false }),
+    );
+
+    act(() => {
+      handlers["chat:message:added"]?.(message({ role: "assistant", projectId: "p2" }));
+    });
+
+    expect(result.current.chatHasUnreadResponse).toBe(false);
+  });
 });

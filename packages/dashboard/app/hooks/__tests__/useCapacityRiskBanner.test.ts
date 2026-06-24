@@ -7,7 +7,7 @@ vi.mock("../../utils/projectStorage", () => ({
   removeScopedItem: vi.fn(),
 }));
 
-import { getScopedItem, removeScopedItem } from "../../utils/projectStorage";
+import { getScopedItem, removeScopedItem, setScopedItem } from "../../utils/projectStorage";
 import { useCapacityRiskBanner } from "../useCapacityRiskBanner";
 
 const base = {
@@ -41,6 +41,7 @@ describe("useCapacityRiskBanner", () => {
     });
 
     expect(result.current.dismissed).toBe(true);
+    expect(setScopedItem).toHaveBeenCalledWith(expect.any(String), "true", "p1");
   });
 
   it("clears a prior dismissal when the banner is re-enabled after hydrate", () => {
@@ -57,6 +58,24 @@ describe("useCapacityRiskBanner", () => {
 
     // Re-enabling the banner resurrects the dismissed banner.
     rerender({ enabled: true });
+
+    expect(removeScopedItem).toHaveBeenCalledWith(expect.any(String), "p1");
+    expect(result.current.dismissed).toBe(false);
+  });
+  it("clears a prior dismissal when the todo threshold changes after hydrate", () => {
+    vi.mocked(getScopedItem).mockReturnValue("true");
+    const { result, rerender } = renderHook(
+      (props: { threshold: number }) =>
+        useCapacityRiskBanner({ ...base, capacityRiskTodoThreshold: props.threshold }),
+      { initialProps: { threshold: 3 } },
+    );
+
+    // First settings load hydrates without clearing.
+    expect(result.current.dismissed).toBe(true);
+    expect(removeScopedItem).not.toHaveBeenCalled();
+
+    // Changing the threshold resurrects the previously-dismissed banner.
+    rerender({ threshold: 5 });
 
     expect(removeScopedItem).toHaveBeenCalledWith(expect.any(String), "p1");
     expect(result.current.dismissed).toBe(false);

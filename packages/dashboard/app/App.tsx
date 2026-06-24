@@ -101,8 +101,6 @@ export {
   isSessionNeedingInputForBanner,
   getCliActionDisabledReasonForBanner,
   executeCliSessionBannerAction,
-  type ApprovalBannerCandidate,
-  type CliActionDeps,
 } from "./utils/appLifecycle";
 import { subscribeSse } from "./sse-bus";
 import { AuthTokenRecoveryDialog } from "./components/AuthTokenRecoveryDialog";

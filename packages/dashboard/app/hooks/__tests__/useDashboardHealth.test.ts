@@ -59,4 +59,27 @@ describe("useDashboardHealth", () => {
     expect(result.current.refreshError).toBe("nope");
     expect(result.current.refreshing).toBe(false);
   });
+  it("does not apply the mount fetch after unmount", async () => {
+    let resolveMount: (value: { status: string }) => void = () => {};
+    fetchDashboardHealth.mockImplementation(
+      () =>
+        new Promise<{ status: string }>((resolve) => {
+          resolveMount = resolve;
+        }),
+    );
+
+    const { result, unmount } = renderHook(() => useDashboardHealth());
+    expect(result.current.health).toBeNull();
+
+    unmount();
+    resolveMount({ status: "ok" });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The cancelled flag suppresses setState — health stays at its initial null.
+    expect(result.current.health).toBeNull();
+  });
 });

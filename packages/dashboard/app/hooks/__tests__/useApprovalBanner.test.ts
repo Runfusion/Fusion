@@ -136,4 +136,64 @@ describe("useApprovalBanner", () => {
     });
     expect(result.current.candidate).toBeNull();
   });
+  it("re-triggers after leaving and re-entering awaiting-approval (clear-on-leave)", () => {
+    const onMailboxRefresh = vi.fn();
+    const seedTasks: Task[] = [task("t1", "awaiting-approval")];
+    const { result } = renderHook(() =>
+      useApprovalBanner({
+        tasks: seedTasks,
+        currentProjectId: "p1",
+        gitHubStarPromptShown: true,
+        onStarPrompt: vi.fn(),
+        onMailboxRefresh,
+      }),
+    );
+
+    // The seeded awaiting-approval task is already in the seen set, so a repeat
+    // event for it must NOT trigger.
+    act(() => {
+      handlers["task:updated"]?.(msg({ id: "t1", status: "awaiting-approval", updatedAt: "2026-01-01T00:00:00Z" }));
+    });
+    expect(result.current.candidate).toBeNull();
+    expect(onMailboxRefresh).not.toHaveBeenCalled();
+
+    // Task leaves awaiting-approval → the seen-key for t1 is cleared.
+    act(() => {
+      handlers["task:updated"]?.(msg({ id: "t1", status: "approved", updatedAt: "2026-01-02T00:00:00Z" }));
+    });
+    expect(result.current.candidate).toBeNull();
+
+    // Re-entering awaiting-approval re-triggers the candidate + mailbox refresh.
+    act(() => {
+      handlers["task:updated"]?.(msg({ id: "t1", status: "awaiting-approval", updatedAt: "2026-01-03T00:00:00Z" }));
+    });
+    expect(result.current.candidate?.dedupeKey).toBe("task:t1");
+    expect(onMailboxRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("dedupes mailbox refresh on a repeated awaiting-approval task:updated", () => {
+    const onMailboxRefresh = vi.fn();
+    const tasks: Task[] = [];
+    const { result } = renderHook(() =>
+      useApprovalBanner({
+        tasks,
+        currentProjectId: "p1",
+        gitHubStarPromptShown: true,
+        onStarPrompt: vi.fn(),
+        onMailboxRefresh,
+      }),
+    );
+
+    act(() => {
+      handlers["task:updated"]?.(msg({ id: "t1", status: "awaiting-approval", updatedAt: "2026-01-01T00:00:00Z" }));
+    });
+    expect(result.current.candidate?.dedupeKey).toBe("task:t1");
+    expect(onMailboxRefresh).toHaveBeenCalledTimes(1);
+
+    // A second awaiting-approval for the same task is suppressed by seenApprovalKeys.
+    act(() => {
+      handlers["task:updated"]?.(msg({ id: "t1", status: "awaiting-approval", updatedAt: "2026-01-04T00:00:00Z" }));
+    });
+    expect(onMailboxRefresh).toHaveBeenCalledTimes(1);
+  });
 });

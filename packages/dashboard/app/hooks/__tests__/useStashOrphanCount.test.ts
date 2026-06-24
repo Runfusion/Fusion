@@ -58,4 +58,22 @@ describe("useStashOrphanCount", () => {
     });
     expect(mockedApi).toHaveBeenCalledTimes(2);
   });
+  it("stops polling once unmounted", async () => {
+    mockedApi.mockResolvedValue({ count: 1 });
+    const { unmount } = renderHook(() => useStashOrphanCount(undefined));
+
+    // Initial mount fetch.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(mockedApi).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    // Advance well past the 30s interval — the cleared timer must not fire.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(mockedApi).toHaveBeenCalledTimes(1);
+  });
 });
