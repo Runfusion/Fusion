@@ -166,6 +166,18 @@ FN-6425 requires the chat expand control to stay inside the chat view as an icon
   white-space: nowrap;
 }
 
+/*
+FNXC:TaskDetailChat 2026-06-23-21:38:
+List View split-pane detail can be narrow while the global viewport is desktop-sized. Scope the compact/mobile agent-output group contract to that host so agent/provider headers stack above output blocks there without changing full-width modal, board main-panel, popped-out, or expanded chat desktop layouts.
+*/
+.list-split-detail-content .task-chat-group {
+  grid-template-columns: 1fr;
+}
+
+.list-split-detail-content .task-chat-group-header {
+  min-width: 0;
+}
+
 .task-chat-group-bubbles {
   display: flex;
   min-width: 0;

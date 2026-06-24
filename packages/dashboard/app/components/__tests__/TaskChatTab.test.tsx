@@ -167,6 +167,22 @@ function expectTranscriptTextOrder(...texts: string[]) {
   }
 }
 
+function expectAgentHeaderBeforeBubbles(group: HTMLElement) {
+  const header = group.querySelector(".task-chat-group-header");
+  const bubbles = group.querySelector(".task-chat-group-bubbles");
+  expect(header).not.toBeNull();
+  expect(bubbles).not.toBeNull();
+  expect(header?.compareDocumentPosition(bubbles as Element) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+function renderListSplitTaskChat(task: Task = makeTask()) {
+  return render(
+    <div className="list-split-detail-content" data-testid="list-split-detail-content">
+      <TaskChatTab task={task} active addToast={vi.fn()} />
+    </div>,
+  );
+}
+
 function expectIdleSessionHint() {
   // FNXC:TaskDetailChat 2026-06-22-21:20: The idle "No agent is working…" banner was removed per user request — idle chats stay sendable with no hint shown.
   expect(screen.queryByTestId("task-chat-idle-hint")).not.toBeInTheDocument();
@@ -484,6 +500,55 @@ describe("TaskChatTab", () => {
 
     expect(document.querySelector(".task-chat-provider-icon [data-provider='openai-codex']")).toBeTruthy();
     expect(screen.queryByLabelText("Executor: model provider unknown")).not.toBeInTheDocument();
+  });
+
+  it("keeps List View split chat agent headers before text tool thinking and user output", () => {
+    mockLogs([
+      makeEntry({ agent: "executor", text: "executor compact text", timestamp: "2026-06-12T00:00:00.000Z" }),
+      makeEntry({ agent: "executor", type: "tool", text: "bash", detail: "pnpm test", timestamp: "2026-06-12T00:00:01.000Z" }),
+      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: "ok", timestamp: "2026-06-12T00:00:02.000Z" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "checking compact layout", timestamp: "2026-06-12T00:00:03.000Z" }),
+      makeEntry({ text: "fallback compact text", timestamp: "2026-06-12T00:00:05.000Z" }),
+    ]);
+
+    renderListSplitTaskChat(
+      makeTask({
+        modelProvider: "openai",
+        modelId: "gpt-4o",
+        steeringComments: [makeSteeringComment({ id: "compact-user", text: "compact user guidance", createdAt: "2026-06-12T00:00:04.000Z" })],
+      }),
+    );
+
+    const host = screen.getByTestId("list-split-detail-content");
+    const executorGroup = within(host).getByLabelText("Executor messages");
+    const fallbackGroup = within(host).getByLabelText("Agent messages");
+
+    expectAgentHeaderBeforeBubbles(executorGroup);
+    expectAgentHeaderBeforeBubbles(fallbackGroup);
+    expect(within(executorGroup).getAllByText("Executor")).toHaveLength(1);
+    expect(within(fallbackGroup).getAllByText("Agent")).toHaveLength(1);
+    expect(within(executorGroup).getByText("executor compact text")).toBeVisible();
+    expect(within(executorGroup).getByTestId("task-chat-tool-group")).toBeInTheDocument();
+    expect(within(executorGroup).getByTestId("task-chat-thinking")).toBeInTheDocument();
+    expect(within(host).getByText("compact user guidance").closest(".task-chat-user-group")).not.toBeNull();
+    expect(within(host).getByText("fallback compact text")).toBeVisible();
+    expect(document.querySelector(".task-chat-provider-icon [data-provider='openai']")).toBeTruthy();
+    expect(within(fallbackGroup).getByLabelText("Agent: model provider unknown")).toBeVisible();
+  });
+
+  it("keeps List View split chat empty and loading states free of header shells", () => {
+    mockLogs([], true);
+    const loading = renderListSplitTaskChat();
+    expect(screen.getByText(/Loading agent output/)).toBeVisible();
+    expect(document.querySelector(".task-chat-group-header")).not.toBeInTheDocument();
+    expect(document.querySelector(".task-chat-group-bubbles")).not.toBeInTheDocument();
+
+    loading.unmount();
+    mockLogs([]);
+    renderListSplitTaskChat();
+    expect(screen.getByText(/No agent output yet/)).toBeVisible();
+    expect(document.querySelector(".task-chat-group-header")).not.toBeInTheDocument();
+    expect(document.querySelector(".task-chat-group-bubbles")).not.toBeInTheDocument();
   });
 
   it("groups consecutive entries by agent role", () => {
@@ -2411,6 +2476,31 @@ describe("TaskChatTab", () => {
     expect(source).toContain("const isChatExpanded = chatExpanded && activeTab === \"chat\" && !isEditing");
     expect(source).toContain("task-detail-content--chat-expanded");
     expect(source).toContain("expanded={chatExpanded}");
+  });
+
+  it("stacks agent headers only inside the List View split-detail chat host", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const desktopGroupRule = getCssRuleBlock(css, ".task-chat-group");
+    const listSplitGroupRule = getCssRuleBlock(css, ".list-split-detail-content .task-chat-group");
+    const listSplitHeaderRule = getCssRuleBlock(css, ".list-split-detail-content .task-chat-group-header");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileGroupRule = getCssRuleBlock(mobileCss, ".task-chat-group");
+
+    expect(desktopGroupRule).toContain("grid-template-columns: auto minmax(0, 1fr)");
+    expect(listSplitGroupRule).toContain("grid-template-columns: 1fr");
+    expect(listSplitHeaderRule).toContain("min-width: 0");
+    expect(mobileGroupRule).toContain("grid-template-columns: 1fr");
+  });
+
+  it("keeps List View as the only split-pane host for compact task chat", () => {
+    const listSource = readFileSync(resolve(__dirname, "../ListView.tsx"), "utf8");
+    const appSource = readFileSync(resolve(__dirname, "../../App.tsx"), "utf8");
+
+    expect(listSource).toContain('className="list-split-detail-content"');
+    expect(listSource).toContain("<TaskDetailContent");
+    expect(listSource).toContain("embedded");
+    expect(appSource).toContain('className="task-detail-main-panel-body"');
+    expect(appSource).toContain("<TaskDetailContent");
   });
 
   it("keeps task chat timestamp styling tokenized and mobile-safe", () => {
