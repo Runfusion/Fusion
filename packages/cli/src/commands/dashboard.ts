@@ -17,6 +17,7 @@ import {
   resolveGlobalDir,
   DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS,
   isWorkflowColumnsEnabled,
+  isWorkspaceTask,
   resolveColumnFlags,
   BUILTIN_CODING_WORKFLOW_IR,
   mergeBuiltInZaiProviderModels,
@@ -1312,8 +1313,9 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // Phase C (user decision). U0's R7 throw is replaced here by routing; the engine
     // chokepoint + store.mergeTask/aiMergeTask keep throwing as defense-in-depth.
     const mergeTask = await store.getTask(taskId).catch(() => null);
-    const isWorkspaceMerge =
-      !!mergeTask?.workspaceWorktrees && Object.keys(mergeTask.workspaceWorktrees).length > 0;
+    // FNXC:Workspace 2026-06-22-09:30 (Phase C review B10): use the exported `isWorkspaceTask`
+    // (the engine/CLI canonical predicate) instead of re-inlining the workspaceWorktrees check.
+    const isWorkspaceMerge = !!mergeTask && isWorkspaceTask(mergeTask);
     if (isWorkspaceMerge) {
       const workspaceResult = await landWorkspaceTask(store, mergeTask!, cwd, {
         agentStore,

@@ -1,0 +1,5 @@
+---
+"@runfusion/fusion": patch
+---
+
+Address Phase C workspace merge-loop review feedback. A sub-repo recognized as already-landed via the `Fusion-Task-Id` trailer fallback (when its `landedSha` persist was lost) now resolves and re-records a concrete `landedSha`, so finalize no longer drops it and mis-reports a fully-landed workspace task as a no-op (`mergeConfirmed:false`). A manual merge that hits sub-repo land-lease contention now surfaces the busy error to the user without consuming the persisted `mergeRetries` quota (matching the auto path's separate busy counter). The partial-land retry persists the incremented retry count before arming the backoff timer — a failed write now fails closed instead of looping without consuming budget — and clears the stale busy-contention counter when a real partial land supersedes transient busy failures. The CLI and dashboard merge doors use the shared `isWorkspaceTask` predicate instead of re-inlining the workspace check, and integration-branch shell interpolation in base-commit capture uses POSIX single-quote escaping.

@@ -30,7 +30,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Task, TaskStore } from "@fusion/core";
 import { assertNotWorkspaceTaskMerge } from "@fusion/core";
-import { landWorkspaceTask } from "../merger-ai.js";
+import { landWorkspaceTask, runAiMerge } from "../merger-ai.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -291,5 +291,25 @@ describe("workspace merge defense-in-depth (non-routed doors keep throwing)", ()
   it("assertNotWorkspaceTaskMerge is a no-op for a single-repo task", () => {
     const task = { id: TASK_ID } as unknown as Task;
     expect(() => assertNotWorkspaceTaskMerge(task)).not.toThrow();
+  });
+
+  /*
+  FNXC:Workspace 2026-06-22-09:30 (Phase C review B11 — exercise the REAL merge door, not only the helper):
+  Calling `assertNotWorkspaceTaskMerge` directly proves the helper, but a regression where `runAiMerge`
+  (the sole engine merge door, R7 chokepoint) stopped invoking it would slip through. Drive the actual
+  door with a minimal store whose `getTask` returns the workspace task: `runAiMerge` reads the task and
+  calls the guard BEFORE any git work, so it rejects with WorkspaceTaskMergeError without a real repo.
+  */
+  it("runAiMerge (engine merge door) rejects a workspace task with WorkspaceTaskMergeError", async () => {
+    const workspaceTask = {
+      id: TASK_ID,
+      workspaceWorktrees: { "repo-a": { worktreePath: "/x/repo-a", branch: BRANCH } },
+    } as unknown as Task;
+    const store = {
+      getTask: vi.fn(async () => workspaceTask),
+    } as unknown as TaskStore;
+    await expect(runAiMerge(store, "/x", TASK_ID)).rejects.toMatchObject({
+      name: "WorkspaceTaskMergeError",
+    });
   });
 });

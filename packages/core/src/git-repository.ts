@@ -167,11 +167,15 @@ export async function loadWorkspaceConfig(rootDir: string): Promise<WorkspaceCon
   try {
     const raw = await readFile(configPath, "utf-8");
     const parsed = JSON.parse(raw) as unknown;
+    // FNXC:Workspace 2026-06-22-09:30 (Phase C review nit): validate that `repos` is an array
+    // OF STRINGS, not merely an array. A malformed config (`{ repos: [123, null] }`) would
+    // otherwise pass and feed non-string values into path joins downstream.
     if (
       parsed !== null &&
       typeof parsed === "object" &&
       "repos" in parsed &&
-      Array.isArray((parsed as { repos: unknown }).repos)
+      Array.isArray((parsed as { repos: unknown }).repos) &&
+      (parsed as { repos: unknown[] }).repos.every((r) => typeof r === "string")
     ) {
       const rawRepos = (parsed as { repos: unknown[] }).repos;
       const repos = rawRepos.filter((entry): entry is string => isInRootRelativePath(entry, pathMod));

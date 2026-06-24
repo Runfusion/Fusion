@@ -1546,9 +1546,42 @@ describe("ProjectEngine workspace merge dispatch hardening (Phase C review)", ()
         .some((c) => c[0] === "FN-WSH" && typeof c[1]?.mergeRetries === "number");
       expect(burnedRetries).toBe(false);
 
-      // Drive several busy re-enqueues; the backoff must stay capped at 60s.
-      enqueueSpy.mockClear();
-      await vi.advanceTimersByTimeAsync(60_000); // first backoff (5s) fires → re-enqueue
+      /*
+      FNXC:Workspace 2026-06-22-09:30 (Phase C review B5b — assert the 60s CAP, not just the first retry):
+      Advancing 60s once only proves the first 5s timer fired; an UNcapped exponential
+      (5s,10s,20s,40s,80s,160s,…) would still pass that. Capture EVERY scheduled busy backoff delay
+      across enough cycles to pass the cap point (busyCount=4 → 5000*2^4 = 80_000ms, clamped to 60_000)
+      and assert no delay exceeds 60_000 AND the cap is actually reached. Each advance fires the pending
+      timer → re-enqueue → landWorkspaceTask rejects busy again → next backoff is scheduled.
+      */
+      const scheduledBusyDelays: number[] = [];
+      // `globalThis.setTimeout` is already the fake-timer impl here (vi.useFakeTimers above).
+      // Wrap it to record the requested delay, then delegate to the SAME fake timer so the
+      // fake clock still drives the callback — no real-timer leakage.
+      const fakeSetTimeout = globalThis.setTimeout;
+      const setTimeoutSpy = vi
+        .spyOn(globalThis, "setTimeout")
+        .mockImplementation(((cb: (...a: unknown[]) => void, ms?: number, ...rest: unknown[]) => {
+          if (typeof ms === "number") scheduledBusyDelays.push(ms);
+          return (fakeSetTimeout as (...a: unknown[]) => unknown)(cb, ms, ...rest);
+        }) as typeof setTimeout);
+
+      try {
+        // Drive enough busy cycles to climb past the cap point (busyCount 0..5 = 6 cycles).
+        for (let i = 0; i < 6; i++) {
+          await vi.advanceTimersByTimeAsync(60_000);
+        }
+      } finally {
+        setTimeoutSpy.mockRestore();
+      }
+
+      // The exponential climbed (more than one distinct delay) AND every delay is capped at 60s.
+      expect(scheduledBusyDelays.length).toBeGreaterThanOrEqual(5);
+      expect(Math.max(...scheduledBusyDelays)).toBe(60_000);
+      expect(scheduledBusyDelays.every((d) => d <= 60_000)).toBe(true);
+      // The cap was actually exercised: at least one delay sits at the 60s ceiling.
+      expect(scheduledBusyDelays).toContain(60_000);
+      // Each fired backoff re-enqueued the merge (the contention retry loop is live).
       expect(enqueueSpy).toHaveBeenCalledWith("FN-WSH");
 
       await engine.stop();

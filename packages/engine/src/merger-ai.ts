@@ -1003,6 +1003,7 @@ export interface LandRepoContext {
   taskTitle?: string;
   signal?: AbortSignal;
   allowDirtyLocalCheckoutSync?: boolean;
+  store: TaskStore;
 }
 
 /** What a single repo's land produced. No task move / mergeDetails — the caller
@@ -1028,8 +1029,11 @@ export type LandOneRepoResult =
  * repo-scoped clean room, retrying on concurrent advance. No remote push. See
  * the FNXC note above for the extraction contract.
  */
+// FNXC:Workspace 2026-06-22-09:30 (Phase C review B12): `landOneRepo` takes its store access
+// exclusively through the `ctx` callbacks (log/setStatus/audit) and pre-built agents — it never
+// touches a TaskStore directly. The former leading `store` param was dead and misleading at the
+// call sites (they looked like they forwarded a store the function ignored), so it was dropped.
 export async function landOneRepo(
-  store: TaskStore,
   repoRootDir: string,
   branch: string,
   integrationBranch: string,
@@ -1038,7 +1042,7 @@ export async function landOneRepo(
   const {
     taskId, settings, audit, log, setStatus, maxPasses,
     mergeAgent, reviewAgent, stashResolveAgent,
-    includeTaskId, trailers, taskTitle, signal,
+    includeTaskId, trailers, taskTitle, signal, store,
   } = ctx;
 
   // Pre-merge prune is rooted at THIS sub-repo (KTD1): N per-repo clean rooms for
@@ -1278,11 +1282,12 @@ export async function runAiMerge(
   // once; the task-global finalization below (empty no-op / no-commits demote /
   // finalizeMerged) is unchanged byte-for-byte — only the inline clean-room land
   // loop moved into `landOneRepo` so `landWorkspaceTask` can reuse it per sub-repo.
-  const landResult = await landOneRepo(store, projectRootDir, branch, integrationBranch, {
+  const landResult = await landOneRepo(projectRootDir, branch, integrationBranch, {
     taskId, settings, audit, log, setStatus, maxPasses,
     mergeAgent, reviewAgent, stashResolveAgent,
     includeTaskId, trailers, taskTitle, signal: options.signal,
     allowDirtyLocalCheckoutSync: options.allowDirtyLocalCheckoutSync === true,
+    store,
   });
 
   if (landResult.outcome === "empty") {
@@ -1606,11 +1611,12 @@ export async function landWorkspaceTask(
     });
 
     try {
-      const landResult = await landOneRepo(store, repoRootDir, entry.branch, integrationBranch, {
+      const landResult = await landOneRepo(repoRootDir, entry.branch, integrationBranch, {
         taskId, settings, audit, log, setStatus, maxPasses,
         mergeAgent, reviewAgent, stashResolveAgent,
         includeTaskId, trailers, taskTitle, signal: options.signal,
         allowDirtyLocalCheckoutSync: options.allowDirtyLocalCheckoutSync === true,
+        store,
       });
       if (landResult.outcome === "landed") {
         /*

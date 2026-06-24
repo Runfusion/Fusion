@@ -1,4 +1,4 @@
-import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
+import { TaskStore, COLUMNS, COLUMN_LABELS, CentralCore, buildAutoPauseClearPatch, buildManualRetryResetPatch, extractIntentSignature, findNearDuplicates, getTaskDuplicateLineage, isWorkspaceTask, reconcileDeterministicDuplicate, runDeterministicDuplicateGuard, type Settings, type Column, type ColumnId, type StepStatus, type AgentLogType, type AgentLogEntry, type IntentSignature, type NearDuplicateCandidate, type NearDuplicateMatch, type TaskDependencyMutation } from "@fusion/core";
 import { runAiMerge, landWorkspaceTask } from "@fusion/engine";
 import { createInterface } from "node:readline/promises";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
@@ -858,8 +858,9 @@ export async function runTaskMerge(id: string, projectName?: string) {
     // Phase C (user decision). U0's R7 throw is replaced here by routing; the
     // engine chokepoint + store.mergeTask/aiMergeTask keep throwing.
     const mergeTaskRecord = await store.getTask(id).catch(() => null);
-    const isWorkspaceMerge =
-      !!mergeTaskRecord?.workspaceWorktrees && Object.keys(mergeTaskRecord.workspaceWorktrees).length > 0;
+    // FNXC:Workspace 2026-06-22-09:30 (Phase C review B10): use the exported `isWorkspaceTask`
+    // (the engine/CLI canonical predicate) instead of re-inlining the workspaceWorktrees check.
+    const isWorkspaceMerge = !!mergeTaskRecord && isWorkspaceTask(mergeTaskRecord);
     if (isWorkspaceMerge) {
       const workspaceResult = await landWorkspaceTask(store, mergeTaskRecord!, projectPath, {
         onAgentText: (delta) => process.stdout.write(delta),

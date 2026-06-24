@@ -28,12 +28,18 @@ vi.mock("../merger.js", () => ({
   VerificationError: testState.VerificationError,
 }));
 
-vi.mock("../merger-ai.js", () => ({
-  runAiMerge: testState.runAiMerge,
-  landWorkspaceTask: vi.fn(),
-  WorkspacePartialLandError: class WorkspacePartialLandError extends Error {},
-  WorkspaceRepoLandBusyError: class WorkspaceRepoLandBusyError extends Error {},
-}));
+// FNXC:Workspace 2026-06-22-09:30 (Phase C review fix): the dispatch's error handler does
+// `err instanceof WorkspaceRepoLandBusyError` / `WorkspacePartialLandError` on EVERY merge error
+// (these classes are imported from ./merger-ai.js). A bare replacement mock left them undefined,
+// so `instanceof undefined` threw on every recovery path (24 pre-existing red tests). Re-export the
+// REAL error classes via importOriginal so the instanceof guards evaluate; only runAiMerge is faked.
+vi.mock("../merger-ai.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../merger-ai.js")>();
+  return {
+    ...actual,
+    runAiMerge: testState.runAiMerge,
+  };
+});
 
 vi.mock("../runtimes/in-process-runtime.js", () => ({
   InProcessRuntime: vi.fn().mockImplementation(function () {

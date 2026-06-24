@@ -20,7 +20,7 @@ Coverage (FN-5893 surfaces):
 - retry/park: a partial-land failure consumes one mergeRetry; after MAX it parks
   (shouldRetryWorkspacePartialLand boundary, fake timers).
 */
-import { afterEach, beforeEach, afterAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { execSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -426,10 +426,11 @@ describeIfGit("landWorkspaceTask — DB-failure resilience (Phase C review A1/A4
   });
 });
 
-describe("workspace partial-land retry/park decision (engine seam, fake timers)", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterAll(() => vi.useRealTimers());
-
+// FNXC:Workspace 2026-06-22-09:30 (Phase C review nit): the former generic "fake-timer backoff
+// schedule does not spin real retries" smoke test only proved Vitest's fake timers work — it never
+// drove the production retry seam. The real backoff-cap invariant is now asserted against the live
+// ProjectEngine in project-engine.test.ts ("B4/B5: busy contention re-enqueues with capped backoff").
+describe("workspace partial-land retry/park decision (engine seam)", () => {
   it("consumes a mergeRetry up to MAX, then parks (shouldRetryWorkspacePartialLand)", () => {
     // Default MAX = 3. currentRetries + 1 < MAX gates retry.
     expect(shouldRetryWorkspacePartialLand(0, {})).toMatchObject({
@@ -451,15 +452,5 @@ describe("workspace partial-land retry/park decision (engine seam, fake timers)"
     // Custom cap honored.
     expect(shouldRetryWorkspacePartialLand(3, { maxAutoMergeRetries: 5 }).shouldRetry).toBe(true);
     expect(shouldRetryWorkspacePartialLand(4, { maxAutoMergeRetries: 5 }).shouldRetry).toBe(false);
-  });
-
-  it("fake-timer backoff schedule does not spin real retries", () => {
-    // The dispatch schedules internalEnqueueMerge via setTimeout(5000 * 2^retries).
-    // Assert a scheduled callback exists and only fires when advanced — no real wait.
-    const fired: number[] = [];
-    setTimeout(() => fired.push(1), 5000);
-    expect(fired).toHaveLength(0);
-    vi.advanceTimersByTime(5000);
-    expect(fired).toHaveLength(1);
   });
 });

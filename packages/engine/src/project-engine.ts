@@ -2534,6 +2534,23 @@ export class ProjectEngine {
           retries on busy-errors before either makes a real land attempt, then parking a never-failed
           task. Detect via `instanceof` now that both are exported classes (B7).
           */
+          /*
+          FNXC:Workspace 2026-06-22-09:30 (Phase C review B7b — manual-merge busy must NOT burn mergeRetries):
+          A manual merge (hasManualResolver) that hits sub-repo land contention is the SAME transient
+          lease contention as the auto path, NOT a real land failure. Without this branch it falls
+          through to the generic handler below, which increments the persisted `mergeRetries` quota —
+          so a user mashing the merge button during contention could exhaust retries before any real
+          land attempt. Reject the resolver so the busy error surfaces to the user (they can retry),
+          WITHOUT consuming a mergeRetry. No re-enqueue: manual merges are user-driven, not engine-timed.
+          */
+          if (err instanceof WorkspaceRepoLandBusyError && hasManualResolver) {
+            await store
+              .logEntry(taskId, `Workspace sub-repo land busy (contention): ${errorMsg}`, "WorkspaceRepoLandBusy")
+              .catch(() => undefined);
+            this.rejectMergeResolvers(taskId, err instanceof Error ? err : new Error(errorMsg));
+            continue;
+          }
+
           if (err instanceof WorkspaceRepoLandBusyError && !hasManualResolver) {
             const busyCount = this.workspaceBusyReenqueues.get(taskId) ?? 0;
             await store
@@ -2576,6 +2593,15 @@ export class ProjectEngine {
           // (B6). Detect via `instanceof` (B7). Manual merges fall through to
           // rejectMergeResolvers at the hasManualResolver early-return below.
           if (err instanceof WorkspacePartialLandError && !hasManualResolver) {
+            /*
+            FNXC:Workspace 2026-06-22-09:30 (Phase C review B8 — clear stale busy quota on real outcome):
+            Reaching a REAL partial land means the prior transient busy contention is over. The
+            `workspaceBusyReenqueues` counter is otherwise only cleared on success or busy-cap
+            exhaustion, so a few transient busy failures followed by a real partial land would leave
+            a stale count — later UNRELATED contention would then resume from it and park the task
+            early. Clear it here so each fresh contention episode gets the full busy budget.
+            */
+            this.workspaceBusyReenqueues.delete(taskId);
             const wsSettings = await store.getSettings().catch(() => null);
             const wsTask = await store.getTask(taskId).catch(() => null);
             /*
@@ -2613,7 +2639,27 @@ export class ProjectEngine {
               .logEntry(taskId, `Workspace partial land: ${errorMsg}`, "WorkspacePartialLand")
               .catch(() => undefined);
             if (decision.shouldRetry) {
-              await store.updateTask(taskId, { mergeRetries: decision.nextRetryCount, status: null }).catch(() => undefined);
+              /*
+              FNXC:Workspace 2026-06-22-09:30 (Phase C review B9 — persist retry count BEFORE arming the timer):
+              The retry-count write must succeed before we schedule the retry. A swallowed
+              `.catch(() => undefined)` here armed the timer even when the `mergeRetries` increment
+              never landed — so the next attempt re-read the OLD `mergeRetries` and could loop without
+              consuming budget, defeating the fail-closed DB-outage guard above. FAIL CLOSED: if the
+              write throws, park as failed (best-effort) and do NOT schedule a retry storm against a
+              non-responsive DB; the cooldown sweep re-evaluates once the DB recovers.
+              */
+              try {
+                await store.updateTask(taskId, { mergeRetries: decision.nextRetryCount, status: null });
+              } catch (persistErr: unknown) {
+                const pmsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+                runtimeLog.error(
+                  `Auto-merge: ${taskId} workspace partial land retry NOT scheduled — mergeRetries could not be persisted (DB outage?), failing closed instead of a retry storm: ${pmsg}`,
+                );
+                await store
+                  .updateTask(taskId, { status: "failed", error: errorMsg })
+                  .catch(() => undefined);
+                continue;
+              }
               // Capped exponential backoff (B5): cap at 60s so a tuned maxAutoMergeRetries doesn't
               // push the delay toward ~85 minutes at the ceiling.
               const delayMs = Math.min(5000 * Math.pow(2, wsRetries), 60_000);
