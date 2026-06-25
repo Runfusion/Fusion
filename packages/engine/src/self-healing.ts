@@ -3651,6 +3651,27 @@ export class SelfHealingManager {
       await this.reconcileTaskWorktreeMetadata({ includeTaskIds: new Set([taskId]) });
       const allTasks = await this.store.listTasks({ slim: true, includeArchived: true });
       const taskById = new Map(allTasks.map((t) => [t.id, t]));
+      const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
+      const filteredScopeByTaskId = new Map<string, string[]>();
+      const getFilteredFileScope = async (scopeTaskId: string): Promise<string[]> => {
+        const cached = filteredScopeByTaskId.get(scopeTaskId);
+        if (cached) return cached;
+        const scope = await this.store.parseFileScopeFromPrompt(scopeTaskId);
+        const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
+        filteredScopeByTaskId.set(scopeTaskId, filteredScope);
+        return filteredScope;
+      };
+      const hasActiveFileScopeOverlapBlocker = async (dependent: Task, blockerId: string | null | undefined): Promise<boolean> => {
+        if (!blockerId) return false;
+        const blocker = taskById.get(blockerId);
+        if (!blocker || blocker.paused || blocker.userPaused) return false;
+        if (blocker.column !== "in-progress" && !(blocker.column === "in-review" && !blocker.paused)) return false;
+        const dependentScope = await getFilteredFileScope(dependent.id);
+        if (dependentScope.length === 0 || isCoordinationOnlyTask(dependent, dependentScope)) return false;
+        const blockerScope = await getFilteredFileScope(blocker.id);
+        if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
+        return pathsOverlap(dependentScope, blockerScope);
+      };
       const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
       const inProgressTasks = await this.store.listTasks({ column: "in-progress", slim: true });
       const inReviewTasks = (await this.store.listTasks({ column: "in-review", slim: true })).filter((t) => !t.paused);
@@ -3666,11 +3687,7 @@ export class SelfHealingManager {
             return dep && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
           });
           const overlapBlockedBy = dependent.overlapBlockedBy === taskId ? null : (dependent.overlapBlockedBy ?? null);
-          const overlapBlockerTask = overlapBlockedBy ? taskById.get(overlapBlockedBy) : undefined;
-          const hasActiveOverlapBlocker = Boolean(
-            overlapBlockerTask
-            && (overlapBlockerTask.column === "in-progress" || (overlapBlockerTask.column === "in-review" && !overlapBlockerTask.paused)),
-          );
+          const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(dependent, overlapBlockedBy);
 
           if (todoTaskIds.has(dependent.id)) {
             if (unresolvedDeps.length > 0) {
@@ -4748,6 +4765,28 @@ export class SelfHealingManager {
 
       const allTasks = await this.store.listTasks({ includeArchived: true });
       const taskById = new Map(allTasks.map((task) => [task.id, task]));
+      const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
+      const filteredScopeByTaskId = new Map<string, string[]>();
+      const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
+        const cached = filteredScopeByTaskId.get(taskId);
+        if (cached) return cached;
+        const scope = await this.store.parseFileScopeFromPrompt(taskId);
+        const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
+        filteredScopeByTaskId.set(taskId, filteredScope);
+        return filteredScope;
+      };
+      const hasActiveFileScopeOverlapBlocker = async (task: Task, blockerId: string | null | undefined): Promise<boolean> => {
+        if (!blockerId) return false;
+        const blocker = taskById.get(blockerId);
+        if (!blocker || blocker.paused || blocker.userPaused) return false;
+        if (blocker.column !== "in-progress" && !(blocker.column === "in-review" && !blocker.paused)) return false;
+
+        const taskScope = await getFilteredFileScope(task.id);
+        if (taskScope.length === 0 || isCoordinationOnlyTask(task, taskScope)) return false;
+        const blockerScope = await getFilteredFileScope(blocker.id);
+        if (blockerScope.length === 0 || isCoordinationOnlyTask(blocker, blockerScope)) return false;
+        return pathsOverlap(taskScope, blockerScope);
+      };
 
       let recovered = 0;
       const todoTaskIds = new Set(todoTasks.map((task) => task.id));
@@ -4759,11 +4798,9 @@ export class SelfHealingManager {
 
       for (const [taskId, lastLoggedBlockerId] of this.preservedQueuedOverlapLogged) {
         const memoTask = taskById.get(taskId);
-        const memoOverlapBlocker = memoTask?.overlapBlockedBy ? taskById.get(memoTask.overlapBlockedBy) : undefined;
-        const memoHasActiveOverlapBlocker = Boolean(
-          memoOverlapBlocker
-          && (memoOverlapBlocker.column === "in-progress" || (memoOverlapBlocker.column === "in-review" && !memoOverlapBlocker.paused)),
-        );
+        const memoHasActiveOverlapBlocker = memoTask
+          ? await hasActiveFileScopeOverlapBlocker(memoTask, memoTask.overlapBlockedBy)
+          : false;
         if (
           !candidates.has(taskId)
           || memoTask?.column !== "todo"
@@ -4784,11 +4821,7 @@ export class SelfHealingManager {
           // treated as resolved here by design.
           return dep && !dep.deletedAt && dep.column !== "done" && dep.column !== "in-review" && dep.column !== "archived";
         });
-        const overlapBlocker = task.overlapBlockedBy ? taskById.get(task.overlapBlockedBy) : undefined;
-        const hasActiveOverlapBlocker = Boolean(
-          overlapBlocker
-          && (overlapBlocker.column === "in-progress" || (overlapBlocker.column === "in-review" && !overlapBlocker.paused)),
-        );
+        const hasActiveOverlapBlocker = await hasActiveFileScopeOverlapBlocker(task, task.overlapBlockedBy);
 
         if (blockedTaskIds.has(task.id)) {
           if (!blockerId) continue;

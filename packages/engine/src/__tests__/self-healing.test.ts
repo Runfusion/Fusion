@@ -7184,7 +7184,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
     return { id, column: "todo", paused: false, blockedBy: null, dependencies: [], mergeRetries: 0, ...overrides };
   }
 
-  function makeStore(tasks: Record<string, unknown>[]) {
+  function makeStore(tasks: Record<string, unknown>[], scopes: Record<string, string[]> = {}) {
     const store = createMockStore({
       getSettings: vi.fn().mockResolvedValue({
         autoUnpauseEnabled: false,
@@ -7192,6 +7192,7 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
         globalPause: false,
         enginePaused: false,
       } as unknown as Settings),
+      parseFileScopeFromPrompt: vi.fn(async (taskId: string) => scopes[taskId] ?? ["packages/engine/src/scheduler.ts"]),
     });
     (store.listTasks as ReturnType<typeof vi.fn>).mockImplementation(async (options?: { column?: string }) => {
       if (options?.column === "todo") return tasks.filter((task) => task.column === "todo");
@@ -7391,6 +7392,31 @@ describe("FN-4538 overlapBlockedBy self-healing", () => {
     expect(store.updateTask).not.toHaveBeenCalledWith("FN-TARGET", expect.objectContaining({ status: null }));
     manager.stop();
   });
+  it("FN-783: clearStaleBlockedBy clears queued status when overlap blocker no longer shares effective write scope", async () => {
+    const overlapBlocker = makeTask("FN-ACTIVE", { column: "in-progress" });
+    const target = makeTask("FN-TARGET", {
+      column: "todo",
+      status: "queued",
+      blockedBy: undefined,
+      overlapBlockedBy: "FN-ACTIVE",
+      dependencies: [],
+    });
+    const store = makeStore([target, overlapBlocker], {
+      "FN-ACTIVE": ["project.yml", "Tests/AtlasNotesMobileUITests/**"],
+      "FN-TARGET": ["packages/core/**", "packages/engine/**"],
+    });
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    await manager.clearStaleBlockedBy();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-TARGET", { blockedBy: null, overlapBlockedBy: null, status: null });
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-TARGET",
+      "Auto-recovered: preserved queued status — still blocked by file scope overlap with FN-ACTIVE",
+    );
+    manager.stop();
+  });
+
 });
 
 describe("stale triage processing eviction before recovery", () => {

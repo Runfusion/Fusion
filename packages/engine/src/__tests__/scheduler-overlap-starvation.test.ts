@@ -360,4 +360,99 @@ describe("scheduler overlap starvation regression (FN-057)", () => {
     );
   });
 
+  it("does not preserve FN-779/FN-756 poisoned cross-repository blocker after write-scope sanitization", async () => {
+    const tasks = [
+      makeTask({ id: "FN-756", column: "in-progress", priority: "normal", title: "iPad mobile XCUITest work" }),
+      makeTask({
+        id: "FN-779",
+        column: "todo",
+        status: "queued",
+        priority: "high",
+        overlapBlockedBy: "FN-756",
+        title: "Fusion engine heartbeat suppression",
+      }),
+    ];
+    const store = createStore(tasks, {
+      "FN-756": ["project.yml", "AtlasNotes.xcodeproj/**", "Tests/AtlasNotesMobileUITests/**", "Packages/MobileApp/**"],
+      "FN-779": ["packages/core/**", "packages/engine/**", "packages/dashboard/**", "packages/cli/**"],
+    });
+
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-779", { overlapBlockedBy: null });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-779", "in-progress", expect.anything());
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      "FN-779",
+      expect.objectContaining({ status: "queued", overlapBlockedBy: "FN-756" }),
+    );
+  });
+
+  it("keeps true Atlas hot-file-family overlaps blocked", async () => {
+    const tasks = [
+      makeTask({ id: "FN-756", column: "in-progress", priority: "normal" }),
+      makeTask({ id: "FN-800", column: "todo", priority: "high" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-756": ["project.yml", "AtlasNotes.xcodeproj/**", "Tests/AtlasNotesMobileUITests/**", "Packages/MobileApp/**"],
+      "FN-800": ["Tests/AtlasNotesMobileUITests/**", "Packages/MobileApp/**"],
+    });
+
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-800", {
+      status: "queued",
+      blockedBy: null,
+      overlapBlockedBy: "FN-756",
+    });
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-800", "in-progress", expect.anything());
+  });
+
+  it("reroutes a stale overlap blocker to another current active lease", async () => {
+    const tasks = [
+      makeTask({ id: "FN-OLD", column: "done", priority: "normal" }),
+      makeTask({ id: "FN-NEW", column: "in-progress", priority: "normal" }),
+      makeTask({ id: "FN-900", column: "todo", status: "queued", priority: "high", overlapBlockedBy: "FN-OLD" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-OLD": ["packages/core/src/store.ts"],
+      "FN-NEW": ["packages/engine/src/scheduler.ts"],
+      "FN-900": ["packages/engine/src/scheduler.ts"],
+    });
+
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-900", {
+      status: "queued",
+      blockedBy: null,
+      overlapBlockedBy: "FN-NEW",
+    });
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-900",
+      "queued — blocked by active file-scope lease FN-NEW (column=in-progress)",
+    );
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-900", "in-progress", expect.anything());
+  });
+
+  it("clears an absent overlap blocker only after confirming no current overlap remains", async () => {
+    const tasks = [
+      makeTask({ id: "FN-901", column: "todo", status: "queued", priority: "normal", overlapBlockedBy: "FN-MISSING" }),
+    ];
+    const store = createStore(tasks, {
+      "FN-901": ["packages/engine/src/scheduler.ts"],
+    });
+
+    const scheduler = new Scheduler(store);
+    (scheduler as any).running = true;
+    await scheduler.schedule();
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-901", { overlapBlockedBy: null });
+    expect(store.moveTask).toHaveBeenCalledWith("FN-901", "in-progress", expect.anything());
+  });
+
 });
