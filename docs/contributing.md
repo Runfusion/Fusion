@@ -40,6 +40,19 @@ pnpm build      # default build (excludes desktop/mobile)
 pnpm build:all  # full recursive build including desktop/mobile
 ```
 
+### Git LFS (demo reel GIFs)
+
+The demo reel GIFs in `demo/assets/*.gif` are stored via [Git LFS](https://git-lfs.com) so the binaries live outside the packfile and re-shot captures stop bloating `.git` (see `.gitattributes`).
+
+Install Git LFS **before** cloning or pulling, otherwise these files arrive as small text pointer stubs instead of real GIFs:
+
+```bash
+# macOS: brew install git-lfs   (or your platform's package manager)
+git lfs install        # one-time, per machine
+```
+
+If you already cloned without LFS, run `git lfs install` then `git lfs pull` to hydrate the GIFs. New GIFs added under `demo/assets/` are routed to LFS automatically by the `.gitattributes` filter — no extra steps.
+
 ## Workspace Package Overview
 
 | Package | Purpose |
