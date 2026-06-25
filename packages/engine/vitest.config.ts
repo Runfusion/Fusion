@@ -19,6 +19,8 @@ export default defineConfig({
       resolve(__dirname, "../core/src/__test-utils__/vitest-setup.ts"),
     ],
     globalSetup: [resolve(__dirname, "../core/src/__test-utils__/vitest-teardown.ts")],
+    // Keep the broad engine lanes on worker threads; engine-core overrides this
+    // below because only the curated merge gate has hit the Node/macOS abort.
     pool: "threads",
     maxWorkers,
     minWorkers: 1,
@@ -52,6 +54,11 @@ export default defineConfig({
         extends: true,
         test: {
           name: "engine-core",
+          /*
+          FNXC:EngineTests 2026-06-25-11:11:
+          The curated engine-core merge gate hits a Node 24.15.0/macOS libuv kqueue SIGABRT when Vitest thread workers close unmanaged file descriptors. Scope fork workers to this gate so the broad default engine suite keeps its explicit worker-thread behavior.
+          */
+          pool: "forks",
           // The curated merge-gate suite (see docs/testing.md "Merge gate").
           // Membership is an explicit allow-list, NOT a glob: tests earn their
           // way in with evidence of value, and a flaky gate test is evicted by
