@@ -1096,7 +1096,13 @@ describe("Scheduler after restart", () => {
 
     expect(store.moveTask).toHaveBeenCalledWith("FN-070", "in-progress", expect.objectContaining({ allocateWorktree: expect.any(Function) }));
     expect(store.updateTask).toHaveBeenCalledWith("FN-070", expect.objectContaining({ status: null, blockedBy: null }));
-    expect(onSchedule).toHaveBeenCalledWith(todoTask);
+    expect(onSchedule).toHaveBeenCalledWith(expect.objectContaining({
+      id: todoTask.id,
+      column: "in-progress",
+      effectiveNodeSource: "local",
+      dispatchStormCount: 1,
+      blockedBy: undefined,
+    }));
   });
 
   it("schedule() respects dependency ordering — blocked tasks stay in todo", async () => {

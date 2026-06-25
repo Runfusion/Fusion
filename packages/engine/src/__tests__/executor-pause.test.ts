@@ -14,6 +14,7 @@ import { generateWorktreeName, slugify } from "../worktree-names.js";
 import type { Task, TaskDetail } from "@fusion/core";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { StepSessionExecutor } from "../step-session-executor.js";
+import { activeSessionRegistry } from "../active-session-registry.js";
 import { executorLog } from "../logger.js";
 import { withRateLimitRetry } from "../rate-limit-retry.js";
 import { runVerificationCommand as mockedRunVerificationCommand } from "../verification-utils.js";
@@ -1041,11 +1042,13 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
         steer: vi.fn(),
       };
 
-      // Simulate an active session
-      (executor as any).activeSessions.set("FN-001", {
+      const worktreePath = "/tmp/test/.worktrees/fn-001";
+      (executor as any).addActiveWorktree("FN-001", worktreePath);
+      (executor as any).setActiveSession("FN-001", {
         session: mockSession,
         seenSteeringIds: new Set(),
-      });
+      }, worktreePath);
+      expect(activeSessionRegistry.isPathActive(worktreePath)).toBe(true);
 
       const task = {
         id: "FN-001",
@@ -1070,6 +1073,7 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
       // Verify session was disposed and removed from map
       expect(disposeSpy).toHaveBeenCalled();
       expect((executor as any).activeSessions.has("FN-001")).toBe(false);
+      expect(activeSessionRegistry.isPathActive(worktreePath)).toBe(false);
       // Verify task was added to pausedAborted set
       expect((executor as any).pausedAborted.has("FN-001")).toBe(true);
     });
@@ -1085,8 +1089,10 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
         cleanup: vi.fn().mockResolvedValue(undefined),
       };
 
-      // Simulate an active step executor
-      (executor as any).activeStepExecutors.set("FN-002", mockStepExecutor as any);
+      const worktreePath = "/tmp/test/.worktrees/fn-002";
+      (executor as any).addActiveWorktree("FN-002", worktreePath);
+      (executor as any).setActiveStepExecutor("FN-002", mockStepExecutor as any, worktreePath);
+      expect(activeSessionRegistry.isPathActive(worktreePath)).toBe(true);
 
       const task = {
         id: "FN-002",
@@ -1112,6 +1118,42 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
       expect(mockTerminateAllSessions).toHaveBeenCalled();
       // Verify removed from map
       expect((executor as any).activeStepExecutors.has("FN-002")).toBe(false);
+      expect(activeSessionRegistry.isPathActive(worktreePath)).toBe(false);
+    });
+
+    it("terminates active workflow-step session when task is moved away", async () => {
+      const store = createMockStore();
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const worktreePath = "/tmp/test/.worktrees/fn-006";
+      const abort = vi.fn().mockResolvedValue(undefined);
+      const dispose = vi.fn();
+
+      (executor as any).addActiveWorktree("FN-006", worktreePath);
+      (executor as any).setActiveWorkflowStepSession("FN-006", { abort, dispose } as any, worktreePath);
+      expect(activeSessionRegistry.isPathActive(worktreePath)).toBe(true);
+
+      const task = {
+        id: "FN-006",
+        title: "Test Task",
+        description: "Test",
+        column: "todo" as const,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      store._trigger("task:moved", { task, from: "in-progress", to: "triage" });
+
+      await waitForAsyncExpectation(() => {
+        expect(abort).toHaveBeenCalled();
+      });
+
+      expect(dispose).toHaveBeenCalled();
+      expect((executor as any).activeWorkflowStepSessions.has("FN-006")).toBe(false);
+      expect(activeSessionRegistry.isPathActive(worktreePath)).toBe(false);
     });
 
     it("handles graceful no-op when no active session exists", async () => {

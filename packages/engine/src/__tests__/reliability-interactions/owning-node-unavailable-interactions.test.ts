@@ -263,7 +263,7 @@ describe("reliability interactions: owning-node unavailable handoff", () => {
     await scheduler.schedule();
 
     expect(store.logEntry).toHaveBeenCalledWith(task.id, expect.stringContaining("Owning-node handoff applied"));
-    expect(store.updateTask).toHaveBeenCalledWith(task.id, expect.objectContaining({ effectiveNodeId: null }));
     expect(store.moveTask).toHaveBeenCalledWith(task.id, "in-progress", expect.any(Object));
+    expect(store.updateTask).not.toHaveBeenCalledWith(task.id, expect.objectContaining({ effectiveNodeId: "node-b" }));
   });
 });

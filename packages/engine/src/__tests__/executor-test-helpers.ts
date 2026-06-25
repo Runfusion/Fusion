@@ -289,7 +289,7 @@ import { hydrateWorktreeDb } from "../worktree-db-hydrate.js";
 import { classifyTaskWorktree, describeRegisteredWorktrees, isUsableTaskWorktree } from "../worktree-pool.js";
 import { classifyStaleLock, tryRemoveStaleLock } from "../worktree-stale-lock.js";
 import { parseStaleRegistrationPath, recoverStaleRegistration } from "../worktree-stale-registration.js";
-import { executingTaskLock } from "../active-session-registry.js";
+import { activeSessionRegistry, executingTaskLock } from "../active-session-registry.js";
 
 export const mockedCreateFnAgent = vi.mocked(createFnAgent);
 export const mockedSessionManager = vi.mocked(SessionManager);
@@ -438,9 +438,7 @@ export function resetExecutorMocks() {
   mockTerminateAllSessions.mockResolvedValue(undefined);
   mockCleanup.mockResolvedValue(undefined);
   mockSteerActiveSessions.mockResolvedValue(undefined);
-  // FN-4811 follow-up: the executingTaskLock is process-wide module state, so it must
-  // be cleared between tests or earlier tests' claims will block later tests' execute()
-  // calls ("expected at least 2 createFnAgent calls but got 0" / "expected not called
-  // but called 3 times" symptoms in executor-pause / executor-prompt tests).
+  // FNXC:ExecutorTests 2026-06-24-21:09: Executor liveness guards are process-wide module state, so test reset must clear both executing locks and active-session registry paths; otherwise earlier tests' claims can block later execute() calls with duplicate-execution or foreign active-session path symptoms.
   executingTaskLock._clearForTest();
+  activeSessionRegistry.clear();
 }
