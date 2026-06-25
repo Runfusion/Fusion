@@ -4,3 +4,15 @@
 # live outside the packfile and future regenerations stop bloating .git.
 # Scoped to demo/assets/*.gif (track-forward only — existing history was left intact).
 demo/assets/*.gif filter=lfs diff=lfs merge=lfs -text
+
+# FNXC:RepoAssets 2026-06-25-09:40:
+# Documentation/marketing PNG screenshots are pure doc assets (referenced only from
+# markdown, rendered by GitHub) so they are safe to route through LFS alongside the GIFs.
+# IMPORTANT: scope to doc/demo dirs ONLY. App-runtime/build images must stay as real
+# blobs because a build env without LFS hydration would otherwise embed a pointer stub:
+#   - packages/dashboard/app/public/icons/*.png  (PWA manifest icons, served)
+#   - packages/desktop/src/icons/*.png            (Electron app/tray icons, packaged)
+#   - packages/dashboard/app/public/fonts/SymbolsNerdFontMono-Regular.ttf (@font-face src)
+demo/**/*.png filter=lfs diff=lfs merge=lfs -text
+docs/screenshots/**/*.png filter=lfs diff=lfs merge=lfs -text
+screenshots/**/*.png filter=lfs diff=lfs merge=lfs -text
