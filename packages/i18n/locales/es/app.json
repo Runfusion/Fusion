@@ -1932,6 +1932,7 @@
     "loadingMessage": "Cargando panel de Fusion",
     "loadingProgress": "Progreso de carga del panel",
     "updatingMessage": "Actualizando panel de Fusion",
+    "title": "Panel del proyecto",
     "updatingVersion": "Actualizando a una nueva versión de frontend..."
   },
   "dbBanner": {
@@ -8535,10 +8536,12 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}",
+    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
     "done": "Done",
     "inProgress": "In Progress",
     "label": "Workflow",
+    "merging": "Fusionando",
+    "mergingTitle": "{{count}} tarea{{plural}} fusionándose",
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",

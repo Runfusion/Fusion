@@ -1932,6 +1932,7 @@
     "loadingMessage": "Chargement du tableau de bord Fusion",
     "loadingProgress": "Progression du chargement du tableau de bord",
     "updatingMessage": "Mise à jour du tableau de bord Fusion",
+    "title": "Tableau de bord du projet",
     "updatingVersion": "Mise à jour vers une nouvelle version de l'interface..."
   },
   "dbBanner": {
@@ -8535,10 +8536,12 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}",
+    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
     "done": "Done",
     "inProgress": "In Progress",
     "label": "Workflow",
+    "merging": "Fusion",
+    "mergingTitle": "{{count}} tâche{{plural}} en fusion",
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",

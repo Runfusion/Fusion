@@ -1932,6 +1932,7 @@
     "loadingMessage": "加载 Fusion 仪表板",
     "loadingProgress": "仪表板加载进度",
     "updatingMessage": "更新 Fusion 仪表板",
+    "title": "项目仪表板",
     "updatingVersion": "更新到新的前端版本..."
   },
   "dbBanner": {
@@ -8535,10 +8536,12 @@
     "widgetDefault": ""
   },
   "workflowSwitcher": {
-    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}",
+    "countsAria": "{{todoLabel}}: {{todo}}, {{inProgressLabel}}: {{inProgress}}, {{doneLabel}}: {{done}}{{mergingSuffix}}",
     "done": "Done",
     "inProgress": "In Progress",
     "label": "Workflow",
+    "merging": "合并中",
+    "mergingTitle": "{{count}} 个合并中任务{{plural}}",
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
