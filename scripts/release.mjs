@@ -28,7 +28,9 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 
 import { evaluateReleaseAuthorization } from "./lib/release-authorization-gate.mjs";
-import { extractVersionNotes } from "./lib/extract-version-notes.mjs";
+import { extractVersionNotes, replaceVersionSection } from "./lib/extract-version-notes.mjs";
+import { parseChangesetFile } from "./lib/changeset-schema.mjs";
+import { distillDeterministic } from "./lib/distill-release-notes.mjs";
 import { shouldPromptForVersion } from "./lib/release-prompt-gate.mjs";
 
 const args = new Set(process.argv.slice(2));
@@ -564,6 +566,17 @@ if (!(await confirm(`Proceed with release v${chosenVersion} (build, publish, tag
 
 // --- Version bump ---------------------------------------------------------
 
+/*
+ * FNXC:Changelog 2026-06-24-16:15:
+ * Capture and parse structured changeset entries BEFORE `changeset version`
+ * runs — versioning consumes and deletes the .changeset/*.md files.
+ * The captured entries feed the post-version distillation step.
+ */
+const capturedEntries = changesetSummaries.map(({ file }) => {
+  const raw = readFileSync(join(".changeset", file), "utf8");
+  return parseChangesetFile(raw).parsed;
+}).filter(Boolean);
+
 info("Applying changesets (version bump + CHANGELOG)…");
 run("pnpm release:version");
 
@@ -587,6 +600,23 @@ ok(`New version: ${version}`);
 info("Syncing root CHANGELOG.md from packages/cli/CHANGELOG.md…");
 syncRootChangelog();
 ok("Root CHANGELOG.md updated.");
+
+/*
+ * FNXC:Changelog 2026-06-24-16:30:
+ * Distill end-user-facing release notes from the captured changeset entries
+ * and replace the raw per-package aggregate in the root CHANGELOG for this
+ * version. Historical version sections are preserved untouched.
+ */
+info("Distilling release notes…");
+const { notes: distilledNotes, source: distillSource } = distillDeterministic(capturedEntries, version);
+const changelogBeforeDistill = readFileSync("CHANGELOG.md", "utf8");
+const changelogAfterDistill = replaceVersionSection(changelogBeforeDistill, version, distilledNotes);
+if (changelogAfterDistill !== changelogBeforeDistill) {
+  writeFileSync("CHANGELOG.md", changelogAfterDistill);
+  ok(`Root CHANGELOG.md updated with distilled notes (source: ${distillSource}).`);
+} else {
+  warn(`Could not locate version section in CHANGELOG.md for distillation; leaving raw aggregate.`);
+}
 
 // --- Build ----------------------------------------------------------------
 

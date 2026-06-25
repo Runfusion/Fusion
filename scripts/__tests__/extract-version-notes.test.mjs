@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extractVersionNotes } from "../lib/extract-version-notes.mjs";
+import { extractVersionNotes, replaceVersionSection } from "../lib/extract-version-notes.mjs";
 
 const changelog = `# Fusion changelog
 
@@ -68,4 +68,41 @@ test("does not bleed into adjacent version sections", () => {
   const notes = extractVersionNotes(changelog, "1.1.0");
   assert.doesNotMatch(notes, /Initial release\./);
   assert.doesNotMatch(notes, /Added release integration\./);
+});
+
+// --- replaceVersionSection ---
+
+test("replaces version section with distilled notes", () => {
+  const result = replaceVersionSection(changelog, "1.2.0", "### New\n\n- Distilled entry.");
+  assert.match(result, /### New/);
+  assert.match(result, /Distilled entry\./);
+  // Other versions preserved.
+  assert.match(result, /Fixed parser bug\./);
+  assert.match(result, /Initial release\./);
+  // Old content removed.
+  assert.doesNotMatch(result, /Added release integration\./);
+});
+
+test("returns original content when version not found", () => {
+  const result = replaceVersionSection(changelog, "9.9.9", "### New\n\n- Entry.");
+  assert.equal(result, changelog);
+});
+
+test("preserves version heading", () => {
+  const result = replaceVersionSection(changelog, "1.1.0", "### Fixed\n\n- New fix.");
+  assert.match(result, /## 1\.1\.0/);
+  assert.match(result, /## 1\.2\.0/);
+  assert.match(result, /## 1\.0\.0/);
+});
+
+test("replaces last version section correctly", () => {
+  const result = replaceVersionSection(changelog, "1.0.0", "### Fixed\n\n- Replaced.");
+  assert.match(result, /Replaced\./);
+  // Versions above 1.0.0 are preserved.
+  assert.match(result, /## 1\.1\.0/);
+});
+
+test("handles null content gracefully", () => {
+  const result = replaceVersionSection(null, "1.0.0", "Body.");
+  assert.equal(result, null);
 });
