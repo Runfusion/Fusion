@@ -175,7 +175,6 @@ const qualityAppComponentTests = [
   "ResearchView",
   "SecretsView",
   "SecretsView.mobile",
-  "SettingsModal",
   "SettingsModal.testMode",
   "SettingsModal.worktrunk",
   "StashConflictModal",
@@ -209,7 +208,11 @@ const qualityAppComponentTests = [
   "WorktrunkInstallApprovalDetails",
 ] as const;
 
-const isolatedQualityAppComponentTests = ["App", "ChatView", "SettingsModal"] as const;
+// FNXC:DashboardTests 2026-06-25-10:10: SettingsModal stays isolated in its own
+// project, but the 231-test suite is now 4 sibling files sharing
+// SettingsModal.test-harness so the settings project parallelizes them across
+// workers instead of one ~61s sequential file (FN-5048 feedback-loop velocity).
+const isolatedQualityAppComponentTests = ["App", "ChatView"] as const;
 const batchedQualityAppComponentTests = qualityAppComponentTests.filter(
   (testName) => !isolatedQualityAppComponentTests.includes(testName),
 );
@@ -236,7 +239,12 @@ const qualityAppComponentBatchBTests = buildComponentQualityInclude(batchedQuali
 
 const qualityAppAppOnlyTests = ["app/components/__tests__/App.test.tsx"];
 const qualityAppChatOnlyTests = ["app/components/__tests__/ChatView.test.tsx"];
-const qualityAppSettingsOnlyTests = ["app/components/__tests__/SettingsModal.test.tsx"];
+const qualityAppSettingsOnlyTests = [
+  "app/components/__tests__/SettingsModal.general.test.tsx",
+  "app/components/__tests__/SettingsModal.models-auth.test.tsx",
+  "app/components/__tests__/SettingsModal.scheduling-merge.test.tsx",
+  "app/components/__tests__/SettingsModal.remote-notifications.test.tsx",
+];
 /*
 FNXC:DashboardTestQuarantine 2026-06-14-17:01:
 FN-6454 applied the quarantine deletion ratchet to every dashboard test quarantined on 2026-06-14.

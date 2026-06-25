@@ -76,10 +76,26 @@ FN-6444 rescues this route/API suite from the curated skip-list; awaited store c
 describe("Insights routes", () => {
   let rootA: string;
   const disposableRouters: Array<{ __disposeSweeper?: () => void }> = [];
-  let rootB: string;
   let storeA: TaskStore;
-  let storeB: TaskStore;
   let app: ReturnType<typeof createServer>;
+
+  /*
+  FNXC:DashboardTests 2026-06-25-09:55:
+  Only the projectId-scoped resolution test touches the project-b store. Lazily
+  init storeB on first use instead of in beforeEach so the other 23 tests skip a
+  second full TaskStore.init()/migrate per test (FN-5048: avoid redundant per-test
+  setup, prefer narrow seams).
+  */
+  let rootB: string | null = null;
+  let storeB: TaskStore | null = null;
+  async function getStoreB(): Promise<TaskStore> {
+    if (!storeB) {
+      rootB = mkdtempSync(join(tmpdir(), "kb-insights-routes-b-"));
+      storeB = new TaskStoreClass(rootB, join(rootB, ".fusion-global-settings"), { inMemoryDb: true });
+      await storeB.init();
+    }
+    return storeB;
+  }
 
   const readWorkingMemorySpy = vi.spyOn(coreModule, "readWorkingMemory");
   const readInsightsMemorySpy = vi.spyOn(coreModule, "readInsightsMemory");
@@ -101,16 +117,15 @@ describe("Insights routes", () => {
     vi.clearAllMocks();
 
     rootA = mkdtempSync(join(tmpdir(), "kb-insights-routes-a-"));
-    rootB = mkdtempSync(join(tmpdir(), "kb-insights-routes-b-"));
+    rootB = null;
+    storeB = null;
 
     storeA = new TaskStoreClass(rootA, join(rootA, ".fusion-global-settings"), { inMemoryDb: true });
-    storeB = new TaskStoreClass(rootB, join(rootB, ".fusion-global-settings"), { inMemoryDb: true });
     await storeA.init();
-    await storeB.init();
 
     resolverMocks.getOrCreateProjectStore.mockImplementation(async (projectId: string) => {
       if (projectId === "project-b") {
-        return storeB;
+        return getStoreB();
       }
       return storeA;
     });
@@ -146,13 +161,17 @@ describe("Insights routes", () => {
     } catch {
       // no-op
     }
-    try {
-      await storeB.close();
-    } catch {
-      // no-op
+    if (storeB) {
+      try {
+        await storeB.close();
+      } catch {
+        // no-op
+      }
     }
     await rm(rootA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
-    await rm(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    if (rootB) {
+      await rm(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    }
   });
 
   it("GET /api/insights/runs and /api/insights/runs/:id are not shadowed by /:id", async () => {
@@ -309,11 +328,12 @@ describe("Insights routes", () => {
   });
 
   it("GET /api/insights and /api/insights/runs resolve projectId-scoped stores", async () => {
+    const storeBInstance = await getStoreB();
     const runA = storeA.getInsightStore().createRun("", { trigger: "manual" });
-    const runB = storeB.getInsightStore().createRun("", { trigger: "manual" });
+    const runB = storeBInstance.getInsightStore().createRun("", { trigger: "manual" });
 
     storeA.getInsightStore().createInsight("", { title: "A", category: "quality", provenance: { trigger: "manual" }, status: "generated" });
-    storeB.getInsightStore().createInsight("", { title: "B", category: "quality", provenance: { trigger: "manual" }, status: "generated" });
+    storeBInstance.getInsightStore().createInsight("", { title: "B", category: "quality", provenance: { trigger: "manual" }, status: "generated" });
 
     const defaultInsights = await request(app, "GET", "/api/insights");
     expect((defaultInsights.body as { insights: Array<{ title: string }> }).insights.map((i) => i.title)).toEqual(["A"]);

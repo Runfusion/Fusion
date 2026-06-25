@@ -26,23 +26,37 @@ FN-6444 rescues this route/API suite from the curated skip-list, so cleanup must
 */
 describe("Evals routes", () => {
   let rootA: string;
-  let rootB: string;
   let storeA: TaskStore;
-  let storeB: TaskStore;
   let app: ReturnType<typeof createServer>;
+
+  /*
+  FNXC:DashboardTests 2026-06-25-10:05:
+  Only the project-scoping tests touch the project-b store. Lazily init storeB on
+  first use instead of in beforeEach so the other tests skip a redundant second
+  TaskStore.init()/migrate per test (FN-5048: avoid redundant per-test setup).
+  */
+  let rootB: string | null = null;
+  let storeB: TaskStore | null = null;
+  async function getStoreB(): Promise<TaskStore> {
+    if (!storeB) {
+      rootB = mkdtempSync(join(tmpdir(), "kb-evals-routes-b-"));
+      storeB = new TaskStoreClass(rootB, join(rootB, ".fusion-global-settings"), { inMemoryDb: true });
+      await storeB.init();
+    }
+    return storeB;
+  }
 
   beforeEach(async () => {
     vi.clearAllMocks();
     rootA = mkdtempSync(join(tmpdir(), "kb-evals-routes-a-"));
-    rootB = mkdtempSync(join(tmpdir(), "kb-evals-routes-b-"));
+    rootB = null;
+    storeB = null;
 
     storeA = new TaskStoreClass(rootA, join(rootA, ".fusion-global-settings"), { inMemoryDb: true });
-    storeB = new TaskStoreClass(rootB, join(rootB, ".fusion-global-settings"), { inMemoryDb: true });
     await storeA.init();
-    await storeB.init();
 
     resolverMocks.getOrCreateProjectStore.mockImplementation(async (projectId: string) => (
-      projectId === "project-b" ? storeB : storeA
+      projectId === "project-b" ? getStoreB() : storeA
     ));
 
     app = createServer(storeA);
@@ -50,9 +64,13 @@ describe("Evals routes", () => {
 
   afterEach(async () => {
     try { await storeA.close(); } catch { /* cleanup */ }
-    try { await storeB.close(); } catch { /* cleanup */ }
+    if (storeB) {
+      try { await storeB.close(); } catch { /* cleanup */ }
+    }
     await rm(rootA, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
-    await rm(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    if (rootB) {
+      await rm(rootB, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    }
   });
 
   function seedEvalResult(store: TaskStore, options?: { runId?: string; title?: string; score?: number; rationale?: string }) {
@@ -133,8 +151,9 @@ describe("Evals routes", () => {
   });
 
   it("GET /api/evals list endpoint honors project scoping", async () => {
+    const storeBInstance = await getStoreB();
     const runA = storeA.getEvalStore().createRun({ projectId: "", scope: "scheduled", trigger: "manual" });
-    const runB = storeB.getEvalStore().createRun({ projectId: "", scope: "scheduled", trigger: "manual" });
+    const runB = storeBInstance.getEvalStore().createRun({ projectId: "", scope: "scheduled", trigger: "manual" });
 
     storeA.getEvalStore().createTaskResult(runA.id, {
       taskId: "FN-1",
@@ -146,7 +165,7 @@ describe("Evals routes", () => {
       evidence: [],
       followUps: [],
     });
-    storeB.getEvalStore().createTaskResult(runB.id, {
+    storeBInstance.getEvalStore().createTaskResult(runB.id, {
       taskId: "FN-2",
       taskSnapshot: { taskId: "FN-2", title: "Project B task", column: "done" },
       status: "scored",
@@ -176,8 +195,9 @@ describe("Evals routes", () => {
   });
 
   it("GET /api/evals/runs includes selector metadata and supports project scoping", async () => {
+    const storeBInstance = await getStoreB();
     const runA = storeA.getEvalStore().createRun({ projectId: "", scope: "scheduled", trigger: "manual" });
-    const runB = storeB.getEvalStore().createRun({ projectId: "", scope: "scheduled", trigger: "manual" });
+    const runB = storeBInstance.getEvalStore().createRun({ projectId: "", scope: "scheduled", trigger: "manual" });
 
     storeA.getEvalStore().createTaskResult(runA.id, {
       taskId: "FN-1",
@@ -189,7 +209,7 @@ describe("Evals routes", () => {
       evidence: [],
       followUps: [],
     });
-    storeB.getEvalStore().createTaskResult(runB.id, {
+    storeBInstance.getEvalStore().createTaskResult(runB.id, {
       taskId: "FN-2",
       taskSnapshot: { taskId: "FN-2", title: "B", column: "done" },
       status: "scored",
