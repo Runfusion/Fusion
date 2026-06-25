@@ -233,10 +233,14 @@ describe("runAiMerge dependency install", () => {
     abortStore.appendAgentLog.mockImplementation(async (_id: string, message: string) => {
       if (String(message).includes("Syncing dependencies")) controller.abort();
     });
+    /*
+    FNXC:AIMerge 2026-06-25-04:07:
+    Merge-layer aborts must surface as the canonical MergeAbortedError consumed by project-engine.ts abort detection; landOneRepo intentionally re-normalizes dependency-sync inner AbortError via throwIfAborted.
+    */
     await expect(runAiMerge(abortStore, abortDir, "FN-1", { manual: true, signal: controller.signal }, {
       mergeAgent: realMergeAgent(),
       reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
-    })).rejects.toMatchObject({ name: "AbortError" });
+    })).rejects.toMatchObject({ name: "MergeAbortedError" });
   });
 
   it("runs dependency install again after a concurrent integration advance rebuild", async () => {
