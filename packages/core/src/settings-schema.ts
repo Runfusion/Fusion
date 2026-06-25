@@ -375,6 +375,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // project opts into a single default budget.
   buildTimeoutMs: 300_000,
   verificationCommandTimeoutMs: undefined,
+  // FNXC:Verification 2026-06-25-00:00: default-on file-scoped verification —
+  // run only the branch diff's own test files so merge verification stays
+  // proportional to the change; the thin merge gate carries cross-cutting
+  // coverage. Falls back to package/explicit command when no tests resolve.
+  scopeVerificationToChangedFiles: true,
   ephemeralAgentsEnabled: true,
   agentProvisioning: {},
   sandboxProvisioning: {},

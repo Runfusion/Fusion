@@ -53,7 +53,7 @@ export {
 
 import { existsSync, readFileSync, readdirSync, writeFileSync, unlinkSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 import {
   computeLockfileHash,
   getConfiguredWorktreeInitCommand,
@@ -1102,6 +1102,161 @@ export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string,
 }
 
 /**
+ * Matches a Vitest/Jest-style test or spec file by extension.
+ * @internal
+ */
+const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
+
+/**
+ * Derive a verification command that runs ONLY the test files implicated by the
+ * branch diff, so merge verification scales with the change instead of the
+ * repository.
+ *
+ * For each file changed between `baseBranch` and `branch`:
+ *  - A changed test/spec file (`*.test.ts` / `*.spec.tsx` / …) is run directly.
+ *  - A changed source file resolves to its co-located test, if one exists on
+ *    disk: `<dir>/__tests__/<name>.test.{ts,tsx}` or the sibling
+ *    `<dir>/<name>.test.{ts,tsx}`.
+ * Resolved test files are grouped by their owning pnpm workspace package and run
+ * via `pnpm --filter <pkg> exec vitest run <relPaths…> --silent=passed-only
+ * --reporter=dot`. Multiple packages are joined with ` && `.
+ *
+ * Returns `null` when scoping can't be established (no workspace, no git
+ * context, or — importantly — when NO test files resolve from the diff). The
+ * caller treats `null` as "fall back to the broader command".
+ *
+ * FNXC:Verification 2026-06-25-00:00:
+ * Merge/executor verification must complete in seconds-to-<2min by running only
+ * the diff's own tests, not a whole-package or full-suite command. This relies
+ * on the thin, trusted merge gate (`pnpm test:gate`) to carry cross-cutting
+ * coverage; per-branch verification only needs to prove the branch's own tests
+ * still pass. When a diff touches source with no co-located test (or only
+ * non-source files), file-scoping yields nothing and we deliberately return
+ * null so the caller falls back to the existing package-scoped/explicit command
+ * rather than verifying nothing. Package names come from workspace package.json
+ * files and test paths come from `git diff`, so every shell argument is quoted
+ * via `quoteArg`.
+ *
+ * @internal Exported for testing only.
+ */
+export function deriveFileScopedPnpmTestCommand(
+  rootDir: string,
+  baseBranch: string,
+  branch: string,
+): string | null {
+  // 1. Read and parse pnpm-workspace.yaml + resolve package roots.
+  let workspaceContent: string;
+  try {
+    workspaceContent = readFileSync(join(rootDir, "pnpm-workspace.yaml"), "utf-8");
+  } catch {
+    return null;
+  }
+  const globs = parsePnpmWorkspaceGlobs(workspaceContent);
+  if (globs.length === 0) return null;
+  const packageRoots = resolveWorkspacePackageRoots(rootDir, globs);
+  if (packageRoots.length === 0) return null;
+
+  // 2. Get the changed files between base and the branch tip.
+  let changedFilesOutput: string;
+  try {
+    changedFilesOutput = execSync(
+      `git diff --name-only ${quoteArg(baseBranch)}...${quoteArg(branch)}`,
+      { cwd: rootDir, stdio: "pipe", encoding: "utf-8" },
+    ).toString();
+  } catch {
+    return null;
+  }
+  const changedFiles = changedFilesOutput
+    .split("\n")
+    .map((f) => f.trim())
+    .filter(Boolean);
+  if (changedFiles.length === 0) return null;
+
+  // 3. Resolve a set of repo-relative test files from the diff.
+  const resolvedTests = new Set<string>();
+  for (const file of changedFiles) {
+    if (TEST_FILE_RE.test(file)) {
+      // A changed test/spec file is run directly.
+      resolvedTests.add(file);
+      continue;
+    }
+    // A changed source file maps to a co-located test if one exists on disk.
+    const dir = dirname(file);
+    const stem = basename(file).replace(/\.(ts|tsx|js|jsx)$/, "");
+    if (!stem) continue;
+    const candidates = [
+      `${dir}/__tests__/${stem}.test.ts`,
+      `${dir}/__tests__/${stem}.test.tsx`,
+      `${dir}/${stem}.test.ts`,
+      `${dir}/${stem}.test.tsx`,
+    ];
+    for (const candidate of candidates) {
+      // dirname("foo.ts") === "." → normalize the leading "./".
+      const normalized = candidate.startsWith("./") ? candidate.slice(2) : candidate;
+      if (existsSync(join(rootDir, normalized))) {
+        resolvedTests.add(normalized);
+      }
+    }
+  }
+  if (resolvedTests.size === 0) return null;
+
+  // 4. Group resolved test files by their owning workspace package.
+  const byPackage = new Map<string, { name: string; tests: Set<string> }>();
+  for (const testFile of resolvedTests) {
+    // Find the longest package root that is a prefix of this test file.
+    let bestRoot: string | null = null;
+    let bestLen = -1;
+    for (const pkgRoot of packageRoots) {
+      const prefix = pkgRoot.endsWith("/") ? pkgRoot : `${pkgRoot}/`;
+      if (testFile === pkgRoot || testFile.startsWith(prefix)) {
+        if (pkgRoot.length > bestLen) {
+          bestLen = pkgRoot.length;
+          bestRoot = pkgRoot;
+        }
+      }
+    }
+    if (bestRoot === null) continue;
+    const relPath = testFile.slice(bestRoot.length + 1);
+    if (!relPath) continue;
+    // Defensively skip any path quoting can't safely contain.
+    if (relPath.includes("\n") || relPath.includes("\0")) continue;
+    let entry = byPackage.get(bestRoot);
+    if (!entry) {
+      // Read the package name from package.json (fall back to the root path).
+      let name = bestRoot;
+      try {
+        const parsed = JSON.parse(
+          readFileSync(join(rootDir, bestRoot, "package.json"), "utf-8"),
+        ) as { name?: string };
+        if (parsed.name) name = parsed.name;
+      } catch {
+        // keep the relative root path as the filter
+      }
+      entry = { name, tests: new Set<string>() };
+      byPackage.set(bestRoot, entry);
+    }
+    entry.tests.add(relPath);
+  }
+  if (byPackage.size === 0) return null;
+
+  // 5. Compose one scoped vitest invocation per package, joined with ` && `.
+  const segments: string[] = [];
+  for (const root of Array.from(byPackage.keys()).sort()) {
+    const entry = byPackage.get(root);
+    if (!entry) continue;
+    const quotedPaths = Array.from(entry.tests)
+      .sort()
+      .map((p) => quoteArg(p));
+    if (quotedPaths.length === 0) continue;
+    segments.push(
+      `pnpm --filter ${quoteArg(entry.name)} exec vitest run ${quotedPaths.join(" ")} --silent=passed-only --reporter=dot`,
+    );
+  }
+  if (segments.length === 0) return null;
+  return segments.join(" && ");
+}
+
+/**
  * Infer a default test command based on project files.
  * Returns the command and whether it was explicitly configured or inferred.
  *
@@ -1115,6 +1270,17 @@ export function deriveScopedPnpmTestCommand(rootDir: string, baseBranch: string,
  * provided, the command is automatically scoped to the packages touched by the
  * branch diff. testSource will be "inferred-scoped" in that case.
  *
+ * FNXC:Verification 2026-06-25-00:00:
+ * When `scopeToChangedFiles` is true (project setting
+ * `scopeVerificationToChangedFiles`, default true) AND git context is present,
+ * verification is first narrowed to the diff's own test FILES via
+ * `deriveFileScopedPnpmTestCommand` — for BOTH explicit and inferred commands,
+ * so even a configured whole-package `testCommand` gets file-scoped. This keeps
+ * per-branch verification proportional to the change; cross-cutting coverage is
+ * owned by the thin merge gate. If file-scoping yields nothing (no resolvable
+ * tests) or the setting is off, the original behavior is preserved exactly:
+ * explicit command as-is, else package-scoped inference, else unscoped fallback.
+ *
  * Returns null if no test command can be inferred.
  */
 export function inferDefaultTestCommand(
@@ -1123,7 +1289,24 @@ export function inferDefaultTestCommand(
   explicitBuildCommand?: string,
   baseBranch?: string,
   branch?: string,
+  scopeToChangedFiles?: boolean,
 ): InferredTestCommand | null {
+  // File-scoped verification: try first for BOTH explicit and inferred cases.
+  // Only narrows when the setting is on, git context exists, and at least one
+  // test file resolves from the diff; otherwise falls through to existing logic.
+  if (scopeToChangedFiles && baseBranch?.trim() && branch?.trim()) {
+    try {
+      const fileScoped = deriveFileScopedPnpmTestCommand(rootDir, baseBranch.trim(), branch.trim());
+      if (fileScoped) {
+        mergerLog.log(`Scoped verification to changed test files: ${fileScoped}`);
+        const fileScopedBuildSource = explicitBuildCommand?.trim() ? "explicit" : undefined;
+        return { command: fileScoped, testSource: "inferred-scoped", buildSource: fileScopedBuildSource };
+      }
+    } catch {
+      // Fall through to existing explicit/inferred behavior.
+    }
+  }
+
   // If explicit test command is set, use it (no inference needed)
   if (explicitTestCommand?.trim()) {
     return {
@@ -9579,6 +9762,9 @@ export async function aiMergeTask(
     explicitBuildCommand,
     mergeTarget.branch,
     branch,
+    // FNXC:Verification 2026-06-25-00:00: default-on, file-scope verification to
+    // the branch diff so merge verification stays proportional to the change.
+    settings.scopeVerificationToChangedFiles !== false,
   );
   const effectiveTestCommand = inferredTest?.command || explicitTestCommand;
   const effectiveTestSource = inferredTest?.testSource;

@@ -4040,6 +4040,19 @@ export interface ProjectSettings {
    * When set, this millisecond value overrides both fn_run_verification scope defaults (package 300s, workspace 900s); when unset, the legacy per-scope defaults still apply.
    */
   verificationCommandTimeoutMs?: number;
+  /**
+   * FNXC:Verification 2026-06-25-00:00:
+   * When true (default), merge/executor verification is narrowed to ONLY the
+   * test files implicated by the task's branch diff — changed `*.test`/`*.spec`
+   * files plus the co-located tests of changed source files — run via
+   * `pnpm --filter <pkg> exec vitest run <files> --silent=passed-only
+   * --reporter=dot`. This keeps verification proportional to the change
+   * (seconds-to-<2min) and relies on the thin merge gate for cross-cutting
+   * coverage. Applies to BOTH explicit and inferred test commands. When no test
+   * files resolve from the diff, verification falls back to the existing
+   * package-scoped/explicit command. Set false to always run the broader
+   * package/full command. Default: true. */
+  scopeVerificationToChangedFiles?: boolean;
   /** When enabled, AI-generated task specifications require manual approval
    *  before the task can move from triage to todo. Tasks with approved specs
    *  remain in triage with status "awaiting-approval" until a user approves
