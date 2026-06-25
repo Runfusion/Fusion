@@ -19,7 +19,6 @@
   "packages/core/src/mission-store.ts": 4382,
   "packages/core/src/store.ts": 16939,
   "packages/core/src/types.ts": 7269,
-  "packages/dashboard/app/App.tsx": 2729,
   "packages/dashboard/app/api/legacy.ts": 10742,
   "packages/dashboard/app/components/AgentDetailView.tsx": 5400,
   "packages/dashboard/app/components/AgentsView.tsx": 2109,
