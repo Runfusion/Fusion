@@ -4,7 +4,7 @@ import type { ComponentProps } from "react";
 import { readFileSync } from "node:fs";
 import { NewTaskModal } from "../NewTaskModal";
 import type { Task, Column } from "@fusion/core";
-import { checkDuplicateTasks, type BoardWorkflowsPayload } from "../../api";
+import { apiFetchGitHubIssues, apiFetchGitHubPulls, checkDuplicateTasks, fetchGitRemotes, type BoardWorkflowsPayload } from "../../api";
 import { writeBoardWorkflowsCache } from "../../utils/boardWorkflowsCache";
 import { writeLastSelectedWorkflowId } from "../../utils/lastSelectedWorkflow";
 
@@ -37,6 +37,9 @@ vi.mock("../ProviderIcon", () => ({
 vi.mock("../../api", () => ({
   uploadAttachment: vi.fn().mockResolvedValue({}),
   checkDuplicateTasks: vi.fn().mockResolvedValue([]),
+  fetchGitRemotes: vi.fn().mockResolvedValue([]),
+  apiFetchGitHubIssues: vi.fn().mockResolvedValue([]),
+  apiFetchGitHubPulls: vi.fn().mockResolvedValue([]),
   fetchModels: vi.fn().mockResolvedValue({ models: [
     { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 },
     { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false, contextWindow: 128000 },
@@ -115,6 +118,9 @@ describe("NewTaskModal", () => {
     mockConfirm.mockReset();
     mockConfirm.mockResolvedValue(true);
     vi.mocked(checkDuplicateTasks).mockResolvedValue([]);
+    vi.mocked(fetchGitRemotes).mockResolvedValue([]);
+    vi.mocked(apiFetchGitHubIssues).mockResolvedValue([]);
+    vi.mocked(apiFetchGitHubPulls).mockResolvedValue([]);
     mockUseMobileKeyboard.mockReturnValue({
       keyboardOpen: false,
       keyboardOverlap: 0,
@@ -186,6 +192,197 @@ describe("NewTaskModal", () => {
     });
     expect(screen.getByRole("button", { name: "Create Task" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  describe("GitHub reference picker", () => {
+    const originRemote = { name: "origin", owner: "runfusion", repo: "fusion", url: "https://github.com/runfusion/fusion.git" };
+    const upstreamRemote = { name: "upstream", owner: "octo", repo: "project", url: "https://github.com/octo/project.git" };
+    const issue = {
+      number: 12,
+      title: "Crash on startup",
+      body: null,
+      html_url: "https://github.com/runfusion/fusion/issues/12",
+      labels: [],
+    };
+    const pull = {
+      number: 34,
+      title: "Fix login",
+      body: null,
+      html_url: "https://github.com/runfusion/fusion/pull/34",
+      headBranch: "fix-login",
+      baseBranch: "main",
+    };
+
+    async function renderPickerWithData({ remotes = [originRemote], issues = [issue], pulls = [pull], viewport = "mobile" as "mobile" | "desktop" } = {}) {
+      mockViewportMode = viewport;
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce(remotes);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce(issues);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce(pulls);
+      renderNewTaskModal({ projectId: "project-1" });
+      await waitFor(() => expect(fetchGitRemotes).toHaveBeenCalledWith("project-1"));
+      if (remotes.length === 1 || remotes.some((remote) => remote.name === "origin")) {
+        await waitFor(() => expect(apiFetchGitHubIssues).toHaveBeenCalled());
+      }
+    }
+
+    it("loads origin remote references and seeds the issue prompt", async () => {
+      await renderPickerWithData();
+
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-select")).toBeInTheDocument());
+      expect(screen.getByText("Issue #12 — Crash on startup")).toBeInTheDocument();
+      expect(screen.getByText("PR #34 — Fix login")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId("new-task-github-reference-select"), { target: { value: "issue:12" } });
+
+      await waitFor(() => {
+        const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
+        expect(textarea.value).toContain("Fetch and read this GitHub issue");
+        expect(textarea.value).toContain("Source: https://github.com/runfusion/fusion/issues/12");
+      });
+      expect(mockConfirm).not.toHaveBeenCalled();
+    });
+
+    it("seeds the PR prompt with review-comment resolution instructions", async () => {
+      await renderPickerWithData();
+
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-select")).toBeInTheDocument());
+      fireEvent.change(screen.getByTestId("new-task-github-reference-select"), { target: { value: "pull:34" } });
+
+      await waitFor(() => {
+        const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
+        expect(textarea.value).toContain("Fetch and read this GitHub pull request");
+        expect(textarea.value).toContain("resolve or address all actionable PR review comments");
+        expect(textarea.value).toContain("PR: https://github.com/runfusion/fusion/pull/34");
+      });
+    });
+
+    it("protects typed descriptions before replacing them with a GitHub prompt", async () => {
+      await renderPickerWithData();
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-select")).toBeInTheDocument());
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Keep my draft" } });
+
+      mockConfirm.mockResolvedValueOnce(false);
+      fireEvent.change(screen.getByTestId("new-task-github-reference-select"), { target: { value: "issue:12" } });
+
+      await waitFor(() => expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Replace description?" })));
+      expect(screen.getByPlaceholderText("What needs to be done?")).toHaveValue("Keep my draft");
+      expect(screen.getByTestId("new-task-github-reference-select")).toHaveValue("");
+
+      mockConfirm.mockResolvedValueOnce(true);
+      fireEvent.change(screen.getByTestId("new-task-github-reference-select"), { target: { value: "issue:12" } });
+
+      await waitFor(() => {
+        const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
+        expect(textarea.value).toContain("Source: https://github.com/runfusion/fusion/issues/12");
+      });
+    });
+
+    it.each([
+      { label: "issues only", issues: [issue], pulls: [], expected: "Issue #12 — Crash on startup", absent: "PR #34 — Fix login" },
+      { label: "PRs only", issues: [], pulls: [pull], expected: "PR #34 — Fix login", absent: "Issue #12 — Crash on startup" },
+    ])("renders $label references without an empty dropdown shell", async ({ issues, pulls, expected, absent }) => {
+      await renderPickerWithData({ issues, pulls });
+
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-select")).toBeInTheDocument());
+      expect(screen.getByText(expected)).toBeInTheDocument();
+      expect(screen.queryByText(absent)).toBeNull();
+    });
+
+    it("keeps duplicate issue and PR numbers distinct", async () => {
+      await renderPickerWithData({
+        issues: [{ ...issue, number: 7, html_url: "https://github.com/runfusion/fusion/issues/7" }],
+        pulls: [{ ...pull, number: 7, html_url: "https://github.com/runfusion/fusion/pull/7" }],
+      });
+
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-select")).toBeInTheDocument());
+      expect(screen.getByText("Issue #7 — Crash on startup")).toBeInTheDocument();
+      expect(screen.getByText("PR #7 — Fix login")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByTestId("new-task-github-reference-select"), { target: { value: "pull:7" } });
+      await waitFor(() => {
+        const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
+        expect(textarea.value).toContain("PR: https://github.com/runfusion/fusion/pull/7");
+      });
+
+      fireEvent.change(screen.getByTestId("new-task-github-reference-select"), { target: { value: "issue:7" } });
+      await waitFor(() => {
+        const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
+        expect(textarea.value).toContain("Source: https://github.com/runfusion/fusion/issues/7");
+      });
+    });
+
+    it("shows unavailable states without an empty reference dropdown shell", async () => {
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+      const noRemoteRender = renderNewTaskModal({ projectId: "project-1" });
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-status")).toHaveTextContent("No GitHub remotes were detected"));
+      expect(screen.queryByTestId("new-task-github-reference-select")).toBeNull();
+      noRemoteRender.unmount();
+
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([upstreamRemote, { ...originRemote, name: "fork" }]);
+      const { unmount } = renderNewTaskModal({ projectId: "project-1" });
+      await waitFor(() => expect(screen.getByText("Choose a GitHub remote before selecting an issue or pull request.")).toBeInTheDocument());
+      expect(screen.getByTestId("new-task-github-remote-select")).toBeInTheDocument();
+      expect(screen.queryByTestId("new-task-github-reference-select")).toBeNull();
+      unmount();
+
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([originRemote]);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([]);
+      const emptyRender = renderNewTaskModal({ projectId: "project-1" });
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-status")).toHaveTextContent("No open issues or pull requests"));
+      expect(screen.queryByTestId("new-task-github-reference-select")).toBeNull();
+      emptyRender.unmount();
+
+      vi.mocked(fetchGitRemotes).mockResolvedValueOnce([originRemote]);
+      vi.mocked(apiFetchGitHubIssues).mockRejectedValueOnce(new Error("GitHub auth required"));
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([]);
+      const authErrorRender = renderNewTaskModal({ projectId: "project-1" });
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-status")).toHaveTextContent("GitHub auth required"));
+      expect(screen.queryByTestId("new-task-github-reference-select")).toBeNull();
+      authErrorRender.unmount();
+
+      vi.mocked(fetchGitRemotes).mockRejectedValueOnce(new Error("Remote network failure"));
+      renderNewTaskModal({ projectId: "project-1" });
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-status")).toHaveTextContent("Remote network failure"));
+      expect(screen.queryByTestId("new-task-github-reference-select")).toBeNull();
+    });
+
+    it.each(["desktop", "mobile"] as const)("renders the picker in %s New Task mode", async (viewport) => {
+      await renderPickerWithData({ viewport });
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-picker")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-select")).toBeEnabled());
+    });
+
+    it("ignores stale remote responses after the project changes", async () => {
+      let resolveOldRemotes: (remotes: Array<typeof originRemote>) => void = () => {};
+      vi.mocked(fetchGitRemotes)
+        .mockReturnValueOnce(new Promise((resolve) => { resolveOldRemotes = resolve; }))
+        .mockResolvedValueOnce([originRemote]);
+      vi.mocked(apiFetchGitHubIssues).mockResolvedValueOnce([issue]);
+      vi.mocked(apiFetchGitHubPulls).mockResolvedValueOnce([]);
+
+      const { props, rerender } = renderNewTaskModal({ projectId: "old-project" });
+      rerender(<NewTaskModal {...props} projectId="new-project" />);
+      resolveOldRemotes([{ ...upstreamRemote, name: "stale" }]);
+
+      await waitFor(() => expect(fetchGitRemotes).toHaveBeenCalledWith("new-project"));
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-remote")).toHaveTextContent("origin: runfusion/fusion"));
+      expect(screen.queryByText(/stale:/)).toBeNull();
+    });
+
+    it("renders the picker in the mobile keyboard-open layout", async () => {
+      mockUseMobileKeyboard.mockReturnValue({
+        keyboardOpen: true,
+        keyboardOverlap: 250,
+        viewportHeight: 400,
+        viewportOffsetTop: 50,
+      });
+      await renderPickerWithData({ viewport: "mobile" });
+
+      await waitFor(() => expect(screen.getByTestId("new-task-github-reference-picker")).toBeInTheDocument());
+      expect(screen.getByTestId("new-task-github-reference-select")).toBeEnabled();
+      expect(document.querySelector(".new-task-modal")?.getAttribute("style")).toContain("--keyboard-overlap: 250px");
+    });
   });
 
   it("exposes New Task dialog quick-add affordance parity when AI handoff callbacks are supplied", () => {

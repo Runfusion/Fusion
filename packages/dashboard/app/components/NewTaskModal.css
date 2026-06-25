@@ -147,6 +147,59 @@ Edge + corner resize handles. touch-action:none keeps the drag from being hijack
   margin-bottom: 0;
 }
 
+/*
+FNXC:NewTaskGitHubReference 2026-06-24-00:00:
+The GitHub reference picker is a compact prompt-seeding helper inside the primary create flow, not a competing create action. Keep it token-sized, vertically stacked, and allowed to shrink so desktop floating windows and mobile sheets avoid horizontal overflow while unavailable states render as text instead of empty selects.
+*/
+.new-task-github-reference-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.new-task-github-reference-picker__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  min-width: 0;
+}
+
+.new-task-github-reference-picker__header label,
+.new-task-github-reference-picker__label {
+  margin-bottom: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.new-task-github-reference-picker__remote {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-task-github-reference-picker__remote-select,
+.new-task-github-reference-picker__select {
+  width: 100%;
+  min-width: 0;
+}
+
+.new-task-github-reference-picker__status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
 .task-form-primary-section .description-with-refine {
   padding: var(--space-sm);
   border: 1px solid var(--border-subtle);

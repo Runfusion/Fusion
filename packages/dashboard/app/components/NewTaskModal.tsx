@@ -1,11 +1,22 @@
 import "./NewTaskModal.css";
-import { useState, useCallback, useEffect, useRef, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useState, useCallback, useEffect, useRef, type CSSProperties, type ChangeEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_TASK_PRIORITY, type Task, type TaskPriority } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { checkDuplicateTasks, uploadAttachment, type CreateTaskInput, type DuplicateMatch } from "../api";
+import {
+  apiFetchGitHubIssues,
+  apiFetchGitHubPulls,
+  checkDuplicateTasks,
+  fetchGitRemotes,
+  uploadAttachment,
+  type CreateTaskInput,
+  type DuplicateMatch,
+  type GitHubIssue,
+  type GitHubPull,
+  type GitRemote,
+} from "../api";
 import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
@@ -131,6 +142,259 @@ function writeFloatPosition(position: FloatPosition, size: FloatSize): FloatPosi
 
 type FloatResizeDirection = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 const NEW_TASK_RESIZE_DIRECTIONS: FloatResizeDirection[] = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+const NEW_TASK_GITHUB_REFERENCE_LIMIT = 30;
+
+type GitHubReferenceOption =
+  | { type: "issue"; number: number; title: string; url: string }
+  | { type: "pull"; number: number; title: string; url: string };
+
+function buildGitHubReferenceValue(option: GitHubReferenceOption): string {
+  return `${option.type}:${option.number}`;
+}
+
+function buildGitHubIssuePrompt(issue: GitHubReferenceOption): string {
+  return `Fetch and read this GitHub issue, then implement the requested fix or feature.\n\nSource: ${issue.url}\n\nUse the issue details, reproduction notes, linked discussion, and acceptance criteria to produce a complete implementation with tests and documentation updates as needed.`;
+}
+
+function buildGitHubPullPrompt(pull: GitHubReferenceOption): string {
+  return `Fetch and read this GitHub pull request, inspect the conversation, review comments, check failures, and changed files as needed, then resolve or address all actionable PR review comments.\n\nPR: ${pull.url}\n\nKeep the PR intent intact while making the requested fixes, and verify the result with targeted tests.`;
+}
+
+function defaultGitHubRemote(remotes: GitRemote[]): GitRemote | undefined {
+  if (remotes.length === 1) return remotes[0];
+  return remotes.find((remote) => remote.name === "origin");
+}
+
+function gitHubReferenceLabel(option: GitHubReferenceOption): string {
+  return `${option.type === "issue" ? "Issue" : "PR"} #${option.number} — ${option.title}`;
+}
+
+interface NewTaskGitHubReferencePickerProps {
+  isOpen: boolean;
+  projectId?: string;
+  disabled?: boolean;
+  onSelectReference: (option: GitHubReferenceOption) => Promise<boolean> | boolean;
+}
+
+/*
+FNXC:NewTaskGitHubReference 2026-06-24-00:00:
+The New Task dialog gets exactly one compact GitHub reference picker that seeds prompts from the current GitHub remote. It reuses existing remote/list helpers and never imports, closes, comments on, or otherwise mutates GitHub issues/PRs; selecting an item only writes task description text for the executor to fetch/read the selected URL.
+*/
+function NewTaskGitHubReferencePicker({ isOpen, projectId, disabled = false, onSelectReference }: NewTaskGitHubReferencePickerProps) {
+  const { t } = useTranslation("app");
+  const [remotes, setRemotes] = useState<GitRemote[]>([]);
+  const [loadingRemotes, setLoadingRemotes] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [selectedRemoteName, setSelectedRemoteName] = useState("");
+  const [issues, setIssues] = useState<GitHubIssue[]>([]);
+  const [pulls, setPulls] = useState<GitHubPull[]>([]);
+  const [loadingReferences, setLoadingReferences] = useState(false);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+  const [selectedValue, setSelectedValue] = useState("");
+  const remoteRequestIdRef = useRef(0);
+  const referenceRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!isOpen) {
+      remoteRequestIdRef.current += 1;
+      referenceRequestIdRef.current += 1;
+      setRemotes([]);
+      setLoadingRemotes(false);
+      setRemoteError(null);
+      setSelectedRemoteName("");
+      setIssues([]);
+      setPulls([]);
+      setLoadingReferences(false);
+      setReferenceError(null);
+      setSelectedValue("");
+      return;
+    }
+
+    const requestId = remoteRequestIdRef.current + 1;
+    remoteRequestIdRef.current = requestId;
+    setRemotes([]);
+    setLoadingRemotes(true);
+    setRemoteError(null);
+    setSelectedRemoteName("");
+    setIssues([]);
+    setPulls([]);
+    setReferenceError(null);
+    setSelectedValue("");
+
+    let cancelled = false;
+    fetchGitRemotes(projectId)
+      .then((fetchedRemotes) => {
+        if (cancelled || remoteRequestIdRef.current !== requestId) return;
+        setRemotes(fetchedRemotes);
+        const defaultRemote = defaultGitHubRemote(fetchedRemotes);
+        setSelectedRemoteName(defaultRemote?.name ?? "");
+      })
+      .catch((error) => {
+        if (cancelled || remoteRequestIdRef.current !== requestId) return;
+        setRemoteError(getErrorMessage(error) || t("newTaskModal.githubRemoteError", "Unable to load GitHub remotes."));
+      })
+      .finally(() => {
+        if (!cancelled && remoteRequestIdRef.current === requestId) {
+          setLoadingRemotes(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, projectId, t]);
+
+  const selectedRemote = remotes.find((remote) => remote.name === selectedRemoteName);
+
+  useEffect(() => {
+    if (!isOpen || !selectedRemote) {
+      referenceRequestIdRef.current += 1;
+      setIssues([]);
+      setPulls([]);
+      setLoadingReferences(false);
+      setReferenceError(null);
+      setSelectedValue("");
+      return;
+    }
+
+    const requestId = referenceRequestIdRef.current + 1;
+    referenceRequestIdRef.current = requestId;
+    setIssues([]);
+    setPulls([]);
+    setLoadingReferences(true);
+    setReferenceError(null);
+    setSelectedValue("");
+
+    let cancelled = false;
+    Promise.all([
+      apiFetchGitHubIssues(selectedRemote.owner, selectedRemote.repo, NEW_TASK_GITHUB_REFERENCE_LIMIT),
+      apiFetchGitHubPulls(selectedRemote.owner, selectedRemote.repo, NEW_TASK_GITHUB_REFERENCE_LIMIT),
+    ])
+      .then(([fetchedIssues, fetchedPulls]) => {
+        if (cancelled || referenceRequestIdRef.current !== requestId) return;
+        setIssues(fetchedIssues);
+        setPulls(fetchedPulls);
+      })
+      .catch((error) => {
+        if (cancelled || referenceRequestIdRef.current !== requestId) return;
+        setReferenceError(getErrorMessage(error) || t("newTaskModal.githubReferenceError", "Unable to load GitHub issues and pull requests."));
+      })
+      .finally(() => {
+        if (!cancelled && referenceRequestIdRef.current === requestId) {
+          setLoadingReferences(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, selectedRemote, t]);
+
+  const issueOptions: GitHubReferenceOption[] = issues.map((issue) => ({ type: "issue", number: issue.number, title: issue.title, url: issue.html_url }));
+  const pullOptions: GitHubReferenceOption[] = pulls.map((pull) => ({ type: "pull", number: pull.number, title: pull.title, url: pull.html_url }));
+  const allOptions = [...issueOptions, ...pullOptions];
+  const multipleRemotesRequireChoice = remotes.length > 1 && !defaultGitHubRemote(remotes) && !selectedRemote;
+  const canSelectReference = allOptions.length > 0 && !referenceError;
+
+  const handleReferenceChange = async (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextValue = event.target.value;
+    const option = allOptions.find((candidate) => buildGitHubReferenceValue(candidate) === nextValue);
+    if (!option) {
+      setSelectedValue("");
+      return;
+    }
+    const accepted = await onSelectReference(option);
+    if (accepted) {
+      setSelectedValue(nextValue);
+    }
+  };
+
+  let statusText = "";
+  if (loadingRemotes) {
+    statusText = t("newTaskModal.githubLoadingRemotes", "Loading GitHub remotes…");
+  } else if (remoteError) {
+    statusText = remoteError;
+  } else if (remotes.length === 0) {
+    statusText = t("newTaskModal.githubNoRemotes", "No GitHub remotes were detected for this project.");
+  } else if (multipleRemotesRequireChoice) {
+    statusText = t("newTaskModal.githubChooseRemote", "Choose a GitHub remote before selecting an issue or pull request.");
+  } else if (loadingReferences) {
+    statusText = t("newTaskModal.githubLoadingReferences", "Loading open issues and pull requests…");
+  } else if (referenceError) {
+    statusText = referenceError;
+  } else if (selectedRemote && allOptions.length === 0) {
+    statusText = t("newTaskModal.githubNoReferences", "No open issues or pull requests were found for the selected remote.");
+  } else if (selectedRemote) {
+    statusText = t("newTaskModal.githubReferenceHelp", "Select an open issue or pull request to seed the task prompt.");
+  }
+
+  return (
+    <div className="new-task-github-reference-picker" data-testid="new-task-github-reference-picker">
+      <div className="new-task-github-reference-picker__header">
+        {canSelectReference ? (
+          <label htmlFor="new-task-github-reference-select">{t("newTaskModal.githubReferenceLabel", "GitHub issue or PR")}</label>
+        ) : (
+          <span className="new-task-github-reference-picker__label">{t("newTaskModal.githubReferenceLabel", "GitHub issue or PR")}</span>
+        )}
+        {remotes.length === 1 && (
+          <span className="new-task-github-reference-picker__remote" data-testid="new-task-github-reference-remote">
+            {remotes[0].name}: {remotes[0].owner}/{remotes[0].repo}
+          </span>
+        )}
+      </div>
+
+      {remotes.length > 1 && (
+        <select
+          className="input new-task-github-reference-picker__remote-select"
+          aria-label={t("newTaskModal.githubRemoteLabel", "GitHub remote")}
+          data-testid="new-task-github-remote-select"
+          value={selectedRemoteName}
+          onChange={(event) => setSelectedRemoteName(event.target.value)}
+          disabled={disabled || loadingRemotes}
+        >
+          <option value="">{t("newTaskModal.githubSelectRemote", "Select remote…")}</option>
+          {remotes.map((remote) => (
+            <option key={remote.name} value={remote.name}>{remote.name}: {remote.owner}/{remote.repo}</option>
+          ))}
+        </select>
+      )}
+
+      {canSelectReference ? (
+        <select
+          id="new-task-github-reference-select"
+          className="input new-task-github-reference-picker__select"
+          data-testid="new-task-github-reference-select"
+          value={selectedValue}
+          onChange={handleReferenceChange}
+          disabled={disabled || loadingReferences}
+          aria-describedby="new-task-github-reference-status"
+        >
+          <option value="">{t("newTaskModal.githubSelectReference", "Select issue or PR…")}</option>
+          {issueOptions.length > 0 && (
+            <optgroup label={t("newTaskModal.githubIssueGroup", "Issues")}>
+              {issueOptions.map((option) => (
+                <option key={buildGitHubReferenceValue(option)} value={buildGitHubReferenceValue(option)}>{gitHubReferenceLabel(option)}</option>
+              ))}
+            </optgroup>
+          )}
+          {pullOptions.length > 0 && (
+            <optgroup label={t("newTaskModal.githubPullGroup", "Pull requests")}>
+              {pullOptions.map((option) => (
+                <option key={buildGitHubReferenceValue(option)} value={buildGitHubReferenceValue(option)}>{gitHubReferenceLabel(option)}</option>
+              ))}
+            </optgroup>
+          )}
+        </select>
+      ) : null}
+
+      {statusText && (
+        <p id="new-task-github-reference-status" className="new-task-github-reference-picker__status" role="status" aria-live="polite" data-testid="new-task-github-reference-status">
+          {statusText}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, addToast, initialDescription = "", onPlanningMode, onSubtaskBreakdown }: NewTaskModalProps) {
   const { t } = useTranslation("app");
@@ -148,6 +412,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       } as React.CSSProperties)
     : {};
   const [description, setDescription] = useState("");
+  const githubGeneratedDescriptionRef = useRef("");
   const wasOpenRef = useRef(false);
 
   /*
@@ -473,6 +738,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setGithubTrackingEnabled(false);
     setGithubRepoOverride("");
     setDuplicateMatches(null);
+    githubGeneratedDescriptionRef.current = "";
   }, [pendingImages]);
 
   const handleClose = useCallback(async () => {
@@ -632,6 +898,26 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setIsSubmitting(false);
   }, []);
 
+  const handleGitHubReferenceSelect = useCallback(async (option: GitHubReferenceOption) => {
+    const nextDescription = option.type === "issue" ? buildGitHubIssuePrompt(option) : buildGitHubPullPrompt(option);
+    const currentDescription = description.trim();
+    const currentGenerated = githubGeneratedDescriptionRef.current;
+    // FNXC:NewTaskGitHubReference 2026-06-24-00:00: Protect user-authored prompt text from silent replacement; generated GitHub templates may be replaced without another confirm so issue↔PR switching stays lightweight.
+    const shouldConfirmOverwrite = currentDescription !== "" && description !== currentGenerated && description !== nextDescription;
+
+    if (shouldConfirmOverwrite) {
+      const shouldOverwrite = await confirm({
+        title: t("newTaskModal.githubOverwriteTitle", "Replace description?"),
+        message: t("newTaskModal.githubOverwriteMessage", "Selecting a GitHub issue or PR will replace the current task description. Continue?"),
+      });
+      if (!shouldOverwrite) return false;
+    }
+
+    githubGeneratedDescriptionRef.current = nextDescription;
+    setDescription(nextDescription);
+    return true;
+  }, [confirm, description, t]);
+
   // Handle keyboard shortcuts
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -647,6 +933,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   // Quick fields: promoted dependencies and agent assignment
   const quickFields = (
     <div className="new-task-quick-fields">
+      <NewTaskGitHubReferencePicker
+        isOpen={isOpen}
+        projectId={projectId}
+        disabled={isSubmitting}
+        onSelectReference={handleGitHubReferenceSelect}
+      />
+
       {/* Dependencies field */}
       <div className="form-group">
         <label>{t("newTaskModal.dependencies", "Dependencies")}</label>

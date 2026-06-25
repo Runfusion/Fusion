@@ -319,6 +319,8 @@ Rules:
 
 The dialog also exposes the board quick-add AI handoffs: **Plan** opens Planning Mode with the current description, and **Subtask** opens Subtask Breakdown with the current description when **Settings → Experimental Features → Subtask Breakdown** is enabled. The Subtask handoff is hidden by default; visible handoff buttons remain disabled until the description has content, matching the quick-add row behavior. **Execution mode** is available in the New Task dialog as well as quick entry, so users can choose Fast or standard execution before creating a task from either surface.
 
+The full **New Task** dialog includes a compact **GitHub issue or PR** picker near the description. It detects GitHub remotes for the current project, auto-selects a single remote or `origin`, and asks you to choose a remote when multiple non-`origin` remotes are available. Selecting an issue replaces the description with a prompt that tells the executor to fetch/read the issue and includes `Source: <issue-url>`; selecting a pull request creates a PR-focused prompt with `PR: <pr-url>` and explicit instructions to inspect the PR conversation, review comments, checks, and changed files, then resolve or address actionable review comments. If you already typed a description, Fusion asks before replacing it. This picker only seeds the prompt; it does not import, close, or comment on GitHub items.
+
 ## Chat View
 
 Chat view provides project-scoped conversations with agents.
