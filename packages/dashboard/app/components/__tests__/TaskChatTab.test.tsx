@@ -800,7 +800,7 @@ describe("TaskChatTab", () => {
 
     expect(toolGroup).toHaveAttribute("open");
     const invocation = screen.getByTestId("task-chat-tool-invocation");
-    const kicker = screen.getByText("Tool call → Result");
+    const kicker = screen.getByText("Tool call → result");
     expect(invocation).toHaveClass("task-chat-tool-entry", "task-chat-tool-invocation");
     expect(kicker).toHaveClass("task-chat-entry-kicker");
     expect(kicker).toBeVisible();
@@ -857,7 +857,7 @@ describe("TaskChatTab", () => {
 
     await user.click(within(summary as HTMLElement).getByText("1 tool call"));
 
-    expect(screen.getByText("Tool call → Error")).toBeVisible();
+    expect(screen.getByText("Tool call → error")).toBeVisible();
     expect(screen.getByText("Error")).toBeVisible();
     expect(screen.getByText("stderr")).toBeVisible();
   });
