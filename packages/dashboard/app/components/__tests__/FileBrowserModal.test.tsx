@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -759,222 +760,203 @@ describe("FileBrowserModal", () => {
     });
   });
 
-  describe("image file preview", () => {
-    it("renders image preview for .png files instead of editor", async () => {
+  describe("browser-native file previews", () => {
+    const renderWithEntries = (entries: typeof defaultBrowserState.entries, props: Partial<ComponentProps<typeof FileBrowserModal>> = {}) => {
       mockUseWorkspaceFileBrowser.mockReturnValue({
         ...defaultBrowserState,
-        entries: [
-          { name: "screenshot.png", type: "file" as const, size: 102400, mtime: "2024-01-01" },
-        ],
+        entries,
       });
 
-      render(
+      return render(
         <FileBrowserModal
           initialWorkspace="project"
           isOpen={true}
           onClose={mockOnClose}
+          {...props}
         />,
       );
+    };
 
-      // Select the image file
+    const selectFile = async (name: string) => {
       await act(async () => {
-        fireEvent.click(screen.getByText("screenshot.png"));
+        fireEvent.click(screen.getByText(name));
       });
+    };
 
-      // Should render an image preview
-      const imagePreview = screen.getByRole("img", { name: "screenshot.png" });
-      expect(imagePreview).toBeInTheDocument();
-      expect(imagePreview).toHaveAttribute("src", expect.stringContaining("screenshot.png"));
-
-      // Should NOT render the text editor
-      expect(screen.queryByLabelText(/Editor for screenshot.png/)).not.toBeInTheDocument();
-    });
-
-    it("renders image preview for .jpg files instead of editor", async () => {
-      mockUseWorkspaceFileBrowser.mockReturnValue({
-        ...defaultBrowserState,
-        entries: [
-          { name: "photo.jpg", type: "file" as const, size: 204800, mtime: "2024-01-01" },
-        ],
-      });
-
-      render(
-        <FileBrowserModal
-          initialWorkspace="project"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
-
-      await act(async () => {
-        fireEvent.click(screen.getByText("photo.jpg"));
-      });
-
-      const imagePreview = screen.getByRole("img", { name: "photo.jpg" });
-      expect(imagePreview).toBeInTheDocument();
-    });
-
-    it("renders image preview for .gif files instead of editor", async () => {
-      mockUseWorkspaceFileBrowser.mockReturnValue({
-        ...defaultBrowserState,
-        entries: [
-          { name: "animation.gif", type: "file" as const, size: 51200, mtime: "2024-01-01" },
-        ],
-      });
-
-      render(
-        <FileBrowserModal
-          initialWorkspace="project"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
-
-      await act(async () => {
-        fireEvent.click(screen.getByText("animation.gif"));
-      });
-
-      const imagePreview = screen.getByRole("img", { name: "animation.gif" });
-      expect(imagePreview).toBeInTheDocument();
-    });
-
-    it("renders image preview for .webp files instead of editor", async () => {
-      mockUseWorkspaceFileBrowser.mockReturnValue({
-        ...defaultBrowserState,
-        entries: [
-          { name: "image.webp", type: "file" as const, size: 76800, mtime: "2024-01-01" },
-        ],
-      });
-
-      render(
-        <FileBrowserModal
-          initialWorkspace="project"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
-
-      await act(async () => {
-        fireEvent.click(screen.getByText("image.webp"));
-      });
-
-      const imagePreview = screen.getByRole("img", { name: "image.webp" });
-      expect(imagePreview).toBeInTheDocument();
-    });
-
-    it("hides save/discard actions for image files", async () => {
-      mockUseWorkspaceFileBrowser.mockReturnValue({
-        ...defaultBrowserState,
-        entries: [
-          { name: "test.png", type: "file" as const, size: 1024, mtime: "2024-01-01" },
-        ],
-      });
-
-      // Mock editor state with changes
+    it.each([
+      {
+        name: "screenshot.png",
+        role: "img" as const,
+        selector: "img.file-browser-preview-media--image",
+        attribute: "src",
+      },
+      {
+        name: "clip.mp4",
+        role: null,
+        selector: "video.file-browser-preview-media--video",
+        attribute: "src",
+      },
+      {
+        name: "voice.mp3",
+        role: null,
+        selector: "audio.file-browser-preview-media--audio",
+        attribute: "src",
+      },
+      {
+        name: "manual.pdf",
+        role: null,
+        selector: "iframe.file-browser-preview-media--pdf",
+        attribute: "src",
+      },
+    ])("renders $name with the native project preview element", async ({ name, role, selector, attribute }) => {
       mockUseWorkspaceFileEditor.mockReturnValue({
         ...defaultEditorState,
         hasChanges: true,
       });
+      renderWithEntries([
+        { name, type: "file" as const, size: 102400, mtime: "2024-01-01" },
+      ]);
 
-      render(
-        <FileBrowserModal
-          initialWorkspace="project"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
+      await selectFile(name);
 
-      await act(async () => {
-        fireEvent.click(screen.getByText("test.png"));
-      });
+      const preview = role === "img"
+        ? screen.getByRole(role, { name })
+        : document.querySelector(selector);
+      expect(preview).toBeInTheDocument();
+      expect(preview).toHaveAttribute(attribute, expect.stringContaining(encodeURIComponent(name)));
+      expect(preview).toHaveAttribute(attribute, expect.stringContaining("workspace=project"));
+      if (selector.startsWith("video") || selector.startsWith("audio")) {
+        expect(preview).toHaveAttribute("controls");
+        expect(preview).toHaveAttribute("aria-label", `Preview for ${name}`);
+      }
+      if (selector.startsWith("iframe")) {
+        expect(preview).toHaveAttribute("title", `Preview for ${name}`);
+      }
 
-      // Should NOT show Discard or Save buttons for images
+      expect(screen.getByText("Preview only")).toBeInTheDocument();
+      expect(screen.queryByText(/Binary file — read only/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(new RegExp(`Editor for ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /toggle editor options/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Discard/ })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Save/ })).not.toBeInTheDocument();
+      expect(document.querySelector(".file-editor-wrapper")).not.toBeInTheDocument();
+      expect(document.querySelector(".file-browser-footer")).not.toBeInTheDocument();
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", name, false, undefined);
     });
 
-    it("still shows save/discard actions for text files with changes", async () => {
-      // Mock editor state with changes
+    it("renders task-workspace preview URLs with project scoping", async () => {
+      renderWithEntries([
+        { name: "movie.mov", type: "file" as const, size: 204800, mtime: "2024-01-01" },
+      ], {
+        initialWorkspace: "FN-001",
+        projectId: "proj-1",
+      });
+
+      await selectFile("movie.mov");
+
+      const video = document.querySelector("video.file-browser-preview-media--video");
+      expect(video).toBeInTheDocument();
+      expect(video).toHaveAttribute("src", expect.stringContaining("workspace=FN-001"));
+      expect(video).toHaveAttribute("src", expect.stringContaining("projectId=proj-1"));
+      expect(video).toHaveAttribute("src", expect.stringContaining("movie.mov"));
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-001", "movie.mov", false, "proj-1");
+    });
+
+    it("previews uppercase and nested PDF paths without loading editor content", async () => {
+      render(
+        <FileBrowserModal
+          initialWorkspace="project"
+          initialFile="docs/MANUAL.PDF"
+          isOpen={true}
+          onClose={mockOnClose}
+        />,
+      );
+
+      await waitFor(() => expect(document.querySelector("iframe.file-browser-preview-media--pdf")).toBeInTheDocument());
+      const pdf = document.querySelector("iframe.file-browser-preview-media--pdf");
+      expect(pdf).toHaveAttribute("src", expect.stringContaining(encodeURIComponent("docs/MANUAL.PDF")));
+      expect(pdf).toHaveAttribute("title", "Preview for docs/MANUAL.PDF");
+      expect(mockSetPath).toHaveBeenCalledWith("docs");
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "docs/MANUAL.PDF", false, undefined);
+    });
+
+    it("keeps text files editable with save and discard controls", async () => {
       mockUseWorkspaceFileEditor.mockReturnValue({
         ...defaultEditorState,
         hasChanges: true,
       });
 
-      render(
-        <FileBrowserModal
-          initialWorkspace="project"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
+      renderWithEntries([
+        { name: "file1.ts", type: "file" as const, size: 1024, mtime: "2024-01-01" },
+      ]);
 
-      // Select a text file
-      await act(async () => {
-        fireEvent.click(screen.getByText("file1.ts"));
-      });
+      await selectFile("file1.ts");
 
-      // Should show Discard and Save buttons
+      expect(screen.getByLabelText("Editor for file1.ts")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Discard/ })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Save/ })).toBeInTheDocument();
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "file1.ts", true, undefined);
     });
 
-    it("renders file editor for non-image binary files like .pdf", async () => {
-      mockUseWorkspaceFileBrowser.mockReturnValue({
-        ...defaultBrowserState,
-        entries: [
-          { name: "document.pdf", type: "file" as const, size: 1024000, mtime: "2024-01-01" },
-        ],
-      });
+    it("keeps unknown binary files in the read-only editor fallback", async () => {
+      renderWithEntries([
+        { name: "archive.zip", type: "file" as const, size: 1024, mtime: "2024-01-01" },
+      ]);
 
-      render(
-        <FileBrowserModal
-          initialWorkspace="project"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
+      await selectFile("archive.zip");
 
-      await act(async () => {
-        fireEvent.click(screen.getByText("document.pdf"));
-      });
-
-      // Should show binary indicator
       expect(screen.getByText(/Binary file — read only/)).toBeInTheDocument();
-
-      // Should NOT render an image preview
-      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Editor for archive.zip")).toBeInTheDocument();
+      expect(document.querySelector(".file-browser-preview")).not.toBeInTheDocument();
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "archive.zip", true, undefined);
     });
 
-    it("image preview uses workspace-safe URL pattern", async () => {
-      mockUseWorkspaceFileBrowser.mockReturnValue({
-        ...defaultBrowserState,
-        entries: [
-          { name: "test.png", type: "file" as const, size: 1024, mtime: "2024-01-01" },
-        ],
+    it("keeps the no-selected-file placeholder until a previewable file is selected", async () => {
+      renderWithEntries([
+        { name: "voice.mp3", type: "file" as const, size: 1024, mtime: "2024-01-01" },
+      ]);
+
+      expect(screen.getByText("Select a file to edit")).toBeInTheDocument();
+      expect(document.querySelector(".file-browser-preview")).not.toBeInTheDocument();
+
+      await selectFile("voice.mp3");
+
+      expect(screen.queryByText("Select a file to edit")).not.toBeInTheDocument();
+      expect(document.querySelector("audio.file-browser-preview-media--audio")).toBeInTheDocument();
+    });
+
+    it("updates preview-only state across repeated selections", async () => {
+      renderWithEntries([
+        { name: "manual.pdf", type: "file" as const, size: 1024, mtime: "2024-01-01" },
+        { name: "clip.mp4", type: "file" as const, size: 1024, mtime: "2024-01-01" },
+      ]);
+
+      await selectFile("manual.pdf");
+      expect(document.querySelector("iframe.file-browser-preview-media--pdf")).toBeInTheDocument();
+
+      await selectFile("clip.mp4");
+      expect(document.querySelector("iframe.file-browser-preview-media--pdf")).not.toBeInTheDocument();
+      expect(document.querySelector("video.file-browser-preview-media--video")).toBeInTheDocument();
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "clip.mp4", false, undefined);
+    });
+
+    it("renders preview-only files in the mobile editor pane with back navigation", async () => {
+      Object.defineProperty(window, "innerWidth", {
+        writable: true,
+        configurable: true,
+        value: 375,
       });
 
-      render(
-        <FileBrowserModal
-          initialWorkspace="FN-001"
-          isOpen={true}
-          onClose={mockOnClose}
-        />,
-      );
+      renderWithEntries([
+        { name: "voice.mp3", type: "file" as const, size: 1024, mtime: "2024-01-01" },
+      ]);
 
-      await act(async () => {
-        fireEvent.click(screen.getByText("test.png"));
-      });
+      fireEvent(window, new Event("resize"));
+      await selectFile("voice.mp3");
 
-      const imagePreview = screen.getByRole("img", { name: "test.png" });
-      // URL should include workspace parameter
-      expect(imagePreview).toHaveAttribute(
-        "src",
-        expect.stringContaining("workspace=FN-001")
-      );
-      expect(imagePreview).toHaveAttribute(
-        "src",
-        expect.stringContaining("test.png")
-      );
+      expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
+      expect(document.querySelector("audio.file-browser-preview-media--audio")).toBeInTheDocument();
+      expect(document.querySelector(".file-browser-content.mobile.active")).toBeInTheDocument();
     });
   });
 

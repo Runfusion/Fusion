@@ -10,6 +10,7 @@ import { FileBrowser } from "./FileBrowser";
 import { FileEditor } from "./FileEditor";
 import { FloatingWindow } from "./FloatingWindow";
 import { WorkspaceSelector } from "./WorkspaceSelector";
+import { getFilePreviewKind, IMAGE_PREVIEW_EXTENSIONS, VIDEO_PREVIEW_EXTENSIONS, AUDIO_PREVIEW_EXTENSIONS, PDF_PREVIEW_EXTENSIONS } from "../utils/file-preview-kind";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
 
 const MOBILE_BREAKPOINT = 768;
@@ -20,33 +21,24 @@ const SIDEBAR_STORAGE_KEY = "fusion:file-browser-sidebar-width";
 const FILES_LINE_NUMBERS_STORAGE_KEY = "kb-files-line-numbers";
 
 /**
- * Image file extensions that should be rendered as image previews.
- */
-const IMAGE_EXTENSIONS = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".svgz",
-]);
-
-/**
- * Binary file extensions that should be displayed as read-only.
+ * Binary file extensions that should be displayed as read-only when the browser cannot preview them natively.
  */
 const BINARY_EXTENSIONS = new Set([
-  ...IMAGE_EXTENSIONS,
+  ...IMAGE_PREVIEW_EXTENSIONS,
+  ...VIDEO_PREVIEW_EXTENSIONS,
+  ...AUDIO_PREVIEW_EXTENSIONS,
+  ...PDF_PREVIEW_EXTENSIONS,
   ".exe", ".dll", ".so", ".dylib",
   ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-  ".mp3", ".mp4", ".avi", ".mov", ".webm", ".mkv", ".flv",
+  ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+  ".avi", ".mkv", ".flv",
   ".woff", ".woff2", ".ttf", ".otf", ".eot",
   ".wasm", ".bin",
 ]);
 
 function isBinaryFile(filename: string): boolean {
   const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  return BINARY_EXTENSIONS.has(ext);
-}
-
-function isImageFile(filename: string): boolean {
-  const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
-  return IMAGE_EXTENSIONS.has(ext);
+  return Boolean(getFilePreviewKind(filename)) || BINARY_EXTENSIONS.has(ext);
 }
 
 function getParentDirectory(path: string): string {
@@ -99,6 +91,9 @@ export function FileBrowserModal({
     refresh,
   } = useWorkspaceFileBrowser(currentWorkspace, true, projectId);
 
+  const selectedPreviewKind = useMemo(() => getFilePreviewKind(selectedFile), [selectedFile]);
+  const isPreviewOnlyFile = selectedPreviewKind !== null;
+
   const {
     content,
     setContent,
@@ -109,7 +104,7 @@ export function FileBrowserModal({
     save,
     hasChanges,
     mtime,
-  } = useWorkspaceFileEditor(currentWorkspace, selectedFile, true, projectId);
+  } = useWorkspaceFileEditor(currentWorkspace, selectedFile, !isPreviewOnlyFile, projectId);
 
   useEffect(() => {
     setCurrentWorkspace(initialWorkspace);
@@ -208,7 +203,7 @@ export function FileBrowserModal({
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        if (hasChanges && !saving) {
+        if (!isPreviewOnlyFile && hasChanges && !saving) {
           void save();
         }
       }
@@ -216,7 +211,7 @@ export function FileBrowserModal({
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, hasChanges, saving, save]);
+  }, [onClose, hasChanges, saving, save, isPreviewOnlyFile]);
 
   const handleSelectFile = useCallback((path: string) => {
     setSelectedFile(path);
@@ -326,11 +321,21 @@ export function FileBrowserModal({
   const modalTitle = t("fileBrowser.modalTitle", "Files — {{workspace}}", { workspace: workspaceLabel });
   const isNarrowEditorView = Boolean(isMobile && selectedFile && mobileView === "editor" && !isBinaryFile(selectedFile));
 
-  // Compute image source URL when an image file is selected
-  const imageSrc = useMemo(() => {
-    if (!selectedFile || !isImageFile(selectedFile)) return null;
+  /*
+  FNXC:FileBrowser 2026-06-25-00:00:
+  Known image, video, audio, and PDF files must use browser-native previews from the workspace-safe download route without fetching binary content into CodeMirror. Editable text and unknown binary files keep the existing editor/read-only paths so save/discard, selection comments, and binary indicators remain scoped to editor-backed files.
+  */
+  const previewUrl = useMemo(() => {
+    if (!selectedFile || !selectedPreviewKind) return null;
     return downloadFileUrl(currentWorkspace, selectedFile, projectId);
-  }, [selectedFile, currentWorkspace, projectId]);
+  }, [currentWorkspace, projectId, selectedFile, selectedPreviewKind]);
+
+  const selectedPreviewLabel = selectedFile
+    ? t("fileBrowser.previewOnly", "Preview only")
+    : null;
+  const selectedPreviewTitle = selectedFile
+    ? t("fileBrowser.previewTitle", "Preview for {{file}}", { file: selectedFile })
+    : "";
 
   const formatFileSize = (value: string): string => {
     const bytes = new Blob([value]).size;
@@ -440,12 +445,17 @@ export function FileBrowserModal({
                       </button>
                     )}
                     {selectedFile}
-                    {isBinaryFile(selectedFile) && (
+                    {selectedPreviewKind && selectedPreviewLabel ? (
+                      <span className="file-browser-preview-indicator">
+                        <FileType size={12} />
+                        {selectedPreviewLabel}
+                      </span>
+                    ) : isBinaryFile(selectedFile) ? (
                       <span className="file-browser-binary-indicator">
                         <FileType size={12} />
                         {t("fileBrowser.binaryReadOnly", "Binary file — read only")}
                       </span>
-                    )}
+                    ) : null}
                     {mtime && (
                       <span className="file-browser-mtime">
                         {t("fileBrowser.modified", "Modified: {{date}}", { date: new Date(mtime).toLocaleString() })}
@@ -456,7 +466,7 @@ export function FileBrowserModal({
                     )}
                   </div>
                   <div className="file-browser-actions">
-                    {!imageSrc && hasChanges && (
+                    {!previewUrl && hasChanges && (
                       <>
                         <button
                           className="btn btn-sm"
@@ -479,17 +489,42 @@ export function FileBrowserModal({
                   </div>
                 </div>
 
-                {editorError && !imageSrc && (
+                {editorError && !previewUrl && (
                   <div className="file-browser-error-banner">{editorError}</div>
                 )}
 
-                {imageSrc ? (
-                  <div className="file-browser-image-preview">
-                    <img
-                      src={imageSrc}
-                      alt={selectedFile ?? ""}
-                      className="file-browser-image"
-                    />
+                {previewUrl && selectedPreviewKind ? (
+                  <div className={`file-browser-preview file-browser-preview--${selectedPreviewKind}`}>
+                    {selectedPreviewKind === "image" && (
+                      <img
+                        src={previewUrl}
+                        alt={selectedFile ?? ""}
+                        className="file-browser-preview-media file-browser-preview-media--image"
+                      />
+                    )}
+                    {selectedPreviewKind === "video" && (
+                      <video
+                        src={previewUrl}
+                        controls
+                        aria-label={selectedPreviewTitle}
+                        className="file-browser-preview-media file-browser-preview-media--video"
+                      />
+                    )}
+                    {selectedPreviewKind === "audio" && (
+                      <audio
+                        src={previewUrl}
+                        controls
+                        aria-label={selectedPreviewTitle}
+                        className="file-browser-preview-media file-browser-preview-media--audio"
+                      />
+                    )}
+                    {selectedPreviewKind === "pdf" && (
+                      <iframe
+                        src={previewUrl}
+                        title={selectedPreviewTitle}
+                        className="file-browser-preview-media file-browser-preview-media--pdf"
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="file-editor-wrapper">
@@ -509,7 +544,7 @@ export function FileBrowserModal({
                   </div>
                 )}
 
-                {!imageSrc && (
+                {!previewUrl && (
                   <div className="file-browser-footer">
                     <span>{formatFileSize(content)}</span>
                     {hasChanges && <span className="file-browser-unsaved">{t("fileBrowser.unsavedChanges", "Unsaved changes")}</span>}

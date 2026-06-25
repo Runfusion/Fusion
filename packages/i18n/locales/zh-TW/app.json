@@ -2384,7 +2384,9 @@
     "typeFolder": "資料夾",
     "unsavedChanges": "未儲存的變更",
     "upOneLevel": "上一層",
-    "workspaceProject": "專案"
+    "workspaceProject": "專案",
+    "previewOnly": "僅預覽",
+    "previewTitle": "{{file}} 的預覽"
   },
   "fileEditor": {
     "edit": "編輯",

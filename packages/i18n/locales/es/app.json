@@ -2384,7 +2384,9 @@
     "typeFolder": "Carpeta",
     "unsavedChanges": "Cambios no guardados",
     "upOneLevel": "Subir un nivel",
-    "workspaceProject": "Proyecto"
+    "workspaceProject": "Proyecto",
+    "previewOnly": "Solo vista previa",
+    "previewTitle": "Vista previa de {{file}}"
   },
   "fileEditor": {
     "edit": "Editar",

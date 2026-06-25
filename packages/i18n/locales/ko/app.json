@@ -2384,7 +2384,9 @@
     "typeFolder": "폴더",
     "unsavedChanges": "저장되지 않은 변경 사항",
     "upOneLevel": "상위 폴더로",
-    "workspaceProject": "프로젝트"
+    "workspaceProject": "프로젝트",
+    "previewOnly": "미리보기 전용",
+    "previewTitle": "{{file}} 미리보기"
   },
   "fileEditor": {
     "edit": "편집",

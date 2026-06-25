@@ -2384,7 +2384,9 @@
     "typeFolder": "Dossier",
     "unsavedChanges": "Modifications non enregistrées",
     "upOneLevel": "Remonter d'un niveau",
-    "workspaceProject": "Projet"
+    "workspaceProject": "Projet",
+    "previewOnly": "Aperçu uniquement",
+    "previewTitle": "Aperçu de {{file}}"
   },
   "fileEditor": {
     "edit": "Modifier",

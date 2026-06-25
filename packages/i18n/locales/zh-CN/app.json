@@ -2384,7 +2384,9 @@
     "typeFolder": "文件夹",
     "unsavedChanges": "未保存的更改",
     "upOneLevel": "上一级",
-    "workspaceProject": "项目"
+    "workspaceProject": "项目",
+    "previewOnly": "仅预览",
+    "previewTitle": "{{file}} 的预览"
   },
   "fileEditor": {
     "edit": "编辑",

@@ -670,6 +670,7 @@ The Files modal provides a workspace-aware file browser and editor.
 - Use **New File** or **New Folder** in the browser header to create entries in the current folder; new files open in the editor after creation
 - Source/text editing supports a **Line #** header toggle to show or hide line numbers in the editor gutter
 - The line-number preference is saved per project and restored automatically when you switch projects
+- Known image, video/movie, audio, and PDF files render browser-native read-only previews from the selected project or task workspace download URL; text files remain editable, and unknown binary files keep the read-only editor fallback
 - In editable files and markdown preview mode, highlighted text exposes **Add comment** so you can send the file path, selected snippet, best-effort line range, and your note to the **New Task** dialog without copy/paste
 
 ## Memory View

@@ -2394,7 +2394,9 @@
     "typeFolder": "Folder",
     "unsavedChanges": "Unsaved changes",
     "upOneLevel": "Up one level",
-    "workspaceProject": "Project"
+    "workspaceProject": "Project",
+    "previewOnly": "Preview only",
+    "previewTitle": "Preview for {{file}}"
   },
   "fileEditor": {
     "edit": "Edit",
