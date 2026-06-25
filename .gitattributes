@@ -1,0 +1,6 @@
+# FNXC:RepoAssets 2026-06-25-09:00:
+# Demo reel GIFs dominate repo size (the same captures get re-shot and re-committed,
+# and git keeps every old blob forever). Route them through Git LFS so the binaries
+# live outside the packfile and future regenerations stop bloating .git.
+# Scoped to demo/assets/*.gif (track-forward only — existing history was left intact).
+demo/assets/*.gif filter=lfs diff=lfs merge=lfs -text
