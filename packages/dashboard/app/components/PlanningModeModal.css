@@ -1251,12 +1251,41 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
 
 .planning-summary-actions {
   justify-content: space-between;
+  min-width: 0;
 }
 
 .planning-summary-actions-right {
   display: flex;
   gap: var(--space-sm);
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/*
+FNXC:PlanningMode 2026-06-25-09:20:
+Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer must absorb the narrower detail pane instead of relying on the mobile full-width stack. Allow the three labeled actions to wrap inside the pane while preserving the desktop left/right grouping when space is available.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .planning-summary-actions {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .planning-summary-actions-right {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .planning-summary-actions .btn {
+    flex-shrink: 1;
+    max-width: 100%;
+    white-space: normal;
+  }
 }
 
 /* Loading State */
