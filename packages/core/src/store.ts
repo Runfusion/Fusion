@@ -10841,9 +10841,15 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
   }
 
   async repairOverlapBlocker(id: string, options: RepairOverlapBlockerOptions = {}): Promise<RepairOverlapBlockerResult> {
+    /*
+    FNXC:OverlapRepair 2026-06-25-04:34:
+    Dashboard-initiated overlap repair is a narrow stale-blocker cleanup, not a general task mutation endpoint. Return structured reasons for missing tasks and cache empty scopes so route handlers can map failures predictably and repair decisions stay deterministic.
+    */
     const dryRun = options.dryRun === true;
-    const task = await this.getTask(id);
-    if (!task) {
+    let task: Task;
+    try {
+      task = await this.getTask(id);
+    } catch {
       return { taskId: id, dryRun, repaired: false, statusCleared: false, reason: "task-not-found", message: `Task ${id} not found` };
     }
 
@@ -10886,7 +10892,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     const scopeCache = new Map<string, string[]>();
     const getScope = async (taskId: string): Promise<string[]> => {
       const cached = scopeCache.get(taskId);
-      if (cached) return cached;
+      if (cached !== undefined) return cached;
       const scope = filterRepairOverlapIgnoredPaths(await this.parseFileScopeFromPrompt(taskId), ignorePaths);
       scopeCache.set(taskId, scope);
       return scope;

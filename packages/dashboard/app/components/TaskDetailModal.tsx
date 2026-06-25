@@ -678,6 +678,10 @@ export function TaskDetailContent({
   // FN-4161: board/restart flows open the modal from slim task rows where
   // `githubTracking` is intentionally omitted; preserve the fetched full-detail
   // tracking blob instead of letting the sparse parent prop overwrite it.
+  const [overlapBlockedByOverride, setOverlapBlockedByOverride] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    setOverlapBlockedByOverride(undefined);
+  }, [task.id]);
   const workingTask: TaskDetail = fullDetail
     ? ({
       ...fullDetail,
@@ -692,7 +696,13 @@ export function TaskDetailContent({
       paused: task.paused === undefined ? fullDetail.paused : task.paused,
       userPaused: task.userPaused === undefined ? fullDetail.userPaused : task.userPaused,
       pausedReason: task.pausedReason === undefined ? fullDetail.pausedReason : task.pausedReason,
-      overlapBlockedBy: task.overlapBlockedBy === undefined ? undefined : fullDetail.overlapBlockedBy,
+      /*
+      FNXC:TaskDetailOverlapRepair 2026-06-25-04:34:
+      SSE task props are authoritative for live blocker changes, but the Clear repair flow needs a local override while stale parent props catch up. Only fall back to fetched detail when the slim parent omitted the field entirely.
+      */
+      overlapBlockedBy: overlapBlockedByOverride !== undefined
+        ? overlapBlockedByOverride
+        : task.overlapBlockedBy === undefined ? fullDetail.overlapBlockedBy : task.overlapBlockedBy,
     } as TaskDetail)
     : ({ ...task, prompt: "" } as TaskDetail);
   const canRetryTask =
@@ -2474,6 +2484,7 @@ export function TaskDetailContent({
         return;
       }
       if (result.task) {
+        setOverlapBlockedByOverride(result.task.overlapBlockedBy ?? null);
         setFullDetail((prev) => prev ? ({ ...prev, ...result.task } as TaskDetail) : (result.task as TaskDetail));
         onTaskUpdated?.(result.task);
       } else {
@@ -2481,6 +2492,7 @@ export function TaskDetailContent({
         if (activeTaskIdRef.current !== requestTaskId) {
           return;
         }
+        setOverlapBlockedByOverride(updatedTask.overlapBlockedBy ?? null);
         setFullDetail((prev) => prev ? ({ ...prev, ...updatedTask } as TaskDetail) : updatedTask);
         onTaskUpdated?.(updatedTask);
       }

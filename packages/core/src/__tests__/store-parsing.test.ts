@@ -539,6 +539,17 @@ Expected touched paths:
       expect(repaired?.log.at(-1)?.action).toContain(`Repaired stale overlap blocker: cleared ${blocker.id}`);
     });
 
+    it("returns structured not-found result instead of throwing", async () => {
+      const result = await store.repairOverlapBlocker("FN-MISSING");
+
+      expect(result).toMatchObject({
+        taskId: "FN-MISSING",
+        repaired: false,
+        statusCleared: false,
+        reason: "task-not-found",
+      });
+    });
+
     it("rejects repair when the stored blocker still overlaps", async () => {
       const blocker = await store.createTask({ description: "Fusion blocker" });
       const target = await store.createTask({ description: "Fusion target" });

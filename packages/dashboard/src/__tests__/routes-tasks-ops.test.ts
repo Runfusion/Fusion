@@ -2371,6 +2371,42 @@ describe("PATCH /tasks/:id", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
   });
 
+  it("rejects overlap blocker repair when request body is not an object", async () => {
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks/KB-001/repair-overlap-blocker",
+      JSON.stringify(["not", "an", "object"]),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("body must be an object");
+    expect(store.repairOverlapBlocker).not.toHaveBeenCalled();
+  });
+
+  it("maps missing overlap repair target to 404", async () => {
+    (store.repairOverlapBlocker as ReturnType<typeof vi.fn>).mockResolvedValue({
+      taskId: "MISSING",
+      dryRun: false,
+      repaired: false,
+      statusCleared: false,
+      reason: "task-not-found",
+      message: "Task MISSING not found",
+    });
+
+    const res = await REQUEST(
+      buildApp(),
+      "POST",
+      "/api/tasks/MISSING/repair-overlap-blocker",
+      JSON.stringify({}),
+      { "Content-Type": "application/json" },
+    );
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("Task MISSING not found");
+  });
+
   it("rejects overlap blocker repair when scopes still overlap", async () => {
     (store.repairOverlapBlocker as ReturnType<typeof vi.fn>).mockResolvedValue({
       taskId: "KB-001",

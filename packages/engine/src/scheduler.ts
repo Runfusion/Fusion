@@ -265,6 +265,29 @@ export function isRunnableQueuedOverlapCandidate(
   return true;
 }
 
+export function shouldHoldActiveFileScopeLease(
+  task: Task,
+  tasks: Task[],
+  options?: {
+    mergeRequestContractShadowEnabled?: boolean;
+    handoffAccepted?: boolean;
+    schedulingDependencyOptions?: Parameters<typeof getUnmetSchedulingDependencies>[2];
+  },
+): boolean {
+  /*
+  FNXC:OverlapScheduling 2026-06-25-04:34:
+  Active file-scope leases are a scheduler contract, not just a column check. Self-healing and repair paths must use this same predicate so stale `overlapBlockedBy` cleanup does not preserve blockers the scheduler would ignore on the next tick.
+  */
+  if (task.paused || task.userPaused) return false;
+  if (task.column === "in-progress") {
+    return getUnmetSchedulingDependencies(task, tasks, options?.schedulingDependencyOptions).length === 0;
+  }
+  if (task.column !== "in-review") return false;
+  if (!task.worktree || task.status === "failed") return false;
+  if (options?.mergeRequestContractShadowEnabled === true && options.handoffAccepted === true) return false;
+  return true;
+}
+
 export function findHigherPriorityQueuedOverlap(
   candidate: QueuedOverlapCandidate,
   queuedScopes: QueuedOverlapCandidate[],
@@ -1446,7 +1469,7 @@ export class Scheduler {
       const filteredScopeByTaskId = new Map<string, string[]>();
       const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
         const cached = filteredScopeByTaskId.get(taskId);
-        if (cached) return cached;
+        if (cached !== undefined) return cached;
         const scope = await this.store.parseFileScopeFromPrompt(taskId);
         const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
         filteredScopeByTaskId.set(taskId, filteredScope);
@@ -1455,12 +1478,10 @@ export class Scheduler {
       if (settings.groupOverlappingFiles) {
         // In-progress tasks
         for (const t of inProgress) {
+          if (!shouldHoldActiveFileScopeLease(t, tasks, { schedulingDependencyOptions })) continue;
           const filteredScope = await getFilteredFileScope(t.id);
           if (isCoordinationOnlyTask(t, filteredScope)) continue;
           if (filteredScope.length === 0) continue;
-          // FN-6292: a holder waiting on scheduling deps must not lease files
-          // that can block its own dependency and create a circular wait.
-          if (getUnmetSchedulingDependencies(t, tasks, schedulingDependencyOptions).length > 0) continue;
           setActiveScopeLease(t.id, filteredScope, "in-progress");
         }
         // Only live in-review tasks with a worktree belong in activeScopes.
@@ -1473,7 +1494,13 @@ export class Scheduler {
         // will never merge, so superseding re-implementation tasks (for example FN-4177
         // replaced by FN-4198) must not stay queued behind them. (FN-4200)
         const inReviewWithWorktree = tasks.filter(
-          (t) => t.column === "in-review" && Boolean(t.worktree) && !t.paused && t.status !== "failed",
+          (t) => t.column === "in-review" && shouldHoldActiveFileScopeLease(t, tasks, {
+            mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
+            handoffAccepted: settings.mergeRequestContractShadowEnabled === true
+              ? this.store.getCompletionHandoffAcceptedMarker(t.id) !== null
+              : false,
+            schedulingDependencyOptions,
+          }),
         );
         for (const t of inReviewWithWorktree) {
           const filteredScope = await getFilteredFileScope(t.id);
@@ -2118,7 +2145,7 @@ export class Scheduler {
       const filteredScopeByTaskId = new Map<string, string[]>();
       const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
         const cached = filteredScopeByTaskId.get(taskId);
-        if (cached) return cached;
+        if (cached !== undefined) return cached;
         const scope = await this.store.parseFileScopeFromPrompt(taskId);
         const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
         filteredScopeByTaskId.set(taskId, filteredScope);
@@ -2145,18 +2172,22 @@ export class Scheduler {
       if (settings.groupOverlappingFiles) {
         for (const task of tasks) {
           if (task.column !== "in-progress") continue;
+          if (!shouldHoldActiveFileScopeLease(task, tasks, { schedulingDependencyOptions })) continue;
           const filteredScope = await getFilteredFileScope(task.id);
           if (isCoordinationOnlyTask(task, filteredScope)) continue;
           if (filteredScope.length === 0) continue;
-          // FN-6292: do not let a task with unmet deps lease files that can
-          // keep those deps queued behind their own dependent.
-          if (getUnmetSchedulingDependencies(task, tasks, schedulingDependencyOptions).length > 0) continue;
           activeScopes.set(task.id, filteredScope);
           activeScopeColumns.set(task.id, task.column);
         }
 
         const inReviewWithWorktree = tasks.filter(
-          (task) => task.column === "in-review" && Boolean(task.worktree) && !task.paused && task.status !== "failed",
+          (task) => task.column === "in-review" && shouldHoldActiveFileScopeLease(task, tasks, {
+            mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
+            handoffAccepted: settings.mergeRequestContractShadowEnabled === true
+              ? this.store.getCompletionHandoffAcceptedMarker(task.id) !== null
+              : false,
+            schedulingDependencyOptions,
+          }),
         );
         for (const task of inReviewWithWorktree) {
           const filteredScope = await getFilteredFileScope(task.id);

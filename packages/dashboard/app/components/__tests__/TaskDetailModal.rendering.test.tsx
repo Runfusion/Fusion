@@ -513,7 +513,7 @@ describe("TaskDetailModal", () => {
     expect(screen.queryByText("File scope overlap blocker: FN-OVER (stale)")).toBeNull();
   });
 
-  it("renders clear overlap blocker button only when overlapBlockedBy is present", () => {
+  it("keeps clear overlap blocker button when slim live task omits overlapBlockedBy", () => {
     const { rerender } = render(
       <TaskDetailModal
         initialTab="definition"
@@ -542,7 +542,7 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument();
   });
 
   it("repairs overlap blocker when clicking Clear", async () => {
@@ -578,6 +578,9 @@ describe("TaskDetailModal", () => {
         { reason: "dashboard-clear-overlap-blocker" },
         undefined,
       );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
     });
   });
 

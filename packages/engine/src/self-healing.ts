@@ -74,7 +74,7 @@ import {
 } from "./notifier.js";
 import type { GhostBugDecision } from "./triage-preflight.js";
 import { DependencyBlockedTodoReporter } from "./dependency-blocked-todo-reporter.js";
-import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap } from "./scheduler.js";
+import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordinationOnlyTask, pathsOverlap, shouldHoldActiveFileScopeLease } from "./scheduler.js";
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
 
 const log = createLogger("self-healing");
@@ -3653,9 +3653,13 @@ export class SelfHealingManager {
       const taskById = new Map(allTasks.map((t) => [t.id, t]));
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
+      /*
+      FNXC:OverlapSelfHealing 2026-06-25-04:34:
+      Completion fan-out may preserve queued overlap blockers only when the blocker still holds the scheduler's active file-scope lease. Cache empty filtered scopes too so coordination-only tasks stay deterministic within a reconciliation pass.
+      */
       const getFilteredFileScope = async (scopeTaskId: string): Promise<string[]> => {
         const cached = filteredScopeByTaskId.get(scopeTaskId);
-        if (cached) return cached;
+        if (cached !== undefined) return cached;
         const scope = await this.store.parseFileScopeFromPrompt(scopeTaskId);
         const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
         filteredScopeByTaskId.set(scopeTaskId, filteredScope);
@@ -3664,8 +3668,12 @@ export class SelfHealingManager {
       const hasActiveFileScopeOverlapBlocker = async (dependent: Task, blockerId: string | null | undefined): Promise<boolean> => {
         if (!blockerId) return false;
         const blocker = taskById.get(blockerId);
-        if (!blocker || blocker.paused || blocker.userPaused) return false;
-        if (blocker.column !== "in-progress" && !(blocker.column === "in-review" && !blocker.paused)) return false;
+        if (!blocker || !shouldHoldActiveFileScopeLease(blocker, allTasks, {
+          mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
+          handoffAccepted: settings.mergeRequestContractShadowEnabled === true
+            ? this.store.getCompletionHandoffAcceptedMarker(blocker.id) !== null
+            : false,
+        })) return false;
         const dependentScope = await getFilteredFileScope(dependent.id);
         if (dependentScope.length === 0 || isCoordinationOnlyTask(dependent, dependentScope)) return false;
         const blockerScope = await getFilteredFileScope(blocker.id);
@@ -4767,9 +4775,13 @@ export class SelfHealingManager {
       const taskById = new Map(allTasks.map((task) => [task.id, task]));
       const overlapIgnorePaths = settings.overlapIgnorePaths ?? [];
       const filteredScopeByTaskId = new Map<string, string[]>();
+      /*
+      FNXC:OverlapSelfHealing 2026-06-25-04:34:
+      Stale blockedBy cleanup must mirror scheduler lease semantics before preserving queued overlap state. Empty-scope cache hits matter here because no-write-scope advisory tasks should not repeatedly reparse specs or look active by accident.
+      */
       const getFilteredFileScope = async (taskId: string): Promise<string[]> => {
         const cached = filteredScopeByTaskId.get(taskId);
-        if (cached) return cached;
+        if (cached !== undefined) return cached;
         const scope = await this.store.parseFileScopeFromPrompt(taskId);
         const filteredScope = filterPathsByIgnoreList(scope, overlapIgnorePaths);
         filteredScopeByTaskId.set(taskId, filteredScope);
@@ -4778,8 +4790,12 @@ export class SelfHealingManager {
       const hasActiveFileScopeOverlapBlocker = async (task: Task, blockerId: string | null | undefined): Promise<boolean> => {
         if (!blockerId) return false;
         const blocker = taskById.get(blockerId);
-        if (!blocker || blocker.paused || blocker.userPaused) return false;
-        if (blocker.column !== "in-progress" && !(blocker.column === "in-review" && !blocker.paused)) return false;
+        if (!blocker || !shouldHoldActiveFileScopeLease(blocker, allTasks, {
+          mergeRequestContractShadowEnabled: settings.mergeRequestContractShadowEnabled,
+          handoffAccepted: settings.mergeRequestContractShadowEnabled === true
+            ? this.store.getCompletionHandoffAcceptedMarker(blocker.id) !== null
+            : false,
+        })) return false;
 
         const taskScope = await getFilteredFileScope(task.id);
         if (taskScope.length === 0 || isCoordinationOnlyTask(task, taskScope)) return false;

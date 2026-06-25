@@ -22,6 +22,10 @@ export interface FileScopeClassificationResult {
   effectiveWriteScope: string[];
 }
 
+/*
+FNXC:FileScopeClassification 2026-06-25-04:34:
+Task File Scope is operator intent, not every path-like token in PROMPT.md. Keep this classifier conservative so read-only evidence, wrong-worktree safeguards, generated locks, route names, and conditional changesets do not create false write-scope leases or file-scope merge guards.
+*/
 const KNOWN_FILE_SCOPE_ROOT_FILES = new Set([
   "makefile",
   "dockerfile",
@@ -92,6 +96,10 @@ export function extractEffectiveWriteScopeFromPrompt(content: string): string[] 
 }
 
 export function classifyFileScopeFromPrompt(content: string): FileScopeClassificationResult {
+  /*
+  FNXC:FileScopeClassification 2026-06-25-04:34:
+  Context headings inside `## File Scope` change the meaning of backticked tokens. The state machine is line-oriented on purpose: execution specs often mix write targets with forbidden paths and evidence-only metadata in the same section.
+  */
   const section = extractFileScopeSection(content);
   if (!section) return { entries: [], effectiveWriteScope: [] };
 
@@ -103,13 +111,11 @@ export function classifyFileScopeFromPrompt(content: string): FileScopeClassific
   for (const rawLine of section.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
-    const lower = line.toLowerCase();
-
     if (INCLUDE_CONTEXT_RE.test(line) && !EXCLUDE_CONTEXT_RE.test(line) && !CONDITIONAL_CONTEXT_RE.test(line)) {
       context = "include";
     }
     if (EXCLUDE_CONTEXT_RE.test(line)) {
-      context = lower.includes("wrong-worktree") || lower.includes("wrong worktree") ? "exclude" : "exclude";
+      context = "exclude";
     }
     if (CONDITIONAL_CONTEXT_RE.test(line)) {
       context = "conditional";
@@ -141,6 +147,10 @@ function classifyToken(
   line: string,
   context: "include" | "exclude" | "conditional",
 ): FileScopeClassificationReason {
+  /*
+  FNXC:FileScopeClassification 2026-06-25-04:34:
+  Classification reasons must be stable enough for diagnostics while the include/exclude decision stays binary. Preserve specific exclusion reasons after validation so review/spec gates explain why a token was ignored instead of silently shrinking File Scope.
+  */
   if (ROUTE_OR_ACTION_RE.test(token)) return "route-or-action";
   if (!isValidFileScopeEntry(token)) return "invalid-entry";
 
