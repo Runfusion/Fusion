@@ -28,6 +28,7 @@ import {
   FileText,
   RefreshCw,
 } from "lucide-react";
+import { useConfirm } from "../hooks/useConfirm";
 import type { ToastType } from "../hooks/useToast";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
@@ -614,6 +615,7 @@ function normalizeMissionHierarchy(mission: MissionWithHierarchy): MissionWithHi
 
 export function MissionManager({ isOpen, isInline = false, onClose, addToast, projectId, onSelectTask, availableTasks = [], resumeSessionId, targetMissionId, milestoneSliceResumeSessionId, onMilestoneSliceResumeFetchError, onNavigateToGoal }: MissionManagerProps) {
   const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
   const isActive = isInline || isOpen;
   const cacheSuffix = projectId ?? "";
   const missionsCacheKey = `${SWR_CACHE_KEYS.MISSIONS_PREFIX}${cacheSuffix}`;
@@ -1712,11 +1714,28 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
         setSelectedMission(null);
       }
       await loadMissions();
-      setDeleteConfirmId(null);
     } catch (err) {
       addToast(getErrorMessage(err) || t("missions.deleteFailed", "Failed to delete mission"), "error");
     }
-  }, [addToast, loadMissions, selectedMission, projectId]);
+  }, [addToast, loadMissions, selectedMission, projectId, t]);
+
+  const requestDeleteMission = useCallback(async (missionId: string) => {
+    /*
+    FNXC:MissionManager 2026-06-24-00:00:
+    Mission deletes are destructive and must use the app-level modal confirmation from both list and detail delete affordances. Keeping this path out of the inline mission-confirm-panel prevents the prompt from landing in the sidebar footer, detail pane, or below mobile scroll content.
+    */
+    const confirmed = await confirm({
+      title: t("missions.deleteMission", "Delete mission"),
+      message: t("missions.deleteConfirm", "Delete this {{type}}? This cannot be undone.", { type: "mission" }),
+      confirmLabel: t("missions.deleteButton", "Delete"),
+      cancelLabel: t("missions.cancelButton", "Cancel"),
+      danger: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    await handleDeleteMission(missionId);
+  }, [confirm, handleDeleteMission, t]);
 
   // Milestone handlers
   const handleCreateMilestone = useCallback(() => {
@@ -2753,7 +2772,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
                       </button>
                       <button
                         className="mission-icon-btn mission-icon-btn--danger"
-                        onClick={() => setDeleteConfirmId({ type: "mission", id: selectedMission.id })}
+                        onClick={() => void requestDeleteMission(selectedMission.id)}
                         title={t("missions.deleteMission", "Delete mission")}
                         aria-label={t("missions.deleteMission", "Delete mission")}
                       >
@@ -4187,9 +4206,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   };
 
   const shouldRenderSidebarDeleteConfirm =
-    deleteConfirmId != null &&
-    (deleteConfirmId.type === "interview_draft" ||
-      (deleteConfirmId.type === "mission" && selectedMission?.id !== deleteConfirmId.id));
+    deleteConfirmId != null && deleteConfirmId.type === "interview_draft";
 
   const handleInterviewModalClose = () => {
     dismissedResumeSessionIdRef.current = effectiveResumeSessionId ?? null;
@@ -4469,7 +4486,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
           </button>
           <button
             className="mission-icon-btn mission-icon-btn--danger"
-            onClick={() => setDeleteConfirmId({ type: "mission", id: m.id })}
+            onClick={() => void requestDeleteMission(m.id)}
             title={t("missions.deleteMission", "Delete mission")}
             aria-label={t("missions.deleteMission", "Delete mission")}
           >
@@ -4715,6 +4732,9 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
   };
 
   const renderDeleteConfirmPanel = () => {
+    if (deleteConfirmId?.type === "mission") {
+      return null;
+    }
     const isInterviewDraftDelete = deleteConfirmId?.type === "interview_draft";
 
     return (
@@ -4730,9 +4750,7 @@ export function MissionManager({ isOpen, isInline = false, onClose, addToast, pr
               className="mission-btn mission-btn--danger"
               onClick={async () => {
                 if (!deleteConfirmId) return;
-                if (deleteConfirmId.type === "mission") {
-                  await handleDeleteMission(deleteConfirmId.id);
-                } else if (deleteConfirmId.type === "milestone") {
+                if (deleteConfirmId.type === "milestone") {
                   await handleDeleteMilestone(deleteConfirmId.id);
                 } else if (deleteConfirmId.type === "slice") {
                   await handleDeleteSlice(deleteConfirmId.id);
