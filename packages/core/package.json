@@ -23,7 +23,8 @@
       "types": "./src/gh-cli.ts",
       "source": "./src/gh-cli.ts",
       "import": "./dist/gh-cli.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "publishConfig": {
     "access": "public"
