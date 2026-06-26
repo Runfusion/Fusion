@@ -121,7 +121,6 @@ const qualityAppComponentTests = [
   "board-mobile",
   "board-mobile-view-switch",
   "BranchGroupCard",
-  "ChatView",
   "ChatView.autosize",
   "ChatView.chat-input-autosize",
   "ChatView.default-model-icon",
@@ -212,7 +211,7 @@ const qualityAppComponentTests = [
 // project, but the 231-test suite is now 4 sibling files sharing
 // SettingsModal.test-harness so the settings project parallelizes them across
 // workers instead of one ~61s sequential file (FN-5048 feedback-loop velocity).
-const isolatedQualityAppComponentTests = ["App", "ChatView"] as const;
+const isolatedQualityAppComponentTests = ["App"] as const;
 const batchedQualityAppComponentTests = qualityAppComponentTests.filter(
   (testName) => !isolatedQualityAppComponentTests.includes(testName),
 );
@@ -238,7 +237,20 @@ const qualityAppComponentBatchATests = buildComponentQualityInclude(batchedQuali
 const qualityAppComponentBatchBTests = buildComponentQualityInclude(batchedQualityAppComponentTestsB);
 
 const qualityAppAppOnlyTests = ["app/components/__tests__/App.test.tsx"];
-const qualityAppChatOnlyTests = ["app/components/__tests__/ChatView.test.tsx"];
+/*
+FNXC:DashboardTests 2026-06-25-16:30:
+ChatView keeps its own isolated `dashboard-app-quality-chat` project, but the 231-test
+ChatView.test.tsx is now 3 sibling files sharing ChatView.test-harness so the chat project
+parallelizes them across workers instead of one ~24s sequential file (FN-5048 feedback-loop
+velocity). Mirror the SettingsModal split: these 3 files live ONLY here (not in
+qualityAppComponentTests), so they must be spread into backfillAppExclude too — otherwise
+the broad `app/**` backfill glob re-collects them and they run in BOTH projects.
+*/
+const qualityAppChatOnlyTests = [
+  "app/components/__tests__/ChatView.core.test.tsx",
+  "app/components/__tests__/ChatView.sessions-rooms.test.tsx",
+  "app/components/__tests__/ChatView.mobile.test.tsx",
+];
 const qualityAppSettingsOnlyTests = [
   "app/components/__tests__/SettingsModal.general.test.tsx",
   "app/components/__tests__/SettingsModal.models-auth.test.tsx",
@@ -342,6 +354,10 @@ const backfillAppExclude = [
   settings project and backfill, doubling their wall-time instead of halving it.
   */
   ...qualityAppSettingsOnlyTests,
+  // FNXC:DashboardTests 2026-06-25-16:30: same rationale as the settings split above —
+  // the 3 ChatView split files live only in qualityAppChatOnlyTests, so exclude them from
+  // the broad app backfill to avoid double-collection.
+  ...qualityAppChatOnlyTests,
   ...skipListDashboardGlobs.filter((file) => file.startsWith("app/")),
   "app/__tests__/build-output.test.ts",
 ];
