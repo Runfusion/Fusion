@@ -11,7 +11,6 @@ export const BUILTIN_SEAM_PROMPTS: Record<string, string> = {
   planning: DEFAULT_TRIAGE_PROMPT,
   "planning-fast": DEFAULT_TRIAGE_FAST_PROMPT,
   "step-execute": DEFAULT_EXECUTOR_PROMPT,
-  "workflow-step": DEFAULT_REVIEWER_PROMPT,
   review: DEFAULT_REVIEWER_PROMPT,
   merge: DEFAULT_MERGER_PROMPT,
 };

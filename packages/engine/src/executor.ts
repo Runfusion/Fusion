@@ -771,59 +771,6 @@ function evaluatePromptDerivedNoCommitEligibility(task: Task, promptContent: str
   return { eligible: true, reason: "prompt/source metadata derived operational no-commit contract" };
 }
 
-export function partitionWorkflowRevisionFeedback(
-  feedback: string,
-  declaredFileScope: readonly string[],
-): WorkflowRevisionFeedbackPartition {
-  const trimmedFeedback = feedback.trim();
-  if (!trimmedFeedback || declaredFileScope.length === 0) {
-    return {
-      inScopeFeedback: trimmedFeedback,
-      outOfScopeFeedback: "",
-      inScopeSegments: trimmedFeedback ? [trimmedFeedback] : [],
-      outOfScopeSegments: [],
-      detectedPaths: extractReferencedPathsFromWorkflowFeedback(trimmedFeedback),
-    };
-  }
-
-  const segments = trimmedFeedback.split(/\n\s*\n/).map((segment) => segment.trim()).filter(Boolean);
-  const allDetectedPaths = extractReferencedPathsFromWorkflowFeedback(trimmedFeedback);
-  if (allDetectedPaths.length === 0) {
-    return {
-      inScopeFeedback: trimmedFeedback,
-      outOfScopeFeedback: "",
-      inScopeSegments: trimmedFeedback ? [trimmedFeedback] : [],
-      outOfScopeSegments: [],
-      detectedPaths: [],
-    };
-  }
-
-  const inScopeSegments: string[] = [];
-  const outOfScopeSegments: string[] = [];
-  for (const segment of segments) {
-    const segmentPaths = extractReferencedPathsFromWorkflowFeedback(segment);
-    if (segmentPaths.length === 0) {
-      inScopeSegments.push(segment);
-      continue;
-    }
-
-    const hasOutOfScopePath = segmentPaths.some((path) => !workflowPathMatchesDeclaredScope(path, declaredFileScope));
-    if (hasOutOfScopePath) {
-      outOfScopeSegments.push(segment);
-    } else {
-      inScopeSegments.push(segment);
-    }
-  }
-
-  return {
-    inScopeFeedback: inScopeSegments.join("\n\n"),
-    outOfScopeFeedback: outOfScopeSegments.join("\n\n"),
-    inScopeSegments,
-    outOfScopeSegments,
-    detectedPaths: allDetectedPaths,
-  };
-}
-
 class NonRetryableWorktreeError extends Error {}
 
 function buildSessionWorktreePathRegex(rootDir: string, settings: Partial<Settings>): RegExp {
@@ -1895,38 +1842,6 @@ export class TaskExecutor {
     return this.shouldDeferCompletionForGlobalPause(taskId, context);
   }
 
-  private async parkTaskAfterWorkflowStepPause(taskId: string): Promise<boolean> {
-    let latestTask: Task | null = null;
-    try {
-      latestTask = await this.store.getTask(taskId);
-    } catch {
-      latestTask = null;
-    }
-
-    if (!latestTask?.paused) {
-      return false;
-    }
-
-    executorLog.log(`${taskId}: workflow step interrupted by task pause — moving to todo`);
-    await this.store.logEntry(
-      taskId,
-      "Execution paused during pre-merge workflow step — moved to todo",
-      undefined,
-      this.getRunContextFor(taskId),
-    ).catch(() => undefined);
-    // FN-5256: synchronously reap any spawned shells BEFORE moving the task so
-    // a fast re-dispatch (task:moved → in-progress) doesn't race a live shell.
-    // The task:moved (away) listener also tracks an awaited disposal as a
-    // backstop, but doing it here keeps `parkTaskAfterWorkflowStepPause`'s
-    // contract straightforward for its callers.
-    await this.awaitAbortInFlightTaskWork(taskId, "pause-before-park").catch((err) => {
-      executorLog.warn(`${taskId}: awaitAbortInFlightTaskWork failed in pause-before-park: ${err}`);
-    });
-    if (latestTask.column === "in-progress") {
-      await this.store.moveTask(taskId, "todo", { preserveResumeState: true });
-    }
-    return true;
-  }
   /** Child agent sessions keyed by agent ID. Used for termination. */
   private childSessions = new Map<string, AgentSession>();
   /** Total count of currently spawned agents (across all parents). */
@@ -6498,9 +6413,23 @@ export class TaskExecutor {
     const blocking = step.gateMode === "gate";
     // Script-mode outcomes carry no structured verdict; prompt-mode may.
     const verdict = (outcome as { verdict?: string }).verdict;
+    // FNXC:WorkflowSteps 2026-06-26-00:00: Surface the step agent's output text
+    // and parsed verdict notes on the node result's contextPatch so the
+    // optional-group exit record carries them through to the recorded
+    // WorkflowStepResult (workflow-graph-loop exitStepRecord →
+    // workflow-graph-executor recordOptionalGroupStepResult). Without this the
+    // Workflow tab only shows a generic fallback and `[pre-merge]` revision logs
+    // pass `undefined` detail. `notes` is only attached when the parsed verdict
+    // produced notes; `output` carries the raw step output when present.
+    const stepOutput = (outcome as { output?: string }).output;
+    const stepNotes = (outcome as { notes?: string }).notes;
+    const contextPatch: Record<string, unknown> = {};
+    if (typeof stepOutput === "string") contextPatch.output = stepOutput;
+    if (typeof stepNotes === "string" && stepNotes) contextPatch.notes = stepNotes;
     return {
       outcome: outcome.success || !blocking ? "success" : "failure",
       value: verdict ?? (outcome.success ? "passed" : "failed"),
+      ...(Object.keys(contextPatch).length > 0 ? { contextPatch } : {}),
     };
   }
 
@@ -9475,8 +9404,8 @@ export class TaskExecutor {
           }
           // FNXC:WorkflowLifecycle 2026-06-21-00:00: FN-6722 — a mid-run abort on
           // a task that already has real step progress must not discard that
-          // progress on the bounce to todo. The sibling pause-park path
-          // (parkTaskAfterWorkflowStepPause, ~1826) moves with preserveResumeState;
+          // progress on the bounce to todo. The sibling pause-park path moves
+          // with preserveResumeState;
           // this teardown branch historically did not — it cleared `branch` AND
           // moved without preservation, which reset every step to pending
           // (store.moveTaskInternal ~7322 resetAllStepsToPending) and dropped the
@@ -11815,114 +11744,6 @@ export class TaskExecutor {
   }
 
   /**
-   * Handle a workflow step revision request.
-   *
-   * Re-opens ONLY the last step so the executor has exactly one pending slot
-   * to re-enter through. All earlier done steps stay done — the agent reads
-   * the injected feedback from PROMPT.md and applies an in-place fix rather
-   * than redoing any completed step.
-   */
-  private async handleWorkflowRevisionRequest(
-    task: Task,
-    worktreePath: string,
-    feedback: string,
-    stepName: string,
-    settings: Settings,
-  ): Promise<boolean> {
-    executorLog.log(`${task.id}: workflow revision requested by step "${stepName}"`);
-    this.clearCompletedTaskWatchdog(task.id);
-
-    const shouldForkOnScopeMismatch = settings.workflowRevisionForkOnScopeMismatch !== false;
-    let inScopeFeedback = feedback.trim();
-    let outOfScopeFeedback = "";
-    let followUpTaskId: string | undefined;
-
-    if (shouldForkOnScopeMismatch) {
-      const declaredFileScope = await this.store.parseFileScopeFromPrompt(task.id).catch(() => [] as string[]);
-      const partition = partitionWorkflowRevisionFeedback(feedback, declaredFileScope);
-      inScopeFeedback = partition.inScopeFeedback;
-      outOfScopeFeedback = partition.outOfScopeFeedback;
-
-      if (outOfScopeFeedback) {
-        const followUpTask = await this.createWorkflowRevisionFollowUpTask(task, stepName, outOfScopeFeedback);
-        followUpTaskId = followUpTask.id;
-      }
-    }
-
-    if (!inScopeFeedback) {
-      await this.store.logEntry(
-        task.id,
-        followUpTaskId
-          ? `Workflow step "${stepName}" requested revision — feedback forked to follow-up ${followUpTaskId}; original task left unchanged`
-          : `Workflow step "${stepName}" requested revision — no in-scope feedback detected`,
-        outOfScopeFeedback || feedback,
-        this.getRunContextFor(task.id),
-      );
-      return false;
-    }
-
-    const updatedTask = await this.store.getTask(task.id);
-    const reopen = await this.reopenLastStepForRevision(task.id, updatedTask);
-    const reopenSummary = reopen
-      ? `re-opening Step ${reopen.index + 1} ("${reopen.name}") for in-place fix`
-      : "no step to re-open (none were completed)";
-
-    const logMessage = followUpTaskId
-      ? `Workflow step "${stepName}" requested revision — split feedback: appended in-scope guidance and forked out-of-scope work to ${followUpTaskId}; ${reopenSummary}`
-      : `Workflow step "${stepName}" requested revision — feedback appended to original task; ${reopenSummary}`;
-    await this.store.logEntry(task.id, logMessage, inScopeFeedback, this.getRunContextFor(task.id));
-
-    await this.injectWorkflowRevisionInstructions(task, inScopeFeedback);
-
-    await this.store.updateTask(task.id, {
-      status: null,
-      sessionFile: null,
-    });
-
-    executorLog.log(`${task.id}: scheduling fresh execution after revision request`);
-    this.scheduleWorkflowRerun(
-      task.id,
-      worktreePath,
-      `${task.id}: revision rerun scheduled — moved to todo then in-progress`,
-    );
-    return true;
-  }
-
-  private async createWorkflowRevisionFollowUpTask(
-    task: Task,
-    stepName: string,
-    feedback: string,
-  ): Promise<Task> {
-    const title = `${task.id}: workflow follow-up from ${stepName}`;
-    const description = [
-      `Follow-up work forked from workflow revision feedback on ${task.id}.`,
-      "",
-      `Original task: ${task.id}${task.title ? ` — ${task.title}` : ""}`,
-      `Workflow step: ${stepName}`,
-      "",
-      "This feedback referenced files outside the original task's declared File Scope, so it was forked into a follow-up task instead of mutating the original PROMPT.md.",
-      "",
-      "## Out-of-Scope Workflow Revision Feedback",
-      "",
-      feedback,
-    ].join("\n");
-
-    return this.store.createTask({
-      title,
-      description,
-      dependencies: [task.id],
-      source: {
-        sourceType: "workflow_step",
-        sourceParentTaskId: task.id,
-        sourceMetadata: {
-          workflowStepName: stepName,
-          routing: "scope-mismatch-fork",
-        },
-      },
-    });
-  }
-
-  /**
    * Re-open the last non-pending step so a revision/failure handler gives the
    * executor exactly one pending slot to re-enter through. Returns the index
    * and name of the step that was flipped to `pending`, or null when there
@@ -11953,84 +11774,6 @@ export class TaskExecutor {
     return { index: targetIndex, name: steps[targetIndex].name };
   }
 
-  /**
-   * Inject or update the "Workflow Revision Instructions" section in PROMPT.md.
-   * This section contains feedback from workflow steps that requested revisions.
-   * The section is replaced entirely to avoid accumulation of old feedback.
-   */
-  private async injectWorkflowRevisionInstructions(
-    task: Task,
-    feedback: string,
-  ): Promise<void> {
-    const promptPath = join(this.store.getFusionDir(), "tasks", task.id, "PROMPT.md");
-
-    // Read existing PROMPT.md
-    let content: string;
-    try {
-      content = await readFile(promptPath, "utf-8");
-    } catch {
-      executorLog.warn(`${task.id}: PROMPT.md not found at ${promptPath}, skipping revision injection`);
-      return;
-    }
-
-    // All prior steps stay done — agent applies the feedback as an in-place
-    // patch rather than re-planning or re-executing earlier steps.
-    const scopeLine = "All prior steps remain **done**. Apply the feedback above as an in-place fix (make the necessary code changes, commit, and call `fn_task_done()` when complete). Do **not** re-run or re-plan any earlier step unless the feedback explicitly calls it out.";
-
-    // Check for existing Workflow Revision Instructions section
-    const revisionSectionHeader = "## Workflow Revision Instructions";
-    const revisionSectionContent = `${revisionSectionHeader}
-
-The following feedback was received from quality gates and requires implementation changes:
-
-${feedback}
-
-**Important:** ${scopeLine}
-
-`;
-
-    let newContent: string;
-    if (content.includes(revisionSectionHeader)) {
-      // Replace existing section
-      const sectionRegex = new RegExp(
-        `${revisionSectionHeader}[\\s\\S]*?(?=\\n## |\\n# |$)`,
-        "i"
-      );
-      if (sectionRegex.test(content)) {
-        newContent = content.replace(sectionRegex, revisionSectionContent);
-      } else {
-        // Fallback: append at end
-        newContent = content + "\n" + revisionSectionContent;
-      }
-    } else {
-      // Append new section before any closing markers or at end
-      // Look for common markers like "## Acceptance Criteria" or just append
-      const acceptanceCriteriaMatch = content.match(/\n##\s+Acceptance Criteria\n/);
-      if (acceptanceCriteriaMatch) {
-        const insertIdx = acceptanceCriteriaMatch.index!;
-        newContent = content.slice(0, insertIdx) + "\n" + revisionSectionContent + content.slice(insertIdx);
-      } else {
-        newContent = content + "\n" + revisionSectionContent;
-      }
-    }
-
-    // Write updated content
-    try {
-      await writeFile(promptPath, newContent);
-      executorLog.log(`${task.id}: injected workflow revision instructions into PROMPT.md`);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      executorLog.error(`${task.id}: failed to inject revision instructions: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Handle workflow step hard failures by retrying execution up to MAX_WORKFLOW_STEP_RETRIES times.
-   * This gives the executor a chance to fix workflow step failures automatically before
-   * moving the task to in-review with failed status.
-   *
-   * @returns true if a retry was scheduled, false if retries are exhausted
-   */
   /**
    * Run deterministic verification (test + build commands) in the task's worktree.
    * Returns a structured result indicating whether all commands passed.
@@ -12285,54 +12028,6 @@ ${failureContext.output.slice(0, VERIFICATION_LOG_MAX_CHARS)}
       );
       return false;
     }
-  }
-
-  private async handleWorkflowStepFailure(
-    task: Task,
-    worktreePath: string,
-    failureFeedback: string,
-    stepName: string,
-  ): Promise<boolean> {
-    this.clearCompletedTaskWatchdog(task.id);
-    const currentRetries = task.workflowStepRetries ?? 0;
-
-    if (currentRetries >= MAX_WORKFLOW_STEP_RETRIES) {
-      // Retries exhausted — caller should fall through to hard failure
-      executorLog.warn(`${task.id}: workflow step "${stepName}" failed — retries exhausted (${MAX_WORKFLOW_STEP_RETRIES}/${MAX_WORKFLOW_STEP_RETRIES})`);
-      return false;
-    }
-
-    const retryCount = currentRetries + 1;
-    executorLog.log(`${task.id}: workflow step "${stepName}" failed — retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES} (executor will attempt to fix)`);
-
-    // 1. Update the workflowStepRetries counter on the task
-    await this.store.updateTask(task.id, {
-      workflowStepRetries: retryCount,
-    });
-
-    // 2. Inject failure feedback into PROMPT.md
-    await this.injectWorkflowStepFailureInstructions(task, failureFeedback, stepName, retryCount);
-
-    // 3. Re-open only the last step so the executor has a single pending
-    // slot to re-enter. Earlier done steps stay done.
-    const updatedTask = await this.store.getTask(task.id);
-    await this.reopenLastStepForRevision(task.id, updatedTask);
-
-    // 4. Clear any session file so we get a fresh session
-    await this.store.updateTask(task.id, {
-      status: null,
-      sessionFile: null,
-    });
-
-    // 5. Schedule fresh execution after guard unwinds
-    executorLog.log(`${task.id}: scheduling fresh execution after workflow step failure (retry ${retryCount}/${MAX_WORKFLOW_STEP_RETRIES})`);
-    this.scheduleWorkflowRerun(
-      task.id,
-      worktreePath,
-      `${task.id}: workflow step retry scheduled — moved to todo then in-progress`,
-    );
-
-    return true;
   }
 
   /**
@@ -12776,14 +12471,6 @@ ${failureFeedback}
 
   // ── Worktree management ────────────────────────────────────────────
 
-  /**
-   * Create a git worktree at `path` on a new branch.
-   *
-   * @param branch — Branch name (e.g., `fusion/fn-042`)
-   * @param path — Absolute worktree directory path
-   * @param startPoint — Optional git ref to branch from (e.g., `fusion/fn-041`).
-   *   When provided, the worktree starts from that ref instead of HEAD.
-   */
   /**
    * Execute a script-mode workflow step by resolving the scriptName to a command
    * from project settings and running it in the task worktree.

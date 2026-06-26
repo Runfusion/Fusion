@@ -6016,11 +6016,10 @@ export class SelfHealingManager {
    * Recover `in-review` tasks parked by a failed pre-merge workflow step.
    *
    * When a pre-merge workflow step (e.g. Browser Verification) fails during an
-   * active executor run, `executor.handleWorkflowStepFailure` retries up to
-   * `MAX_WORKFLOW_STEP_RETRIES` times in-session. If all retries exhaust the
-   * task ends up in `in-review` with the failed workflow step result still on
-   * record, which `getTaskMergeBlocker` correctly treats as a merge block —
-   * leaving the task stranded with no live session to un-stick it.
+   * active executor run, the graph workflow records the failed step result and
+   * the task ends up in `in-review` with that failed result still on record,
+   * which `getTaskMergeBlocker` correctly treats as a merge block — leaving the
+   * task stranded with no live session to un-stick it.
    *
    * This scan delegates back to the executor's `recoverFailedPreMergeWorkflowStep`
    * path (which reuses the same `sendTaskBackForFix` flow the executor uses

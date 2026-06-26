@@ -208,7 +208,7 @@ describe("compileWorkflowToSteps (U2)", () => {
     expect(err?.message).toMatch(/disconnected nodes/);
   });
 
-  it("rejects seams that are out of the planning -> execute -> workflow-step -> review -> merge order", () => {
+  it("rejects seams that are out of the planning -> execute -> review -> merge order", () => {
     const ir: WorkflowIr = {
       version: "v1",
       name: "misordered-seams",
@@ -226,7 +226,7 @@ describe("compileWorkflowToSteps (U2)", () => {
     };
     const err = validateLinearity(ir);
     expect(err).toBeInstanceOf(WorkflowCompileError);
-    expect(err?.message).toMatch(/planning -> execute -> workflow-step -> review -> merge order/);
+    expect(err?.message).toMatch(/planning -> execute -> review -> merge order/);
   });
 
   it("rejects a graph with a duplicated seam role", () => {

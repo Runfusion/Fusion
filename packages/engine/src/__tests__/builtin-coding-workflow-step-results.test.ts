@@ -155,6 +155,34 @@ describe("WorkflowGraphExecutor optional-group → task.workflowStepResults (pla
     expect(recorder.results).toHaveLength(0);
   });
 
+  it("(e) carries the inner node's output AND notes through to the recorded result (REVISE with notes)", async () => {
+    // FNXC:WorkflowStepResults 2026-06-26-00:00: The recorded WorkflowStepResult
+    // must carry the step agent's `output` and the parsed verdict `notes` (surfaced
+    // on the inner node result's contextPatch by runGraphCustomNode) so the Workflow
+    // tab shows real detail instead of a fallback and `[pre-merge]` revision logs
+    // carry the notes. Advisory REVISE keeps the success outcome (non-blocking).
+    const recorder = makeRecorder();
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: innerHandler({
+          outcome: "success",
+          value: "REVISE",
+          contextPatch: { output: "full step output text", notes: "please fix the null check" },
+        }),
+      },
+      recordWorkflowStepResult: recorder.record,
+    });
+
+    await executor.run(taskWith(["code-review"]), settingsOn(), codeReviewGroupIr());
+
+    expect(recorder.results).toHaveLength(1);
+    const entry = recorder.results[0];
+    expect(entry.status).toBe("advisory_failure");
+    expect(entry.verdict).toBe("REVISE");
+    expect(entry.output).toBe("full step output text");
+    expect(entry.notes).toBe("please fix the null check");
+  });
+
   it("emits parity [pre-merge] logs for the enabled group via logTaskEntry", async () => {
     const logs: string[] = [];
     const recorder = makeRecorder();

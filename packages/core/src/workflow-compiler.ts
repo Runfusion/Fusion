@@ -40,9 +40,9 @@ function isMergeRegionKind(node: WorkflowIrNode): boolean {
 }
 
 /** Seam anchor kinds, encoded on IR nodes as `config.seam`. These map to the
- *  fixed planning → execute → workflow-step → review → merge pipeline and are
+ *  fixed planning → execute → review → merge pipeline and are
  *  not emitted as steps. */
-const SEAM_NAMES = new Set(["planning", "execute", "workflow-step", "review", "merge"]);
+const SEAM_NAMES = new Set(["planning", "execute", "review", "merge"]);
 
 const ENGINE_PRIMITIVE_NODE_KINDS = new Set<WorkflowIrNode["kind"]>([
   "merge-gate",
@@ -163,11 +163,11 @@ export function validateLinearity(ir: WorkflowIr): WorkflowCompileError | null {
 
   // Reachability: the single main path must reach end and cover every node.
   // While walking, enforce the canonical seam pipeline: each of planning/
-  // execute/workflow-step/review/merge may appear at most once and only in that
+  // execute/review/merge may appear at most once and only in that
   // order. The compiler treats seams as a fixed lifecycle boundary (merge flips
   // pre- to post-merge), so out-of-order or duplicate seams would compile
   // inconsistently with the runtime contract.
-  const expectedSeamOrder = ["planning", "execute", "workflow-step", "review", "merge"] as const;
+  const expectedSeamOrder = ["planning", "execute", "review", "merge"] as const;
   const seenSeams = new Set<string>();
   let nextExpectedSeamIndex = 0;
   const visited = new Set<string>();
@@ -193,7 +193,7 @@ export function validateLinearity(ir: WorkflowIr): WorkflowCompileError | null {
       }
       if (expectedSeamOrder[nextExpectedSeamIndex] !== seam) {
         return new WorkflowCompileError(
-          "seams must follow the planning -> execute -> workflow-step -> review -> merge order",
+          "seams must follow the planning -> execute -> review -> merge order",
         );
       }
       seenSeams.add(seam);
