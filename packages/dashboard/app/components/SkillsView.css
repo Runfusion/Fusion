@@ -449,8 +449,10 @@ Detail-pane header bar: BACK (narrow only) on the left, truncating skill name in
   flex-shrink: 0;
 }
 
+/* FNXC:Skills 2026-06-26-13:38: FN-7072 reduces skill detail/metadata font size in the right panel; scope the compact text to SkillsView plain-text content so shared mailbox markdown typography is unaffected. */
 .skills-view-detail-content {
   font-family: var(--font-mono);
+  font-size: 0.9em;
   line-height: 1.5;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -542,9 +544,13 @@ File viewer column inside the detail body. Header bar carries the "← Back to S
   white-space: nowrap;
 }
 
-/* FNXC:Skills 2026-06-23-04:15: markdown render wrapper (SKILL.md + markdown files) reuses the shared .mailbox-markdown styling from MailboxMessageContent; this just bounds its width inside the pane. */
+/*
+FNXC:Skills 2026-06-23-04:15: markdown render wrapper (SKILL.md + markdown files) reuses the shared .mailbox-markdown styling from MailboxMessageContent; this just bounds its width inside the pane.
+FNXC:Skills 2026-06-26-13:38: FN-7072 reduces skill detail/metadata font size in the right panel; scope the compact text to SkillsView markdown content so shared mailbox markdown typography is unaffected.
+*/
 .skills-view-detail-markdown {
   min-width: 0;
+  font-size: 0.9em;
   word-break: break-word;
 }
 
