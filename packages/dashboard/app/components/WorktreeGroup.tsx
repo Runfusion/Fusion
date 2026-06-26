@@ -28,8 +28,6 @@ interface WorktreeGroupProps {
   onOpenMission?: (missionId: string) => void;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
   lastFetchTimeMs?: number;
-  /** Lookup of workflow step IDs to display names, fetched once at board level. */
-  workflowStepNameLookup?: ReadonlyMap<string, string>;
   /** Per-task card-placed custom field definitions (U13/KTD-14). */
   taskCardFieldDefs?: ReadonlyMap<string, import("../api").WorkflowFieldDefinition[]>;
   /** Precomputed blocker fanout keyed by blocker task ID. */
@@ -55,7 +53,6 @@ function WorktreeGroupComponent({
   taskStuckTimeoutMs,
   onOpenMission,
   lastFetchTimeMs,
-  workflowStepNameLookup,
   taskCardFieldDefs,
   blockerFanoutMap,
   prAuthAvailable,
@@ -92,7 +89,6 @@ function WorktreeGroupComponent({
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
-          workflowStepNameLookup={workflowStepNameLookup}
           cardFieldDefs={taskCardFieldDefs?.get(task.id)}
           fanout={blockerFanoutMap?.get(task.id)}
           prAuthAvailable={prAuthAvailable}
@@ -115,7 +111,6 @@ function WorktreeGroupComponent({
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
           lastFetchTimeMs={lastFetchTimeMs}
-          workflowStepNameLookup={workflowStepNameLookup}
           cardFieldDefs={taskCardFieldDefs?.get(task.id)}
           fanout={blockerFanoutMap?.get(task.id)}
           prAuthAvailable={prAuthAvailable}

@@ -401,8 +401,6 @@ interface TaskCardProps {
   isPromoting?: boolean;
   /** Timestamp (ms) when task data was last confirmed fresh from the server. Used for freshness-aware stuck detection. */
   lastFetchTimeMs?: number;
-  /** Lookup of workflow step IDs to display names, fetched once at board level. */
-  workflowStepNameLookup?: ReadonlyMap<string, string>;
   /** Disable card drag semantics when embedding in custom draggable containers (e.g. dependency graph). */
   disableDrag?: boolean;
   /** Downstream fan-out entry for this task, computed at board-level. */
@@ -597,7 +595,6 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onMoveTask === next.onMoveTask &&
     previous.onPromote === next.onPromote &&
     previous.isPromoting === next.isPromoting &&
-    previous.workflowStepNameLookup === next.workflowStepNameLookup &&
     previous.disableDrag === next.disableDrag &&
     previous.fanout?.totalCount === next.fanout?.totalCount &&
     previous.fanout?.activeTodoCount === next.fanout?.activeTodoCount &&
@@ -707,7 +704,6 @@ function TaskCardComponent({
   onPromote,
   isPromoting = false,
   lastFetchTimeMs,
-  workflowStepNameLookup,
   disableDrag,
   fanout,
   prAuthAvailable,
@@ -1072,8 +1068,8 @@ function TaskCardComponent({
     return providers;
   }, [task.modelProvider, task.validatorModelProvider, task.planningModelProvider]);
   const unifiedProgress = useMemo(
-    () => getUnifiedTaskProgress(task, workflowStepNameLookup),
-    [task.steps, task.enabledWorkflowSteps, task.workflowStepResults, workflowStepNameLookup],
+    () => getUnifiedTaskProgress(task),
+    [task.steps, task.enabledWorkflowSteps, task.workflowStepResults],
   );
   const showProgressSection =
     unifiedProgress.total > 0 && (task.status === "executing" || task.column === "in-progress");
@@ -2283,12 +2279,18 @@ function TaskCardComponent({
             {showSteps && (
               <div className="card-steps-list">
                 {unifiedProgress.items.map((step) => {
-                  const isWorkflowFailed = step.source === "workflow" && step.status === "failed";
-
+                  /*
+                  FNXC:WorkflowSteps 2026-06-25-00:00:
+                  The dot color is keyed by the unified status, which now distinguishes the two
+                  workflow-failure modes: `advisory_failure` (non-blocking REVISE → amber/warning) vs
+                  `failed` (blocking gate failure → red/error). `running` shows the in-progress color.
+                  No `card-step-dot--workflow-failed` override is needed — the status class carries the
+                  distinction directly.
+                  */
                   return (
                     <div key={step.id} className="card-step-item">
                       <span
-                        className={`card-step-dot card-step-dot--${step.status}${isWorkflowFailed ? " card-step-dot--workflow-failed" : ""}`}
+                        className={`card-step-dot card-step-dot--${step.status}`}
                         aria-hidden="true"
                       />
                       <span className={`card-step-name${step.status === "done" ? " completed" : ""}`}>

@@ -33,7 +33,6 @@ export interface RightDockControllerInput {
   onCreateTaskFromInsight: (payload: { insightId: string; title: string; description: string }) => Promise<void> | void;
   onNavigateToMission: (missionId: string) => void;
   onTaskCreated: (task: Task) => void;
-  workflowStepNameLookup: Map<string, string>;
   prAuthAvailable: boolean;
   autoMerge: boolean;
   visibilityOptions: OverflowViewVisibilityOptions;
@@ -104,7 +103,6 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       projectId={input.projectId}
       onOpenDetail={(value: Task | TaskDetail) => input.openDetailTask(value)}
       addToast={input.addToast}
-      workflowStepNameLookup={input.workflowStepNameLookup}
       disableDrag={true}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}

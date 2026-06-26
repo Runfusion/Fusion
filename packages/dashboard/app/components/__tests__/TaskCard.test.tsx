@@ -1909,7 +1909,10 @@ describe("TaskCard", () => {
     expect(screen.queryByText("1 steps")).toBeNull();
   });
 
-  it("renders workflow checks after normal steps with mapped statuses and phase badges", () => {
+  // FNXC:WorkflowSteps 2026-06-25 — graph-written results drive the card progress; names come from
+  // result.workflowStepName (with raw-id fallback), and advisory_failure (amber) is visually distinct
+  // from failed (red). No board-level name lookup is involved.
+  it("renders workflow checks after normal steps with graph-written statuses and phase badges", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -1917,7 +1920,7 @@ describe("TaskCard", () => {
             { name: "Step 0", status: "done" },
             { name: "Step 1", status: "failed" as any },
           ],
-          enabledWorkflowSteps: ["WS-001", "WS-002", "WS-003"],
+          enabledWorkflowSteps: ["WS-001", "WS-002", "WS-003", "WS-004"],
           workflowStepResults: [
             {
               workflowStepId: "WS-001",
@@ -1927,53 +1930,90 @@ describe("TaskCard", () => {
             {
               workflowStepId: "WS-002",
               workflowStepName: "Frontend UX Design",
-              status: "failed",
+              status: "advisory_failure",
               phase: "post-merge",
+            },
+            {
+              workflowStepId: "WS-004",
+              workflowStepName: "Code Review Gate",
+              status: "failed",
             },
           ],
         })}
-        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
 
     const stepNames = Array.from(container.querySelectorAll(".card-step-name")).map((el) => el.textContent);
+    // WS-003 has no result → name falls back to the raw id; all others resolve from result.workflowStepName.
     expect(stepNames).toEqual([
       "Step 0",
       "Step 1",
       "Browser Verification",
       "Frontend UX Design",
-      "Accessibility Audit",
+      "WS-003",
+      "Code Review Gate",
     ]);
 
     const dots = container.querySelectorAll(".card-step-dot");
+    // Impl step failure → blocking red.
     expect(dots[1]?.className).toContain("card-step-dot--failed");
-    expect(dots[1]?.className).not.toContain("card-step-dot--workflow-failed");
+    expect(dots[1]?.className).not.toContain("card-step-dot--advisory_failure");
 
+    // Passed workflow step → done.
     expect(dots[2]?.className).toContain("card-step-dot--done");
-    expect(dots[2]?.className).not.toContain("card-step-dot--workflow-failed");
 
-    expect(dots[3]?.className).toContain("card-step-dot--failed");
-    expect(dots[3]?.className).toContain("card-step-dot--workflow-failed");
+    // advisory_failure → amber, NOT the blocking red failed class.
+    expect(dots[3]?.className).toContain("card-step-dot--advisory_failure");
+    expect(dots[3]?.className).not.toContain("card-step-dot--failed");
 
+    // Enabled-but-not-run → pending.
     expect(dots[4]?.className).toContain("card-step-dot--pending");
-    expect(dots[4]?.className).not.toContain("card-step-dot--workflow-failed");
+
+    // Gate failure → blocking red, NOT amber advisory.
+    expect(dots[5]?.className).toContain("card-step-dot--failed");
+    expect(dots[5]?.className).not.toContain("card-step-dot--advisory_failure");
 
     const workflowBadgeElements = container.querySelectorAll(".card-step-workflow-badge");
     const workflowBadges = Array.from(workflowBadgeElements).map((el) => el.textContent);
-    expect(workflowBadges).toEqual(["workflow", "workflow", "workflow"]);
+    expect(workflowBadges).toEqual(["workflow", "workflow", "workflow", "workflow"]);
 
     expect(workflowBadgeElements[0]?.className).toContain("card-step-workflow-badge--pre-merge");
     expect(workflowBadgeElements[1]?.className).toContain("card-step-workflow-badge--post-merge");
     expect(workflowBadgeElements[2]?.className).toContain("card-step-workflow-badge--pre-merge");
+    expect(workflowBadgeElements[3]?.className).toContain("card-step-workflow-badge--pre-merge");
 
     workflowBadgeElements.forEach((badge) => {
       expect(badge.getAttribute("title")).toBe("Workflow check");
     });
   });
 
-  it("falls back to workflow result name, then raw ID when lookup names are unavailable", () => {
+  it("renders the running state for a started-but-not-completed workflow step", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          enabledWorkflowSteps: ["WS-001"],
+          workflowStepResults: [
+            {
+              workflowStepId: "WS-001",
+              workflowStepName: "Browser Verification",
+              status: "pending",
+              startedAt: "2026-06-25T00:00:00.000Z",
+            },
+          ],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const dots = container.querySelectorAll(".card-step-dot");
+    expect(dots[0]?.className).toContain("card-step-dot--running");
+    expect(dots[0]?.className).not.toContain("card-step-dot--pending");
+  });
+
+  it("falls back to the raw workflow step ID when the result name is blank", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -1981,19 +2021,19 @@ describe("TaskCard", () => {
           workflowStepResults: [
             {
               workflowStepId: "WS-002",
-              workflowStepName: "Fallback from result",
+              workflowStepName: "   ",
               status: "passed",
             },
           ],
         })}
-        workflowStepNameLookup={new Map([["WS-002", "   "]])}
         onOpenDetail={noop}
         addToast={noop}
       />,
     );
 
     const stepNames = Array.from(container.querySelectorAll(".card-step-name")).map((el) => el.textContent);
-    expect(stepNames).toEqual(["Fallback from result", "WS-003"]);
+    // Blank result name → fall back to id; WS-003 (no result) → id.
+    expect(stepNames).toEqual(["WS-002", "WS-003"]);
   });
 
   it("shows drop indicator on file dragover and removes on dragleave", () => {

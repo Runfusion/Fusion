@@ -7,7 +7,7 @@ import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { fetchWorkflowSteps, promoteTask, type ModelInfo, type BoardWorkflowsPayload } from "../api";
+import { promoteTask, type ModelInfo, type BoardWorkflowsPayload } from "../api";
 import { useBlockerFanout } from "../hooks/useBlockerFanout";
 import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -89,7 +89,6 @@ function areTaskArraysEqual(previous: Task[], next: Task[]): boolean {
   return previous.every((task, index) => task === next[index]);
 }
 
-const EMPTY_WORKFLOW_STEP_NAME_LOOKUP: ReadonlyMap<string, string> = new Map();
 let boardWasPreviouslyInactive = false;
 
 // Real mobile browsers can pan the document horizontally while focusing/clicking
@@ -123,14 +122,6 @@ function scheduleDocumentHorizontalScrollReset() {
   setTimeout(run, 0);
 }
 
-function areWorkflowNameLookupsEqual(previous: ReadonlyMap<string, string>, next: ReadonlyMap<string, string>): boolean {
-  if (previous.size !== next.size) return false;
-  for (const [key, value] of previous) {
-    if (next.get(key) !== value) return false;
-  }
-  return true;
-}
-
 function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
   return (
     <main className="board board-workflows-skeleton" id="board" aria-busy={!empty} aria-label={empty ? "No workflow lanes available" : "Loading workflow lanes"} data-testid={empty ? "board-workflows-empty" : "board-workflows-skeleton"}>
@@ -148,7 +139,6 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
 export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const archivedLoadedRef = useRef(false);
-  const [workflowStepNameLookup, setWorkflowStepNameLookup] = useState<ReadonlyMap<string, string>>(EMPTY_WORKFLOW_STEP_NAME_LOOKUP);
   const boardRef = useRef<HTMLElement | null>(null);
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
@@ -241,28 +231,6 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
     tasksByColumnCacheRef.current = stableGrouped;
     return stableGrouped;
   }, [tasks]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    fetchWorkflowSteps(projectId)
-      .then((steps) => {
-        if (cancelled) return;
-
-        const nextLookup = new Map(steps.map((step) => [step.id, step.name] as const));
-        setWorkflowStepNameLookup((previous) => (
-          areWorkflowNameLookupsEqual(previous, nextLookup) ? previous : nextLookup
-        ));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setWorkflowStepNameLookup((previous) => (previous.size === 0 ? previous : EMPTY_WORKFLOW_STEP_NAME_LOOKUP));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
 
   // FN-4574 + FN-001 diagnosis: on iOS Safari, the mobile board can occasionally
   // snap against stale layout/visualViewport metrics before flex columns resolve,
@@ -602,7 +570,6 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
                 taskStuckTimeoutMs={taskStuckTimeoutMs}
                 onOpenMission={onOpenMission}
                 lastFetchTimeMs={lastFetchTimeMs}
-                workflowStepNameLookup={workflowStepNameLookup}
                 taskCardFieldDefs={taskCardFieldDefs}
                 blockerFanoutMap={blockerFanoutMap}
                 prAuthAvailable={prAuthAvailable}
@@ -649,7 +616,6 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
               taskStuckTimeoutMs={taskStuckTimeoutMs}
               onOpenMission={onOpenMission}
               lastFetchTimeMs={lastFetchTimeMs}
-              workflowStepNameLookup={workflowStepNameLookup}
               taskCardFieldDefs={taskCardFieldDefs}
               blockerFanoutMap={blockerFanoutMap}
               prAuthAvailable={prAuthAvailable}
@@ -695,7 +661,6 @@ export function Board({ tasks, projectId, maxConcurrent, onMoveTask, onPauseTask
             taskStuckTimeoutMs={taskStuckTimeoutMs}
             onOpenMission={onOpenMission}
             lastFetchTimeMs={lastFetchTimeMs}
-            workflowStepNameLookup={workflowStepNameLookup}
             taskCardFieldDefs={taskCardFieldDefs}
             blockerFanoutMap={blockerFanoutMap}
             prAuthAvailable={prAuthAvailable}

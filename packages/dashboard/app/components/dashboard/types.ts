@@ -108,7 +108,6 @@ export interface MainContentProps {
     options?: { origin?: DetailTaskOrigin },
   ) => void;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
-  workflowStepNameLookup: Map<string, string>;
   prAuthAvailable: boolean;
   autoMerge: boolean;
   settingsLoaded: boolean;

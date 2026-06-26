@@ -1045,12 +1045,22 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   background: var(--text-dim);
 }
 
+/*
+FNXC:WorkflowSteps 2026-06-25-00:00:
+`failed` is a blocking gate failure (red/error); `advisory_failure` is a non-blocking REVISE that
+returned feedback but does not block merge (amber/warning). `running` is a graph node actively
+executing. These map 1:1 to the unified progress status so the dot color encodes blocking-ness.
+*/
 .card-step-dot--failed {
   background: var(--color-error-dark);
 }
 
-.card-step-dot--workflow-failed {
+.card-step-dot--advisory_failure {
   background: var(--ws-warning);
+}
+
+.card-step-dot--running {
+  background: var(--todo);
 }
 
 .card-step-name {

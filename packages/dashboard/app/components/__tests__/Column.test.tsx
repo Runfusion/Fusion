@@ -9,10 +9,10 @@ import type { Task, Column as ColumnType } from "@fusion/core";
 const taskCardRenderSpy = vi.fn();
 
 vi.mock("../TaskCard", () => ({
-  TaskCard: React.memo(({ task, workflowStepNameLookup, onPromote, isPromoting }: { task: Task; workflowStepNameLookup?: ReadonlyMap<string, string>; onPromote?: (taskId: string) => Promise<void>; isPromoting?: boolean }) => {
+  TaskCard: React.memo(({ task, onPromote, isPromoting }: { task: Task; onPromote?: (taskId: string) => Promise<void>; isPromoting?: boolean }) => {
     taskCardRenderSpy(task.id);
     return (
-      <div data-testid={`task-${task.id}`} data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)}>
+      <div data-testid={`task-${task.id}`}>
         {onPromote && (
           <button type="button" data-testid={`card-promote-${task.id}`} disabled={isPromoting} onClick={() => void onPromote(task.id)}>
             {isPromoting ? "Promoting…" : "Promote"}
@@ -23,8 +23,8 @@ vi.mock("../TaskCard", () => ({
   }),
 }));
 vi.mock("../WorktreeGroup", () => ({
-  WorktreeGroup: ({ workflowStepNameLookup }: { workflowStepNameLookup?: ReadonlyMap<string, string> }) => (
-    <div data-testid="worktree-group" data-workflow-lookup-size={String(workflowStepNameLookup?.size ?? 0)} />
+  WorktreeGroup: () => (
+    <div data-testid="worktree-group" />
   ),
 }));
 vi.mock("../QuickEntryBox", () => ({
@@ -255,31 +255,6 @@ describe("Column memoization", () => {
     expect(taskCardRenderSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards workflowStepNameLookup to task cards", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column="todo"
-        tasks={[{ ...makeTask("FN-001"), column: "todo" as ColumnType }]}
-        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
-      />,
-    );
-
-    expect(screen.getByTestId("task-FN-001").getAttribute("data-workflow-lookup-size")).toBe("1");
-  });
-
-  it("forwards workflowStepNameLookup to in-progress worktree groups", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column="in-progress"
-        tasks={[{ ...makeTask("FN-001"), column: "in-progress" as ColumnType, worktree: "wt-1" }]}
-        workflowStepNameLookup={new Map([["WS-003", "Accessibility Audit"]])}
-      />,
-    );
-
-    expect(screen.getByTestId("worktree-group").getAttribute("data-workflow-lookup-size")).toBe("1");
-  });
 });
 
 describe("Column pagination", () => {
