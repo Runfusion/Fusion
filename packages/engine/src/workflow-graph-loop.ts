@@ -229,6 +229,16 @@ export interface OptionalGroupRunResult {
   outcome: WorkflowNodeOutcome;
   value?: string;
   visitedNodeIds: string[];
+  /*
+   * FNXC:WorkflowStepResults 2026-06-25-12:00:
+   * The exit (last-run) inner template node's result, surfaced so the executor can
+   * record the group's outcome into `task.workflowStepResults` (KTD-1/KTD-2, plan
+   * U2). For a prompt/gate inner node `value` carries the structured verdict
+   * (APPROVE / APPROVE_WITH_NOTES / REVISE); `outcome` distinguishes a gate REVISE
+   * (failure) from an advisory REVISE (success). Notes/output are not surfaced by
+   * the WorkflowNodeResult contract, so they are recorded only when present.
+   */
+  exitStepRecord?: WorkflowNodeResult;
 }
 
 function resolveOptionalGroupTemplate(
@@ -278,7 +288,7 @@ export async function runOptionalGroup(
       // Publish accumulated template context, then surface the failure as the
       // group's outcome so its failure/outcome: edges route.
       Object.assign(env.context, groupContext);
-      return { outcome: "failure", value: lastResult.value, visitedNodeIds };
+      return { outcome: "failure", value: lastResult.value, visitedNodeIds, exitStepRecord: lastResult };
     }
 
     const edges: WorkflowIrEdge[] = outgoing.get(current.id) ?? [];
@@ -290,5 +300,5 @@ export async function runOptionalGroup(
 
   // Single pass complete: publish the template's context onto the shared context.
   Object.assign(env.context, groupContext);
-  return { outcome: lastResult.outcome, value: lastResult.value, visitedNodeIds };
+  return { outcome: lastResult.outcome, value: lastResult.value, visitedNodeIds, exitStepRecord: lastResult };
 }

@@ -7,6 +7,7 @@ import type {
   WorkflowIrNode,
   WorkflowIrNodeKind,
   WorkflowNodeExtensionResult,
+  WorkflowStepResult,
 } from "@fusion/core";
 import { BUILTIN_CODING_WORKFLOW_IR, WorkflowIrError, getWorkflowExtensionRegistry, resolveMaxReworkCycles } from "@fusion/core";
 
@@ -153,6 +154,18 @@ export interface WorkflowGraphExecutorDeps {
   resumeReconcile?: ForeachEnvironment["resumeReconcile"];
   /** FIX 4 (context gap): task-level log sink for integration-conflict rework. */
   logTaskEntry?: ForeachEnvironment["logTaskEntry"];
+  /*
+   * FNXC:WorkflowStepResults 2026-06-25-12:00:
+   * Fail-soft persistence sink for an ENABLED optional-group node's outcome
+   * (plan U2, KTD-1/KTD-2). The graph upserts each enabled group's result into the
+   * EXISTING `task.workflowStepResults` field keyed by `node.id` so the unified
+   * progress bar (`getUnifiedTaskProgress`) reflects graph-run steps. Optional: when
+   * absent the executor records NOTHING (keeps in-memory tests byte-inert), so a
+   * disabled group and an unwired store both record nothing. The upsert-by-id +
+   * `store.updateTask({workflowStepResults})` wiring lives in the executor adapter;
+   * this seam only forwards the terminal/pending entry.
+   */
+  recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => void | Promise<void>;
   /** Project node-published task metadata onto the task row for dispatcher/UI. */
   publishTaskProjection?: (taskId: string, patch: WorkflowTaskProjection, source: { nodeId: string; nodeKind: WorkflowIrNode["kind"] }) => void | Promise<void>;
   /** @deprecated use publishTaskProjection. Kept for older callers. */
@@ -502,6 +515,32 @@ export class WorkflowGraphExecutor {
             // invariant. (Code review: CodeRabbit.)
             return await traverseChildren(node, { outcome: "success" });
           }
+          /*
+           * FNXC:WorkflowStepResults 2026-06-25-12:00:
+           * Record an enabled optional-group's outcome into the EXISTING
+           * `task.workflowStepResults` field keyed by `node.id` (plan U2,
+           * KTD-1/KTD-2/KTD-3) + emit `[pre-merge]` logs at parity with the legacy
+           * `runWorkflowSteps`. A `pending` entry (with `startedAt`) is written when
+           * the enabled group STARTS so the dashboard can show live status; after
+           * `runOptionalGroup` returns, the entry is UPSERT-replaced by the terminal
+           * record (same `startedAt`, plus `completedAt`). Disabled groups take the
+           * bypass branch above and record NOTHING (byte-inert). Recording is
+           * fail-soft via the optional `recordWorkflowStepResult` dep — absent → no
+           * record (in-memory tests unchanged).
+           */
+          const groupName = typeof node.config?.name === "string" && node.config.name.trim()
+            ? node.config.name.trim()
+            : node.id;
+          const stepStartedAt = new Date().toISOString();
+          await this.recordOptionalGroupStepResult(task.id, {
+            workflowStepId: node.id,
+            workflowStepName: groupName,
+            phase: "pre-merge",
+            status: "pending",
+            startedAt: stepStartedAt,
+          });
+          this.deps.logTaskEntry?.(`[pre-merge] Starting workflow step: ${groupName}`);
+
           const groupResult = await runOptionalGroup(node, {
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
@@ -509,6 +548,49 @@ export class WorkflowGraphExecutor {
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             signal: this.deps.signal,
           });
+          // Map the group outcome → a WorkflowStepResult status (mirrors
+          // `mapWorkflowStatus` in taskProgress.ts): a `failure` outcome (gate REVISE
+          // or hard failure) → "failed"; an advisory REVISE (success outcome, REVISE
+          // verdict) → "advisory_failure" (non-blocking); otherwise → "passed".
+          const exitResult = groupResult.exitStepRecord;
+          const verdictRaw = typeof (exitResult?.value ?? groupResult.value) === "string"
+            ? (exitResult?.value ?? groupResult.value) as string
+            : undefined;
+          const verdict =
+            verdictRaw === "APPROVE" || verdictRaw === "APPROVE_WITH_NOTES" || verdictRaw === "REVISE"
+              ? verdictRaw
+              : undefined;
+          let stepStatus: WorkflowStepResult["status"];
+          if (groupResult.outcome === "failure") stepStatus = "failed";
+          else if (verdict === "REVISE") stepStatus = "advisory_failure";
+          else stepStatus = "passed";
+          const exitContextPatch = exitResult?.contextPatch;
+          const stepOutput = typeof exitContextPatch?.output === "string" ? exitContextPatch.output : undefined;
+          const stepNotes = typeof exitContextPatch?.notes === "string" ? exitContextPatch.notes : undefined;
+          await this.recordOptionalGroupStepResult(task.id, {
+            workflowStepId: node.id,
+            workflowStepName: groupName,
+            phase: "pre-merge",
+            status: stepStatus,
+            ...(verdict ? { verdict } : {}),
+            ...(stepOutput !== undefined ? { output: stepOutput } : {}),
+            ...(stepNotes !== undefined ? { notes: stepNotes } : {}),
+            startedAt: stepStartedAt,
+            completedAt: new Date().toISOString(),
+          });
+          // `[pre-merge]` terminal logs at parity with the legacy path
+          // (executor.ts runWorkflowSteps: "completed" / "requested revision" /
+          // "failed" + the advisory variant).
+          if (stepStatus === "passed") {
+            this.deps.logTaskEntry?.(`[pre-merge] Workflow step completed: ${groupName}`);
+          } else if (stepStatus === "advisory_failure") {
+            this.deps.logTaskEntry?.(`[pre-merge] Workflow step requested revision: ${groupName}`, stepOutput);
+            this.deps.logTaskEntry?.(`[pre-merge] Advisory workflow step failed: ${groupName}`);
+          } else if (verdict === "REVISE") {
+            this.deps.logTaskEntry?.(`[pre-merge] Workflow step requested revision: ${groupName}`, stepOutput);
+          } else {
+            this.deps.logTaskEntry?.(`[pre-merge] Workflow step failed: ${groupName}`, stepOutput);
+          }
           visitedNodeIds.push(...groupResult.visitedNodeIds);
           const result: WorkflowNodeResult = {
             outcome: groupResult.outcome,
@@ -686,6 +768,21 @@ export class WorkflowGraphExecutor {
       await this.deps.stepInstancePersistence?.clearStaleInstanceStates?.(taskId, keepRunId);
     } catch {
       // Pruning is additive bookkeeping — a failure must not affect the run.
+    }
+  }
+
+  /*
+   * FNXC:WorkflowStepResults 2026-06-25-12:00:
+   * Fail-soft forward to the `recordWorkflowStepResult` persistence sink (plan U2).
+   * Recording is additive visibility bookkeeping — a sink failure (or absent sink)
+   * must NEVER affect graph execution, so swallow errors and no-op when unwired.
+   */
+  private async recordOptionalGroupStepResult(taskId: string, result: WorkflowStepResult): Promise<void> {
+    if (!this.deps.recordWorkflowStepResult) return;
+    try {
+      await this.deps.recordWorkflowStepResult(taskId, result);
+    } catch {
+      // Result recording is additive — a failure must not affect the run.
     }
   }
 

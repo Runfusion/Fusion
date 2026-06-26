@@ -1,4 +1,4 @@
-import type { Settings, TaskDetail, WorkflowDefinition } from "@fusion/core";
+import type { Settings, TaskDetail, WorkflowDefinition, WorkflowStepResult } from "@fusion/core";
 import { getBuiltinWorkflow, isBuiltinWorkflowId } from "@fusion/core";
 
 import { WorkflowGraphExecutor, type WorkflowNodeOutcome, type WorkflowTaskProjection } from "./workflow-graph-executor.js";
@@ -88,6 +88,10 @@ export interface WorkflowGraphTaskRunnerDeps {
   resumeReconcile?: ForeachEnvironment["resumeReconcile"];
   /** FIX 4 (context gap): task-level log sink for integration-conflict rework. */
   logTaskEntry?: ForeachEnvironment["logTaskEntry"];
+  /** Plan U2 (KTD-1/KTD-2): fail-soft sink that upserts an enabled optional-group
+   *  node's outcome into `task.workflowStepResults` keyed by node id. Additive;
+   *  absent → graph records nothing (disabled groups + unwired stores byte-inert). */
+  recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => void | Promise<void>;
   /** Project node-published task metadata onto the task row for dispatcher/UI. */
   publishTaskProjection?: (taskId: string, patch: WorkflowTaskProjection, source: { nodeId: string; nodeKind: string }) => void | Promise<void>;
   /** @deprecated use publishTaskProjection. */
@@ -233,6 +237,7 @@ export class WorkflowGraphTaskRunner {
         semaphoreAvailability: this.deps.semaphoreAvailability,
         resumeReconcile: this.deps.resumeReconcile,
         logTaskEntry: this.deps.logTaskEntry,
+        recordWorkflowStepResult: this.deps.recordWorkflowStepResult,
         publishTaskProjection: this.deps.publishTaskProjection,
         publishTouchedFiles: this.deps.publishTouchedFiles,
         // Single source of truth (KTD-6): prefer the caller-threaded run id so the

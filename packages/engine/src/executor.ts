@@ -4352,6 +4352,33 @@ export class TaskExecutor {
             .logEntry(task.id, summary, detail, this.getRunContextFor(task.id))
             .catch(() => {});
         },
+        /*
+        FNXC:WorkflowStepResults 2026-06-25-12:00:
+        Plan U2 (KTD-1/KTD-2): persistence adapter for an ENABLED optional-group
+        node's outcome. The graph records each enabled group's WorkflowStepResult
+        into the EXISTING `task.workflowStepResults` field keyed by `node.id` so the
+        unified progress bar (getUnifiedTaskProgress) reflects graph-run steps —
+        NO new table/type/store method. Upsert by `workflowStepId === node.id`
+        (replace-if-present else append) through the existing
+        `store.updateTask({workflowStepResults})` path. Fail-soft: degrade to a
+        no-op when the store lacks updateTask, and swallow read/write errors (the
+        executor wrapper also swallows) so result recording never affects the run.
+        */
+        recordWorkflowStepResult: async (taskId: string, result: import("@fusion/core").WorkflowStepResult) => {
+          if (typeof this.store.updateTask !== "function") return;
+          try {
+            const live = await this.store.getTask(taskId);
+            const existing = Array.isArray(live?.workflowStepResults)
+              ? [...live.workflowStepResults]
+              : [];
+            const idx = existing.findIndex((r) => r.workflowStepId === result.workflowStepId);
+            if (idx >= 0) existing[idx] = result;
+            else existing.push(result);
+            await this.store.updateTask(taskId, { workflowStepResults: existing }, this.getRunContextFor(taskId));
+          } catch {
+            // Result recording is additive visibility — never affect the run.
+          }
+        },
       });
       let result: WorkflowGraphTaskRunResult;
       try {
