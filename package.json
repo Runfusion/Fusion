@@ -33,6 +33,7 @@
     "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",
     "build:exe:all": "pnpm build && pnpm --filter @runfusion/fusion build:exe:all",
     "test": "node scripts/test-changed.mjs",
+    "verify:fast": "node scripts/verify-fast.mjs",
     "test:scripts": "node scripts/run-script-tests.mjs",
     "test:workflow-release-check": "node scripts/workflow-reliability-release-check.mjs",
     "fn:cache-stats": "node scripts/cache-stats.mjs",

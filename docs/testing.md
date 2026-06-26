@@ -32,11 +32,15 @@ Use the narrowest command that exercises the behavior you changed, then broaden 
 pnpm test              # gate suite + changed-only affected tests (bounded; never full-suite)
 pnpm test:gate         # the merge gate: curated engine-core suite + CI-shape test
 pnpm smoke:boot        # boot smoke: CLI --help + real serve /api/health
+pnpm verify:fast       # TEST-FREE verification: typecheck + build (scoped to changed packages) + boot smoke
 pnpm test:full         # full workspace suite — explicit opt-in only
 pnpm lint              # lint all packages
 pnpm build             # build workspace packages (excludes desktop/mobile)
 pnpm verify:workspace  # deep opt-in verification: lint -> test:full -> build (NOT the merge gate)
 ```
+
+<!-- FNXC:TestInfrastructure 2026-06-25-00:00: verify:fast is the opt-in test-free verification path. docs/testing.md observes the broad test gate caught no recalled real bugs while consuming ~70% of shipping time in flake triage; typecheck+build+boot-smoke gives deterministic, flake-free signal without running tests. It changes no default — pnpm test, the merge gate, and CI are untouched; the full suite stays available and runs non-blocking. -->
+`pnpm verify:fast` (`scripts/verify-fast.mjs`) is the recommended **test-free verification** command: it runs **typecheck + build scoped to the changed packages** (reusing the same git-diff / changed-package resolution as `pnpm test`) followed by the existing **boot smoke** once — and runs **no test suite**. It gives deterministic, flake-free signal in seconds, so it is a sound project `testCommand`/verification command when you want non-test verification. With no affected package (root/docs-only diff) it runs the boot smoke only. Each step is bounded by the shared `runWithWatchdog` (class `changed`) so a hang fails fast, and it exits nonzero on the first failing step. This is purely additive: it does not change `pnpm test`, the merge gate, or CI, and the full suite stays available (`pnpm test:full`, non-blocking on push to main).
 
 `pnpm test:full` runs each package's default test script with capped worker fanout (`FUSION_TEST_TOTAL_WORKERS=4 FUSION_TEST_CONCURRENCY=2 pnpm -r --workspace-concurrency=2 test`). Do not casually raise worker counts; dashboard/jsdom and integration-heavy packages destabilize when oversubscribed. Use `VITEST_MAX_WORKERS=<n>` only for targeted package-level investigation.
 

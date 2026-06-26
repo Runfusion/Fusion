@@ -107,12 +107,15 @@ The merge gate is thin and trusted: CI blocks PRs on exactly Lint, Typecheck, Bu
 pnpm test          # gate suite + changed-only affected tests (bounded; never full-suite)
 pnpm test:gate     # the merge gate: curated engine-core suite + CI-shape test
 pnpm smoke:boot    # boot smoke: CLI --help + real serve /api/health
+pnpm verify:fast   # TEST-FREE verification: typecheck + build (scoped to changed packages) + boot smoke; recommended non-test verification/testCommand. Additive — changes no default
 pnpm test:velocity # weekly report-only test velocity baseline; use -- --measure --write-report to refresh
 pnpm test:full     # full workspace suite — explicit opt-in only
 pnpm lint
 pnpm build
 pnpm verify:workspace  # deep opt-in verification (lint -> test:full -> build); NOT the merge gate
 ```
+
+`pnpm verify:fast` is the recommended **test-free verification** path: typecheck + build scoped to the changed packages (it reuses `pnpm test`'s changed-package resolution) plus the boot smoke once, with **no test run**. It is deterministic and flake-free, suitable as a project `testCommand`/verification command when you want non-test verification; the full suite stays available and runs non-blocking. It is additive and does not change `pnpm test`, the gate, or CI. See `docs/testing.md`.
 
 ### Standing Rule: Flaky Tests Are Quarantined on Sight (Deletion Ratchet)
 

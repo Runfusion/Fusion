@@ -407,7 +407,13 @@ function gitOutput(gitArgs) {
   return result.stdout.trim();
 }
 
-function getBaseBranch() {
+// FNXC:TestInfrastructure 2026-06-25-00:00:
+// Exported so the test-free verification path (scripts/verify-fast.mjs) reuses
+// the SAME base-branch / comparison-base / changed-file / workspace-resolution
+// logic instead of reinventing git-diff. verify:fast runs typecheck + build +
+// boot-smoke (no test suite) and must scope to exactly the packages a
+// changed-only run would scope to.
+export function getBaseBranch() {
   const changesetConfigPath = path.join(rootDir, ".changeset", "config.json");
   const changesetConfig = JSON.parse(readFileSync(changesetConfigPath, "utf8"));
   return changesetConfig.baseBranch || "main";
@@ -497,7 +503,7 @@ export function listWorkspacePackageInfos({ projectRoot = rootDir } = {}) {
     .sort((a, b) => a.dir.localeCompare(b.dir));
 }
 
-function listWorkspacePackages(workspacePackages = listWorkspacePackageInfos()) {
+export function listWorkspacePackages(workspacePackages = listWorkspacePackageInfos()) {
   const packageNameByDir = new Map();
   for (const workspacePackage of workspacePackages) {
     packageNameByDir.set(workspacePackage.dir, workspacePackage.name);
@@ -665,7 +671,7 @@ export function isSharedInfraChange(changedFiles) {
   });
 }
 
-function detectComparisonBase(baseBranch) {
+export function detectComparisonBase(baseBranch) {
   const candidates = [
     `origin/${baseBranch}`,
     `refs/remotes/origin/${baseBranch}`,
@@ -682,7 +688,7 @@ function detectComparisonBase(baseBranch) {
   return null;
 }
 
-function changedFilesSince(baseSha) {
+export function changedFilesSince(baseSha) {
   const diff = gitOutput(["diff", "--name-only", `${baseSha}...HEAD`]);
   if (diff === null) {
     return null;
