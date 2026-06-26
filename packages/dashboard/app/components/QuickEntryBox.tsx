@@ -4,9 +4,9 @@ import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, getErrorMessage } from "@fusion/core";
-import type { Task, Settings, TaskPriority } from "@fusion/core";
+import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep } from "@fusion/core";
 import type { ModelInfo, RefinementType, Agent, CreateTaskInput, DuplicateMatch } from "../api";
-import { checkDuplicateTasks, fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment } from "../api";
+import { checkDuplicateTasks, fetchModels, fetchSettings, refineText, getRefineErrorMessage, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
 import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Flag } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -15,6 +15,7 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 import { useNodes } from "../hooks/useNodes";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
+import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const MOBILE_BREAKPOINT_PX = 768;
@@ -172,6 +173,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [favoriteModels, setFavoriteModels] = useState<string[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [selectedPresetId, setSelectedPresetId] = useState<string | undefined>(undefined);
+  const [optionalSteps, setOptionalSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
+  const [enabledOptionalStepIds, setEnabledOptionalStepIds] = useState<string[]>([]);
   const [isFastMode, setIsFastMode] = useState(false);
   const [githubTrackingOverride, setGithubTrackingOverride] = useState<boolean | null>(null);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -252,6 +255,51 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
       cancelled = true;
     };
   }, [projectId]);
+
+  /*
+  FNXC:WorkflowOptionalSteps 2026-06-25-00:00:
+  Quick-add creation needs the active workflow's optional steps in the immediate action row, seeded from each step's `defaultOn`, and forwarded through `enabledWorkflowSteps`. `null` workflow is an explicit no-workflow opt-out, while `undefined` inherits the project default so Board and List quick-add match TaskForm's create-time resolution.
+  */
+  const effectiveOptionalWorkflowId =
+    workflowId === null
+      ? null
+      : (workflowId ?? settings?.defaultWorkflowId ?? null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOptionalSteps([]);
+    setEnabledOptionalStepIds([]);
+
+    if (!effectiveOptionalWorkflowId) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    fetchWorkflowOptionalSteps(effectiveOptionalWorkflowId, projectId)
+      .then((steps) => {
+        if (cancelled) return;
+        setOptionalSteps(steps);
+        setEnabledOptionalStepIds(steps.filter((step) => step.defaultOn).map((step) => step.templateId));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOptionalSteps([]);
+        setEnabledOptionalStepIds([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveOptionalWorkflowId, projectId]);
+
+  const toggleOptionalStep = useCallback((templateId: string) => {
+    setEnabledOptionalStepIds((prev) => (
+      prev.includes(templateId)
+        ? prev.filter((id) => id !== templateId)
+        : [...prev, templateId]
+    ));
+  }, []);
 
   const executorSelectionValue = getModelSelectionValue(executorProvider, executorModelId);
   const validatorSelectionValue = getModelSelectionValue(validatorProvider, validatorModelId);
@@ -492,6 +540,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
     setSelectedPresetId(undefined);
+    setEnabledOptionalStepIds(optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId));
     setIsFastMode(false);
     setGithubTrackingOverride(null);
     setPriority(DEFAULT_TASK_PRIORITY);
@@ -510,7 +559,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     if (typeof window !== "undefined") {
       removeScopedItem(STORAGE_KEY, projectId);
     }
-  }, [pendingImages, projectId]);
+  }, [pendingImages, projectId, optionalSteps]);
 
   const handleImageFiles = useCallback((files: FileList | null | undefined) => {
     if (!files || files.length === 0) return;
@@ -563,6 +612,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
+        enabledWorkflowSteps: enabledOptionalStepIds.length ? enabledOptionalStepIds : undefined,
         ...(isFastMode ? { executionMode: "fast" } : {}),
         githubTracking: githubTrackingOverride !== null ? { enabled: githubTrackingOverride } : undefined,
         priority,
@@ -607,6 +657,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     hasPlanningOverride,
     planningProvider,
     planningModelId,
+    enabledOptionalStepIds,
     isFastMode,
     settings,
     githubTrackingOverride,
@@ -1662,6 +1713,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               </div>,
               portalRoot,
             )}
+
+            <WorkflowOptionalStepsDropdown
+              steps={optionalSteps}
+              enabledIds={enabledOptionalStepIds}
+              onToggle={toggleOptionalStep}
+              disabled={isSubmitting || isDisabled}
+              triggerTestId="quick-entry-optional-steps-trigger"
+            />
 
             <button
               type="button"

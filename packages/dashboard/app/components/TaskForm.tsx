@@ -876,6 +876,9 @@ export function TaskForm({
 
       FNXC:NewTaskDialogAffordances 2026-06-23-21:20:
       The regular New Task dialog must visibly expose the screenshot quick-add button contract in the immediate action cluster while Advanced remains the deep configuration editor. TaskForm hosts the cluster so create payload state has one source of truth; NewTaskModal only supplies the submit handler and its existing dependency/agent quick controls.
+
+      FNXC:NewTaskDialogAffordances 2026-06-25-00:00:
+      Optional workflow steps are now an inline create-time quick button, seeded by the selected workflow's `defaultOn` values and lifted to NewTaskModal through the existing enabledWorkflowSteps state. The Advanced workflow section remains the place to choose the workflow itself, not a duplicate optional-steps trigger.
       */}
       {mode === "create" && (
         <div className="task-form-description-actions" data-testid="task-form-description-actions">
@@ -991,6 +994,20 @@ export function TaskForm({
             >
               {workflowInlineLabel}
             </button>
+          )}
+
+          {optionalStepsLoading ? (
+            <small className="workflow-optional-steps-loading" data-testid="task-optional-steps-loading">
+              {t("taskForm.optionalStepsLoading", "Loading optional steps…")}
+            </small>
+          ) : (
+            <WorkflowOptionalStepsDropdown
+              steps={optionalSteps}
+              enabledIds={enabledOptionalStepIds}
+              onToggle={toggleOptionalStep}
+              disabled={disabled}
+              triggerTestId="task-form-inline-optional-steps"
+            />
           )}
 
           <button
@@ -1588,23 +1605,6 @@ export function TaskForm({
           <small className="workflow-select-help" data-testid="task-workflow-help">
             {t("taskForm.workflowHelp", "The selected workflow's steps run automatically around this task's execution.")}
           </small>
-          {optionalStepsLoading ? (
-            <small className="workflow-optional-steps-loading" data-testid="task-optional-steps-loading">
-              {t("taskForm.optionalStepsLoading", "Loading optional steps…")}
-            </small>
-          ) : (
-            optionalSteps.length > 0 && (
-              <div className="task-form-optional-steps" data-testid="task-form-optional-steps">
-                <WorkflowOptionalStepsDropdown
-                  steps={optionalSteps}
-                  enabledIds={enabledOptionalStepIds}
-                  onToggle={toggleOptionalStep}
-                  disabled={disabled}
-                  triggerTestId="task-optional-steps-trigger"
-                />
-              </div>
-            )
-          )}
         </div>
       )}
 

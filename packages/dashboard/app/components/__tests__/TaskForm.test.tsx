@@ -756,6 +756,7 @@ describe("TaskForm description-adjacent actions layout (FN-781)", () => {
     });
 
     expect(screen.queryByTestId("task-form-description-actions")).toBeNull();
+    expect(screen.queryByTestId("task-form-inline-optional-steps")).toBeNull();
   });
 
   it("Plan and Subtask buttons are disabled when description is empty", () => {

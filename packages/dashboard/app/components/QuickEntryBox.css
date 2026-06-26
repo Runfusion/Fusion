@@ -457,8 +457,10 @@ The global `.description-with-refine textarea { padding-right: 70px }` (styles.c
     touch-action: manipulation;
   }
 
-  .quick-entry-actions .btn {
-    min-height: 36px;
+  .quick-entry-actions .btn,
+  .quick-entry-actions .wf-optional-steps-dropdown-trigger {
+    /* FNXC:WorkflowOptionalSteps 2026-06-25-00:00: The optional-steps trigger is not a `.btn`, so opt it into the same mobile quick-entry touch-target contract as the surrounding action buttons without adding a wrapper that could leave an empty shell for zero-step workflows. */
+    min-height: calc(var(--space-2xl) + var(--space-xs));
   }
 
   .quick-entry-box .dep-dropdown {

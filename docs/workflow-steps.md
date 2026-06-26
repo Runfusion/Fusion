@@ -244,6 +244,8 @@ Workflows can advertise optional workflow-step templates with `optionalSteps: [{
 
 `defaultOn` is optional and seeds the UI toggle when a task is created or edited before the task has made its own selection. Unknown or removed template ids are skipped during resolution so stale declarations do not render blank controls or break workflow loading.
 
+Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. Workflows with no optional steps render no trigger, and selected ids are submitted through `enabledWorkflowSteps` when the task is created.
+
 The built-in coding workflow (`builtin:coding`) declares `browser-verification` as an optional step. It remains opt-in by default, so browser verification only runs for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
 
 ## What They Are

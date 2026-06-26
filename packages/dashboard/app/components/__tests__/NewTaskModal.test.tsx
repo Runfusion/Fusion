@@ -818,7 +818,7 @@ describe("NewTaskModal", () => {
       });
       fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "wf-x" } });
 
-      const trigger = await screen.findByTestId("task-optional-steps-trigger");
+      const trigger = await screen.findByTestId("task-form-inline-optional-steps");
       expect(trigger).toHaveTextContent("Steps: none");
       fireEvent.click(trigger);
       fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-browser-verification"));
@@ -831,6 +831,21 @@ describe("NewTaskModal", () => {
       });
     });
 
+    it("keeps exactly one inline optional-steps trigger when Advanced is expanded", async () => {
+      const { fetchWorkflows, fetchWorkflowOptionalSteps } = await import("../../api");
+      vi.mocked(fetchWorkflows).mockResolvedValue([WF]);
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([STEP]);
+
+      renderNewTaskModal();
+      fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "wf-x" } });
+
+      await screen.findByTestId("task-form-inline-optional-steps");
+      fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+
+      expect(screen.getAllByTestId("task-form-inline-optional-steps")).toHaveLength(1);
+      expect(screen.queryByTestId("task-form-optional-steps")).toBeNull();
+    });
+
     it("seeds defaultOn steps as pre-enabled and submits them without toggling", async () => {
       const { fetchWorkflows, fetchWorkflowOptionalSteps } = await import("../../api");
       vi.mocked(fetchWorkflows).mockResolvedValue([WF]);
@@ -840,7 +855,7 @@ describe("NewTaskModal", () => {
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "task" } });
       fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "wf-x" } });
 
-      const trigger = await screen.findByTestId("task-optional-steps-trigger");
+      const trigger = await screen.findByTestId("task-form-inline-optional-steps");
       await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
 
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -861,7 +876,7 @@ describe("NewTaskModal", () => {
       // "No workflow" → null selection → no optional-steps fetch, no dropdown.
       fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "__none__" } });
 
-      expect(screen.queryByTestId("task-optional-steps-trigger")).toBeNull();
+      expect(screen.queryByTestId("task-form-inline-optional-steps")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
       await waitFor(() => {
         const call = vi.mocked(props.onCreateTask).mock.calls.at(-1)?.[0];

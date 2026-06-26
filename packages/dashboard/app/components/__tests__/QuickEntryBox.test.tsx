@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
 import type { Task } from "@fusion/core";
-import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment } from "../../api";
+import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import { scopedKey } from "../../utils/projectStorage";
 import { loadAllAppCss } from "../../test/cssFixture";
@@ -190,6 +190,7 @@ vi.mock("../../api", () => ({
   fetchAgents: vi.fn().mockResolvedValue([]),
   checkDuplicateTasks: vi.fn().mockResolvedValue([]),
   uploadAttachment: vi.fn().mockResolvedValue({}),
+  fetchWorkflowOptionalSteps: vi.fn().mockResolvedValue([]),
   updateGlobalSettings: vi.fn().mockResolvedValue({}),
 }));
 
@@ -401,6 +402,17 @@ describe("QuickEntryBox", () => {
     });
     vi.mocked(uploadAttachment).mockResolvedValue({} as any);
     vi.mocked(checkDuplicateTasks).mockResolvedValue([]);
+    vi.mocked(fetchSettings).mockResolvedValue({
+      modelPresets: [],
+      autoSelectModelPreset: false,
+      defaultPresetBySize: {},
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 30000,
+      groupOverlappingFiles: true,
+      autoMerge: true,
+    } as any);
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([]);
 
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -1581,6 +1593,127 @@ describe("QuickEntryBox", () => {
     });
 
     innerWidthSpy.mockRestore();
+  });
+
+  describe("optional workflow steps", () => {
+    const DEFAULT_ON_STEP = {
+      templateId: "browser-verification",
+      name: "Browser verification",
+      description: "Run browser checks",
+      phase: "pre-merge" as const,
+      defaultOn: true,
+    };
+    const MANUAL_STEP = {
+      templateId: "manual-smoke",
+      name: "Manual smoke",
+      description: "Run a manual smoke pass",
+      phase: "pre-merge" as const,
+      defaultOn: false,
+    };
+
+    it("renders in the quick action row and submits the toggled enabled set via Save", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP, MANUAL_STEP]);
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      const trigger = await screen.findByTestId("quick-entry-optional-steps-trigger");
+      expect(screen.getByTestId("quick-entry-actions").contains(trigger)).toBe(true);
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+
+      fireEvent.click(trigger);
+      fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-browser-verification"));
+      fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-manual-smoke"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create with optional step" } });
+      clickSave();
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ enabledWorkflowSteps: ["manual-smoke"] }),
+        );
+      });
+      await waitFor(() => expect(screen.getByTestId("quick-entry-input")).toHaveValue(""));
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create after reset" } });
+      clickSave();
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenLastCalledWith(
+          expect.objectContaining({ enabledWorkflowSteps: ["browser-verification"] }),
+        );
+      });
+    });
+
+    it("submits defaultOn optional steps via Enter key", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP]);
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      await screen.findByTestId("quick-entry-optional-steps-trigger");
+      const textarea = screen.getByTestId("quick-entry-input");
+      fireEvent.change(textarea, { target: { value: "Create from enter" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ enabledWorkflowSteps: ["browser-verification"] }),
+        );
+      });
+    });
+
+    it("resolves null, undefined, and explicit workflow ids for optional-step fetches", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([]);
+      const { unmount: unmountNull } = renderQuickEntryBox({ workflowId: null });
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+      expect(fetchWorkflowOptionalSteps).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("quick-entry-optional-steps-trigger")).toBeNull();
+      unmountNull();
+
+      vi.clearAllMocks();
+      vi.mocked(fetchSettings).mockResolvedValue({ defaultWorkflowId: "wf-default" } as any);
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP]);
+      const { unmount: unmountDefault } = renderQuickEntryBox({ workflowId: undefined });
+      await screen.findByTestId("quick-entry-optional-steps-trigger");
+      expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-default", TEST_PROJECT_ID);
+      unmountDefault();
+
+      vi.clearAllMocks();
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP]);
+      renderQuickEntryBox({ workflowId: "wf-explicit" });
+      await screen.findByTestId("quick-entry-optional-steps-trigger");
+      expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-explicit", TEST_PROJECT_ID);
+    });
+
+    it("renders no trigger or action-row shell when the workflow has zero optional steps", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([]);
+      renderQuickEntryBox({ workflowId: "wf-empty" });
+
+      await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-empty", TEST_PROJECT_ID));
+      expect(screen.queryByTestId("quick-entry-optional-steps-trigger")).toBeNull();
+      expect(screen.getByTestId("quick-entry-actions").querySelector(".wf-optional-steps-dropdown")).toBeNull();
+    });
+
+    it("carries enabledWorkflowSteps through duplicate-confirmed create anyway", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP]);
+      vi.mocked(checkDuplicateTasks).mockResolvedValueOnce([
+        { id: "FN-456", title: "Duplicate", description: "duplicate", column: "todo", score: 0.9 },
+      ]);
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      await screen.findByTestId("quick-entry-optional-steps-trigger");
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Duplicate optional step" } });
+      clickSave();
+      fireEvent.click(await screen.findByRole("button", { name: "Create anyway" }));
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            enabledWorkflowSteps: ["browser-verification"],
+            acknowledgedDuplicates: ["FN-456"],
+          }),
+        );
+      });
+    });
   });
 
   describe("Rich creation features", () => {
@@ -3900,6 +4033,16 @@ describe("QuickEntryBox", () => {
 
       expect(touchRule).toMatch(/\.quick-entry-actions,\s*\.quick-entry-actions \*/);
       expect(touchRule).toMatch(/touch-action:\s*manipulation;/);
+    });
+
+    it("keeps the optional-steps trigger in the mobile quick-entry touch target rule", () => {
+      const optionalTriggerRule = cssRuleBody(
+        QUICK_ENTRY_BOX_CSS,
+        ".quick-entry-actions .btn,\n  .quick-entry-actions .wf-optional-steps-dropdown-trigger",
+      );
+
+      expect(optionalTriggerRule).not.toBeNull();
+      expect(cssDeclarationValue(optionalTriggerRule!, "min-height")).toBe("calc(var(--space-2xl) + var(--space-xs))");
     });
 
     it("keeps inline deps/models controls in touch-target button classes on mobile", () => {
