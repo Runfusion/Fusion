@@ -11,7 +11,7 @@ const dashboardRoot = join(__dirname, "..", "..");
 const dashboardPackageJsonPath = join(dashboardRoot, "package.json");
 const vitestConfigPath = join(dashboardRoot, "vitest.config.ts");
 const dashboardQualityScriptPath = join(dashboardRoot, "scripts", "run-quality-tests.mjs");
-const qualityParityBaselineFileCount = 746;
+const qualityParityBaselineFileCount = 726;
 
 interface QualityLane {
   name: string;

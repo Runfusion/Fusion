@@ -718,7 +718,7 @@ describe("FN-5241 executor handoff auditing", () => {
     await executor.execute(task as any);
 
     expect((await store.getTask(task.id))?.column).toBe("in-review");
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id, priority: task.priority }),
     ]);
     const handoff = store.getRunAuditEvents({ taskId: task.id, mutationType: "task:handoff", limit: 10 })[0];
@@ -757,7 +757,7 @@ describe("FN-5241 executor handoff auditing", () => {
     expect(latest?.column).toBe("in-review");
     expect(latest?.status).toBe("failed");
     expect(String(latest?.error ?? "")).toContain("without calling fn_task_done");
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id, priority: task.priority }),
     ]);
     const handoff = store.getRunAuditEvents({ taskId: task.id, mutationType: "task:handoff", limit: 10 })[0];

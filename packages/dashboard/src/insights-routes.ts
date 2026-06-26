@@ -255,9 +255,25 @@ export function createInsightsRouter(store: TaskStore): Router {
   const router = Router();
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
-  const rootInsightStore = typeof (store as { getInsightStore?: () => InsightStore }).getInsightStore === "function"
-    ? (store as { getInsightStore: () => InsightStore }).getInsightStore()
-    : undefined;
+  /*
+   * FNXC:BackendFlip 2026-06-26-16:15:
+   * The InsightStore is a sync SQLite satellite store that has not been
+   * ported to the async PostgreSQL path. In backend mode, store.getInsightStore()
+   * throws ("SQLite Database is not available in backend mode") because it
+   * constructs `new InsightStore(store.db)`. Wrap the eager root-store access
+   * (used only for the startup sweep + background sweeper) in try/catch so
+   * route registration does not crash `fn serve` / boot smoke against embedded
+   * PG. When unavailable, the insights REST endpoints will surface the error
+   * per-request instead of the whole server failing to boot.
+   */
+  let rootInsightStore: InsightStore | undefined;
+  if (typeof (store as { getInsightStore?: () => InsightStore }).getInsightStore === "function") {
+    try {
+      rootInsightStore = (store as { getInsightStore: () => InsightStore }).getInsightStore();
+    } catch {
+      rootInsightStore = undefined;
+    }
+  }
 
   if (rootInsightStore) {
     try {

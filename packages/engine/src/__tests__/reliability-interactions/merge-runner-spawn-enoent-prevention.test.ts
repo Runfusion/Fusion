@@ -67,7 +67,7 @@ async function setupReuseMergeFixture(opts: {
   git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
   await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
   if (!opts.skipEnqueue) {
-    store.enqueueMergeQueue(task.id);
+    await store.enqueueMergeQueue(task.id);
   }
 
   return { rootDir, store, taskId: task.id, branch, fixture, worktreeRoot, worktreePath };

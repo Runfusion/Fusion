@@ -266,7 +266,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      const result = aggregateActivityAnalytics(store.getDatabase(), {
+      const result = await aggregateActivityAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
       });
@@ -458,7 +458,10 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      const result = aggregatePluginActivations(store.getDatabase(), {
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-13:15:
+      // Pass the async layer when in backend mode; otherwise pass the sync DB.
+      const dbOrLayer = store.getAsyncLayer() ?? store.getDatabase();
+      const result = await aggregatePluginActivations(dbOrLayer, {
         from: range.from,
         to: range.to,
       });

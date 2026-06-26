@@ -7682,7 +7682,7 @@ export async function syncGroupPrOnLanding(input: {
   syncGroupPr: import("./group-merge-coordinator.js").SyncGroupPrFn;
 }): Promise<void> {
   const { store, groupId, cwd, syncGroupPr } = input;
-  const latestGroup = store.getBranchGroup(groupId);
+  const latestGroup = await store.getBranchGroup(groupId);
   if (!latestGroup || latestGroup.prNumber == null || latestGroup.prState !== "open") {
     return;
   }
@@ -7695,7 +7695,7 @@ export async function syncGroupPrOnLanding(input: {
   // Guard against stale snapshots: a newer landing/promotion may have stored a
   // different (e.g. newer open) PR for this group while we were awaiting the
   // sync. Re-read and only persist when the snapshot still matches.
-  const currentGroup = store.getBranchGroup(groupId);
+  const currentGroup = await store.getBranchGroup(groupId);
   if (
     !currentGroup ||
     currentGroup.prNumber !== latestGroup.prNumber ||
@@ -7706,7 +7706,7 @@ export async function syncGroupPrOnLanding(input: {
   // Out-of-band reconciliation: if GitHub reports the PR is no longer open
   // (closed/merged), persist the corrected prState rather than leaving a stale "open".
   if (reconciled.prState !== currentGroup.prState) {
-    store.updateBranchGroup(currentGroup.id, {
+    void store.updateBranchGroup(currentGroup.id, {
       prState: reconciled.prState,
       prNumber: reconciled.prNumber,
       prUrl: reconciled.prUrl,
@@ -7849,7 +7849,7 @@ export async function aiMergeTask(
       }).catch((err) => {
         // Non-fatal: never fail the merge/landing because PR sync failed.
         try {
-          store.recordRunAuditEvent({
+          void store.recordRunAuditEvent({
             taskId,
             agentId: "merger",
             runId: `merge-${taskId}`,
@@ -8340,15 +8340,15 @@ export async function aiMergeTask(
     const existingRecord = store.getMergeRequestRecord(task.id);
     const currentState = existingRecord?.state ?? initialState;
     if (!existingRecord) {
-      store.upsertMergeRequestRecord(task.id, { state: initialState });
+      await store.upsertMergeRequestRecord(task.id, { state: initialState });
     }
 
     if (!autoMergeManuallyGated) {
       if (currentState === "retrying") {
-        store.transitionMergeRequestState(task.id, "queued");
-        store.transitionMergeRequestState(task.id, "running");
+        await store.transitionMergeRequestState(task.id, "queued");
+        await store.transitionMergeRequestState(task.id, "running");
       } else if (currentState === "queued") {
-        store.transitionMergeRequestState(task.id, "running");
+        await store.transitionMergeRequestState(task.id, "running");
       }
     }
 
@@ -8369,7 +8369,7 @@ export async function aiMergeTask(
   if (integrationRoot.mode === "reuse-task-worktree") {
     // FN-5353: ensure the target task is in mergeQueue before attempting strict
     // targetTaskId lease acquisition for reuse handoff.
-    store.enqueueMergeQueue(task.id, { priority: task.priority });
+    await store.enqueueMergeQueue(task.id, { priority: task.priority });
     try {
       reuseHandoff = await acquireReuseHandoff({
         task,
@@ -9629,7 +9629,7 @@ export async function aiMergeTask(
   // 5. Execute merge with retry logic
   // Cross-process safety net: abort if another task is already mid-merge.
   // The engine's drainMergeQueue also checks, but this catches direct callers.
-  const activeMerge = store.getActiveMergingTask(taskId);
+  const activeMerge = await store.getActiveMergingTask(taskId);
   if (activeMerge) {
     throw new Error(
       `Cannot merge ${taskId}: task ${activeMerge} is already merging (cross-process conflict)`,
@@ -12380,7 +12380,7 @@ async function completeTask(
   if (isMergeRequestContractShadowEnabled(settings) && preMoveTask?.autoMerge !== false) {
     const mergeRequestRecord = store.getMergeRequestRecord(taskId);
     if (mergeRequestRecord) {
-      store.transitionMergeRequestState(taskId, "succeeded");
+      await store.transitionMergeRequestState(taskId, "succeeded");
     }
   }
   result.task = task;

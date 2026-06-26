@@ -7320,6 +7320,40 @@ export async function fetchMeshState(): Promise<MeshClusterSnapshot> {
   return api<MeshClusterSnapshot>("/mesh/state");
 }
 
+/*
+ * FNXC:MeshSharedPg 2026-06-25-00:00:
+ * With the mesh on shared PostgreSQL, the dashboard needs to surface which
+ * engines are actively connected to the shared DB, their in-flight tasks, and
+ * heartbeat status. GET /api/mesh/engines joins the local engineManager with
+ * the central node registry and per-project health. The shape matches the
+ * MeshTopology `engines` prop (MeshEngineStatus) so the dashboard can render it
+ * without transformation.
+ */
+export interface MeshEnginesResponse {
+  collectedAt: string;
+  backend: string;
+  engines: MeshEngineStatusApi[];
+}
+
+/** Per-engine status entry returned by GET /api/mesh/engines. Mirrors MeshEngineStatus. */
+export interface MeshEngineStatusApi {
+  projectId: string;
+  projectName?: string;
+  projectPath?: string;
+  workingDirectory?: string;
+  runtimeStatus: string;
+  inFlightTasks: number;
+  activeAgents: number;
+  lastActivityAt?: string;
+  memoryBytes?: number;
+  nodeId?: string;
+}
+
+/** Fetch active engine connections reading from shared PG (GET /api/mesh/engines). */
+export async function fetchMeshEngines(): Promise<MeshEnginesResponse> {
+  return api<MeshEnginesResponse>("/mesh/engines");
+}
+
 /** Browse directory entries for the directory picker */
 export interface BrowseDirectoryResult {
   currentPath: string;

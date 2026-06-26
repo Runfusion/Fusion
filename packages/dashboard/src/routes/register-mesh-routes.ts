@@ -458,7 +458,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
 
         const ensureAgentStore = async (): Promise<InstanceType<typeof AgentStore>> => {
           if (agentStore) return agentStore;
-          const newStore = new AgentStore({ rootDir: fusionDir, taskStore: store });
+          const newStore = new AgentStore({ rootDir: fusionDir, taskStore: store, asyncLayer: store.getAsyncLayer() ?? undefined });
           await newStore.init();
           agentStore = newStore;
           return agentStore;
@@ -591,7 +591,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
       await collectSnapshot("activityLog", async () => store.getActivityLogSnapshot(SHARED_STATE_DEFAULT_LIMIT));
       await collectSnapshot("runAudit", async () => store.getRunAuditSnapshot({ limit: SHARED_STATE_DEFAULT_LIMIT }));
 
-      const responseAgentStore = new AgentStore({ rootDir: store.getFusionDir(), taskStore: store });
+      const responseAgentStore = new AgentStore({ rootDir: store.getFusionDir(), taskStore: store, asyncLayer: store.getAsyncLayer() ?? undefined });
       await responseAgentStore.init();
       await collectSnapshot("agents", async () => responseAgentStore.getAgentSnapshot());
       await collectSnapshot("agentRuns", async () => responseAgentStore.getAgentRunSnapshot(SHARED_STATE_DEFAULT_LIMIT));

@@ -79,7 +79,6 @@
   "pnpm": {
     "ignoredBuiltDependencies": [
       "@google/genai",
-      "better-sqlite3",
       "cpu-features",
       "electron-winstaller",
       "keytar",
@@ -87,6 +86,14 @@
       "ssh2"
     ],
     "onlyBuiltDependencies": [
+      "@embedded-postgres/darwin-arm64",
+      "@embedded-postgres/darwin-x64",
+      "@embedded-postgres/linux-arm",
+      "@embedded-postgres/linux-arm64",
+      "@embedded-postgres/linux-ia32",
+      "@embedded-postgres/linux-ppc64",
+      "@embedded-postgres/linux-x64",
+      "@embedded-postgres/windows-x64",
       "@homebridge/node-pty-prebuilt-multiarch",
       "electron",
       "esbuild",

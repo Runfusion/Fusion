@@ -2,8 +2,34 @@ import { memo, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import type { NodeMeshState } from "@fusion/core";
 
+/*
+ * FNXC:MeshSharedPg 2026-06-25-00:00:
+ * MeshTopology was repurposed for the shared-PostgreSQL mesh. Previously it
+ * visualized peer SYNC state (which snapshots were exchanged between nodes);
+ * now it visualizes active engine CONNECTIONS — which engines are connected to
+ * the shared PG database, what tasks they're executing, and their heartbeat
+ * status. The node/peer topology data still comes from NodeMeshState (mDNS
+ * discovery + central registry, both PG-backed). The optional `engines` prop
+ * surfaces per-engine runtime status (in-flight tasks, active agents, last
+ * activity) read directly from shared PG via GET /api/mesh/engines.
+ */
+
+/** Per-engine status surfaced from shared PG via GET /api/mesh/engines. */
+export interface MeshEngineStatus {
+  projectId: string;
+  projectName?: string;
+  workingDirectory?: string;
+  runtimeStatus: string;
+  inFlightTasks: number;
+  activeAgents: number;
+  lastActivityAt?: string;
+  nodeId?: string;
+}
+
 export interface MeshTopologyProps {
   nodes: NodeMeshState[];
+  /** Active engine connections reading from shared PG. Optional for backward compatibility. */
+  engines?: MeshEngineStatus[];
   className?: string;
 }
 
@@ -19,10 +45,19 @@ const LABEL_OFFSET = 12;
 const MIN_VIEWBOX_SIZE = 300;
 const MAX_REMOTE_DISTANCE = 120;
 
-function MeshTopologyInner({ nodes, className }: MeshTopologyProps): ReactElement {
+function MeshTopologyInner({ nodes, engines, className }: MeshTopologyProps): ReactElement {
   const { t } = useTranslation("app");
   const localNode = useMemo(() => nodes.find((n) => n.nodeType === "local") ?? nodes[0], [nodes]);
   const remoteNodes = useMemo(() => nodes.filter((n) => n.nodeId !== localNode?.nodeId), [nodes, localNode?.nodeId]);
+
+  const totalInFlight = useMemo(
+    () => (engines ?? []).reduce((sum, e) => sum + (e.inFlightTasks ?? 0), 0),
+    [engines],
+  );
+  const totalActiveAgents = useMemo(
+    () => (engines ?? []).reduce((sum, e) => sum + (e.activeAgents ?? 0), 0),
+    [engines],
+  );
 
   const viewBoxSize = useMemo(() => MIN_VIEWBOX_SIZE + (Math.max(0, remoteNodes.length - 4) * 20), [remoteNodes.length]);
   const centerX = viewBoxSize / 2;
@@ -93,6 +128,27 @@ function MeshTopologyInner({ nodes, className }: MeshTopologyProps): ReactElemen
           </g>
         ))}
       </svg>
+
+      {(engines ?? []).length > 0 && (
+        <div className="mesh-topology__engines" aria-label={t("mesh.enginesAriaLabel", "Active engine connections")}>
+          <div className="mesh-topology__engines-summary">
+            <span className="mesh-topology__engines-count">
+              {t("mesh.enginesConnected", { count: (engines ?? []).length, defaultValue: "{{count}} engine(s) connected to shared PG" })}
+            </span>
+            <span className="mesh-topology__engines-metric">{t("mesh.inFlightTasks", { count: totalInFlight, defaultValue: "{{count}} in-flight" })}</span>
+            <span className="mesh-topology__engines-metric">{t("mesh.activeAgents", { count: totalActiveAgents, defaultValue: "{{count}} agents" })}</span>
+          </div>
+          <ul className="mesh-topology__engines-list">
+            {(engines ?? []).map((engine) => (
+              <li key={engine.projectId} className="mesh-topology__engine-item">
+                <span className="mesh-topology__engine-name">{engine.projectName ?? engine.projectId}</span>
+                <span className="mesh-topology__engine-status" data-runtime-status={engine.runtimeStatus}>{engine.runtimeStatus}</span>
+                <span className="mesh-topology__engine-tasks">{engine.inFlightTasks} tasks</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="mesh-topology__legend">
         <div className="mesh-topology__legend-item"><span className="mesh-topology__legend-dot" style={{ background: STATUS_COLORS.online }} /><span>{t("mesh.online", "Online")}</span></div>

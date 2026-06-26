@@ -156,14 +156,14 @@ export interface PrResponseRunDeps {
 
 /** The store slice the response run reads/writes (per-thread outcomes). */
 export interface PrResponseRunStore {
-  getPrThreadState(prEntityId: string, threadId: string, headOid: string): PrThreadState | null;
+  getPrThreadState(prEntityId: string, threadId: string, headOid: string): Promise<PrThreadState | null>;
   recordPrThreadOutcome(
     prEntityId: string,
     threadId: string,
     headOid: string,
     outcome: "fixed" | "disagreed" | "pending",
     fixCommitSha?: string,
-  ): void;
+  ): Promise<void>;
 }
 
 /** A detected secret in the agent-authored content. */
@@ -369,7 +369,7 @@ export async function runPrResponseRun(deps: PrResponseRunDeps): Promise<PrRespo
       }
 
       // (a) Persisted-row recovery (R15): a recorded outcome at this head → skip.
-      const row = deps.store.getPrThreadState(entity.id, thread.id, headOid);
+      const row = await deps.store.getPrThreadState(entity.id, thread.id, headOid);
       if (row && (row.outcome === "fixed" || row.outcome === "disagreed")) {
         threadResults.push({ threadId: thread.id, outcome: "skipped-row" });
         continue;
@@ -391,7 +391,7 @@ export async function runPrResponseRun(deps: PrResponseRunDeps): Promise<PrRespo
         );
         const recoveredSha = markerComment ? parsePrEntityMarker(markerComment.body) ?? undefined : undefined;
         try {
-          deps.store.recordPrThreadOutcome(entity.id, thread.id, headOid, "fixed", recoveredSha);
+          void deps.store.recordPrThreadOutcome(entity.id, thread.id, headOid, "fixed", recoveredSha);
         } catch {
           /* best-effort backfill */
         }
@@ -481,7 +481,7 @@ export async function runPrResponseRun(deps: PrResponseRunDeps): Promise<PrRespo
           }
           // Record AFTER GitHub confirms (R15 commit-last) — a crash before this
           // is recovered next run via the pushed marker (skipped-marker).
-          deps.store.recordPrThreadOutcome(entity.id, thread.id, headOid, "fixed", pushedSha);
+          void deps.store.recordPrThreadOutcome(entity.id, thread.id, headOid, "fixed", pushedSha);
           anyFixed = true;
           threadResults.push({ threadId: thread.id, outcome: "fixed" });
         } catch (err) {
@@ -502,7 +502,7 @@ export async function runPrResponseRun(deps: PrResponseRunDeps): Promise<PrRespo
       const replyBody = `${verdict.reply}\n\n${buildPrEntityMarker(headOid)}`;
       try {
         await deps.replyToThread(thread.id, replyBody);
-        deps.store.recordPrThreadOutcome(entity.id, thread.id, headOid, "disagreed");
+        void deps.store.recordPrThreadOutcome(entity.id, thread.id, headOid, "disagreed");
         threadResults.push({ threadId: thread.id, outcome: "disagreed" });
       } catch (err) {
         audit(

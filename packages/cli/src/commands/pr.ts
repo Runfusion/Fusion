@@ -206,7 +206,7 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
     // workflow node uses (mirrors pr-nodes.ts: ensure → flip to open with the
     // persisted PR number/url). Without this the PR would be invisible to
     // `fn pr list/show`, the reconciler, and the workflow nodes (R13 parity).
-    const entity = store.ensurePrEntityForSource({
+    const entity = await store.ensurePrEntityForSource({
       sourceType: "task",
       sourceId: task.id,
       repo: `${owner}/${repo}`,
@@ -214,7 +214,7 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
       baseBranch: prInfo.baseBranch,
       state: "creating",
     });
-    store.updatePrEntity(entity.id, {
+    await store.updatePrEntity(entity.id, {
       state: "open",
       prNumber: prInfo.number,
       prUrl: prInfo.url,
@@ -245,8 +245,8 @@ export async function runPrCreate(id: string, options: PrCreateOptions = {}, pro
 // ── Entity read commands (parity with GET /api/pull-requests[/:id]) ───────────
 
 /** Resolve a PR entity by its id (or 404-style exit). */
-function requireEntity(store: TaskStore, id: string): PrEntity {
-  const entity = store.getPrEntity(id);
+async function requireEntity(store: TaskStore, id: string): Promise<PrEntity> {
+  const entity = await store.getPrEntity(id);
   if (!entity) {
     console.error(`\n  ✗ PR entity ${id} not found\n`);
     process.exit(1);
@@ -256,7 +256,7 @@ function requireEntity(store: TaskStore, id: string): PrEntity {
 
 export async function runPrList(projectName?: string) {
   const { store } = await getPrContext(projectName);
-  const entities = store.listActivePrEntities();
+  const entities = await store.listActivePrEntities();
 
   if (entities.length === 0) {
     console.log("\n  No active pull requests.\n");
@@ -278,8 +278,8 @@ export async function runPrShow(id: string, projectName?: string) {
     process.exit(1);
   }
   const { store } = await getPrContext(projectName);
-  const entity = requireEntity(store, id);
-  const threads: PrThreadState[] = store.listPrThreadStates(entity.id);
+  const entity = await requireEntity(store, id);
+  const threads: PrThreadState[] = await store.listPrThreadStates(entity.id);
   const pending = threads.filter((t) => t.outcome === "pending").length;
   const disagreed = threads.filter((t) => t.outcome === "disagreed").length;
 
@@ -318,7 +318,7 @@ async function runReleaseAction(
     process.exit(1);
   }
   const { store } = await getPrContext(projectName);
-  const entity = requireEntity(store, id);
+  const entity = await requireEntity(store, id);
 
   if (!isPrEntityActive(entity)) {
     console.error(`\n  ✗ PR ${id} is already terminal (merged/closed/failed)\n`);
@@ -363,7 +363,7 @@ export async function runPrAutomerge(id: string, enabled: boolean | undefined, p
     process.exit(1);
   }
   const { store } = await getPrContext(projectName);
-  const entity = requireEntity(store, id);
+  const entity = await requireEntity(store, id);
 
   if (!isPrEntityActive(entity)) {
     console.error(`\n  ✗ PR ${id} is already terminal (merged/closed/failed)\n`);
@@ -371,7 +371,7 @@ export async function runPrAutomerge(id: string, enabled: boolean | undefined, p
   }
 
   const next = typeof enabled === "boolean" ? enabled : !entity.autoMerge;
-  const updated = store.updatePrEntity(id, { autoMerge: next });
+  const updated = await store.updatePrEntity(id, { autoMerge: next });
   console.log(`\n  ✓ Auto-merge ${updated.autoMerge ? "enabled" : "disabled"} for ${id} (${autoMergeGateReason(updated)})\n`);
 }
 

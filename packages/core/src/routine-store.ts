@@ -26,6 +26,20 @@ import {
   MAX_ROUTINE_RUN_HISTORY,
 } from "./routine.js";
 import { assertProjectRootDir } from "./project-root-guard.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+/*
+ * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
+ * Async Drizzle helpers for backend-mode (PostgreSQL) RoutineStore operations.
+ * These helpers target the project.routines table via Drizzle and are the async
+ * equivalent of the sync this.db.prepare() call sites below.
+ */
+import {
+  upsertRoutine as upsertRoutineAsync,
+  getRoutine as getRoutineAsync,
+  listRoutines as listRoutinesAsync,
+  deleteRoutine as deleteRoutineAsync,
+  getDueRoutines as getDueRoutinesAsync,
+} from "./async-routine-store.js";
 
 const CRON_TIMEZONE = "UTC";
 
@@ -61,6 +75,17 @@ interface RoutineRow {
   updatedAt: string;
 }
 
+export interface RoutineStoreOptions {
+  /**
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
+   * When an AsyncDataLayer is injected, RoutineStore operates in "backend mode":
+   * all data access delegates to PostgreSQL via Drizzle and no SQLite Database
+   * is constructed. When absent, the legacy SQLite path is byte-identical to
+   * pre-migration. This mirrors the TaskStore/AgentStore dual-path pattern.
+   */
+  asyncLayer?: AsyncDataLayer;
+}
+
 export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   /** SQLite database instance (lazy init). */
   private _db: Database | null = null;
@@ -68,30 +93,52 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   /** Per-routine promise chain for serializing writes. */
   private routineLocks: Map<string, Promise<void>> = new Map();
 
-  private readonly inMemoryDb: boolean;
+  /**
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
+   * When set, RoutineStore operates in backend mode (PostgreSQL via Drizzle).
+   * All data access delegates to async helpers. No SQLite Database is
+   * constructed. This mirrors the TaskStore/AgentStore dual-path pattern.
+   */
+  public readonly asyncLayer: AsyncDataLayer | null = null;
 
-  constructor(private rootDir: string, options?: { inMemoryDb?: boolean }) {
+  /** True when AsyncDataLayer was injected. Gates all SQLite construction. */
+  public get backendMode(): boolean {
+    return this.asyncLayer !== null;
+  }
+
+  constructor(private rootDir: string, options?: RoutineStoreOptions) {
     super();
     assertProjectRootDir(rootDir, "RoutineStore");
-    this.inMemoryDb = options?.inMemoryDb === true;
+    this.asyncLayer = options?.asyncLayer ?? null;
   }
 
   // ── Database Access ────────────────────────────────────────────────
 
   /**
    * Get the SQLite database, initializing it on first access.
+   *
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:30:
+   * Throws in backend mode (asyncLayer injected) — callers must branch on
+   * backendMode and use the async helpers instead.
    */
   private get db(): Database {
+    if (this.backendMode) {
+      throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
+    }
     if (!this._db) {
       const fusionDir = `${this.rootDir}/.fusion`;
-      this._db = new Database(fusionDir, { inMemory: this.inMemoryDb });
+      this._db = new Database(fusionDir);
       this._db.init();
     }
     return this._db;
   }
 
-  /** Initialize the store (no-op, DB is lazily initialized). */
+  /** Initialize the store (no-op in backend mode, DB is lazily initialized otherwise). */
   async init(): Promise<void> {
+    // FNXC:SqliteFinalRemoval 2026-06-26-10:30: No-op in backend mode.
+    if (this.backendMode) {
+      return;
+    }
     // Trigger lazy init
     const _ = this.db;
   }
@@ -160,7 +207,16 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
     };
   }
 
-  private upsertRoutine(routine: Routine): void {
+  private async upsertRoutine(routine: Routine): Promise<void> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:35:
+     * Backend-mode: delegate to the async Drizzle upsertRoutine helper.
+     */
+    if (this.backendMode) {
+      await upsertRoutineAsync(this.asyncLayer!.db, routine);
+      return;
+    }
+
     const trigger = routine.trigger;
     let triggerConfig: Record<string, unknown> = {};
 
@@ -312,7 +368,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       routine.nextRunAt = this.computeNextRun(routine.trigger.cronExpression);
     }
 
-    this.upsertRoutine(routine);
+    await this.upsertRoutine(routine);
     this.emit("routine:created", routine);
     return routine;
   }
@@ -321,6 +377,13 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
    * Get a routine by ID.
    */
   async getRoutine(id: string): Promise<Routine> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:40:
+     * Backend-mode: delegate to the async Drizzle getRoutine helper.
+     */
+    if (this.backendMode) {
+      return getRoutineAsync(this.asyncLayer!.db, id);
+    }
     const row = this.db.prepare("SELECT * FROM routines WHERE id = ?").get(id) as unknown as RoutineRow | undefined;
     if (!row) {
       throw Object.assign(new Error(`Routine '${id}' not found`), { code: "ENOENT" });
@@ -332,6 +395,13 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
    * List all routines.
    */
   async listRoutines(): Promise<Routine[]> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:40:
+     * Backend-mode: delegate to the async Drizzle listRoutines helper.
+     */
+    if (this.backendMode) {
+      return listRoutinesAsync(this.asyncLayer!.db);
+    }
     const rows = this.db.prepare("SELECT * FROM routines ORDER BY createdAt ASC").all() as unknown as RoutineRow[];
     return rows.map((row) => this.rowToRoutine(row));
   }
@@ -386,7 +456,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       }
 
       routine.updatedAt = new Date().toISOString();
-      this.upsertRoutine(routine);
+      await this.upsertRoutine(routine);
       this.emit("routine:updated", routine);
       return routine;
     });
@@ -398,8 +468,16 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
   async deleteRoutine(id: string): Promise<Routine> {
     return this.withRoutineLock(id, async () => {
       const routine = await this.getRoutine(id);
-      this.db.prepare("DELETE FROM routines WHERE id = ?").run(id);
-      this.db.bumpLastModified();
+      /*
+       * FNXC:SqliteFinalRemoval 2026-06-26-10:40:
+       * Backend-mode: delegate to the async Drizzle deleteRoutine helper.
+       */
+      if (this.backendMode) {
+        await deleteRoutineAsync(this.asyncLayer!.db, id);
+      } else {
+        this.db.prepare("DELETE FROM routines WHERE id = ?").run(id);
+        this.db.bumpLastModified();
+      }
       this.emit("routine:deleted", routine);
       return routine;
     });
@@ -431,7 +509,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       }
 
       routine.updatedAt = new Date().toISOString();
-      this.upsertRoutine(routine);
+      await this.upsertRoutine(routine);
       this.emit("routine:run", { routine, result });
       return routine;
     });
@@ -448,7 +526,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       const routine = await this.getRoutine(id);
       routine.lastRunAt = meta.triggeredAt;
       routine.updatedAt = new Date().toISOString();
-      this.upsertRoutine(routine);
+      await this.upsertRoutine(routine);
     });
   }
 
@@ -486,7 +564,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
       }
 
       routine.updatedAt = new Date().toISOString();
-      this.upsertRoutine(routine);
+      await this.upsertRoutine(routine);
       this.emit("routine:run", { routine, result });
     });
   }
@@ -501,7 +579,7 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
         routine.nextRunAt = this.computeNextRun(routine.trigger.cronExpression);
       }
       routine.updatedAt = new Date().toISOString();
-      this.upsertRoutine(routine);
+      await this.upsertRoutine(routine);
     });
   }
 
@@ -511,6 +589,13 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
    */
   async getDueRoutines(scope: "global" | "project"): Promise<Routine[]> {
     const now = new Date().toISOString();
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:45:
+     * Backend-mode: delegate to the async Drizzle getDueRoutines helper.
+     */
+    if (this.backendMode) {
+      return getDueRoutinesAsync(this.asyncLayer!.db, now, scope);
+    }
     const rows = this.db.prepare(
       "SELECT * FROM routines WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?"
     ).all(now, scope) as unknown as RoutineRow[];
@@ -523,6 +608,13 @@ export class RoutineStore extends EventEmitter<RoutineStoreEvents> {
    */
   async getDueRoutinesAllScopes(): Promise<Routine[]> {
     const now = new Date().toISOString();
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:45:
+     * Backend-mode: delegate to the async Drizzle getDueRoutines helper (no scope).
+     */
+    if (this.backendMode) {
+      return getDueRoutinesAsync(this.asyncLayer!.db, now);
+    }
     const rows = this.db.prepare(
       "SELECT * FROM routines WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?"
     ).all(now) as unknown as RoutineRow[];

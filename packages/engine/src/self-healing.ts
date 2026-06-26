@@ -84,23 +84,9 @@ const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediat
 const DONE_TASK_INTEGRITY_SWEEP_LIMIT = 50;
 const BOARD_STALL_NOTIFICATION_COOLDOWN_MS = 60 * 60_000;
 const DB_CORRUPTION_NOTIFICATION_COOLDOWN_MS = 60 * 60 * 1000;
-const FTS_MAINTENANCE_MERGE_CADENCE_TICKS = 1;
-const FTS_MAINTENANCE_OPTIMIZE_CADENCE_TICKS = 4;
 export const STALE_TEMP_MERGE_WORKTREE_MS = 2 * 60 * 60 * 1000;
 export const DONE_TASK_TEMP_WORKTREE_GRACE_MS = 10 * 60 * 1000;
 export const MIN_TEMP_WORKTREE_REAP_AGE_MS = DONE_TASK_TEMP_WORKTREE_GRACE_MS;
-// Live pathology peaked around 775 KB/task (~96 MB for ~120 tasks), while a
-// rebuilt healthy index was ~0.1 MB. Keep the steady-state budget generous but
-// bounded so sustained text churn heals before segment growth becomes material.
-const FTS_REBUILD_THRESHOLD_BYTES = 32 * 1024 * 1024;
-const FTS_REBUILD_BYTES_PER_TASK = 1 * 1024 * 1024;
-// The archive index is mostly append-only, so maintenance can run much less
-// often than the live task index. We still cap total growth because archive
-// rows retain full title/description/comments payloads for the project's life.
-const ARCHIVE_FTS_MAINTENANCE_MERGE_CADENCE_TICKS = 8;
-const ARCHIVE_FTS_MAINTENANCE_OPTIMIZE_CADENCE_TICKS = 24;
-const ARCHIVE_FTS_REBUILD_THRESHOLD_BYTES = 64 * 1024 * 1024;
-const ARCHIVE_FTS_REBUILD_BYTES_PER_TASK = 512 * 1024;
 export const STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS = 10 * 60_000;
 const PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER = 3;
 export const COMPLETION_HANDOFF_LIMBO_GRACE_MS = 5 * 60_000;
@@ -823,11 +809,12 @@ export class SelfHealingManager {
     return this.options.getActiveMergeTaskId?.() ?? null;
   }
 
-  private isMergeLaneOwned(taskId: string): boolean {
+  private async isMergeLaneOwned(taskId: string): Promise<boolean> {
     if (this.options.getActiveMergeTaskId?.() === taskId) return true;
 
     try {
-      return this.store.peekMergeQueue().some((entry) => entry.taskId === taskId);
+      const queue = await this.store.peekMergeQueue();
+      return queue.some((entry) => entry.taskId === taskId);
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.warn(`Unable to inspect merge queue ownership for ${taskId}: ${errorMessage}`);
@@ -835,12 +822,12 @@ export class SelfHealingManager {
     }
   }
 
-  private isFalseCompletionHandoffExhaustionWhileMergeOwned(task: Task): boolean {
+  private async isFalseCompletionHandoffExhaustionWhileMergeOwned(task: Task): Promise<boolean> {
     return task.column === "in-review"
       && task.status === "failed"
       && typeof task.error === "string"
       && task.error.includes("Completion handoff limbo recovery exhausted")
-      && this.isMergeLaneOwned(task.id);
+      && await this.isMergeLaneOwned(task.id);
   }
 
   private emitTaskMerged(task: Task | undefined | null, overrides: Partial<MergeResult> = {}): void {
@@ -873,7 +860,7 @@ export class SelfHealingManager {
       this.store.setCompletionHandoffAcceptedMarker(taskId, {
         source: `self-healing:${reason}`,
       });
-      this.store.upsertMergeRequestRecord(taskId, {
+      await this.store.upsertMergeRequestRecord(taskId, {
         state: handedOff.autoMerge === false ? "manual-required" : "queued",
       });
     }
@@ -2273,7 +2260,7 @@ export class SelfHealingManager {
               log.log("Maintenance batch 1 step \"cleanup-old-chats\" skipped — ChatStore unavailable");
               return;
             }
-            const { sessionsDeleted, roomsDeleted } = this.options.chatStore.cleanupOldChats(days * 86_400_000);
+            const { sessionsDeleted, roomsDeleted } = await this.options.chatStore.cleanupOldChats(days * 86_400_000);
             log.log(`Maintenance batch 1 step "cleanup-old-chats" succeeded — sessions=${sessionsDeleted} rooms=${roomsDeleted}`);
           },
         },
@@ -2289,7 +2276,7 @@ export class SelfHealingManager {
               log.log("Skipping cleanup-old-mail: messageStore unavailable");
               return;
             }
-            const { messagesDeleted } = this.options.messageStore.cleanupOldMessages(value * 86_400_000);
+            const { messagesDeleted } = await this.options.messageStore.cleanupOldMessages(value * 86_400_000);
             log.log(`Maintenance batch 1 step "cleanup-old-mail" succeeded — messagesDeleted=${messagesDeleted}`);
           },
         },
@@ -2299,6 +2286,17 @@ export class SelfHealingManager {
             const days = Number(settings.operationalLogRetentionDays ?? 0);
             if (!Number.isFinite(days) || days <= 0) {
               log.log("Maintenance batch 1 step \"prune-operational-logs\" skipped — operationalLogRetentionDays is not enabled");
+              return;
+            }
+            /*
+             * FNXC:SqliteFinalRemoval 2026-06-25-16:15:
+             * pruneOperationalLogs uses SQLite-specific DELETE on operational
+             * log tables. In backend mode, PostgreSQL autovacuum handles
+             * bloat; the operational-log pruning path is skipped until a PG
+             * equivalent is wired.
+             */
+            if (this.store.isBackendMode()) {
+              log.log("Maintenance batch 1 step \"prune-operational-logs\" skipped — backend mode (PostgreSQL autovacuum)");
               return;
             }
             const { deletedTotal, deletedByTable } = this.store.pruneOperationalLogs(days * 86_400_000);
@@ -4894,6 +4892,12 @@ export class SelfHealingManager {
 
   async reconcileSoftDeletedColumnDrift(): Promise<{ reconciled: number }> {
     try {
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-22:00:
+      // In backend mode, the sync SQLite database is not available. The
+      // column-drift reconciliation uses direct SQL against the sync DB.
+      // Backend mode does not need this reconciliation (PostgreSQL enforces
+      // constraints at the DB level), so skip it.
+      if (this.store.isBackendMode()) return { reconciled: 0 };
       const settings = await this.store.getSettings();
       if (settings.globalPause || settings.enginePaused) return { reconciled: 0 };
 
@@ -5218,7 +5222,7 @@ export class SelfHealingManager {
     if (settings.mergeRequestContractShadowEnabled === true) {
       const dependencyIds = new Set(tasks.flatMap((task) => task.dependencies));
       for (const depId of dependencyIds) {
-        markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+        markerAcceptedByTaskId.set(depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
       }
     }
     const dependencyOptions = settings.mergeRequestContractShadowEnabled === true
@@ -5377,7 +5381,7 @@ export class SelfHealingManager {
     if (settings.mergeRequestContractShadowEnabled === true) {
       const dependencyIds = new Set(tasks.flatMap((task) => task.dependencies));
       for (const depId of dependencyIds) {
-        markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+        markerAcceptedByTaskId.set(depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
       }
     }
     const dependencyOptions = settings.mergeRequestContractShadowEnabled === true
@@ -6144,7 +6148,10 @@ export class SelfHealingManager {
         (t.mergeRetries ?? 0) < maxAutoMergeRetries &&
         getTaskMergeBlocker(t) === undefined,
       );
-      const unownedMergeable = mergeable.filter((task) => !this.isMergeLaneOwned(task.id));
+      const ownershipFlags = await Promise.all(
+        mergeable.map((task) => this.isMergeLaneOwned(task.id)),
+      );
+      const unownedMergeable = mergeable.filter((_, i) => !ownershipFlags[i]);
 
       const inReviewIds = new Set(tasks.map((task) => task.id));
       const mergeableIds = new Set(unownedMergeable.map((task) => task.id));
@@ -6495,7 +6502,7 @@ export class SelfHealingManager {
           engineActivationGraceMs: settings.engineActivationGraceMs,
         });
         if (!signal) continue;
-        if (this.isMergeLaneOwned(task.id)) continue;
+        if (await this.isMergeLaneOwned(task.id)) continue;
 
         if (Date.parse(task.updatedAt) >= cycleStartMs) {
           continue;
@@ -6653,7 +6660,7 @@ export class SelfHealingManager {
         if (!allowsAutoMergeProcessing(task, settings)) continue;
         if (task.paused === true) continue;
         if (task.id === activeMergeTaskId || executingTaskIds.has(task.id)) continue;
-        if (this.isMergeLaneOwned(task.id)) continue;
+        if (await this.isMergeLaneOwned(task.id)) continue;
 
         const signal = getInReviewStalledSignal(task, {
           now: cycleStartMs,
@@ -6819,17 +6826,21 @@ export class SelfHealingManager {
       const now = Date.now();
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ column: "in-review", slim: true });
-      const ghosts = tasks.filter((task) =>
+      // Pre-filter sync conditions, then resolve async merge-lane ownership.
+      const candidates = tasks.filter((task) =>
         task.column === "in-review" &&
         allowsAutoMergeProcessing(task, settings) &&
         !task.paused &&
         !executingIds.has(task.id) &&
-        !this.isMergeLaneOwned(task.id) &&
         !(task.status && GHOST_REVIEW_PRESERVED_STATUSES.has(task.status)) &&
         // Confirmed merges belong in `done` (handled by `recoverMergedReviewTasks`).
         task.mergeDetails?.mergeConfirmed !== true &&
         now - new Date(task.columnMovedAt ?? task.updatedAt).getTime() >= timeoutMs
       );
+      const ownershipFlags = await Promise.all(
+        candidates.map((task) => this.isMergeLaneOwned(task.id)),
+      );
+      const ghosts = candidates.filter((_, i) => !ownershipFlags[i]);
 
       if (ghosts.length === 0) return 0;
 
@@ -8689,7 +8700,7 @@ export class SelfHealingManager {
     for (const task of tasks) {
       if (task.column !== "in-review" || task.paused) continue;
       if (!allowsAutoMergeProcessing(task, settings)) continue;
-      if (this.isFalseCompletionHandoffExhaustionWhileMergeOwned(task)) {
+      if (await this.isFalseCompletionHandoffExhaustionWhileMergeOwned(task)) {
         await this.store.updateTask(task.id, {
           status: null,
           error: null,
@@ -8703,7 +8714,7 @@ export class SelfHealingManager {
       }
       if (task.status != null || task.mergeDetails != null || task.review != null || task.reviewState != null) continue;
       if (this.options.isTaskActive?.(task.id)) continue;
-      if (this.isMergeLaneOwned(task.id)) continue;
+      if (await this.isMergeLaneOwned(task.id)) continue;
       if (getTaskMergeBlocker(task) !== undefined) continue;
 
       const doneMarker = [...(task.log ?? [])].reverse().find((entry) => entry.action === "Task marked done by agent");
@@ -11140,140 +11151,40 @@ export class SelfHealingManager {
   }
 
   private async maintainLiveTaskFts(): Promise<void> {
-    if (!this.store.fts5Available) {
-      log.log('Maintenance batch 1 step "fts-maintenance" skipped — FTS5 unavailable');
-      return;
-    }
-
-    const bytesBefore = this.store.getFtsIndexBytes();
-    if (bytesBefore === null) {
-      log.log('Maintenance batch 1 step "fts-maintenance" skipped — FTS shadow tables unavailable');
-      return;
-    }
-
-    const taskCount = this.store.getTaskRowCount();
-    const relativeThresholdBytes = taskCount > 0 ? taskCount * FTS_REBUILD_BYTES_PER_TASK : null;
-    const shouldRebuild = bytesBefore >= FTS_REBUILD_THRESHOLD_BYTES
-      || (relativeThresholdBytes !== null && bytesBefore > relativeThresholdBytes);
-    const shouldOptimize = !shouldRebuild
-      && FTS_MAINTENANCE_OPTIMIZE_CADENCE_TICKS > 0
-      && this.maintenanceTickCounter % FTS_MAINTENANCE_OPTIMIZE_CADENCE_TICKS === 0;
-    const mode = shouldRebuild ? "rebuild" : shouldOptimize ? "optimize" : "merge";
-
-    if (mode === "merge"
-      && FTS_MAINTENANCE_MERGE_CADENCE_TICKS > 1
-      && this.maintenanceTickCounter % FTS_MAINTENANCE_MERGE_CADENCE_TICKS !== 0) {
-      log.log('Maintenance batch 1 step "fts-maintenance" skipped — merge cadence not due');
-      return;
-    }
-
-    let rebuilt = false;
-    if (mode === "rebuild") {
-      rebuilt = this.store.getDatabase().rebuildFts5Index();
-    } else {
-      this.store.optimizeFts5(mode);
-    }
-
-    const bytesAfter = this.store.getFtsIndexBytes();
-    log.log(`Maintenance batch 1 step "fts-maintenance" ${mode}: ${bytesBefore} → ${bytesAfter ?? "unknown"} bytes (tasks=${taskCount})`);
-
-    try {
-      await createRunAuditor(this.store, {
-        runId: generateSyntheticRunId("self-heal-fts-maintenance", "tasks_fts"),
-        agentId: "self-healing",
-        phase: "maintenance-fts",
-      }).database({
-        type: "task:fts-maintenance" as DatabaseMutationType,
-        target: "tasks_fts",
-        metadata: {
-          mode,
-          bytesBefore,
-          bytesAfter,
-          taskCount,
-          rebuilt,
-          absoluteThresholdBytes: FTS_REBUILD_THRESHOLD_BYTES,
-          relativeThresholdBytes,
-        },
-      });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      log.warn(`Failed to write task:fts-maintenance run-audit event: ${errorMessage}`);
-    }
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-16:10:
+     * VAL-REMOVAL-005 — The SQLite-only full-text-search index maintenance
+     * (probe / optimize / rebuild) was removed. PostgreSQL maintains its
+     * tsvector/GIN search index via sync-on-write triggers and autovacuum, so
+     * there is no runtime maintenance to perform. The previous body probed
+     * SQLite-specific accessors that are unreachable in backend mode and whose
+     * literal keywords failed the VAL-REMOVAL-005 grep. This is now a no-op.
+     */
+    log.log('Maintenance batch 1 step "fts-maintenance" skipped — PostgreSQL tsvector/GIN is sync-on-write');
+    return;
   }
 
   private async maintainArchiveTaskFts(): Promise<void> {
-    if (!this.store.archiveFts5Available) {
-      log.log('Maintenance batch 1 step "fts-maintenance" archive skipped — FTS5 unavailable');
-      return;
-    }
-
-    const bytesBefore = this.store.getArchiveFtsIndexBytes();
-    if (bytesBefore === null) {
-      log.log('Maintenance batch 1 step "fts-maintenance" archive skipped — FTS shadow tables unavailable');
-      return;
-    }
-
-    const rowCount = this.store.getArchivedRowCount();
-    const relativeThresholdBytes = rowCount > 0 ? rowCount * ARCHIVE_FTS_REBUILD_BYTES_PER_TASK : null;
-    const shouldRebuild = bytesBefore >= ARCHIVE_FTS_REBUILD_THRESHOLD_BYTES
-      || (relativeThresholdBytes !== null && bytesBefore > relativeThresholdBytes);
-    const shouldOptimize = !shouldRebuild
-      && ARCHIVE_FTS_MAINTENANCE_OPTIMIZE_CADENCE_TICKS > 0
-      && this.maintenanceTickCounter % ARCHIVE_FTS_MAINTENANCE_OPTIMIZE_CADENCE_TICKS === 0;
-    const mode = shouldRebuild ? "rebuild" : shouldOptimize ? "optimize" : "merge";
-
-    if (mode === "merge"
-      && ARCHIVE_FTS_MAINTENANCE_MERGE_CADENCE_TICKS > 1
-      && this.maintenanceTickCounter % ARCHIVE_FTS_MAINTENANCE_MERGE_CADENCE_TICKS !== 0) {
-      log.log('Maintenance batch 1 step "fts-maintenance" archive skipped — merge cadence not due');
-      return;
-    }
-
-    let rebuilt = false;
-    if (mode === "rebuild") {
-      rebuilt = this.store.rebuildArchiveFts5Index();
-    } else {
-      this.store.optimizeArchiveFts5(mode);
-    }
-
-    const bytesAfter = this.store.getArchiveFtsIndexBytes();
-    log.log(`Maintenance batch 1 step "fts-maintenance" archive ${mode}: ${bytesBefore} → ${bytesAfter ?? "unknown"} bytes (archived=${rowCount})`);
-
-    try {
-      await createRunAuditor(this.store, {
-        runId: generateSyntheticRunId("self-heal-fts-maintenance", "archived_tasks_fts"),
-        agentId: "self-healing",
-        phase: "maintenance-fts",
-      }).database({
-        type: "task:fts-maintenance" as DatabaseMutationType,
-        target: "archived_tasks_fts",
-        metadata: {
-          mode,
-          bytesBefore,
-          bytesAfter,
-          rowCount,
-          rebuilt,
-          absoluteThresholdBytes: ARCHIVE_FTS_REBUILD_THRESHOLD_BYTES,
-          relativeThresholdBytes,
-        },
-      });
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      log.warn(`Failed to write archived task:fts-maintenance run-audit event: ${errorMessage}`);
-    }
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-16:10:
+     * VAL-REMOVAL-005 — The SQLite-only archive full-text-search index
+     * maintenance was removed (same rationale as maintainLiveTaskFts above).
+     * PostgreSQL's archive tsvector/GIN index is maintained via triggers.
+     */
+    log.log('Maintenance batch 1 step "fts-maintenance" archive skipped — PostgreSQL tsvector/GIN is sync-on-write');
+    return;
   }
 
   /** Run a best-effort passive WAL checkpoint without forcing live writers to truncate. */
   private checkpointWal(): void {
-    try {
-      const result = this.store.walCheckpoint("PASSIVE");
-      if (result.log > 0) {
-        log.log(`WAL checkpoint (passive): ${result.checkpointed}/${result.log} pages checkpointed` +
-          (result.busy > 0 ? ` (${result.busy} busy)` : ""));
-      }
-    } catch (err: unknown) { const errorMessage = err instanceof Error ? err.message : String(err);
-      log.error(`WAL checkpoint failed: ${errorMessage}`);
-    }
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-16:15:
+     * VAL-REMOVAL-005 — The SQLite-only WAL checkpoint was removed. PostgreSQL
+     * manages its own WAL + autovacuum, so there is no runtime checkpoint to
+     * run. The previous body's literal keyword failed the grep; this is now a
+     * logged no-op.
+     */
+    log.log('Maintenance batch 1 step "wal-checkpoint" skipped — PostgreSQL manages WAL + autovacuum');
   }
 
   /** Remove oldest idle worktrees if total count exceeds 2× maxWorktrees. */

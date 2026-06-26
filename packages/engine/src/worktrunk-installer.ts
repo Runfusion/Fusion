@@ -276,7 +276,7 @@ export async function requestWorktrunkInstallApproval(opts: {
   projectId?: string;
 }): Promise<{ approvalRequestId: string; status: "pending" | "approved" | "denied" | "completed" }> {
   const dedupeKey = worktrunkInstallDedupeKey();
-  const existing = opts.approvalStore.findLatestByDedupeKey({
+  const existing = await opts.approvalStore.findLatestByDedupeKey({
     requesterActorId: opts.actor.actorId,
     taskId: undefined,
     dedupeKey,
@@ -285,7 +285,7 @@ export async function requestWorktrunkInstallApproval(opts: {
     return { approvalRequestId: existing.id, status: existing.status };
   }
 
-  const created = opts.approvalStore.create({
+  const created = await opts.approvalStore.create({
     requester: opts.actor,
     targetAction: {
       category: "network_api",
@@ -325,7 +325,7 @@ export async function executeApprovedWorktrunkInstall(opts: {
     auditor: opts.auditor,
     gateOverride: "pre-approved",
   });
-  opts.approvalStore.markCompleted(opts.request.id, {
+  await opts.approvalStore.markCompleted(opts.request.id, {
     actor: {
       actorId: "system",
       actorType: "system",

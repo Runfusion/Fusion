@@ -114,7 +114,7 @@ export function registerIntegratedRouters({
         fetchMembers: false,
         syncGroupPr: async ({ cwd: projectCwd, group: g }) => reconcileGroupPullRequest(client, g, projectCwd || undefined),
       });
-      return store.getBranchGroup(group.id) ?? group;
+      return (await store.getBranchGroup(group.id)) ?? group;
     },
   }));
 

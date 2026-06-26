@@ -46,7 +46,10 @@ async function getRoadmapStore(req: RouteRequest, ctx: PluginContext): Promise<R
   const key = scopedTaskStore as object;
   const cached = roadmapStoreCache.get(key);
   if (cached) return cached;
-  const store = new RoadmapStore(scopedTaskStore.getDatabase());
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:30:
+  // In backend mode, getDatabase() throws. Guard with isBackendMode() check.
+  const db = scopedTaskStore.isBackendMode() ? null : scopedTaskStore.getDatabase();
+  const store = new RoadmapStore(db);
   roadmapStoreCache.set(key, store);
   return store;
 }

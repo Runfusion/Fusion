@@ -764,6 +764,8 @@ export {
   ProjectIdentityMismatchError,
   readProjectIdentity,
   writeProjectIdentity,
+  readProjectIdentityAsync,
+  writeProjectIdentityAsync,
 } from "./project-identity.js";
 export { ProcessSupervisor, superviseSpawn } from "./process-supervisor.js";
 export type {
@@ -776,7 +778,6 @@ export type { Statement, VacuumResult } from "./db.js";
 export type { ProjectIdentity } from "./project-identity.js";
 export type { EnsureProjectForPathInput, EnsureProjectForPathResult } from "./central-core.js";
 export { ArchiveDatabase } from "./archive-db.js";
-export { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "./db-migrate.js";
 export { GlobalSettingsStore, resolveGlobalDir, resolveGlobalDirForHome } from "./global-settings.js";
 export { isValidSqliteDatabaseFile } from "./sqlite-validation.js";
 export { DaemonTokenManager, DAEMON_TOKEN_PREFIX, DAEMON_TOKEN_HEX_LENGTH, isDaemonTokenFormat } from "./daemon-token.js";
@@ -2034,3 +2035,132 @@ export {
   hasSyncPassphraseConfigured,
 } from "./secrets-sync-passphrase.js";
 export { suggestTaskPrefix } from "./task-prefix.js";
+
+// ── U1: PostgreSQL connection layer (backend resolution + connection pool) ──
+export {
+  resolveBackend,
+  resolveBackendWithOptions,
+  looksLikePoolerUrl,
+  poolerWarning,
+  describeBackendForLog,
+  DATABASE_URL_ENV,
+  DATABASE_MIGRATION_URL_ENV,
+  POOLER_PREPARED_STATEMENT_WARNING,
+  createConnectionSet,
+  createConnectionSetFromUrl,
+  verifyConnection,
+  DatabaseConnectionError,
+  redactUrlPassword,
+  redactKeywordPassword,
+  redactConnectionString,
+  redactCredentialsFromMessage,
+  REDACTED_PASSWORD_PLACEHOLDER,
+  createAsyncDataLayer,
+  recordRunAuditEvent,
+  recordRunAuditEventWithinTransaction,
+  checkPostgresHealth,
+  detectSchemaDrift,
+  healSchemaDrift,
+  validateAndHealSchema,
+  vacuumAnalyze,
+  detectTaskIdIntegrityAnomaliesAsync,
+  EXPECTED_PROJECT_COLUMNS,
+  // FNXC:SqliteRemoval 2026-06-25-00:00:
+  // SQLite migrator (U9) exports. The dual-read cutover harness (U10) has been
+  // removed — it was a transitional operator tool that should not ship to end
+  // users. The upgrade path is auto-migrate + keep the SQLite file as a backup.
+  PgBackupManager,
+  PROJECT_BACKUP_SCHEMAS,
+  CENTRAL_BACKUP_SCHEMAS,
+  migrateSqliteToPostgres,
+  defaultMigrationSources,
+  applySchemaBaseline,
+  getAppliedMigrations,
+  SCHEMA_BASELINE_VERSION,
+  // FNXC:BackendFlip 2026-06-26-14:30:
+  // Runtime startup factory (cutover milestone). Production construction sites
+  // (engine, dashboard, CLI serve/dashboard, desktop) consult this to boot
+  // against PostgreSQL. Post default-flip: embedded PG is the default when
+  // DATABASE_URL is unset; FUSION_NO_EMBEDDED_PG=1 opts back to legacy SQLite.
+  createTaskStoreForBackend,
+  shouldUsePostgresBackend,
+  isEmbeddedPgRequested,
+  isEmbeddedPgOptedOut,
+  EMBEDDED_PG_ENV,
+  NO_EMBEDDED_PG_ENV,
+} from "./postgres/index.js";
+export type {
+  BackendMode,
+  ResolvedBackend,
+  ResolveBackendOptions,
+  PostgresConnections,
+  CreateConnectionOptions,
+  AsyncDataLayer,
+  DrizzleDb,
+  DbTransaction,
+  TransactionOptions,
+  PostgresHealthSnapshot,
+  SchemaDriftFinding,
+  SchemaValidationReport,
+  VacuumAnalyzeStats,
+  VacuumAnalyzeResult,
+  PgBackupOptions,
+  PgBackupPair,
+  PgDumpResult,
+  SqliteMigrationSource,
+  SchemaName,
+  MigrationReport,
+  TableMigrationResult,
+  BackendBootResult,
+  CreateTaskStoreForBackendOptions,
+} from "./postgres/index.js";
+
+// FNXC:RuntimeSatelliteAsync 2026-06-24-13:30:
+// Async monitor helpers exported for the dashboard monitor-store dual-path.
+export {
+  recordDeploymentAsync,
+  resolveIncidentAsync,
+  getOpenIncidentByGroupingKeyAsync,
+  getIncidentAsync,
+} from "./task-store/async-monitor.js";
+export type { Deployment as AsyncDeployment, Incident as AsyncIncident } from "./task-store/async-monitor.js";
+
+// FNXC:RuntimeSatelliteCompletion 2026-06-24-23:40:
+// Async AiSessionStore helpers exported for the dashboard AiSessionStore dual-path.
+export {
+  upsertAiSession,
+  getAiSession,
+  listActiveAiSessions,
+  listAllAiSessions,
+  listRecoverableAiSessions,
+  updateAiSessionStatus,
+  updateAiSessionTitle,
+  markDraftSummarized,
+  updateDraft,
+  pingAiSession,
+  updateThinking as updateThinkingAsync,
+  archiveAiSession,
+  unarchiveAiSession,
+  acquireAiSessionLock,
+  releaseAiSessionLock,
+  forceAcquireAiSessionLock,
+  getAiSessionLockHolder,
+  releaseStaleAiSessionLocks,
+  deleteAiSession,
+  deleteAiSessionByIdAndType,
+  recoverStaleAiSessions,
+  cleanupOldAiSessions,
+  cleanupStaleAiSessions,
+} from "./async-ai-session-store.js";
+export type {
+  AiSessionRow as AsyncAiSessionRow,
+  AiSessionStatus as AsyncAiSessionStatus,
+  AiSessionType as AsyncAiSessionType,
+  AiSessionSummary as AsyncAiSessionSummary,
+  AiSessionCleanupSummary as AsyncAiSessionCleanupSummary,
+} from "./async-ai-session-store.js";
+
+// Re-export the drizzle-orm `sql` template tag so dashboard/engine consumers
+// can build raw queries against the AsyncDataLayer without depending on
+// drizzle-orm directly.
+export { sql as drizzleSql } from "drizzle-orm";

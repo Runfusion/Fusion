@@ -1606,7 +1606,7 @@ export function registerSettingsMemoryRoutes(ctx: ApiRoutesContext, deps: Settin
       const projectResult = await processMemoryDreams(rootDir, executePrompt);
 
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
       const agents = await agentStore.listAgents();
 

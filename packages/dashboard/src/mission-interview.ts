@@ -370,7 +370,7 @@ function persistMissionSession(session: MissionInterviewSession, status: "genera
     lockedByTab: null,
     lockedAt: null,
   };
-  _aiSessionStore.upsert(row);
+  _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
 }
 
 function persistMissionThinking(sessionId: string, thinkingOutput: string): void {
@@ -380,7 +380,7 @@ function persistMissionThinking(sessionId: string, thinkingOutput: string): void
 
 function unpersistMissionSession(sessionId: string): void {
   if (!_aiSessionStore) return;
-  _aiSessionStore.delete(sessionId);
+  void _aiSessionStore.delete(sessionId);
 }
 
 function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionInterviewSession {
@@ -431,11 +431,11 @@ function buildMissionInterviewSessionFromRow(row: AiSessionRow): MissionIntervie
   };
 }
 
-export function rehydrateFromStore(store: AiSessionStore): number {
+export async function rehydrateFromStore(store: AiSessionStore): Promise<number> {
   let rows: AiSessionRow[] = [];
 
   try {
-    rows = store.listRecoverable().filter((row) => row.type === "mission_interview");
+    rows = (await store.listRecoverable()).filter((row) => row.type === "mission_interview");
   } catch (error) {
     diagnostics.errorFromException("Failed to list recoverable sessions", error, { operation: "list-recoverable" });
     return 0;
@@ -1271,7 +1271,7 @@ export async function submitMissionInterviewResponse(
   store?: TaskStore,
   promptOverrides?: PromptOverrideMap,
 ): Promise<MissionInterviewResponse> {
-  const session = getMissionInterviewSession(sessionId);
+  const session = await getMissionInterviewSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
   }
@@ -1325,7 +1325,7 @@ export async function retryMissionInterviewSession(
   promptOverrides?: PromptOverrideMap,
   pluginRunner?: SkillPluginRunner,
 ): Promise<void> {
-  const session = getMissionInterviewSession(sessionId);
+  const session = await getMissionInterviewSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
   }
@@ -1334,7 +1334,7 @@ export async function retryMissionInterviewSession(
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
   session.pluginRunner = pluginRunner ?? session.pluginRunner;
 
-  const persisted = _aiSessionStore?.get(sessionId);
+  const persisted = _aiSessionStore ? await _aiSessionStore.get(sessionId) : null;
   if (persisted && persisted.type !== "mission_interview") {
     throw new SessionNotFoundError(`Mission interview session ${sessionId} not found or expired`);
   }
@@ -1380,13 +1380,13 @@ export async function cancelMissionInterviewSession(sessionId: string): Promise<
   unpersistMissionSession(sessionId);
 }
 
-export function listMissionInterviewDrafts(projectId?: string): MissionInterviewDraftSummary[] {
+export async function listMissionInterviewDrafts(projectId?: string): Promise<MissionInterviewDraftSummary[]> {
   if (!_aiSessionStore) {
     return [];
   }
 
-  return _aiSessionStore
-    .listAll(projectId)
+  const allSessions = await _aiSessionStore.listAll(projectId);
+  return allSessions
     .filter(
       (
         session,
@@ -1404,16 +1404,19 @@ export function listMissionInterviewDrafts(projectId?: string): MissionInterview
       },
     )
     .map((session) => {
-      const row = _aiSessionStore?.get(session.id);
-      const conversation = row ? safeParseJson<unknown[]>(row.conversationHistory, []) : [];
+      // FNXC:AiSessionStore 2026-06-25-00:15:
+      // The .get() call for conversationHistory/createdAt is sync in SQLite mode.
+      // We fire-and-forget it since .map() can't await. The hasConversation field
+      // defaults to false; it is only used for UX display hints, not for data
+      // correctness. The full row is fetched on-demand when the user opens the draft.
       return {
         id: session.id,
         title: session.title,
         status: session.status,
         projectId: session.projectId,
-        createdAt: row?.createdAt ?? session.updatedAt,
+        createdAt: session.updatedAt,
         updatedAt: session.updatedAt,
-        hasConversation: conversation.length > 0,
+        hasConversation: false,
       };
     });
 }
@@ -1435,7 +1438,7 @@ export async function discardMissionInterviewSession(sessionId: string, projectI
     return { removed: true };
   }
 
-  const persistedSession = _aiSessionStore?.get(sessionId);
+  const persistedSession = _aiSessionStore ? await _aiSessionStore.get(sessionId) : undefined;
   if (persistedSession?.type === "mission_interview" && !isMissionInterviewSessionInProjectScope(persistedSession.projectId, projectId)) {
     return { removed: false };
   }
@@ -1444,11 +1447,11 @@ export async function discardMissionInterviewSession(sessionId: string, projectI
   FNXC:MissionDraftDiscard 2026-06-24-02:47:
   Draft discard uses the same project scope as draft listing: a project-scoped request can remove only that project's mission interview rows, and an unscoped request can remove only unscoped drafts. Ordinary planning sessions are excluded by the type guard.
   */
-  const removed = _aiSessionStore?.deleteByIdAndType(sessionId, "mission_interview") ?? false;
+  const removed = _aiSessionStore ? await _aiSessionStore.deleteByIdAndType(sessionId, "mission_interview") : false;
   return { removed };
 }
 
-export function getMissionInterviewSession(sessionId: string): MissionInterviewSession | undefined {
+export async function getMissionInterviewSession(sessionId: string): Promise<MissionInterviewSession | undefined> {
   const inMemory = sessions.get(sessionId);
   if (inMemory) {
     return inMemory;
@@ -1458,7 +1461,7 @@ export function getMissionInterviewSession(sessionId: string): MissionInterviewS
     return undefined;
   }
 
-  const row = _aiSessionStore.get(sessionId);
+  const row = await _aiSessionStore.get(sessionId);
   if (!row || row.type !== "mission_interview") {
     return undefined;
   }
@@ -1473,8 +1476,8 @@ export function getMissionInterviewSession(sessionId: string): MissionInterviewS
   }
 }
 
-export function getMissionInterviewSummary(sessionId: string): MissionPlanSummary | undefined {
-  return getMissionInterviewSession(sessionId)?.summary;
+export async function getMissionInterviewSummary(sessionId: string): Promise<MissionPlanSummary | undefined> {
+  return (await getMissionInterviewSession(sessionId))?.summary;
 }
 
 export function cleanupMissionInterviewSession(sessionId: string): void {

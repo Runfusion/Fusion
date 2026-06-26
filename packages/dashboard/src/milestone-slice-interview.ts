@@ -428,7 +428,7 @@ function persistSession(session: TargetInterviewSession, status: "generating" | 
     lockedByTab: null,
     lockedAt: null,
   };
-  _aiSessionStore.upsert(row);
+  _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
 }
 
 function persistThinking(sessionId: string, thinkingOutput: string): void {
@@ -438,7 +438,7 @@ function persistThinking(sessionId: string, thinkingOutput: string): void {
 
 function unpersistSession(sessionId: string): void {
   if (!_aiSessionStore) return;
-  _aiSessionStore.delete(sessionId);
+  void _aiSessionStore.delete(sessionId);
 }
 
 function buildSessionFromRow(row: AiSessionRow): TargetInterviewSession {
@@ -494,11 +494,11 @@ function buildSessionFromRow(row: AiSessionRow): TargetInterviewSession {
   };
 }
 
-export function rehydrateFromStore(store: AiSessionStore): number {
+export async function rehydrateFromStore(store: AiSessionStore): Promise<number> {
   let rows: AiSessionRow[] = [];
 
   try {
-    rows = store.listRecoverable().filter(
+    rows = (await store.listRecoverable()).filter(
       (row) => row.type === "milestone_interview" || row.type === "slice_interview"
     );
   } catch (error) {
@@ -1149,7 +1149,7 @@ export async function submitTargetInterviewResponse(
   store?: TaskStore,
   pluginRunner?: SkillSelectionPluginRunner,
 ): Promise<TargetInterviewResponse> {
-  const session = getTargetInterviewSession(sessionId);
+  const session = await getTargetInterviewSession(sessionId);
   if (!session) {
     throw new TargetSessionNotFoundError(`Interview session ${sessionId} not found or expired`);
   }
@@ -1202,12 +1202,12 @@ export async function retryTargetInterviewSession(
   store?: TaskStore,
   pluginRunner?: SkillSelectionPluginRunner,
 ): Promise<void> {
-  const session = getTargetInterviewSession(sessionId);
+  const session = await getTargetInterviewSession(sessionId);
   if (!session) {
     throw new TargetSessionNotFoundError(`Interview session ${sessionId} not found or expired`);
   }
 
-  const persisted = _aiSessionStore?.get(sessionId);
+  const persisted = _aiSessionStore ? await _aiSessionStore.get(sessionId) : null;
   if (persisted) {
     const sessionType = getSessionType(session.targetType);
     if (persisted.type !== sessionType) {
@@ -1264,7 +1264,7 @@ export async function cancelTargetInterviewSession(sessionId: string): Promise<v
 /**
  * Get session by ID (in-memory or from SQLite).
  */
-export function getTargetInterviewSession(sessionId: string): TargetInterviewSession | undefined {
+export async function getTargetInterviewSession(sessionId: string): Promise<TargetInterviewSession | undefined> {
   const inMemory = sessions.get(sessionId);
   if (inMemory) {
     return inMemory;
@@ -1274,7 +1274,7 @@ export function getTargetInterviewSession(sessionId: string): TargetInterviewSes
     return undefined;
   }
 
-  const row = _aiSessionStore.get(sessionId);
+  const row = await _aiSessionStore.get(sessionId);
   if (!row || (row.type !== "milestone_interview" && row.type !== "slice_interview")) {
     return undefined;
   }
@@ -1292,8 +1292,8 @@ export function getTargetInterviewSession(sessionId: string): TargetInterviewSes
 /**
  * Get the summary from a completed session.
  */
-export function getTargetInterviewSummary(sessionId: string): TargetInterviewSummary | undefined {
-  return getTargetInterviewSession(sessionId)?.summary;
+export async function getTargetInterviewSummary(sessionId: string): Promise<TargetInterviewSummary | undefined> {
+  return (await getTargetInterviewSession(sessionId))?.summary;
 }
 
 /**
@@ -1309,11 +1309,11 @@ export function cleanupTargetInterviewSession(sessionId: string): void {
 /**
  * Apply the interview summary to the target (milestone or slice).
  */
-export function applyTargetInterview(
+export async function applyTargetInterview(
   sessionId: string,
   missionStore: MissionStore
-): Milestone | Slice {
-  const session = getTargetInterviewSession(sessionId);
+): Promise<Milestone | Slice> {
+  const session = await getTargetInterviewSession(sessionId);
   if (!session) {
     throw new TargetSessionNotFoundError(`Interview session ${sessionId} not found or expired`);
   }

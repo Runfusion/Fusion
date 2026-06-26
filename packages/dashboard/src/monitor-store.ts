@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "@fusion/core";
+import type { AsyncDataLayer } from "@fusion/core";
+import {
+  recordDeploymentAsync,
+  resolveIncidentAsync,
+} from "@fusion/core";
 
 /**
  * U13 — Monitor stage storage + storm guard.
@@ -158,13 +163,26 @@ const FIRST_FIRED_META_KEY = "firstFiredAt";
 // ── Deployments ─────────────────────────────────────────────────────────────
 
 /** Record a deployment (idempotent by `deploymentId`). */
-export function recordDeployment(db: Database, input: DeploymentInput): Deployment {
+export async function recordDeployment(db: Database | AsyncDataLayer, input: DeploymentInput): Promise<Deployment> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:20:
+  // Backend mode: delegate to the async Drizzle helper (recordDeploymentAsync).
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): the previous discriminator `"transactionImmediate" in db`
+  // was broken because the SQLite `Database` class ALSO exposes
+  // `transactionImmediate` (db.ts), so every SQLite instance routed to the
+  // async path with a `DatabaseSync` as the Drizzle arg. The AsyncDataLayer
+  // uniquely exposes `ping()` (the connectivity probe); SQLite `Database` does
+  // not, so `"ping" in db` correctly distinguishes the two backends.
+  if ("ping" in db) {
+    return recordDeploymentAsync((db as AsyncDataLayer).db, input);
+  }
+  const sqliteDb = db as Database;
   const deploymentId = input.deploymentId?.trim() || `dep-${randomUUID()}`;
   const now = new Date().toISOString();
   const deployedAt = input.deployedAt ?? now;
   const meta = input.meta ? JSON.stringify(input.meta) : null;
 
-  db.prepare(
+  sqliteDb.prepare(
     `INSERT INTO deployments
        (deploymentId, service, environment, version, status, deployedAt, link, meta, createdAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -187,9 +205,9 @@ export function recordDeployment(db: Database, input: DeploymentInput): Deployme
     meta,
     now,
   );
-  db.bumpLastModified();
+  sqliteDb.bumpLastModified();
 
-  const row = db
+  const row = sqliteDb
     .prepare(`SELECT * FROM deployments WHERE deploymentId = ?`)
     .get(deploymentId) as DeploymentRow;
   return deploymentFromRow(row);
@@ -281,20 +299,30 @@ export function ingestIncidentSignal(
  * Resolve an open incident for a grouping key (sets `status = resolved` +
  * `resolvedAt`). Returns the resolved incident, or null if none was open. The
  * resolution feeds MTTR via {@link aggregateMonitorMetrics}.
+ *
+ * FNXC:RuntimeSatelliteAsync 2026-06-24-13:25:
+ * Backend dual-path: delegates to resolveIncidentAsync when AsyncDataLayer.
  */
-export function resolveIncident(
-  db: Database,
+export async function resolveIncident(
+  db: Database | AsyncDataLayer,
   groupingKey: string,
   at?: string,
-): Incident | null {
-  const open = getOpenIncidentByGroupingKey(db, groupingKey);
+): Promise<Incident | null> {
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in db` (unique to AsyncDataLayer) instead
+  // of the broken `"transactionImmediate" in db` (SQLite Database also has it).
+  if ("ping" in db) {
+    return resolveIncidentAsync((db as AsyncDataLayer).db, groupingKey, at);
+  }
+  const sqliteDb = db as Database;
+  const open = getOpenIncidentByGroupingKey(sqliteDb, groupingKey);
   if (!open) return null;
   const now = at ?? new Date().toISOString();
-  db.prepare(
+  sqliteDb.prepare(
     `UPDATE incidents SET status = 'resolved', resolvedAt = ?, updatedAt = ? WHERE incidentId = ?`,
   ).run(now, now, open.incidentId);
-  db.bumpLastModified();
-  return getIncident(db, open.incidentId);
+  sqliteDb.bumpLastModified();
+  return getIncident(sqliteDb, open.incidentId);
 }
 
 /**

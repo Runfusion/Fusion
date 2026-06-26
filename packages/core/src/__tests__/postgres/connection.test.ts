@@ -1,0 +1,180 @@
+import { describe, it, expect, afterEach } from "vitest";
+import {
+  createConnectionSet,
+  createConnectionSetFromUrl,
+  verifyConnection,
+  DatabaseConnectionError,
+  type ResolvedBackend,
+} from "../../postgres/connection.js";
+import { resolveBackendWithOptions } from "../../postgres/backend-resolver.js";
+import { redactConnectionString } from "../../postgres/credential-redact.js";
+
+const PG_TEST_URL =
+  process.env.FUSION_PG_TEST_URL ??
+  "postgresql://localhost:5432/postgres";
+
+const PG_AVAILABLE =
+  process.env.FUSION_PG_TEST_SKIP !== "1" && Boolean(PG_TEST_URL);
+
+/**
+ * Helper: skip tests when no PostgreSQL is reachable. The existing Homebrew
+ * instance on localhost:5432 is the default; set FUSION_PG_TEST_URL to point
+ * elsewhere, or FUSION_PG_TEST_SKIP=1 to skip integration tests.
+ */
+const pgDescribe = PG_AVAILABLE ? describe : describe.skip;
+
+describe("connection: createConnectionSet (embedded mode guard)", () => {
+  it("throws in embedded mode without a resolved URL", async () => {
+    await expect(createConnectionSet({})).rejects.toThrow(/embedded mode/);
+  });
+});
+
+describe("connection: DatabaseConnectionError credential redaction (VAL-CONN-004, VAL-CONN-005)", () => {
+  it("error message redacts the password from the URL", () => {
+    const url = "postgresql://admin:s3cr3tP@ss@badhost.invalid:5432/fusion";
+    const err = new DatabaseConnectionError(url, new Error("ECONNREFUSED"));
+    expect(err.message).not.toContain("s3cr3tP@ss");
+    expect(err.message).toContain("********");
+    expect(err.message).toContain("ECONNREFUSED");
+    expect(err.message).toContain("badhost.invalid");
+  });
+
+  it("error message redacts passwords from the cause message too", () => {
+    const url = "postgresql://admin:hunter2@10.0.0.99:5432/db";
+    const cause = new Error("Connection to postgresql://admin:hunter2@10.0.0.99:5432/db refused");
+    const err = new DatabaseConnectionError(url, cause);
+    expect(err.message).not.toContain("hunter2");
+    expect(err.message).toContain("refused");
+  });
+
+  it("safeUrl property is redacted", () => {
+    const url = "postgresql://admin:pw@host:5432/db";
+    const err = new DatabaseConnectionError(url, new Error("fail"));
+    expect(err.safeUrl).not.toContain(":pw@");
+    expect(err.safeUrl).toContain("********");
+  });
+});
+
+describe("connection: verifyConnection fails loudly for unreachable URLs (VAL-CONN-004)", () => {
+  it("throws DatabaseConnectionError for an unreachable host", async () => {
+    const badUrl = "postgresql://nobody:nobody@127.0.0.1:1/nonexistent";
+    await expect(verifyConnection(badUrl, 2)).rejects.toThrow(DatabaseConnectionError);
+  });
+
+  it("the thrown error does not contain the password", async () => {
+    const password = "superSecretPassword123";
+    const badUrl = `postgresql://nobody:${password}@127.0.0.1:1/nonexistent`;
+    try {
+      await verifyConnection(badUrl, 2);
+      expect.fail("Should have thrown");
+    } catch (error) {
+      const err = error as Error;
+      expect(err.message).not.toContain(password);
+    }
+  });
+});
+
+pgDescribe("connection: external PostgreSQL integration (VAL-CONN-002)", () => {
+  let connections: Awaited<ReturnType<typeof createConnectionSetFromUrl>> | null = null;
+
+  afterEach(async () => {
+    if (connections) {
+      await connections.close();
+      connections = null;
+    }
+  });
+
+  it("connects to the external PostgreSQL and ping succeeds", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 2, connectTimeoutSeconds: 5 });
+    await connections.ping();
+  });
+
+  it("runtime and migration Drizzle instances are usable", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 2, connectTimeoutSeconds: 5 });
+    // Execute a simple query via the Drizzle runtime instance.
+    const result = await connections.runtime.execute("SELECT 1 as val");
+    expect(result).toBeDefined();
+  });
+
+  it("close() cleanly shuts down the pool without error", async () => {
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: false,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
+    await connections.close();
+    connections = null; // prevent double-close in afterEach
+  });
+});
+
+pgDescribe("connection: DATABASE_MIGRATION_URL split integration (VAL-CONN-003)", () => {
+  let connections: Awaited<ReturnType<typeof createConnectionSetFromUrl>> | null = null;
+
+  afterEach(async () => {
+    if (connections) {
+      await connections.close();
+      connections = null;
+    }
+  });
+
+  it("uses separate runtime and migration connections when split is configured", async () => {
+    // Both point at the same test DB, but the resolver records the split.
+    const backend: ResolvedBackend = {
+      mode: "external",
+      runtimeUrl: PG_TEST_URL,
+      migrationUrl: PG_TEST_URL,
+      migrationUrlOverridden: true,
+    };
+    connections = await createConnectionSetFromUrl(backend, { poolMax: 1, connectTimeoutSeconds: 5 });
+    // Both instances should work.
+    await connections.runtime.execute("SELECT 1");
+    await connections.migration.execute("SELECT 1");
+  });
+});
+
+describe("connection: pooler URL disables prepared statements and warns (VAL-CONN-008)", () => {
+  it("emits the prepared-statement warning for a pooler URL without migration URL", async () => {
+    // We don't connect (the pooler URL is fake); we verify the warning is emitted
+    // at connection creation time. Use a custom onWarning to capture it.
+    let capturedWarning: string | null = null;
+    const backend = resolveBackendWithOptions({
+      databaseUrl: "postgresql://user:pw@xyz.pooler.supabase.com:6543/db",
+    });
+
+    // Attempt to create — this will fail to connect, but the warning is emitted
+    // before the connection attempt.
+    try {
+      await createConnectionSetFromUrl(backend, {
+        poolMax: 1,
+        connectTimeoutSeconds: 2,
+        onWarning: (msg) => {
+          capturedWarning = msg;
+        },
+      });
+    } catch {
+      // Connection failure expected (fake host)
+    }
+    expect(capturedWarning).not.toBeNull();
+    expect(capturedWarning).toMatch(/prepared statement/i);
+  });
+});
+
+describe("connection: redactConnectionString re-export", () => {
+  it("is accessible and works", () => {
+    expect(redactConnectionString("postgresql://u:p@h/db")).not.toContain(":p@");
+  });
+});

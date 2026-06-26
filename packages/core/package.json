@@ -54,7 +54,10 @@
     "check-disk-space": "^3.4.0",
     "cron-parser": "^5.5.0",
     "dockerode": "^4.0.2",
+    "drizzle-orm": "^0.45.2",
+    "embedded-postgres": "15.18.0-beta.17",
     "extract-zip": "^2.0.1",
+    "postgres": "^3.4.9",
     "tar": "^7.5.13",
     "yaml": "^2.8.3"
   },

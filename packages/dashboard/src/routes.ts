@@ -1005,16 +1005,16 @@ function replayBufferedSSE(
   return true;
 }
 
-function checkSessionLock(
+async function checkSessionLock(
   sessionId: string,
   tabId: string | undefined,
   store: AiSessionStore | undefined,
-): { allowed: true } | { allowed: false; currentHolder: string | null } {
+): Promise<{ allowed: true } | { allowed: false; currentHolder: string | null }> {
   if (!tabId || !store) {
     return { allowed: true };
   }
 
-  const result = store.acquireLock(sessionId, tabId);
+  const result = await store.acquireLock(sessionId, tabId);
   if (result.acquired) {
     return { allowed: true };
   }
@@ -1259,7 +1259,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     }
 
     const { AgentStore } = await import("@fusion/core");
-    const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+    const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
     await agentStore.init();
 
     const assignedAgent = await agentStore.getAgent(task.assignedAgentId);
@@ -1657,7 +1657,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       }
 
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
       const agents = await agentStore.listAgents();
       for (const agent of agents) {
@@ -4062,7 +4062,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * also surface sessions the user has explicitly archived.
    * Query: { projectId?, includeCompleted?, includeArchived? }
    */
-  router.get("/ai-sessions", (req, res) => {
+  router.get("/ai-sessions", async (req, res) => {
     if (!aiSessionStore) {
       res.json({ sessions: [] });
       return;
@@ -4073,8 +4073,8 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const includeArchived =
       req.query.includeArchived === "1" || req.query.includeArchived === "true";
     const sessions = includeCompleted
-      ? aiSessionStore.listAll(projectId, { includeArchived })
-      : aiSessionStore.listActive(projectId);
+      ? await aiSessionStore.listAll(projectId, { includeArchived })
+      : await aiSessionStore.listActive(projectId);
     res.json({ sessions });
   });
 
@@ -4082,7 +4082,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * DELETE /api/ai-sessions/cleanup
    * Cleanup stale AI sessions with optional max-age override.
    */
-  router.delete("/ai-sessions/cleanup", (req, res) => {
+  router.delete("/ai-sessions/cleanup", async (req, res) => {
     if (!aiSessionStore) {
       sendErrorResponse(res, 503, "Session store not available");
       return;
@@ -4099,7 +4099,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       maxAgeMs = Math.max(minimumMaxAgeMs, Math.floor(parsed));
     }
 
-    const result = aiSessionStore.cleanupStaleSessions(maxAgeMs);
+    const result = await aiSessionStore.cleanupStaleSessions(maxAgeMs);
     res.json({
       ...result,
       maxAgeMs,
@@ -4110,11 +4110,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * GET /api/ai-sessions/:id
    * Get full session state for modal reconnection.
    */
-  router.get("/ai-sessions/:id", (req, res) => {
+  router.get("/ai-sessions/:id", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
-    const session = aiSessionStore.get(req.params.id);
+    const session = await aiSessionStore.get(req.params.id);
     if (!session) {
       throw notFound("Session not found");
     }
@@ -4141,19 +4141,19 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * deleting it. Only terminal sessions are archivable; archiving an
    * in-flight session is rejected so we don't orphan a live agent.
    */
-  router.post("/ai-sessions/:id/archive", (req, res) => {
+  router.post("/ai-sessions/:id/archive", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
-    const session = aiSessionStore.get(req.params.id);
+    const session = await aiSessionStore.get(req.params.id);
     if (!session) {
       throw notFound("Session not found");
     }
     if (session.status !== "complete" && session.status !== "error") {
       throw badRequest("Only completed or errored sessions can be archived");
     }
-    aiSessionStore.archive(req.params.id);
-    const after = aiSessionStore.get(req.params.id);
+    await aiSessionStore.archive(req.params.id);
+    const after = await aiSessionStore.get(req.params.id);
     res.json({ archived: Number(after?.archived ?? 0) === 1 });
   });
 
@@ -4161,25 +4161,25 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * POST /api/ai-sessions/:id/unarchive
    * Restore a previously archived session.
    */
-  router.post("/ai-sessions/:id/unarchive", (req, res) => {
+  router.post("/ai-sessions/:id/unarchive", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
-    if (!aiSessionStore.get(req.params.id)) {
+    if (!(await aiSessionStore.get(req.params.id))) {
       throw notFound("Session not found");
     }
-    aiSessionStore.unarchive(req.params.id);
-    const after = aiSessionStore.get(req.params.id);
+    await aiSessionStore.unarchive(req.params.id);
+    const after = await aiSessionStore.get(req.params.id);
     res.json({ archived: Number(after?.archived ?? 0) === 1 });
   });
 
-  router.post("/ai-sessions/:id/lock", (req, res) => {
+  router.post("/ai-sessions/:id/lock", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
 
     const { id } = req.params;
-    const session = aiSessionStore.get(id);
+    const session = await aiSessionStore.get(id);
     if (!session) {
       throw notFound("Session not found");
     }
@@ -4189,7 +4189,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw badRequest("tabId is required");
     }
 
-    const result = aiSessionStore.acquireLock(id, tabId);
+    const result = await aiSessionStore.acquireLock(id, tabId);
     if (!result.acquired) {
       res.json({ acquired: false, currentHolder: result.currentHolder });
       return;
@@ -4198,7 +4198,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     res.json({ acquired: true });
   });
 
-  router.delete("/ai-sessions/:id/lock", (req, res) => {
+  router.delete("/ai-sessions/:id/lock", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
@@ -4209,17 +4209,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw badRequest("tabId is required");
     }
 
-    aiSessionStore.releaseLock(id, tabId);
+    await aiSessionStore.releaseLock(id, tabId);
     res.json({ success: true });
   });
 
-  router.post("/ai-sessions/:id/lock/force", (req, res) => {
+  router.post("/ai-sessions/:id/lock/force", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
 
     const { id } = req.params;
-    const session = aiSessionStore.get(id);
+    const session = await aiSessionStore.get(id);
     if (!session) {
       throw notFound("Session not found");
     }
@@ -4229,11 +4229,11 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       throw badRequest("tabId is required");
     }
 
-    aiSessionStore.forceAcquireLock(id, tabId);
+    await aiSessionStore.forceAcquireLock(id, tabId);
     res.json({ success: true });
   });
 
-  router.delete("/ai-sessions/:id/lock/beacon", (req, res) => {
+  router.delete("/ai-sessions/:id/lock/beacon", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
@@ -4241,7 +4241,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const { id } = req.params;
     const tabId = typeof req.query.tabId === "string" ? req.query.tabId.trim() : "";
     if (tabId) {
-      aiSessionStore.releaseLock(id, tabId);
+      await aiSessionStore.releaseLock(id, tabId);
     }
 
     res.status(200).end();
@@ -4251,13 +4251,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * POST /api/ai-sessions/:id/ping
    * Lightweight keep-alive touch for active AI sessions.
    */
-  router.post("/ai-sessions/:id/ping", (req, res) => {
+  router.post("/ai-sessions/:id/ping", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
 
     const { id } = req.params;
-    const updated = aiSessionStore.ping(id);
+    const updated = await aiSessionStore.ping(id);
     if (!updated) {
       throw notFound("Session not found");
     }
@@ -4270,13 +4270,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Keep planning draft title/text synchronized while editing.
    * Body: { title: string, initialPlan: string }
    */
-  router.patch("/ai-sessions/:id/draft", (req, res) => {
+  router.patch("/ai-sessions/:id/draft", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
 
     const { id } = req.params;
-    const session = aiSessionStore.get(id);
+    const session = await aiSessionStore.get(id);
     if (!session) {
       throw notFound("Session not found");
     }
@@ -4300,7 +4300,7 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     const modelProvider = rawProvider && rawModelId ? rawProvider : undefined;
     const modelId = rawProvider && rawModelId ? rawModelId : undefined;
 
-    const updated = aiSessionStore.updateDraft(id, { initialPlan, modelProvider, modelId });
+    const updated = await aiSessionStore.updateDraft(id, { initialPlan, modelProvider, modelId });
     if (!updated) {
       throw notFound("Session not found");
     }
@@ -4313,38 +4313,38 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Dismiss/cancel a background AI session.
    * Also cleans up the in-memory agent if still alive.
    */
-  router.delete("/ai-sessions/:id", (req, res) => {
+  router.delete("/ai-sessions/:id", async (req, res) => {
     if (!aiSessionStore) {
       throw notFound("AI sessions not available");
     }
     const { id } = req.params;
-    const session = aiSessionStore.get(id);
+    const session = await aiSessionStore.get(id);
     if (!session) {
       throw notFound("Session not found");
     }
 
-    aiSessionStore.delete(id);
+    await aiSessionStore.delete(id);
 
     try {
-      if (getPlanningSession(id)) cleanupPlanningSession(id);
+      if (await getPlanningSession(id)) cleanupPlanningSession(id);
     } catch {
       // Session may not belong to planning or may already be cleaned up.
     }
 
     try {
-      if (getSubtaskSession(id)) cleanupSubtaskSession(id);
+      if (await getSubtaskSession(id)) cleanupSubtaskSession(id);
     } catch {
       // Session may not belong to subtask breakdown or may already be cleaned up.
     }
 
     try {
-      if (getMissionInterviewSession(id)) cleanupMissionInterviewSession(id);
+      if (await getMissionInterviewSession(id)) cleanupMissionInterviewSession(id);
     } catch {
       // Session may not belong to mission interview or may already be cleaned up.
     }
 
     try {
-      if (getTargetInterviewSession(id)) cleanupTargetInterviewSession(id);
+      if (await getTargetInterviewSession(id)) cleanupTargetInterviewSession(id);
     } catch {
       // Session may not belong to milestone/slice interview or may already be cleaned up.
     }

@@ -993,7 +993,7 @@ export class HeartbeatMonitor {
           continue;
         }
 
-        const roomTimeline = this.chatStore.getRoomMessages(entry.room.id, { limit: 100 });
+        const roomTimeline = await this.chatStore.getRoomMessages(entry.room.id, { limit: 100 });
         const messageIndex = roomTimeline.findIndex((roomMessage) => roomMessage.id === message.id);
         if (messageIndex <= 0) {
           continue;
@@ -1054,12 +1054,12 @@ export class HeartbeatMonitor {
             continue;
           }
 
-          const members = this.chatStore.listRoomMembers(entry.room.id);
+          const members = await this.chatStore.listRoomMembers(entry.room.id);
           if (countActiveAgentMembers(members) < 2) {
             continue;
           }
 
-          const roomTimeline = this.chatStore.getRoomMessages(entry.room.id, { limit: 100 });
+          const roomTimeline = await this.chatStore.getRoomMessages(entry.room.id, { limit: 100 });
           const messageIndex = roomTimeline.findIndex((roomMessage) => roomMessage.id === message.id);
           if (messageIndex < 0) {
             continue;
@@ -1124,14 +1124,14 @@ export class HeartbeatMonitor {
     }
 
     try {
-      const rooms = this.chatStore.listRoomsForAgent(agent.id, { status: "active" });
+      const rooms = await this.chatStore.listRoomsForAgent(agent.id, { status: "active" });
       const entries: Array<{ room: ChatRoom; messages: ChatRoomMessage[] }> = [];
       let total = 0;
       let surfaced = 0;
       let truncatedCount = 0;
 
       for (const room of rooms) {
-        const messages = this.chatStore.listRoomMessagesSince(room.id, sinceIso, {
+        const messages = await this.chatStore.listRoomMessagesSince(room.id, sinceIso, {
           excludeSenderAgentId: agent.id,
           limit: 10,
         });
@@ -1164,7 +1164,8 @@ export class HeartbeatMonitor {
       if (!this.taskStore) {
         throw new Error("HeartbeatMonitor missing taskStore for approval request persistence");
       }
-      this.approvalRequestStore = new ApprovalRequestStore(this.taskStore.getDatabase());
+      const layer = this.taskStore.getAsyncLayer();
+      this.approvalRequestStore = new ApprovalRequestStore(layer ? null : this.taskStore.getDatabase(), { asyncLayer: layer });
     }
     return this.approvalRequestStore;
   }
@@ -1181,7 +1182,7 @@ export class HeartbeatMonitor {
       taskId,
       runId,
       permissionPolicy: policy,
-      createApprovalRequest: async (decision, args) => this.getApprovalRequestStore().create({
+      createApprovalRequest: async (decision, args) => await this.getApprovalRequestStore().create({
         requester: { actorId: agent.id, actorType: "agent", actorName: agent.name },
         taskId,
         runId,
@@ -1195,11 +1196,11 @@ export class HeartbeatMonitor {
         },
       }),
       findApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
+        const latest = await this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       findPendingApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
+        const latest = await this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
         return latest?.status === "pending" ? { id: latest.id } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
@@ -1232,7 +1233,7 @@ export class HeartbeatMonitor {
       requester: { actorId: agent.id, actorType: "agent", actorName: agent.name },
       taskId,
       runId,
-      createApprovalRequest: async ({ category, toolName, args }) => this.getApprovalRequestStore().create({
+      createApprovalRequest: async ({ category, toolName, args }) => await this.getApprovalRequestStore().create({
         requester: { actorId: agent.id, actorType: "agent", actorName: agent.name },
         taskId,
         runId,
@@ -1250,7 +1251,7 @@ export class HeartbeatMonitor {
         },
       }),
       findPendingApprovalRequest: async (dedupeKey) => {
-        const pending = this.getApprovalRequestStore().list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
+        const pending = await this.getApprovalRequestStore().list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
         return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
       },
     };
@@ -2771,7 +2772,7 @@ export class HeartbeatMonitor {
           // Fetch unread messages when messageStore is available (for all trigger types)
           if (this.messageStore) {
             try {
-              pendingMessages = this.messageStore.getInbox(agentId, "agent", { read: false, limit: 10 });
+              pendingMessages = await this.messageStore.getInbox(agentId, "agent", { read: false, limit: 10 });
             } catch (inboxErr) {
               heartbeatLog.warn(`Failed to fetch inbox messages for ${agentId}: ${inboxErr instanceof Error ? inboxErr.message : String(inboxErr)}`);
             }
@@ -3146,7 +3147,7 @@ export class HeartbeatMonitor {
           // Mark messages as read after successful processing (only if messages were included in prompt)
           if (pendingMessages.length > 0 && this.messageStore) {
             try {
-              this.messageStore.markAllAsRead(agentId, "agent");
+              await this.messageStore.markAllAsRead(agentId, "agent");
             } catch (markReadErr) {
               heartbeatLog.warn(`Failed to mark messages as read for ${agentId}: ${markReadErr instanceof Error ? markReadErr.message : String(markReadErr)}`);
             }

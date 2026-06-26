@@ -14,23 +14,46 @@ import type {
   ExperimentSessionStoreEvents,
   ExperimentSessionUpdateInput,
 } from "./experiment-session-types.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import * as asyncExp from "./async-experiment-session-store.js";
 
 function generateId(prefix: string): string {
   return `${prefix}-${randomUUID()}`;
 }
 
+/**
+ * FNXC:ExperimentSessionStore 2026-06-24-14:30:
+ * Backend dual-path: when an `AsyncDataLayer` is provided (PostgreSQL backend
+ * active), methods delegate to the async-experiment-session-store helpers.
+ * When absent, the legacy sync SQLite path runs byte-identically.
+ */
 export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreEvents> {
+  private readonly db: Database | null;
+  private readonly asyncLayer: AsyncDataLayer | null;
   private readonly insertSessionStmt;
 
-  constructor(private readonly db: Database) {
+  constructor(db: Database | null, options?: { asyncLayer?: AsyncDataLayer | null }) {
     super();
     this.setMaxListeners(50);
-    this.insertSessionStmt = this.db.prepare(`
+    this.db = db;
+    this.asyncLayer = options?.asyncLayer ?? null;
+    if (this.asyncLayer) {
+      // Backend mode: no prepared statements needed.
+      this.insertSessionStmt = null;
+      return;
+    }
+    const sqliteDb = db!;
+    this.insertSessionStmt = sqliteDb.prepare(`
       INSERT INTO experiment_sessions (
         id, name, projectId, status, metric, currentSegment, maxIterations, workingDir,
         baselineRunId, bestRunId, keptRunIds, tags, metadata, createdAt, updatedAt, finalizedAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+  }
+
+  /** True when the store is backed by PostgreSQL (AsyncDataLayer present). */
+  isBackendMode(): boolean {
+    return this.asyncLayer !== null;
   }
 
   createSession(input: ExperimentSessionCreateInput): ExperimentSession {
@@ -54,7 +77,16 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
       finalizedAt: input.finalizedAt,
     };
 
-    this.insertSessionStmt.run(
+    // FNXC:RuntimeSatelliteAsync 2026-06-24-14:35:
+    // Backend mode: insert via async helper (fire-and-forget for EventEmitter compat).
+    // The callers that need the persisted result await the async write separately.
+    if (this.asyncLayer) {
+      void asyncExp.createExperimentSession(this.asyncLayer.db, session);
+      this.emit("session:created", session);
+      return session;
+    }
+
+    this.insertSessionStmt!.run(
       session.id,
       session.name,
       session.projectId ?? null,
@@ -73,17 +105,23 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
       session.finalizedAt ?? null,
     );
 
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
     this.emit("session:created", session);
     return session;
   }
 
-  getSession(id: string): ExperimentSession | undefined {
-    const row = this.db.prepare("SELECT * FROM experiment_sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  async getSession(id: string): Promise<ExperimentSession | undefined> {
+    if (this.asyncLayer) {
+      return asyncExp.getExperimentSession(this.asyncLayer.db, id);
+    }
+    const row = this.db!.prepare("SELECT * FROM experiment_sessions WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToSession(row) : undefined;
   }
 
-  listSessions(options: ExperimentSessionListOptions = {}): ExperimentSession[] {
+  async listSessions(options: ExperimentSessionListOptions = {}): Promise<ExperimentSession[]> {
+    if (this.asyncLayer) {
+      return asyncExp.listExperimentSessions(this.asyncLayer.db, options);
+    }
     const where: string[] = [];
     const params: Array<string | number> = [];
 
@@ -108,7 +146,7 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
     const limitClause = options.limit !== undefined ? `LIMIT ${options.limit}` : "";
     const offsetClause = options.offset !== undefined ? `OFFSET ${options.offset}` : "";
 
-    const rows = this.db.prepare(`
+    const rows = this.db!.prepare(`
       SELECT * FROM experiment_sessions
       ${whereClause}
       ORDER BY createdAt DESC
@@ -119,8 +157,8 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
     return rows.map((row) => this.rowToSession(row));
   }
 
-  updateSession(id: string, patch: ExperimentSessionUpdateInput): ExperimentSession {
-    const existing = this.getSession(id);
+  async updateSession(id: string, patch: ExperimentSessionUpdateInput): Promise<ExperimentSession> {
+    const existing = await this.getSession(id);
     if (!existing) throw new Error(`Experiment session not found: ${id}`);
 
     const now = new Date().toISOString();
@@ -134,8 +172,12 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
       updatedAt: now,
     };
 
-    this.persistSession(updated);
-    this.db.bumpLastModified();
+    if (this.asyncLayer) {
+      await asyncExp.persistExperimentSession(this.asyncLayer.db, updated);
+    } else {
+      this.persistSession(updated);
+      this.db!.bumpLastModified();
+    }
     this.emit("session:updated", updated);
     if (updated.status !== existing.status) {
       this.emit("session:status_changed", updated);
@@ -146,26 +188,47 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
     return updated;
   }
 
-  deleteSession(id: string): boolean {
-    const result = this.db.prepare("DELETE FROM experiment_sessions WHERE id = ?").run(id) as { changes?: number };
+  async deleteSession(id: string): Promise<boolean> {
+    if (this.asyncLayer) {
+      const deleted = await asyncExp.deleteExperimentSession(this.asyncLayer.db, id);
+      if (deleted) this.emit("session:deleted", id);
+      return deleted;
+    }
+    const result = this.db!.prepare("DELETE FROM experiment_sessions WHERE id = ?").run(id) as { changes?: number };
     const deleted = (result.changes ?? 0) > 0;
     if (deleted) {
-      this.db.bumpLastModified();
+      this.db!.bumpLastModified();
       this.emit("session:deleted", id);
     }
     return deleted;
   }
 
-  appendRecord(sessionId: string, input: ExperimentSessionRecordAppendInput): ExperimentSessionRecord {
-    const session = this.getSession(sessionId);
+  async appendRecord(sessionId: string, input: ExperimentSessionRecordAppendInput): Promise<ExperimentSessionRecord> {
+    if (this.asyncLayer) {
+      const session = await this.getSession(sessionId);
+      if (!session) throw new Error(`Experiment session not found: ${sessionId}`);
+      if (session.status === "finalized" || session.status === "archived") {
+        throw new Error(`Cannot append record to ${session.status} session: ${sessionId}`);
+      }
+      const record = await asyncExp.appendExperimentRecord(this.asyncLayer, {
+        id: generateId("EXPR"),
+        sessionId,
+        segment: input.segment ?? session.currentSegment,
+        type: input.type,
+        payload: input.payload as unknown as Record<string, unknown>,
+      });
+      this.emit("record:appended", record);
+      return record;
+    }
+    const session = await this.getSession(sessionId);
     if (!session) throw new Error(`Experiment session not found: ${sessionId}`);
     if (session.status === "finalized" || session.status === "archived") {
       throw new Error(`Cannot append record to ${session.status} session: ${sessionId}`);
     }
 
     const now = new Date().toISOString();
-    const record = this.db.transaction(() => {
-      const seqRow = this.db
+    const record = this.db!.transaction(() => {
+      const seqRow = this.db!
         .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as nextSeq FROM experiment_session_records WHERE sessionId = ?")
         .get(sessionId) as { nextSeq: number };
       const nextSeq = seqRow.nextSeq;
@@ -179,7 +242,7 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
         createdAt: now,
       } as ExperimentSessionRecord;
 
-      this.db.prepare(`
+      this.db!.prepare(`
         INSERT INTO experiment_session_records (id, sessionId, segment, seq, type, payload, createdAt)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(created.id, created.sessionId, created.segment, created.seq, created.type, toJson(created.payload), created.createdAt);
@@ -187,12 +250,15 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
       return created;
     });
 
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
     this.emit("record:appended", record);
     return record;
   }
 
-  listRecords(sessionId: string, opts: { segment?: number; type?: ExperimentRecordType; limit?: number; offset?: number } = {}): ExperimentSessionRecord[] {
+  async listRecords(sessionId: string, opts: { segment?: number; type?: ExperimentRecordType; limit?: number; offset?: number } = {}): Promise<ExperimentSessionRecord[]> {
+    if (this.asyncLayer) {
+      return asyncExp.listExperimentRecords(this.asyncLayer.db, sessionId, { segment: opts.segment, type: opts.type });
+    }
     const where = ["sessionId = ?"];
     const params: Array<string | number> = [sessionId];
 
@@ -208,7 +274,7 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
     const limitClause = opts.limit !== undefined ? `LIMIT ${opts.limit}` : "";
     const offsetClause = opts.offset !== undefined ? `OFFSET ${opts.offset}` : "";
 
-    const rows = this.db.prepare(`
+    const rows = this.db!.prepare(`
       SELECT * FROM experiment_session_records
       WHERE ${where.join(" AND ")}
       ORDER BY seq ASC
@@ -219,20 +285,41 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
     return rows.map((row) => this.rowToRecord(row));
   }
 
-  getRecord(id: string): ExperimentSessionRecord | undefined {
-    const row = this.db.prepare("SELECT * FROM experiment_session_records WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+  async getRecord(id: string): Promise<ExperimentSessionRecord | undefined> {
+    if (this.asyncLayer) {
+      return asyncExp.getExperimentRecord(this.asyncLayer.db, id);
+    }
+    const row = this.db!.prepare("SELECT * FROM experiment_session_records WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? this.rowToRecord(row) : undefined;
   }
 
-  startNewSegment(sessionId: string, configPayload: ExperimentConfigRecordPayload): { session: ExperimentSession; record: ExperimentSessionRecord } {
-    const result = this.db.transaction(() => {
-      const session = this.getSession(sessionId);
+  async startNewSegment(sessionId: string, configPayload: ExperimentConfigRecordPayload): Promise<{ session: ExperimentSession; record: ExperimentSessionRecord }> {
+    if (this.asyncLayer) {
+      const session = await this.getSession(sessionId);
+      if (!session) throw new Error(`Experiment session not found: ${sessionId}`);
+      const nextSegment = session.currentSegment + 1;
+      const updated: ExperimentSession = { ...session, currentSegment: nextSegment, updatedAt: new Date().toISOString() };
+      await asyncExp.persistExperimentSession(this.asyncLayer.db, updated);
+      const record = await asyncExp.appendExperimentRecord(this.asyncLayer, {
+        id: generateId("EXPR"),
+        sessionId,
+        segment: nextSegment,
+        type: "config",
+        payload: configPayload as unknown as Record<string, unknown>,
+      });
+      this.emit("segment:reset", { sessionId, segment: updated.currentSegment });
+      this.emit("record:appended", record);
+      return { session: updated, record };
+    }
+    const result = this.db!.transaction(() => {
+      const row = this.db!.prepare("SELECT * FROM experiment_sessions WHERE id = ?").get(sessionId) as Record<string, unknown> | undefined;
+      const session = row ? this.rowToSession(row) : undefined;
       if (!session) throw new Error(`Experiment session not found: ${sessionId}`);
       const nextSegment = session.currentSegment + 1;
       const updated: ExperimentSession = { ...session, currentSegment: nextSegment, updatedAt: new Date().toISOString() };
       this.persistSession(updated);
 
-      const seqRow = this.db
+      const seqRow = this.db!
         .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as nextSeq FROM experiment_session_records WHERE sessionId = ?")
         .get(sessionId) as { nextSeq: number };
 
@@ -246,7 +333,7 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
         createdAt: new Date().toISOString(),
       };
 
-      this.db.prepare(`
+      this.db!.prepare(`
         INSERT INTO experiment_session_records (id, sessionId, segment, seq, type, payload, createdAt)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(record.id, record.sessionId, record.segment, record.seq, record.type, toJson(record.payload), record.createdAt);
@@ -254,24 +341,24 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
       return { session: updated, record };
     });
 
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
     this.emit("segment:reset", { sessionId, segment: result.session.currentSegment });
     this.emit("record:appended", result.record);
     return result;
   }
 
-  setBaselineRun(sessionId: string, runRecordId: string): ExperimentSession {
-    const session = this.assertRunRecordOwnership(sessionId, runRecordId);
+  async setBaselineRun(sessionId: string, runRecordId: string): Promise<ExperimentSession> {
+    const session = await this.assertRunRecordOwnership(sessionId, runRecordId);
     return this.updateSession(session.id, { baselineRunId: runRecordId });
   }
 
-  setBestRun(sessionId: string, runRecordId: string): ExperimentSession {
-    const session = this.assertRunRecordOwnership(sessionId, runRecordId);
+  async setBestRun(sessionId: string, runRecordId: string): Promise<ExperimentSession> {
+    const session = await this.assertRunRecordOwnership(sessionId, runRecordId);
     return this.updateSession(session.id, { bestRunId: runRecordId });
   }
 
-  updateRecordPayload(recordId: string, patch: Partial<ExperimentSessionRecord["payload"]>): ExperimentSessionRecord {
-    const record = this.getRecord(recordId);
+  async updateRecordPayload(recordId: string, patch: Partial<ExperimentSessionRecord["payload"]>): Promise<ExperimentSessionRecord> {
+    const record = await this.getRecord(recordId);
     if (!record) throw new Error(`Experiment record not found: ${recordId}`);
 
     const updated = {
@@ -282,28 +369,33 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
       },
     } as ExperimentSessionRecord;
 
-    this.db.prepare(`
-      UPDATE experiment_session_records
-      SET payload = ?
-      WHERE id = ?
-    `).run(toJson(updated.payload), recordId);
-
-    this.db.bumpLastModified();
+    if (this.asyncLayer) {
+      // No dedicated async helper for payload-only update; use a raw Drizzle update.
+      const { sql } = await import("drizzle-orm");
+      await this.asyncLayer.db.execute(sql`UPDATE experiment_session_records SET payload = ${JSON.stringify(updated.payload)} WHERE id = ${recordId}`);
+    } else {
+      this.db!.prepare(`
+        UPDATE experiment_session_records
+        SET payload = ?
+        WHERE id = ?
+      `).run(toJson(updated.payload), recordId);
+      this.db!.bumpLastModified();
+    }
     return updated;
   }
 
-  recordKept(sessionId: string, runRecordId: string): ExperimentSession {
-    const session = this.assertRunRecordOwnership(sessionId, runRecordId);
+  async recordKept(sessionId: string, runRecordId: string): Promise<ExperimentSession> {
+    const session = await this.assertRunRecordOwnership(sessionId, runRecordId);
     const keptRunIds = session.keptRunIds.includes(runRecordId)
       ? session.keptRunIds
       : [...session.keptRunIds, runRecordId];
     return this.updateSession(sessionId, { keptRunIds });
   }
 
-  private assertRunRecordOwnership(sessionId: string, runRecordId: string): ExperimentSession {
-    const session = this.getSession(sessionId);
+  private async assertRunRecordOwnership(sessionId: string, runRecordId: string): Promise<ExperimentSession> {
+    const session = await this.getSession(sessionId);
     if (!session) throw new Error(`Experiment session not found: ${sessionId}`);
-    const record = this.getRecord(runRecordId);
+    const record = await this.getRecord(runRecordId);
     if (!record) throw new Error(`Experiment record not found: ${runRecordId}`);
     if (record.type !== "run") throw new Error(`Experiment record is not a run: ${runRecordId}`);
     if (record.sessionId !== sessionId) throw new Error(`Experiment record ${runRecordId} does not belong to session ${sessionId}`);
@@ -311,7 +403,7 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
   }
 
   private persistSession(session: ExperimentSession): void {
-    this.db.prepare(`
+    this.db!.prepare(`
       UPDATE experiment_sessions
       SET name = ?, projectId = ?, status = ?, metric = ?, currentSegment = ?, maxIterations = ?,
           workingDir = ?, baselineRunId = ?, bestRunId = ?, keptRunIds = ?, tags = ?, metadata = ?,

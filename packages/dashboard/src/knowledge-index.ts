@@ -337,6 +337,11 @@ export async function refreshKnowledgeForTask(
   options?: { now?: string },
 ): Promise<KnowledgePage | null> {
   try {
+    // FNXC:RuntimeSatelliteAsync 2026-06-24-22:10:
+    // In backend mode, the sync SQLite database is not available. Knowledge
+    // indexing uses direct SQL against the sync DB; skip in backend mode
+    // until the async knowledge index path is implemented.
+    if (store.isBackendMode()) return null;
     const detail = await store.getTask(taskId);
     if (!detail) return null;
 

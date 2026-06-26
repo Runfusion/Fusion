@@ -8638,7 +8638,9 @@
     "todo": "Todo",
     "triggerAria": "Select workflow. Current workflow: {{name}}",
     "editWorkflow": "Edit workflow",
-    "newWorkflow": "New workflow"
+    "newWorkflow": "New workflow",
+    "merging": "",
+    "mergingTitle": ""
   },
   "workspace": {
     "projectRoot": "프로젝트 루트",

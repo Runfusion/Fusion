@@ -42,9 +42,9 @@ describe("FN-5241 reliability interactions: in-review handoff atomic", () => {
 
   it("rolls back column move and queue insert when enqueueMergeQueue throws, then succeeds on retry", async () => {
     const task = await createInProgressTask();
-    vi.spyOn(store, "enqueueMergeQueue").mockImplementationOnce(() => {
+    vi.spyOn(store as never, "enqueueMergeQueueSyncInternal").mockImplementationOnce((() => {
       throw new Error("boom");
-    });
+    }) as never);
 
     await expect(store.handoffToReview(task.id, {
       ownerAgentId: "executor-agent",
@@ -52,7 +52,7 @@ describe("FN-5241 reliability interactions: in-review handoff atomic", () => {
     })).rejects.toThrow("boom");
 
     expect((await store.getTask(task.id))?.column).toBe("in-progress");
-    expect(store.peekMergeQueue()).toHaveLength(0);
+    expect(await store.peekMergeQueue()).toHaveLength(0);
     expect(store.getRunAuditEvents({ taskId: task.id, mutationType: "task:handoff", limit: 20 })).toHaveLength(0);
 
     await store.handoffToReview(task.id, {
@@ -61,7 +61,7 @@ describe("FN-5241 reliability interactions: in-review handoff atomic", () => {
     });
 
     expect((await store.getTask(task.id))?.column).toBe("in-review");
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id, priority: task.priority }),
     ]);
   });
@@ -98,7 +98,7 @@ describe("FN-5241 reliability interactions: in-review handoff atomic", () => {
     expect(latest?.column).toBe("in-review");
     expect(latest?.paused ?? false).toBe(false);
     expect(latest?.status ?? null).toBeNull();
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id }),
     ]);
     expect(store.getRunAuditEvents({ taskId: task.id, limit: 50 }).filter((event) => event.mutationType.startsWith("task:auto-recover"))).toEqual([]);
@@ -115,7 +115,7 @@ describe("FN-5241 reliability interactions: in-review handoff atomic", () => {
     expect(latest?.column).toBe("in-review");
     expect(latest?.status).toBe("failed");
     expect(latest?.error).toMatch(/^STUCK_NO_PROGRESS_CHURN:/);
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id, priority: task.priority }),
     ]);
     const handoff = store.getRunAuditEvents({ taskId: task.id, mutationType: "task:handoff", limit: 10 })[0];
@@ -140,7 +140,7 @@ describe("FN-5241 reliability interactions: in-review handoff atomic", () => {
       evidence: { reason: "fn_task_done", runId: "run-1", agentId: "executor-agent" },
     })).rejects.toBeInstanceOf(HandoffInvariantViolationError);
 
-    expect(store.peekMergeQueue()).toHaveLength(0);
+    expect(await store.peekMergeQueue()).toHaveLength(0);
     expect(store.getRunAuditEvents({ taskId: task.id, mutationType: "task:handoff", limit: 10 })).toHaveLength(0);
   });
 });

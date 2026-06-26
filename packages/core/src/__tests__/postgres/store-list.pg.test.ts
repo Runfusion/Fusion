@@ -1,0 +1,110 @@
+/**
+ * FNXC:SqliteFinalRemoval 2026-06-25-11:05:
+ * PostgreSQL-backed counterpart of the listTasks portions of store-create.test.ts
+ * and store-sort.test.ts. Validates the public TaskStore.listTasks() facade
+ * (the primary board read path) against PostgreSQL backend mode, covering
+ * column filtering, slim vs full hydration, soft-delete exclusion, and
+ * createdAt-then-numeric-id sort ordering.
+ *
+ * Migrated from `new TaskStore(rootDir, globalDir, { inMemoryDb: true })`
+ * (SQLite) to `createSharedPgTaskStoreTestHarness` (PostgreSQL).
+ */
+import { afterEach, beforeEach, describe, expect, it, beforeAll, afterAll } from "vitest";
+import {
+  pgDescribe,
+  createSharedPgTaskStoreTestHarness,
+  type SharedPgTaskStoreHarness,
+} from "../../__test-utils__/pg-test-harness.js";
+
+const pgTest = pgDescribe;
+
+pgTest("TaskStore.listTasks facade (PostgreSQL)", () => {
+  const h: SharedPgTaskStoreHarness = createSharedPgTaskStoreTestHarness({
+    prefix: "fusion_list",
+  });
+
+  beforeAll(h.beforeAll);
+  afterAll(h.afterAll);
+  beforeEach(async () => {
+    await h.beforeEach();
+  });
+  afterEach(async () => {
+    await h.afterEach();
+  });
+
+  it("returns an empty array when the board has no tasks", async () => {
+    const tasks = await h.store().listTasks();
+    expect(tasks).toEqual([]);
+  });
+
+  it("returns all live tasks sorted by createdAt then numeric id suffix", async () => {
+    const store = h.store();
+    // Seed with explicit ascending timestamps so ordering is deterministic.
+    await store.createTaskWithReservedId(
+      { description: "first", column: "todo" },
+      { taskId: "FN-100", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", applyDefaultWorkflowSteps: false },
+    );
+    await store.createTaskWithReservedId(
+      { description: "second", column: "todo" },
+      { taskId: "FN-005", createdAt: "2026-01-01T00:00:00.001Z", updatedAt: "2026-01-01T00:00:00.001Z", applyDefaultWorkflowSteps: false },
+    );
+    await store.createTaskWithReservedId(
+      { description: "third", column: "todo" },
+      { taskId: "FN-010", createdAt: "2026-01-01T00:00:00.001Z", updatedAt: "2026-01-01T00:00:00.001Z", applyDefaultWorkflowSteps: false },
+    );
+
+    const tasks = await store.listTasks();
+    // createdAt ASC; ties broken by numeric id suffix ASC.
+    expect(tasks.map((t) => t.id)).toEqual(["FN-100", "FN-005", "FN-010"]);
+  });
+
+  it("column filter returns only tasks in that column", async () => {
+    const store = h.store();
+    await store.createTask({ description: "in todo", column: "todo" });
+    const review = await store.createTask({ description: "in review", column: "in-review" });
+    await store.createTask({ description: "another todo", column: "todo" });
+
+    const reviewOnly = await store.listTasks({ column: "in-review" });
+    expect(reviewOnly.map((t) => t.id)).toEqual([review.id]);
+    expect(reviewOnly.length).toBe(1);
+  });
+
+  it("excludes soft-deleted tasks", async () => {
+    const store = h.store();
+    const keep = await store.createTask({ description: "keep me", column: "todo" });
+    const drop = await store.createTask({ description: "drop me", column: "todo" });
+    await store.deleteTask(drop.id);
+
+    const tasks = await store.listTasks();
+    const ids = tasks.map((t) => t.id);
+    expect(ids).toContain(keep.id);
+    expect(ids).not.toContain(drop.id);
+  });
+
+  it("slim mode strips the log payload but keeps other JSON columns", async () => {
+    const store = h.store();
+    const created = await store.createTask({ description: "slim probe", column: "todo" });
+
+    const slim = await store.listTasks({ slim: true });
+    const target = slim.find((t) => t.id === created.id);
+    expect(target).toBeDefined();
+    expect(target!.log).toEqual([]);
+    // Non-log JSON columns are retained (description is always present).
+    expect(target!.description).toBe("slim probe");
+  });
+
+  it("limit and offset paginate the result set", async () => {
+    const store = h.store();
+    for (let i = 1; i <= 5; i += 1) {
+      await store.createTaskWithReservedId(
+        { description: `task ${i}`, column: "todo" },
+        { taskId: `FN-PG-${i}`, createdAt: `2026-03-01T00:00:0${i}.000Z`, updatedAt: `2026-03-01T00:00:0${i}.000Z`, applyDefaultWorkflowSteps: false },
+      );
+    }
+
+    const page1 = await store.listTasks({ limit: 2, offset: 0 });
+    const page2 = await store.listTasks({ limit: 2, offset: 2 });
+    expect(page1.map((t) => t.id)).toEqual(["FN-PG-1", "FN-PG-2"]);
+    expect(page2.map((t) => t.id)).toEqual(["FN-PG-3", "FN-PG-4"]);
+  });
+});

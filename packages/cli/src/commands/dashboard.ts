@@ -25,6 +25,7 @@ import {
   registerBuiltInZaiProvider,
   type WorkflowIrColumn,
   type TraitFlags,
+  createTaskStoreForBackend,
 } from "@fusion/core";
 import {
   createServer,
@@ -764,7 +765,6 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // (they're assigned after initialization, but the variables exist from the start).
   // prefer-const disabled: callbacks close over these identifiers before the
   // single assignment below, which requires `let` even though no reassignment occurs.
-  // eslint-disable-next-line prefer-const
   let store: TaskStore | undefined;
   // eslint-disable-next-line prefer-const
   let agentStore: AgentStore | undefined;
@@ -866,17 +866,49 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // startup/runtime lines flow into the TUI log buffer when interactive.
   ensureProcessDiagnostics(runtimeLogger);
 
-  store = new TaskStore(cwd);
-  const automationStore = new AutomationStore(cwd);
+  // FNXC:BackendFlip 2026-06-26-14:40:
+  // Consult the startup factory to boot a PostgreSQL-backed TaskStore. Post
+  // default-flip: the factory boots embedded PG by default when DATABASE_URL
+  // is unset, external PG when DATABASE_URL is set, and returns null only
+  // when the operator opted out via FUSION_NO_EMBEDDED_PG=1 (legacy SQLite
+  // path). When it returns null, the legacy SQLite path runs unchanged. The
+  // backend shutdown handle is captured so the dashboard teardown path can
+  // release the pool / stop an embedded cluster; it is invoked via the
+  // existing store.close() (which closes the AsyncDataLayer) plus the
+  // dashboardBackendShutdown
+  // registered below for embedded-cluster teardown.
+  let dashboardBackendShutdown: (() => Promise<void>) | undefined;
+  const dashboardBackendBoot = await createTaskStoreForBackend({ rootDir: cwd });
+  if (dashboardBackendBoot) {
+    store = dashboardBackendBoot.taskStore;
+    dashboardBackendShutdown = dashboardBackendBoot.shutdown;
+  } else {
+    store = new TaskStore(cwd);
+  }
+  // FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:05:
+  // Propagate the backend mode (asyncLayer) from the resolved TaskStore so
+  // AutomationStore does not construct a SQLite file under PostgreSQL. The
+  // `?? undefined` coerces `AsyncDataLayer | null` to the optional option
+  // shape used by the other satellite stores.
+  const automationStore = new AutomationStore(cwd, { asyncLayer: store.getAsyncLayer() ?? undefined });
 
   // CentralCore.init() is independent of store inits — start it early so it
   // overlaps with plugin loading and extension resolution instead of running
   // after them.
   const noEngine = opts.noEngine === true;
 
+  // FNXC:CentralCoreBackendMode 2026-06-26-13:20:
+  // CentralCore must receive the same AsyncDataLayer the resolved TaskStore
+  // uses, otherwise registerProject/listProjects fall back to the deleted
+  // SQLite CentralDatabase path and throw "Cannot read properties of null
+  // (reading 'transaction')" in backend mode. This mirrors serve.ts:292 which
+  // passes { asyncLayer: centralBootResult.asyncLayer } to the CentralCore
+  // constructor. Without this, the dashboard boots but project registration
+  // is completely broken (POST /api/projects returns 500), blocking the
+  // kanban board and all dashboard UI flows.
   const centralCoreInitPromise = !noEngine
     ? (async () => {
-        const core = new CentralCore();
+        const core = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() ?? undefined });
         try { await core.init(); } catch { /* non-fatal — fallback defaults */ }
         return core;
       })()
@@ -908,7 +940,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   const pluginStore = store.getPluginStore();
   await phaseTime("pluginStore.init", () => pluginStore.init());
 
-  agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+  // FNXC:PhysicalDeleteSqliteClass 2026-06-26-15:10:
+  // Propagate the backend mode (asyncLayer) from the resolved TaskStore so
+  // AgentStore does not construct a SQLite file under PostgreSQL. Without
+  // this, AgentStore falls into the legacy SQLite path in backend mode and
+  // throws "SQLite Database is not available in backend mode" the first time
+  // any getter touches `this.db`. Mirrors the AutomationStore fix on line ~893
+  // (VAL-CROSS-008 dashboard boot on embedded PostgreSQL). The `?? undefined`
+  // coerces `AsyncDataLayer | null` to the optional option shape.
+  agentStore = new AgentStore({ rootDir: store.getFusionDir(), asyncLayer: store.getAsyncLayer() ?? undefined });
   if (tui) tui.setLoadingStatus(DASHBOARD_STARTUP_STATUS.initializingAgentStore);
   await phaseTime("agentStore.init", () => agentStore!.init());
   // store.watch() is filesystem-watcher setup — no DB schema work, safe to
@@ -1322,7 +1362,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
       if (schemaHooks.length > 0) {
         try {
-          await store.getDatabase().runPluginSchemaInits(schemaHooks);
+          /*
+           * FNXC:SqliteFinalRemoval 2026-06-25-16:25:
+           * Skip SQLite-specific plugin schema init in backend mode (PostgreSQL
+           * uses Drizzle migrations for schema management).
+           */
+          if (store.isBackendMode()) {
+            logSink.log("[plugins] Schema initialization skipped — backend mode (PostgreSQL Drizzle migrations)");
+          } else {
+            await store.getDatabase().runPluginSchemaInits(schemaHooks);
+          }
         } catch (err) {
           logSink.log(
             `Schema initialization failed: ${err instanceof Error ? err.message : err}`,
@@ -1452,23 +1501,69 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   // Created inline for UI-only mode (engine doesn't start with --no-engine).
   // In engine mode, the engine is passed to createServer which derives these.
   //
-  const missionAutopilotImpl: MissionAutopilot | undefined = new MissionAutopilot(store, store.getMissionStore());
-  const missionExecutionLoopImpl: MissionExecutionLoop | undefined = new MissionExecutionLoop({
-    taskStore: store,
-    missionStore: store.getMissionStore(),
-    missionAutopilot: {
-      notifyValidationComplete: async (featureId: string, _status: "passed" | "failed" | "blocked" | "error") => {
-        if (missionAutopilotImpl) {
-          const missionStore = store.getMissionStore();
-          const feature = missionStore?.getFeature(featureId);
-          if (feature?.taskId) {
-            await missionAutopilotImpl.handleTaskCompletion(feature.taskId);
-          }
-        }
-      },
-    },
-    rootDir: cwd,
-  });
+  /*
+   * FNXC:SqliteFinalRemoval 2026-06-26-13:05:
+   * In backend mode (PostgreSQL), store.getMissionStore() throws because
+   * MissionStore has not been converted to the async path yet — it requires a
+   * synchronous SQLite Database handle (store.db), which throws
+   * "SQLite Database is not available in backend mode". This used to crash the
+   * entire `fn dashboard` boot, blocking the UI entirely.
+   *
+   * Catch the error and degrade to undefined, mirroring InProcessRuntime's
+   * graceful-degrade pattern (engine/src/runtimes/in-process-runtime.ts:401-413).
+   * The proxy objects handed to createServer (below, around the UI-only-mode
+   * createServer call) already route through `missionAutopilotImpl?` /
+   * `missionExecutionLoopImpl?` optional chaining, so undefined disables
+   * mission lifecycle features without breaking dashboard boot. Mission
+   * autopilot / execution loop will re-enable once MissionStore is fully
+   * converted to the async Drizzle path.
+   */
+  let missionStore: import("@fusion/core").MissionStore | undefined;
+  try {
+    missionStore = store.getMissionStore();
+  } catch (msErr) {
+    if (store.isBackendMode()) {
+      logSink.log(
+        `MissionStore unavailable (backend mode); mission autopilot disabled: ${
+          msErr instanceof Error ? msErr.message : msErr
+        }`,
+        "engine",
+      );
+    } else {
+      // In SQLite mode, an unexpected failure here is a real bug — surface it
+      // via the log sink but still degrade rather than crashing dashboard boot.
+      logSink.log(
+        `MissionStore init failed; mission autopilot disabled: ${
+          msErr instanceof Error ? msErr.message : msErr
+        }`,
+        "engine",
+      );
+    }
+    missionStore = undefined;
+  }
+  const missionAutopilotImpl: MissionAutopilot | undefined = missionStore
+    ? new MissionAutopilot(store, missionStore)
+    : undefined;
+  const missionExecutionLoopImpl: MissionExecutionLoop | undefined = missionStore
+    ? new MissionExecutionLoop({
+        taskStore: store,
+        missionStore,
+        missionAutopilot: {
+          notifyValidationComplete: async (
+            featureId: string,
+            _status: "passed" | "failed" | "blocked" | "error",
+          ) => {
+            if (missionAutopilotImpl) {
+              const feature = missionStore?.getFeature(featureId);
+              if (feature?.taskId) {
+                await missionAutopilotImpl.handleTaskCompletion(feature.taskId);
+              }
+            }
+          },
+        },
+        rootDir: cwd,
+      })
+    : undefined;
 
   // ── Auth & model wiring ────────────────────────────────────────────
   // AuthStorage manages OAuth/API-key credentials (stored in ~/.fusion/agent/auth.json).
@@ -1697,6 +1792,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     for (const callback of disposeCallbacks.splice(0)) {
       callback();
     }
+  }
+
+  // FNXC:RuntimeStartupWiring 2026-06-24-10:20:
+  // Register the backend shutdown (release PG pool / stop embedded cluster)
+  // so it runs during dispose(). store.close() already closes the
+  // AsyncDataLayer pool; this adds embedded-cluster teardown.
+  if (dashboardBackendShutdown) {
+    disposeCallbacks.push(() => {
+      void dashboardBackendShutdown!().catch(() => undefined);
+    });
   }
 
   // ── createServer: deferred until engine is conditionally started ────
@@ -2067,7 +2172,7 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
     // instance for peer exchange and mDNS discovery.
     //
     try {
-      centralCoreForMesh = new CentralCore();
+      centralCoreForMesh = new CentralCore(undefined, { asyncLayer: store.getAsyncLayer() ?? undefined });
       await centralCoreForMesh.init();
 
       peerExchangeService = new PeerExchangeService(centralCoreForMesh);

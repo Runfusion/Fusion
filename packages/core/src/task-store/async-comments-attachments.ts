@@ -1,0 +1,482 @@
+/**
+ * Async Drizzle comments / attachments / documents helpers (U14).
+ *
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:30:
+ * Async equivalents of the sync SQLite task-document and artifact call sites
+ * in store.ts (`upsertTaskDocument`, `getTaskDocument`, `getTaskDocumentRevisions`,
+ * `registerArtifact`, `getArtifact`, `getArtifacts`). These helpers target the
+ * PostgreSQL `project.task_documents`, `project.task_document_revisions`, and
+ * `project.artifacts` tables via Drizzle.
+ *
+ * Document/artifact parent-task scoping (VAL-CROSS-015):
+ *   Documents and artifacts scoped to a task are read-only when the task is
+ *   archived. The upsert paths reject writes against archived tasks. The list
+ *   paths filter by the parent task's live state (`deleted_at IS NULL` AND
+ *   `column != 'archived'`) so rows scoped to an archived parent disappear
+ *   from live views but are retained for restore.
+ *
+ * JSON columns (VAL-SCHEMA-004):
+ *   The `metadata` columns are jsonb in PostgreSQL. Drizzle returns them
+ *   already-parsed as JS values. On write, pass the JS value directly.
+ *
+ * Transition context (see library/taskstore-persistence-notes.md):
+ *   `getDatabase()` still returns the sync `Database` until U15 flips it. The
+ *   TaskStore facade keeps its sync document/artifact path (the gate depends
+ *   on it). These helpers are the async target the migrating store and the
+ *   PostgreSQL integration tests consume.
+ */
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import * as schema from "../postgres/schema/index.js";
+import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
+import type {
+  Artifact,
+  ArtifactCreateInput,
+  TaskDocument,
+  TaskDocumentCreateInput,
+} from "../types.js";
+import type {
+  ArtifactRow,
+  TaskDocumentRow,
+  TaskDocumentRevisionRow,
+} from "./row-types.js";
+
+/**
+ * Convert a raw `task_documents` row into the public `TaskDocument` shape.
+ * The `metadata` column is jsonb (already-parsed on read).
+ */
+function rowToTaskDocument(row: TaskDocumentRow): TaskDocument {
+  const metadata =
+    typeof row.metadata === "string"
+      ? safeJsonParse(row.metadata)
+      : (row.metadata as Record<string, unknown> | null);
+  return {
+    id: row.id,
+    taskId: row.taskId,
+    key: row.key,
+    content: row.content,
+    revision: row.revision,
+    author: row.author,
+    metadata: metadata ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function safeJsonParse(value: string | null): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Convert a raw `artifacts` row into the public `Artifact` shape.
+ * The `metadata` column is jsonb (already-parsed on read).
+ */
+function rowToArtifact(row: ArtifactRow): Artifact {
+  const metadata =
+    typeof row.metadata === "string"
+      ? safeJsonParse(row.metadata)
+      : (row.metadata as Record<string, unknown> | null);
+  return {
+    id: row.id,
+    type: row.type,
+    title: row.title,
+    description: row.description ?? undefined,
+    mimeType: row.mimeType ?? undefined,
+    sizeBytes: row.sizeBytes ?? undefined,
+    uri: row.uri ?? undefined,
+    content: row.content ?? undefined,
+    authorId: row.authorId,
+    authorType: row.authorType,
+    taskId: row.taskId ?? undefined,
+    metadata: metadata ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:35:
+ * Check whether a task is live (exists, not soft-deleted, not archived). This
+ * is the document/artifact write gate — upserts are rejected against archived
+ * or soft-deleted tasks. Returns the task's column if live, or `null` if the
+ * task is absent, archived, or soft-deleted.
+ */
+async function getLiveTaskColumn(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  taskId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ column: schema.project.tasks.column })
+    .from(schema.project.tasks)
+    .where(and(eq(schema.project.tasks.id, taskId), ACTIVE_TASK_FILTER))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  if (row.column === "archived") return null;
+  return row.column;
+}
+
+// ── Task documents ───────────────────────────────────────────────────
+
+/**
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:40:
+ * Read a task document by (taskId, key). Returns `null` if not found or if the
+ * parent task is archived/soft-deleted (documents are read-only on archived
+ * tasks and hidden from live views). This is the async equivalent of
+ * `getTaskDocument`.
+ */
+export async function getTaskDocument(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  taskId: string,
+  key: string,
+): Promise<TaskDocument | null> {
+  // Gate on the parent task being live.
+  const column = await getLiveTaskColumn(db, taskId);
+  if (column === null) return null;
+
+  const rows = await db
+    .select()
+    .from(schema.project.taskDocuments)
+    .where(
+      and(
+        eq(schema.project.taskDocuments.taskId, taskId),
+        eq(schema.project.taskDocuments.key, key),
+      ),
+    )
+    .limit(1);
+  const row = rows[0] as TaskDocumentRow | undefined;
+  return row ? rowToTaskDocument(row) : null;
+}
+
+/**
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:45:
+ * Create or update a task document while archiving the previous revision.
+ * This is the async equivalent of `upsertTaskDocument`. The upsert is rejected
+ * against archived or soft-deleted tasks (documents are read-only on archived
+ * tasks). The revision-archive (insert into `task_document_revisions`) and the
+ * document update run in a single transaction so the revision history is
+ * consistent with the current document state.
+ *
+ * @param layer The async data layer (the upsert runs in its own transaction).
+ * @param taskId The parent task id.
+ * @param input The document create/update input.
+ * @returns The upserted document.
+ */
+export async function upsertTaskDocument(
+  layer: AsyncDataLayer,
+  taskId: string,
+  input: TaskDocumentCreateInput,
+): Promise<TaskDocument> {
+  return layer.transactionImmediate(async (tx) => {
+    // Gate: reject writes against archived/soft-deleted/absent tasks.
+    const column = await getLiveTaskColumn(tx, taskId);
+    if (column === "archived") {
+      throw new Error(`Task ${taskId} is archived — documents are read-only`);
+    }
+    if (column === null) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    const now = new Date().toISOString();
+    const author = input.author ?? "user";
+
+    // Read the existing document (if any).
+    const existingRows = await tx
+      .select()
+      .from(schema.project.taskDocuments)
+      .where(
+        and(
+          eq(schema.project.taskDocuments.taskId, taskId),
+          eq(schema.project.taskDocuments.key, input.key),
+        ),
+      )
+      .limit(1);
+    const existing = existingRows[0] as TaskDocumentRow | undefined;
+
+    if (existing) {
+      // Archive the previous revision.
+      await tx.insert(schema.project.taskDocumentRevisions).values({
+        taskId,
+        key: input.key,
+        content: existing.content,
+        revision: existing.revision,
+        author: existing.author,
+        metadata: existing.metadata ?? null,
+        createdAt: now,
+      });
+
+      // Update the current document.
+      await tx
+        .update(schema.project.taskDocuments)
+        .set({
+          content: input.content,
+          revision: existing.revision + 1,
+          author,
+          metadata: input.metadata ?? null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.project.taskDocuments.taskId, taskId),
+            eq(schema.project.taskDocuments.key, input.key),
+          ),
+        );
+    } else {
+      // Insert a new document.
+      await tx.insert(schema.project.taskDocuments).values({
+        id: randomUUID(),
+        taskId,
+        key: input.key,
+        content: input.content,
+        revision: 1,
+        author,
+        metadata: input.metadata ?? null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    // Read back the upserted document.
+    const rows = await tx
+      .select()
+      .from(schema.project.taskDocuments)
+      .where(
+        and(
+          eq(schema.project.taskDocuments.taskId, taskId),
+          eq(schema.project.taskDocuments.key, input.key),
+        ),
+      )
+      .limit(1);
+    const row = rows[0] as TaskDocumentRow | undefined;
+    if (!row) {
+      throw new Error(`Failed to upsert document ${input.key} for task ${taskId}`);
+    }
+    return rowToTaskDocument(row);
+  });
+}
+
+/**
+ * List all documents for a LIVE parent task (archived/soft-deleted parents
+ * return an empty list). This is the async equivalent of the sync
+ * `hasActiveTask`-gated document list.
+ */
+export async function listTaskDocuments(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  taskId: string,
+): Promise<TaskDocument[]> {
+  const column = await getLiveTaskColumn(db, taskId);
+  if (column === null) return [];
+
+  const rows = await db
+    .select()
+    .from(schema.project.taskDocuments)
+    .where(eq(schema.project.taskDocuments.taskId, taskId));
+  return (rows as TaskDocumentRow[]).map((row) => rowToTaskDocument(row));
+}
+
+/**
+ * List archived revisions for a task document, newest first. Only returns
+ * revisions for a LIVE parent task.
+ */
+export async function getTaskDocumentRevisions(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  taskId: string,
+  key: string,
+): Promise<TaskDocumentRevisionRow[]> {
+  const column = await getLiveTaskColumn(db, taskId);
+  if (column === null) return [];
+
+  const rows = await db
+    .select()
+    .from(schema.project.taskDocumentRevisions)
+    .where(
+      and(
+        eq(schema.project.taskDocumentRevisions.taskId, taskId),
+        eq(schema.project.taskDocumentRevisions.key, key),
+      ),
+    )
+    .orderBy(desc(schema.project.taskDocumentRevisions.createdAt));
+  return rows as unknown as TaskDocumentRevisionRow[];
+}
+
+// ── Artifacts ────────────────────────────────────────────────────────
+
+/**
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:50:
+ * Insert an artifact row. The binary payload is written to disk by the caller
+ * (the store's artifact-registry path); this helper only persists the metadata
+ * row. The upsert is rejected against archived tasks (the gate mirrors
+ * `upsertTaskDocument`). This is the async equivalent of `insertArtifactRow`.
+ *
+ * @param layer The async data layer (the insert runs in its own transaction
+ *   so the row insert and any cleanup-on-failure are consistent).
+ * @param input The artifact create input.
+ * @param stored The stored-binary metadata (uri, sizeBytes) from the caller's
+ *   disk-write step.
+ * @returns The registered artifact.
+ */
+export async function insertArtifactRow(
+  layer: AsyncDataLayer,
+  input: ArtifactCreateInput,
+  stored: { uri?: string; sizeBytes?: number },
+): Promise<Artifact> {
+  return layer.transactionImmediate(async (tx) => {
+    // Gate: if taskId is set, the parent must be live.
+    if (input.taskId) {
+      const column = await getLiveTaskColumn(tx, input.taskId);
+      if (column === "archived") {
+        throw new Error(`Task ${input.taskId} is archived — artifacts are read-only`);
+      }
+      if (column === null) {
+        throw new Error(`Task ${input.taskId} not found`);
+      }
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await tx.insert(schema.project.artifacts).values({
+      id,
+      type: input.type,
+      title: input.title,
+      description: input.description ?? null,
+      mimeType: input.mimeType ?? null,
+      sizeBytes: stored.sizeBytes ?? input.sizeBytes ?? null,
+      uri: stored.uri ?? input.uri ?? null,
+      content: input.data ? null : input.content ?? null,
+      authorId: input.authorId,
+      authorType: input.authorType,
+      taskId: input.taskId ?? null,
+      metadata: input.metadata ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const rows = await tx
+      .select()
+      .from(schema.project.artifacts)
+      .where(eq(schema.project.artifacts.id, id))
+      .limit(1);
+    const row = rows[0] as ArtifactRow | undefined;
+    if (!row) throw new Error(`Failed to register artifact ${id}`);
+    return rowToArtifact(row);
+  });
+}
+
+/**
+ * Read an artifact by id (metadata-only; does not read the binary payload).
+ * Returns `null` if not found.
+ */
+export async function getArtifact(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  id: string,
+): Promise<Artifact | null> {
+  const rows = await db
+    .select()
+    .from(schema.project.artifacts)
+    .where(eq(schema.project.artifacts.id, id))
+    .limit(1);
+  const row = rows[0] as ArtifactRow | undefined;
+  return row ? rowToArtifact(row) : null;
+}
+
+/**
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-09:55:
+ * List artifacts for a LIVE parent task, newest-first. Artifacts scoped to an
+ * archived or soft-deleted task are NOT surfaced (they are retained for
+ * restore but hidden from live views). This is the async equivalent of
+ * `getArtifacts`.
+ */
+export async function getArtifacts(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  taskId: string,
+): Promise<Artifact[]> {
+  const column = await getLiveTaskColumn(db, taskId);
+  if (column === null) return [];
+
+  const rows = await db
+    .select()
+    .from(schema.project.artifacts)
+    .where(eq(schema.project.artifacts.taskId, taskId))
+    .orderBy(desc(schema.project.artifacts.createdAt));
+  return (rows as ArtifactRow[]).map((row) => rowToArtifact(row));
+}
+
+/**
+ * FNXC:TaskStoreCommentsAttachments 2026-06-24-10:00:
+ * Cross-agent registry query: filter artifacts across tasks, authors, and
+ * media types. A LEFT JOIN to `tasks` keeps task-less registry artifacts
+ * visible while excluding artifacts attached to soft-deleted or archived tasks.
+ * This is the async equivalent of `listArtifacts`.
+ *
+ * The query is metadata-only (does not select `content`) so large inline
+ * payloads are not loaded on list paths.
+ */
+export async function listArtifacts(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  options?: {
+    type?: string;
+    authorId?: string;
+    taskId?: string;
+    limit?: number;
+    offset?: number;
+  },
+): Promise<Artifact[]> {
+  // Build the conditions. For task-scoped artifacts, exclude those whose parent
+  // is soft-deleted or archived (LEFT JOIN + filter).
+  const conditions = [];
+  if (options?.type) {
+    conditions.push(eq(schema.project.artifacts.type, options.type));
+  }
+  if (options?.authorId) {
+    conditions.push(eq(schema.project.artifacts.authorId, options.authorId));
+  }
+  if (options?.taskId) {
+    conditions.push(eq(schema.project.artifacts.taskId, options.taskId));
+  }
+
+  // Exclude artifacts attached to soft-deleted/archived tasks. A task-less
+  // artifact (taskId IS NULL) is always included.
+  conditions.push(
+    or(
+      isNull(schema.project.artifacts.taskId),
+      sql`EXISTS (
+        SELECT 1 FROM ${schema.project.tasks}
+        WHERE ${schema.project.tasks.id} = ${schema.project.artifacts.taskId}
+          AND ${ACTIVE_TASK_FILTER}
+          AND ${schema.project.tasks.column} != 'archived'
+      )`,
+    ),
+  );
+
+  // Select metadata-only (no content column) for list paths.
+  const query = db
+    .select({
+      id: schema.project.artifacts.id,
+      type: schema.project.artifacts.type,
+      title: schema.project.artifacts.title,
+      description: schema.project.artifacts.description,
+      mimeType: schema.project.artifacts.mimeType,
+      sizeBytes: schema.project.artifacts.sizeBytes,
+      uri: schema.project.artifacts.uri,
+      authorId: schema.project.artifacts.authorId,
+      authorType: schema.project.artifacts.authorType,
+      taskId: schema.project.artifacts.taskId,
+      metadata: schema.project.artifacts.metadata,
+      createdAt: schema.project.artifacts.createdAt,
+      updatedAt: schema.project.artifacts.updatedAt,
+    })
+    .from(schema.project.artifacts)
+    .where(and(...conditions))
+    .orderBy(desc(schema.project.artifacts.createdAt));
+
+  const rows = options?.limit
+    ? await query.limit(options.limit).offset(options.offset ?? 0)
+    : await query;
+  return (rows as ArtifactRow[]).map((row) => rowToArtifact(row));
+}

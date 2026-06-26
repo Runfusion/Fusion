@@ -30,7 +30,8 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const worktrunkSettings = settings.worktrunk ?? {};
-      const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
+      const layer = scopedStore.getAsyncLayer();
+      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
 
       try {
         const resolved = await resolveWorktrunkBinary({ settings: worktrunkSettings });
@@ -45,7 +46,7 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
         // continue to pending/missing lookup
       }
 
-      const pending = approvalStore.findLatestByDedupeKey({
+      const pending = await approvalStore.findLatestByDedupeKey({
         requesterActorId: DEFAULT_ACTOR.actorId,
         dedupeKey: worktrunkInstallDedupeKey(),
       });
@@ -81,7 +82,8 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const settings = await scopedStore.getSettings();
       const worktrunkSettings = settings.worktrunk ?? {};
-      const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
+      const layer2 = scopedStore.getAsyncLayer();
+      const approvalStore = new ApprovalRequestStore(layer2 ? null : scopedStore.getDatabase(), { asyncLayer: layer2 });
 
       try {
         const resolved = await resolveWorktrunkBinary({ settings: worktrunkSettings });
@@ -100,7 +102,7 @@ export function registerWorktrunkRoutes(ctx: ApiRoutesContext): void {
         actor,
         projectId,
       });
-      const detail = approvalStore.get(request.approvalRequestId);
+      const detail = await approvalStore.get(request.approvalRequestId);
       if (detail) {
         emitApprovalSseEvent("approval:requested", {
           id: detail.id,

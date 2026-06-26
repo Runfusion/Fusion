@@ -49,7 +49,7 @@ describe("FN-5348 cwd integration fallback removed", () => {
       await fixture.checkout("master");
       git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
       await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
-      store.enqueueMergeQueue(task.id);
+      await store.enqueueMergeQueue(task.id);
       git(worktreePath, "sh -c 'printf dirty > DIRTY.txt'");
 
       await aiMergeTask(store, rootDir, task.id).catch(() => undefined);

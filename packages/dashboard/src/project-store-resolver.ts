@@ -36,6 +36,15 @@ const pendingCreations = new Map<string, Promise<TaskStore>>();
  * lookups.
  */
 const initializedProjects = new Set<string>();
+/**
+ * FNXC:RuntimeStartupWiring 2026-06-24-10:10:
+ * Backend shutdown handles for stores booted via createTaskStoreForBackend.
+ * Keyed by projectId so eviction can release the connection pool AND stop an
+ * embedded PostgreSQL process (if one was started). The TaskStore.close()
+ * call in evictProjectStore already closes the AsyncDataLayer pool; this map
+ * adds the embedded-cluster teardown that the layer does not own.
+ */
+const backendShutdowns = new Map<string, () => Promise<void>>();
 const projectRegisteredListeners = new Set<(projectId: string, store: TaskStore) => void>();
 
 /**
@@ -84,8 +93,25 @@ export async function getOrCreateProjectStore(projectId: string): Promise<TaskSt
   }
 
   const creation = (async () => {
-    const { TaskStore: TaskStoreClass } = await import("@fusion/core");
-    const store = await TaskStoreClass.getOrCreateForProject(projectId);
+    const { TaskStore: TaskStoreClass, createTaskStoreForBackend } = await import("@fusion/core");
+
+    // FNXC:BackendFlip 2026-06-26-14:40:
+    // Consult the startup factory to boot a PostgreSQL-backed TaskStore for
+    // this project. Post default-flip: the factory boots embedded PG by
+    // default when DATABASE_URL is unset, external PG when DATABASE_URL is
+    // set, and returns null only when the operator opted out via
+    // FUSION_NO_EMBEDDED_PG=1 (legacy SQLite path). When it returns null, the
+    // dashboard uses the SQLite-backed getOrCreateForProject exactly as
+    // before. The factory applies the schema baseline and integrates the
+    // dual-read harness when FUSION_DUAL_READ=1.
+    let store: TaskStore;
+    const backendBoot = await createTaskStoreForBackend({ projectId });
+    if (backendBoot) {
+      store = backendBoot.taskStore;
+      backendShutdowns.set(projectId, backendBoot.shutdown);
+    } else {
+      store = await TaskStoreClass.getOrCreateForProject(projectId);
+    }
 
     // Start watching for external changes (CLI, engine agents, etc.)
     // so SSE listeners receive live events even when mutations happen
@@ -126,6 +152,15 @@ export function evictProjectStore(projectId: string): void {
     store.close();
     storeCache.delete(projectId);
     initializedProjects.delete(projectId);
+  }
+  // FNXC:RuntimeStartupWiring 2026-06-24-10:10:
+  // Release the backend connection pool / embedded PG cluster if this store
+  // was booted via the startup factory. Best-effort: an error is swallowed so
+  // eviction of one project never blocks eviction of the rest.
+  const backendShutdown = backendShutdowns.get(projectId);
+  if (backendShutdown) {
+    backendShutdowns.delete(projectId);
+    void backendShutdown().catch(() => undefined);
   }
 }
 

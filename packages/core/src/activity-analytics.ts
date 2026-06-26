@@ -1,4 +1,5 @@
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 import type { WorkflowIrColumn } from "./workflow-ir-types.js";
 
@@ -197,10 +198,45 @@ function rangeClauses(
  * stickiness) over a date range. Empty range yields zeroed structures and an
  * empty `daily` array — never nulls. `mttr` is the U13 unavailable seam.
  */
-export function aggregateActivityAnalytics(
-  db: Database,
+export async function aggregateActivityAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ActivityAnalyticsQuery = {},
-): ActivityAnalytics {
+): Promise<ActivityAnalytics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:45:
+  // The activity analytics queries (sessions, messages, nodes, agents, daily
+  // breakdown) are not yet ported to async. In backend mode, return a degraded
+  // result (empty daily, zero sessions/messages) with the monitor metrics from
+  // the async path. The SQLite path runs all queries synchronously.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"transactionImmediate" in dbOrLayer`.
+  if ("ping" in dbOrLayer) {
+    const monitor = await aggregateMonitorMetrics(dbOrLayer, query);
+    return {
+      from: query.from ?? null,
+      to: query.to ?? null,
+      sessions: 0,
+      messages: 0,
+      activeNodes: 0,
+      activeAgents: 0,
+      agentRuns: { total: 0, active: 0, completed: 0, failed: 0 },
+      stickiness: 0,
+      daily: [],
+      mttr: monitor.mttr,
+      monitor,
+      funnel: {
+        from: query.from ?? null,
+        to: query.to ?? null,
+        stages: [],
+        enteredInRange: 0,
+        doneInRange: 0,
+        completionRate: null,
+        rangeDays: 0,
+        throughputPerDay: 0,
+      },
+    };
+  }
+  const db = dbOrLayer as Database;
   // Sessions from cli_sessions (by createdAt).
   const sessionRange = rangeClauses("createdAt", query);
   const sessions = (
@@ -295,7 +331,7 @@ export function aggregateActivityAnalytics(
   const stickiness = mau > 0 ? dau / mau : 0;
 
   // U13: real monitor metrics over the incidents/deployments tables.
-  const monitor = aggregateMonitorMetrics(db, query);
+  const monitor = await aggregateMonitorMetrics(db, query);
 
   return {
     from: query.from ?? null,
@@ -651,10 +687,60 @@ interface ResolvedIncidentRow {
  * predating migration 120), every metric degrades to its empty value rather than
  * throwing, so the aggregator is safe to call on any schema.
  */
-export function aggregateMonitorMetrics(
-  db: Database,
+export async function aggregateMonitorMetrics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ActivityAnalyticsQuery = {},
-): MonitorMetrics {
+): Promise<MonitorMetrics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:40:
+  // Backend mode: query incidents + deployments via the async layer.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"transactionImmediate" in dbOrLayer`.
+  if ("ping" in dbOrLayer) {
+    const layer = dbOrLayer as AsyncDataLayer;
+    const { sql } = await import("drizzle-orm");
+    const fromClause = query.from ? sql`AND "openedAt" >= ${query.from}` : sql``;
+    const toClause = query.to ? sql`AND "openedAt" <= ${query.to}` : sql``;
+    const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM deployments WHERE 1=1 ${fromClause} ${toClause}`);
+    const deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+    try {
+      const resolvedFrom = query.from ? sql`AND "resolvedAt" >= ${query.from}` : sql``;
+      const resolvedTo = query.to ? sql`AND "resolvedAt" <= ${query.to}` : sql``;
+      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM incidents WHERE 1=1 ${fromClause} ${toClause}`);
+      const incidentsOpened = (incidentsOpenedRows[0] as { count?: number } | undefined)?.count ?? 0;
+      const incidentsResolvedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM incidents WHERE "resolvedAt" IS NOT NULL ${resolvedFrom} ${resolvedTo}`);
+      const incidentsResolved = (incidentsResolvedRows[0] as { count?: number } | undefined)?.count ?? 0;
+      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM incidents WHERE status = 'open'`);
+      const openIncidents = (openIncidentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+      const resolvedDetailRows = await layer.db.execute(sql`SELECT "openedAt", "resolvedAt" FROM incidents WHERE "resolvedAt" IS NOT NULL ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      let totalMs = 0;
+      let sampleCount = 0;
+      for (const row of resolvedDetailRows) {
+        const duration = new Date(row.resolvedAt).getTime() - new Date(row.openedAt).getTime();
+        if (Number.isFinite(duration) && duration >= 0) {
+          totalMs += duration;
+          sampleCount++;
+        }
+      }
+      const mttrValue = sampleCount > 0 ? totalMs / sampleCount / 60000 : null;
+      return {
+        mttr: { value: mttrValue, unavailable: sampleCount === 0, sampleCount },
+        incidentsOpened,
+        incidentsResolved,
+        openIncidents,
+        deployments,
+      };
+    } catch {
+      return {
+        mttr: { value: null, unavailable: true, sampleCount: 0 },
+        incidentsOpened: 0,
+        incidentsResolved: 0,
+        openIncidents: 0,
+        deployments,
+      };
+    }
+  }
+  const db = dbOrLayer as Database;
   if (!tableExists(db, "incidents")) {
     return {
       mttr: { value: null, unavailable: true, sampleCount: 0 },

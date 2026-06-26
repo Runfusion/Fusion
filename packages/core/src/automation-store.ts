@@ -12,6 +12,21 @@ import { AUTOMATION_PRESETS, MAX_RUN_HISTORY } from "./automation.js";
 import type { ScheduleType } from "./automation.js";
 import { Database, fromJson } from "./db.js";
 import { assertProjectRootDir } from "./project-root-guard.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+/*
+ * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
+ * Async Drizzle helpers for backend-mode (PostgreSQL) AutomationStore operations.
+ * These helpers target the project.automations table via Drizzle and are the
+ * async equivalent of the sync this.db.prepare() call sites below. They are the
+ * AutomationStore dual of the routine-store / plugin-store async helpers.
+ */
+import {
+  upsertSchedule as upsertScheduleAsync,
+  getSchedule as getScheduleAsync,
+  listSchedules as listSchedulesAsync,
+  deleteSchedule as deleteScheduleAsync,
+  getDueSchedules as getDueSchedulesAsync,
+} from "./async-automation-store.js";
 
 const CRON_TIMEZONE = "UTC";
 
@@ -20,6 +35,17 @@ export interface AutomationStoreEvents {
   "schedule:updated": [schedule: ScheduledTask];
   "schedule:deleted": [schedule: ScheduledTask];
   "schedule:run": [data: { schedule: ScheduledTask; result: AutomationRunResult }];
+}
+
+/**
+ * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
+ * Construction options for AutomationStore. When `asyncLayer` is provided the
+ * store operates in backend mode (PostgreSQL via Drizzle) and never constructs
+ * a SQLite Database. This is the AutomationStore dual of RoutineStoreOptions /
+ * PluginStoreOptions / AgentStoreOptions.
+ */
+export interface AutomationStoreOptions {
+  asyncLayer?: AsyncDataLayer;
 }
 
 /** Database row shape for the automations table. */
@@ -49,28 +75,66 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   /** SQLite database instance */
   private _db: Database | null = null;
 
-  private readonly inMemoryDb: boolean;
+  /**
+   * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
+   * When an AsyncDataLayer is injected, AutomationStore operates in "backend
+   * mode": all data access delegates to PostgreSQL via Drizzle and no SQLite
+   * Database is constructed. When absent, the legacy SQLite path is
+   * byte-identical to pre-migration. This mirrors the TaskStore/RoutineStore/
+   * PluginStore/AgentStore dual-path pattern.
+   */
+  public readonly asyncLayer: AsyncDataLayer | null = null;
 
-  constructor(private rootDir: string, options?: { inMemoryDb?: boolean }) {
+  /** True when AsyncDataLayer was injected. Gates all SQLite construction. */
+  public get backendMode(): boolean {
+    return this.asyncLayer !== null;
+  }
+
+  /**
+   * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
+   * AutomationStore may receive an injected AsyncDataLayer so that production
+   * construction sites (engine ProjectEngine, CLI dashboard) propagate the
+   * backend mode from the owning TaskStore. The optional second arg preserves
+   * the historical `new AutomationStore(rootDir)` call shape used by tests.
+   */
+  constructor(private rootDir: string, options?: AutomationStoreOptions) {
     super();
     assertProjectRootDir(rootDir, "AutomationStore");
-    this.inMemoryDb = options?.inMemoryDb === true;
+    this.asyncLayer = options?.asyncLayer ?? null;
   }
 
   /**
    * Get the SQLite database, initializing it on first access.
+   *
+   * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
+   * Throws in backend mode (asyncLayer injected) — callers must branch on
+   * backendMode and use the async helpers instead. This is the same guard the
+   * other satellite stores (RoutineStore/PluginStore/AgentStore) use so that a
+   * missed call site fails loudly instead of silently constructing a SQLite
+   * file under backend mode.
    */
   private get db(): Database {
+    if (this.backendMode) {
+      throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
+    }
     if (!this._db) {
       const fusionDir = join(this.rootDir, ".fusion");
-      this._db = new Database(fusionDir, { inMemory: this.inMemoryDb });
+      this._db = new Database(fusionDir);
       this._db.init();
     }
     return this._db;
   }
 
-  /** Initialize the store. */
+  /**
+   * Initialize the store.
+   *
+   * FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:00:
+   * In backend mode this is a no-op: the PostgreSQL schema baseline (applied
+   * by the startup factory) already creates the automations table, so there is
+   * no SQLite file to open or one-shot migration to run.
+   */
   async init(): Promise<void> {
+    if (this.backendMode) return;
     // Ensure DB is initialized
     const _ = this.db;
   }
@@ -154,6 +218,9 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   // ── Persistence ────────────────────────────────────────────────────
 
   private async readScheduleJson(id: string): Promise<ScheduledTask> {
+    if (this.backendMode) {
+      return getScheduleAsync(this.asyncLayer!.db, id);
+    }
     const row = this.db.prepare('SELECT * FROM automations WHERE id = ?').get(id) as unknown as ScheduleRow | undefined;
     if (!row) {
       throw Object.assign(new Error(`Schedule '${id}' not found`), { code: "ENOENT" });
@@ -162,6 +229,10 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   private async persistSchedule(schedule: ScheduledTask): Promise<void> {
+    if (this.backendMode) {
+      await upsertScheduleAsync(this.asyncLayer!.db, schedule);
+      return;
+    }
     this.upsertSchedule(schedule);
     this.db.bumpLastModified();
   }
@@ -248,10 +319,16 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   }
 
   async getSchedule(id: string): Promise<ScheduledTask> {
+    if (this.backendMode) {
+      return getScheduleAsync(this.asyncLayer!.db, id);
+    }
     return this.readScheduleJson(id);
   }
 
   async listSchedules(): Promise<ScheduledTask[]> {
+    if (this.backendMode) {
+      return listSchedulesAsync(this.asyncLayer!.db);
+    }
     const rows = this.db.prepare('SELECT * FROM automations ORDER BY createdAt ASC').all() as unknown as ScheduleRow[];
     return rows.map((row) => this.rowToSchedule(row));
   }
@@ -366,9 +443,13 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
   async deleteSchedule(id: string): Promise<ScheduledTask> {
     return this.withScheduleLock(id, async () => {
       const schedule = await this.getSchedule(id);
-      // Delete from SQLite
-      this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);
-      this.db.bumpLastModified();
+      if (this.backendMode) {
+        await deleteScheduleAsync(this.asyncLayer!.db, id);
+      } else {
+        // Delete from SQLite
+        this.db.prepare('DELETE FROM automations WHERE id = ?').run(id);
+        this.db.bumpLastModified();
+      }
       this.emit("schedule:deleted", schedule);
       return schedule;
     });
@@ -443,6 +524,9 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    */
   async getDueSchedules(scope: "global" | "project"): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
+    if (this.backendMode) {
+      return getDueSchedulesAsync(this.asyncLayer!.db, now, scope);
+    }
     const rows = this.db.prepare(
       'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ? AND scope = ?'
     ).all(now, scope) as unknown as ScheduleRow[];
@@ -455,6 +539,9 @@ export class AutomationStore extends EventEmitter<AutomationStoreEvents> {
    */
   async getDueSchedulesAllScopes(): Promise<ScheduledTask[]> {
     const now = new Date().toISOString();
+    if (this.backendMode) {
+      return getDueSchedulesAsync(this.asyncLayer!.db, now);
+    }
     const rows = this.db.prepare(
       'SELECT * FROM automations WHERE enabled = 1 AND nextRunAt IS NOT NULL AND nextRunAt <= ?'
     ).all(now) as unknown as ScheduleRow[];

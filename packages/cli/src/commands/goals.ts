@@ -132,7 +132,7 @@ export async function runGoalsCitations(
 ): Promise<void> {
   const store = await getStore({ project: projectName });
 
-  const rows = store.listGoalCitations({
+  const rows = await store.listGoalCitations({
     goalId: opts.goalId,
     agentId: opts.agentId,
     surface: opts.surface,

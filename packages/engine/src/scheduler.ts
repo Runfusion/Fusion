@@ -712,7 +712,7 @@ export class Scheduler {
               if (!mentionsCompletedTask && !currentlyBlockedByCompletedTask) continue;
 
               const markerAcceptedByTaskId = settings.mergeRequestContractShadowEnabled === true
-                ? new Map(dependent.dependencies.map((depId) => [depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null]))
+                ? new Map(await Promise.all(dependent.dependencies.map(async (depId) => [depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null] as const)))
                 : undefined;
               const unresolvedDeps = getUnmetSchedulingDependencies(
                 dependent,
@@ -871,7 +871,7 @@ export class Scheduler {
             if (!mentionsDeletedTask && !currentlyBlockedByDeletedTask) continue;
 
             const markerAcceptedByTaskId = settings.mergeRequestContractShadowEnabled === true
-              ? new Map(dependent.dependencies.map((depId) => [depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null]))
+              ? new Map(await Promise.all(dependent.dependencies.map(async (depId) => [depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null] as const)))
               : undefined;
             const unresolvedDeps = getUnmetSchedulingDependencies(
               dependent,
@@ -1456,7 +1456,7 @@ export class Scheduler {
       if (mergeShadowEnabled) {
         const dependencyIds = new Set(tasks.flatMap((candidate) => candidate.dependencies));
         for (const depId of dependencyIds) {
-          markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+          markerAcceptedByTaskId.set(depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
         }
       }
       const schedulingDependencyOptions = mergeShadowEnabled
@@ -1535,7 +1535,7 @@ export class Scheduler {
           if (filteredScope.length === 0) continue;
 
           const handoffAccepted = settings.mergeRequestContractShadowEnabled === true
-            ? this.store.getCompletionHandoffAcceptedMarker(t.id) !== null
+            ? (await this.store.getCompletionHandoffAcceptedMarker(t.id)) !== null
             : false;
           if (!handoffAccepted) {
             setActiveScopeLease(t.id, filteredScope, "in-review");
@@ -2184,7 +2184,7 @@ export class Scheduler {
       if (mergeShadowEnabled) {
         const dependencyIds = new Set(tasks.flatMap((candidate) => candidate.dependencies));
         for (const depId of dependencyIds) {
-          markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+          markerAcceptedByTaskId.set(depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
         }
       }
       const schedulingDependencyOptions = mergeShadowEnabled

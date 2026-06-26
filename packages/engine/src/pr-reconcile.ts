@@ -76,10 +76,10 @@ export interface PrReconcileGithubOps {
 
 /** The slice of the task store the reconciler reads/writes. */
 export interface PrReconcileStore {
-  listActivePrEntities(): PrEntity[];
-  getPrEntity(id: string): PrEntity | null;
-  updatePrEntity(id: string, patch: import("@fusion/core").PrEntityUpdate): PrEntity;
-  recordRunAuditEvent?: (input: import("@fusion/core").RunAuditEventInput) => unknown;
+  listActivePrEntities(): Promise<PrEntity[]>;
+  getPrEntity(id: string): Promise<PrEntity | null>;
+  updatePrEntity(id: string, patch: import("@fusion/core").PrEntityUpdate): Promise<PrEntity>;
+  recordRunAuditEvent?: (input: import("@fusion/core").RunAuditEventInput) => unknown | Promise<unknown>;
 }
 
 /**
@@ -243,7 +243,7 @@ export class PrReconciler {
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.syncReposAndSchedule();
+    void this.syncReposAndSchedule();
     prReconcileLog.log("PR reconcile started");
   }
 
@@ -290,9 +290,9 @@ export class PrReconciler {
   }
 
   /** Group active entities by repo; ensure a tracker + scheduled tick per repo. */
-  private syncReposAndSchedule(): void {
+  private async syncReposAndSchedule(): Promise<void> {
     if (!this.running) return;
-    const byRepo = this.groupActiveByRepo();
+    const byRepo = await this.groupActiveByRepo();
     // Drop repos with no active entities.
     for (const repo of [...this.repos.keys()]) {
       if (!byRepo.has(repo)) this.stopRepo(repo);
@@ -303,11 +303,11 @@ export class PrReconciler {
     }
   }
 
-  private groupActiveByRepo(): Map<string, PrEntity[]> {
+  private async groupActiveByRepo(): Promise<Map<string, PrEntity[]>> {
     const byRepo = new Map<string, PrEntity[]>();
     let entities: PrEntity[];
     try {
-      entities = this.store.listActivePrEntities();
+      entities = await this.store.listActivePrEntities();
     } catch (err) {
       prReconcileLog.error("Failed to list active PR entities:", err);
       return byRepo;
@@ -343,7 +343,7 @@ export class PrReconciler {
         // Re-derive the repo set (pick up new entities, drop emptied repos),
         // then reschedule this repo if it still has work.
         tracker.timer = undefined;
-        this.syncReposAndSchedule();
+        void this.syncReposAndSchedule();
       });
     }, interval);
   }
@@ -355,7 +355,7 @@ export class PrReconciler {
    * poller survives.
    */
   private async tickRepo(tracker: RepoTracker): Promise<PrReconcileTransition[]> {
-    const byRepo = this.groupActiveByRepo();
+    const byRepo = await this.groupActiveByRepo();
     const entities = byRepo.get(tracker.repo) ?? [];
     if (entities.length === 0) {
       this.stopRepo(tracker.repo);
@@ -430,7 +430,7 @@ export class PrReconciler {
         this.clearFiction(entity);
       } else {
         // A verified entity that vanished from GitHub: treat as closed.
-        this.store.updatePrEntity(entity.id, { state: "closed", unverified: false });
+        void this.store.updatePrEntity(entity.id, { state: "closed", unverified: false });
       }
       return [];
     }
@@ -441,7 +441,7 @@ export class PrReconciler {
     // 5. Persist the corroborated mirror; clear `unverified` on first success.
     const nextState =
       fetched.prState === "merged" ? "merged" : fetched.prState === "closed" ? "closed" : entity.state;
-    this.store.updatePrEntity(entity.id, {
+    void this.store.updatePrEntity(entity.id, {
       state: nextState,
       prNumber: fetched.prNumber ?? entity.prNumber,
       prUrl: fetched.prUrl ?? null,
@@ -486,7 +486,7 @@ export class PrReconciler {
    * to `closed` and never advance it on stale state.
    */
   private clearFiction(entity: PrEntity): void {
-    this.store.updatePrEntity(entity.id, {
+    void this.store.updatePrEntity(entity.id, {
       state: "closed",
       unverified: false,
       failureReason: "reconcile: no PR exists on GitHub (cleared fictional unverified entity)",

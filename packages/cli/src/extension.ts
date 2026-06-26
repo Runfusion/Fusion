@@ -198,7 +198,7 @@ function emitSecretAudit(
   if (!ctx.runId || !ctx.agentId) return;
   try {
     assertNoSecretPlaintext(metadata);
-    store.recordRunAuditEvent({
+    void store.recordRunAuditEvent({
       runId: ctx.runId,
       agentId: ctx.agentId,
       taskId: ctx.taskId,
@@ -1960,7 +1960,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       let record: import("@fusion/core").SecretRecord | null = null;
       let resolvedScope: import("@fusion/core").SecretScope | null = null;
       for (const scope of scopes) {
-        const match = secretsStore.listSecrets(scope).find((candidate) => candidate.key === params.key);
+        const match = (await secretsStore.listSecrets(scope)).find((candidate) => candidate.key === params.key);
         if (match) {
           record = match;
           resolvedScope = scope;
@@ -1985,12 +1985,13 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       if (decision.policy === "prompt") {
         const { ApprovalRequestStore } = await import("@fusion/core");
-        const approvalStore = new ApprovalRequestStore(store.getDatabase());
+        const cliLayer = store.getAsyncLayer();
+        const approvalStore = new ApprovalRequestStore(cliLayer ? null : store.getDatabase(), { asyncLayer: cliLayer });
         const dedupeKey = `secret-read:${resolvedScope}:${params.key}:${fnCtx.agentId ?? "unknown"}`;
-        const existing = approvalStore.findLatestByDedupeKey({ requesterActorId: fnCtx.agentId ?? "user", taskId: fnCtx.taskId, dedupeKey });
+        const existing = await approvalStore.findLatestByDedupeKey({ requesterActorId: fnCtx.agentId ?? "user", taskId: fnCtx.taskId, dedupeKey });
         const request = existing && existing.status === "pending"
           ? existing
-          : approvalStore.create({
+          : await approvalStore.create({
             requester: { actorId: fnCtx.agentId ?? "user", actorType: "agent", actorName: fnCtx.agentName ?? fnCtx.agentId ?? "Agent" },
             targetAction: {
               category: "task_mutation",
@@ -4061,8 +4062,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       if (policy.decision === "require-approval") {
-        const approvalStore = new ApprovalRequestStore(store.getDatabase());
-        const request = approvalStore.create({
+        const cliLayer2 = store.getAsyncLayer();
+        const approvalStore = new ApprovalRequestStore(cliLayer2 ? null : store.getDatabase(), { asyncLayer: cliLayer2 });
+        const request = await approvalStore.create({
           requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
           targetAction: { category: "agent_provisioning", action: "create", summary: `Create agent ${params.name} (${params.role})`, resourceType: "agent", resourceId: "", context: { tool: "fn_agent_create", params } },
         });
@@ -4210,8 +4212,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       });
 
       if (policy.decision === "require-approval") {
-        const approvalStore = new ApprovalRequestStore(store.getDatabase());
-        const request = approvalStore.create({
+        const cliLayer3 = store.getAsyncLayer();
+        const approvalStore = new ApprovalRequestStore(cliLayer3 ? null : store.getDatabase(), { asyncLayer: cliLayer3 });
+        const request = await approvalStore.create({
           requester: { actorId: "user", actorType: "user", actorName: "CLI User" },
           targetAction: { category: "agent_provisioning", action: "delete", summary: `Delete agent ${params.agent_id}`, resourceType: "agent", resourceId: params.agent_id, context: { tool: "fn_agent_delete", params } },
         });

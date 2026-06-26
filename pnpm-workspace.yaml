@@ -1,6 +1,5 @@
 ignoredBuiltDependencies:
   - '@google/genai'
-  - better-sqlite3
   - cpu-features
   - electron-winstaller
   - keytar

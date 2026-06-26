@@ -39,7 +39,23 @@ export interface LocalRuntimeManagerOptions {
 }
 
 async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
-  const { TaskStore } = await import("@fusion/core");
+  // FNXC:BackendFlip 2026-06-26-14:40:
+  // Consult the startup factory to boot a PostgreSQL-backed TaskStore. Post
+  // default-flip: the factory boots embedded PG by default when DATABASE_URL
+  // is unset, external PG when DATABASE_URL is set, and returns null only
+  // when the operator opted out via FUSION_NO_EMBEDDED_PG=1 (legacy SQLite
+  // path). The backend shutdown handle is stashed on the returned object so
+  // the runtime manager's stop path can release the pool / stop an embedded
+  // cluster.
+  const { TaskStore, createTaskStoreForBackend } = await import("@fusion/core");
+  const backendBoot = await createTaskStoreForBackend({ rootDir });
+  if (backendBoot) {
+    const store = backendBoot.taskStore as unknown as TaskStoreLike;
+    // Attach the backend shutdown so LocalRuntimeManager can invoke it on stop.
+    (store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown =
+      backendBoot.shutdown;
+    return store;
+  }
   return new TaskStore(rootDir) as TaskStoreLike;
 }
 
@@ -242,6 +258,14 @@ export class LocalRuntimeManager {
       await new Promise<void>((resolve) => runtime.server.close(() => resolve()));
       await runtime.cleanup?.();
       runtime.store.close();
+      // FNXC:RuntimeStartupWiring 2026-06-24-10:30:
+      // Release the backend connection pool / embedded PG cluster if the store
+      // was booted via the startup factory. store.close() already closes the
+      // AsyncDataLayer pool; this adds embedded-cluster teardown. Best-effort.
+      const backendShutdown = (runtime.store as TaskStoreLike & { __backendShutdown?: () => Promise<void> }).__backendShutdown;
+      if (backendShutdown) {
+        await backendShutdown().catch(() => undefined);
+      }
       this.status = { source: "none", state: "stopped" };
       return this.status;
     }

@@ -62,7 +62,7 @@ interface NotificationMessageStore {
 export interface NotificationChatStore {
   on(event: "chat:room:message:added", listener: (message: ChatRoomMessage) => void): void;
   off?(event: "chat:room:message:added", listener: (message: ChatRoomMessage) => void): void;
-  getRoom?(id: string): { id: string; name: string } | undefined;
+  getRoom?(id: string): Promise<{ id: string; name: string } | undefined> | { id: string; name: string } | undefined;
 }
 
 export class NotificationService {
@@ -483,7 +483,7 @@ export class NotificationService {
     }
 
     const senderName = await this.resolveAgentName("agent", message.senderAgentId, "from");
-    const roomName = this.chatStore?.getRoom?.(message.roomId)?.name;
+    const roomName = (await this.chatStore?.getRoom?.(message.roomId))?.name;
     const preview = this.createPreview(message.content);
 
     this.maybeNotify(message.id, "message:room", {

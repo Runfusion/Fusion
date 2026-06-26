@@ -136,7 +136,7 @@ function emitProvisioningDecisionAudit(params: {
   };
   if (request.taskId) event.taskId = request.taskId;
   if (request.runId) event.runId = request.runId;
-  scopedStore.recordRunAuditEvent(event);
+  void scopedStore.recordRunAuditEvent(event);
 }
 
 function emitSecretsAccessDecisionAudit(params: {
@@ -172,7 +172,7 @@ function emitSecretsAccessDecisionAudit(params: {
   };
   if (request.taskId) event.taskId = request.taskId;
   if (request.runId) event.runId = request.runId;
-  scopedStore.recordRunAuditEvent(event);
+  void scopedStore.recordRunAuditEvent(event);
 }
 
 function emitSandboxProvisioningDecisionAudit(params: {
@@ -202,7 +202,7 @@ function emitSandboxProvisioningDecisionAudit(params: {
     };
     if (request.taskId) event.taskId = request.taskId;
     if (request.runId) event.runId = request.runId;
-    scopedStore.recordRunAuditEvent(event);
+    void scopedStore.recordRunAuditEvent(event);
   } catch (error) {
     runtimeLogger.warn("Failed to emit sandbox provisioning decision audit", {
       requestId: request.id,
@@ -235,7 +235,7 @@ async function resumeAfterDecision(params: {
   }
 
   try {
-    const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+    const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
     await agentStore.init();
     const agent = await agentStore.getAgent(request.requester.actorId);
     if (agent?.state === "paused" && agent.pauseReason === "awaiting-approval") {
@@ -257,18 +257,19 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
   router.get("/approvals", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
+      const layer = scopedStore.getAsyncLayer();
+      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
       const status = parseStatus(req.query.status);
       const limit = parseOptionalInt(req.query.limit, "limit") ?? 50;
       const offset = parseOptionalInt(req.query.offset, "offset") ?? 0;
 
-      const requests = approvalStore.list({ status, limit, offset });
-      const summaries = requests.map((request) => {
-        const history = approvalStore.getAuditHistory(request.id);
+      const requests = await approvalStore.list({ status, limit, offset });
+      const summaries = await Promise.all(requests.map(async (request) => {
+        const history = await approvalStore.getAuditHistory(request.id);
         return toSummaryDto(request, history);
-      });
-      const total = approvalStore.list({ status, limit: Number.MAX_SAFE_INTEGER, offset: 0 }).length;
-      const pendingCount = approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 }).length;
+      }));
+      const total = (await approvalStore.list({ status, limit: Number.MAX_SAFE_INTEGER, offset: 0 })).length;
+      const pendingCount = (await approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 })).length;
 
       res.json({ requests: summaries, total, pendingCount });
     } catch (err: unknown) {
@@ -280,11 +281,12 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
   router.get("/approvals/:id", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
+      const layer = scopedStore.getAsyncLayer();
+      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
       const requestId = String(req.params.id);
-      const request = approvalStore.get(requestId);
+      const request = await approvalStore.get(requestId);
       if (!request) throw notFound("Approval request not found");
-      const history = approvalStore.getAuditHistory(requestId);
+      const history = await approvalStore.getAuditHistory(requestId);
       res.json(toDetailDto(request, history));
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -303,9 +305,10 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
       }
 
       const { store: scopedStore, projectId } = await getProjectContext(req);
-      const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
+      const layer = scopedStore.getAsyncLayer();
+      const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
       const requestId = String(req.params.id);
-      const existing = approvalStore.get(requestId);
+      const existing = await approvalStore.get(requestId);
       if (!existing) throw notFound("Approval request not found");
 
       const actor = body.actor ?? DEFAULT_ACTOR;
@@ -316,7 +319,7 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
       const targetStatus = body.decision === "approve" ? "approved" : "denied";
       let updated;
       try {
-        updated = approvalStore.decide(requestId, targetStatus, { actor, note: body.comment });
+        updated = await approvalStore.decide(requestId, targetStatus, { actor, note: body.comment });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (message.includes("Invalid approval request transition")) {
@@ -327,7 +330,7 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
 
       if (updated.targetAction.category === "agent_provisioning") {
         if (body.decision === "approve") {
-          const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+          const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
           await agentStore.init();
           await executeApprovedAgentProvisioning(updated, { agentStore });
           emitProvisioningDecisionAudit({ scopedStore, request: updated, decision: "approved" });
@@ -350,7 +353,7 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
               requestId: updated.id,
               error: error instanceof Error ? error.message : String(error),
             });
-            scopedStore.recordRunAuditEvent({
+            void scopedStore.recordRunAuditEvent({
               domain: "filesystem",
               mutationType: "binary:install-failed",
               target: updated.targetAction.resourceId,
@@ -387,7 +390,7 @@ export function registerApprovalRoutes(ctx: ApiRoutesContext): void {
       }
 
       await resumeAfterDecision({ scopedStore, request: updated, runtimeLogger });
-      const history = approvalStore.getAuditHistory(requestId);
+      const history = await approvalStore.getAuditHistory(requestId);
       const detail = toDetailDto(updated, history);
       emitApprovalSseEvent("approval:updated", detail, projectId);
       emitApprovalSseEvent("approval:decided", detail, projectId);

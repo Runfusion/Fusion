@@ -651,8 +651,8 @@ export async function acquireReuseHandoff(input: ReuseHandoffInput): Promise<Han
   try {
     // Non-atomic fallback: executor lease checks above race with mergeQueue lease acquisition.
     // TaskStore does not yet expose an atomic executor-lease absence check inside mergeQueue leasing.
-    lease = (input.store as TaskStore & {
-      acquireMergeQueueLease(workerId: string, opts: { leaseDurationMs: number; now?: string; targetTaskId?: string }): unknown;
+    lease = await (input.store as TaskStore & {
+      acquireMergeQueueLease(workerId: string, opts: { leaseDurationMs: number; now?: string; targetTaskId?: string }): Promise<unknown>;
     }).acquireMergeQueueLease(MERGE_HANDOFF_WORKER_ID, {
       leaseDurationMs: 15 * 60 * 1000,
       targetTaskId: input.task.id,
@@ -678,8 +678,8 @@ export async function acquireReuseHandoff(input: ReuseHandoffInput): Promise<Han
   }
 
   if (!("taskId" in lease) || lease.taskId !== input.task.id) {
-    const queueHead = (input.store as TaskStore & {
-      peekMergeQueueHead?: () => { taskId: string; leasedBy: string | null; column: string | null } | null;
+    const queueHead = await (input.store as TaskStore & {
+      peekMergeQueueHead?: () => Promise<{ taskId: string; leasedBy: string | null; column: string | null } | null>;
     }).peekMergeQueueHead?.();
     throw new MergeHandoffRefusedError("lease-handoff-failed", "no-lease", {
       taskId: input.task.id,
@@ -696,7 +696,7 @@ export async function acquireReuseHandoff(input: ReuseHandoffInput): Promise<Han
   // conflicting executor lease and surfacing as a generic failure later.
   if (executingTaskLock.has(input.task.id)) {
     (input.store as TaskStore & {
-      releaseMergeQueueLease(taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): void;
+      releaseMergeQueueLease(taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): Promise<void>;
     }).releaseMergeQueueLease(input.task.id, MERGE_HANDOFF_WORKER_ID, {
       kind: "failure",
       error: "executor-lease-acquired-after-queue-lease",
@@ -715,8 +715,8 @@ export async function acquireReuseHandoff(input: ReuseHandoffInput): Promise<Han
     branch: expectedBranch,
     workerId: MERGE_HANDOFF_WORKER_ID,
     releaseLease: (outcome) => {
-      (input.store as TaskStore & {
-        releaseMergeQueueLease(taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): void;
+      void (input.store as TaskStore & {
+        releaseMergeQueueLease(taskId: string, workerId: string, outcome: MergeQueueReleaseOutcome): Promise<void>;
       }).releaseMergeQueueLease(input.task.id, MERGE_HANDOFF_WORKER_ID, outcome);
     },
   };

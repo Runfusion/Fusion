@@ -68,7 +68,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore, computeAccessState } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -113,7 +113,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
       }
 
       const { store: scopedStore } = await getProjectContext(req);
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.updateAgent(req.params.id, {
@@ -146,7 +146,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.updateAgent(req.params.id, {
@@ -174,7 +174,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -208,7 +208,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.updateAgent(req.params.id, { soul });
@@ -232,7 +232,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -266,7 +266,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.updateAgent(req.params.id, { memory });
@@ -290,7 +290,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agentId = req.params.id;
@@ -327,7 +327,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agentId = req.params.id;
@@ -367,7 +367,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agentId = req.params.id;
@@ -408,7 +408,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const currentAgent = await agentStore.getAgent(agentId);
@@ -529,7 +529,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -561,7 +561,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -591,7 +591,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -623,7 +623,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore, isEphemeralAgent } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -639,6 +639,35 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
         throw badRequest("limit must be a positive integer");
       }
       const limit = Math.min(rawLimit, 30);
+
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-13:05:
+      // In backend mode, read prompt sizes via the async layer's raw query
+      // against PostgreSQL jsonb. The SQLite path uses json_extract.
+      const asyncLayer = scopedStore.getAsyncLayer();
+      if (asyncLayer) {
+        const { drizzleSql: sql } = await import("@fusion/core");
+        const pgRows = await asyncLayer.db.execute(sql`
+          SELECT
+            id AS "runId",
+            started_at AS "createdAt",
+            COALESCE(length(data->>'systemPrompt'), 0) AS "systemChars",
+            COALESCE(length(data->>'executionPrompt'), 0) AS "execChars",
+            COALESCE(length(data->>'systemPrompt'), 0)
+              + COALESCE(length(data->>'executionPrompt'), 0) AS "totalChars"
+          FROM agent_runs
+          WHERE data->>'agentId' = ${req.params.id}
+          ORDER BY started_at DESC
+          LIMIT ${limit}
+        `);
+        res.json(pgRows as unknown as Array<{
+          runId: string;
+          createdAt: string;
+          systemChars: number;
+          execChars: number;
+          totalChars: number;
+        }>);
+        return;
+      }
 
       const rows = scopedStore.getDatabase().prepare(`
         SELECT
@@ -680,8 +709,8 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
   router.get("/agents/:id/token-usage", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { AgentStore, aggregateAgentTokenUsage } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const { AgentStore, aggregateAgentTokenUsage, isEphemeralAgent } = await import("@fusion/core");
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -720,7 +749,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -750,7 +779,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -786,7 +815,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -816,7 +845,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const keys = await agentStore.listApiKeys(req.params.id);
@@ -841,7 +870,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const revoked = await agentStore.revokeApiKey(req.params.id, req.params.keyId);
@@ -866,7 +895,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -895,7 +924,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agentId = req.params.id;
@@ -941,7 +970,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const event = await agentStore.recordHeartbeat(req.params.id, status as "ok" | "missed" | "recovered");
@@ -990,7 +1019,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
 
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const history = await agentStore.getHeartbeatHistory(req.params.id, limit);
@@ -1012,7 +1041,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
@@ -1185,7 +1214,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
         // Fallback: record-only behavior without HeartbeatMonitor
         const { store: scopedStore } = await getProjectContext(req);
         const { AgentStore } = await import("@fusion/core");
-        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
         await agentStore.init();
 
         const agent = await agentStore.getAgent(req.params.id);
@@ -1229,7 +1258,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const agent = await agentStore.getAgent(req.params.id);
@@ -1309,7 +1338,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
@@ -1340,7 +1369,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const run = await agentStore.getRunDetail(req.params.id, req.params.runId);
@@ -1393,7 +1422,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       // Verify the run exists
@@ -1434,7 +1463,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       // Validate runId is not blank/whitespace
@@ -1508,7 +1537,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore, collectCitedGoalIdsFromAudit } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const runId = req.params.runId;
@@ -1566,7 +1595,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
     try {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       // Validate runId is not blank/whitespace

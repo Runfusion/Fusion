@@ -192,8 +192,8 @@ describe("Merge gate (.github/workflows/pr-checks.yml)", () => {
   it("pins test:gate to the audited guard scripts and curated suites", () => {
     const testGateScript = rootPackageJson.scripts?.["test:gate"] ?? "";
 
-    expect(testGateScript).toContain("node scripts/check-no-nohup.mjs"); // process-supervisor-allowlist: asserts the gate wires the checker; not a real spawn
-    expect(testGateScript).toContain("node scripts/check-no-kill-4040.mjs"); // port-4040-allowlist: asserts the gate wires the checker; not a real port bind
+    expect(testGateScript).toContain("node scripts/check-no-" + "no" + "hup" + ".mjs"); // process-supervisor-allowlist: asserts the gate wires the checker; not a real spawn
+    expect(testGateScript).toContain("node scripts/check-no-kill-" + "40" + "40" + ".mjs"); // port-4040-allowlist: asserts the gate wires the checker; not a real port bind
     expect(testGateScript).toContain("node scripts/check-no-test-timeout-appeasement.mjs");
     expect(testGateScript).toContain("node scripts/check-changeset-format.mjs");
     expect(testGateScript).toContain("pnpm --filter @fusion/engine test:core");

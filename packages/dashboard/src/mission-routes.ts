@@ -251,16 +251,16 @@ function replayBufferedSSE(
   return true;
 }
 
-function checkSessionLock(
+async function checkSessionLock(
   sessionId: string,
   tabId: string | undefined,
   store: AiSessionStore | undefined,
-): { allowed: true } | { allowed: false; currentHolder: string | null } {
+): Promise<{ allowed: true } | { allowed: false; currentHolder: string | null }> {
   if (!tabId || !store) {
     return { allowed: true };
   }
 
-  const result = store.acquireLock(sessionId, tabId);
+  const result = await store.acquireLock(sessionId, tabId);
   if (result.acquired) {
     return { allowed: true };
   }
@@ -601,7 +601,7 @@ export function createMissionRouter(
       }
 
       const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -658,7 +658,7 @@ export function createMissionRouter(
       const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
         ? req.body.tabId.trim()
         : undefined;
-      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -705,7 +705,7 @@ export function createMissionRouter(
       }
 
       const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -738,7 +738,7 @@ export function createMissionRouter(
         ? req.query.projectId.trim()
         : undefined;
       const { listMissionInterviewDrafts } = await import("./mission-interview.js");
-      res.json({ drafts: listMissionInterviewDrafts(projectId) });
+      res.json({ drafts: await listMissionInterviewDrafts(projectId) });
     })
   );
 
@@ -757,7 +757,7 @@ export function createMissionRouter(
         throw badRequest("sessionId is required");
       }
 
-      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -802,7 +802,7 @@ export function createMissionRouter(
         } = await import("./mission-interview.js");
 
         // Verify session exists
-        const session = getMissionInterviewSession(sessionId);
+        const session = await getMissionInterviewSession(sessionId);
         if (!session) {
           writeSSEEvent(res, "error", JSON.stringify({ message: "Session not found or expired" }));
           res.end();
@@ -908,13 +908,13 @@ export function createMissionRouter(
           cleanupMissionInterviewSession,
         } = await import("./mission-interview.js");
 
-        const session = getMissionInterviewSession(sessionId);
+        const session = await getMissionInterviewSession(sessionId);
         if (!session) {
           throw notFound(`Interview session ${sessionId} not found or expired`);
         }
 
         // Use edited summary if provided, otherwise use the session's generated summary
-        const summary = editedSummary || getMissionInterviewSummary(sessionId);
+        const summary = editedSummary || (await getMissionInterviewSummary(sessionId));
         if (!summary || !Array.isArray(summary.milestones)) {
           throw badRequest("Interview session is not complete or summary is missing");
         }
@@ -3069,7 +3069,7 @@ export function createMissionRouter(
       const scopedStore = getScopedStore();
       const startSettings = await scopedStore.getSettings();
       if (startSettings.ephemeralAgentsEnabled === false) {
-        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+        const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
         await agentStore.init();
         const executors = await listEligibleExecutorAgents(agentStore);
         if (executors.length === 0) {
@@ -3354,7 +3354,7 @@ export function createMissionRouter(
       }
 
       const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -3411,7 +3411,7 @@ export function createMissionRouter(
         } = await import("./milestone-slice-interview.js");
 
         // Verify session exists
-        const session = getTargetInterviewSession(sessionId);
+        const session = await getTargetInterviewSession(sessionId);
         if (!session) {
           writeSSEEvent(res, "error", JSON.stringify({ message: "Session not found or expired" }));
           res.end();
@@ -3518,7 +3518,7 @@ export function createMissionRouter(
       const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
         ? req.body.tabId.trim()
         : undefined;
-      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -3569,7 +3569,7 @@ export function createMissionRouter(
       try {
         const { applyTargetInterview } = await import("./milestone-slice-interview.js");
 
-        const milestone = applyTargetInterview(sessionId, missionStore);
+        const milestone = await applyTargetInterview(sessionId, missionStore);
         res.json(milestone);
       } catch (err: unknown) {
         const errName = err instanceof Error ? err.name : "";
@@ -3703,7 +3703,7 @@ export function createMissionRouter(
       }
 
       const normalizedTabId = typeof tabId === "string" && tabId.trim().length > 0 ? tabId.trim() : undefined;
-      const lockCheck = checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, normalizedTabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -3760,7 +3760,7 @@ export function createMissionRouter(
         } = await import("./milestone-slice-interview.js");
 
         // Verify session exists
-        const session = getTargetInterviewSession(sessionId);
+        const session = await getTargetInterviewSession(sessionId);
         if (!session) {
           writeSSEEvent(res, "error", JSON.stringify({ message: "Session not found or expired" }));
           res.end();
@@ -3867,7 +3867,7 @@ export function createMissionRouter(
       const tabId = typeof req.body?.tabId === "string" && req.body.tabId.trim().length > 0
         ? req.body.tabId.trim()
         : undefined;
-      const lockCheck = checkSessionLock(sessionId, tabId, aiSessionStore);
+      const lockCheck = await checkSessionLock(sessionId, tabId, aiSessionStore);
       if (!lockCheck.allowed) {
         res.status(409).json({
           error: "Session locked by another tab",
@@ -3918,7 +3918,7 @@ export function createMissionRouter(
       try {
         const { applyTargetInterview } = await import("./milestone-slice-interview.js");
 
-        const slice = applyTargetInterview(sessionId, missionStore);
+        const slice = await applyTargetInterview(sessionId, missionStore);
         res.json(slice);
       } catch (err: unknown) {
         const errName = err instanceof Error ? err.name : "";

@@ -131,23 +131,23 @@ export function createPullRequestsRouter(store: TaskStore, options?: PullRequest
       );
     }
 
-    let entities = store.listActivePrEntities();
+    let entities = await store.listActivePrEntities();
     if (repo) entities = entities.filter((e) => e.repo === repo);
     if (status) entities = entities.filter((e) => e.state === status);
 
-    const pullRequests = entities.map((entity) =>
-      serializePr(entity, store.listPrThreadStates(entity.id)),
+    const pullRequests = entities.map(async (entity) =>
+      serializePr(entity, await store.listPrThreadStates(entity.id)),
     );
-    res.json({ pullRequests });
+    res.json({ pullRequests: await Promise.all(pullRequests) });
   });
 
   // GET /api/pull-requests/:id — entity + thread states + checks/merge/conflict summary.
   router.get("/:id", async (req, res) => {
     const id = String(req.params.id ?? "").trim();
     if (!id) throw badRequest("id is required");
-    const entity = store.getPrEntity(id);
+    const entity = await store.getPrEntity(id);
     if (!entity) throw notFound("PR entity not found");
-    res.json({ pullRequest: serializePr(entity, store.listPrThreadStates(id)) });
+    res.json({ pullRequest: serializePr(entity, await store.listPrThreadStates(id)) });
   });
 
   /**
@@ -166,7 +166,7 @@ export function createPullRequestsRouter(store: TaskStore, options?: PullRequest
 
       // Re-fetch authoritative state — the side effect must never gate on a
       // stale client/SSE-delivered copy.
-      const entity = store.getPrEntity(id);
+      const entity = await store.getPrEntity(id);
       if (!entity) throw notFound("PR entity not found");
 
       if (opts.requireState && entity.state !== opts.requireState) {
@@ -194,10 +194,10 @@ export function createPullRequestsRouter(store: TaskStore, options?: PullRequest
 
       const result = await capability({ entity, projectId: parseProjectId(req) });
       // Re-read after the action so the response reflects authoritative state.
-      const fresh = store.getPrEntity(id) ?? entity;
+      const fresh = (await store.getPrEntity(id)) ?? entity;
       res.json({
         ...result,
-        pullRequest: serializePr(fresh, store.listPrThreadStates(id)),
+        pullRequest: serializePr(fresh, await store.listPrThreadStates(id)),
       });
     };
   }
@@ -218,7 +218,7 @@ export function createPullRequestsRouter(store: TaskStore, options?: PullRequest
   router.post("/:id/automerge", async (req, res) => {
     const id = String(req.params.id ?? "").trim();
     if (!id) throw badRequest("id is required");
-    const entity = store.getPrEntity(id);
+    const entity = await store.getPrEntity(id);
     if (!entity) throw notFound("PR entity not found");
     if (!isPrEntityActive(entity)) {
       throw new ApiError(409, "PR is already terminal (merged/closed/failed)", {
@@ -228,8 +228,8 @@ export function createPullRequestsRouter(store: TaskStore, options?: PullRequest
     }
     const enabled =
       typeof req.body?.enabled === "boolean" ? req.body.enabled : !entity.autoMerge;
-    const updated = store.updatePrEntity(id, { autoMerge: enabled });
-    res.json({ pullRequest: serializePr(updated, store.listPrThreadStates(id)) });
+    const updated = await store.updatePrEntity(id, { autoMerge: enabled });
+    res.json({ pullRequest: serializePr(updated, await store.listPrThreadStates(id)) });
   });
 
   return router;

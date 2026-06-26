@@ -253,7 +253,7 @@ export async function promoteBranchGroup(input: PromoteBranchGroupInput): Promis
 }
 
 async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<BranchGroupPromotionResult> {
-  const group = input.store.getBranchGroup(input.groupId);
+  const group = await input.store.getBranchGroup(input.groupId);
   if (!group) {
     return {
       groupId: input.groupId,
@@ -380,12 +380,12 @@ async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<
     // creator. The injected creator itself also reuses an existing GitHub PR.
     const persistedPr = group.prNumber
       ? { prNumber: group.prNumber, prUrl: group.prUrl }
-      : (() => {
+      : await (async () => {
           // Only reuse a sibling row's PR when that PR is still OPEN. A
           // closed/merged sibling PR must NOT be relinked onto this group (doing
           // so would persist a terminal PR as if it were live); fall through to
           // creation instead.
-          const existing = input.store.getBranchGroupByBranchName(group.branchName);
+          const existing = await input.store.getBranchGroupByBranchName(group.branchName);
           return existing && existing.id !== group.id && existing.prNumber && existing.prState === "open"
             ? { prNumber: existing.prNumber, prUrl: existing.prUrl }
             : null;
@@ -414,7 +414,7 @@ async function promoteBranchGroupInner(input: PromoteBranchGroupInput): Promise<
     // back to the legacy behaviour (flip prState to "open" without a number).
   }
 
-  const updatedGroup = input.store.updateBranchGroup(group.id, {
+  const updatedGroup = await input.store.updateBranchGroup(group.id, {
     status: "finalized",
     prState,
     prNumber: prNumber ?? null,
@@ -514,7 +514,7 @@ export async function reconcileBranchGroupPr(input: {
     };
   }
 
-  const updated = input.store.updateBranchGroup(group.id, {
+  const updated = await input.store.updateBranchGroup(group.id, {
     prState: reconciled.prState,
     prNumber: reconciled.prNumber,
     prUrl: reconciled.prUrl,
@@ -542,7 +542,7 @@ export async function resolveBranchGroupMergeRouting(input: {
   if (!groupId) {
     return null;
   }
-  const branchGroup = input.store.getBranchGroup(groupId);
+  const branchGroup = await input.store.getBranchGroup(groupId);
   if (!branchGroup) {
     return null;
   }

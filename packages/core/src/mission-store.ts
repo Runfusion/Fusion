@@ -3959,7 +3959,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
               : "main";
           const settingsAutoMerge = typeof settings.autoMerge === "boolean" ? settings.autoMerge : false;
           sharedBranchBaseForMission = resolvedBranch ?? resolvedBaseBranch ?? settingsDefaultBranch;
-          const group = this.taskStore.ensureBranchGroupForSource("mission", missionId, {
+          const group = await this.taskStore.ensureBranchGroupForSource("mission", missionId, {
             branchName: sharedBranchBaseForMission,
             autoMerge: mission?.autoMerge ?? settingsAutoMerge,
           });

@@ -538,34 +538,56 @@ export class ProjectEngine {
     const cwd = this.config.workingDirectory;
     const settings = await store.getSettings();
 
+    /*
+     * FNXC:BackendFlip 2026-06-26-15:30:
+     * The ResearchStore (and its sibling sync SQLite satellite stores:
+     * InsightStore, TodoStore) have not been ported to the async PostgreSQL
+     * path yet. In backend mode, store.getResearchStore() throws because it
+     * constructs `new ResearchStore(store.db)` and store.db throws
+     * "SQLite Database is not available in backend mode". Wrap the research
+     * subsystem init in try/catch so the engine degrades gracefully (no
+     * research dispatcher) instead of failing the whole engine start — the
+     * same pattern used for MissionStore in InProcessRuntime.start(). This
+     * keeps `fn serve` / boot smoke booting against embedded PG.
+     */
     if (typeof (store as { getResearchStore?: () => unknown }).getResearchStore === "function") {
-      const registry = new ResearchProviderRegistry(settings, cwd);
-      const providers = registry.getAvailableProviders()
-        .map((type) => registry.getProvider(type))
-        .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
-      const synthesisProvider = registry.getProvider("llm-synthesis") as ({
-        synthesize?: (
-          request: ResearchSynthesisRequest,
-          modelSelection: { provider?: string; modelId?: string },
-          signal?: AbortSignal,
-        ) => Promise<ResearchSynthesisResult>;
-      } | undefined);
-      const synthesisRunner = typeof synthesisProvider?.synthesize === "function"
-        ? (request: ResearchSynthesisRequest, _modelSettings: ResearchModelSettings, signal?: AbortSignal) => synthesisProvider.synthesize!(request, {
-          provider: settings.researchGlobalDefaults?.synthesisProvider ?? settings.defaultProvider,
-          modelId: settings.researchGlobalDefaults?.synthesisModelId ?? settings.defaultModelId,
-        }, signal)
-        : undefined;
-      this.researchOrchestrator = new ResearchOrchestrator({
-        store: store.getResearchStore(),
-        stepRunner: new ResearchStepRunner({ providers, synthesisRunner }),
-        maxConcurrentRuns: settings.researchMaxConcurrentRuns ?? 3,
-      });
-      this.researchDispatcher = new ResearchRunDispatcher({
-        store: store.getResearchStore(),
-        orchestrator: this.researchOrchestrator,
-      });
-      this.researchDispatcher.start();
+      try {
+        const researchStore = store.getResearchStore();
+        const registry = new ResearchProviderRegistry(settings, cwd);
+        const providers = registry.getAvailableProviders()
+          .map((type) => registry.getProvider(type))
+          .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider));
+        const synthesisProvider = registry.getProvider("llm-synthesis") as ({
+          synthesize?: (
+            request: ResearchSynthesisRequest,
+            modelSelection: { provider?: string; modelId?: string },
+            signal?: AbortSignal,
+          ) => Promise<ResearchSynthesisResult>;
+        } | undefined);
+        const synthesisRunner = typeof synthesisProvider?.synthesize === "function"
+          ? (request: ResearchSynthesisRequest, _modelSettings: ResearchModelSettings, signal?: AbortSignal) => synthesisProvider.synthesize!(request, {
+            provider: settings.researchGlobalDefaults?.synthesisProvider ?? settings.defaultProvider,
+            modelId: settings.researchGlobalDefaults?.synthesisModelId ?? settings.defaultModelId,
+          }, signal)
+          : undefined;
+        this.researchOrchestrator = new ResearchOrchestrator({
+          store: researchStore,
+          stepRunner: new ResearchStepRunner({ providers, synthesisRunner }),
+          maxConcurrentRuns: settings.researchMaxConcurrentRuns ?? 3,
+        });
+        this.researchDispatcher = new ResearchRunDispatcher({
+          store: researchStore,
+          orchestrator: this.researchOrchestrator,
+        });
+        this.researchDispatcher.start();
+      } catch (rsErr) {
+        runtimeLog.warn(
+          `Research subsystem unavailable (${
+            store.isBackendMode?.() ? "backend mode" : "init error"
+          }); research dispatcher disabled:`,
+          rsErr instanceof Error ? rsErr.message : rsErr,
+        );
+      }
     }
 
     this.remoteTunnelManager = new TunnelProcessManager();
@@ -663,7 +685,12 @@ export class ProjectEngine {
     try {
       const coreAutomationModule = await import("@fusion/core");
       const { AutomationStore } = coreAutomationModule;
-      this.automationStore = new AutomationStore(cwd);
+      // FNXC:PhysicalDeleteSqliteClass 2026-06-26-14:05:
+      // Propagate the backend mode (asyncLayer) from the owning TaskStore so
+      // AutomationStore does not construct a SQLite file under PostgreSQL. The
+      // `?? undefined` coerces the `AsyncDataLayer | null` to the optional
+      // option shape (null would be a type error; undefined = "not provided").
+      this.automationStore = new AutomationStore(cwd, { asyncLayer: store.getAsyncLayer() ?? undefined });
       await this.automationStore.init();
 
       const aiPromptExecutor = await createAiPromptExecutor(cwd, store);
@@ -1738,7 +1765,7 @@ export class ProjectEngine {
       runtimeLog.warn(
         `Global auto-merge was turned off, but ${taskIds.length} legacy in-review task(s) still have task.autoMerge=true without user provenance and may continue to auto-merge: ${taskIds.join(", ")}. Run reconcileLegacyAutoMergeStamps({ apply: true }) to clear these legacy stamps after review.`,
       );
-      store.recordRunAuditEvent({
+      void store.recordRunAuditEvent({
         agentId: "system",
         runId: `legacy-auto-merge-stamp-advisory-${Date.now()}`,
         domain: "database",
@@ -1840,14 +1867,14 @@ export class ProjectEngine {
           }
           if (mergeRequest && (mergeRequest.state === "queued" || mergeRequest.state === "retrying")) {
             if (mergeRequest.state === "retrying") {
-              store.transitionMergeRequestState(taskId, "queued", { attemptCount: mergeRequest.attemptCount, lastError: mergeRequest.lastError });
+              await store.transitionMergeRequestState(taskId, "queued", { attemptCount: mergeRequest.attemptCount, lastError: mergeRequest.lastError });
             }
-            store.transitionMergeRequestState(taskId, "running", { attemptCount: mergeRequest.attemptCount, lastError: mergeRequest.lastError });
+            await store.transitionMergeRequestState(taskId, "running", { attemptCount: mergeRequest.attemptCount, lastError: mergeRequest.lastError });
           }
           if (mergeRequest?.state === "running") {
             const ageMs = Date.now() - Date.parse(mergeRequest.updatedAt);
             if ((mergeRequest.attemptCount ?? 0) >= ProjectEngine.MAX_AUTO_MERGE_TRANSIENT_RETRIES && ageMs >= ProjectEngine.MERGE_REQUEST_RETRY_EXHAUSTED_AGE_MS) {
-              store.transitionMergeRequestState(taskId, "exhausted", {
+              await store.transitionMergeRequestState(taskId, "exhausted", {
                 attemptCount: mergeRequest.attemptCount,
                 lastError: mergeRequest.lastError ?? "merge-request-running-age-cap-exhausted",
               });
@@ -2222,7 +2249,7 @@ export class ProjectEngine {
           // task for this project. The in-memory mergeQueue serializes within
           // this process, but multiple processes (e.g. dashboard + serve) share
           // the same SQLite database and can race.
-          const activeMergingTask = store.getActiveMergingTask(taskId);
+          const activeMergingTask = await store.getActiveMergingTask(taskId);
           if (activeMergingTask) {
             const retryMs = settings.pollIntervalMs ?? 15_000;
             runtimeLog.log(
@@ -3144,14 +3171,14 @@ export class ProjectEngine {
                     const record = store.getMergeRequestRecord(taskId);
                     if (record && record.state !== "exhausted" && record.state !== "cancelled" && record.state !== "succeeded") {
                       if (record.state === "running") {
-                        store.transitionMergeRequestState(taskId, "retrying", {
+                        await store.transitionMergeRequestState(taskId, "retrying", {
                           attemptCount: record.attemptCount,
                           lastError: errorMsg,
                         });
                       }
                       const refreshed = store.getMergeRequestRecord(taskId);
                       if (refreshed && refreshed.state === "retrying") {
-                        store.transitionMergeRequestState(taskId, "exhausted", {
+                        await store.transitionMergeRequestState(taskId, "exhausted", {
                           attemptCount: refreshed.attemptCount,
                           lastError: errorMsg,
                         });
@@ -3200,14 +3227,14 @@ export class ProjectEngine {
                   const record = store.getMergeRequestRecord(taskId);
                   if (record && record.state !== "exhausted" && record.state !== "cancelled" && record.state !== "succeeded") {
                     if (record.state === "running") {
-                      store.transitionMergeRequestState(taskId, "retrying", {
+                      await store.transitionMergeRequestState(taskId, "retrying", {
                         attemptCount: record.attemptCount,
                         lastError: errorMsg,
                       });
                     }
                     const refreshed = store.getMergeRequestRecord(taskId);
                     if (refreshed && refreshed.state === "retrying") {
-                      store.transitionMergeRequestState(taskId, "exhausted", {
+                      await store.transitionMergeRequestState(taskId, "exhausted", {
                         attemptCount: refreshed.attemptCount,
                         lastError: errorMsg,
                       });
@@ -3293,13 +3320,13 @@ export class ProjectEngine {
       const record = store.getMergeRequestRecord(taskId);
       if (record && record.state !== "manual-required" && record.state !== "cancelled" && record.state !== "succeeded" && record.state !== "exhausted") {
         if (record.state === "running") {
-          store.transitionMergeRequestState(taskId, "retrying", {
+          await store.transitionMergeRequestState(taskId, "retrying", {
             attemptCount: nextRetryCount,
             lastError: errorMsg,
           });
         }
         if (store.getMergeRequestRecord(taskId)?.state === "retrying") {
-          store.transitionMergeRequestState(taskId, "queued", {
+          await store.transitionMergeRequestState(taskId, "queued", {
             attemptCount: nextRetryCount,
             lastError: errorMsg,
           });

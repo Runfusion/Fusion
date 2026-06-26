@@ -56,7 +56,7 @@ describe("secrets-sync-passphrase", () => {
       await setSyncPassphrase(secrets, "first");
       await setSyncPassphrase(secrets, "second");
       expect(await getSyncPassphrase(secrets)).toBe("second");
-      expect(secrets.listSecrets("global").filter((record) => record.key === RESERVED_SYNC_PASSPHRASE_KEY)).toHaveLength(1);
+      expect((await secrets.listSecrets("global")).filter((record) => record.key === RESERVED_SYNC_PASSPHRASE_KEY)).toHaveLength(1);
     } finally {
       await fixture.cleanup();
     }
@@ -81,7 +81,7 @@ describe("secrets-sync-passphrase", () => {
     try {
       const secrets = await createSecretsStore(fixture);
       await setSyncPassphrase(secrets, "policy-check");
-      const row = secrets.listSecrets("global").find((record) => record.key === RESERVED_SYNC_PASSPHRASE_KEY);
+      const row = (await secrets.listSecrets("global")).find((record) => record.key === RESERVED_SYNC_PASSPHRASE_KEY);
       expect(row).toBeTruthy();
       expect(row?.accessPolicy).toBe("deny");
       expect(row?.envExportable).toBe(false);
@@ -103,7 +103,7 @@ describe("secrets-sync-passphrase", () => {
 
       const passphrase = await getSyncPassphrase(secrets);
       const records = [] as Array<{ key: string; value: string; scope: SecretRecord["scope"]; description?: string | null; accessPolicy: SecretRecord["accessPolicy"]; envExportable: boolean; envExportKey?: string | null }>;
-      for (const record of secrets.listSecrets()) {
+      for (const record of await secrets.listSecrets()) {
         if (record.key === RESERVED_SYNC_PASSPHRASE_KEY) {
           continue;
         }

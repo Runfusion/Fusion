@@ -116,17 +116,32 @@ export class DatabaseSync {
 
   prepare(sql: string): SqliteStatement {
     const stmt = this.impl.prepare(sql);
+    /*
+    FNXC:Storage 2026-06-25-00:00:
+    Node v26's node:sqlite rejects `undefined` bound parameters with
+    ERR_INVALID_ARG_TYPE ("Provided value cannot be bound to SQLite parameter").
+    Bun's bun:sqlite and the legacy better-sqlite3 treat `undefined` as NULL.
+    To preserve the historical contract that callers may pass `undefined` for
+    an optional/absent column value, coerce each param: undefined → null before
+    handing it to the underlying statement. This is the production-safe fix
+    (no caller depends on `undefined` being a distinct value from NULL — NULL
+    is the SQL-correct representation of "no value"). The coercion is applied
+    uniformly across all/get/run so behavior is identical regardless of which
+    execute path a caller takes.
+    */
+    const coerceParams = (params: unknown[]): unknown[] =>
+      params.map((p) => (p === undefined ? null : p));
     // Both node:sqlite and bun:sqlite expose the same .all/.get/.run shape.
     // Normalize `get` to return undefined (not null) when no row matches, and
     // pass run() through unchanged — both runtimes already produce the same
     // { changes, lastInsertRowid } shape.
     return {
-      all: (...params: unknown[]) => stmt.all(...params),
+      all: (...params: unknown[]) => stmt.all(...coerceParams(params)),
       get: (...params: unknown[]) => {
-        const row = stmt.get(...params);
+        const row = stmt.get(...coerceParams(params));
         return row ?? undefined;
       },
-      run: (...params: unknown[]) => stmt.run(...params),
+      run: (...params: unknown[]) => stmt.run(...coerceParams(params)),
     };
   }
 }

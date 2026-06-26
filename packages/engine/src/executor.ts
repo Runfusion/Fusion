@@ -2042,7 +2042,7 @@ export class TaskExecutor {
       this.store.setCompletionHandoffAcceptedMarker(task.id, {
         source: `executor:${reason}`,
       });
-      this.store.upsertMergeRequestRecord(task.id, {
+      await this.store.upsertMergeRequestRecord(task.id, {
         state: handedOff.autoMerge === false ? "manual-required" : "queued",
       });
     }
@@ -2065,7 +2065,8 @@ export class TaskExecutor {
 
   private get approvalRequestStore(): ApprovalRequestStore {
     if (!this._approvalRequestStore) {
-      this._approvalRequestStore = new ApprovalRequestStore(this.store.getDatabase());
+      const layer = this.store.getAsyncLayer();
+      this._approvalRequestStore = new ApprovalRequestStore(layer ? null : this.store.getDatabase(), { asyncLayer: layer });
     }
     return this._approvalRequestStore;
   }
@@ -2082,7 +2083,7 @@ export class TaskExecutor {
       taskId,
       runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
       permissionPolicy: policy,
-      createApprovalRequest: async (decision, args) => this.approvalRequestStore.create({
+      createApprovalRequest: async (decision, args) => await this.approvalRequestStore.create({
         requester: {
           actorId: agent.id,
           actorType: "agent",
@@ -2105,11 +2106,11 @@ export class TaskExecutor {
         },
       }),
       findApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
+        const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       findPendingApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
+        const latest = await this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
         return latest?.status === "pending" ? { id: latest.id } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
@@ -2150,7 +2151,7 @@ export class TaskExecutor {
       },
       taskId,
       runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
-      createApprovalRequest: async ({ category, toolName, args }) => this.approvalRequestStore.create({
+      createApprovalRequest: async ({ category, toolName, args }) => await this.approvalRequestStore.create({
         requester: {
           actorId: agent.id,
           actorType: "agent",
@@ -2172,7 +2173,7 @@ export class TaskExecutor {
         },
       }),
       findPendingApprovalRequest: async (dedupeKey) => {
-        const pending = this.approvalRequestStore.list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
+        const pending = await this.approvalRequestStore.list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
         return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
       },
     };
@@ -8350,7 +8351,7 @@ export class TaskExecutor {
     const markerAcceptedByTaskId = new Map<string, boolean>();
     if (settings.mergeRequestContractShadowEnabled === true) {
       for (const depId of liveTask.dependencies) {
-        markerAcceptedByTaskId.set(depId, this.store.getCompletionHandoffAcceptedMarker(depId) !== null);
+        markerAcceptedByTaskId.set(depId, (await this.store.getCompletionHandoffAcceptedMarker(depId)) !== null);
       }
     }
     const unmetDeps = getUnmetSchedulingDependencies(

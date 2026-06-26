@@ -67,7 +67,7 @@ export async function makeReliabilityFixture(input: {
   git(rootDir, 'git commit -m "chore: init"');
   await mkdir(join(rootDir, ".fusion"), { recursive: true });
 
-  const store = new TaskStore(rootDir, undefined, { inMemoryDb: true });
+  const store = new TaskStore(rootDir, undefined);
   await store.init();
   const settings: Settings = {
     ...DEFAULT_SETTINGS,

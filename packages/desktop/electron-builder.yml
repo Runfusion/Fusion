@@ -27,7 +27,6 @@ files:
   - package.json
   - node_modules/@fusion/core/**/*
   - node_modules/@fusion/dashboard/**/*
-  - node_modules/better-sqlite3/**/*
   - node_modules/electron-updater/**/*
   - node_modules/builder-util-runtime/**/*
   - node_modules/fs-extra/**/*
@@ -84,8 +83,7 @@ files:
   - node_modules/tar-fs/**/*
   - node_modules/uuid/**/*
 
-asarUnpack:
-  - node_modules/better-sqlite3/**/*
+asarUnpack: []
 
 extraMetadata:
   main: dist/main.js

@@ -1458,7 +1458,7 @@ async function registerArtifactForAgent(
     };
 
     const artifact: Artifact = await store.registerArtifact(input);
-    notifyArtifactRegistered(messageStore, artifact, authorId);
+    void notifyArtifactRegistered(messageStore, artifact, authorId);
     return {
       content: [{
         type: "text" as const,
@@ -1477,7 +1477,6 @@ async function registerArtifactForAgent(
     };
   }
 }
-
 /**
  * FNXC:ArtifactRegistry 2026-06-29-00:00:
  * Agents need a portable way to create task-scoped image artifacts without reading arbitrary local files. `dataBase64` decodes inside the tool and then uses TaskStore's existing binary persistence path so registry rows continue to store only managed artifact URIs.
@@ -1545,11 +1544,11 @@ function hasImageSignature(data: Buffer, mimeType: string): boolean {
   return false;
 }
 
-function notifyArtifactRegistered(messageStore: MessageStore | undefined, artifact: Artifact, authorId: string): void {
+async function notifyArtifactRegistered(messageStore: MessageStore | undefined, artifact: Artifact, authorId: string): Promise<void> {
   if (!messageStore) return;
 
   try {
-    messageStore.sendMessage({
+    await messageStore.sendMessage({
       fromType: "system",
       toType: "user",
       toId: DASHBOARD_USER_ID,
@@ -1921,7 +1920,13 @@ async function assertWorkflowColumnAgentBindings(
 ): Promise<void> {
   const columns = (ir as { columns?: unknown })?.columns;
   if (!Array.isArray(columns) || !columns.some((c) => c?.agent?.agentId)) return;
-  const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+  // FNXC:SqliteFinalRemoval 2026-06-26-11:05:
+  // In backend mode, pass the AsyncDataLayer so AgentStore delegates to async helpers.
+  const agentLayer = store.getAsyncLayer();
+  const agentStore = new AgentStore({
+    rootDir: store.getFusionDir(),
+    ...(agentLayer ? { asyncLayer: agentLayer } : {}),
+  });
   await agentStore.init();
   const settings = await store.getSettings();
   await validateColumnAgentBindings({ ir, agentStore, settings, confirmPolicyEscalation });
@@ -3238,7 +3243,7 @@ export function createAgentCreateTool(
           operation: `create:${params.name}:${params.role}:${reportsTo}`,
         });
 
-        const request = options.approvalRequestStore.create({
+        const request = await options.approvalRequestStore.create({
           requester: { actorId: callingAgentId, actorType: "agent", actorName: caller?.name ?? callingAgentId },
           targetAction: {
             category: "agent_provisioning",
@@ -3358,7 +3363,7 @@ export function createAgentDeleteTool(
           operation: `delete:${target.id}:${params.force === true ? "force" : "normal"}:${params.reassign_to ?? ""}`,
         });
 
-        const request = options.approvalRequestStore.create({
+        const request = await options.approvalRequestStore.create({
           requester: { actorId: callingAgentId, actorType: "agent", actorName: caller?.name ?? callingAgentId },
           targetAction: {
             category: "agent_provisioning",
@@ -3634,7 +3639,7 @@ export function createSendMessageTool(
         }
 
         const result = await deliveryHandler.runWithBoundedRetry({
-          run: async () => Promise.resolve(messageStore.sendMessage({
+          run: async () => messageStore.sendMessage({
             fromId: fromAgentId,
             fromType: "agent",
             toId: recipient.id,
@@ -3642,7 +3647,7 @@ export function createSendMessageTool(
             content,
             type: messageType,
             ...(replyToMessageId ? { metadata: { replyTo: { messageId: replyToMessageId } } } : {}),
-          })),
+          }),
           correlation: { kind: "direct", fromAgentId, toId: recipient.id },
         }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 }, async () => {
           const taskId = _ctx?.taskId as string | undefined;
@@ -3953,7 +3958,7 @@ export function createPostRoomMessageTool(
       }
 
       try {
-        const isMember = chatStore.listRoomMembers(params.roomId).some((member) => member.agentId === fromAgentId);
+        const isMember = (await chatStore.listRoomMembers(params.roomId)).some((member) => member.agentId === fromAgentId);
         if (!isMember) {
           return {
             content: [{ type: "text" as const, text: `ERROR: Agent ${fromAgentId} is not a member of room ${params.roomId}` }],
@@ -4017,11 +4022,11 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
     return `${value.slice(0, REPLY_CONTEXT_CONTENT_MAX_CHARS - 1)}…`;
   };
 
-  const resolveReplyContext = (msg: Message): {
+  const resolveReplyContext = async (msg: Message): Promise<{
     parentMessageId: string;
     parentMessage: Message | null;
     missingParent: boolean;
-  } | null => {
+  } | null> => {
     const metadata = msg.metadata;
     const parentMessageId = typeof metadata === "object"
       && metadata !== null
@@ -4037,7 +4042,7 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
       return null;
     }
 
-    const parentMessage = messageStore.getMessage(parentMessageId);
+    const parentMessage = await messageStore.getMessage(parentMessageId);
     return {
       parentMessageId,
       parentMessage,
@@ -4061,7 +4066,7 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
           limit,
         };
 
-        const messages = messageStore.getInbox(agentId, "agent", filter);
+        const messages = await messageStore.getInbox(agentId, "agent", filter);
 
         if (messages.length === 0) {
           return {
@@ -4070,13 +4075,13 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
           };
         }
 
-        const messageEntries = messages.map((msg: Message) => {
-          const replyContext = resolveReplyContext(msg);
+        const messageEntries = await Promise.all(messages.map(async (msg: Message) => {
+          const replyContext = await resolveReplyContext(msg);
           return {
             message: msg,
             replyContext,
           };
-        });
+        }));
 
         const lines = messageEntries.map(({ message, replyContext }) => {
           const timestamp = new Date(message.createdAt).toLocaleString();

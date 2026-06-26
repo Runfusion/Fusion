@@ -18,7 +18,10 @@ export function getOrCreateScopedChatStore(store: TaskStore, fallbackChatStore?:
   const cached = scopedChatStoreCache.get(key);
   if (cached) return cached;
 
-  const chatStore = new ChatStore(store.getFusionDir(), store.getDatabase());
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-21:50:
+  // ChatStore dual-path: pass async layer in backend mode, sync DB otherwise.
+  const layer = store.getAsyncLayer();
+  const chatStore = new ChatStore(store.getFusionDir(), layer ? null : store.getDatabase(), { asyncLayer: layer });
   scopedChatStoreCache.set(key, chatStore);
   return chatStore;
 }
@@ -68,7 +71,7 @@ export async function createProjectScopedChatManager(options: {
   pluginRunner?: ConstructorParameters<typeof ChatManager>[3];
   messageStore?: MessageStore;
 }): Promise<ChatManager> {
-  const agentStore = new AgentStore({ rootDir: options.store.getFusionDir() });
+  const agentStore = new AgentStore({ rootDir: options.store.getFusionDir(), asyncLayer: options.store.getAsyncLayer() ?? undefined });
   return new ChatManager(
     options.chatStore,
     options.store.getRootDir(),
@@ -94,7 +97,7 @@ export function getOrCreateScopedChatManager(
   const key = store.getFusionDir();
   const cached = scopedChatManagerCache.get(key);
   if (cached) return cached;
-  const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+  const agentStore = new AgentStore({ rootDir: store.getFusionDir(), asyncLayer: store.getAsyncLayer() ?? undefined });
   const manager = new ChatManager(
     chatStore,
     store.getRootDir(),
