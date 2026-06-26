@@ -57,6 +57,13 @@ export type {
   McpServersImportResult,
 } from "./mcp-config.js";
 export {
+  getMcpDiscoverySources,
+  parseDiscoveredMcpServersFromFile,
+  type McpDiscoverySource,
+  type McpDiscoverySourcesOptions,
+  type DiscoveredMcpServer,
+} from "./mcp-discovery.js";
+export {
   resolveAgentMemoryInclusionMode,
   type AgentMemoryInclusionModeSource,
   type ResolveAgentMemoryInclusionModeInput,

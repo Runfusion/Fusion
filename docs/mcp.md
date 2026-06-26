@@ -94,9 +94,56 @@ Note: `fn mcp validate` currently validates stored definitions and reports wheth
 5. Save the server. Expected outcome: the row appears with its transport, state badge, and validation status of **Not tested**.
 6. In project settings, review inherited rows from global settings. Use **Override** to replace an inherited server or **Disable** to add a same-named project disabled entry. Expected outcome: state badges identify inherited, overridden, project-local, and disabled-global behavior before you save.
 7. Click **Test** on a server row. Expected outcome: the row shows **Testing…** while pending, then `valid`, `unreachable`, or `error` with the returned message.
-8. Use the **Import** pane to paste JSON or choose **Upload JSON**. Expected outcome: Claude Desktop-style servers are added to the draft, duplicate names are rejected, and plaintext env/header values are converted into newly created Fusion secrets plus secret references.
-9. Use **Copy Fusion MCP JSON** and then **Download JSON** when needed. Expected outcome: the export contains Fusion MCP JSON with secret references, and no plaintext secret values.
-10. Save the Settings modal. Expected outcome: the selected global or project `mcpServers` settings are persisted and used by subsequent MCP-capable AI sessions.
+8. Review **Discovered on this machine**. Expected outcome: Fusion shows read-only MCP servers found in supported third-party config files for this scope, with source labels and a **Configured** badge for same-named servers already present in the current settings draft.
+9. Click **Add** for a discovered server you trust. Expected outcome: servers without sensitive fields are copied into the current scope and enable that scope; servers with discovered env/header/token material open the editor so you bind existing Fusion secrets or create new Fusion secrets before saving.
+10. Use the **Import** pane to paste JSON or choose **Upload JSON**. Expected outcome: Claude Desktop-style servers are added to the draft, duplicate names are rejected, and plaintext env/header values are converted into newly created Fusion secrets plus secret references.
+11. Use **Copy Fusion MCP JSON** and then **Download JSON** when needed. Expected outcome: the export contains Fusion MCP JSON with secret references, and no plaintext secret values.
+12. Save the Settings modal. Expected outcome: the selected global or project `mcpServers` settings are persisted and used by subsequent MCP-capable AI sessions.
+
+## Auto-discovering MCP servers
+
+Fusion can scan known on-host MCP configuration files and show inert candidates in **Settings → Global → MCP Servers** and **Settings → Project → MCP Servers**. Discovery is read-only: Fusion does not auto-enable, spawn, validate, connect to, or otherwise execute a discovered server. A discovered server becomes trusted only after an operator clicks **Add**, reviews the definition, binds any required secrets, and saves Settings.
+
+The scanner reads only these well-known paths; missing files are normal and malformed files produce non-fatal notes in the card:
+
+| Tool | Scope | macOS / Linux path | Windows path |
+|---|---|---|---|
+| Claude Desktop | Global | macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`; Linux: `~/.config/Claude/claude_desktop_config.json` | `%APPDATA%\\Claude\\claude_desktop_config.json` |
+| Claude Code | Global | `~/.claude.json` | `%USERPROFILE%\\.claude.json` |
+| Cursor | Global | `~/.cursor/mcp.json` | `%USERPROFILE%\\.cursor\\mcp.json` |
+| Windsurf | Global | `~/.codeium/windsurf/mcp_config.json` | `%USERPROFILE%\\.codeium\\windsurf\\mcp_config.json` |
+| Cursor | Project | `<projectRootDir>/.cursor/mcp.json` | `<projectRootDir>\\.cursor\\mcp.json` |
+| VS Code | Project | `<projectRootDir>/.vscode/mcp.json` | `<projectRootDir>\\.vscode\\mcp.json` |
+
+Claude Desktop, Claude Code, Cursor, and Windsurf use the Claude-style `{ "mcpServers": { ... } }` shape. VS Code project config can use `{ "servers": { ... } }`; Fusion normalizes it to the same import parser before rendering candidates.
+
+Sensitive discovery follows the same no-plaintext rule as manual import. If a third-party file contains inline environment values, header values, or token-like values, the API response includes only secret descriptor metadata (`field`, `key`, `suggestedKey`, `scope`) and the candidate definition uses Fusion `McpSecretRef` placeholders. The dashboard **Add** flow opens the server editor so operators choose existing Fusion secrets or create new Fusion-managed secrets; the settings blob stores only `{ secretRef, scope }` references.
+
+The dashboard uses this route:
+
+```http
+GET /api/mcp/discovered?scope=global|project
+```
+
+Response shape:
+
+```json
+{
+  "sources": [{ "id": "vscode-project", "tool": "VS Code", "label": "VS Code project", "scope": "project", "path": "/repo/.vscode/mcp.json" }],
+  "servers": [
+    {
+      "source": { "id": "vscode-project", "tool": "VS Code", "label": "VS Code project", "scope": "project", "path": "/repo/.vscode/mcp.json" },
+      "definition": { "name": "docs", "transport": "stdio", "command": "node", "env": { "API_KEY": { "secretRef": "mcp.docs.env.API_KEY", "scope": "project" } } },
+      "alreadyConfigured": false,
+      "hasPlaintextSecrets": true,
+      "secretDescriptors": [{ "field": "env", "key": "API_KEY", "suggestedKey": "mcp.docs.env.API_KEY", "scope": "project" }]
+    }
+  ],
+  "errors": []
+}
+```
+
+Expected outcome: API clients can display candidates, source labels, configured badges, and secret-binding prompts without receiving plaintext secret values.
 
 ## Managing servers from the CLI
 

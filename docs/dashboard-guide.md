@@ -1519,10 +1519,11 @@ Manage Model Context Protocol servers from the existing Settings modal; no new t
 - Supported transports are `stdio`, `sse`, and `streamable-http`. The editor shows the transport-specific command, URL, args, env, and header fields.
 - Sensitive MCP values are secret references only. Environment values, HTTP/SSE header values, and tokens must be selected from or created in Fusion secrets; plaintext values are never persisted into the settings blob.
 - Each server row has a **Test** control that calls the MCP validation API and renders pending, valid, unreachable, or error status inline using the standard status-dot convention and semantic status colors.
+- The **Discovered on this machine** region scans known Claude Desktop, Claude Code, Cursor, Windsurf, and VS Code MCP config paths for the selected scope. Candidates are read-only and inert until the operator clicks **Add**; sensitive discovered values open the secret-reference editor instead of persisting plaintext.
 - The import panel accepts Claude Desktop-style `{ "mcpServers": { ... } }` JSON by paste or upload. Imported plaintext sensitive values are converted into Fusion secret references before the settings draft is saved.
 - The export panel produces Fusion MCP JSON for the active scope and offers copy/download actions.
 
-The MCP sections reuse Settings form/card primitives and include mobile layouts for `(max-width: 768px)` so validate, override, disable, import, and export controls remain usable in the Settings sheet.
+The MCP sections reuse Settings form/card primitives and include mobile layouts for `(max-width: 768px)` so validate, discovery, override, disable, import, and export controls remain usable in the Settings sheet.
 
 ### Lazy-Loaded Heavy Views
 

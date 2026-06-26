@@ -363,6 +363,7 @@ import {
   promptWithFallback as enginePromptWithFallback,
   reloadExemptTools as engineReloadExemptTools,
   resolveIntegrationBranch,
+  discoverMcpServers,
   resolveMcpServersForRuntime,
   resolveMcpServersForStore,
   validateMcpServer,
@@ -408,6 +409,22 @@ function parseMcpValidationBody(body: unknown): { name?: string; definition?: Mc
   }
 
   return { name, definition, timeoutMs: parseMcpValidationTimeout(input.timeoutMs) };
+}
+
+function parseMcpDiscoveryScope(value: unknown): "global" | "project" {
+  if (value === undefined) return "project";
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === "global" || raw === "project") return raw;
+  throw badRequest("scope must be either global or project");
+}
+
+function stripMcpSecretDescriptor(secret: { field: "env" | "headers" | "token"; key: string; suggestedKey: string; scope: "global" | "project" }) {
+  return {
+    field: secret.field,
+    key: secret.key,
+    suggestedKey: secret.suggestedKey,
+    scope: secret.scope,
+  };
 }
 
 async function resolveMcpServerForValidation(
@@ -1297,6 +1314,35 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
     } catch {
       const { store: scopedStore } = await getProjectContext(req);
       res.json({ maxConcurrent: options?.maxConcurrent ?? 2, maxTriageConcurrent: options?.maxConcurrent ?? 2, maxWorktrees: 4, rootDir: scopedStore.getRootDir() });
+    }
+  });
+
+  router.get("/mcp/discovered", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const scope = parseMcpDiscoveryScope(req.query.scope);
+      const [discovered, settingsByScope] = await Promise.all([
+        discoverMcpServers({ scope, projectRootDir: scopedStore.getRootDir() }),
+        scopedStore.getSettingsByScopeFast(),
+      ]);
+      const configured = new Set((scope === "global" ? settingsByScope.global.mcpServers?.servers : settingsByScope.project.mcpServers?.servers)?.map((server) => server.name) ?? []);
+      /*
+       * FNXC:McpConfig 2026-06-26-10:31:
+       * The discovery API is read-only: it reports inert third-party MCP definitions for explicit user opt-in and strips plaintextValue before crossing the wire. The dashboard can create Fusion-managed secret references from these descriptors, but API clients never receive raw env/header/token material.
+       */
+      res.json({
+        sources: discovered.sources,
+        servers: discovered.servers.map((server) => ({
+          source: server.source,
+          definition: server.definition,
+          alreadyConfigured: configured.has(server.definition.name),
+          hasPlaintextSecrets: server.secretsToCreate.length > 0,
+          secretDescriptors: server.secretsToCreate.map(stripMcpSecretDescriptor),
+        })),
+        errors: discovered.errors,
+      });
+    } catch (error) {
+      rethrowAsApiError(error, "Failed to discover MCP servers");
     }
   });
 

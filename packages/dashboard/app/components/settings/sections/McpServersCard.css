@@ -6,6 +6,8 @@
 
 .mcp-servers-card__header,
 .mcp-server-row,
+.mcp-discovery__header,
+.mcp-discovery-row,
 .mcp-import-export,
 .mcp-sensitive-row,
 .mcp-inline-actions {
@@ -14,19 +16,24 @@
 }
 
 .mcp-servers-card__header,
-.mcp-server-row {
+.mcp-server-row,
+.mcp-discovery__header,
+.mcp-discovery-row {
   align-items: flex-start;
   justify-content: space-between;
 }
 
 .mcp-servers-card__title,
 .mcp-server-row p,
+.mcp-discovery p,
+.mcp-discovery h6,
 .mcp-import-export h6 {
   margin: 0;
 }
 
 .mcp-servers-card__description,
 .mcp-server-row p,
+.mcp-discovery p,
 .mcp-empty,
 .mcp-empty-inline,
 .mcp-effective-count {
@@ -34,6 +41,8 @@
 }
 
 .mcp-server-list,
+.mcp-discovery,
+.mcp-discovery__group,
 .mcp-editor,
 .mcp-sensitive-list,
 .mcp-import-export__pane,
@@ -44,12 +53,23 @@
 }
 
 .mcp-server-row,
+.mcp-discovery,
+.mcp-discovery-row,
 .mcp-editor,
 .mcp-import-export__pane {
   padding: var(--space-md);
   border: var(--border-width) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
+}
+
+.mcp-discovery-row {
+  background: var(--surface-hover);
+}
+
+.mcp-discovery__notes,
+.mcp-discovery-row__note {
+  color: var(--color-warning);
 }
 
 .mcp-server-row__titleline,
@@ -86,6 +106,16 @@
 }
 
 .mcp-state-badge--inherited {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.mcp-state-badge--configured {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.mcp-state-badge--required {
   color: var(--color-warning);
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
 }
@@ -157,6 +187,8 @@
 @media (max-width: 768px) {
   .mcp-servers-card__header,
   .mcp-server-row,
+  .mcp-discovery__header,
+  .mcp-discovery-row,
   .mcp-import-export,
   .mcp-server-row__actions,
   .mcp-sensitive-row,

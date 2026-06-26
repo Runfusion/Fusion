@@ -26,9 +26,25 @@ const secret = {
   lastReadAt: null,
 };
 
-function mockFetch(statusByName: Record<string, { status: "valid" | "unreachable" | "error"; message: string }> = {}) {
+function discoveredResponse(scope: McpSettingsScope) {
+  return {
+    sources: [{ id: `${scope}-source`, tool: scope === "global" ? "Claude Desktop" : "VS Code", label: scope === "global" ? "Claude Desktop" : "VS Code project", scope, path: scope === "global" ? "/home/ada/claude.json" : "/repo/.vscode/mcp.json" }],
+    servers: [
+      { source: { id: `${scope}-source`, tool: scope === "global" ? "Claude Desktop" : "VS Code", label: scope === "global" ? "Claude Desktop" : "VS Code project", scope, path: "config.json" }, definition: { name: `${scope}-plain`, transport: "stdio", command: "plain-mcp" }, alreadyConfigured: false, hasPlaintextSecrets: false, secretDescriptors: [] },
+      { source: { id: `${scope}-source`, tool: scope === "global" ? "Claude Desktop" : "VS Code", label: scope === "global" ? "Claude Desktop" : "VS Code project", scope, path: "config.json" }, definition: { name: `${scope}-secure`, transport: "stdio", command: "secure-mcp", env: { TOKEN: { secretRef: `mcp.${scope}-secure.env.TOKEN`, scope } } }, alreadyConfigured: false, hasPlaintextSecrets: true, secretDescriptors: [{ field: "env", key: "TOKEN", suggestedKey: `mcp.${scope}-secure.env.TOKEN`, scope }] },
+      { source: { id: `${scope}-source`, tool: scope === "global" ? "Claude Desktop" : "VS Code", label: scope === "global" ? "Claude Desktop" : "VS Code project", scope, path: "config.json" }, definition: { name: `${scope}-configured`, transport: "stdio", command: "configured-mcp" }, alreadyConfigured: true, hasPlaintextSecrets: false, secretDescriptors: [] },
+    ],
+    errors: [`${scope} source: skipped malformed config`],
+  };
+}
+
+function mockFetch(statusByName: Record<string, { status: "valid" | "unreachable" | "error"; message: string }> = {}, discoveryByScope?: Partial<Record<McpSettingsScope, unknown>>) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.startsWith("/api/mcp/discovered")) {
+      const scope = (new URL(url, "https://fusion.test").searchParams.get("scope") === "global" ? "global" : "project") as McpSettingsScope;
+      return new Response(JSON.stringify(discoveryByScope?.[scope] ?? { sources: [], servers: [], errors: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url === "/api/secrets" && (!init?.method || init.method === "GET")) {
       return new Response(JSON.stringify({ secrets: [secret] }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
@@ -198,6 +214,64 @@ describe("MCP Settings UI", () => {
     expect(screen.getByTestId("mcp-validation-slow")).toHaveTextContent("timed out");
     expect(screen.getByTestId("mcp-validation-bad")).toHaveClass("mcp-validation-status--error");
     expect(screen.getByTestId("mcp-validation-bad")).toHaveTextContent("HTTP 503");
+  });
+
+  it("renders discovered MCP regions in both global and project cards", async () => {
+    mockFetch({}, { global: discoveredResponse("global"), project: discoveredResponse("project") });
+    render(<GlobalMcpSection scopeBanner={<div>Global scope</div>} form={{} as Settings} setForm={vi.fn()} addToast={vi.fn()} />);
+    const globalDiscovery = await screen.findByTestId("mcp-discovery-global");
+    expect(within(globalDiscovery).getByText("Discovered on this machine")).toBeInTheDocument();
+    expect(within(globalDiscovery).getByText("global-plain")).toBeInTheDocument();
+    cleanup();
+
+    render(<ProjectMcpSection scopeBanner={<div>Project scope</div>} form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
+    const projectDiscovery = await screen.findByTestId("mcp-discovery-project");
+    expect(within(projectDiscovery).getByText("VS Code project")).toBeInTheDocument();
+    expect(within(projectDiscovery).getByText("project source: skipped malformed config")).toBeInTheDocument();
+  });
+
+  it("adds discovered servers, opens secret binding for sensitive entries, and disables configured entries", async () => {
+    mockFetch({}, { project: discoveredResponse("project") });
+    const { getForm } = renderCard({
+      scope: "project",
+      form: { mcpServers: { enabled: false, servers: [{ name: "project-configured", transport: "stdio", command: "configured-mcp" }] } } as Settings,
+    });
+
+    const plainRow = await screen.findByTestId("mcp-discovery-row-project-project-source-project-plain");
+    fireEvent.click(within(plainRow).getByRole("button", { name: /^Add$/i }));
+    await waitFor(() => expect(screen.getByTestId("mcp-server-row-project-plain")).toBeInTheDocument());
+    expect(getForm().mcpServers?.enabled).toBe(true);
+    expect(getForm().mcpServers?.servers?.find((server) => server.name === "project-plain")).toMatchObject({ command: "plain-mcp" });
+
+    const secureRow = screen.getByTestId("mcp-discovery-row-project-project-source-project-secure");
+    fireEvent.click(within(secureRow).getByRole("button", { name: /^Add$/i }));
+    expect(await screen.findByTestId("mcp-server-editor")).toBeInTheDocument();
+    expect(screen.getByText(/Bind or create Fusion secret references/i)).toBeInTheDocument();
+    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove secret reference/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    expect(screen.getByText(/Bind or create Fusion secret references/i)).toBeInTheDocument();
+    expect(getForm().mcpServers?.servers?.find((server) => server.name === "project-secure")).toBeUndefined();
+    fireEvent.change(screen.getByLabelText("Secret reference"), { target: { value: "project:secret-token" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+    await screen.findByTestId("mcp-server-row-project-secure");
+    const saved = JSON.stringify(getForm().mcpServers);
+    expect(saved).toContain("secret-token");
+    expect(saved).not.toContain("typed-secret");
+
+    const configuredRow = screen.getByTestId("mcp-discovery-row-project-project-source-project-configured");
+    expect(configuredRow).toHaveTextContent("Configured");
+    expect(within(configuredRow).getByRole("button", { name: /^Configured$/i })).toBeDisabled();
+  });
+
+  it("renders empty discovery and mobile controls without empty button shells", async () => {
+    mockFetch({}, { project: { sources: [], servers: [], errors: [] } });
+    renderCard({ scope: "project", form: {} as Settings });
+    const discovery = await screen.findByTestId("mcp-discovery-project");
+    expect(within(discovery).getByText("No MCP servers found in supported tool configs yet.")).toBeInTheDocument();
+    for (const button of within(discovery).getAllByRole("button")) {
+      expect(button.textContent?.trim() || button.getAttribute("aria-label") || "").not.toBe("");
+    }
   });
 
   it("imports Claude JSON through secret creation and exports Fusion JSON", async () => {

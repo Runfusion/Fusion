@@ -299,6 +299,7 @@ export {
 export { reviewStep, type ReviewType, type ReviewVerdict, type ReviewResult, type ReviewOptions } from "./reviewer.js";
 export { createFnAgent, promptWithFallback, describeModel, setHostExtensionPaths, getHostExtensionPaths, type AgentOptions, type AgentResult } from "./pi.js";
 export { resolveMcpServersForRuntime, resolveMcpServersForStore, type ResolvedMcpServersForRuntime } from "./mcp-resolution.js";
+export { discoverMcpServers, type DiscoverMcpServersOptions, type DiscoverMcpServersResult } from "./mcp-discovery-service.js";
 export { runtimeSupportsMcp, logMcpForwardingSkipped } from "./mcp-runtime-support.js";
 export { validateMcpServer, type McpValidationResult, type ValidateMcpServerOptions } from "./mcp-validation-service.js";
 export {

@@ -1,5 +1,5 @@
 import "./McpServersCard.css";
-import { Download, Pencil, Play, Plus, Trash2, Upload } from "lucide-react";
+import { Download, Pencil, Play, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -44,6 +44,7 @@ interface SensitiveRowDraft {
   scope: SecretScope;
   createKey: string;
   createValue: string;
+  required: boolean;
 }
 
 interface EditorDraft {
@@ -61,6 +62,27 @@ interface EditorDraft {
 interface ValidateState {
   status: ValidationStatus;
   message?: string;
+}
+
+interface DiscoveredMcpSecretDescriptor {
+  field: "env" | "headers" | "token";
+  key: string;
+  suggestedKey: string;
+  scope: SecretScope;
+}
+
+interface DiscoveredMcpServerEntry {
+  source: { id: string; tool: string; label: string; scope: McpSettingsScope; path: string };
+  definition: McpServerDefinition;
+  alreadyConfigured: boolean;
+  hasPlaintextSecrets?: boolean;
+  secretDescriptors: DiscoveredMcpSecretDescriptor[];
+}
+
+interface DiscoveredMcpResponse {
+  sources: Array<{ id: string; tool: string; label: string; scope: McpSettingsScope; path: string }>;
+  servers: DiscoveredMcpServerEntry[];
+  errors: string[];
 }
 
 export interface McpServersCardProps {
@@ -97,6 +119,7 @@ function sensitiveRowsFromMap(values: Record<string, unknown> | undefined): Sens
       scope: ref.scope,
       createKey: key,
       createValue: "",
+      required: false,
     };
   });
 }
@@ -125,6 +148,21 @@ function draftFromServer(server?: McpServerDefinition): EditorDraft {
     env: server.transport === "stdio" ? sensitiveRowsFromMap(server.env) : [],
     headers: server.transport === "stdio" ? [] : sensitiveRowsFromMap(server.headers),
   };
+}
+
+function draftFromDiscoveredServer(server: McpServerDefinition, descriptors: DiscoveredMcpSecretDescriptor[]): EditorDraft {
+  const draft = draftFromServer(server);
+  /* FNXC:McpConfig 2026-06-26-10:45: Discovered sensitive env/header/token descriptors are required placeholders, not optional editable rows; operators must bind each descriptor to a Fusion secret reference before the server can be saved. */
+  const rowsFor = (field: "env" | "headers") => descriptors.filter((descriptor) => descriptor.field === field || (field === "headers" && descriptor.field === "token")).map((descriptor) => ({
+    id: nextRowId(),
+    key: descriptor.key,
+    secretRef: "",
+    scope: descriptor.scope,
+    createKey: descriptor.suggestedKey,
+    createValue: "",
+    required: true,
+  }));
+  return server.transport === "stdio" ? { ...draft, env: rowsFor("env") } : { ...draft, headers: rowsFor("headers") };
 }
 
 function sensitiveRowsToMap(rows: SensitiveRowDraft[]): Record<string, McpSecretRef> | undefined {
@@ -201,7 +239,7 @@ function getValidationLabel(status: ValidationStatus): string {
  * FNXC:McpConfig 2026-06-26-01:17:
  * Project MCP declarations override global servers by matching name and may save enabled:false tombstones to disable inherited global servers. The project card shows inherited, overridden, local, and disabled states so operators can see effective behavior before saving.
  */
-export function McpServersCard({ scope, form, setForm, globalSettings, addToast }: McpServersCardProps) {
+export function McpServersCard({ scope, form, setForm, globalSettings, projectId, addToast }: McpServersCardProps) {
   const { t } = useTranslation("app");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const settings = normalizeMcpSettings(form.mcpServers ?? EMPTY_MCP_SETTINGS);
@@ -216,6 +254,9 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
   const [importError, setImportError] = useState<string | null>(null);
   const [exportText, setExportText] = useState("");
   const [validateStates, setValidateStates] = useState<Record<string, ValidateState>>({});
+  const [discovered, setDiscovered] = useState<DiscoveredMcpResponse | null>(null);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null);
 
   const reloadSecrets = useCallback(async () => {
     try {
@@ -231,6 +272,25 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
     void reloadSecrets();
   }, [reloadSecrets]);
 
+  const scanDiscoveredServers = useCallback(async () => {
+    setDiscoveryLoading(true);
+    setDiscoveryError(null);
+    try {
+      const params = new URLSearchParams({ scope });
+      if (projectId) params.set("projectId", projectId);
+      setDiscovered(await requestJson<DiscoveredMcpResponse>(`/api/mcp/discovered?${params.toString()}`));
+    } catch (error) {
+      setDiscoveryError(error instanceof Error ? error.message : String(error));
+      setDiscovered({ sources: [], servers: [], errors: [] });
+    } finally {
+      setDiscoveryLoading(false);
+    }
+  }, [projectId, scope]);
+
+  useEffect(() => {
+    void scanDiscoveredServers();
+  }, [scanDiscoveredServers]);
+
   const effectiveServers = useMemo(
     () => scope === "project" ? resolveEffectiveMcpServers({ mcpServers: globalMcp }, { mcpServers: form.mcpServers }) : configuredServers.filter((server) => server.enabled !== false),
     [configuredServers, form.mcpServers, globalMcp, scope],
@@ -238,6 +298,16 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
 
   const globalByName = useMemo(() => new Map(globalServers.map((server) => [server.name, server])), [globalServers]);
   const projectByName = useMemo(() => new Map(configuredServers.map((server) => [server.name, server])), [configuredServers]);
+  const configuredNames = useMemo(() => new Set(configuredServers.map((server) => server.name)), [configuredServers]);
+  const discoveredGroups = useMemo(() => {
+    const groups = new Map<string, DiscoveredMcpServerEntry[]>();
+    for (const entry of discovered?.servers ?? []) {
+      const existing = groups.get(entry.source.label) ?? [];
+      existing.push(entry);
+      groups.set(entry.source.label, existing);
+    }
+    return [...groups.entries()];
+  }, [discovered?.servers]);
 
   const displayRows = useMemo(() => {
     if (scope === "global") return configuredServers.map((server): { server: McpServerDefinition; state: DisplayState } => ({ server, state: server.enabled === false ? "disabled" : "configured" }));
@@ -268,6 +338,11 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
   const saveServer = () => {
     if (!editor) return;
     setEditorError(null);
+    const unboundRequired = [...editor.env, ...editor.headers].filter((row) => row.required && (!row.key.trim() || !row.secretRef.trim()));
+    if (unboundRequired.length > 0) {
+      setEditorError(t("settings.mcp.discoverySecretsRequired", "Bind or create Fusion secret references before saving this discovered server."));
+      return;
+    }
     const parsed = validateMcpServerDefinitionDetailed(draftToServer(editor));
     if (!parsed.value) {
       setEditorError(parsed.errors.map((error) => error.message).join("; "));
@@ -296,6 +371,19 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
       delete next[name];
       return next;
     });
+  };
+
+  const addDiscoveredServer = (entry: DiscoveredMcpServerEntry) => {
+    if (configuredNames.has(entry.definition.name)) return;
+    /* FNXC:McpConfig 2026-06-26-10:31: Discovered MCP servers remain inert until this explicit Add action. Servers without sensitive fields can be copied into settings; servers with env/header/token descriptors open the editor with blank secret bindings so plaintext is never persisted. */
+    if (entry.secretDescriptors.length > 0 || entry.hasPlaintextSecrets) {
+      setEditor(draftFromDiscoveredServer(entry.definition, entry.secretDescriptors));
+      setEditorError(t("settings.mcp.discoverySecretsRequired", "Bind or create Fusion secret references before saving this discovered server."));
+      return;
+    }
+    const next = [...configuredServers.filter((server) => server.name !== entry.definition.name), entry.definition];
+    updateMcpSettings({ ...settings, enabled: true, servers: next });
+    addToast(t("settings.mcp.discoveredAdded", "Discovered MCP server added"), "success");
   };
 
   const disableInheritedServer = (name: string) => {
@@ -415,7 +503,8 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
       {rows.length === 0 ? <p className="mcp-empty-inline">{t("settings.mcp.noSensitiveRows", "No secret references configured.")}</p> : null}
       {rows.map((row) => (
         <div className="mcp-sensitive-row" key={row.id}>
-          <input className="input" aria-label={t("settings.mcp.sensitiveKey", "Sensitive field name")} value={row.key} onChange={(event) => setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, key: event.target.value } : candidate) })} placeholder={field === "env" ? "API_KEY" : "Authorization"} />
+          <input className="input" aria-label={t("settings.mcp.sensitiveKey", "Sensitive field name")} value={row.key} onChange={(event) => setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, key: event.target.value } : candidate) })} placeholder={field === "env" ? "API_KEY" : "Authorization"} readOnly={row.required} />
+          {row.required ? <span className="mcp-state-badge mcp-state-badge--required">{t("settings.mcp.requiredSecret", "Required")}</span> : null}
           <select className="select" aria-label={t("settings.mcp.secretReference", "Secret reference")} value={`${row.scope}:${row.secretRef}`} onChange={(event) => {
             const [nextScope, nextRef] = event.target.value.split(":");
             setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, scope: nextScope as SecretScope, secretRef: nextRef } : candidate) });
@@ -426,10 +515,10 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
           <input className="input" aria-label={t("settings.mcp.newSecretKey", "New secret key")} value={row.createKey} onChange={(event) => setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, createKey: event.target.value } : candidate) })} placeholder={t("settings.mcp.newSecretKey", "New secret key")} />
           <input className="input" type="password" aria-label={t("settings.mcp.newSecretValue", "New secret value (not stored in settings)")} value={row.createValue} onChange={(event) => setEditor((current) => current && { ...current, [field]: current[field].map((candidate) => candidate.id === row.id ? { ...candidate, createValue: event.target.value } : candidate) })} placeholder={t("settings.mcp.createSecretPlaceholder", "Create secret value")} />
           <button type="button" className="btn btn-sm touch-target" onClick={() => void createSecretForRow(row, field)}>{t("settings.mcp.createSecret", "Create secret")}</button>
-          <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeSensitive", "Remove secret reference")} onClick={() => setEditor((current) => current && { ...current, [field]: current[field].filter((candidate) => candidate.id !== row.id) })}><Trash2 aria-hidden="true" /></button>
+          {row.required ? null : <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeSensitive", "Remove secret reference")} onClick={() => setEditor((current) => current && { ...current, [field]: current[field].filter((candidate) => candidate.id !== row.id) })}><Trash2 aria-hidden="true" /></button>}
         </div>
       ))}
-      <button type="button" className="btn btn-sm touch-target" onClick={() => setEditor((current) => current && { ...current, [field]: [...current[field], { id: nextRowId(), key: "", secretRef: "", scope, createKey: "", createValue: "" }] })}><Plus aria-hidden="true" /> {t("settings.mcp.addSecretRef", "Add secret reference")}</button>
+      <button type="button" className="btn btn-sm touch-target" onClick={() => setEditor((current) => current && { ...current, [field]: [...current[field], { id: nextRowId(), key: "", secretRef: "", scope, createKey: "", createValue: "", required: false }] })}><Plus aria-hidden="true" /> {t("settings.mcp.addSecretRef", "Add secret reference")}</button>
       {secretsError ? <p className="form-error">{secretsError}</p> : null}
     </div>
   );
@@ -448,6 +537,37 @@ export function McpServersCard({ scope, form, setForm, globalSettings, addToast 
         <input type="checkbox" checked={settings.enabled === true} onChange={(event) => setEnabled(event.target.checked)} />
         {t("settings.mcp.enabled", "Enable MCP servers for this scope")}
       </label>
+
+      <div className="mcp-discovery card" data-testid={`mcp-discovery-${scope}`}>
+        <div className="mcp-discovery__header">
+          <div>
+            <h6>{t("settings.mcp.discoveryTitle", "Discovered on this machine")}</h6>
+            <p>{t("settings.mcp.discoveryDescription", "Read-only scan of Claude, Cursor, Windsurf, and VS Code MCP config files. Add a server to enable it in Fusion.")}</p>
+          </div>
+          <button type="button" className="btn btn-sm touch-target" onClick={() => void scanDiscoveredServers()} disabled={discoveryLoading}><RefreshCw aria-hidden="true" /> {discoveryLoading ? t("settings.mcp.scanning", "Scanning…") : t("settings.mcp.scanAgain", "Scan again")}</button>
+        </div>
+        {discoveryError ? <p className="form-error">{discoveryError}</p> : null}
+        {(discovered?.errors.length ?? 0) > 0 ? <div className="mcp-discovery__notes" role="note">{discovered?.errors.map((error) => <p key={error}>{error}</p>)}</div> : null}
+        {!discoveryLoading && discoveredGroups.length === 0 ? <p className="mcp-empty" data-testid={`mcp-discovery-empty-${scope}`}>{t("settings.mcp.discoveryEmpty", "No MCP servers found in supported tool configs yet.")}</p> : null}
+        {discoveredGroups.map(([label, entries]) => (
+          <div className="mcp-discovery__group" key={label}>
+            <div className="mcp-subheading">{label}</div>
+            {entries.map((entry) => {
+              const isConfigured = entry.alreadyConfigured || configuredNames.has(entry.definition.name);
+              return (
+                <article className="mcp-discovery-row" key={`${entry.source.id}:${entry.definition.name}`} data-testid={`mcp-discovery-row-${scope}-${entry.source.id}-${entry.definition.name}`}>
+                  <div className="mcp-server-row__main">
+                    <div className="mcp-server-row__titleline"><strong>{entry.definition.name}</strong><span className="mcp-transport-badge">{entry.definition.transport}</span>{isConfigured ? <span className="mcp-state-badge mcp-state-badge--configured">{t("settings.mcp.configuredBadge", "Configured")}</span> : null}</div>
+                    <p>{serverSummary(entry.definition)}</p>
+                    {entry.secretDescriptors.length > 0 ? <p className="mcp-discovery-row__note">{t("settings.mcp.discoverySecrets", "Requires Fusion secret references before saving.")}</p> : null}
+                  </div>
+                  <div className="mcp-server-row__actions"><button type="button" className="btn btn-sm touch-target" onClick={() => addDiscoveredServer(entry)} disabled={isConfigured}>{isConfigured ? t("settings.mcp.configured", "Configured") : t("settings.mcp.addDiscovered", "Add")}</button></div>
+                </article>
+              );
+            })}
+          </div>
+        ))}
+      </div>
 
       {displayRows.length === 0 ? <p className="mcp-empty" data-testid={`mcp-empty-${scope}`}>{t("settings.mcp.empty", "No MCP servers configured.")}</p> : (
         <div className="mcp-server-list">
