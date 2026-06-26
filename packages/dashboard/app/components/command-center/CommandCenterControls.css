@@ -114,6 +114,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+.cc-controls-range-wrap {
+  --cc-controls-range-thumb-size: var(--space-md);
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* FNXC:GlobalConcurrencyControls 2026-06-26-00:00: The Command Center current-use marker mirrors the footer marker, reuses the status-dot convention, uses logical inline positioning for RTL, and never intercepts range drags. */
+.cc-controls-use-marker {
+  --use-pct: 0%;
+  --use-offset: 0%;
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--use-offset, var(--use-pct));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 /*
 FNXC:CommandCenter 2026-06-20-00:25:
 Mobile users must be able to drag horizontal concurrency sliders without the page scroll gesture stealing the thumb movement. Scope touch-action to these range inputs and preserve desktop accent/full-width behavior while increasing the hit area with design tokens.
@@ -141,6 +159,10 @@ Mobile users must be able to drag horizontal concurrency sliders without the pag
 
   .cc-controls-sliders {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cc-controls-range-wrap {
+    --cc-controls-range-thumb-size: var(--space-xl);
   }
 
   .cc-controls-slider input[type="range"],

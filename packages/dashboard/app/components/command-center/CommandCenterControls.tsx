@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Power } from "lucide-react";
 import { DEFAULT_PROJECT_SETTINGS, type ColorTheme, type ThemeMode } from "@fusion/core";
@@ -60,6 +60,18 @@ function clamp(value: number, min: number, max: number) {
 
 function getConcurrencySliderMax(key: keyof ConcurrencyValues, value: number) {
   return Math.max(CONCURRENCY_SLIDER_LIMITS[key].max, value);
+}
+
+function getUseMarkerRatio(current: number, min: number, max: number) {
+  if (max <= min) return 0;
+  return clamp((current - min) / (max - min), 0, 1);
+}
+
+function getUseMarkerStyle(ratio: number): CSSProperties {
+  return {
+    "--use-pct": `${ratio * 100}%`,
+    "--use-offset": `calc((var(--cc-controls-range-thumb-size) / 2) + ((100% - var(--cc-controls-range-thumb-size)) * ${ratio}))`,
+  } as CSSProperties;
 }
 
 function StatusPill({ paused, label }: { paused: boolean; label: string }) {
@@ -149,6 +161,11 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
 
   const effectiveGlobalPaused = globalPaused;
   const concurrencyValues = concurrencyState.data ?? DEFAULT_CONCURRENCY_VALUES;
+  const globalCountsLoaded = gc.status === "loaded";
+  const projectActive = gc.projectActiveCount(projectId);
+  const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
+  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, gc.min, gc.sliderMax);
+  const projectUseMarkerRatio = getUseMarkerRatio(projectActive, CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min, maxConcurrentSliderMax);
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Mirror the per-project slider save-state labels for the shared global cap.
   // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Explicit load-error branch — a failed initial load leaves saveState "idle", so the label otherwise fell through to "Ready" while the slider was disabled and an error alert shown.
   const globalSaveLabel = gc.status === "loading" || gc.status === "idle"
@@ -260,22 +277,41 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
             FNXC:GlobalConcurrencyControls 2026-06-25-14:10:
             Operators need to adjust the global cross-project concurrency cap from the footer engine menu and the dashboard Concurrency card, not just the Settings modal; global cap is distinct from per-project maxConcurrent and persists via the central /api/global-concurrency endpoint.
             */}
+            {/**
+              FNXC:GlobalConcurrencyControls 2026-06-26-00:00:
+              The Command Center Concurrency card mirrors the footer's read-only utilization readouts from the shared global-concurrency hook. These counts are display-only capacity context and must never write running-agent totals back to settings.
+            */}
             <label className="cc-controls-slider cc-controls-slider--global" htmlFor="cc-global-max-concurrent">
               <span className="cc-controls-slider-label">
                 {t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent")}
                 <strong>{gc.value}</strong>
               </span>
               <small className="cc-controls-slider-caption">{t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects")}</small>
-              <input
-                id="cc-global-max-concurrent"
-                className="cc-controls-touch-slider"
-                type="range"
-                min={gc.min}
-                max={gc.sliderMax}
-                value={gc.value}
-                disabled={!gc.interactive}
-                onChange={(event) => gc.setValue(event.target.value)}
-              />
+              {globalCountsLoaded ? (
+                <small className="cc-controls-slider-caption" data-testid="cc-global-running">
+                  {t("commandCenter.controls.concurrency.runningGlobal", "{{count}} running (all projects)", { count: gc.currentlyActive })}
+                </small>
+              ) : null}
+              <span className="cc-controls-range-wrap">
+                <input
+                  id="cc-global-max-concurrent"
+                  className="cc-controls-touch-slider"
+                  type="range"
+                  min={gc.min}
+                  max={gc.sliderMax}
+                  value={gc.value}
+                  disabled={!gc.interactive}
+                  onChange={(event) => gc.setValue(event.target.value)}
+                />
+                {globalCountsLoaded ? (
+                  <span
+                    className="status-dot status-dot--online cc-controls-use-marker"
+                    style={getUseMarkerStyle(globalUseMarkerRatio)}
+                    data-testid="cc-global-use-marker"
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </span>
               {/* FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Surface the shared cap's save-state (and a fetch-error message that the card previously lacked) so operators see Saving…/Saved/Save failed and know when the slider is non-interactive due to a load failure. */}
               <span className={`cc-controls-save-state cc-controls-save-state--${gc.saveState}`} aria-live="polite">
                 {globalSaveLabel}
@@ -287,21 +323,36 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
                 {t("commandCenter.controls.concurrency.maxConcurrent", "Max concurrent tasks")}
                 <strong>{concurrencyValues.maxConcurrent}</strong>
               </span>
-              <input
-                id="cc-max-concurrent"
-                className="cc-controls-touch-slider"
-                type="range"
-                min={CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min}
-                max={getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent)}
-                value={concurrencyValues.maxConcurrent}
-                disabled={concurrencyState.status === "loading"}
-                onChange={(event) => updateConcurrencyValue(
-                  "maxConcurrent",
-                  event.target.value,
-                  CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min,
-                  getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent),
-                )}
-              />
+              {globalCountsLoaded ? (
+                <small className="cc-controls-slider-caption" data-testid="cc-project-running">
+                  {t("commandCenter.controls.concurrency.runningProject", "{{count}} running (this project)", { count: projectActive })}
+                </small>
+              ) : null}
+              <span className="cc-controls-range-wrap">
+                <input
+                  id="cc-max-concurrent"
+                  className="cc-controls-touch-slider"
+                  type="range"
+                  min={CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min}
+                  max={maxConcurrentSliderMax}
+                  value={concurrencyValues.maxConcurrent}
+                  disabled={concurrencyState.status === "loading"}
+                  onChange={(event) => updateConcurrencyValue(
+                    "maxConcurrent",
+                    event.target.value,
+                    CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min,
+                    maxConcurrentSliderMax,
+                  )}
+                />
+                {globalCountsLoaded ? (
+                  <span
+                    className="status-dot status-dot--online cc-controls-use-marker"
+                    style={getUseMarkerStyle(projectUseMarkerRatio)}
+                    data-testid="cc-project-use-marker"
+                    aria-hidden="true"
+                  />
+                ) : null}
+              </span>
             </label>
             <label className="cc-controls-slider" htmlFor="cc-max-triage-concurrent">
               <span className="cc-controls-slider-label">

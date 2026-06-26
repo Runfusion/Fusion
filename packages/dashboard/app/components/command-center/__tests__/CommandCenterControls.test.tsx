@@ -13,7 +13,9 @@ const commandCenterControlsCss = readFileSync(
 const mocks = vi.hoisted(() => ({
   fetchSettings: vi.fn(),
   fetchConfig: vi.fn(),
+  fetchGlobalConcurrency: vi.fn(),
   updateSettings: vi.fn(),
+  updateGlobalConcurrency: vi.fn(),
   toggleGlobalPause: vi.fn(),
   toggleEnginePause: vi.fn(),
   refresh: vi.fn(),
@@ -26,7 +28,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../../api/legacy", () => ({
   fetchSettings: mocks.fetchSettings,
   fetchConfig: mocks.fetchConfig,
+  fetchGlobalConcurrency: mocks.fetchGlobalConcurrency,
   updateSettings: mocks.updateSettings,
+  updateGlobalConcurrency: mocks.updateGlobalConcurrency,
 }));
 
 vi.mock("../../../hooks/useAppSettings", () => ({
@@ -64,7 +68,14 @@ beforeEach(() => {
   mocks.appSettings.enginePaused = false;
   mocks.fetchSettings.mockResolvedValue({ maxConcurrent: 2, maxTriageConcurrent: 2, maxWorktrees: 4 });
   mocks.fetchConfig.mockResolvedValue({ maxConcurrent: 2, rootDir: "/repo" });
+  mocks.fetchGlobalConcurrency.mockResolvedValue({
+    globalMaxConcurrent: 8,
+    currentlyActive: 3,
+    queuedCount: 0,
+    projectsActive: { "project-a": 2 },
+  });
   mocks.updateSettings.mockResolvedValue({});
+  mocks.updateGlobalConcurrency.mockResolvedValue({});
   mocks.refresh.mockResolvedValue(undefined);
 });
 
@@ -92,6 +103,103 @@ describe("CommandCenterControls", () => {
     fireEvent.click(screen.getByRole("button", { name: /stop ai engine/i }));
     expect(mocks.toggleGlobalPause).toHaveBeenCalledTimes(1);
     expect(mocks.toggleEnginePause).not.toHaveBeenCalled();
+  });
+
+  it("shows loaded global and current-project running counts and use markers", async () => {
+    renderControls("project-a");
+
+    await flushPromises();
+    const section = screen.getByTestId("cc-controls-concurrency");
+
+    expect(within(section).getByTestId("cc-global-running")).toHaveTextContent("3 running (all projects)");
+    expect(within(section).getByTestId("cc-project-running")).toHaveTextContent("2 running (this project)");
+    expect(within(section).getByTestId("cc-global-use-marker").style.getPropertyValue("--use-pct")).toBe(`${((3 - 1) / (32 - 1)) * 100}%`);
+    expect(within(section).getByTestId("cc-project-use-marker").style.getPropertyValue("--use-pct")).toBe(`${((2 - 1) / (50 - 1)) * 100}%`);
+    expect(within(section).queryAllByTestId(/cc-.*-use-marker/)).toHaveLength(2);
+  });
+
+  it("shows truthful zero or missing project running counts only after utilization loads", async () => {
+    mocks.fetchGlobalConcurrency.mockResolvedValueOnce({
+      globalMaxConcurrent: 8,
+      currentlyActive: 0,
+      queuedCount: 0,
+      projectsActive: {},
+    });
+    renderControls(undefined);
+
+    await flushPromises();
+    const section = screen.getByTestId("cc-controls-concurrency");
+
+    expect(within(section).getByTestId("cc-global-running")).toHaveTextContent("0 running (all projects)");
+    expect(within(section).getByTestId("cc-project-running")).toHaveTextContent("0 running (this project)");
+    expect(within(section).getByTestId("cc-global-use-marker").style.getPropertyValue("--use-pct")).toBe("0%");
+    expect(within(section).getByTestId("cc-project-use-marker").style.getPropertyValue("--use-pct")).toBe("0%");
+  });
+
+  it("clamps over-subscribed current-use markers while keeping truthful counts", async () => {
+    mocks.fetchSettings.mockResolvedValueOnce({ maxConcurrent: 4, maxTriageConcurrent: 2, maxWorktrees: 4 });
+    mocks.fetchGlobalConcurrency.mockResolvedValueOnce({
+      globalMaxConcurrent: 8,
+      currentlyActive: 60,
+      queuedCount: 0,
+      projectsActive: { "project-a": 60 },
+    });
+    renderControls("project-a");
+
+    await flushPromises();
+    const section = screen.getByTestId("cc-controls-concurrency");
+
+    expect(within(section).getByTestId("cc-global-running")).toHaveTextContent("60 running (all projects)");
+    expect(within(section).getByTestId("cc-project-running")).toHaveTextContent("60 running (this project)");
+    expect(within(section).getByTestId("cc-global-use-marker").style.getPropertyValue("--use-pct")).toBe("100%");
+    expect(within(section).getByTestId("cc-project-use-marker").style.getPropertyValue("--use-pct")).toBe("100%");
+  });
+
+  it("suppresses running counts before global utilization finishes loading", async () => {
+    let resolveGlobalConcurrency!: (value: { globalMaxConcurrent: number; currentlyActive: number; queuedCount: number; projectsActive: Record<string, number> }) => void;
+    mocks.fetchGlobalConcurrency.mockReturnValueOnce(new Promise((resolve) => {
+      resolveGlobalConcurrency = resolve;
+    }));
+    renderControls("project-a");
+    const section = screen.getByTestId("cc-controls-concurrency");
+
+    expect(within(section).queryByTestId("cc-global-running")).toBeNull();
+    expect(within(section).queryByTestId("cc-project-running")).toBeNull();
+    expect(within(section).queryByTestId("cc-global-use-marker")).toBeNull();
+    expect(within(section).queryByTestId("cc-project-use-marker")).toBeNull();
+
+    resolveGlobalConcurrency({ globalMaxConcurrent: 8, currentlyActive: 1, queuedCount: 0, projectsActive: {} });
+    await flushPromises();
+  });
+
+  it("suppresses running counts while global utilization is unavailable", async () => {
+    mocks.fetchGlobalConcurrency.mockRejectedValueOnce(new Error("global unavailable"));
+    renderControls("project-a");
+
+    await flushPromises();
+    const section = screen.getByTestId("cc-controls-concurrency");
+
+    expect(within(section).queryByTestId("cc-global-running")).toBeNull();
+    expect(within(section).queryByTestId("cc-project-running")).toBeNull();
+    expect(within(section).queryByTestId("cc-global-use-marker")).toBeNull();
+    expect(within(section).queryByTestId("cc-project-use-marker")).toBeNull();
+  });
+
+  it("persists shared global cap slider changes without mutating project settings", async () => {
+    renderControls("project-a");
+
+    await flushPromises();
+    const section = screen.getByTestId("cc-controls-concurrency");
+    const slider = within(section).getByLabelText(/global max concurrent/i);
+    fireEvent.change(slider, { target: { value: "10" } });
+
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    expect(mocks.updateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 10 });
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
 
   it("persists bounded concurrency slider changes and refreshes settings", async () => {
@@ -241,8 +349,11 @@ describe("CommandCenterControls", () => {
     }
     // jsdom cannot simulate whether a touch drag is captured by page scrolling, so this verifies the CSS contract that enables horizontal thumb drags on mobile.
     expect(commandCenterControlsCss).toContain("touch-action: pan-y");
+    expect(commandCenterControlsCss).toContain("pointer-events: none");
+    expect(commandCenterControlsCss).toContain("inset-inline-start: var(--use-offset, var(--use-pct))");
     expect(commandCenterControlsCss).toContain("@media (max-width: 768px)");
     expect(commandCenterControlsCss).toContain("min-block-size: var(--space-2xl)");
+    expect(commandCenterControlsCss).toContain("--cc-controls-range-thumb-size: var(--space-xl)");
   });
 
   it("shows save error indicator when concurrency update fails", async () => {
