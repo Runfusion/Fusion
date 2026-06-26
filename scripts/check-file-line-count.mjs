@@ -31,6 +31,9 @@ FN-7035 split the two new hard-cap crossers (`ChatView.core.test.tsx` and `notif
 
 FNXC:CI 2026-06-25-22:08:
 FN-7046 repaired the deferred `store.ts`/`types.ts` line-count drift by re-ratcheting only those two baseline ceilings after organic Code Review workflow-step and MCP configuration growth. Wholesale god-file shrink remains long-term deferred work for dedicated refactors, and unrelated line-count violations must not be bundled into this scoped repair.
+
+FNXC:CI 2026-06-25-23:10:
+FN-7050 repaired the `routes.ts`/`executor.ts` line-count drift by re-ratcheting only those two baseline ceilings after organic execution-lane model growth. Wholesale god-file shrink remains long-term deferred work for dedicated refactors, and this repair intentionally excludes FN-7046's `store.ts`/`types.ts` entries and FN-7044's `areas.test.tsx` split.
 */
 // Repo-wide guard: hand-written source files may not exceed a hard line-count
 // cap (MAX_LINES). This stops the next god-file from being born while leaving
