@@ -1469,7 +1469,26 @@ handing Vitest an empty/garbage positional set.
  * @param {{ projectRoot?: string }} [opts]
  * @returns {string[]}
  */
-export function existingChangedTestFilesInPackage(changedFiles, pkgDir, { projectRoot = rootDir } = {}) {
+/*
+FNXC:TestInfrastructure 2026-06-26-13:40:
+Existence checks for changed test files must anchor at the GIT REPO ROOT, not
+`rootDir` (which falls back to `process.cwd()`). `git diff --name-only` returns
+repo-root-relative paths regardless of the cwd it runs from, so joining them
+against a `rootDir` that is a package SUBDIR (script run from a package without
+FUSION_PROJECT_DIR) would form a doubled path (packages/x/packages/x/...), make
+`existsSync` false, and silently DROP live changed tests into the delegate path.
+Resolve the toplevel once via git so the check is correct from any cwd inside the
+repo; fall back to rootDir if git can't report a toplevel.
+*/
+let _repoToplevelCache;
+function repoRootForExistence() {
+  if (_repoToplevelCache !== undefined) return _repoToplevelCache;
+  const top = gitOutput(["rev-parse", "--show-toplevel"]);
+  _repoToplevelCache = top && top.trim() ? top.trim() : rootDir;
+  return _repoToplevelCache;
+}
+
+export function existingChangedTestFilesInPackage(changedFiles, pkgDir, { projectRoot = repoRootForExistence() } = {}) {
   return (changedFiles ?? []).filter(
     (file) =>
       isTestFilePath(file) &&
@@ -1794,7 +1813,7 @@ export async function main(argv = process.argv.slice(2)) {
           const log = gateCovered ? console.log : console.warn;
           log(
             `[test-changed] ${pkg}: a changed non-test source file (${wideSourceDesc}) ` +
-              "would fan `vitest --changed` out to ~the full suite at this heavy 1-worker lane; " +
+              "would fan `vitest --changed` out to ~the full suite at this heavy memory-envelope lane; " +
               `no directly-changed ${pkg} test file to run, so ${delegationNote}`,
           );
           continue;

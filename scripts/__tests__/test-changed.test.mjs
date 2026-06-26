@@ -370,7 +370,7 @@ test("@fusion/core is a wide-fan-out memory-envelope package but is NOT gate-cov
   );
 });
 
-test("core scoped-affected env applies the bounded heap and single-worker envelope", () => {
+test("core scoped-affected env applies the bounded heap and worker envelope", () => {
   const env = createScopedAffectedMemoryEnvelopeEnv(CORE_SCOPED_AFFECTED_PACKAGE, {
     NODE_OPTIONS: "--trace-warnings",
     HOME: "/tmp/fusion-home",
@@ -1974,6 +1974,14 @@ test("existingChangedTestFilesInPackage: excludes non-test and out-of-package pa
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// FNXC:TestInfrastructure 2026-06-26-13:40: regression for the doubled-path subdir
+// bug — with NO projectRoot passed, the existence root must resolve to the git repo
+// root (not cwd), so a real repo-relative test path is found from any cwd.
+test("existingChangedTestFilesInPackage: default existence root anchors at the git repo root", () => {
+  const selfRel = "scripts/__tests__/test-changed.test.mjs"; // this very file — guaranteed on disk
+  assert.deepEqual(existingChangedTestFilesInPackage([selfRel], "scripts"), [selfRel]);
 });
 
 // FNXC:TestInfrastructure 2026-06-26-09:15: the merge gate re-covers a delegated
