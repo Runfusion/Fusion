@@ -117,6 +117,11 @@ describe("TaskStore Archive and Search", () => {
       await expect(store.archiveTask(task.id)).rejects.toThrow("already archived");
     });
 
+    it("reports clean not-found when no DB row or task.json exists", async () => {
+      await expect(store.archiveTask("FN-7067")).rejects.toThrow("Task FN-7067 not found");
+      await expect(store.archiveTask("FN-7067")).rejects.not.toThrow(/ENOENT/);
+    });
+
     it("updates columnMovedAt timestamp", async () => {
       const task = await store.createTask({ description: "Test task" });
       await store.moveTask(task.id, "todo");

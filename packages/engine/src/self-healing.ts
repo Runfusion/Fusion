@@ -2113,6 +2113,20 @@ export class SelfHealingManager {
           },
         },
         {
+          name: "reconcile-phantom-committed-reservations",
+          fn: async () => {
+            /*
+             * FNXC:TaskStoreConsistency 2026-06-26-00:00:
+             * FN-7069 phantoms are committed task-id reservations without any task row or task.json. Maintenance must prune their orphaned child rows without resurrecting/freeing the ID, matching the startup reconcile.
+             */
+            const result = await this.store.reconcilePhantomCommittedReservations();
+            if (result.reconciled.length > 0) {
+              log.warn(`Maintenance batch 1 step "reconcile-phantom-committed-reservations" reconciled=${result.reconciled.length} skipped=${result.skipped.length}`);
+            }
+            return result;
+          },
+        },
+        {
           name: "cleanup-old-chats",
           fn: async () => {
             const days = Number(settings.chatAutoCleanupDays ?? 0);

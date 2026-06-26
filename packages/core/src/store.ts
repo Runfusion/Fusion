@@ -1956,6 +1956,14 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    try {
+      await this.reconcilePhantomCommittedReservations();
+    } catch (err) {
+      storeLog.warn("Phantom committed-reservation reconcile failed during init (non-fatal)", {
+        phase: "init:phantom-reservation-reconcile",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // Write config.json for backward compatibility if it doesn't exist
     if (!existsSync(this.configPath)) {
@@ -3507,6 +3515,90 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     return result;
   }
 
+  /**
+   * FNXC:TaskStoreConsistency 2026-06-26-00:00:
+   * FN-7069 reconciles committed reservation phantoms that have no live, soft-deleted, archived, or disk task. Preserve the committed reservation per FN-5105 so the distributed ID allocator never re-hands out the task ID, prune only orphaned child state, and keep runAuditEvents as the durable audit trail.
+   */
+  async reconcilePhantomCommittedReservations(): Promise<{
+    reconciled: string[];
+    skipped: Array<{ id: string; reason: string }>;
+  }> {
+    const result: { reconciled: string[]; skipped: Array<{ id: string; reason: string }> } = {
+      reconciled: [],
+      skipped: [],
+    };
+
+    if (this.inMemoryDb) {
+      return result;
+    }
+
+    const reservations = this.db
+      .prepare(
+        `SELECT taskId, status
+           FROM distributed_task_id_reservations
+          WHERE status = 'committed'
+          ORDER BY prefix, sequence`,
+      )
+      .all() as Array<{ taskId: string; status: "committed" }>;
+
+    for (const reservation of reservations) {
+      const id = reservation.taskId;
+      if (this.readTaskFromDb(id, { includeDeleted: true })) {
+        result.skipped.push({ id, reason: "task-row-present" });
+        continue;
+      }
+      if (this.isTaskIdPresentInArchivedTasksTable(id) || this.archiveDb.get(id) !== undefined) {
+        result.skipped.push({ id, reason: "archived-task-present" });
+        continue;
+      }
+
+      const taskJsonPath = join(this.taskDir(id), "task.json");
+      if (existsSync(taskJsonPath)) {
+        result.skipped.push({ id, reason: "task-json-present" });
+        continue;
+      }
+
+      try {
+        this.db.transactionImmediate(() => {
+          const prunedActivityLog = this.db.prepare("DELETE FROM activityLog WHERE taskId = ?").run(id).changes;
+          this.db.prepare("DELETE FROM agentRuns WHERE agentId IN (SELECT id FROM agents WHERE taskId = ?)").run(id);
+          const prunedAgents = this.db.prepare("DELETE FROM agents WHERE taskId = ?").run(id).changes;
+          this.insertRunAuditEventRow({
+            mutationType: "task:reconcile-phantom-committed-reservation",
+            taskId: id,
+            domain: "database",
+            target: id,
+            metadata: {
+              reservationStatus: reservation.status,
+              prunedActivityLog,
+              prunedAgents,
+            },
+          });
+          if (prunedActivityLog > 0 || prunedAgents > 0) {
+            this.db.bumpLastModified();
+          }
+        });
+      } catch (error) {
+        const reason = `reconcile-failed: ${error instanceof Error ? error.message : String(error)}`;
+        result.skipped.push({ id, reason });
+        storeLog.warn("Skipping phantom committed-reservation reconcile after non-fatal error", {
+          phase: "reconcilePhantomCommittedReservations:prune",
+          taskId: id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+
+      result.reconciled.push(id);
+      storeLog.warn("Reconciled phantom committed task-id reservation", {
+        phase: "reconcilePhantomCommittedReservations:reconciled",
+        taskId: id,
+      });
+    }
+
+    return result;
+  }
+
   private async readTaskJson(dir: string): Promise<Task> {
     const id = this.getTaskIdFromDir(dir);
 
@@ -3520,7 +3612,19 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
     // Fallback to file-based reading (for legacy compatibility when no DB row exists).
     const filePath = join(dir, "task.json");
-    const raw = await readFile(filePath, "utf-8");
+    let raw: string;
+    try {
+      raw = await readFile(filePath, "utf-8");
+    } catch (err) {
+      /*
+       * FNXC:TaskStoreConsistency 2026-06-26-00:00:
+       * FN-7069 requires a task with no SQLite row and no legacy task.json to report the same clean not-found family as DB-first callers. Do not leak raw ENOENT paths to archive/get-style surfaces for phantom committed reservations.
+       */
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Task ${id} not found`);
+      }
+      throw err;
+    }
     try {
       return this.normalizeTaskFromDisk(JSON.parse(raw) as Task);
     } catch (err) {
