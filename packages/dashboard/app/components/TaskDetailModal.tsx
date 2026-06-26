@@ -10,7 +10,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { sharedRehypePlugins, createMermaidCodeComponent } from "./markdownPipeline";
-import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, AgentLogEntry, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, TaskAttachment, Column, ColumnId, MergeResult, Settings, GlobalSettings, Agent, TaskPriority, TaskSourceIssue, WorkflowStepResult, GithubIssueAction } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
@@ -18,9 +18,6 @@ import {
   VALID_TRANSITIONS,
   isColumn,
   getErrorMessage,
-  resolveTaskExecutionModel,
-  resolveTaskPlanningModel,
-  resolveTaskValidatorModel,
 } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
@@ -66,13 +63,8 @@ import { getTaskAgeStalenessCopy } from "../utils/taskAgeStalenessCopy";
 import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/findInReviewStallLogEntry";
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
+import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
 
-interface ModelSelection {
-  provider?: string;
-  modelId?: string;
-}
-
-const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
 const STALE_PAUSED_REVIEW_LOG_REGEX = /^Stale paused review surfaced \[([^\]]+)\]/;
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
 const STRING_OBJECT_TAG = "[object String]";
@@ -107,35 +99,6 @@ const markdownLinkifyComponents: Components = {
   code: createMermaidCodeComponent("task-detail-mermaid-diagram", markdownLinkifyCodeComponent),
 };
 
-/**
- * Resolve the effective executor model following the engine's resolution order:
- * 1. Per-task modelProvider/modelId (both must be set)
- * 2. Project/global execution lane fallback
- */
-function extractExecutorModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {
-  let result: { provider: string; modelId: string } | null = null;
-  entries.forEach((entry) => {
-    if (entry.agent !== "executor" || entry.type !== "text") return;
-    const match = entry.text.match(/^Executor using model: (.+?)\/(.+)$/);
-    if (match) {
-      result = { provider: match[1], modelId: match[2] };
-    }
-  });
-  return result;
-}
-
-function extractReviewerModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {
-  let result: { provider: string; modelId: string } | null = null;
-  entries.forEach((entry) => {
-    if (entry.agent !== "reviewer" || entry.type !== "text") return;
-    const match = entry.text.match(/^Reviewer using model: (.+?)\/(.+)$/);
-    if (match) {
-      result = { provider: match[1], modelId: match[2] };
-    }
-  });
-  return result;
-}
-
 function hasUsableTrackingTitle(task: { title?: string | null; description?: string | null }): boolean {
   if ((task.title ?? "").trim().length > 0) {
     return true;
@@ -147,121 +110,6 @@ function hasUsableTrackingTitle(task: { title?: string | null; description?: str
     .find((line) => line.length > 0);
 
   return Boolean(firstMeaningfulLine);
-}
-
-function extractAssignedRuntimeModel(agent: Agent | null | undefined): ModelSelection {
-  const runtimeConfig = (agent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined;
-  const model = isStringValue(runtimeConfig?.model) ? runtimeConfig.model.trim() : "";
-  if (model) {
-    const slashIdx = model.indexOf("/");
-    if (slashIdx > 0 && slashIdx < model.length - 1) {
-      return {
-        provider: model.slice(0, slashIdx),
-        modelId: model.slice(slashIdx + 1),
-      };
-    }
-  }
-
-  const provider = isStringValue(runtimeConfig?.modelProvider) ? runtimeConfig.modelProvider.trim() : "";
-  const modelId = isStringValue(runtimeConfig?.modelId) ? runtimeConfig.modelId.trim() : "";
-  return {
-    provider: provider || undefined,
-    modelId: modelId || undefined,
-  };
-}
-
-/**
- * Resolve the effective executor model following the engine's resolution order:
- * 1. Runtime executor model from agent log marker
- * 2. Assigned agent runtime model (active runs only)
- * 3. Per-task modelProvider/modelId override
- * 4. Project/global execution lane fallback
- */
-function resolveEffectiveExecutor(
-  task: Task | TaskDetail,
-  logEntries: AgentLogEntry[],
-  assignedAgent: Agent | null,
-  settings?: Settings,
-): ModelSelection {
-  const fromLog = extractExecutorModelFromLog(logEntries);
-  if (fromLog) return fromLog;
-
-  if (ACTIVE_STATUSES.has(task.status ?? "") || task.column === "in-progress") {
-    const assignedModel = extractAssignedRuntimeModel(assignedAgent);
-    if (assignedModel.provider && assignedModel.modelId) {
-      return assignedModel;
-    }
-  }
-
-  return resolveTaskExecutionModel(task, settings);
-}
-
-/**
- * Resolve the effective validator model following the engine's resolution order:
- * 1. Runtime reviewer model from agent log marker
- * 2. Assigned agent runtime model (active runs only)
- * 3. Per-task validatorModelProvider/validatorModelId override
- * 4. Project/global validator lane fallback
- */
-function resolveEffectiveValidator(
-  task: Task | TaskDetail,
-  logEntries: AgentLogEntry[],
-  assignedAgent: Agent | null,
-  settings?: Settings,
-): ModelSelection {
-  const fromLog = extractReviewerModelFromLog(logEntries);
-  if (fromLog) return fromLog;
-
-  if (ACTIVE_STATUSES.has(task.status ?? "") || task.column === "in-progress") {
-    const assignedModel = extractAssignedRuntimeModel(assignedAgent);
-    if (assignedModel.provider && assignedModel.modelId) {
-      return assignedModel;
-    }
-  }
-
-  return resolveTaskValidatorModel(task, settings);
-}
-
-/**
- * Extract planning model from agent log entries.
- * Looks for text entries with agent role "triage" matching the pattern:
- *   "Triage using model: <provider>/<modelId>"
- * Returns the latest match, or null if none found.
- */
-function extractPlanningModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {
-  // Iterate in chronological order; last match wins
-  let result: { provider: string; modelId: string } | null = null;
-  entries.forEach((entry) => {
-    if (entry.agent !== "triage" || entry.type !== "text") return;
-    const match = entry.text.match(/^Triage using model: (.+?)\/(.+)$/);
-    if (match) {
-      result = { provider: match[1], modelId: match[2] };
-    }
-  });
-  return result;
-}
-
-/**
- * Resolve the effective planning model following the resolution order:
- * 1. Per-task planningModelProvider/planningModelId override
- * 2. Runtime triage model from agent log marker (if present)
- * 3. Project/global planning lane fallback
- */
-function resolveEffectivePlanning(
-  task: Task | TaskDetail,
-  logEntries: AgentLogEntry[],
-  settings?: Settings,
-): ModelSelection {
-  // 1. Per-task override takes precedence
-  if (task.planningModelProvider && task.planningModelId) {
-    return { provider: task.planningModelProvider, modelId: task.planningModelId };
-  }
-  // 2. Runtime triage model from agent log marker
-  const fromLog = extractPlanningModelFromLog(logEntries);
-  if (fromLog) {
-    return fromLog;
-  }
-  return resolveTaskPlanningModel(task, settings);
 }
 
 function toTaskChatModelInfo(model: ModelSelection): { provider: string; modelId?: string } | null {
@@ -3292,6 +3140,8 @@ export function TaskDetailContent({
                 taskStatus={task.status}
                 taskPausedReason={task.pausedReason}
                 settings={settings}
+                agentLogEntries={agentLogEntries}
+                assignedAgent={assignedAgent}
                 onEditWorkflow={onOpenWorkflowEditor}
               />
             </div>

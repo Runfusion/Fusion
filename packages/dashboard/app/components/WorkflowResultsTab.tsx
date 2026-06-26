@@ -11,8 +11,8 @@ import { Check, ChevronDown, ChevronRight, ChevronUp, Maximize2, Pencil, X } fro
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
-import type { AgentLogEntry, Settings, Task, TaskDetail, WorkflowDefinition, WorkflowStep, WorkflowStepResult, ResolvedWorkflowOptionalStep } from "@fusion/core";
-import { getErrorMessage, resolveTaskExecutionModel, resolveTaskPlanningModel, resolveTaskValidatorModel } from "@fusion/core";
+import type { Agent, AgentLogEntry, Settings, Task, TaskDetail, WorkflowDefinition, WorkflowStep, WorkflowStepResult, ResolvedWorkflowOptionalStep } from "@fusion/core";
+import { getErrorMessage } from "@fusion/core";
 import { approveTaskWorkflowCli, fetchBoardWorkflows, fetchWorkflow, fetchWorkflows, fetchWorkflowSteps, fetchTaskWorkflow, fetchWorkflowOptionalSteps, selectTaskWorkflow, submitTaskWorkflowInput } from "../api";
 import { WorkflowSelector } from "./WorkflowSelector";
 import { phaseBadge } from "./workflow-phase-badge";
@@ -22,6 +22,7 @@ import { irToFlow } from "./workflow-flow-mapping";
 import { workflowNodeTypes } from "./nodes/WorkflowNodeTypes";
 import type { Components } from "react-markdown";
 import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
+import { resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator } from "./effective-model-resolution";
 
 // Markdown rendering components for workflow output
 const markdownComponents: Components = {
@@ -59,6 +60,8 @@ interface WorkflowResultsTabProps {
   taskStatus?: string;
   taskPausedReason?: string;
   settings?: Settings;
+  agentLogEntries?: AgentLogEntry[];
+  assignedAgent?: Agent | null;
   onEditWorkflow?: () => void;
   /** U5 (R20): called after a workflow switch affects board placement
    *  (any reconciliation result) so the board can refresh before the SSE
@@ -310,6 +313,8 @@ export function WorkflowResultsTab({
   taskStatus,
   taskPausedReason,
   settings,
+  agentLogEntries = [],
+  assignedAgent = null,
   onEditWorkflow,
   onWorkflowReconciled,
 }: WorkflowResultsTabProps) {
@@ -608,9 +613,9 @@ export function WorkflowResultsTab({
   const completedStepCount = useMemo(() => results.filter((result) => ["passed", "skipped", "failed", "advisory_failure"].includes(result.status)).length, [results]);
   const graphWorkflow = graphCacheKey ? workflowGraphCache[graphCacheKey] : undefined;
   const graphFlow = useMemo(() => (graphWorkflow ? irToFlow(graphWorkflow) : null), [graphWorkflow]);
-  const effectiveExecutor = useMemo(() => (task ? resolveTaskExecutionModel(task, settings) : undefined), [task, settings]);
-  const effectiveValidator = useMemo(() => (task ? resolveTaskValidatorModel(task, settings) : undefined), [task, settings]);
-  const effectivePlanning = useMemo(() => (task ? resolveTaskPlanningModel(task, settings) : undefined), [task, settings]);
+  const effectiveExecutor = useMemo(() => (task ? resolveEffectiveExecutor(task, agentLogEntries, assignedAgent, settings) : undefined), [agentLogEntries, assignedAgent, task, settings]);
+  const effectiveValidator = useMemo(() => (task ? resolveEffectiveValidator(task, agentLogEntries, assignedAgent, settings) : undefined), [agentLogEntries, assignedAgent, task, settings]);
+  const effectivePlanning = useMemo(() => (task ? resolveEffectivePlanning(task, agentLogEntries, settings) : undefined), [agentLogEntries, task, settings]);
 
   const renderEditor = () => {
     if (!canEdit || !isEditing || loading) {
