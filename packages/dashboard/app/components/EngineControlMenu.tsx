@@ -171,9 +171,12 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
   };
 
   const concurrencyValues = concurrencyState.data ?? DEFAULT_CONCURRENCY_VALUES;
-  // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Mirror the per-project slider save-state labels for the shared global cap (Loading…/Saving…/Saved/Save failed/Ready).
+  // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Mirror the per-project slider save-state labels for the shared global cap (Loading…/Load failed/Saving…/Saved/Save failed/Ready).
+  // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: A failed initial load leaves saveState "idle", so without an explicit error branch the label fell through to "Ready" while the slider was disabled and an error alert was shown. Surface the load error instead.
   const globalSaveLabel = gc.status === "loading" || gc.status === "idle"
     ? t("commandCenter.controls.status.loading", "Loading…")
+    : gc.status === "error"
+    ? t("commandCenter.controls.status.loadError", "Load failed")
     : gc.saveState === "saving"
       ? t("commandCenter.controls.status.saving", "Saving…")
       : gc.saveState === "saved"

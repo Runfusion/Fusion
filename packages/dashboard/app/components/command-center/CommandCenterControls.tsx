@@ -150,8 +150,11 @@ export function CommandCenterControls({ projectId, colorTheme, themeMode, shadcn
   const effectiveGlobalPaused = globalPaused;
   const concurrencyValues = concurrencyState.data ?? DEFAULT_CONCURRENCY_VALUES;
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Mirror the per-project slider save-state labels for the shared global cap.
+  // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Explicit load-error branch — a failed initial load leaves saveState "idle", so the label otherwise fell through to "Ready" while the slider was disabled and an error alert shown.
   const globalSaveLabel = gc.status === "loading" || gc.status === "idle"
     ? t("commandCenter.controls.status.loading", "Loading…")
+    : gc.status === "error"
+    ? t("commandCenter.controls.status.loadError", "Load failed")
     : gc.saveState === "saving"
       ? t("commandCenter.controls.status.saving", "Saving…")
       : gc.saveState === "saved"

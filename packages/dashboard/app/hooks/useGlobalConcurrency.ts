@@ -100,8 +100,13 @@ export function useGlobalConcurrency(opts?: { activeWhen?: boolean }): UseGlobal
   const currentValue = (dirtyRef.current ? localValue : cache.value) ?? SLIDER_MIN;
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: sliderMax expands past the base cap so already-persisted values >32 still render truthfully.
   const sliderMax = Math.max(SLIDER_BASE_MAX, currentValue);
+  // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Track the current value in a ref so setValue (a stable useCallback) clamps against the real ceiling without going stale; used to give the clamp an actual upper bound.
+  const currentValueRef = useRef(currentValue);
+  currentValueRef.current = currentValue;
 
   const commit = useCallback((v: number) => {
+    // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Synchronously null the pending ref BEFORE the async PUT so the close-flush and unmount-cleanup guards (`dirtyRef && pendingValueRef != null`) are already false — otherwise a close-then-unmount within the in-flight window fires commit() twice and sends a duplicate PUT. dirtyRef stays true until the PUT resolves so the slider keeps showing the user's value (no snap-back) during save.
+    pendingValueRef.current = null;
     setSaveState("saving");
     void updateGlobalConcurrency({ globalMaxConcurrent: v })
       .then(() => {
@@ -119,7 +124,8 @@ export function useGlobalConcurrency(opts?: { activeWhen?: boolean }): UseGlobal
   }, []);
 
   const setValue = useCallback((raw: string) => {
-    const next = clamp(Number(raw), SLIDER_MIN, Math.max(SLIDER_BASE_MAX, Number(raw)));
+    // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Clamp against a real ceiling (base cap expanded only by the already-persisted value), not Number(raw) — the latter made the upper bound equal the input, so there was no effective ceiling and a programmatic caller could set an arbitrarily large cap.
+    const next = clamp(Number(raw), SLIDER_MIN, Math.max(SLIDER_BASE_MAX, currentValueRef.current));
     dirtyRef.current = true;
     pendingValueRef.current = next;
     setLocalValue(next);
@@ -131,10 +137,10 @@ export function useGlobalConcurrency(opts?: { activeWhen?: boolean }): UseGlobal
     }, DEBOUNCE_MS);
   }, [commit]);
 
-  // Fetch when activeWhen becomes true. `t` deliberately excluded so language changes never refetch/reset.
+  // FNXC:GlobalConcurrencyControls 2026-06-26-06:05: Force-revalidate each time the surface activates (menu opens / card mounts). The cap can be written out-of-band — notably the Settings modal persists globalMaxConcurrent directly via updateGlobalConcurrency() without going through this store — so a plain "fetch once then never again" cache would show a stale value after such a save. Forcing on activate keeps every consumer truthful; concurrent forces still dedupe via the in-flight promise. `t` deliberately excluded so language changes never refetch/reset.
   useEffect(() => {
     if (!activeWhen) return;
-    void ensureFetched();
+    void ensureFetched(true);
   }, [activeWhen]);
 
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: When the shared cache changes and we are not mid-edit, drop the local pending so the slider reflects the new shared value.
