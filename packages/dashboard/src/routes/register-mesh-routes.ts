@@ -449,7 +449,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       // ── Shared state sync: apply inbound domain snapshots independently ──
-      const { AgentStore, SHARED_STATE_DEFAULT_LIMIT, validateSnapshotEnvelope } = await import("@fusion/core");
+      const { AgentStore, SHARED_STATE_DEFAULT_LIMIT, validateSnapshotEnvelope, MissionStore } = await import("@fusion/core");
       const sharedState = req.body?.sharedState;
       if (sharedState && typeof sharedState === "object") {
         const missionStore = store.getMissionStore();
@@ -489,7 +489,14 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         await applyDomain("mission-hierarchy", async () => {
           if (!sharedState.missionHierarchy) return;
           validateSnapshotEnvelope(sharedState.missionHierarchy);
-          missionStore.applyMissionHierarchySnapshot(sharedState.missionHierarchy as Parameters<typeof missionStore.applyMissionHierarchySnapshot>[0]);
+          // FNXC:MissionStore 2026-06-27-15:45:
+          // applyMissionHierarchySnapshot is sync-only (mesh replication). In PG
+          // backend mode getMissionStore() returns the AsyncMissionStore which does
+          // not implement it; guard with instanceof and skip — mission mesh sync is
+          // a sync-mode-only capability this unit.
+          if (missionStore instanceof MissionStore) {
+            missionStore.applyMissionHierarchySnapshot(sharedState.missionHierarchy as Parameters<typeof missionStore.applyMissionHierarchySnapshot>[0]);
+          }
         });
 
         await applyDomain("agents", async () => {
@@ -587,7 +594,13 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
       };
 
       await collectSnapshot("taskMetadata", async () => store.getTaskMetadataSnapshot());
-      await collectSnapshot("missionHierarchy", async () => store.getMissionStore().getMissionHierarchySnapshot());
+      await collectSnapshot("missionHierarchy", async () => {
+        // FNXC:MissionStore 2026-06-27-15:45: getMissionHierarchySnapshot is sync-only;
+        // skip (undefined snapshot) when the PG AsyncMissionStore is active.
+        const { MissionStore: MissionStoreClass } = await import("@fusion/core");
+        const ms = store.getMissionStore();
+        return ms instanceof MissionStoreClass ? ms.getMissionHierarchySnapshot() : undefined;
+      });
       await collectSnapshot("activityLog", async () => store.getActivityLogSnapshot(SHARED_STATE_DEFAULT_LIMIT));
       await collectSnapshot("runAudit", async () => store.getRunAuditSnapshot({ limit: SHARED_STATE_DEFAULT_LIMIT }));
 

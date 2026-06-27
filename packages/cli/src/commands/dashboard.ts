@@ -23,6 +23,7 @@ import {
   mergeBuiltInZaiProviderModels,
   parseWorkflowIr,
   registerBuiltInZaiProvider,
+  MissionStore,
   type WorkflowIrColumn,
   type TraitFlags,
   createTaskStoreForBackend,
@@ -1520,7 +1521,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
    */
   let missionStore: import("@fusion/core").MissionStore | undefined;
   try {
-    missionStore = store.getMissionStore();
+    // FNXC:MissionStore 2026-06-27-16:15:
+    // MissionAutopilot + MissionExecutionLoop are coupled to the sync EventEmitter
+    // MissionStore. In PG backend mode getMissionStore() returns the AsyncMissionStore
+    // (CRUD-only); guard with instanceof and skip autopilot/loop init — mission
+    // lifecycle stays degraded in PG (mirrors InProcessRuntime).
+    const resolvedMissionStore = store.getMissionStore();
+    missionStore = resolvedMissionStore instanceof MissionStore ? resolvedMissionStore : undefined;
   } catch (msErr) {
     if (store.isBackendMode()) {
       logSink.log(

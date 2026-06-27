@@ -17,6 +17,7 @@ import { type DistributedTaskIdAllocator, createDistributedTaskIdAllocator } fro
 import { ExperimentSessionStore } from "../experiment-session-store.js";
 import { MasterKeyManager } from "../master-key.js";
 import { MissionStore } from "../mission-store.js";
+import { AsyncMissionStore } from "../async-mission-store.js";
 import { type PluginGateVerdict } from "../plugin-gate-verdict.js";
 import { PluginStore } from "../plugin-store.js";
 import { SecretsStore } from "../secrets-store.js";
@@ -818,18 +819,27 @@ export async function getTaskMergedTaskIdsImpl(store: TaskStore, options: { sinc
     return new Set(rows.map((row) => row.taskId));
 }
 
-export function getMissionStoreImpl(store: TaskStore): MissionStore {
+export function getMissionStoreImpl(store: TaskStore): MissionStore | AsyncMissionStore {
     if (!store.missionStore) {
-      /*
-       * FNXC:SqliteFinalRemoval 2026-06-24-15:50:
-       * In backend mode (PostgreSQL), the MissionStore has not been converted to
-       * use the AsyncDataLayer yet — it requires a sync SQLite Database handle.
-       * The InProcessRuntime catches the resulting error from store.db access and
-       * degrades gracefully (mission autopilot disabled). This is the expected
-       * boundary until the MissionStore is fully converted to async in a future
-       * session.
-       */
-      store.missionStore = new MissionStore(store.fusionDir, store.db, store);
+      // FNXC:MissionStore 2026-06-27-15:20:
+      // PG backend mode returns the AsyncDataLayer-backed AsyncMissionStore (mission
+      // hierarchy CRUD + status/validation rollups + triage over the project.* mission
+      // tables). The sync SQLite MissionStore (store.db) is used only in legacy SQLite
+      // mode. Both expose the same method names; the dashboard mission routes + goal→
+      // mission routes + CLI mission tools await the result so either works. The store
+      // reference is passed so triage can create/link tasks. Mission AUTOPILOT and live
+      // SSE mission events stay degraded in PG mode — the engine MissionAutopilot +
+      // dashboard SSE are coupled to the sync EventEmitter MissionStore and guard their
+      // init with `instanceof MissionStore`.
+      if (store.backendMode) {
+        const layer = store.getAsyncLayer();
+        if (!layer) {
+          throw new Error("MissionStore is not available: AsyncDataLayer not initialized in backend mode");
+        }
+        store.missionStore = new AsyncMissionStore(layer, store);
+      } else {
+        store.missionStore = new MissionStore(store.fusionDir, store.db, store);
+      }
     }
     return store.missionStore;
 }

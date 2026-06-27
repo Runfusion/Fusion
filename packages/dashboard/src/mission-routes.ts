@@ -306,24 +306,24 @@ export function createMissionRouter(
   }
 
   function getScopedMissionStore() {
-    // FNXC:PostgresBackend 2026-06-27-05:00:
-    // MissionStore is not yet ported to the AsyncDataLayer. Degrade to a clean
-    // 503 in PG backend mode instead of letting getMissionStore() throw a 500.
-    const scoped = getScopedStore();
-    if (scoped.backendMode) throw new ApiError(503, "Missions are not yet available in PG backend mode");
-    return scoped.getMissionStore();
+    // FNXC:MissionStore 2026-06-27-15:30:
+    // MissionStore is now ported to the AsyncDataLayer (AsyncMissionStore in PG
+    // backend mode). getMissionStore() returns MissionStore | AsyncMissionStore;
+    // every handler awaits its calls so both backends work. The interim PG 503
+    // guard is removed.
+    return getScopedStore().getMissionStore();
   }
 
   function getScopedGoalStore() {
     return getScopedStore().getGoalStore();
   }
 
-  function requireMission(missionId: string) {
+  async function requireMission(missionId: string) {
     if (!validateMissionId(missionId)) {
       throw badRequest("Invalid mission ID format");
     }
 
-    const mission = missionStore.getMission(missionId);
+    const mission = await missionStore.getMission(missionId);
     if (!mission) {
       throw notFound("Mission not found");
     }
@@ -359,32 +359,48 @@ export function createMissionRouter(
     return goal;
   }
 
-  function listLinkedGoalsForMission(missionId: string): Goal[] {
-    requireMission(missionId);
+  async function listLinkedGoalsForMission(missionId: string): Promise<Goal[]> {
+    await requireMission(missionId);
+    const goalIds = await missionStore.listGoalIdsForMission(missionId);
+    if (goalIds.length === 0) return [];
+    // FNXC:MissionStore 2026-06-27-16:00:
+    // Mission↔goal LINKS live in the (ported) MissionStore, but resolving full
+    // Goal objects (titles/status) needs the sync GoalStore, which is NOT yet
+    // ported to PG (constructing it dereferences the sync store.db → throws).
+    // In backend mode the links exist but resolved goals are unavailable —
+    // degrade to [] rather than failing the mission read/create. Removing this
+    // when GoalStore is ported restores full goal resolution.
+    if (getScopedStore().backendMode) return [];
     const goalStore = getScopedGoalStore();
-    return missionStore
-      .listGoalIdsForMission(missionId)
+    return goalIds
       .map((goalId) => goalStore.getGoal(goalId))
       .filter((goal): goal is Goal => Boolean(goal));
   }
 
-  function setLinkedGoalsForMission(missionId: string, goalIds: string[]): Goal[] {
-    requireMission(missionId);
+  async function setLinkedGoalsForMission(missionId: string, goalIds: string[]): Promise<Goal[]> {
+    await requireMission(missionId);
     const uniqueGoalIds = Array.from(new Set(goalIds));
-    uniqueGoalIds.forEach((goalId) => requireLinkableGoal(goalId));
+    // FNXC:MissionStore 2026-06-27-16:00:
+    // requireLinkableGoal validates goal existence via the sync GoalStore (not
+    // yet ported to PG). In backend mode skip that validation — the mission↔goal
+    // link write below goes through the async MissionStore and still works; the
+    // existence check returns once GoalStore is ported.
+    if (!getScopedStore().backendMode) {
+      uniqueGoalIds.forEach((goalId) => requireLinkableGoal(goalId));
+    }
 
-    const existingGoalIds = new Set(missionStore.listGoalIdsForMission(missionId));
+    const existingGoalIds = new Set(await missionStore.listGoalIdsForMission(missionId));
     const nextGoalIds = new Set(uniqueGoalIds);
 
     for (const goalId of existingGoalIds) {
       if (!nextGoalIds.has(goalId)) {
-        missionStore.unlinkGoal(missionId, goalId);
+        await missionStore.unlinkGoal(missionId, goalId);
       }
     }
 
     for (const goalId of uniqueGoalIds) {
       if (!existingGoalIds.has(goalId)) {
-        missionStore.linkGoal(missionId, goalId);
+        await missionStore.linkGoal(missionId, goalId);
       }
     }
 
@@ -419,7 +435,7 @@ export function createMissionRouter(
   router.get(
     "/",
     catchTypedHandler(async (_req, res) => {
-      const missionsWithSummary = missionStore.listMissionsWithSummaries();
+      const missionsWithSummary = await missionStore.listMissionsWithSummaries();
       res.json(missionsWithSummary);
     })
   );
@@ -432,7 +448,7 @@ export function createMissionRouter(
   router.get(
     "/health",
     catchTypedHandler(async (_req, res) => {
-      const healthMap = missionStore.listMissionsHealth();
+      const healthMap = await missionStore.listMissionsHealth();
       // Convert Map to Record for JSON serialization
       const result: Record<string, ReturnType<typeof healthMap.get>> = {};
       for (const [missionId, health] of healthMap) {
@@ -462,21 +478,21 @@ export function createMissionRouter(
         branchStrategy: validateMissionBranchStrategy(branchStrategy),
       };
 
-      const mission = missionStore.createMission(input);
+      const mission = await missionStore.createMission(input);
 
       const updates: Partial<Mission> = {};
       if (autoAdvance !== undefined) {
         updates.autoAdvance = validateBoolean(autoAdvance, "autoAdvance");
       }
       const updatedMission = Object.keys(updates).length > 0
-        ? missionStore.updateMission(mission.id, updates)
+        ? await missionStore.updateMission(mission.id, updates)
         : mission;
 
       // Mission creation and mission↔goal linking are separate store operations today,
       // so creation may succeed even when a later goal validation/linking step fails.
       const linkedGoals = validatedGoalIds === undefined
-        ? listLinkedGoalsForMission(mission.id)
-        : setLinkedGoalsForMission(mission.id, validatedGoalIds);
+        ? await listLinkedGoalsForMission(mission.id)
+        : await setLinkedGoalsForMission(mission.id, validatedGoalIds);
 
       res.status(201).json({
         ...updatedMission,
@@ -925,19 +941,19 @@ export function createMissionRouter(
         }
 
         // Create the full mission hierarchy
-        const mission = missionStore.createMission({
+        const mission = await missionStore.createMission({
           title: summary.missionTitle || session.missionTitle,
           description: summary.missionDescription,
         });
 
         // Update interview state to completed
-        missionStore.updateMission(mission.id, { interviewState: "completed" as InterviewState });
+        await missionStore.updateMission(mission.id, { interviewState: "completed" as InterviewState });
 
         // Create milestones, slices, and features with verification in dedicated fields.
         // Auto-generate contract assertions at milestone, slice, and feature levels.
         for (const milestoneData of (summary.milestones ?? [])) {
           // Use dedicated verification field instead of concatenating into description
-          const milestone = missionStore.addMilestone(mission.id, {
+          const milestone = await missionStore.addMilestone(mission.id, {
             title: milestoneData.title,
             description: milestoneData.description || undefined,
             verification: milestoneData.verification,
@@ -948,7 +964,7 @@ export function createMissionRouter(
           const milestoneAssertionText = milestoneData.verification
             || milestoneData.description
             || `Verify milestone completion: ${milestoneData.title}`;
-          missionStore.addContractAssertion(milestone.id, {
+          await missionStore.addContractAssertion(milestone.id, {
             title: `Milestone: ${milestoneData.title}`,
             assertion: milestoneAssertionText,
             status: "pending",
@@ -956,7 +972,7 @@ export function createMissionRouter(
 
           for (const sliceData of (milestoneData.slices ?? [])) {
             // Use dedicated verification field instead of concatenating into description
-            const slice = missionStore.addSlice(milestone.id, {
+            const slice = await missionStore.addSlice(milestone.id, {
               title: sliceData.title,
               description: sliceData.description || undefined,
               verification: sliceData.verification,
@@ -966,14 +982,14 @@ export function createMissionRouter(
             const sliceAssertionText = sliceData.verification
               || sliceData.description
               || `Verify slice completion: ${sliceData.title}`;
-            missionStore.addContractAssertion(milestone.id, {
+            await missionStore.addContractAssertion(milestone.id, {
               title: `Slice: ${sliceData.title}`,
               assertion: sliceAssertionText,
               status: "pending",
             });
 
             for (const featureData of (sliceData.features ?? [])) {
-              missionStore.addFeature(slice.id, {
+              await missionStore.addFeature(slice.id, {
                 title: featureData.title,
                 description: featureData.description,
                 acceptanceCriteria: featureData.acceptanceCriteria,
@@ -981,14 +997,14 @@ export function createMissionRouter(
             }
           }
 
-          missionStore.applyDerivedMilestoneAcceptanceCriteria(milestone.id);
+          await missionStore.applyDerivedMilestoneAcceptanceCriteria(milestone.id);
         }
 
         // Cleanup the interview session
         cleanupMissionInterviewSession(sessionId);
 
         // Return the full hierarchy
-        const result = missionStore.getMissionWithHierarchy(mission.id);
+        const result = await missionStore.getMissionWithHierarchy(mission.id);
         res.status(201).json(result);
       } catch (err: unknown) {
         // Re-throw ApiError subclasses without wrapping
@@ -1019,7 +1035,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMissionWithHierarchy(missionId);
+      const mission = await missionStore.getMissionWithHierarchy(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -1039,7 +1055,7 @@ export function createMissionRouter(
     "/:missionId/goals",
     catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
-      const goals = listLinkedGoalsForMission(missionId);
+      const goals = await listLinkedGoalsForMission(missionId);
       res.json({ goals });
     })
   );
@@ -1053,7 +1069,7 @@ export function createMissionRouter(
     catchTypedHandler(async (req, res) => {
       const { missionId } = req.params;
       const goalIds = validateGoalIdsBody(req.body);
-      const goals = setLinkedGoalsForMission(missionId, goalIds);
+      const goals = await setLinkedGoalsForMission(missionId, goalIds);
       res.json({ goals });
     })
   );
@@ -1066,10 +1082,10 @@ export function createMissionRouter(
     "/:missionId/goals/:goalId",
     catchTypedHandler(async (req, res) => {
       const { missionId, goalId } = req.params;
-      requireMission(missionId);
+      await requireMission(missionId);
       const goal = requireLinkableGoal(goalId);
-      missionStore.linkGoal(missionId, goalId);
-      res.json({ goal, goals: listLinkedGoalsForMission(missionId) });
+      await missionStore.linkGoal(missionId, goalId);
+      res.json({ goal, goals: await listLinkedGoalsForMission(missionId) });
     })
   );
 
@@ -1081,10 +1097,10 @@ export function createMissionRouter(
     "/:missionId/goals/:goalId",
     catchTypedHandler(async (req, res) => {
       const { missionId, goalId } = req.params;
-      requireMission(missionId);
+      await requireMission(missionId);
       requireGoal(goalId);
-      missionStore.unlinkGoal(missionId, goalId);
-      res.json({ removed: true, goals: listLinkedGoalsForMission(missionId) });
+      await missionStore.unlinkGoal(missionId, goalId);
+      res.json({ removed: true, goals: await listLinkedGoalsForMission(missionId) });
     })
   );
 
@@ -1103,12 +1119,12 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      if (!missionStore.getMission(missionId)) {
+      if (!await missionStore.getMission(missionId)) {
         throw notFound("Mission not found");
       }
 
       const resolvedDryRun = dryRun === undefined ? true : validateBoolean(dryRun, "dryRun");
-      const report = missionStore.backfillFeatureAssertions({
+      const report = await missionStore.backfillFeatureAssertions({
         missionId,
         dryRun: resolvedDryRun,
       });
@@ -1162,16 +1178,16 @@ export function createMissionRouter(
       }
 
       try {
-        const existingMission = missionStore.getMission(missionId);
+        const existingMission = await missionStore.getMission(missionId);
         const mission = Object.keys(updates).length > 0
-          ? missionStore.updateMission(missionId, updates)
-          : requireMission(missionId);
+          ? await missionStore.updateMission(missionId, updates)
+          : await requireMission(missionId);
         if (missionAutopilot && updates.autopilotEnabled === true && existingMission?.autopilotEnabled !== true) {
           missionAutopilot.watchMission(missionId);
         }
         const linkedGoals = validatedGoalIds === undefined
-          ? listLinkedGoalsForMission(missionId)
-          : setLinkedGoalsForMission(missionId, validatedGoalIds);
+          ? await listLinkedGoalsForMission(missionId)
+          : await setLinkedGoalsForMission(missionId, validatedGoalIds);
         res.json({
           ...mission,
           linkedGoals,
@@ -1199,12 +1215,12 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const existing = missionStore.getMission(missionId);
+      const existing = await missionStore.getMission(missionId);
       if (!existing) {
         throw notFound("Mission not found");
       }
 
-      missionStore.deleteMission(missionId);
+      await missionStore.deleteMission(missionId);
       res.status(204).send();
     })
   );
@@ -1222,12 +1238,12 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
 
-      const status = missionStore.computeMissionStatus(missionId);
+      const status = await missionStore.computeMissionStatus(missionId);
       res.json({ status });
     })
   );
@@ -1245,7 +1261,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -1262,7 +1278,7 @@ export function createMissionRouter(
         ? req.query.eventType.trim()
         : undefined;
 
-      const result = missionStore.getMissionEvents(missionId, {
+      const result = await missionStore.getMissionEvents(missionId, {
         limit,
         offset,
         eventType,
@@ -1290,12 +1306,12 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
 
-      const health = missionStore.getMissionHealth(missionId);
+      const health = await missionStore.getMissionHealth(missionId);
       if (!health) {
         throw notFound("Mission not found");
       }
@@ -1319,7 +1335,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -1345,7 +1361,7 @@ export function createMissionRouter(
       const validatedState = validateInterviewState(state);
 
       try {
-        const mission = missionStore.updateMissionInterviewState(missionId, validatedState);
+        const mission = await missionStore.updateMissionInterviewState(missionId, validatedState);
         res.json(mission);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -1372,12 +1388,12 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
 
-      const milestones = missionStore.listMilestones(missionId);
+      const milestones = await missionStore.listMilestones(missionId);
       // Sort by orderIndex
       milestones.sort((a, b) => a.orderIndex - b.orderIndex);
       res.json(milestones);
@@ -1398,7 +1414,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -1415,7 +1431,7 @@ export function createMissionRouter(
         acceptanceCriteria: validatedAcceptanceCriteria,
       };
 
-      const milestone = missionStore.addMilestone(missionId, input);
+      const milestone = await missionStore.addMilestone(missionId, input);
       res.status(201).json(milestone);
     })
   );
@@ -1433,7 +1449,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -1441,7 +1457,7 @@ export function createMissionRouter(
       const orderedIds = validateOrderedIds(req.body);
 
       // Validate all IDs belong to this mission
-      const existingMilestones = missionStore.listMilestones(missionId);
+      const existingMilestones = await missionStore.listMilestones(missionId);
       const existingIds = new Set(existingMilestones.map((m) => m.id));
       const allIdsValid = orderedIds.every((id) => existingIds.has(id));
 
@@ -1453,7 +1469,7 @@ export function createMissionRouter(
         throw badRequest("orderedIds must include all milestones");
       }
 
-      missionStore.reorderMilestones(missionId, orderedIds);
+      await missionStore.reorderMilestones(missionId, orderedIds);
       res.status(204).send();
     })
   );
@@ -1471,7 +1487,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -1517,7 +1533,7 @@ export function createMissionRouter(
       }
 
       try {
-        const milestone = missionStore.updateMilestone(milestoneId, updates);
+        const milestone = await missionStore.updateMilestone(milestoneId, updates);
         res.json(milestone);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -1543,13 +1559,13 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const existing = missionStore.getMilestone(milestoneId);
+      const existing = await missionStore.getMilestone(milestoneId);
       if (!existing) {
         throw notFound("Milestone not found");
       }
 
       try {
-        missionStore.deleteMilestone(milestoneId, force);
+        await missionStore.deleteMilestone(milestoneId, force);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (errMsg.includes("linked to live tasks")) {
@@ -1579,7 +1595,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -1605,7 +1621,7 @@ export function createMissionRouter(
       const validatedState = validateInterviewState(state);
 
       try {
-        const milestone = missionStore.updateMilestoneInterviewState(milestoneId, validatedState);
+        const milestone = await missionStore.updateMilestoneInterviewState(milestoneId, validatedState);
         res.json(milestone);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -1632,12 +1648,12 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
 
-      const slices = missionStore.listSlices(milestoneId);
+      const slices = await missionStore.listSlices(milestoneId);
       // Sort by orderIndex
       slices.sort((a, b) => a.orderIndex - b.orderIndex);
       res.json(slices);
@@ -1658,7 +1674,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -1671,7 +1687,7 @@ export function createMissionRouter(
         description: validatedDescription,
       };
 
-      const slice = missionStore.addSlice(milestoneId, input);
+      const slice = await missionStore.addSlice(milestoneId, input);
       res.status(201).json(slice);
     })
   );
@@ -1689,7 +1705,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -1697,7 +1713,7 @@ export function createMissionRouter(
       const orderedIds = validateOrderedIds(req.body);
 
       // Validate all IDs belong to this milestone
-      const existingSlices = missionStore.listSlices(milestoneId);
+      const existingSlices = await missionStore.listSlices(milestoneId);
       const existingIds = new Set(existingSlices.map((s) => s.id));
       const allIdsValid = orderedIds.every((id) => existingIds.has(id));
 
@@ -1709,7 +1725,7 @@ export function createMissionRouter(
         throw badRequest("orderedIds must include all slices");
       }
 
-      missionStore.reorderSlices(milestoneId, orderedIds);
+      await missionStore.reorderSlices(milestoneId, orderedIds);
       res.status(204).send();
     })
   );
@@ -1727,7 +1743,7 @@ export function createMissionRouter(
         throw badRequest("Invalid slice ID format");
       }
 
-      const slice = missionStore.getSlice(sliceId);
+      const slice = await missionStore.getSlice(sliceId);
       if (!slice) {
         throw notFound("Slice not found");
       }
@@ -1767,7 +1783,7 @@ export function createMissionRouter(
       }
 
       try {
-        const slice = missionStore.updateSlice(sliceId, updates);
+        const slice = await missionStore.updateSlice(sliceId, updates);
         res.json(slice);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -1793,13 +1809,13 @@ export function createMissionRouter(
         throw badRequest("Invalid slice ID format");
       }
 
-      const existing = missionStore.getSlice(sliceId);
+      const existing = await missionStore.getSlice(sliceId);
       if (!existing) {
         throw notFound("Slice not found");
       }
 
       try {
-        missionStore.deleteSlice(sliceId, force);
+        await missionStore.deleteSlice(sliceId, force);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (errMsg.includes("linked to live tasks")) {
@@ -1855,12 +1871,12 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
 
-      const assertions = missionStore.listContractAssertions(milestoneId);
+      const assertions = await missionStore.listContractAssertions(milestoneId);
       res.json(assertions);
     })
   );
@@ -1879,7 +1895,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -1910,7 +1926,7 @@ export function createMissionRouter(
         status: status as MissionAssertionStatus,
       };
 
-      const created = missionStore.addContractAssertion(milestoneId, input);
+      const created = await missionStore.addContractAssertion(milestoneId, input);
       res.status(201).json(created);
     })
   );
@@ -1928,7 +1944,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -1936,7 +1952,7 @@ export function createMissionRouter(
       const orderedIds = validateOrderedIds(req.body);
 
       // Validate all IDs belong to this milestone
-      const existingAssertions = missionStore.listContractAssertions(milestoneId);
+      const existingAssertions = await missionStore.listContractAssertions(milestoneId);
       const existingIds = new Set(existingAssertions.map((a) => a.id));
 
       if (orderedIds.length !== existingIds.size) {
@@ -1949,7 +1965,7 @@ export function createMissionRouter(
         }
       }
 
-      missionStore.reorderContractAssertions(milestoneId, orderedIds);
+      await missionStore.reorderContractAssertions(milestoneId, orderedIds);
       res.status(204).send();
     })
   );
@@ -1967,7 +1983,7 @@ export function createMissionRouter(
         throw badRequest("Invalid assertion ID format");
       }
 
-      const assertion = missionStore.getContractAssertion(assertionId);
+      const assertion = await missionStore.getContractAssertion(assertionId);
       if (!assertion) {
         throw notFound("Assertion not found");
       }
@@ -1990,7 +2006,7 @@ export function createMissionRouter(
         throw badRequest("Invalid assertion ID format");
       }
 
-      const existing = missionStore.getContractAssertion(assertionId);
+      const existing = await missionStore.getContractAssertion(assertionId);
       if (!existing) {
         throw notFound("Assertion not found");
       }
@@ -2026,7 +2042,7 @@ export function createMissionRouter(
         updates.status = status as MissionAssertionStatus;
       }
 
-      const updated = missionStore.updateContractAssertion(assertionId, updates);
+      const updated = await missionStore.updateContractAssertion(assertionId, updates);
       res.json(updated);
     })
   );
@@ -2044,12 +2060,12 @@ export function createMissionRouter(
         throw badRequest("Invalid assertion ID format");
       }
 
-      const existing = missionStore.getContractAssertion(assertionId);
+      const existing = await missionStore.getContractAssertion(assertionId);
       if (!existing) {
         throw notFound("Assertion not found");
       }
 
-      missionStore.deleteContractAssertion(assertionId);
+      await missionStore.deleteContractAssertion(assertionId);
       res.status(204).send();
     })
   );
@@ -2072,7 +2088,7 @@ export function createMissionRouter(
       }
 
       try {
-        missionStore.linkFeatureToAssertion(featureId, assertionId);
+        await missionStore.linkFeatureToAssertion(featureId, assertionId);
         res.json({ success: true });
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -2108,7 +2124,7 @@ export function createMissionRouter(
       }
 
       try {
-        missionStore.unlinkFeatureFromAssertion(featureId, assertionId);
+        await missionStore.unlinkFeatureFromAssertion(featureId, assertionId);
         res.json({ success: true });
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -2139,12 +2155,12 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const feature = missionStore.getFeature(featureId);
+      const feature = await missionStore.getFeature(featureId);
       if (!feature) {
         throw notFound("Feature not found");
       }
 
-      const assertions = missionStore.listAssertionsForFeature(featureId);
+      const assertions = await missionStore.listAssertionsForFeature(featureId);
       res.json(assertions);
     })
   );
@@ -2162,12 +2178,12 @@ export function createMissionRouter(
         throw badRequest("Invalid assertion ID format");
       }
 
-      const assertion = missionStore.getContractAssertion(assertionId);
+      const assertion = await missionStore.getContractAssertion(assertionId);
       if (!assertion) {
         throw notFound("Assertion not found");
       }
 
-      const features = missionStore.listFeaturesForAssertion(assertionId);
+      const features = await missionStore.listFeaturesForAssertion(assertionId);
       res.json(features);
     })
   );
@@ -2185,12 +2201,12 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
 
-      const rollup = missionStore.getMilestoneValidationRollup(milestoneId);
+      const rollup = await missionStore.getMilestoneValidationRollup(milestoneId);
       res.json(rollup);
     })
   );
@@ -2213,14 +2229,17 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
 
-      const assertions = missionStore.listContractAssertions(milestoneId);
-      const slices = missionStore.listSlices(milestoneId);
-      const allFeatures: MissionFeature[] = slices.flatMap((slice) => missionStore.listFeatures(slice.id));
+      const assertions = await missionStore.listContractAssertions(milestoneId);
+      const slices = await missionStore.listSlices(milestoneId);
+      const allFeatures: MissionFeature[] = [];
+      for (const slice of slices) {
+        allFeatures.push(...(await missionStore.listFeatures(slice.id)));
+      }
 
       const featureFulfillment: Record<string, {
         assertionIds: string[];
@@ -2229,7 +2248,7 @@ export function createMissionRouter(
       }> = {};
 
       for (const feature of allFeatures) {
-        const linkedAssertions = missionStore.listAssertionsForFeature(feature.id);
+        const linkedAssertions = await missionStore.listAssertionsForFeature(feature.id);
         featureFulfillment[feature.id] = {
           assertionIds: linkedAssertions.map((assertion) => assertion.id),
           featureTitle: feature.title,
@@ -2262,12 +2281,11 @@ export function createMissionRouter(
       }>;
 
       for (const feature of allFeatures) {
-        const runs = missionStore.getValidatorRunsByFeature(feature.id);
+        const runs = await missionStore.getValidatorRunsByFeature(feature.id);
         for (const run of runs) {
           let failedAssertionIds: string[] = [];
           if (run.status === "failed") {
-            failedAssertionIds = missionStore
-              .getFailuresForRun(run.id)
+            failedAssertionIds = (await missionStore.getFailuresForRun(run.id))
               .map((failure) => failure.assertionId);
             failedAssertionIdsByRunId.set(run.id, failedAssertionIds);
           }
@@ -2291,20 +2309,18 @@ export function createMissionRouter(
       validationRounds.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
       const lastValidatorStatus = validationRounds[0]?.validatorStatus ?? null;
 
-      const fixFeatures = allFeatures
-        .filter((feature) => feature.generatedFromFeatureId && feature.generatedFromRunId)
-        .map((feature) => {
+      const fixFeatures = [];
+      for (const feature of allFeatures.filter((f) => f.generatedFromFeatureId && f.generatedFromRunId)) {
           const runId = feature.generatedFromRunId as string;
           let failedAssertionIds = failedAssertionIdsByRunId.get(runId);
 
           if (!failedAssertionIds) {
-            failedAssertionIds = missionStore
-              .getFailuresForRun(runId)
+            failedAssertionIds = (await missionStore.getFailuresForRun(runId))
               .map((failure) => failure.assertionId);
             failedAssertionIdsByRunId.set(runId, failedAssertionIds);
           }
 
-          return {
+          fixFeatures.push({
             id: feature.id,
             title: feature.title,
             sourceFeatureId: feature.generatedFromFeatureId as string,
@@ -2312,10 +2328,10 @@ export function createMissionRouter(
             failedAssertionIds,
             status: feature.status,
             loopState: feature.loopState,
-          };
-        });
+          });
+      }
 
-      const rollup = missionStore.getMilestoneValidationRollup(milestoneId);
+      const rollup = await missionStore.getMilestoneValidationRollup(milestoneId);
 
       res.json({
         validationContract: {
@@ -2357,24 +2373,24 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const feature = missionStore.getFeature(featureId);
+      const feature = await missionStore.getFeature(featureId);
       if (!feature) {
         throw notFound("Feature not found");
       }
 
       // Check if there are linked assertions
-      const assertions = missionStore.listAssertionsForFeature(featureId);
+      const assertions = await missionStore.listAssertionsForFeature(featureId);
       if (assertions.length === 0) {
         throw badRequest("Feature has no linked assertions. Link assertions before triggering validation.");
       }
 
       // Transition feature to validating state
-      missionStore.updateFeature(featureId, {
+      await missionStore.updateFeature(featureId, {
         loopState: "validating" as FeatureLoopState,
       });
 
       // Start a validator run
-      const run = missionStore.startValidatorRun(featureId, "manual");
+      const run = await missionStore.startValidatorRun(featureId, "manual");
 
       res.status(202).json({
         runId: run.id,
@@ -2403,12 +2419,12 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const feature = missionStore.getFeature(featureId);
+      const feature = await missionStore.getFeature(featureId);
       if (!feature) {
         throw notFound("Feature not found");
       }
 
-      const snapshot = missionStore.getFeatureLoopSnapshot(featureId);
+      const snapshot = await missionStore.getFeatureLoopSnapshot(featureId);
       res.json(snapshot);
     })
   );
@@ -2428,7 +2444,7 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const feature = missionStore.getFeature(featureId);
+      const feature = await missionStore.getFeature(featureId);
       if (!feature) {
         throw notFound("Feature not found");
       }
@@ -2442,7 +2458,7 @@ export function createMissionRouter(
         : 0;
 
       // Get all runs (store returns them ordered DESC)
-      const allRuns = missionStore.getValidatorRunsByFeature(featureId);
+      const allRuns = await missionStore.getValidatorRunsByFeature(featureId);
       const total = allRuns.length;
       const runs = allRuns.slice(offset, offset + limit);
 
@@ -2470,13 +2486,13 @@ export function createMissionRouter(
       }
 
       // Use the store's getValidatorRun method to fetch the run directly
-      const run = missionStore.getValidatorRun(runId);
+      const run = await missionStore.getValidatorRun(runId);
       if (!run) {
         throw notFound("Validator run not found");
       }
 
       // Get failures for this run
-      const failures = missionStore.getFailuresForRun(runId);
+      const failures = await missionStore.getFailuresForRun(runId);
 
       res.json({
         ...run,
@@ -2530,12 +2546,12 @@ export function createMissionRouter(
         throw badRequest("Invalid slice ID format");
       }
 
-      const slice = missionStore.getSlice(sliceId);
+      const slice = await missionStore.getSlice(sliceId);
       if (!slice) {
         throw notFound("Slice not found");
       }
 
-      const features = missionStore.listFeatures(sliceId);
+      const features = await missionStore.listFeatures(sliceId);
       res.json(features);
     })
   );
@@ -2554,7 +2570,7 @@ export function createMissionRouter(
         throw badRequest("Invalid slice ID format");
       }
 
-      const slice = missionStore.getSlice(sliceId);
+      const slice = await missionStore.getSlice(sliceId);
       if (!slice) {
         throw notFound("Slice not found");
       }
@@ -2569,7 +2585,7 @@ export function createMissionRouter(
         acceptanceCriteria: validatedCriteria,
       };
 
-      const feature = missionStore.addFeature(sliceId, input);
+      const feature = await missionStore.addFeature(sliceId, input);
       res.status(201).json(feature);
     })
   );
@@ -2587,7 +2603,7 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const feature = missionStore.getFeature(featureId);
+      const feature = await missionStore.getFeature(featureId);
       if (!feature) {
         throw notFound("Feature not found");
       }
@@ -2611,7 +2627,7 @@ export function createMissionRouter(
       }
 
       // Fetch existing feature to check invariants
-      const existing = missionStore.getFeature(featureId);
+      const existing = await missionStore.getFeature(featureId);
       if (!existing) {
         throw notFound("Feature not found");
       }
@@ -2651,7 +2667,7 @@ export function createMissionRouter(
       }
 
       try {
-        const feature = missionStore.updateFeature(featureId, updates);
+        const feature = await missionStore.updateFeature(featureId, updates);
         res.json(feature);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -2677,13 +2693,13 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const existing = missionStore.getFeature(featureId);
+      const existing = await missionStore.getFeature(featureId);
       if (!existing) {
         throw notFound("Feature not found");
       }
 
       try {
-        missionStore.deleteFeature(featureId, force);
+        await missionStore.deleteFeature(featureId, force);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (errMsg.includes("linked to task")) {
@@ -2716,13 +2732,13 @@ export function createMissionRouter(
         throw badRequest("taskId is required and must be a string");
       }
 
-      const existing = missionStore.getFeature(featureId);
+      const existing = await missionStore.getFeature(featureId);
       if (!existing) {
         throw notFound("Feature not found");
       }
 
       try {
-        const feature = missionStore.linkFeatureToTask(featureId, taskId);
+        const feature = await missionStore.linkFeatureToTask(featureId, taskId);
         res.json(feature);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
@@ -2748,7 +2764,7 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const existing = missionStore.getFeature(featureId);
+      const existing = await missionStore.getFeature(featureId);
       if (!existing) {
         throw notFound("Feature not found");
       }
@@ -2785,10 +2801,10 @@ export function createMissionRouter(
       }
 
       if (!existing.taskId) {
-        missionStore.linkFeatureToTask(featureId, normalizedTaskId);
+        await missionStore.linkFeatureToTask(featureId, normalizedTaskId);
       }
 
-      const feature = missionStore.updateFeatureStatus(featureId, "done");
+      const feature = await missionStore.updateFeatureStatus(featureId, "done");
       res.json(feature);
     })
   );
@@ -2806,7 +2822,7 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const existing = missionStore.getFeature(featureId);
+      const existing = await missionStore.getFeature(featureId);
       if (!existing) {
         throw notFound("Feature not found");
       }
@@ -2815,7 +2831,7 @@ export function createMissionRouter(
         throw badRequest("Feature is not linked to a task");
       }
 
-      const feature = missionStore.unlinkFeatureFromTask(featureId);
+      const feature = await missionStore.unlinkFeatureFromTask(featureId);
       res.json(feature);
     })
   );
@@ -2838,7 +2854,7 @@ export function createMissionRouter(
         throw badRequest("Invalid feature ID format");
       }
 
-      const existing = missionStore.getFeature(featureId);
+      const existing = await missionStore.getFeature(featureId);
       if (!existing) {
         throw notFound("Feature not found");
       }
@@ -2891,7 +2907,7 @@ export function createMissionRouter(
         throw badRequest("Invalid slice ID format");
       }
 
-      const slice = missionStore.getSlice(sliceId);
+      const slice = await missionStore.getSlice(sliceId);
       if (!slice) {
         throw notFound("Slice not found");
       }
@@ -2936,7 +2952,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -2945,7 +2961,7 @@ export function createMissionRouter(
         throw badRequest("Mission is already paused (blocked)");
       }
 
-      const updated = missionStore.updateMission(missionId, { status: "blocked" });
+      const updated = await missionStore.updateMission(missionId, { status: "blocked" });
       res.json(updated);
     })
   );
@@ -2963,7 +2979,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -2972,7 +2988,7 @@ export function createMissionRouter(
         throw badRequest("Mission is not paused (status must be 'blocked' to resume)");
       }
 
-      missionStore.updateMission(missionId, { status: "active" });
+      await missionStore.updateMission(missionId, { status: "active" });
 
       // Re-engage autopilot if enabled and autopilot instance is available.
       // The autopilot may have been stopped or the mission unwatched during
@@ -2986,7 +3002,7 @@ export function createMissionRouter(
         await missionAutopilot.recoverStaleMission(missionId);
       }
 
-      const refreshed = missionStore.getMission(missionId);
+      const refreshed = await missionStore.getMission(missionId);
       res.json(refreshed);
     })
   );
@@ -3004,13 +3020,13 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const hierarchy = missionStore.getMissionWithHierarchy(missionId);
+      const hierarchy = await missionStore.getMissionWithHierarchy(missionId);
       if (!hierarchy) {
         throw notFound("Mission not found");
       }
 
       // Set mission status to blocked
-      const updated = missionStore.updateMission(missionId, { status: "blocked" });
+      const updated = await missionStore.updateMission(missionId, { status: "blocked" });
 
       // Pause all tasks linked to features in this mission
       const pausedTaskIds: string[] = [];
@@ -3049,7 +3065,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -3058,7 +3074,7 @@ export function createMissionRouter(
         throw conflict("Mission must be in 'planning' status to start");
       }
 
-      const nextSlice = missionStore.findNextPendingSlice(missionId);
+      const nextSlice = await missionStore.findNextPendingSlice(missionId);
       if (!nextSlice) {
         throw badRequest("No pending slices found");
       }
@@ -3088,7 +3104,7 @@ export function createMissionRouter(
 
       // Enable autopilot (and autoAdvance for backward compat) so the mission
       // will auto-advance slices when autopilot is watching
-      missionStore.updateMission(missionId, {
+      await missionStore.updateMission(missionId, {
         autopilotEnabled: true,
         autoAdvance: true, // kept for backward compat with existing mission data
         status: "active",
@@ -3098,7 +3114,7 @@ export function createMissionRouter(
       await missionStore.activateSlice(nextSlice.id);
 
       // Return updated mission with hierarchy
-      const hierarchy = missionStore.getMissionWithHierarchy(missionId);
+      const hierarchy = await missionStore.getMissionWithHierarchy(missionId);
       res.json(hierarchy);
     })
   );
@@ -3119,7 +3135,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -3160,13 +3176,13 @@ export function createMissionRouter(
         throw badRequest("enabled is required and must be a boolean");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
 
       // Update the mission's autopilotEnabled field
-      missionStore.updateMission(missionId, { autopilotEnabled: enabled });
+      await missionStore.updateMission(missionId, { autopilotEnabled: enabled });
 
       if (missionAutopilot) {
         if (enabled) {
@@ -3189,7 +3205,7 @@ export function createMissionRouter(
         res.json(status);
       } else {
         // No autopilot instance — return updated status from mission data
-        const updated = missionStore.getMission(missionId);
+        const updated = await missionStore.getMission(missionId);
         res.json({
           enabled: updated?.autopilotEnabled ?? false,
           state: updated?.autopilotState ?? "inactive",
@@ -3213,7 +3229,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -3254,7 +3270,7 @@ export function createMissionRouter(
         throw badRequest("Invalid mission ID format");
       }
 
-      const mission = missionStore.getMission(missionId);
+      const mission = await missionStore.getMission(missionId);
       if (!mission) {
         throw notFound("Mission not found");
       }
@@ -3293,7 +3309,7 @@ export function createMissionRouter(
         throw badRequest("Invalid milestone ID format");
       }
 
-      const milestone = missionStore.getMilestone(milestoneId);
+      const milestone = await missionStore.getMilestone(milestoneId);
       if (!milestone) {
         throw notFound("Milestone not found");
       }
@@ -3304,7 +3320,7 @@ export function createMissionRouter(
         const rootDir = scopedStore.getRootDir();
 
         // Get mission context for the interview
-        const mission = missionStore.getMission(milestone.missionId);
+        const mission = await missionStore.getMission(milestone.missionId);
         const missionContext = mission
           ? `Mission: "${mission.title}". ${mission.description || ""}`
           : undefined;
@@ -3606,7 +3622,7 @@ export function createMissionRouter(
           skipTargetInterview,
         } = await import("./milestone-slice-interview.js");
 
-        const milestone = skipTargetInterview("milestone", milestoneId, missionStore);
+        const milestone = await skipTargetInterview("milestone", milestoneId, missionStore);
         res.json(milestone);
       } catch (err: unknown) {
         const errName = err instanceof Error ? err.name : "";
@@ -3639,7 +3655,7 @@ export function createMissionRouter(
         throw badRequest("Invalid slice ID format");
       }
 
-      const slice = missionStore.getSlice(sliceId);
+      const slice = await missionStore.getSlice(sliceId);
       if (!slice) {
         throw notFound("Slice not found");
       }
@@ -3650,8 +3666,8 @@ export function createMissionRouter(
         const rootDir = scopedStore.getRootDir();
 
         // Get mission hierarchy context for the interview
-        const milestone = missionStore.getMilestone(slice.milestoneId);
-        const mission = milestone ? missionStore.getMission(milestone.missionId) : undefined;
+        const milestone = await missionStore.getMilestone(slice.milestoneId);
+        const mission = milestone ? await missionStore.getMission(milestone.missionId) : undefined;
         const missionContext = mission && milestone
           ? `Mission: "${mission.title}". Milestone: "${milestone.title}". ${mission.description || ""}`
           : milestone
@@ -3955,7 +3971,7 @@ export function createMissionRouter(
           skipTargetInterview,
         } = await import("./milestone-slice-interview.js");
 
-        const slice = skipTargetInterview("slice", sliceId, missionStore);
+        const slice = await skipTargetInterview("slice", sliceId, missionStore);
         res.json(slice);
       } catch (err: unknown) {
         const errName = err instanceof Error ? err.name : "";

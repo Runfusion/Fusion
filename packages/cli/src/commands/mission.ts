@@ -33,12 +33,13 @@ const FEATURE_STATUS_LABELS: Record<FeatureStatus, string> = {
   blocked: "Blocked",
 };
 
-function resolveLinkedGoals(store: Awaited<ReturnType<typeof getStore>>, missionId: string): Array<Goal | { id: string; missing: true }> {
+async function resolveLinkedGoals(store: Awaited<ReturnType<typeof getStore>>, missionId: string): Promise<Array<Goal | { id: string; missing: true }>> {
   const goalStore = store.getGoalStore();
-  return store
-    .getMissionStore()
-    .listGoalIdsForMission(missionId)
-    .map((goalId) => goalStore.getGoal(goalId) ?? { id: goalId, missing: true as const });
+  // FNXC:MissionStore 2026-06-27-15:55: getMissionStore() returns
+  // MissionStore | AsyncMissionStore; await listGoalIdsForMission so the `fn mission`
+  // CLI works against both SQLite and PG backends.
+  const goalIds = await store.getMissionStore().listGoalIdsForMission(missionId);
+  return goalIds.map((goalId) => goalStore.getGoal(goalId) ?? { id: goalId, missing: true as const });
 }
 
 async function promptForTitleAndDescription(
@@ -108,14 +109,14 @@ export async function runMissionCreate(
       "Mission description (optional): ",
     );
 
-  const mission = missionStore.createMission({
+  const mission = await missionStore.createMission({
     title,
     description,
     baseBranch: baseBranch?.trim() || undefined,
   });
 
   for (const goal of linkableGoals) {
-    missionStore.linkGoal(mission.id, goal.id);
+    await missionStore.linkGoal(mission.id, goal.id);
   }
 
   console.log();
@@ -153,7 +154,7 @@ export async function runMissionList(projectName?: string, options: RunMissionLi
   const missionStore = store.getMissionStore();
   const includeDrafts = options.includeDrafts ?? true;
 
-  const missions = missionStore.listMissions();
+  const missions = await missionStore.listMissions();
   const drafts = includeDrafts
     ? (store.getDatabase()
       .prepare(
@@ -224,7 +225,7 @@ export async function runMissionShow(id: string, projectName?: string) {
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
 
-  const mission = missionStore.getMissionWithHierarchy(id);
+  const mission = await missionStore.getMissionWithHierarchy(id);
   if (!mission) {
     console.error(`Mission ${id} not found`);
     process.exit(1);
@@ -287,7 +288,7 @@ export async function runMissionDelete(id: string, force?: boolean, projectName?
   const missionStore = store.getMissionStore();
 
   // Check if mission exists
-  const mission = missionStore.getMission(id);
+  const mission = await missionStore.getMission(id);
   if (!mission) {
     console.error(`✗ Mission ${id} not found`);
     process.exit(1);
@@ -306,7 +307,7 @@ export async function runMissionDelete(id: string, force?: boolean, projectName?
     }
   }
 
-  missionStore.deleteMission(id);
+  await missionStore.deleteMission(id);
   console.log();
   console.log(`  ✓ Deleted ${id}: "${mission.title}"`);
   console.log();
@@ -325,7 +326,7 @@ export async function runMissionActivateSlice(id: string, projectName?: string) 
   const missionStore = store.getMissionStore();
 
   // Check if slice exists
-  const slice = missionStore.getSlice(id);
+  const slice = await missionStore.getSlice(id);
   if (!slice) {
     console.error(`✗ Slice ${id} not found`);
     process.exit(1);
@@ -359,7 +360,7 @@ export async function runMilestoneAdd(
 
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
-  const mission = missionStore.getMission(missionId);
+  const mission = await missionStore.getMission(missionId);
 
   if (!mission) {
     console.error(`✗ Mission ${missionId} not found`);
@@ -374,7 +375,7 @@ export async function runMilestoneAdd(
       "Milestone description (optional): ",
     );
 
-  const milestone = missionStore.addMilestone(missionId, { title, description });
+  const milestone = await missionStore.addMilestone(missionId, { title, description });
 
   console.log();
   console.log(`  ✓ Added ${milestone.id}: "${milestone.title}" to ${missionId}`);
@@ -395,7 +396,7 @@ export async function runSliceAdd(
 
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
-  const milestone = missionStore.getMilestone(milestoneId);
+  const milestone = await missionStore.getMilestone(milestoneId);
 
   if (!milestone) {
     console.error(`✗ Milestone ${milestoneId} not found`);
@@ -410,7 +411,7 @@ export async function runSliceAdd(
       "Slice description (optional): ",
     );
 
-  const slice = missionStore.addSlice(milestoneId, { title, description });
+  const slice = await missionStore.addSlice(milestoneId, { title, description });
 
   console.log();
   console.log(`  ✓ Added ${slice.id}: "${slice.title}" to ${milestoneId}`);
@@ -432,7 +433,7 @@ export async function runFeatureAdd(
 
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
-  const slice = missionStore.getSlice(sliceId);
+  const slice = await missionStore.getSlice(sliceId);
 
   if (!slice) {
     console.error(`✗ Slice ${sliceId} not found`);
@@ -458,7 +459,7 @@ export async function runFeatureAdd(
     rl.close();
   }
 
-  const feature = missionStore.addFeature(sliceId, {
+  const feature = await missionStore.addFeature(sliceId, {
     title: title.trim(),
     description,
     acceptanceCriteria,
@@ -482,18 +483,18 @@ export async function runMissionLinkGoal(missionId: string, goalId: string, proj
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
 
-  if (!missionStore.getMission(missionId)) {
+  if (!await missionStore.getMission(missionId)) {
     console.error(`✗ Mission ${missionId} not found`);
     process.exit(1);
   }
 
   const goal = requireCliLinkableGoal(store, goalId);
 
-  missionStore.linkGoal(missionId, goalId);
+  await missionStore.linkGoal(missionId, goalId);
 
   console.log();
   console.log(`  ✓ Linked ${goal.id}: ${goal.title} → ${missionId}`);
-  console.log(`    Linked goals: ${missionStore.listGoalIdsForMission(missionId).length}`);
+  console.log(`    Linked goals: ${(await missionStore.listGoalIdsForMission(missionId)).length}`);
   console.log();
 }
 
@@ -506,7 +507,7 @@ export async function runMissionUnlinkGoal(missionId: string, goalId: string, pr
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
 
-  if (!missionStore.getMission(missionId)) {
+  if (!await missionStore.getMission(missionId)) {
     console.error(`✗ Mission ${missionId} not found`);
     process.exit(1);
   }
@@ -517,11 +518,11 @@ export async function runMissionUnlinkGoal(missionId: string, goalId: string, pr
     process.exit(1);
   }
 
-  missionStore.unlinkGoal(missionId, goalId);
+  await missionStore.unlinkGoal(missionId, goalId);
 
   console.log();
   console.log(`  ✓ Unlinked ${goal.id}: ${goal.title} from ${missionId}`);
-  console.log(`    Linked goals: ${missionStore.listGoalIdsForMission(missionId).length}`);
+  console.log(`    Linked goals: ${(await missionStore.listGoalIdsForMission(missionId)).length}`);
   console.log();
 }
 
@@ -533,14 +534,14 @@ export async function runMissionGoals(missionId: string, projectName?: string) {
 
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
-  const mission = missionStore.getMission(missionId);
+  const mission = await missionStore.getMission(missionId);
 
   if (!mission) {
     console.error(`✗ Mission ${missionId} not found`);
     process.exit(1);
   }
 
-  const linkedGoals = resolveLinkedGoals(store, missionId);
+  const linkedGoals = await resolveLinkedGoals(store, missionId);
 
   console.log();
   console.log(`  Linked goals for ${mission.id}: ${mission.title}`);
@@ -569,7 +570,7 @@ export async function runFeatureLinkTask(featureId: string, taskId: string, proj
 
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
-  const feature = missionStore.getFeature(featureId);
+  const feature = await missionStore.getFeature(featureId);
 
   if (!feature) {
     console.error(`✗ Feature ${featureId} not found`);
@@ -583,7 +584,7 @@ export async function runFeatureLinkTask(featureId: string, taskId: string, proj
     process.exit(1);
   }
 
-  const updated = missionStore.linkFeatureToTask(featureId, taskId);
+  const updated = await missionStore.linkFeatureToTask(featureId, taskId);
 
   console.log();
   console.log(`  ✓ Linked ${updated.id}: "${updated.title}" → ${taskId}`);

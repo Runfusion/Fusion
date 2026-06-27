@@ -64,6 +64,7 @@ import { Database } from "./db.js";
 import { ArchiveDatabase } from "./archive-db.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
 import { MissionStore } from "./mission-store.js";
+import { AsyncMissionStore } from "./async-mission-store.js";
 import { PluginStore } from "./plugin-store.js";
 import { InsightStore } from "./insight-store.js";
 import { ResearchStore } from "./research-store.js";
@@ -356,7 +357,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public get isWatching(): boolean {
     return this.watcher !== null || this.pollInterval !== null;
   }
-  public missionStore: MissionStore | null = null;
+  public missionStore: MissionStore | AsyncMissionStore | null = null;
   public pluginStore: PluginStore | null = null;
   public insightStore: InsightStore | AsyncInsightStore | null = null;
   public researchStore: ResearchStore | AsyncResearchStore | null = null;
@@ -2295,7 +2296,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async clearActivityLog(): Promise<void> {
     return clearActivityLogImpl(this);
   }
-  getMissionStore(): MissionStore {
+  getMissionStore(): MissionStore | AsyncMissionStore {
     return getMissionStoreImpl(this);
   }
   getPluginStore(): PluginStore {

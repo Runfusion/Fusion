@@ -7,6 +7,7 @@
  * instance as its first parameter and performs byte-identical work.
  */
 import {TaskStore} from "../store.js";
+import {MissionStore} from "../mission-store.js";
 import {TaskHasDependentsError, TaskHasLineageChildrenError} from "./errors.js";
 import type {Task, Column, GithubIssueAction} from "../types.js";
 import "../builtin-traits.js";
@@ -118,9 +119,17 @@ export async function deleteTaskImpl(store: TaskStore, id: string, options?: { r
         store.emit("task:updated", lineageChild);
       }
 
-      const linkedFeature = store.missionStore?.getFeatureByTaskId(id);
-      if (linkedFeature) {
-        store.missionStore?.unlinkFeatureFromTask(linkedFeature.id);
+      // FNXC:MissionStore 2026-06-27-16:00:
+      // Best-effort mission feature/task-link cleanup on hard delete. store.missionStore
+      // is now MissionStore | AsyncMissionStore; this sync transaction callback can only
+      // drive the sync MissionStore. In PG backend mode (AsyncMissionStore) the cleanup is
+      // skipped (graceful degrade — the async unlink would need an await this txn cannot provide).
+      const missionStore = store.missionStore;
+      if (missionStore instanceof MissionStore) {
+        const linkedFeature = missionStore.getFeatureByTaskId(id);
+        if (linkedFeature) {
+          missionStore.unlinkFeatureFromTask(linkedFeature.id);
+        }
       }
 
       store.emit("task:deleted", task, { githubIssueAction: options?.githubIssueAction ?? "auto" });

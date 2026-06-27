@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, InsightStore, type Mission, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, InsightStore, MissionStore, type Mission, type TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const reporterLog = createLogger("unlinked-missions-advisory");
@@ -32,7 +32,16 @@ export class UnlinkedMissionsAdvisoryReporter {
 
   async report(): Promise<{ alerted: boolean; reason?: string }> {
     try {
-      const missionStore = this.store.getMissionStore();
+      // FNXC:MissionStore 2026-06-27-15:40:
+      // This reporter reads the MissionStore synchronously. In PG backend mode
+      // getMissionStore() returns the AsyncMissionStore (CRUD-only, not an
+      // EventEmitter); guard with instanceof and degrade gracefully — the advisory
+      // is sync-mode only this unit.
+      const resolvedMissionStore = this.store.getMissionStore();
+      if (!(resolvedMissionStore instanceof MissionStore)) {
+        return { alerted: false, reason: "mission-store-async-unsupported" };
+      }
+      const missionStore = resolvedMissionStore;
       const missions = missionStore.listMissions();
       const unlinkedActiveMissions: Mission[] = [];
 

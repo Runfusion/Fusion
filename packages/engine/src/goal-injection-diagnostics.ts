@@ -1,4 +1,5 @@
 import type { Goal } from "@fusion/core";
+import { MissionStore } from "@fusion/core";
 import { buildGoalContextSection, type GoalInjectionResult } from "./goal-context-injector.js";
 import type { TaskStore } from "@fusion/core";
 import type { GoalAnchoringLane } from "./goal-anchoring-audit.js";
@@ -145,7 +146,14 @@ export async function resolveAndEmitGoalContext(input: ResolveAndEmitGoalContext
   let provenanceGoalIds: string[] = [];
   if (input.taskId && typeof input.store.getMissionStore === "function") {
     try {
-      provenanceGoalIds = input.store.getMissionStore().listGoalIdsForTask(input.taskId);
+      // FNXC:MissionStore 2026-06-27-15:40:
+      // listGoalIdsForTask is a sync-only MissionStore method (not ported to the
+      // AsyncMissionStore). In PG backend mode getMissionStore() returns the async
+      // store; guard with instanceof and leave provenance empty (graceful fallback).
+      const resolvedMissionStore = input.store.getMissionStore();
+      if (resolvedMissionStore instanceof MissionStore) {
+        provenanceGoalIds = resolvedMissionStore.listGoalIdsForTask(input.taskId);
+      }
     } catch (error) {
       diagnosticsLog.warn(
         `failed to resolve goal provenance for task ${input.taskId} in ${input.lane}: ${error instanceof Error ? error.message : String(error)}`,

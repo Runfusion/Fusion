@@ -16,8 +16,7 @@ import type {
   AgentLogEntry,
   TaskIdIntegrityReport,
 } from "@fusion/core";
-import { AgentStore, ChatStore, setRunningAgentCountSource } from "@fusion/core";
-import type { MissionStore } from "@fusion/core";
+import { AgentStore, ChatStore, setRunningAgentCountSource, MissionStore } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "./routes.js";
 import { createApiRoutes } from "./routes.js";
 import { createSSE, disconnectSSEClient, markSSEClientAlive } from "./sse.js";
@@ -1050,14 +1049,16 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     const engineManager = options?.engineManager;
 
-    // FNXC:CentralCoreBackendMode 2026-06-26-13:25:
-    // store.getMissionStore() accesses the sync SQLite db handle, which throws
-    // in backend mode (PostgreSQL). MissionStore has not yet been converted to
-    // the async path. Degrade to undefined so SSE initialization does not 500.
-    // createSSE accepts missionStore as its 2nd param and handles undefined.
+    // FNXC:MissionStore 2026-06-27-15:50:
+    // The dashboard SSE subscribes to the sync EventEmitter MissionStore for live
+    // mission events. In PG backend mode getMissionStore() returns the
+    // AsyncMissionStore (not an EventEmitter); guard with instanceof and pass
+    // undefined so createSSE leaves mission subscriptions off (mission SSE stays
+    // degraded in PG, mirroring the research-store guard). createSSE handles undefined.
     const safeGetMissionStore = (s: TaskStore): MissionStore | undefined => {
       try {
-        return s.getMissionStore();
+        const resolved = s.getMissionStore();
+        return resolved instanceof MissionStore ? resolved : undefined;
       } catch {
         return undefined;
       }

@@ -15,7 +15,7 @@ import type {
   CliSession,
   NotificationPayload,
 } from "@fusion/core";
-import { ChatStore, createCentralDatabase, isEphemeralAgent } from "@fusion/core";
+import { ChatStore, createCentralDatabase, isEphemeralAgent, MissionStore } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
@@ -480,7 +480,14 @@ export class InProcessRuntime
        */
       let missionStore: import("@fusion/core").MissionStore | undefined;
       try {
-        missionStore = this.taskStore.getMissionStore();
+        // FNXC:MissionStore 2026-06-27-15:35:
+        // MissionAutopilot is coupled to the sync EventEmitter MissionStore. In PG
+        // backend mode getMissionStore() returns the AsyncMissionStore (CRUD-only),
+        // so guard with `instanceof MissionStore` and skip autopilot init — mission
+        // autopilot + live SSE mission events stay degraded in PG (mirrors the U4
+        // research orchestrator guard in project-engine.ts).
+        const resolvedMissionStore = this.taskStore.getMissionStore();
+        missionStore = resolvedMissionStore instanceof MissionStore ? resolvedMissionStore : undefined;
       } catch (msErr) {
         runtimeLog.warn(
           `MissionStore unavailable (${this.taskStore.isBackendMode() ? "backend mode" : "init error"}); mission autopilot disabled:`,
@@ -1116,7 +1123,10 @@ export class InProcessRuntime
        */
       let activeMissionStore: import("@fusion/core").MissionStore | undefined;
       try {
-        activeMissionStore = this.taskStore.getMissionStore();
+        // FNXC:MissionStore 2026-06-27-15:35: sync-only crash recovery; skip the
+        // AsyncMissionStore (PG backend) via instanceof — same degrade as autopilot.
+        const resolvedActive = this.taskStore.getMissionStore();
+        activeMissionStore = resolvedActive instanceof MissionStore ? resolvedActive : undefined;
       } catch {
         activeMissionStore = undefined;
       }

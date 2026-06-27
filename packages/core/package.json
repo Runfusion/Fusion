@@ -37,7 +37,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --silent=passed-only --reporter=dot",
-    "test:pg-gate": "vitest run src/__tests__/postgres/handoff-to-review-atomicity.pg.test.ts src/__tests__/postgres/store-list.pg.test.ts src/__tests__/postgres/task-lifecycle-e2e.pg.test.ts src/__tests__/postgres/soft-delete-resurrection-FN-5233.pg.test.ts src/__tests__/postgres/agent-logs-and-monitor.pg.test.ts src/__tests__/postgres/todo-store.pg.test.ts src/__tests__/postgres/workflow-definitions.pg.test.ts  src/__tests__/postgres/message-store.pg.test.ts src/__tests__/postgres/insight-store.pg.test.ts src/__tests__/postgres/research-store.pg.test.ts --silent=passed-only --reporter=dot"
+    "test:pg-gate": "vitest run src/__tests__/postgres/handoff-to-review-atomicity.pg.test.ts src/__tests__/postgres/store-list.pg.test.ts src/__tests__/postgres/task-lifecycle-e2e.pg.test.ts src/__tests__/postgres/soft-delete-resurrection-FN-5233.pg.test.ts src/__tests__/postgres/agent-logs-and-monitor.pg.test.ts src/__tests__/postgres/todo-store.pg.test.ts src/__tests__/postgres/workflow-definitions.pg.test.ts  src/__tests__/postgres/message-store.pg.test.ts src/__tests__/postgres/insight-store.pg.test.ts src/__tests__/postgres/research-store.pg.test.ts src/__tests__/postgres/mission-store.pg.test.ts --silent=passed-only --reporter=dot"
   },
   "devDependencies": {
     "@types/dockerode": "^3.3.41",

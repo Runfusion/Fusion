@@ -15,7 +15,15 @@
  * - Unified session type for both milestone and slice interviews
  */
 
-import type { PlanningQuestion, Milestone, Slice, MissionStore, InterviewState, SlicePlanState, TaskStore } from "@fusion/core";
+import type { PlanningQuestion, Milestone, Slice, MissionStore, AsyncMissionStore, InterviewState, SlicePlanState, TaskStore } from "@fusion/core";
+
+/**
+ * FNXC:MissionStore 2026-06-27-16:10:
+ * getMissionStore() now returns MissionStore | AsyncMissionStore (PG backend mode).
+ * The target-interview helpers await every store call so milestone/slice planning
+ * works against both SQLite and PostgreSQL.
+ */
+type AnyMissionStore = MissionStore | AsyncMissionStore;
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AiSessionStore, AiSessionRow } from "./ai-session-store.js";
@@ -1311,7 +1319,7 @@ export function cleanupTargetInterviewSession(sessionId: string): void {
  */
 export async function applyTargetInterview(
   sessionId: string,
-  missionStore: MissionStore
+  missionStore: AnyMissionStore
 ): Promise<Milestone | Slice> {
   const session = await getTargetInterviewSession(sessionId);
   if (!session) {
@@ -1326,24 +1334,24 @@ export async function applyTargetInterview(
   let result: Milestone | Slice;
 
   if (session.targetType === "milestone") {
-    const milestone = missionStore.getMilestone(session.targetId);
+    const milestone = await missionStore.getMilestone(session.targetId);
     if (!milestone) {
       throw new TargetSessionNotFoundError(`Milestone ${session.targetId} not found`);
     }
 
-    result = missionStore.updateMilestone(session.targetId, {
+    result = await missionStore.updateMilestone(session.targetId, {
       description: summary.description,
       planningNotes: summary.planningNotes,
       verification: summary.verification,
       interviewState: "completed" as InterviewState,
     });
   } else {
-    const slice = missionStore.getSlice(session.targetId);
+    const slice = await missionStore.getSlice(session.targetId);
     if (!slice) {
       throw new TargetSessionNotFoundError(`Slice ${session.targetId} not found`);
     }
 
-    result = missionStore.updateSlice(session.targetId, {
+    result = await missionStore.updateSlice(session.targetId, {
       description: summary.description,
       planningNotes: summary.planningNotes,
       verification: summary.verification,
@@ -1360,46 +1368,46 @@ export async function applyTargetInterview(
 /**
  * Skip the interview and apply mission-level context directly.
  */
-export function skipTargetInterview(
+export async function skipTargetInterview(
   targetType: TargetType,
   targetId: string,
-  missionStore: MissionStore
-): Milestone | Slice {
+  missionStore: AnyMissionStore
+): Promise<Milestone | Slice> {
   let result: Milestone | Slice;
 
   if (targetType === "milestone") {
-    const milestone = missionStore.getMilestone(targetId);
+    const milestone = await missionStore.getMilestone(targetId);
     if (!milestone) {
       throw new TargetSessionNotFoundError(`Milestone ${targetId} not found`);
     }
 
     // Get mission context for the skip message
-    const mission = missionStore.getMission(milestone.missionId);
+    const mission = await missionStore.getMission(milestone.missionId);
     const contextMessage = mission
       ? `Planned using mission-level context (no per-milestone interview). Mission: "${mission.title}". ${mission.description || ""}`
       : "Planned using mission-level context (no per-milestone interview)";
 
-    result = missionStore.updateMilestone(targetId, {
+    result = await missionStore.updateMilestone(targetId, {
       planningNotes: contextMessage,
       interviewState: "completed" as InterviewState,
     });
   } else {
-    const slice = missionStore.getSlice(targetId);
+    const slice = await missionStore.getSlice(targetId);
     if (!slice) {
       throw new TargetSessionNotFoundError(`Slice ${targetId} not found`);
     }
 
     // Get mission context for the skip message
-    const milestone = missionStore.getMilestone(slice.milestoneId);
+    const milestone = await missionStore.getMilestone(slice.milestoneId);
     const milestoneTitle = milestone?.title;
-    const mission = milestone ? missionStore.getMission(milestone.missionId) : undefined;
+    const mission = milestone ? await missionStore.getMission(milestone.missionId) : undefined;
     const contextMessage = mission
       ? `Planned using mission-level context (no per-slice interview). Mission: "${mission.title}". Milestone: "${milestoneTitle}". ${mission.description || ""}`
       : milestoneTitle
         ? `Planned using mission-level context (no per-slice interview). Milestone: "${milestoneTitle}".`
         : "Planned using mission-level context (no per-slice interview)";
 
-    result = missionStore.updateSlice(targetId, {
+    result = await missionStore.updateSlice(targetId, {
       planningNotes: contextMessage,
       planState: "planned" as SlicePlanState,
     });

@@ -27,11 +27,6 @@ type GoalStoreLike = {
   unarchiveGoal(id: string): Goal;
 };
 
-type MissionStoreLike = {
-  listMissionIdsForGoal(goalId: string): string[];
-  getMission(missionId: string): Mission | null | undefined;
-};
-
 const GOAL_ID_RE = /^G-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i;
 const GOAL_STATUSES: GoalStatus[] = ["active", "archived"];
 
@@ -54,11 +49,11 @@ function getGoalStore(store: TaskStore): GoalStoreLike {
   return store.getGoalStore();
 }
 
-function getMissionStore(store: TaskStore): MissionStoreLike {
-  // FNXC:PostgresBackend 2026-06-27-05:00:
-  // MissionStore is not yet ported; degrade goal→mission routes to a clean 503
-  // in PG backend mode rather than 500-ing.
-  if (store.backendMode) throw new ApiError(503, "Missions are not yet available in PG backend mode");
+function getMissionStore(store: TaskStore) {
+  // FNXC:MissionStore 2026-06-27-15:30:
+  // MissionStore is now ported (AsyncMissionStore in PG backend mode); the
+  // goal→mission routes await its calls so both backends work. GoalStore is NOT
+  // ported — its 503 guard (getGoalStore) stays.
   return store.getMissionStore();
 }
 
@@ -157,7 +152,7 @@ export function createGoalsRouter(store: TaskStore): Router {
    */
   router.get(
     "/:id/missions",
-    catchHandler((req, res) => {
+    catchHandler(async (req, res) => {
       const id = validateGoalId(req.params.id);
       const scopedStore = getScopedStore();
       const goalStore = getGoalStore(scopedStore);
@@ -166,9 +161,9 @@ export function createGoalsRouter(store: TaskStore): Router {
       }
 
       const missionStore = getMissionStore(scopedStore);
-      const missions = missionStore
-        .listMissionIdsForGoal(id)
-        .map((missionId) => missionStore.getMission(missionId))
+      const missionIds = await missionStore.listMissionIdsForGoal(id);
+      const resolved = await Promise.all(missionIds.map((missionId) => missionStore.getMission(missionId)));
+      const missions = resolved
         .filter((mission): mission is Mission => Boolean(mission))
         .map((mission) => ({ id: mission.id, title: mission.title, status: mission.status }));
 
