@@ -154,6 +154,11 @@ export function createResearchRouter(store: TaskStore): Router {
   const getStore = () => {
     const scoped = requestContext.getStore();
     if (!scoped) throw new ApiError(500, "Store context not available");
+    // FNXC:PostgresBackend 2026-06-27-05:00:
+    // ResearchStore is not yet ported to the AsyncDataLayer. Degrade to a clean
+    // 503 in PG backend mode instead of letting getResearchStore() throw an
+    // unhandled "not available" error that surfaces as a 500.
+    if (scoped.backendMode) throw new ApiError(503, "Research is not yet available in PG backend mode");
     return scoped.getResearchStore();
   };
 

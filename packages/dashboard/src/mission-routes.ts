@@ -306,7 +306,12 @@ export function createMissionRouter(
   }
 
   function getScopedMissionStore() {
-    return getScopedStore().getMissionStore();
+    // FNXC:PostgresBackend 2026-06-27-05:00:
+    // MissionStore is not yet ported to the AsyncDataLayer. Degrade to a clean
+    // 503 in PG backend mode instead of letting getMissionStore() throw a 500.
+    const scoped = getScopedStore();
+    if (scoped.backendMode) throw new ApiError(503, "Missions are not yet available in PG backend mode");
+    return scoped.getMissionStore();
   }
 
   function getScopedGoalStore() {

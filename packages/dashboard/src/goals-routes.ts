@@ -46,10 +46,19 @@ function getProjectIdFromRequest(req: Request): string | undefined {
 }
 
 function getGoalStore(store: TaskStore): GoalStoreLike {
+  // FNXC:PostgresBackend 2026-06-27-05:00:
+  // GoalStore is not yet ported (it has many sync CLI consumers that would break
+  // on an async flip). Degrade the dashboard goals routes to a clean 503 in PG
+  // backend mode instead of 500-ing.
+  if (store.backendMode) throw new ApiError(503, "Goals are not yet available in PG backend mode");
   return store.getGoalStore();
 }
 
 function getMissionStore(store: TaskStore): MissionStoreLike {
+  // FNXC:PostgresBackend 2026-06-27-05:00:
+  // MissionStore is not yet ported; degrade goal→mission routes to a clean 503
+  // in PG backend mode rather than 500-ing.
+  if (store.backendMode) throw new ApiError(503, "Missions are not yet available in PG backend mode");
   return store.getMissionStore();
 }
 

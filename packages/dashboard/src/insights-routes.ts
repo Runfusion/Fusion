@@ -329,6 +329,13 @@ export function createInsightsRouter(store: TaskStore): Router {
     if (!store) {
       throw new ApiError(500, "Store context not available");
     }
+    // FNXC:PostgresBackend 2026-06-27-05:00:
+    // InsightStore is not yet ported to the AsyncDataLayer (route needs
+    // updateRun, which has no async helper yet). Degrade to a clean 503 in PG
+    // backend mode instead of surfacing the "not available" throw as a 500.
+    if (store.backendMode) {
+      throw new ApiError(503, "Insights are not yet available in PG backend mode");
+    }
     return store.getInsightStore();
   }
 
