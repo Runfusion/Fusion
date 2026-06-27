@@ -48,14 +48,17 @@ function mergeRecord(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-const TERMINAL_STATUSES = new Set<ResearchRunStatus>([
+// FNXC:ResearchStore 2026-06-27-12:00:
+// Exported so the AsyncDataLayer port (async-research-store.ts AsyncResearchStore)
+// replicates the SAME terminal set + transition machine, preventing PG/SQLite drift (R4).
+export const TERMINAL_STATUSES = new Set<ResearchRunStatus>([
   "completed",
   "failed",
   "cancelled",
   "timed_out",
   "retry_exhausted",
 ]);
-const VALID_STATUS_TRANSITIONS: Record<ResearchRunStatus, ResearchRunStatus[]> = {
+export const VALID_STATUS_TRANSITIONS: Record<ResearchRunStatus, ResearchRunStatus[]> = {
   queued: ["running", "cancelling", "cancelled", "failed", "retry_waiting", "timed_out"],
   running: ["completed", "failed", "cancelling", "cancelled", "retry_waiting", "timed_out"],
   cancelling: ["cancelled", "failed", "timed_out"],
@@ -71,7 +74,7 @@ function normalizeStatus(status: ResearchRunStatus | "pending"): ResearchRunStat
   return status === "pending" ? "queued" : status;
 }
 
-function defaultErrorCodeForFailureClass(failureClass?: ResearchRunFailureClass): ResearchErrorCode {
+export function defaultErrorCodeForFailureClass(failureClass?: ResearchRunFailureClass): ResearchErrorCode {
   if (failureClass === "timed_out") return "PROVIDER_TIMEOUT";
   if (failureClass === "cancelled") return "RUN_CANCELLED";
   if (failureClass === "non_retryable") return "NON_RETRYABLE_PROVIDER_ERROR";

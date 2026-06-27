@@ -2042,8 +2042,12 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
+      // FNXC:ResearchStore 2026-06-27-12:40:
+      // getResearchStore() returns ResearchStore (SQLite) or AsyncResearchStore (PG backend);
+      // await every call so research-run CRUD works in both backends (await is harmless on
+      // the sync store). AI research EXECUTION still requires starting the engine.
       const researchStore = store.getResearchStore();
-      const run = researchStore.createRun({
+      const run = await researchStore.createRun({
         query: params.query,
         topic: params.query,
         providerConfig: {},
@@ -2064,7 +2068,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       let latestRun = run;
 
       while (Date.now() <= deadline) {
-        const current = researchStore.getRun(run.id);
+        const current = await researchStore.getRun(run.id);
         if (!current) {
           break;
         }
@@ -2105,7 +2109,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const runs = store.getResearchStore().listRuns({ status: params.status as ResearchRunStatus | undefined, limit: params.limit ?? 10 });
+      const runs = await store.getResearchStore().listRuns({ status: params.status as ResearchRunStatus | undefined, limit: params.limit ?? 10 });
       const text = runs.length ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n") : "No research runs found.";
       return { content: [{ type: "text", text }], details: { runs: runs.map(toResearchRunDetails) } };
     },
@@ -2134,7 +2138,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const run = store.getResearchStore().getRun(params.id);
+      const run = await store.getResearchStore().getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text", text: `Research run ${params.id} not found.` }],
@@ -2178,7 +2182,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       const researchStore = store.getResearchStore();
-      const run = researchStore.getRun(params.id);
+      const run = await researchStore.getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text", text: `Research run ${params.id} not found.` }],
@@ -2207,7 +2211,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const updated = researchStore.requestCancellation(params.id);
+      const updated = await researchStore.requestCancellation(params.id);
       return {
         content: [{ type: "text", text: `Requested cancellation for research run ${params.id} (status: ${updated.status}).` }],
         details: toResearchRunDetails(updated),
@@ -2240,7 +2244,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       const researchStore = store.getResearchStore();
-      const run = researchStore.getRun(params.id);
+      const run = await researchStore.getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text", text: `Research run ${params.id} not found.` }],
@@ -2269,7 +2273,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const retryRun = researchStore.createRetryRun(params.id);
+      const retryRun = await researchStore.createRetryRun(params.id);
       return {
         content: [{ type: "text", text: `Created retry run ${retryRun.id} from ${params.id}.` }],
         details: toResearchRunDetails(retryRun),

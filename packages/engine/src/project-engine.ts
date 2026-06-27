@@ -13,7 +13,7 @@ import type {
   ResearchSynthesisRequest,
   ResearchSynthesisResult,
 } from "@fusion/core";
-import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, isWorkspaceTask, normalizeMergerMode, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
+import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, isWorkspaceTask, normalizeMergerMode, ResearchStore, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -553,6 +553,14 @@ export class ProjectEngine {
     if (typeof (store as { getResearchStore?: () => unknown }).getResearchStore === "function") {
       try {
         const researchStore = store.getResearchStore();
+        // FNXC:ResearchStore 2026-06-27-12:30:
+        // The ResearchOrchestrator/ResearchRunDispatcher are coupled to the sync
+        // EventEmitter ResearchStore. In PG backend mode getResearchStore() returns
+        // the AsyncResearchStore (CRUD-only), so skip orchestrator init — AI research
+        // EXECUTION stays degraded in PG mode (dashboard CRUD/lifecycle still works).
+        if (!(researchStore instanceof ResearchStore)) {
+          throw new Error("ResearchOrchestrator unavailable: async ResearchStore (PG backend mode)");
+        }
         const registry = new ResearchProviderRegistry(settings, cwd);
         const providers = registry.getAvailableProviders()
           .map((type) => registry.getProvider(type))

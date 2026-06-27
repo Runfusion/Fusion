@@ -18,6 +18,7 @@ import { MergeRequestRow, WorkflowWorkItemRow } from "./row-types.js";
 import { TodoStore } from "../todo-store.js";
 import { AsyncTodoStore } from "../async-todo-store.js";
 import { AsyncInsightStore } from "../async-insight-store.js";
+import { AsyncResearchStore } from "../async-research-store.js";
 import { assertColumnTraitsValid } from "../trait-registry.js";
 import { BoardConfig, BranchGroup, MergeRequestRecord, Task, WorkflowStepTemplate, WorkflowWorkItem, WorkflowWorkItemKind } from "../types.js";
 import { WorkflowFieldDefinition, WorkflowIr, WorkflowIrColumn } from "../workflow-ir-types.js";
@@ -246,9 +247,25 @@ export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsig
     return store.insightStore;
 }
 
-export function getResearchStoreImpl(store: TaskStore): ResearchStore {
+export function getResearchStoreImpl(store: TaskStore): ResearchStore | AsyncResearchStore {
     if (!store.researchStore) {
-      store.researchStore = new ResearchStore(store.db);
+      // FNXC:ResearchStore 2026-06-27-12:15:
+      // PG backend mode returns the AsyncDataLayer-backed AsyncResearchStore (run CRUD
+      // + lifecycle/retry machines over project.research_runs / research_run_events /
+      // research_exports). The sync SQLite ResearchStore (store.db) is used only in
+      // legacy SQLite mode. Both expose the same method names; the dashboard research
+      // routes await the result so either works. AI research EXECUTION (the engine
+      // ResearchOrchestrator/ResearchRunDispatcher) stays degraded in PG mode — those
+      // are coupled to the sync EventEmitter ResearchStore and are out of scope here.
+      if (store.backendMode) {
+        const layer = store.getAsyncLayer();
+        if (!layer) {
+          throw new Error("ResearchStore is not available: AsyncDataLayer not initialized in backend mode");
+        }
+        store.researchStore = new AsyncResearchStore(layer);
+      } else {
+        store.researchStore = new ResearchStore(store.db);
+      }
     }
     return store.researchStore;
 }

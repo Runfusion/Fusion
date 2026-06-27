@@ -1,4 +1,9 @@
 import type { Request, Response } from "express";
+// FNXC:ResearchStore 2026-06-27-12:25:
+// Value import so SSE can narrow getResearchStore() (now ResearchStore | AsyncResearchStore)
+// to the sync EventEmitter ResearchStore. AsyncResearchStore (PG backend) is not an
+// EventEmitter, so research run-event subscriptions stay off in PG mode.
+import { ResearchStore } from "@fusion/core";
 import type {
   TaskStore,
   MissionStore,
@@ -466,14 +471,15 @@ export function createSSE(
     const connectionId = nextConnectionId++;
     const clientId = normalizeSSEClientId(_req.query?.clientId);
     const socket = res.socket ?? _req.socket;
-    // FNXC:PostgresBackend 2026-06-27-05:00:
-    // ResearchStore is not yet ported to the AsyncDataLayer and throws in PG
-    // backend mode. The SSE stream must still serve every other event type, so
-    // degrade to null and skip only the research run-event subscriptions below
-    // (guarded with optional chaining) rather than failing the whole connection.
-    let researchStore: ReturnType<typeof store.getResearchStore> | null;
+    // FNXC:ResearchStore 2026-06-27-12:25:
+    // SSE research run-event subscriptions require the sync EventEmitter ResearchStore.
+    // In PG backend mode getResearchStore() returns the AsyncResearchStore (CRUD-only,
+    // not an EventEmitter), so narrow to ResearchStore | null: keep serving every other
+    // event type and skip only the research subscriptions below (optional-chained).
+    let researchStore: ResearchStore | null;
     try {
-      researchStore = store.getResearchStore();
+      const resolvedResearchStore = store.getResearchStore();
+      researchStore = resolvedResearchStore instanceof ResearchStore ? resolvedResearchStore : null;
     } catch {
       researchStore = null;
     }
