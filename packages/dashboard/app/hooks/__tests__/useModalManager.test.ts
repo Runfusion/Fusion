@@ -219,13 +219,19 @@ describe("useModalManager", () => {
     });
 
     expect(result.current.detailTask?.id).toBe("FN-123");
-    expect(result.current.detailTaskInitialTab).toBe("chat");
+    expect(result.current.detailTaskInitialTab).toBeUndefined();
 
     act(() => {
       result.current.openDetailWithChangesTab(task);
     });
 
     expect(result.current.detailTaskInitialTab).toBe("changes");
+
+    act(() => {
+      result.current.openDetailTask(task, "chat");
+    });
+
+    expect(result.current.detailTaskInitialTab).toBe("chat");
 
     act(() => {
       result.current.closeDetailTask();
@@ -267,7 +273,7 @@ describe("useModalManager", () => {
     expect(result.current.detailTask?.id).toBe("FN-456");
     // Should not have prompt field (plain Task)
     expect("prompt" in (result.current.detailTask as unknown as Record<string, unknown>)).toBe(false);
-    expect(result.current.detailTaskInitialTab).toBe("chat");
+    expect(result.current.detailTaskInitialTab).toBeUndefined();
   });
 
   it.each([

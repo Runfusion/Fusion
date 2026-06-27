@@ -194,7 +194,7 @@ export interface MainContentProps {
   openCreateWorkflowWithNav: () => void;
   sidebarActive: boolean;
   isMobile: boolean;
-  mainPanelDetailInitialTab: DetailTaskTab;
+  mainPanelDetailInitialTab: DetailTaskTab | undefined;
   closeTaskDetailMainPanel: () => void;
   setMainPanelDetailTask: Dispatch<SetStateAction<Task | TaskDetail | null>>;
   mergeTask: (id: string) => Promise<MergeResult>;

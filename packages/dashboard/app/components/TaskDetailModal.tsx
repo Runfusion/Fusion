@@ -37,6 +37,7 @@ import { TaskChatTab } from "./TaskChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
+import { TaskSummaryTab } from "./TaskSummaryTab";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
 import { TaskForm, type PendingImage } from "./TaskForm";
 import { useNodes } from "../hooks/useNodes";
@@ -189,7 +190,24 @@ function formatDurationCompact(ageMs: number): string {
   return `${minutes}m`;
 }
 
-type TabId = "definition" | "chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | `plugin-${string}`;
+type TabId = "summary" | "definition" | "chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | `plugin-${string}`;
+
+/*
+FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+Done tasks land on Summary instead of Chat so completed work opens on the completion overview. Chat stays the implicit default for every other column, and explicit tab requests continue to win for done tasks.
+
+FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so done tasks can still deep-link directly to Chat.
+*/
+function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId): TabId {
+  if (initialTab === "retries") {
+    return "definition";
+  }
+  if (initialTab) {
+    return initialTab;
+  }
+  return column === "done" ? "summary" : "chat";
+}
 
 // Lazy-load the terminal so xterm + addons stay out of the main bundle (U11).
 const LazySessionTerminal = lazy(() =>
@@ -278,7 +296,7 @@ export interface TaskDetailModalProps {
   prAuthAvailable?: boolean;
   autoMergeEnabled?: boolean;
   onOpenWorkflowEditor?: () => void;
-  /** Open the modal with this tab active instead of the default Chat view. */
+  /** Open the modal with this tab active instead of the default done-aware landing view. */
   initialTab?: TabId;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
@@ -476,7 +494,7 @@ export function TaskDetailContent({
    * FNXC:TaskDetailTabs 2026-06-17-00:00:
    * FN-6532 makes Chat the default task-detail view when no caller supplies an explicit initial tab.
    */
-  initialTab = "chat",
+  initialTab,
   mobileHeaderMode = "close",
   embedded = false,
   onRequestClose,
@@ -486,7 +504,7 @@ export function TaskDetailContent({
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab === "retries" ? "definition" : initialTab);
+  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column));
   const [chatExpanded, setChatExpanded] = useState(false);
 
   // ── CLI agent session (U11) ────────────────────────────────────────────────
@@ -613,14 +631,20 @@ export function TaskDetailContent({
 
   // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
   useEffect(() => {
-    setActiveTab(initialTab === "retries" ? "definition" : initialTab);
+    setActiveTab(resolveDefaultTab(initialTab, task.column));
     if (initialTab === "retries") {
       setRetriesExpanded(true);
     }
-  }, [initialTab]);
+  }, [initialTab, task.column]);
 
   useEffect(() => {
     if (activeTab === "pr" && task.column !== "in-review") {
+      setActiveTab("definition");
+    }
+  }, [activeTab, task.column]);
+
+  useEffect(() => {
+    if (activeTab === "summary" && task.column !== "done") {
       setActiveTab("definition");
     }
   }, [activeTab, task.column]);
@@ -3050,7 +3074,18 @@ export function TaskDetailContent({
             {/*
               FNXC:TaskDetailTabs 2026-06-17-00:00:
               FN-6532 requires Chat to be the first task-detail tab while preserving every explicit tab entrypoint.
+
+              FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+              Done tasks expose Summary as the first tab because the implicit Chat default resolves there for completed work; non-done tasks keep Chat first and never render an empty Summary shell.
             */}
+            {task.column === "done" && (
+              <button
+                className={`detail-tab${activeTab === "summary" ? " detail-tab-active" : ""}`}
+                onClick={() => setActiveTab("summary")}
+              >
+                {t("taskDetail.tabs.summary", "Summary")}
+              </button>
+            )}
             <button
               className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("chat")}
@@ -3180,6 +3215,10 @@ export function TaskDetailContent({
           ) : activeTab === "model" ? (
             <div className="detail-section">
               <ModelSelectorTab task={task} addToast={addToast} onTaskUpdated={onTaskUpdated} settings={settings} />
+            </div>
+          ) : activeTab === "summary" && task.column === "done" ? (
+            <div className="detail-section detail-section--summary">
+              <TaskSummaryTab task={workingTask} />
             </div>
           ) : activeTab === "chat" ? (
             <div className="detail-section detail-section--chat">
@@ -3482,17 +3521,7 @@ export function TaskDetailContent({
             </div>
           ) : (
           <>
-          {/* Summary section - only for done tasks with summary */}
-          {task.column === "done" && task.summary && (
-            <div className="detail-section detail-summary">
-              <h4>{t("taskDetail.summary.heading", "Summary")}</h4>
-              <div className="markdown-body">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={sharedRehypePlugins} components={markdownLinkifyComponents}>
-                  {task.summary}
-                </ReactMarkdown>
-              </div>
-            </div>
-          )}
+          {/* FNXC:TaskDetailSummaryTab 2026-06-27-00:00: The former inline Definition-tab completion summary is intentionally removed to avoid duplicating the new done-only Summary tab; Definition keeps merge/retry/source metadata below. */}
           <MergeDetails task={task} />
           {(retrySummary?.total ?? 0) > 0 && (
             <div className="detail-section detail-retries-section">

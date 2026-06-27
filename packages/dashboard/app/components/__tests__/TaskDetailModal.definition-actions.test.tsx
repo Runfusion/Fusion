@@ -255,25 +255,26 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Chat, Definition, Logs, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing (11 tabs, no Commits)
+      // Done task with commit SHA: Summary, Chat, Definition, Logs, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing (12 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Chat");
-      expect(tabs[1].textContent).toBe("Definition");
-      expect(tabs[2].textContent).toBe("Logs");
-      expect(tabs[3].textContent).toBe("Changes");
-      expect(tabs[4].textContent).toBe("Review");
-      expect(tabs[5].textContent).toBe("Comments");
-      expect(tabs[6].textContent).toBe("Artifacts");
-      expect(tabs[7].textContent).toBe("Model");
-      expect(tabs[8].textContent).toBe("Workflow");
-      expect(tabs[9].textContent).toBe("Stats");
-      expect(tabs[10].textContent).toBe("Routing");
+      expect(tabs.length).toBe(12);
+      expect(tabs[0].textContent).toBe("Summary");
+      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[2].textContent).toBe("Definition");
+      expect(tabs[3].textContent).toBe("Logs");
+      expect(tabs[4].textContent).toBe("Changes");
+      expect(tabs[5].textContent).toBe("Review");
+      expect(tabs[6].textContent).toBe("Comments");
+      expect(tabs[7].textContent).toBe("Artifacts");
+      expect(tabs[8].textContent).toBe("Model");
+      expect(tabs[9].textContent).toBe("Workflow");
+      expect(tabs[10].textContent).toBe("Stats");
+      expect(tabs[11].textContent).toBe("Routing");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });
 
-    it("shows 11 tabs for done task with workflow steps and commit SHA (Commits merged into Changes)", () => {
+    it("shows 12 tabs for done task with workflow steps and commit SHA (Commits merged into Changes)", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -291,20 +292,21 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with workflow steps and commit SHA: 11 tabs including Review (no Commits)
+      // Done task with workflow steps and commit SHA: 12 tabs including Summary and Review (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
-      expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Chat");
-      expect(tabs[1].textContent).toBe("Definition");
-      expect(tabs[2].textContent).toBe("Logs");
-      expect(tabs[3].textContent).toBe("Changes");
-      expect(tabs[4].textContent).toBe("Review");
-      expect(tabs[5].textContent).toBe("Comments");
-      expect(tabs[6].textContent).toBe("Artifacts");
-      expect(tabs[7].textContent).toBe("Model");
-      expect(tabs[8].textContent).toBe("Workflow");
-      expect(tabs[9].textContent).toBe("Stats");
-      expect(tabs[10].textContent).toBe("Routing");
+      expect(tabs.length).toBe(12);
+      expect(tabs[0].textContent).toBe("Summary");
+      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[2].textContent).toBe("Definition");
+      expect(tabs[3].textContent).toBe("Logs");
+      expect(tabs[4].textContent).toBe("Changes");
+      expect(tabs[5].textContent).toBe("Review");
+      expect(tabs[6].textContent).toBe("Comments");
+      expect(tabs[7].textContent).toBe("Artifacts");
+      expect(tabs[8].textContent).toBe("Model");
+      expect(tabs[9].textContent).toBe("Workflow");
+      expect(tabs[10].textContent).toBe("Stats");
+      expect(tabs[11].textContent).toBe("Routing");
       // Commits tab should NOT be present
       expect(screen.queryByText("Commits")).toBeNull();
     });

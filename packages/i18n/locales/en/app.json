@@ -7533,6 +7533,21 @@
     "summary": {
       "heading": "Summary"
     },
+    "summaryTab": {
+      "agentWorkHeading": "Work done by agents",
+      "changedHeading": "What changed",
+      "commit": "Commit",
+      "completedSteps": "Completed steps",
+      "completionHeading": "Completion summary",
+      "deletions": "Removed",
+      "filesChanged": "Files",
+      "insertions": "Added",
+      "noAgentWork": "No completed steps or workflow results are available for this task.",
+      "noChangedFiles": "No changed-file list is available for this task.",
+      "noCompletionSummary": "No completion summary was recorded for this task.",
+      "retries": "Agents retried this task {{count}} time{{plural}}.",
+      "workflowResults": "Workflow results"
+    },
     "tabs": {
       "changes": "Changes",
       "chat": "Chat",
@@ -7545,6 +7560,7 @@
       "review": "Review",
       "routing": "Routing",
       "stats": "Stats",
+      "summary": "Summary",
       "terminal": "Terminal",
       "workflow": "Workflow"
     },

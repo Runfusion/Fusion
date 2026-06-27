@@ -1555,6 +1555,187 @@ The footer Actions/Move dropdown buttons sit at the BOTTOM of the embedded panel
   margin-bottom: 0;
 }
 
+/*
+FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+The done-task Summary tab is a scrollable overview composed from existing detail data. Reuse detail-section/markdown conventions and tokenized spacing/colors so the new landing tab preserves modal hierarchy across desktop and mobile.
+*/
+.detail-section--summary {
+  overflow-y: auto;
+}
+
+.task-summary-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.task-summary-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.task-summary-section h4,
+.task-summary-section h5 {
+  margin: 0;
+}
+
+.task-summary-section h5 {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  font-weight: 600;
+}
+
+.task-summary-markdown {
+  color: var(--text);
+}
+
+.task-summary-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+}
+
+.task-summary-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--space-2xl) * 3), 1fr));
+  gap: var(--space-sm);
+  margin: 0;
+}
+
+.task-summary-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.task-summary-stats dt {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  text-transform: uppercase;
+  letter-spacing: calc(var(--btn-border-width) * 0.5);
+}
+
+.task-summary-stats dd {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-summary-diff-add {
+  color: var(--color-success);
+}
+
+.task-summary-diff-del {
+  color: var(--color-error);
+}
+
+.task-summary-file-list,
+.task-summary-work-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-summary-file-list li,
+.task-summary-work-list li {
+  min-width: 0;
+  padding: var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+}
+
+.task-summary-file-list li {
+  font-family: var(--font-mono);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  overflow-wrap: anywhere;
+}
+
+.task-summary-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.task-summary-work-list li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.task-summary-status {
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.task-summary-status--done,
+.task-summary-status--passed {
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+  color: var(--color-success);
+}
+
+.task-summary-status--skipped,
+.task-summary-status--advisory_failure,
+.task-summary-status--pending {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+
+.task-summary-status--failed {
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  color: var(--color-error);
+}
+
+.task-summary-retries {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .detail-section--summary {
+    padding-inline: var(--space-sm);
+  }
+
+  .task-summary-tab {
+    gap: var(--space-md);
+  }
+
+  .task-summary-section {
+    padding: var(--space-md);
+  }
+
+  .task-summary-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .task-summary-work-list li {
+    align-items: flex-start;
+  }
+}
+
 /* Spec tab layout - allows SpecEditor to fill available vertical space */
 .detail-section--spec {
   display: flex;

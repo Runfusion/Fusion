@@ -6,6 +6,7 @@ import type { ToastType } from "./useToast";
 import { removeScopedItem } from "../utils/projectStorage";
 
 export type DetailTaskTab =
+  | "summary"
   | "chat"
   | "definition"
   | "logs"
@@ -40,7 +41,7 @@ export interface ModalManager {
   subtaskWorkflowId: string | null | undefined;
   // Can be Task (optimistic open) or TaskDetail (full data with prompt)
   detailTask: (Task | TaskDetail) | null;
-  detailTaskInitialTab: DetailTaskTab;
+  detailTaskInitialTab: DetailTaskTab | undefined;
   detailTaskOrigin: DetailTaskOrigin | null;
   groupModalGroupId: string | null;
   settingsOpen: boolean;
@@ -173,8 +174,11 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
   /**
    * FNXC:TaskDetailTabs 2026-06-17-00:00:
    * FN-6532 makes Chat the default task-detail view whenever a task opens without an explicit tab request.
+   *
+   * FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
+   * Store omitted task-detail tabs as `undefined` so done tasks can resolve the implicit landing tab to Summary without stealing explicit Chat requests.
    */
-  const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<DetailTaskTab>("chat");
+  const [detailTaskInitialTab, setDetailTaskInitialTab] = useState<DetailTaskTab | undefined>(undefined);
   const [detailTaskOrigin, setDetailTaskOrigin] = useState<DetailTaskOrigin | null>(null);
   const [groupModalGroupId, setGroupModalGroupId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -296,11 +300,11 @@ export function useModalManager(options: UseModalManagerOptions): ModalManager {
 
   /**
    * FNXC:TaskDetailTabs 2026-06-17-00:00:
-   * Open-detail callers that omit initialTab should land on Chat; explicit tab requests preserve caller intent.
+   * Open-detail callers that omit initialTab should land on the task-detail default; explicit tab requests preserve caller intent.
    */
   const openDetailTask = useCallback((
     task: Task | TaskDetail,
-    initialTab: DetailTaskTab = "chat",
+    initialTab?: DetailTaskTab,
     options?: { origin?: DetailTaskOrigin },
   ) => {
     setDetailTask(task);

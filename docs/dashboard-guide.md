@@ -966,6 +966,7 @@ For related global/project configuration behavior, see [Settings reference](./se
 Inspect task definition, logs, review feedback, comments, artifacts, workflow outcomes, model overrides, and task routing from a single modal.
 
 - Editable tasks with descriptions show **Summarize as title** beside the read-mode title; it asks AI to generate a concise title from the description and saves it without opening the edit form.
+- The **Summary** tab appears first for `done` tasks and is their default landing tab. It shows the recorded completion summary, changed-file/merge stats when available, completed steps, workflow results, and retry counts from the already-loaded task detail; non-`done` tasks still open on **Chat** by default.
 - The **Chat** tab includes an expand/collapse control that lets the transcript and composer fill the task-detail modal, then restores the normal header, tabs, and action footer when collapsed.
 - Task-detail Chat messages are persisted as user comments/steering guidance and surfaced to every relevant agent lane: live executor sessions receive steering injection, while planner, reviewer (spec/plan/code), and merger agents (standard and clean-room AI merge/review) receive the latest user comments in their next prompt/pass.
 - The priority chip in task metadata is an inline picker: you can change priority directly without entering full edit mode.

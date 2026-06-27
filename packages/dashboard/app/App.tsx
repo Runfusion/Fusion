@@ -787,7 +787,7 @@ function AppInner() {
   FNXC:TaskDetailBack 2026-06-25-00:00:
   Browser and Android Back must close the currently viewed full-panel task detail before leaving the prior dashboard view. The history entry owns an idempotent revert callback that clears stale snapshot state for board/list origins or restores the previous task snapshot for nested task-detail links, and explicit Back-to-board consumes that same entry without pushing a contradictory view entry during popstate.
   */
-  const openTaskDetailInMainPanel = useCallback((task: Task | TaskDetail, initialTab: DetailTaskTab = "chat") => {
+  const openTaskDetailInMainPanel = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
     const previousView = taskView;
     const previousDetailTask = mainPanelDetailTask;
     const previousDetailTab = mainPanelDetailInitialTab;
