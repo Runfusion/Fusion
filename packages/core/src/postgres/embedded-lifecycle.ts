@@ -44,7 +44,7 @@
 // (DATABASE_URL unset AND FUSION_NO_EMBEDDED_PG not set — the default since
 // the flip-embedded-pg-default change; the runtime startup factory is the
 // sole caller and it dynamically imports this module only in that case).
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -161,6 +161,68 @@ export function isDataDirInitialized(dataDir: string): boolean {
 }
 
 /**
+ * FNXC:PostgresCutover 2026-06-27-11:00:
+ * Process-level registry of running embedded PG instances, keyed by data dir.
+ * Prevents the P0 double-boot bug where central core and project runtime both
+ * call createTaskStoreForBackend() in the same process, each starting its own
+ * EmbeddedPostgresLifecycle against the same data dir. The second start would
+ * fail with "postmaster.pid already exists" and hang.
+ *
+ * When start() detects an already-running instance for the same data dir, it
+ * reads the port from postmaster.pid and returns a connection URL without
+ * starting a new postmaster process.
+ */
+const runningInstances = new Map<string, { port: number; database: string }>();
+
+/**
+ * Read the port from a postmaster.pid file. The file format is:
+ * Line 1: PID
+ * Line 2: data dir path
+ * Line 3: unix socket port (or TCP port when listening on TCP)
+ * Line 4: timestamp
+ * We read line 3 (port) which is the TCP port when `listen_addresses` is set.
+ * Returns null if the file cannot be read or parsed.
+ */
+function readPortFromPostmasterPid(dataDir: string): number | null {
+  try {
+    const content = readFileSync(join(dataDir, "postmaster.pid"), "utf-8");
+    const lines = content.split("\n");
+    // Line 3 (index 2) is the port number in standard PostgreSQL postmaster.pid
+    const portStr = lines[2]?.trim();
+    if (portStr) {
+      const port = parseInt(portStr, 10);
+      if (!isNaN(port) && port > 0) return port;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Check whether an embedded PG is already running for the given data dir.
+ * Uses both the in-process registry AND a probe of the postmaster.pid file
+ * (handles the case where another process started it).
+ */
+function isAlreadyRunning(dataDir: string): { port: number; database: string } | null {
+  // Check in-process registry first
+  const cached = runningInstances.get(dataDir);
+  if (cached) return cached;
+
+  // Check postmaster.pid — another process (or a prior call) may have started PG
+  if (!existsSync(join(dataDir, "postmaster.pid"))) return null;
+
+  // Read the port from postmaster.pid
+  const port = readPortFromPostmasterPid(dataDir);
+  if (!port) return null;
+
+  // Probe: can we connect to this port?
+  // We return the port optimistically — the connection layer will fail fast
+  // if the port is stale (postmaster.pid left over from a crash).
+  return { port, database: "fusion" };
+}
+
+/**
  * Find a free TCP port on 127.0.0.1 by binding to port 0 and reading the
  * assigned port, then closing the temporary listener.
  *
@@ -212,6 +274,11 @@ export class EmbeddedPostgresLifecycle {
   private pg: EmbeddedPostgresInstance | null = null;
   private resolvedPort: number | undefined;
   private running = false;
+  // FNXC:PostgresCutover 2026-06-27-11:10:
+  // True when THIS lifecycle instance owns (started) the postmaster process.
+  // When we detect an already-running instance and connect to it, ownsProcess
+  // is false and stop() is a no-op (the owning instance handles shutdown).
+  private ownsProcess = true;
   private shutdownHookInstalled = false;
   /**
    * FNXC:PostgresEmbedded 2026-06-26-16:20 (fix migration-review P1 #24):
@@ -302,9 +369,41 @@ export class EmbeddedPostgresLifecycle {
    * running flag) so a retry is not left in a wedged state. Set
    * `startTimeoutMs: 0` to disable the timeout.
    */
+  /**
+   * Start the embedded PostgreSQL cluster.
+   *
+   * FNXC:PostgresCutover 2026-06-27-11:05:
+   * IDempotent: if an embedded PG is already running for this data dir
+   * (started by a prior start() call in the same process, or detected via
+   * postmaster.pid), returns a connection URL without starting a new
+   * postmaster. This prevents the P0 double-boot collision where central
+   * core and project runtime both call createTaskStoreForBackend() and each
+   * tries to start its own EmbeddedPostgresLifecycle against the same dir.
+   */
   async start(): Promise<ResolvedBackend> {
     if (this.running) {
       throw new Error("EmbeddedPostgresLifecycle already running");
+    }
+
+    // FNXC:PostgresCutover 2026-06-27-11:05:
+    // Check if PG is already running for this data dir. If so, reuse it.
+    const existing = isAlreadyRunning(this.options.dataDir);
+    if (existing) {
+      this.options.onLog(
+        `embedded postgres: already running on port ${existing.port} (data dir ${this.options.dataDir}), connecting without starting a new instance`,
+      );
+      this.resolvedPort = existing.port;
+      this.running = false; // We didn't start it, so we won't stop it
+      this.ownsProcess = false;
+
+      // Ensure the database exists on the running instance
+      const url = this.buildUrl(existing.port, this.options.database);
+      return {
+        mode: "embedded",
+        runtimeUrl: url,
+        migrationUrl: url,
+        migrationUrlOverridden: false,
+      };
     }
     if (this.options.startTimeoutMs <= 0) {
       return this.startInternal();
@@ -375,6 +474,13 @@ export class EmbeddedPostgresLifecycle {
 
     await this.pg.start();
     this.running = true;
+    this.ownsProcess = true;
+
+    // Register in the process-level map so other callers can detect us
+    runningInstances.set(this.options.dataDir, {
+      port,
+      database: this.options.database,
+    });
 
     await this.ensureDatabase();
 
@@ -435,18 +541,29 @@ export class EmbeddedPostgresLifecycle {
    */
   async stop(): Promise<void> {
     this.uninstallShutdownHook();
+
+    // FNXC:PostgresCutover 2026-06-27-11:10:
+    // If we didn't start the postmaster (detected an already-running instance),
+    // don't stop it — the owning instance handles shutdown.
+    if (!this.ownsProcess) {
+      this.running = false;
+      return;
+    }
+
     if (!this.pg) {
       this.running = false;
+      // Clean up the registry even if pg is null
+      runningInstances.delete(this.options.dataDir);
       return;
     }
     try {
       await this.pg.stop();
     } catch (err) {
-      // Log but do not throw — stop must be best-effort during shutdown.
       this.options.onError(`embedded postgres: error during stop: ${String(err)}`);
     } finally {
       this.pg = null;
       this.running = false;
+      runningInstances.delete(this.options.dataDir);
     }
   }
 
@@ -507,6 +624,7 @@ export class EmbeddedPostgresLifecycle {
     signal: NodeJS.Signals | "beforeExit",
   ): Promise<void> => {
     if (!this.running && signal !== "beforeExit") return;
+    if (!this.ownsProcess) return; // Don't stop an instance we didn't start
     this.options.onLog(
       `embedded postgres: received ${signal}, stopping embedded cluster`,
     );
