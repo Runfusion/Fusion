@@ -699,20 +699,45 @@ export async function aggregateMonitorMetrics(
   if ("ping" in dbOrLayer) {
     const layer = dbOrLayer as AsyncDataLayer;
     const { sql } = await import("drizzle-orm");
-    const fromClause = query.from ? sql`AND "openedAt" >= ${query.from}` : sql``;
-    const toClause = query.to ? sql`AND "openedAt" <= ${query.to}` : sql``;
-    const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM deployments WHERE 1=1 ${fromClause} ${toClause}`);
-    const deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+    // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+    // Raw async SQL must schema-qualify project tables (project.deployments,
+    // project.incidents) and use the real snake_case columns (deployed_at,
+    // opened_at, resolved_at). The async connection does not put `project` on
+    // the search_path (see data-layer.ts:353), so unqualified `FROM deployments`
+    // raised `relation "deployments" does not exist`; and quoted camelCase
+    // identifiers like `"openedAt"` do not match the snake_case columns. The
+    // deployments read previously sat OUTSIDE the try/catch, so this error 500'd
+    // the whole /command-center/activity route instead of degrading. Deployment
+    // frequency filters on deployed_at (deploy time), not the incident openedAt.
+    let deployments = 0;
     try {
-      const resolvedFrom = query.from ? sql`AND "resolvedAt" >= ${query.from}` : sql``;
-      const resolvedTo = query.to ? sql`AND "resolvedAt" <= ${query.to}` : sql``;
-      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM incidents WHERE 1=1 ${fromClause} ${toClause}`);
+      const depFrom = query.from ? sql`AND deployed_at >= ${query.from}` : sql``;
+      const depTo = query.to ? sql`AND deployed_at <= ${query.to}` : sql``;
+      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${depFrom} ${depTo}`);
+      deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+    } catch (err) {
+      // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+      // Degrade to 0 so the deployments read never 500s /command-center/activity
+      // (it previously sat outside any try/catch), but log: a real failure here
+      // (permissions, schema drift, bad bind) must not masquerade as "0 deploys".
+      deployments = 0;
+      console.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
+    }
+    try {
+      const openedFrom = query.from ? sql`AND opened_at >= ${query.from}` : sql``;
+      const openedTo = query.to ? sql`AND opened_at <= ${query.to}` : sql``;
+      const resolvedFrom = query.from ? sql`AND resolved_at >= ${query.from}` : sql``;
+      const resolvedTo = query.to ? sql`AND resolved_at <= ${query.to}` : sql``;
+      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`);
       const incidentsOpened = (incidentsOpenedRows[0] as { count?: number } | undefined)?.count ?? 0;
-      const incidentsResolvedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM incidents WHERE "resolvedAt" IS NOT NULL ${resolvedFrom} ${resolvedTo}`);
-      const incidentsResolved = (incidentsResolvedRows[0] as { count?: number } | undefined)?.count ?? 0;
-      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM incidents WHERE status = 'open'`);
+      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open'`);
       const openIncidents = (openIncidentsRows[0] as { count?: number } | undefined)?.count ?? 0;
-      const resolvedDetailRows = await layer.db.execute(sql`SELECT "openedAt", "resolvedAt" FROM incidents WHERE "resolvedAt" IS NOT NULL ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+      // resolvedDetailRows already returns every resolved-in-range incident, so
+      // incidentsResolved is its row count — drop the separate COUNT query that
+      // had an identical WHERE clause (one fewer round-trip per activity load).
+      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      const incidentsResolved = resolvedDetailRows.length;
       let totalMs = 0;
       let sampleCount = 0;
       for (const row of resolvedDetailRows) {

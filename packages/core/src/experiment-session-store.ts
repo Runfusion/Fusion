@@ -371,8 +371,13 @@ export class ExperimentSessionStore extends EventEmitter<ExperimentSessionStoreE
 
     if (this.asyncLayer) {
       // No dedicated async helper for payload-only update; use a raw Drizzle update.
+      // FNXC:PostgresBackend 2026-06-27-00:40:
+      // Raw async SQL must schema-qualify (project.experiment_session_records);
+      // the connection does not put `project` on search_path. `payload` is a
+      // jsonb column, so the bound JSON text needs a `::jsonb` cast (matches the
+      // async-settings.ts convention) or Postgres rejects the text→jsonb assign.
       const { sql } = await import("drizzle-orm");
-      await this.asyncLayer.db.execute(sql`UPDATE experiment_session_records SET payload = ${JSON.stringify(updated.payload)} WHERE id = ${recordId}`);
+      await this.asyncLayer.db.execute(sql`UPDATE project.experiment_session_records SET payload = ${JSON.stringify(updated.payload)}::jsonb WHERE id = ${recordId}`);
     } else {
       this.db!.prepare(`
         UPDATE experiment_session_records

@@ -26,15 +26,34 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
     let validEntries = batch;
     const flushedEntries = new Set<typeof batch[number]>();
     try {
-      const liveTaskIds = new Set(
-        (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
-      );
-      validEntries = batch.filter((entry) => liveTaskIds.has(entry.taskId));
-      const dropped = batch.length - validEntries.length;
-      if (dropped > 0) {
-        console.warn(
-          `[fusion] Dropped ${dropped} buffered agent log entries for deleted tasks (${store.db.path})`,
+      // FNXC:PostgresBackend 2026-06-27-00:40:
+      // In PG backend mode the synchronous SQLite `store.db` getter throws, so
+      // the deleted-task pre-filter and the `bumpLastModified` change stamp are
+      // skipped. Durability comes from the per-task agent-log.jsonl append below,
+      // which is backend-independent. This guard — plus replacing every
+      // `store.db.path` log interpolation with the mode-safe `store.fusionDir` —
+      // is what stops the retry-flush timer (line ~92) from converting a handled
+      // flush error into an UNCAUGHT throw that exits the process in PG mode.
+      //
+      // Tradeoff (accepted): the SQLite path uses this filter as a SECONDARY net
+      // — the primary purge of a deleted task's buffered entries happens at
+      // delete time under the task lock (archive-lifecycle.ts:~105), in BOTH
+      // backends. The only PG-mode residual is a narrow race (a concurrent
+      // append re-buffers after that purge but before this flush): it writes one
+      // JSONL line + records goal citations under a just-deleted taskId. There
+      // is no FK on goal_citations.task_id (plain text column), so this is an
+      // orphaned-by-value metadata row, not a constraint violation or crash.
+      if (!store.backendMode) {
+        const liveTaskIds = new Set(
+          (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
         );
+        validEntries = batch.filter((entry) => liveTaskIds.has(entry.taskId));
+        const dropped = batch.length - validEntries.length;
+        if (dropped > 0) {
+          console.warn(
+            `[fusion] Dropped ${dropped} buffered agent log entries for deleted tasks (${store.fusionDir})`,
+          );
+        }
       }
 
       if (validEntries.length > 0) {
@@ -71,13 +90,22 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
         }
 
         if (citationInputs.length > 0) {
+          // FNXC:PostgresBackend 2026-06-27-00:40:
+          // recordGoalCitations is async in PG backend mode, so a sync try/catch
+          // cannot catch a rejection — guard the returned promise to keep a
+          // citation-write failure from becoming an unhandled rejection on this
+          // fire-and-forget agent-log path.
           try {
-            store.recordGoalCitations(citationInputs);
+            void Promise.resolve(store.recordGoalCitations(citationInputs)).catch((err) => {
+              console.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
+            });
           } catch (err) {
             console.warn("[fusion] Failed to record goal citations from agent_log batch:", err);
           }
         }
-        store.db.bumpLastModified();
+        if (!store.backendMode) {
+          store.db.bumpLastModified();
+        }
       }
     } finally {
       store.agentLogBuffer.splice(0, flushCount);
@@ -89,7 +117,7 @@ export function flushAgentLogBufferImpl(store: TaskStore): void {
             try {
               store.flushAgentLogBuffer();
             } catch (err) {
-              console.error(`[fusion] Retry agent log flush failed (${store.db.path}):`, err);
+              console.error(`[fusion] Retry agent log flush failed (${store.fusionDir}):`, err);
             }
           }, TaskStore.AGENT_LOG_FLUSH_MS);
           store.agentLogFlushTimer.unref();
@@ -112,13 +140,20 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
       ...entry,
       detail: truncateAgentLogDetail(entry.detail, entry.type),
     }));
-    const liveTaskIds = new Set(
-      (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
-    );
-    const validEntries = normalizedEntries.filter((entry) => liveTaskIds.has(entry.taskId));
-    const dropped = normalizedEntries.length - validEntries.length;
-    if (dropped > 0) {
-      console.warn(`[fusion] Dropped ${dropped} batch agent log entries for deleted tasks (${store.db.path})`);
+    // FNXC:PostgresBackend 2026-06-27-00:40:
+    // PG backend mode: skip the sync SQLite deleted-task pre-filter (store.db
+    // throws) — JSONL append below is the backend-independent durable write.
+    // See flushAgentLogBufferImpl for the full rationale.
+    let validEntries = normalizedEntries;
+    if (!store.backendMode) {
+      const liveTaskIds = new Set(
+        (store.db.prepare(`SELECT id FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE}`).all() as Array<{ id: string }>).map((row) => row.id),
+      );
+      validEntries = normalizedEntries.filter((entry) => liveTaskIds.has(entry.taskId));
+      const dropped = normalizedEntries.length - validEntries.length;
+      if (dropped > 0) {
+        console.warn(`[fusion] Dropped ${dropped} batch agent log entries for deleted tasks (${store.fusionDir})`);
+      }
     }
 
     const citationInputs: GoalCitationInput[] = [];
@@ -162,13 +197,17 @@ export async function appendAgentLogBatchImpl(store: TaskStore, entries: Array<{
       }
     }
     if (citationInputs.length > 0) {
+      // FNXC:PostgresBackend 2026-06-27-00:40: async in backend mode — guard the
+      // promise so a citation-write failure is not an unhandled rejection.
       try {
-        store.recordGoalCitations(citationInputs);
+        void Promise.resolve(store.recordGoalCitations(citationInputs)).catch((err) => {
+          console.warn("[fusion] Failed to record goal citations from appendAgentLogBatch:", err);
+        });
       } catch (err) {
         console.warn("[fusion] Failed to record goal citations from appendAgentLogBatch:", err);
       }
     }
-    if (validEntries.length > 0) {
+    if (validEntries.length > 0 && !store.backendMode) {
       store.db.bumpLastModified();
     }
 

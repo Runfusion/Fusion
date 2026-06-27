@@ -90,8 +90,15 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
     if (store.agentLogBuffer.length >= TaskStore.MAX_AGENT_LOG_BACKLOG) {
       const dropCount = store.agentLogBuffer.length - TaskStore.MAX_AGENT_LOG_BACKLOG + 1;
       store.agentLogBuffer.splice(0, dropCount);
+      // FNXC:PostgresBackend 2026-06-27-00:40:
+      // Use the mode-safe `store.fusionDir`, not `store.db.path`: the SQLite
+      // getter throws in PG backend mode, and this warning (plus the two
+      // flush-failure catch handlers below) runs on the agent-log timer path
+      // where an uncaught throw exits the process. The catch blocks exist
+      // precisely to keep a failed flush from crashing the caller/process, so
+      // they must not themselves dereference `store.db`.
       console.warn(
-        `[fusion] Dropped ${dropCount} buffered agent log entries — backlog cap reached (${store.db.path})`,
+        `[fusion] Dropped ${dropCount} buffered agent log entries — backlog cap reached (${store.fusionDir})`,
       );
     }
     store.agentLogBuffer.push({
@@ -109,7 +116,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
         store.flushAgentLogBuffer();
       } catch (err) {
         // Size-triggered flush failed — log but don't crash the caller.
-        console.error(`[fusion] Size-triggered agent log flush failed (${store.db.path}):`, err);
+        console.error(`[fusion] Size-triggered agent log flush failed (${store.fusionDir}):`, err);
       }
     } else if (!store.agentLogFlushTimer) {
       store.agentLogFlushTimer = setTimeout(
@@ -118,7 +125,7 @@ export async function appendAgentLogImpl(store: TaskStore, taskId: string, text:
             store.flushAgentLogBuffer();
           } catch (err) {
             // Timer-triggered flush failed — log but don't crash the process.
-            console.error(`[fusion] Timer-triggered agent log flush failed (${store.db.path}):`, err);
+            console.error(`[fusion] Timer-triggered agent log flush failed (${store.fusionDir}):`, err);
           }
         },
         TaskStore.AGENT_LOG_FLUSH_MS,

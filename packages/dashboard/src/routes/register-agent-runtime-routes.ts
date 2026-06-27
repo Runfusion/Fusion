@@ -654,7 +654,9 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
             COALESCE(length(data->>'executionPrompt'), 0) AS "execChars",
             COALESCE(length(data->>'systemPrompt'), 0)
               + COALESCE(length(data->>'executionPrompt'), 0) AS "totalChars"
-          FROM agent_runs
+          -- FNXC:PostgresBackend 2026-06-27-00:40: schema-qualify project.agent_runs
+          -- (the async connection does not put the project schema on search_path).
+          FROM project.agent_runs
           WHERE data->>'agentId' = ${req.params.id}
           ORDER BY started_at DESC
           LIMIT ${limit}
