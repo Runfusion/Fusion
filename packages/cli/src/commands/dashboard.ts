@@ -1113,10 +1113,49 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
    * begins so any hung teardown step still force-exits within the grace window,
    * and (2) let a second signal force an immediate exit. The watchdog is unref'd
    * so it never itself keeps the process alive.
+   *
+   * Instrumentation: each teardown step runs through timeShutdownStep, which
+   * records the in-flight step name in `currentShutdownStep`. A hang leaves that
+   * step's name set (its await never resolves), so the watchdog names the exact
+   * culprit on stderr before force-exiting — pinpointing the stall without a
+   * repro. Per-step timings are written to stderr when FUSION_DEBUG_SHUTDOWN is
+   * set; otherwise only steps slower than SHUTDOWN_STEP_SLOW_MS are surfaced.
+   * stderr is used (not logSink) so the lines are visible on the restored shell
+   * after the TUI has been torn down.
    */
   const SHUTDOWN_HARD_EXIT_GRACE_MS = 3000;
+  const SHUTDOWN_STEP_SLOW_MS = 1000;
+  let currentShutdownStep: string | null = null;
   function armHardExitWatchdog(): void {
-    setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_GRACE_MS).unref();
+    setTimeout(() => {
+      if (currentShutdownStep) {
+        process.stderr.write(
+          `fusion: graceful shutdown stalled on "${currentShutdownStep}" after ${SHUTDOWN_HARD_EXIT_GRACE_MS}ms — forcing exit\n`,
+        );
+      }
+      process.exit(0);
+    }, SHUTDOWN_HARD_EXIT_GRACE_MS).unref();
+  }
+  async function timeShutdownStep(label: string, fn: () => Promise<void> | void): Promise<void> {
+    currentShutdownStep = label;
+    const startedAt = Date.now();
+    const debug = !!process.env.FUSION_DEBUG_SHUTDOWN;
+    if (debug) process.stderr.write(`fusion: shutdown step: ${label}…\n`);
+    try {
+      await fn();
+      const ms = Date.now() - startedAt;
+      if (debug) process.stderr.write(`fusion: shutdown step: ${label} done in ${ms}ms\n`);
+      else if (ms >= SHUTDOWN_STEP_SLOW_MS) {
+        process.stderr.write(`fusion: slow shutdown step: ${label} took ${ms}ms\n`);
+      }
+    } catch (err) {
+      // Best-effort teardown: log and continue so one failing step can't strand
+      // the process. The watchdog covers the hang case; this covers the throw.
+      const message = err instanceof Error ? err.message : String(err);
+      logSink.warn(`Shutdown step failed: ${label} after ${Date.now() - startedAt}ms — ${message}`, "dashboard");
+    } finally {
+      currentShutdownStep = null;
+    }
   }
 
   async function logShutdownDiagnostics(reason: string): Promise<void> {
@@ -1966,47 +2005,33 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       // Tear down user-project dev-server children (and their process groups)
       // before exiting. server.close() is not awaited on this exit path, so
       // its `close` listener that does the same cleanup may not run in time.
-      try {
-        await stopAllDevServers();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logSink.warn(`Failed to stop dev servers: ${message}`, "dashboard");
-      }
+      await timeShutdownStep("stopAllDevServers", () => stopAllDevServers());
 
       if (hybridExecutor) {
-        await hybridExecutor.shutdown();
+        await timeShutdownStep("hybridExecutor.shutdown", () => hybridExecutor!.shutdown());
       }
 
       // Stop all project engines uniformly
-      await engineManager.stopAll();
+      await timeShutdownStep("engineManager.stopAll", () => engineManager.stopAll());
 
       // Stop peer exchange service
       if (peerExchangeService) {
-        try {
-          await peerExchangeService.stop();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logSink.warn(`Failed to stop peer exchange service: ${message}`, "dashboard");
-        }
+        await timeShutdownStep("peerExchangeService.stop", () => peerExchangeService!.stop());
       }
 
       // Stop mDNS discovery and set local node offline
       if (centralCoreForMesh && localNodeIdForMesh) {
-        try {
-          centralCoreForMesh.stopDiscovery();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logSink.warn(`Failed to stop mDNS discovery: ${message}`, "dashboard");
-        }
-        try {
-          await centralCoreForMesh.updateNode(localNodeIdForMesh, { status: "offline" });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logSink.warn(`Failed to set local node offline: ${message}`, "dashboard");
-        }
+        await timeShutdownStep("mesh.stopDiscovery", () => {
+          centralCoreForMesh!.stopDiscovery();
+        });
+        await timeShutdownStep("mesh.setNodeOffline", async () => {
+          await centralCoreForMesh!.updateNode(localNodeIdForMesh!, { status: "offline" });
+        });
       }
 
-      await closeCentralCoreBestEffort(centralCoreForEngine, `shutdown (${signal})`);
+      await timeShutdownStep("closeCentralCore", () =>
+        closeCentralCoreBestEffort(centralCoreForEngine, `shutdown (${signal})`),
+      );
 
       store.close();
       process.exit(0);
@@ -2300,41 +2325,27 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
       // Tear down user-project dev-server children (and their process groups)
       // before exiting. process.exit below skips server.close()'s cleanup hook.
-      try {
-        await stopAllDevServers();
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logSink.warn(`Failed to stop dev servers: ${message}`, "dashboard");
-      }
+      await timeShutdownStep("stopAllDevServers", () => stopAllDevServers());
 
       // Stop peer exchange service
       if (peerExchangeService) {
-        try {
-          await peerExchangeService.stop();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logSink.warn(`Failed to stop peer exchange service: ${message}`, "dashboard");
-        }
+        await timeShutdownStep("peerExchangeService.stop", () => peerExchangeService!.stop());
       }
 
       // Stop mDNS discovery and set local node offline
       if (centralCoreForMesh && localNodeIdForMesh) {
-        try {
-          centralCoreForMesh.stopDiscovery();
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logSink.warn(`Failed to stop mDNS discovery: ${message}`, "dashboard");
-        }
-        try {
-          await centralCoreForMesh.updateNode(localNodeIdForMesh, { status: "offline" });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          logSink.warn(`Failed to set local node offline: ${message}`, "dashboard");
-        }
+        await timeShutdownStep("mesh.stopDiscovery", () => {
+          centralCoreForMesh!.stopDiscovery();
+        });
+        await timeShutdownStep("mesh.setNodeOffline", async () => {
+          await centralCoreForMesh!.updateNode(localNodeIdForMesh!, { status: "offline" });
+        });
       }
 
       if (centralCoreForMesh) {
-        await closeCentralCoreBestEffort(centralCoreForMesh, `dev shutdown (${signal})`);
+        await timeShutdownStep("closeCentralCore", () =>
+          closeCentralCoreBestEffort(centralCoreForMesh!, `dev shutdown (${signal})`),
+        );
       }
 
       store.close();
