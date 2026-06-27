@@ -359,6 +359,72 @@ describe("WorkflowGraphExecutor optional-group", () => {
     expect(requestFix).not.toHaveBeenCalled();
   });
 
+  it("cycles REVISE findings across graph runs until APPROVE, and falls through only after the budget seam declines", async () => {
+    const verdicts = ["REVISE", "REVISE", "APPROVE"];
+    const requestFix = vi.fn(async () => true);
+
+    for (let cycle = 0; cycle < verdicts.length; cycle += 1) {
+      const calls: string[] = [];
+      const executor = new WorkflowGraphExecutor({
+        handlers: {
+          prompt: async (node) => {
+            calls.push(node.id);
+            if (node.id === "review") {
+              const verdict = verdicts[cycle];
+              return { outcome: "success", value: verdict, contextPatch: { output: `cycle ${cycle + 1} ${verdict}` } };
+            }
+            return { outcome: "success" };
+          },
+        },
+        requestPreMergeOptionalStepFix: requestFix,
+      });
+
+      const result = await executor.run(taskWith(["group"]), settingsOn(), reviseGroupIr());
+
+      if (cycle < 2) {
+        expect(requestFix).toHaveBeenCalledTimes(cycle + 1);
+        expect(calls).not.toContain("after");
+        expect(result.context["node:group:fixScheduled"]).toBe(true);
+      } else {
+        expect(requestFix).toHaveBeenCalledTimes(2);
+        expect(calls).toContain("after");
+        expect(result.context["node:group:fixScheduled"]).toBeUndefined();
+      }
+    }
+
+    let exhaustedFixesScheduled = 0;
+    const exhaustedRequestFix = vi.fn(async () => {
+      if (exhaustedFixesScheduled >= 3) return false;
+      exhaustedFixesScheduled += 1;
+      return true;
+    });
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      const calls: string[] = [];
+      const executor = new WorkflowGraphExecutor({
+        handlers: {
+          prompt: async (node) => {
+            calls.push(node.id);
+            return node.id === "review"
+              ? { outcome: "success", value: "REVISE", contextPatch: { output: `persistent finding ${cycle + 1}` } }
+              : { outcome: "success" };
+          },
+        },
+        requestPreMergeOptionalStepFix: exhaustedRequestFix,
+      });
+
+      const result = await executor.run(taskWith(["group"]), settingsOn(), reviseGroupIr());
+
+      if (cycle < 3) {
+        expect(calls).not.toContain("after");
+        expect(result.context["node:group:fixScheduled"]).toBe(true);
+      } else {
+        expect(calls).toContain("after");
+        expect(result.context["node:group:fixScheduled"]).toBeUndefined();
+      }
+    }
+    expect(exhaustedRequestFix).toHaveBeenCalledTimes(4);
+  });
+
   it("builtin coding optional Code Review and Browser Verification REVISE abort before review, and stepwise carries the same pre-merge path", async () => {
     for (const groupId of ["code-review", "browser-verification"] as const) {
       const requestFix = vi.fn(async () => true);
@@ -403,27 +469,33 @@ describe("WorkflowGraphExecutor optional-group", () => {
       }
     }
 
-    const stepwiseRequestFix = vi.fn(async () => true);
-    const stepwiseExecutor = new WorkflowGraphExecutor({
-      handlers: {
-        "parse-steps": async () => ({ outcome: "success", value: "no-steps" }),
-        prompt: async (node) => node.id === "code-review-step"
-          ? { outcome: "success", value: "REVISE", contextPatch: { output: "stepwise code-review finding" } }
-          : { outcome: "success" },
-      },
-      requestPreMergeOptionalStepFix: stepwiseRequestFix,
-    });
+    for (const groupId of ["browser-verification", "code-review"] as const) {
+      const stepwiseRequestFix = vi.fn(async () => true);
+      const stepwiseExecutor = new WorkflowGraphExecutor({
+        handlers: {
+          "parse-steps": async () => ({ outcome: "success", value: "no-steps" }),
+          prompt: async (node) => {
+            if ((groupId === "code-review" && node.id === "code-review-step")
+              || (groupId === "browser-verification" && node.id === "browser-verification-step")) {
+              return { outcome: "success", value: "REVISE", contextPatch: { output: `stepwise ${groupId} finding` } };
+            }
+            return { outcome: "success" };
+          },
+        },
+        requestPreMergeOptionalStepFix: stepwiseRequestFix,
+      });
 
-    const stepwiseResult = await stepwiseExecutor.run(
-      { ...taskWith(["code-review"]), id: "FN-stepwise", steps: [] } as TaskDetail,
-      settingsOn(),
-      BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
-    );
+      const stepwiseResult = await stepwiseExecutor.run(
+        { ...taskWith(groupId === "code-review" ? ["code-review"] : ["browser-verification", "code-review"]), id: `FN-stepwise-${groupId}`, steps: [] } as TaskDetail,
+        settingsOn(),
+        BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
+      );
 
-    expect(stepwiseRequestFix).toHaveBeenCalledWith("FN-stepwise", expect.objectContaining({
-      stepName: "Code Review",
-      feedback: "stepwise code-review finding",
-    }));
-    expect(stepwiseResult.context["node:code-review:fixScheduled"]).toBe(true);
+      expect(stepwiseRequestFix).toHaveBeenCalledWith(`FN-stepwise-${groupId}`, expect.objectContaining({
+        stepName: groupId === "code-review" ? "Code Review" : "Browser Verification",
+        feedback: `stepwise ${groupId} finding`,
+      }));
+      expect(stepwiseResult.context[`node:${groupId}:fixScheduled`]).toBe(true);
+    }
   });
 });

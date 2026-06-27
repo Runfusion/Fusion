@@ -66,6 +66,41 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(store.updateTask.mock.invocationCallOrder[0]).toBeLessThan(sendBack.mock.invocationCallOrder[0]);
   });
 
+  it("uses the default budget of 3 for repeated fix passes and then declines when exhausted", async () => {
+    const sendBackCalls: number[] = [];
+
+    for (const count of [0, 1, 2, 3]) {
+      const store = createMockStore();
+      const liveTask = task({ postReviewFixCount: count });
+      store.getTask.mockResolvedValue(liveTask);
+      store.getSettings.mockResolvedValue({});
+      const executor = new TaskExecutor(store, "/tmp/test");
+      const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockImplementation(async () => {
+        sendBackCalls.push(count);
+      });
+
+      const scheduled = await (executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, reviseInfo);
+
+      if (count < 3) {
+        expect(scheduled).toBe(true);
+        expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: count + 1 }, undefined);
+        expect(store.logEntry).toHaveBeenCalledWith(
+          "FN-7066",
+          expect.stringContaining(`attempt ${count + 1}/3`),
+          expect.any(String),
+          undefined,
+        );
+        expect(sendBack).toHaveBeenCalledOnce();
+      } else {
+        expect(scheduled).toBe(false);
+        expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", expect.objectContaining({ postReviewFixCount: 4 }), undefined);
+        expect(sendBack).not.toHaveBeenCalled();
+      }
+    }
+
+    expect(sendBackCalls).toEqual([0, 1, 2]);
+  });
+
   it("declines without sending back when maxPostReviewFixes disables or exhausts the budget", async () => {
     for (const { settingsMax, count } of [
       { settingsMax: 0, count: 0 },

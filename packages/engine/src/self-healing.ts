@@ -6085,9 +6085,9 @@ export class SelfHealingManager {
       const maxFixesByTask = new Map<string, number>();
       for (const task of tasks) {
         const eff = await mergeEffectiveSettings(this.store, task, settings);
-        maxFixesByTask.set(task.id, eff.maxPostReviewFixes ?? 1);
+        maxFixesByTask.set(task.id, eff.maxPostReviewFixes ?? 3);
       }
-      const maxFixesFor = (taskId: string): number => maxFixesByTask.get(taskId) ?? 1;
+      const maxFixesFor = (taskId: string): number => maxFixesByTask.get(taskId) ?? 3;
 
       const candidates = tasks.filter((task) => {
         if (task.column !== "in-review") return false;

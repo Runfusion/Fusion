@@ -243,7 +243,7 @@ describe("built-in workflow settings parity anchor (U1, R4)", () => {
       maxParallelSteps: 2,
       buildRetryCount: 0,
       verificationFixRetries: 3,
-      maxPostReviewFixes: 1,
+      maxPostReviewFixes: 3,
       requirePrApproval: false,
       requirePlanApproval: false,
       reviewHandoffPolicy: "disabled",

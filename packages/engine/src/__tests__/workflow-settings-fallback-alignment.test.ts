@@ -94,7 +94,7 @@ describe("workflow-settings fallback alignment (KTD-3, item 4)", () => {
       maxParallelSteps: 2, // executor.ts / step-session-executor.ts: ?? 2
       buildRetryCount: 0, // merger.ts: ?? 0
       verificationFixRetries: 3, // executor.ts: ?? 3; merger.ts aligned to ?? 3 (was ?? 2, dead)
-      maxPostReviewFixes: 1, // self-healing.ts: ?? 1
+      maxPostReviewFixes: 3, // self-healing.ts + executor.ts: ?? 3
       requirePrApproval: false, // no engine read; default-false elsewhere
       requirePlanApproval: false, // triage.ts: truthy check → false
       reviewHandoffPolicy: "disabled", // executor.ts: === "comment-triggered" → "disabled"

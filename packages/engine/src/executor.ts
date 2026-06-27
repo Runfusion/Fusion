@@ -3729,7 +3729,7 @@ export class TaskExecutor {
 
     const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
     const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
-    const maxFixes = settings.maxPostReviewFixes ?? 1;
+    const maxFixes = settings.maxPostReviewFixes ?? 3;
     if (!Number.isFinite(maxFixes) || maxFixes <= 0) return false;
 
     const currentCount = liveTask.postReviewFixCount ?? 0;

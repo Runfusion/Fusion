@@ -546,7 +546,7 @@ Default notes:
 | `maxReviewerContextRetries` | `number` | `2` | Max reviewer context-compaction retries (FN-4082) per task. |
 | `maxReviewerFallbackRetries` | `number` | `2` | Max reviewer fallback-model retries (FN-4092) per task. |
 | `maxTotalRetriesBeforeFail` | `number` | `25` | Master retry budget across all tracked retry counters; exceeding this fails the task with `RetryStormError`. |
-| `maxPostReviewFixes` | `number` | `1` | Max auto-revival attempts for in-review tasks failing pre-merge workflow steps. |
+| `maxPostReviewFixes` | `number` | `3` | Max automatic fix passes for review/pre-merge optional-step feedback, including self-healing auto-revival of in-review tasks failing pre-merge workflow steps. |
 | `maxSpawnedAgentsPerParent` | `number` | `5` | Max child agents per parent task. |
 | `maxSpawnedAgentsGlobal` | `number` | `20` | Max spawned agents across one executor instance. |
 | `maintenanceIntervalMs` | `number` | `300000` | Periodic maintenance interval in ms (5 min). |

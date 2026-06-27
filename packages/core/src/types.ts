@@ -4110,9 +4110,11 @@ export interface ProjectSettings {
    *  the agent can resume from where it left off. Default: true. */
   preserveProgressOnStuckRequeue?: boolean;
   /** Maximum number of times the self-healing manager may auto-revive a task parked
-   *  in `in-review` with a failed pre-merge workflow step. Each revival injects the
-   *  failure feedback into `PROMPT.md`, resets steps, and sends the task back through
-   *  the normal todo → in-progress flow. Set to 0 to disable. Default: 1. */
+   *  in `in-review` with a failed pre-merge workflow step. Also bounds the inline
+   *  pre-merge optional-step fix → re-review cycle for Code Review and Browser
+   *  Verification. Each revival injects the failure feedback into `PROMPT.md`, resets
+   *  steps, and sends the task back through the normal todo → in-progress flow. Set
+   *  to 0 to disable. Default: 3. */
   maxPostReviewFixes?: number;
   /** Maximum number of child agents a single parent agent can spawn.
    *  Limits the fan-out per executor task to prevent resource exhaustion.

@@ -125,8 +125,12 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     id: "maxPostReviewFixes",
     name: "Max post-review fixes",
     type: "number",
-    default: 1,
-    description: "Maximum number of automatic fix passes after review feedback.",
+    /*
+     * FNXC:WorkflowOptionalStepCycle 2026-06-27-11:11:
+     * Built-in Code Review and Browser Verification must cycle through executor fixes and re-review until they pass, bounded by this default budget of three passes. FN-7129 owns future per-step configurable or unbounded budgets.
+     */
+    default: 3,
+    description: "Maximum automatic fix passes after review/optional-step feedback; the step re-runs each pass until it passes or this budget is exhausted.",
   },
 
   // ── Review / approval ──────────────────────────────────────────────────
