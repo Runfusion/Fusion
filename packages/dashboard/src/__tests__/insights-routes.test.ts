@@ -8,13 +8,13 @@ import type { TaskStore } from "@fusion/core";
 import { TaskStore as TaskStoreClass } from "@fusion/core";
 import * as coreModule from "@fusion/core";
 import { request } from "../test-request.js";
-import { createServer } from "../server.js";
 import { createInsightsRouter } from "../insights-routes.js";
 import { DEFAULT_SWEEP_INTERVAL_MS } from "../insight-run-sweeper.js";
 
 const piMocks = vi.hoisted(() => ({
   createFnAgent: vi.fn(),
   promptWithFallback: vi.fn(),
+  resolveMcpServersForStore: vi.fn(),
 }));
 
 const resolverMocks = vi.hoisted(() => ({
@@ -52,14 +52,11 @@ vi.mock("../runtime-provider-probes.js", () => ({
   mintAgentApiKeyViaCli: vi.fn(),
 }));
 
-vi.mock("@fusion/engine", async () => {
-  const actual = await vi.importActual<typeof import("@fusion/engine")>("@fusion/engine");
-  return {
-    ...actual,
-    createFnAgent: piMocks.createFnAgent,
-    promptWithFallback: piMocks.promptWithFallback,
-  };
-});
+vi.mock("@fusion/engine", () => ({
+  createFnAgent: piMocks.createFnAgent,
+  promptWithFallback: piMocks.promptWithFallback,
+  resolveMcpServersForStore: piMocks.resolveMcpServersForStore,
+}));
 
 vi.mock("../project-store-resolver.js", async () => {
   const actual = await vi.importActual<typeof import("../project-store-resolver.js")>("../project-store-resolver.js");
@@ -79,10 +76,10 @@ This suite previously paid a full TaskStore.init()/migrate + createServer() (the
 test with retry-prone cleanup — ~26.5s under full-suite pressure. The HTTP layer here is
 synthetic (test-request.js calls app(req,res) directly; no real port), so the per-test
 server boot bought nothing but cost.
-Harness seam: boot storeA + the createServer() app ONCE in beforeAll, reuse across all
-tests, tear down once in afterAll. Isolation is preserved by truncating the three insight
-tables between tests (resetInsightTables) instead of rebuilding the store — assertions are
-untouched, order-independence is real, not papered over.
+
+FNXC:DashboardTests 2026-06-27-06:50 (FN-7114 — import-cost trim):
+Measurement showed the remaining cost was module transform/import, not test execution: importing server.ts forced broad dashboard chat/runtime wiring and the @fusion/engine importActual graph. Keep coverage at the route boundary by booting storeA once and mounting createInsightsRouter in a tiny Express app with the same JSON/error payload shape these assertions exercise. Mock only the engine exports this router consumes (createFnAgent, promptWithFallback, resolveMcpServersForStore) so the suite no longer transforms the full engine graph.
+Isolation is preserved by truncating the three insight tables between tests (resetInsightTables) instead of rebuilding the store — assertions are untouched, order-independence is real, not papered over.
 Timer seam: any interval/sweep-driven path is driven with FAKE timers + advanceTimersByTimeAsync
 (see "runs periodic sweep" below) so we never wait the real 5-minute DEFAULT_SWEEP_INTERVAL_MS;
 afterEach restores real timers so non-timer tests are unaffected.
@@ -91,7 +88,7 @@ describe("Insights routes", () => {
   let rootA: string;
   const disposableRouters: Array<{ __disposeSweeper?: () => void }> = [];
   let storeA: TaskStore;
-  let app: ReturnType<typeof createServer>;
+  let app: ReturnType<typeof createInsightsOnlyApp>;
 
   /*
   FNXC:DashboardTests 2026-06-25-09:55:
@@ -124,6 +121,17 @@ describe("Insights routes", () => {
     const router = createInsightsRouter(store) as ReturnType<typeof createInsightsRouter> & { __disposeSweeper?: () => void };
     disposableRouters.push(router);
     app.use("/api/insights", router);
+    /*
+    FNXC:DashboardTests 2026-06-27-06:50:
+    The route-only app intentionally avoids createServer(), but error assertions still cover the API payload contract. Preserve the route-level status/message/details shape here instead of weakening assertions or importing the full server error stack.
+    */
+    app.use((error: { status?: number; statusCode?: number; message?: string; details?: unknown }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      const payload: { error: string; details?: unknown } = { error: error.message ?? "Internal server error" };
+      if (error.details !== undefined) {
+        payload.details = error.details;
+      }
+      res.status(error.status ?? error.statusCode ?? 500).json(payload);
+    });
     return app;
   }
 
@@ -131,7 +139,7 @@ describe("Insights routes", () => {
   FNXC:DashboardTests 2026-06-25-10:30:
   State-isolation seam for the shared beforeAll store. Truncates the three insight tables
   (events first to satisfy the run FK) so each test sees a clean slate without paying a
-  fresh TaskStore.init(). This is the correctness contract that lets the server be booted once.
+  fresh TaskStore.init(). This is the correctness contract that lets the route app be booted once.
   */
   function resetInsightTables(store: TaskStore) {
     const db = store.getDatabase();
@@ -154,7 +162,7 @@ describe("Insights routes", () => {
       return storeA;
     });
 
-    app = createServer(storeA);
+    app = createInsightsOnlyApp(storeA);
   });
 
   beforeEach(() => {
@@ -185,6 +193,7 @@ describe("Insights routes", () => {
       },
     }));
     piMocks.promptWithFallback.mockResolvedValue(undefined);
+    piMocks.resolveMcpServersForStore.mockResolvedValue({ servers: [] });
   });
 
   afterEach(() => {
