@@ -9,6 +9,10 @@ import type {
   Settings,
 } from "@fusion/core";
 import type { HeartbeatMonitor } from "../agent-heartbeat.js";
+import { mkdtempSync } from "node:fs";
+import { mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Default settings inline to avoid @fusion/core build dependency during tests
 const DEFAULT_SETTINGS: Settings = {
@@ -111,9 +115,10 @@ function createMockAgentStore(): AgentStore {
   } as unknown as AgentStore;
 }
 
-function createMockTaskStore(): TaskStore {
+function createMockTaskStore(overrides: { fusionDir?: string; settings?: Partial<Settings> } = {}): TaskStore {
   return {
-    getSettings: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
+    getFusionDir: vi.fn().mockReturnValue(overrides.fusionDir ?? "/tmp/.fusion"),
+    getSettings: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS, ...overrides.settings }),
     on: vi.fn(),
     off: vi.fn(),
   } as unknown as TaskStore;
@@ -236,6 +241,42 @@ describe("RoutineRunner", () => {
           success: true,
         }),
       );
+    });
+
+    it("persists an actionable error for in-process Database Backup failures", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "routine-backup-detail-"));
+      const fusionDir = join(tempDir, ".fusion");
+      await mkdir(fusionDir, { recursive: true });
+      const routine = createMockRoutine({
+        id: "routine-backup-missing-db",
+        command: "fn backup --create",
+        agentId: "",
+      });
+      const routineStore = createMockRoutineStore([routine]);
+      const runner = createRoutineRunner({
+        routineStore,
+        taskStore: createMockTaskStore({ fusionDir }),
+      });
+
+      try {
+        const result = await runner.executeRoutine("routine-backup-missing-db", "cron");
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain("project DB");
+        expect(result.error).toContain(`source: ${join(fusionDir, "fusion.db")}`);
+        expect(result.error).toContain("cause:");
+        expect(result.error).not.toBe("");
+        expect(routineStore.completeRoutineExecution).toHaveBeenCalledWith(
+          "routine-backup-missing-db",
+          expect.objectContaining({
+            success: false,
+            error: result.error,
+            output: expect.stringContaining("project DB"),
+          }),
+        );
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
     });
 
     it("marks execution as failed when executeHeartbeat rejects", async () => {

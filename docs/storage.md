@@ -396,6 +396,8 @@ Backups in `.fusion/backups/` now capture the project DB and (when present) the 
 
 `BackupManager` supports `includeCentralDb` (default `true`). If central DB is missing or disabled, project backup still succeeds and records a skip reason. Retention (`autoBackupRetention`) is still computed from project backups; when an old project backup is pruned, its matching `fusion-central-*` sibling is pruned too. Restoring a project backup also restores the paired central backup when available; restoring a `fusion-central-*` file restores the central DB only. Pre-restore snapshots use `fusion-pre-restore-<timestamp>.db` and `fusion-central-pre-restore-<timestamp>.db`.
 
+Database Backup automation failures are surfaced with DB-qualified detail. Project backup failures include the project DB source path, backup target or backup directory when available, and the underlying cause; central DB sub-failures keep the project backup run successful but include `Central DB backup failed` plus central source/target/cause detail in the run output.
+
 ## 4) SQLite Tables Inventory (`packages/core/src/db.ts`)
 
 | Table | Purpose |

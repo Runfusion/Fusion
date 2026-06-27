@@ -2038,6 +2038,41 @@ describe("CronRunner", () => {
       expect(runResult.success).toBe(true);
       expect(runResult.output).toContain("fusion-central-");
     });
+
+    it("normalizes empty runBackupCommand failure output for legacy schedules", async () => {
+      coreModuleMocks.runBackupCommand.mockResolvedValueOnce({ success: false, output: "" });
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      const schedule = createMockSchedule({ id: "db-bk-empty", command: "fn backup --create" });
+      runner = new CronRunner(store, createMockAutomationStore());
+
+      const runResult = await (runner as unknown as { executeLegacyCommand: (s: ScheduledTask, startedAt: string) => Promise<AutomationRunResult> })
+        .executeLegacyCommand(schedule, new Date().toISOString());
+
+      expect(runResult.success).toBe(false);
+      expect(runResult.error).toBe("project DB run backup command failed; source: /tmp/.fusion/fusion.db; cause: unknown error");
+      expect(runResult.output).toBe("");
+    });
+
+    it("normalizes empty thrown errors for backup command steps", async () => {
+      coreModuleMocks.runBackupCommand.mockRejectedValueOnce(new Error(""));
+      const store = createMockStore() as unknown as TaskStore & { getFusionDir: () => string };
+      store.getFusionDir = vi.fn().mockReturnValue("/tmp/.fusion");
+      runner = new CronRunner(store, createMockAutomationStore());
+      const step: AutomationStep = {
+        id: "step-db-bk",
+        name: "Database Backup",
+        type: "command",
+        command: "fn backup --create",
+      };
+
+      const stepResult = await (runner as unknown as { executeCommandStep: (s: AutomationStep, i: number, t: number, startedAt: string) => Promise<AutomationRunResult> })
+        .executeCommandStep(step, 0, 30_000, new Date().toISOString());
+
+      expect(stepResult.success).toBe(false);
+      expect(stepResult.error).toBe("project DB run backup command failed; source: /tmp/.fusion/fusion.db; cause: unknown error");
+      expect(stepResult.output).toBe("");
+    });
   });
 
   describe("memory backup in-process dispatch", () => {

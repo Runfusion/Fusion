@@ -67,7 +67,16 @@ export class BackupManager {
   async createBackup(): Promise<BackupInfo> {
     const sourcePath = join(this.fusionDir, "fusion.db");
     const backupDirPath = this.getBackupDirPath();
-    await mkdir(backupDirPath, { recursive: true });
+    try {
+      await mkdir(backupDirPath, { recursive: true });
+    } catch (err) {
+      throw new Error(formatBackupError({
+        dbLabel: "project DB",
+        action: "prepare backup directory",
+        backupDirPath,
+        cause: err,
+      }));
+    }
 
     const timestamp = currentBackupTimestamp();
     let counter = 0;
@@ -96,21 +105,31 @@ export class BackupManager {
     const filename = generateBackupFilename(timestamp, counter);
     const targetPath = join(backupDirPath, filename);
 
-    await copyLiveDatabase(sourcePath, targetPath);
+    try {
+      await copyLiveDatabase(sourcePath, targetPath);
 
-    // Verify the freshly-written copy. A copy of a live WAL db can capture a
-    // torn/corrupt main file; refusing to keep a corrupt backup guarantees
-    // that every retained `fusion-*.db` is restorable and that a corrupt copy
-    // is never counted as the "last known-good" by cleanupOldBackups().
-    if (this.verifyIntegrity) {
-      const integrity = verifyDatabaseIntegrity(targetPath);
-      if (!integrity.ok) {
-        await quarantineCorruptBackup(targetPath);
-        throw new Error(
-          `Backup verification failed for ${filename}: ${integrity.error ?? "database disk image is malformed"}. ` +
-            "The source database may be corrupt; the unusable copy was quarantined as *.corrupt.",
-        );
+      // Verify the freshly-written copy. A copy of a live WAL db can capture a
+      // torn/corrupt main file; refusing to keep a corrupt backup guarantees
+      // that every retained `fusion-*.db` is restorable and that a corrupt copy
+      // is never counted as the "last known-good" by cleanupOldBackups().
+      if (this.verifyIntegrity) {
+        const integrity = verifyDatabaseIntegrity(targetPath);
+        if (!integrity.ok) {
+          await quarantineCorruptBackup(targetPath);
+          throw new Error(
+            `verification failed: ${integrity.error ?? "database disk image is malformed"}. ` +
+              "The source database may be corrupt; the unusable copy was quarantined as *.corrupt.",
+          );
+        }
       }
+    } catch (err) {
+      throw new Error(formatBackupError({
+        dbLabel: "project DB",
+        action: "create backup",
+        sourcePath,
+        targetPath,
+        cause: err,
+      }));
     }
 
     const stats = await stat(targetPath);
@@ -142,7 +161,8 @@ export class BackupManager {
         if (!centralIntegrity.ok) {
           await quarantineCorruptBackup(centralTargetPath);
           throw new Error(
-            `central DB verification failed: ${centralIntegrity.error ?? "database disk image is malformed"}`,
+            `verification failed: ${centralIntegrity.error ?? "database disk image is malformed"}. ` +
+              "The source database may be corrupt; the unusable copy was quarantined as *.corrupt.",
           );
         }
       }
@@ -156,7 +176,13 @@ export class BackupManager {
       };
     } catch (err) {
       backup.centralBackup = {
-        failed: (err as Error).message,
+        failed: formatBackupError({
+          dbLabel: "central DB",
+          action: "create backup",
+          sourcePath: this.centralDbPath,
+          targetPath: centralTargetPath,
+          cause: err,
+        }),
       };
     }
 
@@ -573,10 +599,16 @@ export async function runBackupCommand(
   fusionDir: string,
   settings: ProjectSettings
 ): Promise<{ success: boolean; output: string; backupPath?: string; deletedCount?: number }> {
+  const projectDbPath = join(fusionDir, "fusion.db");
   if (settings.autoBackupSchedule && !validateBackupSchedule(settings.autoBackupSchedule)) {
     return {
       success: false,
-      output: `Invalid backup schedule: ${settings.autoBackupSchedule}`,
+      output: formatBackupError({
+        dbLabel: "project DB",
+        action: "validate backup schedule",
+        sourcePath: projectDbPath,
+        cause: `invalid cron expression: ${settings.autoBackupSchedule}`,
+      }),
     };
   }
 
@@ -613,9 +645,53 @@ export async function runBackupCommand(
   } catch (err) {
     return {
       success: false,
-      output: `Backup failed: ${(err as Error).message}`,
+      output: formatBackupError({
+        dbLabel: "project DB",
+        action: "run backup command",
+        sourcePath: projectDbPath,
+        cause: err,
+      }),
     };
   }
+}
+
+/*
+FNXC:DatabaseBackup 2026-06-26-12:00:
+Database Backup automations are operator-facing data-safety signals. Every failure must name the affected DB, relevant path, and cause so CLI, dashboard, routine, and cron surfaces never persist a detail-less "Backup failed" result.
+*/
+function formatBackupError(input: {
+  dbLabel: "project DB" | "central DB";
+  action: string;
+  sourcePath?: string;
+  targetPath?: string;
+  backupDirPath?: string;
+  cause: unknown;
+}): string {
+  const parts = [`${input.dbLabel} ${input.action} failed`];
+  if (input.sourcePath) parts.push(`source: ${input.sourcePath}`);
+  if (input.targetPath) parts.push(`target: ${input.targetPath}`);
+  if (input.backupDirPath) parts.push(`backup directory: ${input.backupDirPath}`);
+  parts.push(`cause: ${describeError(input.cause)}`);
+  return parts.join("; ");
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message.trim() || err.name || "unknown error";
+  }
+  if (typeof err === "string") {
+    return err.trim() || "unknown error";
+  }
+  if (err === null || err === undefined) {
+    return "unknown error";
+  }
+  try {
+    const serialized = JSON.stringify(err);
+    if (serialized && serialized !== "{}") return serialized;
+  } catch {
+    // Fall through to String().
+  }
+  return String(err).trim() || "unknown error";
 }
 
 function formatBytes(bytes: number): string {

@@ -878,7 +878,24 @@ describe("runBackupCommand", () => {
     expect(result.output).toContain("Backup created");
   });
 
-  it("should return failure for invalid schedule", async () => {
+  it("reports central DB missing as an explicit successful skip", async () => {
+    const settings: ProjectSettings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: true,
+      autoBackupEnabled: true,
+      autoBackupRetention: 7,
+    };
+
+    const result = await runBackupCommand(fusionDir, settings);
+
+    expect(result.success).toBe(true);
+    expect(result.output).toContain("Central DB skipped: missing");
+  });
+
+  it("returns DB-qualified failure for invalid schedule", async () => {
     const settings: ProjectSettings = {
       maxConcurrent: 2,
       maxWorktrees: 4,
@@ -892,7 +909,9 @@ describe("runBackupCommand", () => {
     const result = await runBackupCommand(fusionDir, settings);
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("Invalid backup schedule");
+    expect(result.output).toContain("project DB");
+    expect(result.output).toContain(join(fusionDir, "fusion.db"));
+    expect(result.output).toContain("invalid cron expression: invalid-cron");
   });
 
   it("should cleanup old backups after creation", async () => {
@@ -921,7 +940,7 @@ describe("runBackupCommand", () => {
     expect(result.deletedCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("should report central copy failure while keeping success true", async () => {
+  it("reports central copy failure with DB and path detail while keeping success true", async () => {
     const settings: ProjectSettings = {
       maxConcurrent: 2,
       maxWorktrees: 4,
@@ -938,9 +957,13 @@ describe("runBackupCommand", () => {
 
     expect(result.success).toBe(true);
     expect(result.output).toContain("Central DB backup failed");
+    expect(result.output).toContain("central DB");
+    expect(result.output).toContain("source:");
+    expect(result.output).toContain("target:");
+    expect(result.output).toContain("cause:");
   });
 
-  it("should return failure when database file is missing", async () => {
+  it("returns DB-qualified failure when the project database file is missing", async () => {
     // Remove the database
     await rm(join(fusionDir, "fusion.db"));
 
@@ -956,6 +979,87 @@ describe("runBackupCommand", () => {
     const result = await runBackupCommand(fusionDir, settings);
 
     expect(result.success).toBe(false);
-    expect(result.output).toContain("failed");
+    expect(result.output).toContain("project DB");
+    expect(result.output).toContain(`source: ${join(fusionDir, "fusion.db")}`);
+    expect(result.output).toContain("target:");
+    expect(result.output).toContain("cause:");
+    expect(result.output).not.toMatch(/Backup failed:\s*$/);
+  });
+
+  it("returns DB-qualified failure when the backup directory cannot be created", async () => {
+    const blockedBackupDir = join(tempDir, "blocked-backups");
+    writeFileSync(blockedBackupDir, "not a directory");
+    const settings: ProjectSettings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: true,
+      autoBackupEnabled: true,
+      autoBackupDir: "blocked-backups",
+    };
+
+    const result = await runBackupCommand(fusionDir, settings);
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("project DB");
+    expect(result.output).toContain(`source: ${join(fusionDir, "fusion.db")}`);
+    expect(result.output).toContain(`backup directory: ${blockedBackupDir}`);
+    expect(result.output).toContain("cause:");
+  });
+
+  it("returns DB-qualified failure when project backup verification quarantines a corrupt copy", async () => {
+    const probe = spawnSync("sqlite3", ["--version"], { encoding: "utf-8" });
+    if (probe.error || probe.status !== 0) return;
+    writeFileSync(join(fusionDir, "fusion.db"), "not sqlite");
+    const settings: ProjectSettings = {
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      groupOverlappingFiles: false,
+      autoMerge: true,
+      autoBackupEnabled: true,
+    };
+
+    const result = await runBackupCommand(fusionDir, settings);
+
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("project DB");
+    expect(result.output).toContain(`source: ${join(fusionDir, "fusion.db")}`);
+    expect(result.output).toContain("quarantined as *.corrupt");
+    expect(result.output).toContain("cause:");
+  });
+
+  it("does not report sqlite3-unavailable verification degradation as a backup failure", async () => {
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      spawnSync: vi.fn(() => ({
+        error: Object.assign(new Error("spawn sqlite3 ENOENT"), { code: "ENOENT" }),
+        stdout: "",
+        stderr: "",
+        status: null,
+      })),
+    }));
+    try {
+      const { runBackupCommand: runBackupCommandWithMissingSqlite } = await import("../backup.js");
+      writeFileSync(join(fusionDir, "fusion.db"), "not sqlite but sqlite3 is unavailable");
+      const settings: ProjectSettings = {
+        maxConcurrent: 2,
+        maxWorktrees: 4,
+        pollIntervalMs: 15000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        autoBackupEnabled: true,
+      };
+
+      const result = await runBackupCommandWithMissingSqlite(fusionDir, settings);
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("Backup created");
+      expect(result.output).not.toContain("failed");
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+    }
   });
 });

@@ -306,15 +306,16 @@ export class RoutineRunner {
         const fusionDir = this.options.taskStore.getFusionDir();
         const settings = await this.options.taskStore.getSettings();
         const result = await runBackupCommand(fusionDir, settings);
+        const output = truncateOutput(result.output ?? "", "");
         return {
           success: result.success,
-          output: truncateOutput(result.output ?? "", ""),
-          error: result.success ? undefined : result.output,
+          output,
+          error: result.success ? undefined : formatInProcessBackupError(output, fusionDir),
           startedAt,
           completedAt: new Date().toISOString(),
         };
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatInProcessBackupError(err, this.options.taskStore.getFusionDir());
         return {
           success: false,
           output: "",
@@ -631,6 +632,19 @@ export class RoutineRunner {
   isRoutineRunning(routineId: string): boolean {
     return this.inFlightExecutions.has(routineId);
   }
+}
+
+/*
+FNXC:DatabaseBackup 2026-06-26-12:00:
+Routine-runner in-process backups persist AutomationRunResult.error directly to lastRunResult. Normalize empty or opaque failures here so Database Backup cards always show a DB-qualified cause.
+*/
+function formatInProcessBackupError(err: unknown, fusionDir: string): string {
+  const message = err instanceof Error ? err.message.trim() : String(err ?? "").trim();
+  const cause = message || "unknown error";
+  if (cause.includes("project DB") || cause.includes("central DB")) {
+    return cause;
+  }
+  return `project DB run backup command failed; source: ${fusionDir}/fusion.db; cause: ${cause}`;
 }
 
 function truncateOutput(stdout: string, stderr: string): string {

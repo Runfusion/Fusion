@@ -608,13 +608,14 @@ export class CronRunner {
       const fusionDir = this.store.getFusionDir();
       const settings = await this.store.getSettings();
       const result = await runBackupCommand(fusionDir, settings);
+      const output = truncateOutput(result.output ?? "", "");
       return {
         success: result.success,
-        output: truncateOutput(result.output ?? "", ""),
-        error: result.success ? undefined : result.output,
+        output,
+        error: result.success ? undefined : formatInProcessBackupError(output, fusionDir),
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = formatInProcessBackupError(err, this.store.getFusionDir());
       return { success: false, output: "", error: message };
     }
   }
@@ -1054,6 +1055,19 @@ export async function createAiPromptExecutor(cwd: string, store?: TaskStore): Pr
       }
     }
   };
+}
+
+/*
+FNXC:DatabaseBackup 2026-06-26-12:00:
+Cron-runner in-process backups feed automation run history and step errors. Normalize empty thrown values and empty command output before they become operator-visible Database Backup failures.
+*/
+function formatInProcessBackupError(err: unknown, fusionDir: string): string {
+  const message = err instanceof Error ? err.message.trim() : String(err ?? "").trim();
+  const cause = message || "unknown error";
+  if (cause.includes("project DB") || cause.includes("central DB")) {
+    return cause;
+  }
+  return `project DB run backup command failed; source: ${fusionDir}/fusion.db; cause: ${cause}`;
 }
 
 /** Combine and truncate stdout/stderr to stay within storage limits. */
