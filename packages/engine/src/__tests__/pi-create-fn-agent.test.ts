@@ -867,6 +867,73 @@ describe("wrapToolsWithActionGate", () => {
     expect(tool.execute).toHaveBeenCalled();
   });
 
+  it("governs newly exposed heartbeat network tools by policy instead of withholding them", async () => {
+    const execute = vi.fn().mockResolvedValue({ ok: true });
+    const tool = { name: "fn_research_run", label: "Run Research", description: "", parameters: {}, execute };
+    const { wrapToolsWithActionGate } = await import("../pi.js");
+
+    const unrestricted = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: {
+        presetId: "unrestricted",
+        rules: {
+          git_write: "allow",
+          file_write_delete: "allow",
+          command_execution: "allow",
+          network_api: "allow",
+          task_agent_mutation: "allow",
+        },
+      },
+      createApprovalRequest: vi.fn(),
+      findApprovalByDedupeKey: vi.fn(),
+    });
+    await expect((unrestricted[0] as any).execute("run-allow", { query: "q" })).resolves.toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    const locked = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: { presetId: "locked-down", rules: lockedDownRules },
+      createApprovalRequest: vi.fn(),
+      findApprovalByDedupeKey: vi.fn(),
+    });
+    const blocked = await (locked[0] as any).execute("run-block", { query: "q" });
+    expect((blocked as any).isError).toBe(true);
+    expect((blocked as any).decision).toEqual(expect.objectContaining({
+      category: "network_api",
+      disposition: "block",
+      toolName: "fn_research_run",
+    }));
+    expect(execute).toHaveBeenCalledTimes(1);
+
+    const createApprovalRequest = vi.fn().mockResolvedValue({ id: "apr-research-1" });
+    const approval = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: { presetId: "approval-required", rules: approvalRules },
+      createApprovalRequest,
+      findApprovalByDedupeKey: vi.fn().mockResolvedValue(null),
+      pauseForApproval: vi.fn(),
+    });
+    const pending = await (approval[0] as any).execute("run-approval", { query: "q" });
+    expect((pending as any).isError).toBe(true);
+    expect((pending as any).decision).toEqual(expect.objectContaining({
+      category: "network_api",
+      disposition: "require-approval",
+      toolName: "fn_research_run",
+      metadata: expect.objectContaining({ approvalRequestId: "apr-research-1" }),
+    }));
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it("creates request once and pauses once while pending", async () => {
     const tool = { name: "write", label: "Write", description: "", parameters: {}, execute: vi.fn() };
     const createApprovalRequest = vi.fn().mockResolvedValue({ id: "apr-1" });

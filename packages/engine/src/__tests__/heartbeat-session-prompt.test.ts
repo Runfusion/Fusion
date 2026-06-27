@@ -119,6 +119,9 @@ describe("createHeartbeatTools", () => {
       "fn_update_agent_config",
       "fn_agent_create",
       "fn_agent_delete",
+      "fn_artifact_register",
+      "fn_artifact_list",
+      "fn_artifact_view",
       "fn_send_message",
       "fn_read_messages",
       "fn_post_room_message",
@@ -129,6 +132,13 @@ describe("createHeartbeatTools", () => {
       "fn_read_evaluations",
       "fn_update_identity",
       "fn_reflect_on_performance",
+      "fn_workflow_list",
+      "fn_workflow_get",
+      "fn_trait_list",
+      "fn_research_run",
+      "fn_research_list",
+      "fn_research_get",
+      "fn_ask_question",
       "fn_heartbeat_done",
     ] as const;
 
@@ -170,7 +180,7 @@ describe("createHeartbeatTools", () => {
 
     const tools = monitor.createHeartbeatTools("agent-001", mockTaskStore, "FN-001");
 
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(24);
     expect(tools[0]!.name).toBe("fn_task_create");
     expect(tools[1]!.name).toBe("fn_task_log");
     expect(tools[2]!.name).toBe("fn_task_document_write");
@@ -188,6 +198,17 @@ describe("createHeartbeatTools", () => {
     expect(tools[14]!.name).toBe("fn_goal_show");
     expect(tools[15]!.name).toBe("fn_read_evaluations");
     expect(tools[16]!.name).toBe("fn_update_identity");
+    expect(tools.slice(17).map((tool) => tool.name)).toEqual([
+      "fn_workflow_list",
+      "fn_workflow_get",
+      "fn_trait_list",
+      "fn_ask_question",
+      "fn_research_run",
+      "fn_research_list",
+      "fn_research_get",
+    ]);
+    expect(tools.map((tool) => tool.name)).not.toContain("fn_research_cancel");
+    expect(tools.map((tool) => tool.name)).not.toContain("fn_run_verification");
   });
 
   it("fn_task_create tool creates a task in triage via TaskStore", async () => {
@@ -737,6 +758,72 @@ describe("clearRunState", () => {
     await monitor.completeRun("agent-001", "run-clear-002", { status: "completed" });
     savedRun = savedRuns.get("run-clear-002");
     expect((savedRun!.resultJson as any)?.tasksCreated).toBeUndefined();
+  });
+});
+
+describe("no-task heartbeat tool surface", () => {
+  it("adds the approved workflow, research, and clarification tools without task-scoped duplicates", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "hb-no-task-tools-"));
+    const globalDir = mkdtempSync(join(tmpdir(), "hb-no-task-global-"));
+    const taskStore = new RealTaskStore(rootDir, globalDir, { inMemoryDb: true });
+    await taskStore.init();
+    const agentStore = new RealAgentStore({ rootDir: taskStore.getFusionDir(), taskStore, inMemoryDb: true });
+
+    const agent = await agentStore.createAgent({
+      name: "No Task Tool Agent",
+      role: "engineer",
+      soul: "Audits ambient project state.",
+      runtimeConfig: { enabled: true },
+    });
+
+    let capturedCustomTools: string[] = [];
+    const createSessionSpy = vi.spyOn(sessionHelpers, "createResolvedAgentSession").mockImplementation(async (options: any) => {
+      capturedCustomTools = (options.customTools ?? []).map((tool: any) => tool.name);
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          getSessionStats: () => ({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+        },
+        options,
+      } as any;
+    });
+
+    try {
+      const monitor = new HeartbeatMonitor({
+        store: agentStore as unknown as AgentStore,
+        taskStore: taskStore as unknown as TaskStore,
+        rootDir,
+      });
+
+      await monitor.executeHeartbeat({ agentId: agent.id, source: "timer" as any });
+
+      expect(capturedCustomTools).toEqual(expect.arrayContaining([
+        "fn_artifact_register",
+        "fn_artifact_list",
+        "fn_artifact_view",
+        "fn_workflow_list",
+        "fn_workflow_get",
+        "fn_trait_list",
+        "fn_ask_question",
+        "fn_research_run",
+        "fn_research_list",
+        "fn_research_get",
+      ]));
+      expect(capturedCustomTools).not.toEqual(expect.arrayContaining([
+        "fn_task_log",
+        "fn_task_document_write",
+        "fn_task_document_read",
+        "fn_research_cancel",
+        "fn_run_verification",
+        "fn_workflow_select",
+        "fn_task_promote",
+      ]));
+    } finally {
+      createSessionSpy.mockRestore();
+      rmSync(rootDir, { recursive: true, force: true });
+      rmSync(globalDir, { recursive: true, force: true });
+    }
   });
 });
 

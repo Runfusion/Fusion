@@ -34,6 +34,7 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
 - Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write` and `fn_task_document_read`; because neither lane has an ambient task, both tools require an explicit `task_id`.
 - Agent workflow-routing tools follow an intent boundary: agents may select or change a task workflow only when the user explicitly requested that workflow or when the agent created the task. Executors must not call `fn_workflow_select` to reroute the task they are executing unless the task instructions or a user steering comment explicitly asks for the workflow change.
 - Executor, heartbeat, and dashboard chat sessions expose artifact registry tools so agents can publish and inspect multi-type deliverables without relying on the dashboard gallery. Planning sessions intentionally exclude artifact tools until they can thread the existing `MessageStore` dependency.
+- Permanent/custom heartbeat agents receive the broad coordination and work-discovery tool surface instead of a narrowly curated subset: workflow discovery (`fn_workflow_list`, `fn_workflow_get`, `fn_trait_list`), bounded research (`fn_research_run`, `fn_research_list`, `fn_research_get`), structured clarification (`fn_ask_question`), artifact, memory, messaging, goal, evaluation, identity, and delegation tools. Dangerous actions are controlled at invocation time by each agent's `AgentPermissionPolicy` through the action gate (allow / require approval / block), not by withholding safe tools from the session.
 
 ### Artifact registry tools
 
@@ -498,12 +499,12 @@ This layered behavior is shared by heartbeat agents and task-scoped sessions tha
 
 ## Research Tools in Planning/Execution Sessions
 
-Triage and executor runtime sessions include a bounded research tool surface only when `experimentalFeatures.researchView` is enabled for the project:
+Triage and executor runtime sessions include a bounded research tool surface only when `experimentalFeatures.researchView` is enabled for the project. Permanent/custom heartbeat sessions always register the safe research discovery/run tools (`fn_research_run`, `fn_research_list`, `fn_research_get`) so permission policy and runtime setup responses govern use; `fn_research_run` remains `network_api`-gated by `AgentPermissionPolicy`, and disabled or misconfigured research returns an actionable setup result instead of removing the tool.
 
 - `fn_research_run` — create/start a bounded research run for a focused query
 - `fn_research_list` — list recent runs and statuses
 - `fn_research_get` — fetch one run's structured findings payload
-- `fn_research_cancel` — cancel an active run
+- `fn_research_cancel` — cancel an active run (triage/executor research surface only; heartbeat withholds cancel until it has explicit action-gate classification)
 
 These tools return structured metadata (`runId`, `status`, `summary`, `findings`, `citations`, `error`, `setup`) in addition to concise text so downstream model steps can consume results deterministically.
 
@@ -511,7 +512,7 @@ Expected behavior and boundaries:
 
 - Agents should use research only when repository/local context is insufficient
 - Queries should stay narrow and task-scoped; avoid open-ended exploration
-- When `experimentalFeatures.researchView` is disabled, sessions do not register `fn_research_*` tools and prompts do not advertise research capabilities
+- When `experimentalFeatures.researchView` is disabled, triage/executor sessions do not register `fn_research_*` tools and prompts do not advertise research capabilities; heartbeat sessions keep the safe research tools registered but return setup guidance at execution time
 - If the research surface is enabled but an explicitly selected external provider is misconfigured (or web search is explicitly disabled), tools return actionable `setup` responses instead of crashing
 - Durable conclusions should be persisted with `fn_task_document_write` (for example, `key="research"`)
 - Research runs require the project engine to be running for processing; `fn_research_run` creates the run but does not block for completion unless `wait_for_completion` is set
@@ -888,7 +889,7 @@ Heartbeat runs are composed from multiple prompt layers so each wake has full id
 2. **Workspace tool mode**
    - Heartbeat sessions are created with coding-capable workspace tools (`read`, `write`, `edit`, `bash`, `grep`, `find`, `ls`) inside worktree boundary guards.
    - Heartbeat behavior still stays lightweight: one concrete action per run, then `fn_heartbeat_done`.
-   - Engine-owned heartbeat tools are still layered on top (task creation/log/docs for task-scoped runs; ambient/delegation/memory tools for no-task runs).
+   - Engine-owned heartbeat tools are layered on top for both task-scoped and no-task runs. Permanent/custom agents get the safe coordination/work-discovery surface (task creation/delegation, agent config/provisioning, artifacts, memory, messaging, goals/evaluations/identity/reflection, workflow discovery, bounded research, and `fn_ask_question`), while task-only tools such as `fn_task_log` and task documents stay limited to task-scoped runs.
 2. **Agent identity and instructions bundle**
    - Inline instructions (`instructionsText`)
    - File-backed instructions (`instructionsPath`)

@@ -23,7 +23,7 @@ import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgen
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
-import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
+import { createTaskCreateTool, createTaskLogToolWithContext, createTaskDocumentWriteTool, createTaskDocumentReadTool, createArtifactRegisterTool, createArtifactListTool, createArtifactViewTool, createListAgentsTool, createDelegateTaskTool, createGetAgentConfigTool, createUpdateAgentConfigTool, createAgentCreateTool, createAgentDeleteTool, createSendMessageTool, createReadMessagesTool, createPostRoomMessageTool, createMemoryTools, createGoalRetrievalTools, createReadEvaluationsTool, createUpdateIdentityTool, createReflectOnPerformanceTool, createWebFetchTool, createWorkflowListTool, createWorkflowGetTool, createTraitListTool, createAskQuestionTool, createResearchTools, readAgentMemoryWorkspaceLongTerm, taskCreateParams } from "./agent-tools.js";
 import { AgentLogger } from "./agent-logger.js";
 import {
   resolveAgentInstructionsWithRatings,
@@ -409,7 +409,7 @@ Examples of ONE useful coordination action:
 
 Keep work lightweight — this is a single-pass coordination check, not an implementation run.
 You have workspace read tools (for context gathering) plus fn_task_create, fn_task_log, fn_task_document tools,
-fn_send_message, fn_read_messages, fn_post_room_message, fn_list_agents, fn_delegate_task, and memory tools.
+fn_send_message, fn_read_messages, fn_post_room_message, fn_list_agents, fn_delegate_task, workflow discovery, bounded research, fn_ask_question, and memory tools.
 
 **Task Documents:** Save important findings with fn_task_document_write(key="...", content="...").
 Documents persist across sessions and are visible in the dashboard's Documents tab.
@@ -502,8 +502,12 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_list_agents and fn_delegate_task
 - fn_get_agent_config and fn_update_agent_config (for direct reports only)
 - fn_agent_create and fn_agent_delete (for direct reports only)
+- fn_artifact_register, fn_artifact_list, and fn_artifact_view
 - fn_read_evaluations and fn_update_identity (available in no-task runs)
 - fn_reflect_on_performance when reflection is enabled for this run
+- fn_workflow_list, fn_workflow_get, and fn_trait_list for workflow discovery
+- fn_research_run, fn_research_list, and fn_research_get for bounded research when configured
+- fn_ask_question to ask the dashboard user for structured clarification
 - fn_web_fetch
 - fn_memory_search, fn_memory_get, and fn_memory_append
 - fn_heartbeat_done
@@ -2390,6 +2394,14 @@ export class HeartbeatMonitor {
             sourceRunId: runContext?.runId,
           }, { rootDir: this.rootDir }));
 
+          /*
+          FNXC:AgentTooling 2026-06-27-11:45:
+          No-task permanent agents must keep artifact registry parity with task-scoped heartbeat agents; artifact registrations can remain agent-authored or explicitly include a taskId, so withholding these tools would violate the permission-policy governance model.
+          */
+          heartbeatTools.push(createArtifactRegisterTool(taskStore, agentId, this.messageStore));
+          heartbeatTools.push(createArtifactListTool(taskStore));
+          heartbeatTools.push(createArtifactViewTool(taskStore));
+
           // Agent delegation tools
           heartbeatTools.push(createListAgentsTool(this.store));
           heartbeatTools.push(createDelegateTaskTool(this.store, taskStore, { rootDir: this.rootDir }));
@@ -2413,6 +2425,8 @@ export class HeartbeatMonitor {
           if (this.reflectionService) {
             heartbeatTools.push(createReflectOnPerformanceTool(this.reflectionService, agentId));
           }
+
+          heartbeatTools.push(...this.createSharedHeartbeatWorkTools(taskStore));
         } else {
           // Task-scoped runs: full tool set including fn_task_log and document tools
           // taskId is guaranteed to be defined here because isNoTaskRun = !taskId
@@ -3402,6 +3416,27 @@ export class HeartbeatMonitor {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
+   * FNXC:AgentTooling 2026-06-27-04:20:
+   * Permanent/custom heartbeat agents should receive the full safe coordination and work-discovery surface they may need; risky actions are governed at call time by AgentPermissionPolicy through wrapToolsWithActionGate, not by hiding tools from the session. Only expose mutating factories here when their tool names are classified by the action gate or are intentional benign coordination primitives.
+   */
+  private createSharedHeartbeatWorkTools(taskStore: TaskStore): ToolDefinition[] {
+    const rootDir = this.rootDir ?? process.cwd();
+    const researchTools = createResearchTools({
+      store: taskStore,
+      rootDir,
+      getSettings: () => taskStore.getSettings(),
+    }).filter((tool) => tool.name !== "fn_research_cancel");
+
+    return [
+      createWorkflowListTool(taskStore),
+      createWorkflowGetTool(taskStore),
+      createTraitListTool(),
+      createAskQuestionTool(),
+      ...researchTools,
+    ];
+  }
+
+  /**
    * Create the tool set for a heartbeat agent session.
    *
    * Returns tools with tracking wrappers that record task creations
@@ -3498,6 +3533,8 @@ export class HeartbeatMonitor {
     if (this.reflectionService) {
       tools.push(createReflectOnPerformanceTool(this.reflectionService, agentId));
     }
+
+    tools.push(...this.createSharedHeartbeatWorkTools(taskStore));
 
     return tools;
   }
