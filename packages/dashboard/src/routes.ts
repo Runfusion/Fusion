@@ -57,6 +57,7 @@ import {
 } from "./api-error.js";
 import { createPluginRouter, resolvePluginManifest } from "./plugin-routes.js";
 import { fetchFromRemoteNode } from "./routes/register-settings-sync-helpers.js";
+import { getOrCreateProjectStore } from "./project-store-resolver.js";
 import { hermesRuntimeMetadata } from "@fusion-plugin-examples/hermes-runtime";
 import { openclawRuntimeMetadata } from "@fusion-plugin-examples/openclaw-runtime";
 
@@ -4637,9 +4638,35 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
       if (shouldClose || (typeof central.isInitialized === "function" && !central.isInitialized())) await central.init();
       
       const state = await central.getGlobalConcurrencyState();
+      const projects = await central.listProjects();
+      const projectCounts = await Promise.all(projects.map(async (project) => {
+        const projectStore = await getOrCreateProjectStore(project.id);
+        const tasks = await projectStore.listTasks({ slim: true });
+        return [project.id, tasks.filter((task) => task.column === "in-progress").length] as const;
+      }));
+
+      const projectsActive: Record<string, number> = {};
+      let currentlyActive = 0;
+      for (const [projectId, activeCount] of projectCounts) {
+        currentlyActive += activeCount;
+        if (activeCount > 0) {
+          projectsActive[projectId] = activeCount;
+        }
+      }
+
+      /*
+      FNXC:GlobalConcurrencyControls 2026-06-26-12:00:
+      The footer EngineControlMenu and Command Center Concurrency card need running-agent counts from live task state. Slot bookkeeping (`globalConcurrency.currentlyActive`) and polled project health are not synced in the default in-process runtime, so derive read-only currentlyActive/projectsActive from authoritative `in-progress` task columns without mutating the slot limiter or editable cap.
+      */
+      const liveState = {
+        ...state,
+        currentlyActive,
+        projectsActive,
+      };
+
       if (shouldClose) await central.close();
       
-      res.json(state);
+      res.json(liveState);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

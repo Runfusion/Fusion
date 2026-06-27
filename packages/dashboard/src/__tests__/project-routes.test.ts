@@ -1208,6 +1208,119 @@ describe("project path mapping route handlers", () => {
   });
 });
 
+describe("GET /api/global-concurrency route handler", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetOrCreateProjectStore.mockReset();
+    mockGetGlobalConcurrencyState.mockResolvedValue({
+      globalMaxConcurrent: 2,
+      currentlyActive: 0,
+      queuedCount: 7,
+      projectsActive: { stale_project: 999 },
+    });
+  });
+
+  function project(id: string) {
+    return {
+      id,
+      name: id,
+      path: `/projects/${id}`,
+      status: "active",
+      isolationMode: "in-process",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  function storeWithColumns(columns: string[]): MockStoreForRoutes & { listTasks: ReturnType<typeof vi.fn> } {
+    const mockStore = new MockStoreForRoutes() as MockStoreForRoutes & { listTasks: ReturnType<typeof vi.fn> };
+    mockStore.listTasks = vi.fn().mockResolvedValue(columns.map((column, index) => ({ id: `FN-${index + 1}`, column })));
+    return mockStore;
+  }
+
+  it("omits projects and reports zero when no tasks are in progress", async () => {
+    const storeA = storeWithColumns(["todo", "in-review", "done", "archived"]);
+    mockListProjects.mockResolvedValue([project("proj_a")]);
+    mockGetOrCreateProjectStore.mockResolvedValue(storeA);
+
+    const app = await createApp(new MockStoreForRoutes());
+    const res = await request(app, "GET", "/api/global-concurrency");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      globalMaxConcurrent: 2,
+      currentlyActive: 0,
+      queuedCount: 7,
+      projectsActive: {},
+    });
+    expect(storeA.listTasks).toHaveBeenCalledWith({ slim: true });
+  });
+
+  it.each([
+    {
+      name: "one in-progress task in one project",
+      max: 4,
+      stores: { proj_a: ["todo", "in-progress", "done"] },
+      expectedProjects: { proj_a: 1 },
+      expectedTotal: 1,
+    },
+    {
+      name: "multiple in-progress tasks in one project",
+      max: 8,
+      stores: { proj_a: ["in-progress", "todo", "in-progress", "in-review"] },
+      expectedProjects: { proj_a: 2 },
+      expectedTotal: 2,
+    },
+    {
+      name: "two projects each with in-progress tasks",
+      max: 10,
+      stores: {
+        proj_a: ["in-progress", "done", "todo"],
+        proj_b: ["todo", "in-progress", "in-progress", "archived"],
+        proj_c: ["todo", "done"],
+      },
+      expectedProjects: { proj_a: 1, proj_b: 2 },
+      expectedTotal: 3,
+    },
+    {
+      name: "over-subscription reports truthful count above cap",
+      max: 2,
+      stores: { proj_a: ["in-progress", "in-progress", "in-progress", "todo"] },
+      expectedProjects: { proj_a: 3 },
+      expectedTotal: 3,
+    },
+  ])("derives live running counts for $name", async ({ max, stores, expectedProjects, expectedTotal }) => {
+    mockGetGlobalConcurrencyState.mockResolvedValue({
+      globalMaxConcurrent: max,
+      currentlyActive: 0,
+      queuedCount: 7,
+      projectsActive: { stale_project: 999 },
+    });
+    mockListProjects.mockResolvedValue(Object.keys(stores).map(project));
+    const storesByProject = new Map(
+      Object.entries(stores).map(([projectId, columns]) => [projectId, storeWithColumns(columns)]),
+    );
+    mockGetOrCreateProjectStore.mockImplementation(async (projectId: string) => storesByProject.get(projectId) ?? storeWithColumns([]));
+
+    const app = await createApp(new MockStoreForRoutes());
+    const res = await request(app, "GET", "/api/global-concurrency");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      globalMaxConcurrent: max,
+      currentlyActive: expectedTotal,
+      queuedCount: 7,
+      projectsActive: expectedProjects,
+    });
+    expect((res.body as { currentlyActive: number }).currentlyActive).toBeGreaterThanOrEqual(expectedTotal);
+    expect((res.body as { projectsActive: Record<string, number> }).projectsActive).not.toHaveProperty("stale_project");
+    for (const [projectId, mockStore] of storesByProject) {
+      expect(mockGetOrCreateProjectStore).toHaveBeenCalledWith(projectId);
+      expect(mockStore.listTasks).toHaveBeenCalledWith({ slim: true });
+    }
+  });
+});
+
 describe("PUT /api/global-concurrency route handler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
