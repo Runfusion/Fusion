@@ -259,7 +259,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 ### Lazy-Loaded Heavy Views
 
 These 20 views are lazy-loaded via `React.lazy()` with `<Suspense fallback={null}>`.
-Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`), and `packages/dashboard/app/__tests__/lazy-loaded-views-docs.test.ts`.
+Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal imports (`SettingsModal`, `WorkflowNodeEditor`, `SetupWizardModal`), plugin settings lazy imports (`PluginManager`, `PiExtensionsManager`), AgentsView lazy imports (`AgentDetailView`), and `packages/dashboard/app/__tests__/lazy-loaded-views-docs.test.ts`.
 
 - `AgentsView`
 - `ChatView`
@@ -282,7 +282,7 @@ Keep this AGENTS inventory in sync with App lazy imports, AppModals lazy modal i
 - `PiExtensionsManager`
 - `AgentDetailView`
 
-Note: the embedded main-content views Workflows (`_WorkflowEditorView`), Import Tasks (`_ImportTasksView`), Automations (`_AutomationsView`), and Settings (`_SettingsView`) in App.tsx are `_`-prefixed lazy splits that reuse already-documented chunks. They are intentionally excluded from the curated list above and from the count; `lazy-loaded-views-docs.test.ts` filters out `_`-prefixed lazy consts (`extractAppLazyViews`), so do not add them as bullets.
+Note: the embedded main-content views Workflows (`_WorkflowEditorView`), Import Tasks (`_ImportTasksView`), Automations (`_AutomationsView`), and Settings (`_SettingsView`) in App.tsx are `_`-prefixed lazy splits that reuse already-documented chunks. Task session terminals, onboarding-internal modals, duplicate `AgentDetailView` imports, and right-dock overflow re-imports of already-counted views are also intentionally excluded. These exclusions stay out of the curated list and count; `lazy-loaded-views-docs.test.ts` asserts them explicitly, so do not add them as bullets.
 
 ## FNXC_LOG comments:
    - Please whenever you're working on a codebase. I want you to add comments describing the date of the change (must be in this format yyyy-MM-dd-hh:mm) and describing the requirements or the change in requirements that made you implement certain functionality.
