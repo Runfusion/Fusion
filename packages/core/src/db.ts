@@ -1375,7 +1375,20 @@ function parseCreateTableSchemasFromSql(sql: string): Map<string, Map<string, st
   const schema = new Map<string, Map<string, string>>();
   const createTableRegex = /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?((?:["`]|\[)?[A-Za-z_][A-Za-z0-9_]*(?:["`]|\])?)\s*\(([\s\S]*?)\)\s*;/g;
 
-  for (const match of sql.matchAll(createTableRegex)) {
+  /*
+  FNXC:SchemaCompatBackfill 2026-06-26-17:30:
+  Strip `--` line comments from the whole schema BEFORE matching each table-definition block.
+  The body-capture regex is non-greedy (`([\s\S]*?)\)\s*;`), so a `)` immediately followed by `;`
+  inside a comment (e.g. a doc reference like `getSchemaCompatibilityTableSchemas();` or
+  `task.workflowStepResults);`) truncates the matched table body early. That silently dropped every
+  column after the comment from the parsed schema, so ensureSchemaCompatibility() stopped backfilling
+  them on legacy DBs whose schemaVersion was already current (regression surfaced as a missing
+  `checkoutNodeId`/`columnDwellMs` column on the tasks table). Stripping comments up front keeps the
+  per-line strip below as defense-in-depth while preventing comment content from ending a table body.
+  */
+  const sqlWithoutComments = sql.replace(/--[^\n]*/g, "");
+
+  for (const match of sqlWithoutComments.matchAll(createTableRegex)) {
     const tableName = normalizeSqlIdentifier(match[1]);
     const body = match[2] ?? "";
     const columns = new Map<string, string>();
