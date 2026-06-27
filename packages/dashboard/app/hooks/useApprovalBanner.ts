@@ -1,9 +1,12 @@
 /*
 FNXC:ApprovalBanner 2026-06-24-00:00:
-Approval-notification banner dedupe/dismiss state machine, driven by task:updated and approval:requested SSE events. Also fires the first-completed-task GitHub-star prompt and a mailbox-count refresh when a task enters awaiting-approval — preserving the former single-subscriber side effects via the onStarPrompt / onMailboxRefresh callbacks. Extracted from AppInner.
+Approval-notification banner dedupe/dismiss state machine, driven by task:updated and approval:requested SSE events. Also fires the first-completed-task GitHub-star prompt. Extracted from AppInner.
 
 FNXC:ApprovalBanner 2026-06-24-00:00:
 Stale-closure / effect-identity hazard: the per-`tasks` ref-sync effect rebuilds the status + seen-key maps on every tasks change, and the dismissal-timestamp comparison (`updatedAtMs <= dismissedAt`) suppresses re-trigger. Preserve both exactly when touching this hook (see docs/solutions ui-bugs/skill-autocomplete-highlight-reset-on-swr-revalidation and logic-errors/queued-chat-message-flush-trusts-stale-isgenerating).
+
+FNXC:ApprovalBanner 2026-06-26-00:00:
+The mailbox approval banner represents only real ApprovalRequest rows delivered by approval:requested SSE with approval:<id> dedupe keys. Task awaiting-approval is a plan-approval lifecycle state surfaced on the triage board and must not create an Open Mailbox banner or refresh mailbox counts.
 */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,7 +14,6 @@ import type { Task } from "@fusion/core";
 import { subscribeSse } from "../sse-bus";
 import {
   type ApprovalBannerCandidate,
-  didEnterAwaitingApproval,
   didEnterDone,
   loadApprovalBannerDismissals,
   parseDateMs,
@@ -24,8 +26,6 @@ export interface UseApprovalBannerOptions {
   gitHubStarPromptShown: boolean;
   /** Invoked when a task first transitions to done (drives the GitHub-star prompt). */
   onStarPrompt: () => void;
-  /** Invoked when a task enters awaiting-approval (drives a mailbox-count refresh). */
-  onMailboxRefresh: () => void;
 }
 
 export interface UseApprovalBannerResult {
@@ -38,7 +38,6 @@ export function useApprovalBanner({
   currentProjectId,
   gitHubStarPromptShown,
   onStarPrompt,
-  onMailboxRefresh,
 }: UseApprovalBannerOptions): UseApprovalBannerResult {
   const [candidate, setCandidate] = useState<ApprovalBannerCandidate | null>(null);
   const taskStatusByIdRef = useRef<Map<string, string | undefined>>(new Map());
@@ -50,9 +49,6 @@ export function useApprovalBanner({
     const nextSeen = new Set<string>();
     for (const task of tasks) {
       next.set(task.id, task.status);
-      if (task.status === "awaiting-approval") {
-        nextSeen.add(`task:${task.id}`);
-      }
     }
     taskStatusByIdRef.current = next;
     seenApprovalKeysRef.current = nextSeen;
@@ -83,7 +79,7 @@ export function useApprovalBanner({
               updatedAt?: string;
               createdAt?: string;
             };
-            const dedupeKey = payload.id ? `approval:${payload.id}` : payload.taskId ? `task:${payload.taskId}` : undefined;
+            const dedupeKey = payload.id ? `approval:${payload.id}` : undefined;
             if (!dedupeKey || seenApprovalKeysRef.current.has(dedupeKey)) {
               return;
             }
@@ -102,28 +98,10 @@ export function useApprovalBanner({
             if (!payload?.id) {
               return;
             }
-            const dedupeKey = `task:${payload.id}`;
             const previousStatus = taskStatusByIdRef.current.get(payload.id);
             taskStatusByIdRef.current.set(payload.id, payload.status);
             if (!gitHubStarPromptShown && didEnterDone(payload.status, previousStatus)) {
               onStarPrompt();
-            }
-            if (payload.status !== "awaiting-approval") {
-              seenApprovalKeysRef.current.delete(dedupeKey);
-              approvalDismissalsRef.current.delete(dedupeKey);
-              persistApprovalBannerDismissals(approvalDismissalsRef.current);
-              return;
-            }
-            if (seenApprovalKeysRef.current.has(dedupeKey)) {
-              return;
-            }
-            if (didEnterAwaitingApproval(payload.status, previousStatus)) {
-              seenApprovalKeysRef.current.add(dedupeKey);
-              triggerApprovalBanner({
-                dedupeKey,
-                updatedAtMs: parseDateMs(payload.updatedAt),
-              });
-              onMailboxRefresh();
             }
           } catch {
             // no-op
@@ -131,7 +109,7 @@ export function useApprovalBanner({
         },
       },
     });
-  }, [currentProjectId, gitHubStarPromptShown, onStarPrompt, onMailboxRefresh]);
+  }, [currentProjectId, gitHubStarPromptShown, onStarPrompt]);
 
   const dismissApproval = useCallback((dismissed: ApprovalBannerCandidate) => {
     approvalDismissalsRef.current.set(

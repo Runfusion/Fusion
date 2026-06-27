@@ -20,6 +20,10 @@ import { SetupWarningBanner } from "../SetupWarningBanner";
 import { ApprovalNotificationBanner } from "../ApprovalNotificationBanner";
 import { GitHubStarPrompt } from "../GitHubStarPrompt";
 
+function isMailboxApprovalCandidate(candidate: DashboardBannersProps["approvalBannerCandidate"]): boolean {
+  return candidate?.dedupeKey.startsWith("approval:") === true;
+}
+
 export function DashboardBanners({
   viewMode,
   currentProject,
@@ -61,6 +65,9 @@ export function DashboardBanners({
   markGitHubStarPromptShown,
   setShowGitHubStarPrompt,
 }: DashboardBannersProps) {
+  /* FNXC:DashboardBanners 2026-06-26-00:00: The Open Mailbox approval banner is gated by an approval:<id> candidate from a real ApprovalRequest. The count floor remains only for the approval-SSE/count-refresh race and must not fabricate a mailbox request for task awaiting-approval states. */
+  const showMailboxApprovalBanner = isMailboxApprovalCandidate(approvalBannerCandidate);
+
   return (
     <>
       {viewMode === "project" && currentProject && (
@@ -150,7 +157,7 @@ export function DashboardBanners({
           onDismiss={handleDismissSetupWarning}
         />
       )}
-      {viewMode === "project" && currentProject && approvalBannerCandidate && (
+      {viewMode === "project" && currentProject && approvalBannerCandidate && showMailboxApprovalBanner && (
         <ApprovalNotificationBanner
           pendingCount={Math.max(mailboxPendingApprovalCount, 1)}
           onOpenMailbox={() => handleTaskViewChange("mailbox")}

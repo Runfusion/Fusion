@@ -469,7 +469,7 @@ function AppInner() {
   useMobileViewportRestoreReset(isMobile);
 
   // App-level mailbox/chat unread state (used for header/mobile nav badges)
-  const { mailboxUnreadCount, mailboxPendingApprovalCount, setMailboxUnreadCount, refresh: mailboxRefresh } = useMailboxUnread(currentProject?.id);
+  const { mailboxUnreadCount, mailboxPendingApprovalCount, setMailboxUnreadCount } = useMailboxUnread(currentProject?.id);
   const { chatHasUnreadResponse } = useChatUnreadBadge(currentProject?.id, { taskView, quickChatOpen });
   const { stashOrphanCount } = useStashOrphanCount(currentProject?.id);
   const [showGitHubStarPrompt, setShowGitHubStarPrompt] = useState(false);
@@ -480,7 +480,6 @@ function AppInner() {
     currentProjectId: currentProject?.id,
     gitHubStarPromptShown,
     onStarPrompt: handleStarPrompt,
-    onMailboxRefresh: mailboxRefresh,
   });
 
   const {

@@ -1,6 +1,9 @@
 /*
 FNXC:MailboxBadge 2026-06-24-00:00:
-Header/mobile-nav unread + pending-approval counts for the mailbox, refreshed on message and approval SSE events. Extracted from AppInner; exposes `refresh` (so the approval-banner hook can re-fetch counts when a task enters awaiting-approval, preserving the former single-subscriber side effect) and `setMailboxUnreadCount` (MailboxView reports its own count changes through onUnreadCountChange).
+Header/mobile-nav unread + pending-approval counts for the mailbox, refreshed on message and approval SSE events. Extracted from AppInner; exposes `refresh` for reconnect/SSE-driven count refresh and `setMailboxUnreadCount` because MailboxView reports its own count changes through onUnreadCountChange.
+
+FNXC:MailboxBadge 2026-06-26-00:00:
+Pending approval counts are mailbox-only and refresh from approval:* events backed by ApprovalRequest rows. Task awaiting-approval transitions must not refresh or inflate these mailbox counts.
 */
 
 import { useCallback, useEffect, useState } from "react";

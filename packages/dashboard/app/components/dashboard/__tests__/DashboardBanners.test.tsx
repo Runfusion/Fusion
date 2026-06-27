@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AiSessionSummary } from "../../../api";
 import type { ModalManager } from "../../../hooks/useModalManager";
@@ -16,7 +16,14 @@ vi.mock("../../MergeAdvanceNotice", () => ({ default: () => null }));
 vi.mock("../../TaskIdIntegrityBanner", () => ({ TaskIdIntegrityBanner: () => null }));
 vi.mock("../../DbCorruptionBanner", () => ({ DbCorruptionBanner: () => null }));
 vi.mock("../../SetupWarningBanner", () => ({ SetupWarningBanner: () => null }));
-vi.mock("../../ApprovalNotificationBanner", () => ({ ApprovalNotificationBanner: () => null }));
+vi.mock("../../ApprovalNotificationBanner", () => ({
+  ApprovalNotificationBanner: ({ pendingCount, onOpenMailbox }: { pendingCount: number; onOpenMailbox: () => void }) => (
+    <section role="region" aria-label="Approval requests">
+      <span>{pendingCount} approval {pendingCount === 1 ? "request" : "requests"} need your attention</span>
+      <button type="button" onClick={onOpenMailbox}>Open Mailbox</button>
+    </section>
+  ),
+}));
 vi.mock("../../GitHubStarPrompt", () => ({ GitHubStarPrompt: () => null }));
 
 import { DashboardBanners } from "../DashboardBanners";
@@ -223,5 +230,59 @@ describe("DashboardBanners session notification visibility", () => {
     render(<DashboardBanners {...buildProps({ sessionsNeedingInput: [] })} />);
 
     expect(querySessionBanner()).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardBanners approval notification visibility", () => {
+  it("does not render the mailbox approval banner without a real approval candidate", () => {
+    render(<DashboardBanners {...buildProps({ mailboxPendingApprovalCount: 0, approvalBannerCandidate: null })} />);
+
+    expect(screen.queryByRole("region", { name: /approval requests/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/approval request.*need your attention/i)).not.toBeInTheDocument();
+  });
+
+  it("does not render the mailbox approval banner for a task plan-approval candidate", () => {
+    render(
+      <DashboardBanners
+        {...buildProps({
+          mailboxPendingApprovalCount: 0,
+          approvalBannerCandidate: { dedupeKey: "task:t1", updatedAtMs: Date.parse("2026-01-01T00:00:00Z") },
+        })}
+      />,
+    );
+
+    expect(screen.queryByRole("region", { name: /approval requests/i })).not.toBeInTheDocument();
+  });
+
+  it("renders a real approval candidate with the mailbox count and CTA", () => {
+    const handleTaskViewChange = vi.fn();
+    render(
+      <DashboardBanners
+        {...buildProps({
+          mailboxPendingApprovalCount: 2,
+          approvalBannerCandidate: { dedupeKey: "approval:a1", updatedAtMs: Date.parse("2026-01-01T00:00:00Z") },
+          handleTaskViewChange,
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("region", { name: /approval requests/i })).toBeInTheDocument();
+    expect(screen.getByText("2 approval requests need your attention")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /open mailbox/i }));
+    expect(handleTaskViewChange).toHaveBeenCalledWith("mailbox");
+  });
+
+  it("keeps the one-request floor only for a real approval SSE/count race", () => {
+    render(
+      <DashboardBanners
+        {...buildProps({
+          mailboxPendingApprovalCount: 0,
+          approvalBannerCandidate: { dedupeKey: "approval:a1", updatedAtMs: Date.parse("2026-01-01T00:00:00Z") },
+        })}
+      />,
+    );
+
+    expect(screen.getByText("1 approval request need your attention")).toBeInTheDocument();
   });
 });

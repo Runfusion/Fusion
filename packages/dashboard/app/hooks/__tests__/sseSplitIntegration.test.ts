@@ -40,8 +40,7 @@ describe("SSE split (KTD4): mailbox-refresh vs approval-banner", () => {
     fetchUnreadCount.mockResolvedValue({ unreadCount: 0 });
   });
 
-  it("co-mount keeps the awaiting-approval refresh single-fired and the banner independent", async () => {
-    const mailboxSpy = vi.fn();
+  it("co-mount keeps mailbox counts on approval events and task plan-approval out of the banner", async () => {
     const tasks: Task[] = [];
     const onStarPrompt = vi.fn();
 
@@ -54,7 +53,6 @@ describe("SSE split (KTD4): mailbox-refresh vs approval-banner", () => {
         currentProjectId: "p1",
         gitHubStarPromptShown: true,
         onStarPrompt,
-        onMailboxRefresh: mailboxSpy,
       }),
     );
 
@@ -76,14 +74,13 @@ describe("SSE split (KTD4): mailbox-refresh vs approval-banner", () => {
     expect(mailboxSub!.onReconnect).toBeTruthy();
     expect(approvalSub!.onReconnect).toBeUndefined();
 
-    // (i) approval:requested sets the banner candidate but does NOT fire
-    //     mailbox-refresh; the mailbox hook's approval:requested handler
-    //     (count refresh) is a distinct function from the banner's.
+    // (i) approval:requested sets the banner candidate; the mailbox hook's
+    //     approval:requested handler (count refresh) remains a distinct
+    //     function from the banner's.
     act(() => {
       approvalSub!.events["approval:requested"]?.(msg({ id: "a1", updatedAt: "2026-01-01T00:00:00Z" }));
     });
     expect(approval.result.current.candidate?.dedupeKey).toBe("approval:a1");
-    expect(mailboxSpy).not.toHaveBeenCalled();
     expect(mailboxSub!.events["approval:requested"]).toBeTruthy();
     expect(mailboxSub!.events["approval:requested"]).not.toBe(approvalSub!.events["approval:requested"]);
     // (ib) … and the mailbox handler actually refreshes the count (wires to
@@ -94,22 +91,19 @@ describe("SSE split (KTD4): mailbox-refresh vs approval-banner", () => {
     });
     expect(fetchUnreadCount).toHaveBeenCalledTimes(refreshCallsBefore + 1);
 
-    // (ii) task:updated → awaiting-approval sets the candidate + fires the
-    //      mailbox refresh exactly once.
+    act(() => {
+      approval.result.current.dismissApproval(approval.result.current.candidate!);
+    });
+
+    // (ii) task:updated → awaiting-approval is plan approval, not mailbox
+    //      approval: no banner candidate and no mailbox-count refresh.
+    const refreshCallsAfterApproval = fetchUnreadCount.mock.calls.length;
     act(() => {
       approvalSub!.events["task:updated"]?.(
         msg({ id: "t1", status: "awaiting-approval", updatedAt: "2026-01-02T00:00:00Z" }),
       );
     });
-    expect(approval.result.current.candidate?.dedupeKey).toBe("task:t1");
-    expect(mailboxSpy).toHaveBeenCalledTimes(1);
-
-    // (iii) a second awaiting-approval for the same task is deduped — no second refresh.
-    act(() => {
-      approvalSub!.events["task:updated"]?.(
-        msg({ id: "t1", status: "awaiting-approval", updatedAt: "2026-01-03T00:00:00Z" }),
-      );
-    });
-    expect(mailboxSpy).toHaveBeenCalledTimes(1);
+    expect(approval.result.current.candidate).toBeNull();
+    expect(fetchUnreadCount).toHaveBeenCalledTimes(refreshCallsAfterApproval);
   });
 });

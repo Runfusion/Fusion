@@ -1133,7 +1133,7 @@ describe("App mailbox unread count", () => {
 });
 
 describe("App approval notification banner", () => {
-  it("shows banner when a task newly enters awaiting-approval", async () => {
+  it("does not show the mailbox banner when a task newly enters awaiting-approval", async () => {
     mockUseTasks.mockImplementation(() => ({
       tasks: [{ id: "FN-1", title: "Task", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" }],
       createTask: mockCreateTask,
@@ -1158,10 +1158,10 @@ describe("App approval notification banner", () => {
 
     await waitFor(() => expect(mockSubscribeSse).toHaveBeenCalled());
 
-    const mailboxSubscriptionCall = mockSubscribeSse.mock.calls.find(
+    const approvalSubscriptionCall = mockSubscribeSse.mock.calls.find(
       ([url, sub]) => String(url).startsWith("/api/events") && typeof (sub as { events?: Record<string, unknown> })?.events?.["task:updated"] === "function",
     );
-    const subscriptionConfig = mailboxSubscriptionCall?.[1] as {
+    const subscriptionConfig = approvalSubscriptionCall?.[1] as {
       events: Record<string, (event: MessageEvent) => void>;
     };
 
@@ -1173,10 +1173,10 @@ describe("App approval notification banner", () => {
       );
     });
 
-    expect(screen.getByLabelText("Approval requests")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Approval requests")).toBeNull();
   });
 
-  it("persists dismissals and suppresses repeat alerts for the same approval item", async () => {
+  it("persists dismissals and suppresses repeat alerts for the same real approval request", async () => {
     mockUseTasks.mockImplementation(() => ({
       tasks: [{ id: "FN-4", title: "Task", description: "x", status: "in-progress", column: "in-progress", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "", updatedAt: "" }],
       createTask: mockCreateTask,
@@ -1201,17 +1201,19 @@ describe("App approval notification banner", () => {
 
     await waitFor(() => expect(mockSubscribeSse).toHaveBeenCalled());
 
-    const mailboxSubscriptionCall = mockSubscribeSse.mock.calls.find(
-      ([url, sub]) => String(url).startsWith("/api/events") && typeof (sub as { events?: Record<string, unknown> })?.events?.["task:updated"] === "function",
+    const approvalSubscriptionCall = mockSubscribeSse.mock.calls.find(
+      ([url, sub]) => String(url).startsWith("/api/events")
+        && typeof (sub as { events?: Record<string, unknown> })?.events?.["approval:requested"] === "function"
+        && typeof (sub as { events?: Record<string, unknown> })?.events?.["task:updated"] === "function",
     );
-    const subscriptionConfig = mailboxSubscriptionCall?.[1] as {
+    const subscriptionConfig = approvalSubscriptionCall?.[1] as {
       events: Record<string, (event: MessageEvent) => void>;
     };
 
     await act(async () => {
-      subscriptionConfig.events["task:updated"](
-        new MessageEvent("task:updated", {
-          data: JSON.stringify({ id: "FN-4", status: "awaiting-approval", updatedAt: "2026-05-05T10:00:00.000Z" }),
+      subscriptionConfig.events["approval:requested"](
+        new MessageEvent("approval:requested", {
+          data: JSON.stringify({ id: "approval-1", taskId: "FN-4", updatedAt: "2026-05-05T10:00:00.000Z" }),
         }),
       );
     });
@@ -1225,15 +1227,16 @@ describe("App approval notification banner", () => {
     const latestSubscription = mockSubscribeSse.mock.calls
       .slice()
       .reverse()
-      .find(([, sub]) => typeof (sub as { events?: Record<string, unknown> })?.events?.["task:updated"] === "function");
+      .find(([, sub]) => typeof (sub as { events?: Record<string, unknown> })?.events?.["approval:requested"] === "function"
+        && typeof (sub as { events?: Record<string, unknown> })?.events?.["task:updated"] === "function");
     const latestConfig = latestSubscription?.[1] as {
       events: Record<string, (event: MessageEvent) => void>;
     };
 
     await act(async () => {
-      latestConfig.events["task:updated"](
-        new MessageEvent("task:updated", {
-          data: JSON.stringify({ id: "FN-4", status: "awaiting-approval", updatedAt: "2026-05-05T10:00:00.000Z" }),
+      latestConfig.events["approval:requested"](
+        new MessageEvent("approval:requested", {
+          data: JSON.stringify({ id: "approval-1", taskId: "FN-4", updatedAt: "2026-05-05T10:00:00.000Z" }),
         }),
       );
     });
