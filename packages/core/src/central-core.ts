@@ -108,6 +108,12 @@ import {
  */
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import * as asyncCentralCore from "./async-central-core.js";
+import {
+  deriveRunningAgentCounts,
+  getRunningAgentCountSource,
+  type RunningAgentCountSource,
+  type RunningAgentCounts,
+} from "./live-agent-count.js";
 // ── Event Types ───────────────────────────────────────────────────────────
 
 export interface CentralCoreEvents {
@@ -3069,6 +3075,29 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       queuedCount: row.queuedCount,
       projectsActive,
     };
+  }
+
+  /**
+   * FNXC:GlobalConcurrencyControls 2026-06-26-17:22:
+   * Live running-agent counts from the registered side-effect-safe source.
+   * Falls back to persisted concurrency/health bookkeeping when no host source
+   * is registered so headless core callers keep their previous semantics.
+   */
+  async getLiveRunningAgentCounts(options?: { source?: RunningAgentCountSource }): Promise<RunningAgentCounts> {
+    this.ensureInitialized();
+
+    const source = options?.source ?? getRunningAgentCountSource();
+    if (!source) {
+      const state = await this.getGlobalConcurrencyState();
+      return {
+        currentlyActive: state.currentlyActive,
+        projectsActive: state.projectsActive,
+      };
+    }
+
+    const projectIds = (await this.listProjects()).map((project) => project.id);
+    const perProject = await source(projectIds);
+    return deriveRunningAgentCounts(perProject);
   }
 
   /**

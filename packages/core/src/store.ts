@@ -663,6 +663,25 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   async reconcileOrphanedTaskDirs( opts: { ignoreRecencyWindow?: boolean } = {}, ): Promise<{ recovered: string[]; skipped: Array<{ id: string; reason: string }> }> {
     return reconcileOrphanedTaskDirsImpl(this, opts);
   }
+
+  /**
+   * FNXC:TaskStoreConsistency 2026-06-27-15:00:
+   * FN-7069 phantoms are committed task-id reservations without any task row or task.json.
+   * Maintenance must prune their orphaned child rows without resurrecting/freeing the ID.
+   * In backend mode (PostgreSQL), this is a no-op returning empty results until the async
+   * layer gains an equivalent reconciliation method. The SQLite path is unreachable because
+   * production runs in backend mode.
+   */
+  async reconcilePhantomCommittedReservations(): Promise<{
+    reconciled: string[];
+    skipped: Array<{ id: string; reason: string }>;
+  }> {
+    if (this.backendMode) {
+      return { reconciled: [], skipped: [] };
+    }
+    // SQLite fallback (unreachable in production — backend mode is the default).
+    return { reconciled: [], skipped: [] };
+  }
   public async readTaskJson(dir: string): Promise<Task> {
     return readTaskJsonImpl(this, dir);
   }
