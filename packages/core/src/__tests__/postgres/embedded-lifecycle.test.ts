@@ -24,6 +24,7 @@ import {
   EmbeddedStartTimeoutError,
   DEFAULT_START_TIMEOUT_MS,
   isDataDirInitialized,
+  readPortFromPostmasterPid,
   type EmbeddedLifecycleOptions,
 } from "../../postgres/embedded-lifecycle.js";
 
@@ -295,6 +296,82 @@ describe("embedded-lifecycle: startup timeout (P1 #24)", () => {
     // constructor must not throw and the instance is usable.
     expect(lifecycle).toBeDefined();
     expect(lifecycle.isRunning()).toBe(false);
+  });
+});
+
+describe("embedded-lifecycle: readPortFromPostmasterPid (P1 code-review fix)", () => {
+  it("reads the TCP port from line 5 (index 4) of postmaster.pid", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
+    try {
+      const { writeFileSync } = require("node:fs");
+      // Standard PostgreSQL postmaster.pid format:
+      // Line 1: PID
+      // Line 2: data directory
+      // Line 3: unix socket directory
+      // Line 4: listen address
+      // Line 5: port number
+      // Line 6: shared memory key
+      // Line 7: postmaster start timestamp
+      writeFileSync(
+        join(dir, "postmaster.pid"),
+        [
+          "12345",
+          "/home/user/.fusion/embedded-postgres/default",
+          "/tmp",
+          "localhost",
+          "55432",
+          "5432101",
+          String(Date.now()),
+        ].join("\n") + "\n",
+      );
+
+      const port = readPortFromPostmasterPid(dir);
+      expect(port).toBe(55432);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when the port line is not a valid number", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
+    try {
+      const { writeFileSync } = require("node:fs");
+      writeFileSync(
+        join(dir, "postmaster.pid"),
+        ["12345", "/data", "/tmp", "localhost", "not-a-port", "5432101"].join("\n") + "\n",
+      );
+      expect(readPortFromPostmasterPid(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null when the file does not exist", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
+    try {
+      expect(readPortFromPostmasterPid(dir)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does NOT read line 3 (index 2, socket dir) as the port", () => {
+    // Regression: the bug read lines[2] (socket dir) which is never the port.
+    // If the socket dir happened to contain digits, parseInt would produce
+    // a wrong port. This test ensures we skip past it.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-embedded-pid-"));
+    try {
+      const { writeFileSync } = require("node:fs");
+      writeFileSync(
+        join(dir, "postmaster.pid"),
+        ["12345", "/data", "/var/run/postgresql", "localhost", "5433", "5432101"].join("\n") + "\n",
+      );
+      const port = readPortFromPostmasterPid(dir);
+      expect(port).toBe(5433);
+      expect(port).not.toBeNaN();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

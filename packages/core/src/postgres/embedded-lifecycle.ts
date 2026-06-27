@@ -175,20 +175,28 @@ export function isDataDirInitialized(dataDir: string): boolean {
 const runningInstances = new Map<string, { port: number; database: string }>();
 
 /**
- * Read the port from a postmaster.pid file. The file format is:
- * Line 1: PID
- * Line 2: data dir path
- * Line 3: unix socket port (or TCP port when listening on TCP)
- * Line 4: timestamp
- * We read line 3 (port) which is the TCP port when `listen_addresses` is set.
+ * Read the port from a postmaster.pid file. The standard PostgreSQL format is:
+ *   Line 1 (index 0): PID
+ *   Line 2 (index 1): Data directory path
+ *   Line 3 (index 2): Unix socket directory
+ *   Line 4 (index 3): Listen address (e.g. localhost or *)
+ *   Line 5 (index 4): Port number
+ *   Line 6 (index 5): Shared memory key
+ *   Line 7 (index 6): Postmaster start timestamp
+ *
+ * FNXC:PostgresCutover 2026-06-27-14:30 (fix code-review P1):
+ * Previously read line 3 (index 2, the socket dir) which is never a port
+ * number, so singleton detection via postmaster.pid ALWAYS failed. Fixed to
+ * read line 5 (index 4, the TCP port).
+ *
  * Returns null if the file cannot be read or parsed.
  */
-function readPortFromPostmasterPid(dataDir: string): number | null {
+export function readPortFromPostmasterPid(dataDir: string): number | null {
   try {
     const content = readFileSync(join(dataDir, "postmaster.pid"), "utf-8");
     const lines = content.split("\n");
-    // Line 3 (index 2) is the port number in standard PostgreSQL postmaster.pid
-    const portStr = lines[2]?.trim();
+    // Line 5 (index 4) is the TCP port in standard PostgreSQL postmaster.pid
+    const portStr = lines[4]?.trim();
     if (portStr) {
       const port = parseInt(portStr, 10);
       if (!isNaN(port) && port > 0) return port;
