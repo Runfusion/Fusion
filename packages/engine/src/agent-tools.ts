@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus } from "@fusion/core";
-import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS } from "@fusion/core";
+import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
 import { DASHBOARD_USER_ID, canAgentTakeImplementationTaskForExplicitRouting, dailyMemoryPath, ensureOpenClawMemoryFiles, extractAgentProvisioningRequest, formatRoleMismatchReason, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
@@ -2897,7 +2897,7 @@ export function createListAgentsTool(agentStore: AgentStore): ToolDefinition {
         };
       }
 
-      const lines = agents.map((agent) => {
+      const lines = await Promise.all(agents.map(async (agent) => {
         const parts: string[] = [
           `ID: ${agent.id}`,
           `Name: ${agent.name}`,
@@ -2911,10 +2911,17 @@ export function createListAgentsTool(agentStore: AgentStore): ToolDefinition {
           const snippet = agent.instructionsText.slice(0, 100);
           parts.push(`Custom Instructions: ${snippet}${agent.instructionsText.length > 100 ? "…" : ""}`);
         }
-        if (agent.taskId) parts.push(`Current Task: ${agent.taskId}`);
+        if (agent.taskId) {
+          /*
+          FNXC:AgentTaskStateDrift 2026-06-27-16:05:
+          Show the linked task column in fn_list_agents so parked triage/todo ownership is not mistaken for an in-progress execution mismatch.
+          */
+          const linkedTask = await agentStore.resolveCurrentTaskLink(agent.taskId);
+          parts.push(formatCurrentTaskLine(agent.taskId, linkedTask));
+        }
 
         return parts.join("\n");
-      });
+      }));
 
       return {
         content: [{ type: "text" as const, text: `Available agents:\n\n${lines.join("\n\n")}` }],

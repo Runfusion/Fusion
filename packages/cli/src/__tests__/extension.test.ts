@@ -3904,6 +3904,34 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
       expect(result.details.agents.every((a: any) => a.id !== ephemeralId)).toBe(true);
     });
 
+    it("shows current task column context for parked, active, terminal, and missing links", async () => {
+      const store = createStore();
+      await store.init();
+      const triageTask = await store.createTask({ description: "Planning link", column: "triage" });
+      const activeTask = await store.createTask({ description: "Active link", column: "in-progress" });
+      const doneTask = await store.createTask({ description: "Done link", column: "done" });
+      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion") });
+      await agentStore.init();
+      const triageAgent = await agentStore.createAgent({ name: "triage-linked", role: "executor", metadata: {} });
+      const activeAgent = await agentStore.createAgent({ name: "active-linked", role: "executor", metadata: {} });
+      const doneAgent = await agentStore.createAgent({ name: "done-linked", role: "executor", metadata: {} });
+      const missingAgent = await agentStore.createAgent({ name: "missing-linked", role: "executor", metadata: {} });
+      await agentStore.syncExecutionTaskLink(triageAgent.id, triageTask.id);
+      await agentStore.syncExecutionTaskLink(activeAgent.id, activeTask.id);
+      await agentStore.syncExecutionTaskLink(doneAgent.id, doneTask.id);
+      await agentStore.syncExecutionTaskLink(missingAgent.id, "FN-404404");
+
+      const tool = api.tools.get("fn_list_agents")!;
+      const result = await tool.execute("la-current-task-context", {}, undefined, undefined, makeCtx(tmpDir));
+
+      const text = result.content[0].text;
+      expect(text).toContain(`Current Task: ${triageTask.id} (triage)`);
+      expect(text).toContain(`Current Task: ${activeTask.id} (in-progress)`);
+      expect(text).toContain(`Current Task: ${doneTask.id} (not active — done)`);
+      expect(text).toContain("Current Task: FN-404404 (unresolved)");
+      expect(text).not.toMatch(new RegExp(`Current Task: ${triageTask.id}(?! \\()`));
+    });
+
     it("returns empty list message when no agents", async () => {
       const tool = api.tools.get("fn_list_agents")!;
       const result = await tool.execute("la-5", {}, undefined, undefined, makeCtx(tmpDir));
@@ -4217,6 +4245,22 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
 
       expect(result.content[0].text).toContain("resolve-by-name");
       expect(result.details.agent.name).toBe("resolve-by-name");
+    });
+
+    it("shows current task column context for linked agents", async () => {
+      const store = createStore();
+      await store.init();
+      const triageTask = await store.createTask({ description: "Show linked task", column: "triage" });
+      const agentStore = new AgentStore({ rootDir: join(tmpDir, ".fusion") });
+      await agentStore.init();
+      const agent = await agentStore.createAgent({ name: "show-linked", role: "executor", metadata: {} });
+      await agentStore.syncExecutionTaskLink(agent.id, triageTask.id);
+
+      const tool = api.tools.get("fn_agent_show")!;
+      const result = await tool.execute("as-current-task-context", { id: agent.id }, undefined, undefined, makeCtx(tmpDir));
+
+      expect(result.content[0].text).toContain(`Current Task: ${triageTask.id} (triage)`);
+      expect(result.content[0].text).not.toMatch(new RegExp(`Current Task: ${triageTask.id}(?! \\()`));
     });
 
     it("returns error for unknown agent", async () => {

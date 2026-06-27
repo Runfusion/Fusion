@@ -169,6 +169,20 @@ interface AgentLock {
  */
 export const DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS = 3_600_000;
 
+export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "column"> | null | undefined): string {
+  /*
+  FNXC:AgentTaskStateDrift 2026-06-27-16:05:
+  FN-7138 requires human-readable agent surfaces to include the linked task column so coordinators can distinguish legitimate transient triage/planning ownership from stale execution drift.
+  */
+  if (!linkedTask) {
+    return `Current Task: ${taskId} (unresolved)`;
+  }
+  if (linkedTask.column === "done" || linkedTask.column === "archived") {
+    return `Current Task: ${taskId} (not active — ${linkedTask.column})`;
+  }
+  return `Current Task: ${taskId} (${linkedTask.column})`;
+}
+
 /**
  * Compute the runtimeConfig to persist for a newly created agent.
  *
@@ -1288,6 +1302,22 @@ export class AgentStore extends EventEmitter {
    * Used by runtime execution bookkeeping so durable assigned agents can
    * reflect active task ownership without triggering heartbeat assignment wakeups.
    */
+  async resolveCurrentTaskLink(taskId: string): Promise<Pick<Task, "id" | "column"> | null> {
+    /*
+    FNXC:AgentTaskStateDrift 2026-06-27-16:05:
+    AgentStore owns agent.taskId but may not have a TaskStore in every host. Expose a null-safe lookup for display-only column context without making task lookup a hard dependency.
+    */
+    if (!this.taskStore) {
+      return null;
+    }
+    try {
+      const task = await this.taskStore.getTask(taskId);
+      return task ? { id: task.id, column: task.column } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async syncExecutionTaskLink(agentId: string, taskId: string | undefined): Promise<Agent> {
     return this.withLock(agentId, async () => {
       const agent = await this.getAgent(agentId);

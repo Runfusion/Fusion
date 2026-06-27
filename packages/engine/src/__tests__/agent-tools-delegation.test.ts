@@ -6,6 +6,7 @@ function createMockAgentStore(overrides: Partial<AgentStore> = {}): AgentStore {
   return {
     listAgents: vi.fn().mockResolvedValue([]),
     getAgent: vi.fn().mockResolvedValue(null),
+    resolveCurrentTaskLink: vi.fn().mockResolvedValue(null),
     ...overrides,
   } as unknown as AgentStore;
 }
@@ -70,7 +71,48 @@ describe("createListAgentsTool", () => {
     expect(text).toContain("Name: Bob");
     expect(text).toContain("Role: reviewer");
     expect(text).toContain("State: running");
-    expect(text).toContain("Current Task: FN-100");
+    expect(text).toContain("Current Task: FN-100 (unresolved)");
+  });
+
+  it("shows linked task columns for triage and in-progress task links", async () => {
+    const agents = [
+      createAgent({ id: "agent-triage", name: "Planner", taskId: "FN-200" }),
+      createAgent({ id: "agent-active", name: "Runner", taskId: "FN-201" }),
+    ];
+    vi.mocked(agentStore.listAgents).mockResolvedValue(agents);
+    vi.mocked(agentStore.resolveCurrentTaskLink).mockImplementation(async (taskId: string) => {
+      if (taskId === "FN-200") return { id: taskId, column: "triage" as const };
+      if (taskId === "FN-201") return { id: taskId, column: "in-progress" as const };
+      return null;
+    });
+
+    const tool = createListAgentsTool(agentStore);
+    const result = await tool.execute("session-1", {}, undefined as any, undefined as any, undefined as any);
+
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("Current Task: FN-200 (triage)");
+    expect(text).toContain("Current Task: FN-201 (in-progress)");
+    expect(text).not.toMatch(/Current Task: FN-200(?! \()/);
+    expect(text).not.toMatch(/Current Task: FN-201(?! \()/);
+  });
+
+  it("marks missing and terminal linked tasks without throwing", async () => {
+    const agents = [
+      createAgent({ id: "agent-missing", name: "Missing", taskId: "FN-300" }),
+      createAgent({ id: "agent-done", name: "Done", taskId: "FN-301" }),
+    ];
+    vi.mocked(agentStore.listAgents).mockResolvedValue(agents);
+    vi.mocked(agentStore.resolveCurrentTaskLink).mockImplementation(async (taskId: string) => {
+      if (taskId === "FN-301") return { id: taskId, column: "done" as const };
+      return null;
+    });
+
+    const tool = createListAgentsTool(agentStore);
+    const result = await tool.execute("session-1", {}, undefined as any, undefined as any, undefined as any);
+
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("Current Task: FN-300 (unresolved)");
+    expect(text).toContain("Current Task: FN-301 (not active — done)");
   });
 
   it("includes soul truncated to 200 chars when present", async () => {

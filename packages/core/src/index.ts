@@ -469,7 +469,7 @@ export {
   validateColumnAgentBindings,
   ColumnAgentBindingError,
 } from "./column-agent-binding-validation.js";
-export { AgentStore, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS } from "./agent-store.js";
+export { AgentStore, DEFAULT_AGENT_HEARTBEAT_INTERVAL_MS, formatCurrentTaskLine } from "./agent-store.js";
 export type { AgentStoreEvents } from "./agent-store.js";
 export {
   isImplementationTask,

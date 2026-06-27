@@ -30,6 +30,7 @@ import {
   resolveSecretAccessPolicy,
   getProjectRootFromWorktree,
   resolveTaskGithubTracking,
+  formatCurrentTaskLine,
   type SecretScope,
 } from "@fusion/core";
 import {
@@ -4123,6 +4124,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       if (params.includeEphemeral !== undefined) filter.includeEphemeral = params.includeEphemeral;
 
       const agents = await agentStore.listAgents(filter as Parameters<typeof agentStore.listAgents>[0]);
+      const store = await getStore(ctx.cwd);
 
       if (agents.length === 0) {
         return {
@@ -4131,7 +4133,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const lines = agents.map((agent) => {
+      const lines = await Promise.all(agents.map(async (agent) => {
         const parts: string[] = [
           `ID: ${agent.id}`,
           `Name: ${agent.name}`,
@@ -4145,10 +4147,22 @@ export default function kbExtension(pi: ExtensionAPI) {
           const snippet = agent.instructionsText.slice(0, 100);
           parts.push(`Custom Instructions: ${snippet}${agent.instructionsText.length > 100 ? "…" : ""}`);
         }
-        if (agent.taskId) parts.push(`Current Task: ${agent.taskId}`);
+        if (agent.taskId) {
+          /*
+          FNXC:AgentTaskStateDrift 2026-06-27-16:05:
+          Show the linked task column in fn_list_agents so parked triage/todo ownership is not mistaken for an in-progress execution mismatch.
+          */
+          let linkedTask: Pick<Task, "id" | "column"> | null = null;
+          try {
+            linkedTask = await store.getTask(agent.taskId);
+          } catch {
+            linkedTask = null;
+          }
+          parts.push(formatCurrentTaskLine(agent.taskId, linkedTask));
+        }
 
         return parts.join("\n");
-      });
+      }));
 
       return {
         content: [{ type: "text" as const, text: `Available agents (${agents.length}):\n\n${lines.join("\n\n")}` }],
@@ -4285,6 +4299,7 @@ export default function kbExtension(pi: ExtensionAPI) {
 
       // Get direct reports
       const directReports = await agentStore.getAgentsByReportsTo(agent.id);
+      const store = await getStore(ctx.cwd);
 
       const parts: string[] = [
         `ID: ${agent.id}`,
@@ -4309,7 +4324,19 @@ export default function kbExtension(pi: ExtensionAPI) {
         parts.push(`Direct Reports: ${directReports.map((r) => `${r.name} (${r.id})`).join(", ")}`);
       }
 
-      if (agent.taskId) parts.push(`Current Task: ${agent.taskId}`);
+      if (agent.taskId) {
+        /*
+        FNXC:AgentTaskStateDrift 2026-06-27-16:05:
+        Show the linked task column in fn_agent_show so parked triage/todo ownership is not mistaken for an in-progress execution mismatch.
+        */
+        let linkedTask: Pick<Task, "id" | "column"> | null = null;
+        try {
+          linkedTask = await store.getTask(agent.taskId);
+        } catch {
+          linkedTask = null;
+        }
+        parts.push(formatCurrentTaskLine(agent.taskId, linkedTask));
+      }
 
       if (agent.instructionsText) {
         const snippet = agent.instructionsText.slice(0, 100);
