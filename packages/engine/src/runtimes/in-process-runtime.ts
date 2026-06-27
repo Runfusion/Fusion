@@ -1127,8 +1127,15 @@ export class InProcessRuntime
         // AsyncMissionStore (PG backend) via instanceof — same degrade as autopilot.
         const resolvedActive = this.taskStore.getMissionStore();
         activeMissionStore = resolvedActive instanceof MissionStore ? resolvedActive : undefined;
-      } catch {
+        // FNXC:MissionStore 2026-06-27-16:30 (review): log the PG-mode degrade so
+        // skipped mission crash-recovery is observable, matching the autopilot
+        // block's warning rather than silently dropping it.
+        if (!activeMissionStore) {
+          runtimeLog.warn("[runtime] mission crash recovery skipped: MissionStore not available in PG backend mode");
+        }
+      } catch (error) {
         activeMissionStore = undefined;
+        runtimeLog.warn(`[runtime] mission crash recovery skipped: ${error instanceof Error ? error.message : String(error)}`);
       }
       const activeMissionAutopilot = this.scheduler.getMissionAutopilot?.();
       if (activeMissionStore && activeMissionAutopilot) {

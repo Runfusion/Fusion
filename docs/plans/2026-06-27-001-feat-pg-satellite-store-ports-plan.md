@@ -1,6 +1,6 @@
 ---
 title: "feat: Port remaining satellite stores to PostgreSQL AsyncDataLayer"
-status: active
+status: completed
 date: 2026-06-27
 type: feat
 branch: feature/postgres

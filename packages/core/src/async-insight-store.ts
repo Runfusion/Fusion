@@ -167,6 +167,12 @@ export async function upsertInsight(
         category: input.category,
         status: input.status,
         provenance: input.provenance,
+        // FNXC:InsightStore 2026-06-27-16:30 (review parity): the sync
+        // InsightStore.upsertInsight refreshes lastRunId from the new provenance
+        // on a fingerprint-match update; mirror it so listInsights({runId}) /
+        // countInsights({runId}) attribute a re-upserted insight to the run that
+        // reproduced it.
+        lastRunId: (input.provenance?.metadata as { runId?: string } | undefined)?.runId ?? null,
         updatedAt: now,
       })
       .where(eq(schema.project.projectInsights.id, existing.id));

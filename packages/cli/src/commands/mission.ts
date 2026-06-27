@@ -34,11 +34,19 @@ const FEATURE_STATUS_LABELS: Record<FeatureStatus, string> = {
 };
 
 async function resolveLinkedGoals(store: Awaited<ReturnType<typeof getStore>>, missionId: string): Promise<Array<Goal | { id: string; missing: true }>> {
-  const goalStore = store.getGoalStore();
   // FNXC:MissionStore 2026-06-27-15:55: getMissionStore() returns
   // MissionStore | AsyncMissionStore; await listGoalIdsForMission so the `fn mission`
   // CLI works against both SQLite and PG backends.
   const goalIds = await store.getMissionStore().listGoalIdsForMission(missionId);
+  // FNXC:MissionStore 2026-06-27-16:30 (review): GoalStore is not yet ported to
+  // PG and getGoalStore() dereferences the sync store.db (throws in backend
+  // mode). The mission↔goal links live in the ported MissionStore, so in backend
+  // mode degrade to id-only entries — mirrors the dashboard's
+  // listLinkedGoalsForMission guard so `fn mission` does not hard-fail in PG.
+  if (store.backendMode) {
+    return goalIds.map((goalId) => ({ id: goalId, missing: true as const }));
+  }
+  const goalStore = store.getGoalStore();
   return goalIds.map((goalId) => goalStore.getGoal(goalId) ?? { id: goalId, missing: true as const });
 }
 
