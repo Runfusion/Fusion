@@ -2396,8 +2396,8 @@ export default function kbExtension(pi: ExtensionAPI) {
         limit: params.limit,
         offset: params.offset,
       };
-      const insights = insightStore.listInsights(options);
-      const count = insightStore.countInsights({
+      const insights = await insightStore.listInsights(options);
+      const count = await insightStore.countInsights({
         category,
         status,
         runId: params.runId,
@@ -2434,7 +2434,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
       const insightStore = store.getInsightStore();
-      const insight = insightStore.getInsight(params.id);
+      const insight = await insightStore.getInsight(params.id);
 
       if (!insight) {
         return {
@@ -2509,8 +2509,8 @@ export default function kbExtension(pi: ExtensionAPI) {
         limit: params.limit,
         offset: params.offset,
       };
-      const runs = insightStore.listRuns(options);
-      const count = insightStore.countRuns({ status, trigger });
+      const runs = await insightStore.listRuns(options);
+      const count = await insightStore.countRuns({ status, trigger });
 
       if (runs.length === 0) {
         return {
@@ -2544,7 +2544,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
       const insightStore = store.getInsightStore();
-      const run = insightStore.getRun(params.id);
+      const run = await insightStore.getRun(params.id);
 
       if (!run) {
         return {

@@ -256,20 +256,21 @@ export function createInsightsRouter(store: TaskStore): Router {
   const requestContext = new AsyncLocalStorage<TaskStore>();
 
   /*
-   * FNXC:BackendFlip 2026-06-26-16:15:
-   * The InsightStore is a sync SQLite satellite store that has not been
-   * ported to the async PostgreSQL path. In backend mode, store.getInsightStore()
-   * throws ("SQLite Database is not available in backend mode") because it
-   * constructs `new InsightStore(store.db)`. Wrap the eager root-store access
-   * (used only for the startup sweep + background sweeper) in try/catch so
-   * route registration does not crash `fn serve` / boot smoke against embedded
-   * PG. When unavailable, the insights REST endpoints will surface the error
-   * per-request instead of the whole server failing to boot.
+   * FNXC:InsightStore 2026-06-27-09:20:
+   * The startup sweep + background sweeper are sync-coupled to the SQLite
+   * InsightStore (they call listStalePendingRuns/updateRun synchronously). In PG
+   * backend mode getInsightStore() returns the AsyncDataLayer-backed
+   * AsyncInsightStore, so the sweeper cannot drive it. Only wire the eager
+   * root-store + background sweeper when the resolved store is the sync
+   * InsightStore (instanceof narrows the union); in backend mode the per-request
+   * read/write routes still work, but the background stale-run sweeper stays
+   * disabled (a follow-up async sweeper port is out of this unit's scope).
    */
   let rootInsightStore: InsightStore | undefined;
-  if (typeof (store as { getInsightStore?: () => InsightStore }).getInsightStore === "function") {
+  if (typeof (store as { getInsightStore?: () => unknown }).getInsightStore === "function") {
     try {
-      rootInsightStore = (store as { getInsightStore: () => InsightStore }).getInsightStore();
+      const resolved = (store as { getInsightStore: () => unknown }).getInsightStore();
+      rootInsightStore = resolved instanceof InsightStore ? resolved : undefined;
     } catch {
       rootInsightStore = undefined;
     }
@@ -323,25 +324,39 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   /**
    * Get the InsightStore from the current request context.
+   *
+   * FNXC:InsightStore 2026-06-27-09:20:
+   * Returns the union `InsightStore | AsyncInsightStore`: the sync SQLite store in
+   * legacy mode, the AsyncDataLayer-backed AsyncInsightStore in PG backend mode.
+   * The interim 503 guard is gone — read/write handlers `await` the result so
+   * either backend works.
    */
-  function getInsightStore(): InsightStore {
+  function getInsightStore() {
     const store = requestContext.getStore();
     if (!store) {
       throw new ApiError(500, "Store context not available");
     }
-    // FNXC:PostgresBackend 2026-06-27-05:00:
-    // InsightStore is not yet ported to the AsyncDataLayer (route needs
-    // updateRun, which has no async helper yet). Degrade to a clean 503 in PG
-    // backend mode instead of surfacing the "not available" throw as a 500.
-    if (store.backendMode) {
-      throw new ApiError(503, "Insights are not yet available in PG backend mode");
-    }
     return store.getInsightStore();
+  }
+
+  /**
+   * FNXC:InsightStore 2026-06-27-09:20:
+   * The sync-coupled insight-run executor + run sweeper are not ported in this
+   * unit. Manual run execution (POST /run) and retry (POST /runs/:id/retry)
+   * require the sync InsightStore; in PG backend mode they surface a clean 503
+   * instead of crashing. Read/write/cancel routes do not use this guard.
+   */
+  function getSyncInsightStore(): InsightStore {
+    const resolved = getInsightStore();
+    if (!(resolved instanceof InsightStore)) {
+      throw new ApiError(503, "Insight run execution is not yet available in PG backend mode");
+    }
+    return resolved;
   }
 
   // ── List Insights ───────────────────────────────────────────────────────
 
-  router.get("/", (req: Request, res: Response) => {
+  router.get("/", async (req: Request, res: Response) => {
     try {
       const store = getInsightStore();
       const options: InsightListOptions = {};
@@ -382,8 +397,8 @@ export function createInsightsRouter(store: TaskStore): Router {
         options.offset = offset;
       }
 
-      const insights = store.listInsights(options);
-      const count = store.countInsights(options);
+      const insights = await store.listInsights(options);
+      const count = await store.countInsights(options);
       res.json({ insights, count });
     } catch (error) {
       rethrowAsApiError(error, "Failed to list insights");
@@ -395,7 +410,7 @@ export function createInsightsRouter(store: TaskStore): Router {
   router.post("/run", async (req: Request, res: Response) => {
     try {
       const projectId = getProjectId(req) ?? "";
-      const insightStore = getInsightStore();
+      const insightStore = getSyncInsightStore();
       const trigger: InsightRunTrigger = (req.body.trigger as InsightRunTrigger) ?? "manual";
 
       if (!VALID_TRIGGERS.includes(trigger)) {
@@ -467,7 +482,7 @@ export function createInsightsRouter(store: TaskStore): Router {
       if (error instanceof InsightLifecycleError && error.code === "active_run_conflict") {
         const projectId = getProjectId(req) ?? "";
         const trigger: InsightRunTrigger = (req.body.trigger as InsightRunTrigger) ?? "manual";
-        const activeRun = getInsightStore().findActiveRun(projectId, trigger);
+        const activeRun = await getInsightStore().findActiveRun(projectId, trigger);
         throw new ApiError(409, "Insight generation is already running", {
           code: "ACTIVE_RUN_CONFLICT",
           activeRunId: activeRun?.id,
@@ -481,7 +496,7 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── List Runs ──────────────────────────────────────────────────────────
 
-  router.get("/runs", (req: Request, res: Response) => {
+  router.get("/runs", async (req: Request, res: Response) => {
     try {
       const store = getInsightStore();
       const options: InsightRunListOptions = {};
@@ -518,18 +533,22 @@ export function createInsightsRouter(store: TaskStore): Router {
         options.offset = offset;
       }
 
-      try {
-        sweepStaleInsightRuns({
-          insightStore: store,
-          activeRunControllers,
-          graceMs: ORPHAN_GRACE_MS,
-          source: "drive_by",
-        });
-      } catch (error) {
-        console.warn("[insight-sweeper] drive-by sweep failed", error);
+      // FNXC:InsightStore 2026-06-27-09:20: drive-by sweep is sync-coupled; only
+      // run it against the sync InsightStore (skipped in PG backend mode).
+      if (store instanceof InsightStore) {
+        try {
+          sweepStaleInsightRuns({
+            insightStore: store,
+            activeRunControllers,
+            graceMs: ORPHAN_GRACE_MS,
+            source: "drive_by",
+          });
+        } catch (error) {
+          console.warn("[insight-sweeper] drive-by sweep failed", error);
+        }
       }
 
-      const runs = store.listRuns(options);
+      const runs = await store.listRuns(options);
       res.json({ runs });
     } catch (error) {
       rethrowAsApiError(error, "Failed to list runs");
@@ -538,23 +557,26 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Get Run ────────────────────────────────────────────────────────────
 
-  router.get("/runs/:id", (req: Request, res: Response) => {
+  router.get("/runs/:id", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
 
-      try {
-        sweepStaleInsightRuns({
-          insightStore: store,
-          activeRunControllers,
-          graceMs: ORPHAN_GRACE_MS,
-          source: "drive_by",
-        });
-      } catch (error) {
-        console.warn("[insight-sweeper] drive-by sweep failed", error);
+      // FNXC:InsightStore 2026-06-27-09:20: sync-coupled drive-by sweep; PG-skip.
+      if (store instanceof InsightStore) {
+        try {
+          sweepStaleInsightRuns({
+            insightStore: store,
+            activeRunControllers,
+            graceMs: ORPHAN_GRACE_MS,
+            source: "drive_by",
+          });
+        } catch (error) {
+          console.warn("[insight-sweeper] drive-by sweep failed", error);
+        }
       }
 
-      const run = store.getRun(id);
+      const run = await store.getRun(id);
       if (!run) {
         throw notFound(`Run not found: ${id}`);
       }
@@ -564,36 +586,36 @@ export function createInsightsRouter(store: TaskStore): Router {
     }
   });
 
-  router.get("/runs/:id/events", (req: Request, res: Response) => {
+  router.get("/runs/:id/events", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const run = store.getRun(id);
+      const run = await store.getRun(id);
       if (!run) throw notFound(`Run not found: ${id}`);
-      res.json({ events: store.listRunEvents(id) });
+      res.json({ events: await store.listRunEvents(id) });
     } catch (error) {
       rethrowAsApiError(error, "Failed to list run events");
     }
   });
 
-  router.post("/runs/:id/cancel", (req: Request, res: Response) => {
+  router.post("/runs/:id/cancel", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const run = store.getRun(id);
+      const run = await store.getRun(id);
       if (!run) throw notFound(`Run not found: ${id}`);
       if (!["pending", "running"].includes(run.status)) {
         throw new ApiError(409, `Run ${id} is already terminal`);
       }
 
       const now = new Date().toISOString();
-      store.appendRunEvent(id, { type: "cancel_requested", status: run.status, message: "Cancellation requested" });
-      const updated = store.updateRun(id, {
+      await store.appendRunEvent(id, { type: "cancel_requested", status: run.status, message: "Cancellation requested" });
+      const updated = await store.updateRun(id, {
         lifecycle: { ...run.lifecycle, cancellationRequestedAt: now },
       });
 
       if (run.status === "pending") {
-        const cancelled = store.updateRun(id, {
+        const cancelled = await store.updateRun(id, {
           status: "cancelled",
           error: "Cancelled before execution started",
           cancelledAt: now,
@@ -619,7 +641,7 @@ export function createInsightsRouter(store: TaskStore): Router {
   router.post("/runs/:id/retry", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
-      const store = getInsightStore();
+      const store = getSyncInsightStore();
       const existing = store.getRun(id);
       if (!existing) throw notFound(`Run not found: ${id}`);
       if (existing.status !== "failed") {
@@ -682,11 +704,11 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Get Insight ────────────────────────────────────────────────────────
 
-  router.get("/:id", (req: Request, res: Response) => {
+  router.get("/:id", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const insight = store.getInsight(id);
+      const insight = await store.getInsight(id);
       if (!insight) {
         throw notFound(`Insight not found: ${id}`);
       }
@@ -698,7 +720,7 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Update Insight ─────────────────────────────────────────────────────
 
-  router.patch("/:id", (req: Request, res: Response) => {
+  router.patch("/:id", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
@@ -723,7 +745,7 @@ export function createInsightsRouter(store: TaskStore): Router {
         input.status = req.body.status;
       }
 
-      const insight = store.updateInsight(id, input as Parameters<typeof store.updateInsight>[1]);
+      const insight = await store.updateInsight(id, input as Parameters<typeof store.updateInsight>[1]);
       if (!insight) {
         throw notFound(`Insight not found: ${id}`);
       }
@@ -735,11 +757,11 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Delete Insight ──────────────────────────────────────────────────────
 
-  router.delete("/:id", (req: Request, res: Response) => {
+  router.delete("/:id", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const deleted = store.deleteInsight(id);
+      const deleted = await store.deleteInsight(id);
       if (!deleted) {
         throw notFound(`Insight not found: ${id}`);
       }
@@ -751,11 +773,11 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Dismiss Insight ────────────────────────────────────────────────────
 
-  router.post("/:id/dismiss", (req: Request, res: Response) => {
+  router.post("/:id/dismiss", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const insight = store.updateInsight(id, { status: "dismissed" });
+      const insight = await store.updateInsight(id, { status: "dismissed" });
       if (!insight) {
         throw notFound(`Insight not found: ${id}`);
       }
@@ -765,11 +787,11 @@ export function createInsightsRouter(store: TaskStore): Router {
     }
   });
 
-  router.post("/:id/archive", (req: Request, res: Response) => {
+  router.post("/:id/archive", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const insight = store.updateInsight(id, { status: "archived" });
+      const insight = await store.updateInsight(id, { status: "archived" });
       if (!insight) {
         throw notFound(`Insight not found: ${id}`);
       }
@@ -779,11 +801,11 @@ export function createInsightsRouter(store: TaskStore): Router {
     }
   });
 
-  router.post("/:id/unarchive", (req: Request, res: Response) => {
+  router.post("/:id/unarchive", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const insight = store.updateInsight(id, { status: "confirmed" });
+      const insight = await store.updateInsight(id, { status: "confirmed" });
       if (!insight) {
         throw notFound(`Insight not found: ${id}`);
       }
@@ -795,11 +817,11 @@ export function createInsightsRouter(store: TaskStore): Router {
 
   // ── Create Task from Insight ────────────────────────────────────────────
 
-  router.post("/:id/create-task", (req: Request, res: Response) => {
+  router.post("/:id/create-task", async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const store = getInsightStore();
-      const insight = store.getInsight(id);
+      const insight = await store.getInsight(id);
       if (!insight) {
         throw notFound(`Insight not found: ${id}`);
       }

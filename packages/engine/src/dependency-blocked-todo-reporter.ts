@@ -2,6 +2,7 @@ import {
   computeDependencyBlockedTodoReport,
   computeInsightFingerprint,
   DEFAULT_DEPENDENCY_BLOCKED_TODO_MAX_GROUPS,
+  InsightStore,
   type TaskStore,
 } from "@fusion/core";
 import { createLogger } from "./logger.js";
@@ -107,7 +108,16 @@ export class DependencyBlockedTodoReporter {
       let insightStore;
       try {
         if (!this.projectId) throw new Error("empty projectId");
-        insightStore = this.store.getInsightStore();
+        // FNXC:InsightStore 2026-06-27-09:25:
+        // getInsightStore() now returns InsightStore | AsyncInsightStore. This
+        // reporter calls the store synchronously and is intentionally on the
+        // graceful-fallback path in PG backend mode (not ported this unit), so
+        // route the async store into the existing catch → log-only fallback.
+        const resolved = this.store.getInsightStore();
+        if (!(resolved instanceof InsightStore)) {
+          throw new Error("InsightStore not available in PG backend mode");
+        }
+        insightStore = resolved;
       } catch (error) {
         await this.store.logEntry(report.groups[0].blockerId, `[dependency-blocked-todo] ${content}`);
         this.logger.warn("[dependency-blocked-todo] insight store unavailable; logged fallback payload", error);

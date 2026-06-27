@@ -17,6 +17,7 @@ import * as schema from "../postgres/schema/index.js";
 import { MergeRequestRow, WorkflowWorkItemRow } from "./row-types.js";
 import { TodoStore } from "../todo-store.js";
 import { AsyncTodoStore } from "../async-todo-store.js";
+import { AsyncInsightStore } from "../async-insight-store.js";
 import { assertColumnTraitsValid } from "../trait-registry.js";
 import { BoardConfig, BranchGroup, MergeRequestRecord, Task, WorkflowStepTemplate, WorkflowWorkItem, WorkflowWorkItemKind } from "../types.js";
 import { WorkflowFieldDefinition, WorkflowIr, WorkflowIrColumn } from "../workflow-ir-types.js";
@@ -224,9 +225,23 @@ export async function clearActivityLogImpl(store: TaskStore): Promise<void> {
     store.db.bumpLastModified();
 }
 
-export function getInsightStoreImpl(store: TaskStore): InsightStore {
+export function getInsightStoreImpl(store: TaskStore): InsightStore | AsyncInsightStore {
     if (!store.insightStore) {
-      store.insightStore = new InsightStore(store.db);
+      // FNXC:InsightStore 2026-06-27-09:15:
+      // PG backend mode returns the AsyncDataLayer-backed AsyncInsightStore (CRUD
+      // + run lifecycle over project.project_insights / project_insight_runs /
+      // project_insight_run_events). The sync SQLite InsightStore (store.db) is
+      // used only in legacy SQLite mode. Both expose the same method names; the
+      // dashboard insights routes await the result so either works.
+      if (store.backendMode) {
+        const layer = store.getAsyncLayer();
+        if (!layer) {
+          throw new Error("InsightStore is not available: AsyncDataLayer not initialized in backend mode");
+        }
+        store.insightStore = new AsyncInsightStore(layer);
+      } else {
+        store.insightStore = new InsightStore(store.db);
+      }
     }
     return store.insightStore;
 }
