@@ -597,6 +597,7 @@ Features:
 - Search documents across tasks
 - Open project markdown files with inline preview
 - Browse the **Artifacts** tab for registry media registered by any agent, dashboard chat/user action, or system tool across tasks
+- Already-open global and task-detail artifact lists refresh live from the artifact registry event when an agent, dashboard chat session, user action, or system tool registers a new artifact, while preserving active search filters and task scoping
 - Use the tab-count badges to see the current counts for Project Files, Task Documents, and Artifacts; the Artifacts badge reflects the loaded `GET /api/artifacts` result set, including active search filters
 - Use the responsive media gallery to scan thumbnail-first image and video cards with consistent framing, while audio, document, and generic artifacts remain readable cards in the same grid
 - Expand image and video artifact thumbnails into a full-size lightbox; dismiss it with the close button, backdrop click, or Escape while non-previewable artifact cards keep their normal controls and links
@@ -609,7 +610,7 @@ Features:
 - Toggle between raw text and rendered markdown using the **Markdown/Plain** button
 - Highlight text in raw or rendered project-file previews, choose **Add comment**, and send the file path, selected snippet, and your comment to the **New Task** dialog
 
-Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery.
+Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery. Artifact list live-refresh does not depend on that best-effort message; it listens to the registry registration event.
 
 ![Artifacts view](./screenshots/documents-view.png)
 

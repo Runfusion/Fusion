@@ -1039,6 +1039,7 @@ export interface TaskStoreEvents {
   "task:deleted": [task: Task, meta?: { githubIssueAction?: GithubIssueAction }];
   "task:merged": [result: MergeResult];
   "settings:updated": [data: { settings: Settings; previous: Settings }];
+  "artifact:registered": [artifact: Artifact];
   "agent:log": [entry: AgentLogEntry];
   "merger:autostashOrphans": [data: {
     rootDir: string;
@@ -13097,6 +13098,9 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
   /**
    * FNXC:ArtifactRegistry 2026-06-19-22:04:
    * Register multi-type agent/user/system artifacts in SQLite while writing binary payloads to disk. Task-scoped binaries use `.fusion/tasks/{taskId}/artifacts/`; task-less binaries use `.fusion/artifacts/`, and both store only a relative `artifacts/<file>` uri in the row.
+   *
+   * FNXC:ArtifactRegistry 2026-06-27-00:00:
+   * Successful registry writes emit `artifact:registered` as the authoritative live-update signal. Dashboard inbox notifications remain best-effort discovery messages, so already-open artifact lists must not depend on message delivery to invalidate their SWR cache.
    */
   async registerArtifact(input: ArtifactCreateInput): Promise<Artifact> {
     const id = randomUUID();
@@ -13129,7 +13133,9 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       }
     };
 
-    return input.taskId ? this.withTaskLock(input.taskId, register) : register();
+    const artifact = input.taskId ? await this.withTaskLock(input.taskId, register) : await register();
+    this.emit("artifact:registered", artifact);
+    return artifact;
   }
 
   /**

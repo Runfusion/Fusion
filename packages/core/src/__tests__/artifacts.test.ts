@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdtempSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -72,6 +72,24 @@ describe("TaskStore artifacts", () => {
 
     await expect(store.getArtifact(artifact.id)).resolves.toEqual(artifact);
     await expect(store.getArtifact("missing-artifact")).resolves.toBeNull();
+  });
+
+  it("emits an authoritative event after artifact registration succeeds", async () => {
+    const task = await store.createTask({ title: "Artifact event task", description: "Emit artifact event" });
+    const registered = vi.fn();
+    store.on("artifact:registered", registered);
+
+    const artifact = await store.registerArtifact({
+      type: "document",
+      title: "Evented artifact",
+      content: "# Event",
+      authorId: "agent-alpha",
+      authorType: "agent",
+      taskId: task.id,
+    });
+
+    expect(registered).toHaveBeenCalledTimes(1);
+    expect(registered).toHaveBeenCalledWith(artifact);
   });
 
   it("stores binary artifacts on disk under the task artifacts directory", async () => {

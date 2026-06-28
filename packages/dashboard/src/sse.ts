@@ -531,6 +531,11 @@ export function createSSE(
       send(`event: task:merged\ndata: ${JSON.stringify(stripTaskEventHeavyFields(result))}\n\n`);
     };
 
+    const onArtifactRegistered = (artifact: unknown) => {
+      /* FNXC:ArtifactRegistry 2026-06-27-00:00: Forward TaskStore's authoritative artifact registration event so live artifact surfaces refresh even when the best-effort inbox notification is absent or delayed. */
+      send(`event: artifact:registered\ndata: ${JSON.stringify(artifact)}\n\n`);
+    };
+
     const onResearchRunCreated = (run: unknown) => {
       send(`event: research:run:created\ndata: ${JSON.stringify(run)}\n\n`);
     };
@@ -822,6 +827,7 @@ export function createSSE(
       store.off("task:updated", onUpdated);
       store.off("task:deleted", onDeleted);
       store.off("task:merged", onMerged);
+      store.off("artifact:registered", onArtifactRegistered);
       if (missionStore) {
         missionStore.off("mission:created", onMissionCreated);
         missionStore.off("mission:updated", onMissionUpdated);
@@ -931,6 +937,7 @@ export function createSSE(
     store.on("task:updated", onUpdated);
     store.on("task:deleted", onDeleted);
     store.on("task:merged", onMerged);
+    store.on("artifact:registered", onArtifactRegistered);
 
     if (missionStore) {
       missionStore.on("mission:created", onMissionCreated);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { ArtifactType, ArtifactWithTask } from "@fusion/core";
 import { fetchArtifacts } from "../api";
+import { subscribeSse } from "../sse-bus";
 import { readCache, SWR_CACHE_KEYS, SWR_DEFAULT_MAX_AGE_MS, writeCache } from "../utils/swrCache";
 
 export interface UseArtifactsResult {
@@ -40,13 +41,22 @@ export function useArtifacts(options?: {
     const cached = readCache<ArtifactWithTask[]>(cacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     return Array.isArray(cached) ? cached : [];
   });
-  const [loading, setLoading] = useState(() => artifacts.length === 0);
+  const [loading, setLoading] = useState(() => Boolean(projectId) && artifacts.length === 0);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const initialLoadCompleteRef = useRef(artifacts.length > 0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
+  const sseRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!projectId) {
+      setArtifacts([]);
+      setLoading(false);
+      initialLoadCompleteRef.current = false;
+      return;
+    }
+
     if (abortRef.current) {
       abortRef.current.abort();
     }
@@ -91,10 +101,14 @@ export function useArtifacts(options?: {
   }, [authorId, cacheKey, projectId, searchQuery, taskId, type]);
 
   useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
+  useEffect(() => {
     if (!cacheKey) {
       initialLoadCompleteRef.current = false;
       setArtifacts([]);
-      setLoading(true);
+      setLoading(false);
       return;
     }
 
@@ -127,11 +141,76 @@ export function useArtifacts(options?: {
   }, [refresh]);
 
   useEffect(() => {
+    if (!cacheKey || !projectId) {
+      return;
+    }
+
+    /*
+     * FNXC:ArtifactRegistry 2026-06-27-00:00:
+     * Already-open task and project artifact lists must live-refresh from TaskStore's authoritative artifact:registered SSE event and also accept the best-effort agent/chat message notifications as an additional signal. Task-scoped hooks filter by artifact/task metadata while project-scoped hooks rely on the projectId refetch and optional payload projectId guard, preserving SWR cached rendering, search filters, and scoped fetch behavior without showing a loading flash.
+     */
+    const handleArtifactRegistration = (event: MessageEvent, source: "artifact" | "message") => {
+      try {
+        const payload = JSON.parse(event.data) as {
+          id?: string | null;
+          projectId?: string | null;
+          taskId?: string | null;
+          metadata?: {
+            artifactId?: string | null;
+            taskId?: string | null;
+          } | null;
+        };
+        const artifactId = source === "artifact" ? payload.id : payload.metadata?.artifactId;
+        const artifactTaskId = source === "artifact" ? payload.taskId : payload.metadata?.taskId;
+        if (!artifactId) return;
+        if (payload.projectId && payload.projectId !== projectId) return;
+        if (taskId && artifactTaskId !== taskId) return;
+
+        if (sseRefreshDebounceRef.current) {
+          return;
+        }
+
+        sseRefreshDebounceRef.current = setTimeout(() => {
+          sseRefreshDebounceRef.current = null;
+          void refreshRef.current();
+        }, 300);
+      } catch {
+        // no-op: malformed or non-JSON SSE payloads must not trigger artifact refetches.
+      }
+    };
+    const handleAuthoritativeArtifact = (event: MessageEvent) => handleArtifactRegistration(event, "artifact");
+    const handleArtifactMessage = (event: MessageEvent) => handleArtifactRegistration(event, "message");
+
+    const params = new URLSearchParams();
+    params.set("projectId", projectId);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    const unsubscribe = subscribeSse(`/api/events${query}`, {
+      events: {
+        "artifact:registered": handleAuthoritativeArtifact,
+        "message:received": handleArtifactMessage,
+        "message:sent": handleArtifactMessage,
+      },
+    });
+
+    return () => {
+      unsubscribe();
+      if (sseRefreshDebounceRef.current) {
+        clearTimeout(sseRefreshDebounceRef.current);
+        sseRefreshDebounceRef.current = null;
+      }
+    };
+  }, [cacheKey, projectId, taskId]);
+
+  useEffect(() => {
     void refresh();
 
     return () => {
       if (abortRef.current) {
         abortRef.current.abort();
+      }
+      if (sseRefreshDebounceRef.current) {
+        clearTimeout(sseRefreshDebounceRef.current);
+        sseRefreshDebounceRef.current = null;
       }
     };
   }, []);
