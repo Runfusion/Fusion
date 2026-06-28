@@ -116,7 +116,11 @@ const EXPECTED_EXCLUDED_LAZY = [
   },
   {
     file: "../components/overflowViewRegistry.tsx",
-    symbols: ["DevServerView", "SecretsView", "TodoView", "PullRequestView"],
+    /*
+     * FNXC:DashboardLazyViews 2026-06-27-00:00:
+     * The right-dock chat tab re-imports ChatView through the overflow registry, but ChatView remains counted once as the App-level Chat chunk in the curated AGENTS inventory.
+     */
+    symbols: ["DevServerView", "SecretsView", "TodoView", "PullRequestView", "ChatView"],
     reason: "right-dock overflow re-imports of App-level chunks already counted once",
     countedBy: "../App.tsx",
   },

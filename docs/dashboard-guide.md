@@ -52,13 +52,14 @@ The **Right Dock Panel** experiment is enabled by default. To disable it, open *
 
 When enabled on desktop or tablet project screens, the right dock is a persistent far-right tools sidebar in the project content row. By default it opens as an overlay so the main content does not reflow. Use the dock toolbar pin action to switch into push mode, where the dock becomes an in-flow pane that shrinks the main content beside it; unpinning returns to overlay mode. The selected tool, open/closed state, pinned push-mode state, width, and expanded modal size persist across reloads.
 
-The dock toolbar has built-in inline tool panels for **Activity**, **Activity Log**, **Git Manager**, **Files**, and project tool launchers such as **Import from GitHub** / **Import Tasks** workflow entry points and **Automation** actions when available. **Activity**, **Activity Log**, **Git Manager**, and **Files** render in embedded mode inside the dock instead of opening fixed popup overlays; **Files** opens by default and is the fallback when browser storage points at a removed dock key. Inline dock views have an expand button that opens the same view in a resizable modal for more room. The right-dock **Files** viewer and its expanded pop-out match the Files modal for browser-previewable file types: image, video/movie, audio, and PDF selections render as native browser previews, while editable text files keep the editor and save flow. Plugin overflow views may add additional right-dock tool tabs, except plugin destinations that explicitly belong in the left sidebar.
+<!-- FNXC:DashboardNavigationDocs 2026-06-27-00:00: The right dock now hosts Chat as an inline tool panel; keep this user-facing roster aligned with STATIC_OVERFLOW_VIEW_ENTRIES so users know Chat can also pop out from the dock. -->
+The dock toolbar has built-in inline tool panels for **Files**, **Chat**, **Activity Log**, **Git Manager**, **Dev Server** when enabled, **Secrets**, **Todos** when enabled, and **Pull Requests**. These tools render in embedded mode inside the dock instead of opening fixed popup overlays; **Files** opens by default and is the fallback when browser storage points at a removed dock key. Inline dock views have an expand button that opens the same view in a resizable modal for more room. The right-dock **Files** viewer and its expanded pop-out match the Files modal for browser-previewable file types: image, video/movie, audio, and PDF selections render as native browser previews, while editable text files keep the editor and save flow. Plugin overflow views may add additional right-dock tool tabs, except plugin destinations that explicitly belong in the left sidebar.
 
 Use the desktop/tablet right dock this way:
 
 1. Open a project screen with **Right Dock Panel** enabled.
    Expected outcome: the dock appears on the far right with **Files** selected unless a valid previous dock view is stored.
-2. Select **Activity**, **Activity Log**, **Git Manager**, **Files**, or another available tool in the dock toolbar.
+2. Select **Chat**, **Activity Log**, **Git Manager**, **Files**, or another available tool in the dock toolbar.
    Expected outcome: the selected tool renders inline inside the dock body and the toolbar tab becomes active.
 3. Drag the dock's left-edge resize handle, or focus the separator and use the arrow keys.
    Expected outcome: the dock width changes within its min/max bounds and is saved for future reloads.
@@ -69,7 +70,7 @@ Use the desktop/tablet right dock this way:
 6. Use the Header right-sidebar toggle.
    Expected outcome: the far-right surface opens or closes without creating duplicate left-sidebar destinations; mobile viewports never render or reserve space for the right dock.
 
-Content views such as Artifacts, Research, Insights, Skills, Memory, Evals, Goals, Dev Server, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
+Content views such as Artifacts, Research, Insights, Skills, Memory, Evals, Goals, **Workflows**, **Import Tasks**, and **Automations** live in the left sidebar (or compact mobile navigation) rather than the right dock. On desktop/tablet, GitHub import lives under **Import Tasks**; mobile keeps compact GitHub import entries in the More surfaces.
 
 On mobile viewports, the Right Dock never renders. The compact Header actions and bottom `MobileNavBar` keep their existing mobile behavior even when the experiment is enabled.
 

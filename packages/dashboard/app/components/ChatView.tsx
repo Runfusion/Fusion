@@ -65,6 +65,11 @@ export interface ChatViewProps {
   addToast: (msg: string, type?: "success" | "error" | "warning") => void;
   experimentalFeatures?: Record<string, boolean>;
   floating?: boolean;
+  /*
+  FNXC:RightDockChat 2026-06-27-23:12:
+  The right dock can host ChatView in a 360px sidebar while the browser viewport remains desktop-sized. Let dock callers force the same narrow list/detail layout used by mobile/resized floating chat without passing floating chrome callbacks.
+  */
+  compactLayout?: boolean;
   onPopOut?: () => void;
   onMaximize?: () => void;
   onMinimize?: () => void;
@@ -987,7 +992,7 @@ const ChatMessageItem = memo(function ChatMessageItem({
   );
 });
 
-export function ChatView({ projectId, addToast, floating = false, onPopOut, onMaximize, onMinimize, onClose }: ChatViewProps) {
+export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose }: ChatViewProps) {
   const { t } = useTranslation("app");
   useEffect(() => {
     recordResumeEvent({
@@ -1188,7 +1193,7 @@ export function ChatView({ projectId, addToast, floating = false, onPopOut, onMa
     observer.observe(element);
     return () => observer.disconnect();
   }, [floating]);
-  const isChatMobile = isMobile || floatingNarrow;
+  const isChatMobile = isMobile || floatingNarrow || compactLayout;
 
   useEffect(() => {
     if (!activeSession?.id) {

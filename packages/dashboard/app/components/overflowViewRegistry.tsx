@@ -6,6 +6,7 @@ import {
   GitPullRequest,
   History,
   Lock,
+  MessageSquare,
   Monitor,
   type LucideProps,
 } from "lucide-react";
@@ -29,12 +30,14 @@ const DevServerView = lazy(() => import("./DevServerView").then((m) => ({ defaul
 const SecretsView = lazy(() => import("./SecretsView").then((m) => ({ default: m.SecretsView })));
 const TodoView = lazy(() => import("./TodoView").then((m) => ({ default: m.TodoView })));
 const PullRequestView = lazy(() => import("./PullRequestView").then((m) => ({ default: m.PullRequestView })));
+const ChatView = lazy(() => import("./ChatView").then((m) => ({ default: m.ChatView })));
 
 export type OverflowViewKey =
   | "usage"
   | "activity-log"
   | "git-manager"
   | "files"
+  | "chat"
   | "devserver"
   | "secrets"
   | "todos"
@@ -110,6 +113,11 @@ FNXC:RightDockFiles 2026-06-23-00:50:
 When the dock body is at least this wide there is clearly room for the Files tree|viewer two-pane split, so the dock forces DockFilesView layout="two-pane" deterministically instead of relying on the unreliable @container dock-files query (its root content-box often measured under the breakpoint and kept the view stacked). Matched to the CSS @container dock-files (min-width: 640px) breakpoint; compared against the threaded outer dock width (the dock chrome padding is small relative to 640px of content, so 640 outer width safely implies enough body width for two panes).
 */
 const RIGHT_DOCK_FILES_TWO_PANE_MIN_WIDTH = 640;
+/*
+FNXC:RightDockChat 2026-06-27-23:12:
+ChatView's desktop split pane is unusable in the default 360px right dock, so compact dock hosts force ChatView's narrow list/detail layout until the dock is wider than the tablet/mobile breakpoint. The expanded pop-out keeps the full desktop layout.
+*/
+const RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH = 768;
 
 function wrapOverflowView(node: ReactNode): ReactNode {
   return (
@@ -154,6 +162,23 @@ export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
             ? "two-pane"
             : "auto"
         }
+      />,
+    ),
+  },
+  /*
+  FNXC:Navigation 2026-06-27-00:00:
+  The right dock hosts the full ChatView as an always-visible inline tool so the compact dock body and the floating expand modal reuse the same conversational surface without adding another navigation destination.
+  */
+  {
+    key: "chat",
+    label: "Chat",
+    icon: MessageSquare,
+    testId: "right-dock-tab-chat",
+    render: (props) => wrapOverflowView(
+      <ChatView
+        projectId={props.projectId}
+        addToast={props.addToast}
+        compactLayout={props.surface === "dock" && (props.dockWidth ?? RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH) <= RIGHT_DOCK_CHAT_COMPACT_MAX_WIDTH}
       />,
     ),
   },

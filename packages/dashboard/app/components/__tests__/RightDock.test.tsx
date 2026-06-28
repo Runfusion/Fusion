@@ -35,10 +35,11 @@ function TestRightDock(props: Omit<RightDockProps, "pinned" | "onTogglePin"> & P
 
 /*
 FNXC:Navigation 2026-06-22-16:00:
-The right dock is now an all-inline tools rail sourced from STATIC_OVERFLOW_VIEW_ENTRIES in overflowViewRegistry. The roster, in registry order, is files, activity-log, git-manager, devserver (gated on devServerView), secrets, todos (gated on todosEnabled), pull-requests. The earlier usage/github-import/automation launcher actions were removed, so every visible tab is an inline view that switches the dock body and can expand into the modal.
+The right dock is now an all-inline tools rail sourced from STATIC_OVERFLOW_VIEW_ENTRIES in overflowViewRegistry. The roster, in registry order, is files, chat, activity-log, git-manager, devserver (gated on devServerView), secrets, todos (gated on todosEnabled), pull-requests. The earlier usage/github-import/automation launcher actions were removed, so every visible tab is an inline view that switches the dock body and can expand into the modal.
 */
 const toolTabIds = [
   "right-dock-tab-files",
+  "right-dock-tab-chat",
   "right-dock-tab-activity-log",
   "right-dock-tab-git-manager",
   "right-dock-tab-devserver",
@@ -302,10 +303,11 @@ describe("RightDock", () => {
 
     /*
     FNXC:Navigation 2026-06-22-16:00:
-    With devServerView and todosEnabled both on, the full seven-entry roster renders in registry order. Files, Activity Log, Git Manager, Dev Server, Secrets, Todos, and Pull Requests are all inline views.
+    With devServerView and todosEnabled both on, the full eight-entry roster renders in registry order. Files, Chat, Activity Log, Git Manager, Dev Server, Secrets, Todos, and Pull Requests are all inline views.
     */
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual(toolTabIds);
     expect(screen.getByTestId("right-dock-tab-files")).toHaveAttribute("aria-label", "Files");
+    expect(screen.getByTestId("right-dock-tab-chat")).toHaveAttribute("aria-label", "Chat");
     expect(screen.getByTestId("right-dock-tab-activity-log")).toHaveAttribute("aria-label", "Activity Log");
     expect(screen.getByTestId("right-dock-tab-git-manager")).toHaveAttribute("aria-label", "Git Manager");
     expect(screen.getByTestId("right-dock-tab-devserver")).toHaveAttribute("aria-label", "Dev Server");
@@ -320,11 +322,12 @@ describe("RightDock", () => {
   it("gates devserver and todos tabs behind their visibility flags", () => {
     /*
     FNXC:Navigation 2026-06-22-16:00:
-    devserver is gated on experimentalFeatures.devServerView and todos on todosEnabled. With both unset (default renderProps), the dock renders only the five always-on inline tools.
+    devserver is gated on experimentalFeatures.devServerView and todos on todosEnabled. With both unset (default renderProps), the dock renders only the six always-on inline tools.
     */
     render(<TestRightDock open={true} renderProps={renderProps} />);
     expect(screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-testid"))).toEqual([
       "right-dock-tab-files",
+      "right-dock-tab-chat",
       "right-dock-tab-activity-log",
       "right-dock-tab-git-manager",
       "right-dock-tab-secrets",

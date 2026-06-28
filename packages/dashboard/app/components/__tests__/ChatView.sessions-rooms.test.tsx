@@ -877,6 +877,15 @@ describe("Chat pop-out header actions", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("forces the narrow one-pane class when hosted in compact right-dock layout", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [] });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} compactLayout />);
+
+    expect(document.querySelector(".chat-view")).toHaveClass("chat-view--narrow");
+    expect(screen.queryByTestId("chat-pop-out")).toBeNull();
+  });
+
   it("defines a modal-width narrow layout that mirrors mobile one-pane behavior", async () => {
     const css = loadAllAppCss();
 

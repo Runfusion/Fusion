@@ -69,7 +69,7 @@ function isInlineOverflowViewKey(key: string, options: OverflowViewVisibilityOpt
   return Boolean(entry?.render);
 }
 
-function readStoredRightDockView(options: OverflowViewVisibilityOptions): OverflowViewKey {
+export function readStoredRightDockView(options: OverflowViewVisibilityOptions): OverflowViewKey {
   if (typeof window === "undefined") return "files";
   const stored = window.localStorage.getItem(RIGHT_DOCK_VIEW_STORAGE_KEY);
   return stored && isOverflowViewKeyVisible(stored, options) && isInlineOverflowViewKey(stored, options) ? stored : "files";
