@@ -69,6 +69,46 @@ Skill-backed prompt/gate nodes run through the same workflow-step session builde
 
 Use the dashboard [Workflow Editor](./workflow-editor.md) to inspect built-ins, tune built-in prompts, duplicate workflows, or author custom workflows. Custom workflows can declare graph nodes and edges, columns/traits, task fields, typed workflow settings, model lanes, optional workflow-step templates, and author-time validation. Use this page for runtime semantics; use the editor guide for the visual authoring surface.
 
+<!--
+FNXC:Workflows 2026-06-28-09:50:
+Pure-v1 custom graphs remain rollback-compatible by upgrading to trait-less default columns. Capacity dispatch after the workflow-columns cutover is therefore an explicit v2 authoring requirement, not an implicit v1 upgrade side effect.
+-->
+
+#### Capacity dispatch for custom workflows
+
+After the workflow-columns cutover, the only automatic queued-work dispatcher is the engine's hold/release sweep. It releases a task from `todo` only when that column resolves as a `hold` column and its hold config uses `release: "capacity"`; it then moves the card to the nearest downstream `wip` column with available capacity.
+
+Pure-v1 custom workflow definitions (`start` / `prompt` / `script` / `gate` / `end` nodes with default columns) still parse and upgrade by synthesizing the legacy column ids with empty trait sets. That shape is intentional for FN-5769 / issue #1405 rollback compatibility: it can be downgraded back to v1 for older binaries. The tradeoff is that a pure-v1 custom workflow's `todo` column is not a hold column, so tasks can sit in `todo` instead of dispatching to `in-progress`.
+
+For capacity-dispatched custom workflows, author or migrate the workflow as IR v2 and give `todo` and `in-progress` the canonical dispatch traits (the same minimum used by the built-in coding workflow):
+
+```json
+{
+  "version": "v2",
+  "columns": [
+    {
+      "id": "todo",
+      "name": "todo",
+      "traits": [
+        { "trait": "hold", "config": { "release": "capacity" } },
+        { "trait": "reset-on-entry" }
+      ]
+    },
+    {
+      "id": "in-progress",
+      "name": "in-progress",
+      "traits": [
+        { "trait": "wip", "config": { "limit": "settings.maxConcurrent" } },
+        { "trait": "abort-on-exit" },
+        { "trait": "timing" }
+      ]
+    }
+  ]
+}
+```
+
+If you need the full lifecycle behavior, duplicate `builtin:coding` (or another selectable built-in) and edit the copy so `in-review`, `done`, and `archived` keep their merge/review/completion traits. FN-7190 keeps selectable built-ins on canonical traits; FN-7192 documents and tests the custom-v1 migration boundary.
+
 ### Workflow graph integrity validation
 
 <!--

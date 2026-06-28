@@ -74,6 +74,40 @@ The editor prevents ordinary cycles while connecting nodes. If a graph branches 
 
 The **Columns** panel edits workflow-defined swimlanes. A column has an id, name, ordered position, and composable traits. The panel can add, rename, reorder, and remove columns for custom workflows; built-ins show the same data read-only.
 
+<!--
+FNXC:Workflows 2026-06-28-09:45:
+FN-7190/FN-7192 made the workflow-columns dispatch contract explicit: `runHoldReleaseSweep` only releases cards resting in a hold column, so custom workflows that queue work in `todo` must author a v2 `hold(capacity)` todo column instead of relying on pure-v1 default columns.
+-->
+
+For task dispatch, the queue column that holds ready work must carry a `hold` trait with `release: "capacity"`, and the downstream active column must carry a `wip` trait. Pure-v1 custom graphs still upgrade to the legacy default column ids with empty trait sets for rollback compatibility, so a task selecting that workflow can remain in `todo` until the workflow is migrated to v2 columns. When authoring or migrating a custom coding workflow, mirror this minimum shape:
+
+```json
+{
+  "version": "v2",
+  "columns": [
+    {
+      "id": "todo",
+      "name": "todo",
+      "traits": [
+        { "trait": "hold", "config": { "release": "capacity" } },
+        { "trait": "reset-on-entry" }
+      ]
+    },
+    {
+      "id": "in-progress",
+      "name": "in-progress",
+      "traits": [
+        { "trait": "wip", "config": { "limit": "settings.maxConcurrent" } },
+        { "trait": "abort-on-exit" },
+        { "trait": "timing" }
+      ]
+    }
+  ]
+}
+```
+
+Copying a selectable built-in workflow is the easiest way to inherit the full canonical trait set (`todo`, `in-progress`, `in-review`, `done`, `archived`) before customizing nodes or prompts.
+
 When column-agent support is enabled by the required experimental features, a column can also assign a permanent agent with one of two modes:
 
 - **defer:** use the column agent only when the work has no more specific agent/model setting.

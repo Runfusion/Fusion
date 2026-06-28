@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
-import { TaskStore, type Task, type WorkflowIr } from "@fusion/core";
+import { getBuiltinWorkflow, resolveColumnFlags, TaskStore, type Task, type WorkflowIr } from "@fusion/core";
 import {
   runHoldReleaseSweep,
   promoteHeldTask,
@@ -70,6 +70,46 @@ const LINEAR_BUILTIN_WORKFLOW_IDS = [
   "builtin:design",
 ] as const;
 
+function pureV1CustomWorkflowIr(): WorkflowIr {
+  return {
+    version: "v1",
+    name: "pure-v1-custom",
+    nodes: [
+      { id: "start", kind: "start" },
+      { id: "execute", kind: "prompt", config: { seam: "execute", prompt: "Do the work" } },
+      { id: "end", kind: "end" },
+    ],
+    edges: [
+      { from: "start", to: "execute", condition: "success" },
+      { from: "execute", to: "end", condition: "success" },
+      { from: "execute", to: "end", condition: "failure" },
+    ],
+  } as WorkflowIr;
+}
+
+function authoredV2CapacityWorkflowIr(): WorkflowIr {
+  return {
+    version: "v2",
+    name: "authored-v2-capacity-workflow",
+    columns: [
+      { id: "todo", name: "todo", traits: [{ trait: "hold", config: { release: "capacity" } }, { trait: "reset-on-entry" }] },
+      { id: "in-progress", name: "in-progress", traits: [{ trait: "wip", config: { limit: "settings.maxConcurrent" } }, { trait: "abort-on-exit" }, { trait: "timing" }] },
+      { id: "in-review", name: "in-review", traits: [{ trait: "merge-blocker" }, { trait: "human-review" }] },
+      { id: "done", name: "done", traits: [{ trait: "complete" }] },
+    ],
+    nodes: [
+      { id: "start", kind: "start", column: "todo" },
+      { id: "execute", kind: "prompt", column: "in-progress", config: { seam: "execute", prompt: "Do the work" } },
+      { id: "end", kind: "end", column: "done" },
+    ],
+    edges: [
+      { from: "start", to: "execute", condition: "success" },
+      { from: "execute", to: "end", condition: "success" },
+      { from: "execute", to: "end", condition: "failure" },
+    ],
+  } as WorkflowIr;
+}
+
 describe("hold-release sweep (U6)", () => {
   let rootDir = "";
   let store: TaskStore;
@@ -107,8 +147,16 @@ describe("hold-release sweep (U6)", () => {
     const defaultWorkflowTask = await seedTodoCard();
     const selectedTasks: string[] = [];
 
-    // Pre-fix, linear() synthesized trait-less default columns, so isHeldTask()
-    // returned false here and these selected tasks were silently skipped forever.
+    for (const workflowId of LINEAR_BUILTIN_WORKFLOW_IDS) {
+      const builtin = getBuiltinWorkflow(workflowId);
+      if (!builtin?.ir || builtin.ir.version !== "v2") throw new Error(`missing v2 built-in ${workflowId}`);
+      const todo = builtin.ir.columns.find((column) => column.id === "todo");
+      expect(todo).toBeDefined();
+      expect(resolveColumnFlags(todo!).hold).toBe(true);
+    }
+
+    // Pre-FN-7190, linear() synthesized trait-less default columns, so isHeldTask()
+    // returned false here and these selected built-in tasks were silently skipped forever.
     for (const workflowId of LINEAR_BUILTIN_WORKFLOW_IDS) {
       const task = await store.createTask({ description: `card ${workflowId}` });
       setSelection(store, task.id, workflowId);
@@ -122,6 +170,33 @@ describe("hold-release sweep (U6)", () => {
     for (const taskId of [defaultWorkflowTask, ...selectedTasks]) {
       expect((await store.getTask(taskId))?.column).toBe("in-progress");
     }
+  });
+
+  it("documents custom v1 stranding and proves the authored v2 capacity-column remedy", async () => {
+    await store.updateSettings({ maxConcurrent: 10 } as Parameters<typeof store.updateSettings>[0]);
+    const defaultWorkflowTask = await seedTodoCard();
+
+    const v1Def = await store.createWorkflowDefinition({ name: "pure v1 custom", ir: pureV1CustomWorkflowIr() });
+    const v1Task = await store.createTask({ description: "pure-v1 custom card" });
+    setSelection(store, v1Task.id, v1Def.id);
+    setColumn(store, v1Task.id, "todo");
+
+    const v2Def = await store.createWorkflowDefinition({ name: "authored v2 capacity", ir: authoredV2CapacityWorkflowIr() });
+    const v2Task = await store.createTask({ description: "authored-v2 custom card" });
+    setSelection(store, v2Task.id, v2Def.id);
+    setColumn(store, v2Task.id, "todo");
+
+    /*
+     * FNXC:Workflows 2026-06-28-09:17:
+     * The migration contract documented in docs/workflow-editor.md is behavioral: pure-v1 custom workflows stay rollback-compatible and are not held, while authored-v2 workflows that put hold(capacity) on todo are released by the sole post-cutover dispatcher.
+     */
+    const result = await runHoldReleaseSweep(store, noReserveDeps);
+
+    expect(result.released).toEqual(expect.arrayContaining([defaultWorkflowTask, v2Task.id]));
+    expect(result.released).not.toContain(v1Task.id);
+    expect((await store.getTask(defaultWorkflowTask))?.column).toBe("in-progress");
+    expect((await store.getTask(v2Task.id))?.column).toBe("in-progress");
+    expect((await store.getTask(v1Task.id))?.column).toBe("todo");
   });
 
   it("ignores stale workflowColumns=false and still releases held default-workflow cards", async () => {
