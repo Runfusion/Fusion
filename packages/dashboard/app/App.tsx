@@ -1501,6 +1501,9 @@ function AppInner() {
 
       FNXC:ChatModal 2026-06-22-14:57:
       Reopening Quick Chat from the FAB restores the last floating Chat window geometry through FloatingWindow's persisted/clamped geometry key. The modal's maximize button routes to the full Chat view and closes the floating modal without clearing ChatView's shared session selection state.
+
+      FNXC:ChatModal 2026-06-27-00:00:
+      Quick Chat is a transient utility window, so it opts into FloatingWindow's outside-click dismissal in addition to minimize, close, and maximize controls. Task pop-outs intentionally do not opt in because they are persistent workspace windows that should survive page clicks.
       */}
       {viewMode === "project" && currentProject && (
         <QuickChatFAB
@@ -1514,6 +1517,7 @@ function AppInner() {
           windowKey="chat-modal"
           title="Chat"
           onClose={() => setQuickChatOpen(false)}
+          closeOnOutsidePointerDown
           hideHeader
           dragHandleSelector=".chat-view--floating .view-header"
           className="floating-window--chat"

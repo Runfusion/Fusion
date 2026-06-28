@@ -1,6 +1,9 @@
 /*
 FNXC:FloatingWindow 2026-06-22-20:45:
-FloatingWindow is a non-blocking floating window (generalized from RightDockExpandModal). The overlay is a full-viewport, transparent, NON-dimming, NON-blurring, click-through layer: `pointer-events: none` lets every click pass through to the app and to other windows behind it. Only the panel re-enables `pointer-events: auto`. Because the overlay never intercepts clicks there is no overlay click-to-dismiss; the header close button is the only dismissal. Multiple overlays/panels coexist with no mutual blocking — z-stacking is driven by inline `z-index` from the component's per-window counter.
+FloatingWindow is a non-blocking floating window (generalized from RightDockExpandModal). The overlay is a full-viewport, transparent, NON-dimming, NON-blurring, click-through layer: `pointer-events: none` lets every click pass through to the app and to other windows behind it. Only the panel re-enables `pointer-events: auto`. Multiple overlays/panels coexist with no mutual blocking — z-stacking is driven by inline `z-index` from the component's per-window counter.
+
+FNXC:FloatingWindow 2026-06-27-00:00:
+Click-through overlays cannot implement backdrop clicks in CSS/DOM structure. Outside-click dismissal is therefore a component-level opt-in document listener for transient windows such as Quick Chat; persistent task and terminal pop-outs keep the default non-dismissable page-click behavior.
 */
 .floating-window-overlay {
   position: fixed;

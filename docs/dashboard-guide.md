@@ -411,6 +411,7 @@ Quick Chat is an optional fast, project-scoped assistant surface for conversatio
 - Submitting the inline chooser uses explicit fresh-session creation and immediately persists/selects the new thread, then refreshes the session dropdown list
 - On first open for a project, Quick Chat restores the last opened non-archived session from per-project local storage; if that saved session is missing, it falls back to the most recently touched non-archived session by latest activity (`max(lastMessageAt, updatedAt)`), and only falls back to the first agent / configured default model when no prior session exists.
 - Closing and reopening Quick Chat keeps the active conversation warm in memory, so messages stay visible without a conversation reload or "Loading conversation…" flash.
+- Clicking outside the desktop Quick Chat floating window closes it; task pop-out floating windows remain persistent on page clicks.
 - Queued follow-up messages entered while a Quick Chat response is still streaming now persist per session, so closing/reopening the panel restores the queued stack and flushes the messages one at a time in FIFO order as active responses complete.
 - Resume lookups still use targeted session queries instead of loading the full active-session list first
 - Tool-call summaries in the floating quick-chat panel are intentionally condensed into a single-line header row (especially on small screens) so tool name + status stay scannable without multi-line wrapping

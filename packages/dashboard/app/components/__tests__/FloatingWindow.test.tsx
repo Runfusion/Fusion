@@ -108,6 +108,115 @@ describe("FloatingWindow", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("closes on outside pointerdown only when the opt-in prop is enabled", () => {
+    const onClose = vi.fn();
+    render(
+      <FloatingWindow windowKey="outside-close" title="Outside close" onClose={onClose} closeOnOutsidePointerDown>
+        <div>inside body</div>
+      </FloatingWindow>
+    );
+
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not close for inside pointerdown when outside dismissal is enabled", () => {
+    const onClose = vi.fn();
+    render(
+      <FloatingWindow windowKey="inside-safe" title="Inside safe" onClose={onClose} closeOnOutsidePointerDown>
+        <button type="button">Inside action</button>
+      </FloatingWindow>
+    );
+
+    fireEvent.pointerDown(screen.getByText("Inside action"));
+    fireEvent.pointerDown(screen.getByTestId("floating-window-body-inside-safe"));
+    fireEvent.pointerDown(screen.getByTestId("floating-window-inside-safe"));
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps page clicks non-dismissive by default for persistent floating windows", () => {
+    const onClose = vi.fn();
+    render(
+      <FloatingWindow windowKey="persistent" title="Persistent" onClose={onClose}>
+        <div>persistent body</div>
+      </FloatingWindow>
+    );
+
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("does not close when the outside target is another floating or dialog surface", () => {
+    for (const surfaceClassOrRole of ["modal-overlay", "floating-window", "dialog-role"] as const) {
+      const onClose = vi.fn();
+      const { unmount } = render(
+        <FloatingWindow windowKey={`nested-${surfaceClassOrRole}`} title="Nested safe" onClose={onClose} closeOnOutsidePointerDown>
+          <div>chat body</div>
+        </FloatingWindow>
+      );
+      const surface = document.createElement("div");
+      if (surfaceClassOrRole === "dialog-role") {
+        surface.setAttribute("role", "dialog");
+      } else {
+        surface.className = surfaceClassOrRole;
+      }
+      document.body.appendChild(surface);
+
+      fireEvent.pointerDown(surface);
+
+      expect(onClose).not.toHaveBeenCalled();
+      surface.remove();
+      unmount();
+    }
+  });
+
+  it("does not close from outside pointerdown while a resize gesture is active", () => {
+    const onClose = vi.fn();
+    render(
+      <FloatingWindow windowKey="resize-safe" title="Resize safe" onClose={onClose} closeOnOutsidePointerDown>
+        <div>resize body</div>
+      </FloatingWindow>
+    );
+
+    fireEvent.pointerDown(screen.getByTestId("floating-window-resize-se"), { pointerId: 1 });
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("ignores compatibility pointer events immediately after touch gestures", () => {
+    const onClose = vi.fn();
+    render(
+      <FloatingWindow windowKey="touch-safe" title="Touch safe" onClose={onClose} closeOnOutsidePointerDown>
+        <div>touch body</div>
+      </FloatingWindow>
+    );
+
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.touchStart(document);
+    fireEvent.touchEnd(document);
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("removes the outside pointerdown listener on unmount", () => {
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <FloatingWindow windowKey="cleanup" title="Cleanup" onClose={onClose} closeOnOutsidePointerDown>
+        <div>cleanup body</div>
+      </FloatingWindow>
+    );
+
+    unmount();
+    fireEvent.pointerDown(document.body);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("multiple windows coexist independently (each renders its own panel)", () => {
     render(
       <>

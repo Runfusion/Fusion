@@ -47,6 +47,11 @@ export interface FloatingWindowProps {
   className?: string;
   /** Optional localStorage key used to restore the last clamped position and size. */
   persistGeometryKey?: string;
+  /**
+   * Opt-in outside-pointer dismissal for transient windows like Quick Chat.
+   * Persistent task/terminal pop-outs must omit this so page clicks do not close them.
+   */
+  closeOnOutsidePointerDown?: boolean;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -147,6 +152,7 @@ export function FloatingWindow({
   dragHandleSelector,
   className,
   persistGeometryKey,
+  closeOnOutsidePointerDown = false,
 }: FloatingWindowProps) {
   const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
@@ -162,6 +168,7 @@ export function FloatingWindow({
   const [position, setPosition] = useState<FloatingWindowPosition>(() => initialGeometry.current!.position);
   // FNXC:FloatingWindow 2026-06-22-21:30: Each window owns its z-index; mounting claims the front of the SHARED cross-type stack.
   const [zIndex, setZIndex] = useState<number>(() => nextFloatingZ());
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   /*
   FNXC:FloatingWindow 2026-06-22-20:45:
@@ -319,6 +326,43 @@ export function FloatingWindow({
   useEffect(() => () => dragTeardownRef.current?.(), []);
 
   /*
+  FNXC:FloatingWindow 2026-06-27-00:00:
+  Outside-click dismissal is opt-in because the overlay is intentionally click-through for coexisting floating windows. A capture-phase document pointerdown listener is the only reliable outside signal, and it must ignore in-flight drag/resize gestures plus nested modal/floating surfaces so Quick Chat can dismiss from bare-page clicks without making persistent task pop-outs fragile.
+  */
+  useEffect(() => {
+    if (!closeOnOutsidePointerDown || typeof document === "undefined") return;
+
+    let lastTouchAt = 0;
+    const markTouch = () => {
+      lastTouchAt = Date.now();
+    };
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      if (Date.now() - lastTouchAt < 500) return;
+      if (dragTeardownRef.current) return;
+
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const panel = panelRef.current;
+      if (panel?.contains(target)) return;
+
+      const targetElement = target instanceof Element ? target : target.parentNode instanceof Element ? target.parentNode : null;
+      if (targetElement?.closest(".floating-window, .modal-overlay, [role=\"dialog\"]")) return;
+
+      onClose();
+    };
+
+    document.addEventListener("touchstart", markTouch, { passive: true });
+    document.addEventListener("touchend", markTouch, { passive: true });
+    document.addEventListener("pointerdown", handleDocumentPointerDown, true);
+
+    return () => {
+      document.removeEventListener("touchstart", markTouch);
+      document.removeEventListener("touchend", markTouch);
+      document.removeEventListener("pointerdown", handleDocumentPointerDown, true);
+    };
+  }, [closeOnOutsidePointerDown, onClose]);
+
+  /*
   FNXC:ChatModal 2026-06-22-14:57:
   Quick Chat reopens should restore the last desktop floating-window size and position while still clamping onto the current viewport. Keep persistence generic for other FloatingWindow callers, but opt in with persistGeometryKey so existing task pop-outs remain ephemeral.
   */
@@ -353,6 +397,7 @@ export function FloatingWindow({
       style={{ zIndex }}
     >
       <div
+        ref={panelRef}
         className={`floating-window${hideHeader ? " floating-window--headerless" : ""}${className ? ` ${className}` : ""}`}
         style={panelStyle}
         data-testid={`floating-window-${windowKey}`}
