@@ -38,16 +38,13 @@ async function resolveLinkedGoals(store: Awaited<ReturnType<typeof getStore>>, m
   // MissionStore | AsyncMissionStore; await listGoalIdsForMission so the `fn mission`
   // CLI works against both SQLite and PG backends.
   const goalIds = await store.getMissionStore().listGoalIdsForMission(missionId);
-  // FNXC:MissionStore 2026-06-27-16:30 (review): GoalStore is not yet ported to
-  // PG and getGoalStore() dereferences the sync store.db (throws in backend
-  // mode). The mission↔goal links live in the ported MissionStore, so in backend
-  // mode degrade to id-only entries — mirrors the dashboard's
-  // listLinkedGoalsForMission guard so `fn mission` does not hard-fail in PG.
-  if (store.backendMode) {
-    return goalIds.map((goalId) => ({ id: goalId, missing: true as const }));
-  }
+  // FNXC:GoalStore 2026-06-27-18:20: GoalStore is now ported to PG
+  // (AsyncGoalStore); getGoalStore() returns GoalStore | AsyncGoalStore. await
+  // getGoal so `fn mission` resolves real goals against both SQLite and PG (the
+  // interim PG id-only degradation is removed).
   const goalStore = store.getGoalStore();
-  return goalIds.map((goalId) => goalStore.getGoal(goalId) ?? { id: goalId, missing: true as const });
+  const resolved = await Promise.all(goalIds.map((goalId) => goalStore.getGoal(goalId)));
+  return goalIds.map((goalId, i) => resolved[i] ?? { id: goalId, missing: true as const });
 }
 
 async function promptForTitleAndDescription(
@@ -84,8 +81,8 @@ async function promptForTitleAndDescription(
  * Create a new mission with optional title and description.
  * If arguments are omitted, prompts interactively.
  */
-function requireCliLinkableGoal(store: Awaited<ReturnType<typeof getStore>>, goalId: string): Goal {
-  const goal = store.getGoalStore().getGoal(goalId);
+async function requireCliLinkableGoal(store: Awaited<ReturnType<typeof getStore>>, goalId: string): Promise<Goal> {
+  const goal = await store.getGoalStore().getGoal(goalId);
   if (!goal) {
     console.error(`✗ Goal ${goalId} not found`);
     process.exit(1);
@@ -107,7 +104,7 @@ export async function runMissionCreate(
   const store = await getStore({ project: projectName });
   const missionStore = store.getMissionStore();
   const uniqueGoalIds = Array.from(new Set(goalIds ?? []));
-  const linkableGoals = uniqueGoalIds.map((goalId) => requireCliLinkableGoal(store, goalId));
+  const linkableGoals = await Promise.all(uniqueGoalIds.map((goalId) => requireCliLinkableGoal(store, goalId)));
 
   const { title, description } = titleArg
     ? { title: titleArg.trim(), description: descriptionArg?.trim() || undefined }
@@ -496,7 +493,7 @@ export async function runMissionLinkGoal(missionId: string, goalId: string, proj
     process.exit(1);
   }
 
-  const goal = requireCliLinkableGoal(store, goalId);
+  const goal = await requireCliLinkableGoal(store, goalId);
 
   await missionStore.linkGoal(missionId, goalId);
 
@@ -520,7 +517,7 @@ export async function runMissionUnlinkGoal(missionId: string, goalId: string, pr
     process.exit(1);
   }
 
-  const goal = store.getGoalStore().getGoal(goalId);
+  const goal = await store.getGoalStore().getGoal(goalId);
   if (!goal) {
     console.error(`✗ Goal ${goalId} not found`);
     process.exit(1);

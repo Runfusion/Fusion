@@ -331,12 +331,12 @@ export function createMissionRouter(
     return mission;
   }
 
-  function requireGoal(goalId: string): Goal {
+  async function requireGoal(goalId: string): Promise<Goal> {
     if (!validateGoalId(goalId)) {
       throw badRequest("Invalid goal ID format");
     }
 
-    const goal = getScopedGoalStore().getGoal(goalId);
+    const goal = await getScopedGoalStore().getGoal(goalId);
     if (!goal) {
       throw notFound("Goal not found");
     }
@@ -344,12 +344,12 @@ export function createMissionRouter(
     return goal;
   }
 
-  function requireLinkableGoal(goalId: string): Goal {
+  async function requireLinkableGoal(goalId: string): Promise<Goal> {
     if (!validateGoalId(goalId)) {
       throw badRequest("Invalid goal ID format");
     }
 
-    const goal = getScopedGoalStore().getGoal(goalId);
+    const goal = await getScopedGoalStore().getGoal(goalId);
     if (!goal) {
       throw badRequest("Goal not found", { code: "GOAL_NOT_FOUND", goalId });
     }
@@ -363,30 +363,24 @@ export function createMissionRouter(
     await requireMission(missionId);
     const goalIds = await missionStore.listGoalIdsForMission(missionId);
     if (goalIds.length === 0) return [];
-    // FNXC:MissionStore 2026-06-27-16:00:
-    // Mission↔goal LINKS live in the (ported) MissionStore, but resolving full
-    // Goal objects (titles/status) needs the sync GoalStore, which is NOT yet
-    // ported to PG (constructing it dereferences the sync store.db → throws).
-    // In backend mode the links exist but resolved goals are unavailable —
-    // degrade to [] rather than failing the mission read/create. Removing this
-    // when GoalStore is ported restores full goal resolution.
-    if (getScopedStore().backendMode) return [];
+    // FNXC:GoalStore 2026-06-27-18:15:
+    // Mission↔goal LINKS live in the MissionStore; resolving full Goal objects
+    // (titles/status) goes through the GoalStore, which is now ported to PG
+    // (AsyncGoalStore). await getGoal so both SQLite and PG backends resolve real
+    // goals (the interim PG `return []` degradation is removed).
     const goalStore = getScopedGoalStore();
-    return goalIds
-      .map((goalId) => goalStore.getGoal(goalId))
-      .filter((goal): goal is Goal => Boolean(goal));
+    const resolved = await Promise.all(goalIds.map((goalId) => goalStore.getGoal(goalId)));
+    return resolved.filter((goal): goal is Goal => Boolean(goal));
   }
 
   async function setLinkedGoalsForMission(missionId: string, goalIds: string[]): Promise<Goal[]> {
     await requireMission(missionId);
     const uniqueGoalIds = Array.from(new Set(goalIds));
-    // FNXC:MissionStore 2026-06-27-16:00:
-    // requireLinkableGoal validates goal existence via the sync GoalStore (not
-    // yet ported to PG). In backend mode skip that validation — the mission↔goal
-    // link write below goes through the async MissionStore and still works; the
-    // existence check returns once GoalStore is ported.
-    if (!getScopedStore().backendMode) {
-      uniqueGoalIds.forEach((goalId) => requireLinkableGoal(goalId));
+    // FNXC:GoalStore 2026-06-27-18:15:
+    // GoalStore is ported to PG, so requireLinkableGoal validates goal existence
+    // against both backends. The interim PG skip of this validation is removed.
+    for (const goalId of uniqueGoalIds) {
+      await requireLinkableGoal(goalId);
     }
 
     const existingGoalIds = new Set(await missionStore.listGoalIdsForMission(missionId));
@@ -1083,7 +1077,7 @@ export function createMissionRouter(
     catchTypedHandler(async (req, res) => {
       const { missionId, goalId } = req.params;
       await requireMission(missionId);
-      const goal = requireLinkableGoal(goalId);
+      const goal = await requireLinkableGoal(goalId);
       await missionStore.linkGoal(missionId, goalId);
       res.json({ goal, goals: await listLinkedGoalsForMission(missionId) });
     })
@@ -1098,7 +1092,7 @@ export function createMissionRouter(
     catchTypedHandler(async (req, res) => {
       const { missionId, goalId } = req.params;
       await requireMission(missionId);
-      requireGoal(goalId);
+      await requireGoal(goalId);
       await missionStore.unlinkGoal(missionId, goalId);
       res.json({ removed: true, goals: await listLinkedGoalsForMission(missionId) });
     })
@@ -1149,7 +1143,11 @@ export function createMissionRouter(
 
       const updates: Partial<Mission> = {};
       const validatedGoalIds = goalIds === undefined ? undefined : validateOptionalGoalIds(goalIds);
-      validatedGoalIds?.forEach((goalId) => requireLinkableGoal(goalId));
+      if (validatedGoalIds) {
+        for (const goalId of validatedGoalIds) {
+          await requireLinkableGoal(goalId);
+        }
+      }
 
       if (title !== undefined) {
         updates.title = validateTitle(title);

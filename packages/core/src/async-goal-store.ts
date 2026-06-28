@@ -197,3 +197,62 @@ export async function listGoals(
     : await query;
   return rows.map((row) => toGoal(row as GoalRow));
 }
+
+/**
+ * FNXC:GoalStore 2026-06-27-18:00:
+ * PostgreSQL-backed GoalStore — the AsyncDataLayer counterpart of the sync
+ * SQLite `GoalStore` (goal-store.ts). It exposes the SAME public method names so
+ * the dashboard goals routes (/api/goals), the mission goal-resolution helpers,
+ * and the CLI/agent goal tools can call either implementation behind `await`;
+ * `getGoalStoreImpl` returns this in backend mode instead of constructing the
+ * sync store (which dereferences the sync SQLite handle). Id generation mirrors
+ * the sync store's `G-<ts>-<seq>-<rand>` format so the route id regex still
+ * matches.
+ *
+ * ACTIVE_GOAL_LIMIT enforcement is NOT re-implemented here: the create/unarchive
+ * helpers above enforce it atomically inside transactionImmediate (count-then-
+ * insert/update), throwing ActiveGoalLimitExceededError — identical semantics to
+ * the sync store's transactionImmediate path. getGoal returns null (not
+ * undefined) when absent, matching the sync convention the routes branch on.
+ *
+ * Known gap vs the sync store: the sync GoalStore is an EventEmitter that emits
+ * goal:created/goal:updated for SSE live-refresh. This wrapper performs the CRUD
+ * only; UI updates land on the next read/refresh, not via live events.
+ */
+export class AsyncGoalStore {
+  private idSequence = 0;
+
+  constructor(private readonly layer: AsyncDataLayer) {}
+
+  private generateGoalId(): string {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    this.idSequence += 1;
+    const sequence = this.idSequence.toString(36).toUpperCase().padStart(4, "0");
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    return `G-${timestamp}-${sequence}-${random}`;
+  }
+
+  async listGoals(filter?: GoalListFilter): Promise<Goal[]> {
+    return listGoals(this.layer.db, filter);
+  }
+
+  async getGoal(id: string): Promise<Goal | null> {
+    return getGoal(this.layer.db, id);
+  }
+
+  async createGoal(input: GoalCreateInput): Promise<Goal> {
+    return createGoal(this.layer, { ...input, id: this.generateGoalId() });
+  }
+
+  async updateGoal(id: string, input: GoalUpdateInput): Promise<Goal> {
+    return updateGoal(this.layer.db, id, input);
+  }
+
+  async archiveGoal(id: string): Promise<Goal> {
+    return archiveGoal(this.layer.db, id);
+  }
+
+  async unarchiveGoal(id: string): Promise<Goal> {
+    return unarchiveGoal(this.layer, id);
+  }
+}

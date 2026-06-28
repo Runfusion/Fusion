@@ -1395,6 +1395,7 @@ export { ACTIVE_GOAL_LIMIT, ActiveGoalLimitExceededError } from "./goal-types.js
 export type { Goal, GoalCreateInput, GoalListFilter, GoalStatus, GoalUpdateInput } from "./goal-types.js";
 export { GoalStore } from "./goal-store.js";
 export type { GoalStoreEvents } from "./goal-store.js";
+export { AsyncGoalStore } from "./async-goal-store.js";
 export type {
   GoalCitation,
   GoalCitationSurface,

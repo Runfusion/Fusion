@@ -18,13 +18,19 @@ import type { Goal, GoalStatus, GoalUpdateInput, Mission, TaskStore } from "@fus
 import { ApiError, badRequest, catchHandler, conflict, internalError, notFound } from "./api-error.js";
 import { getOrCreateProjectStore } from "./project-store-resolver.js";
 
+// FNXC:GoalStore 2026-06-27-18:10:
+// getGoalStore() returns GoalStore | AsyncGoalStore (sync SQLite vs PG-backed).
+// Methods return either a value (sync) or a Promise (PG); every handler awaits
+// the result so both backends work. MaybePromise keeps the structural type
+// satisfied by both stores.
+type MaybePromise<T> = T | Promise<T>;
 type GoalStoreLike = {
-  listGoals(filter?: { status?: GoalStatus }): Goal[];
-  createGoal(input: { title: string; description?: string }): Goal;
-  getGoal(id: string): Goal | null;
-  updateGoal(id: string, input: GoalUpdateInput): Goal;
-  archiveGoal(id: string): Goal;
-  unarchiveGoal(id: string): Goal;
+  listGoals(filter?: { status?: GoalStatus }): MaybePromise<Goal[]>;
+  createGoal(input: { title: string; description?: string }): MaybePromise<Goal>;
+  getGoal(id: string): MaybePromise<Goal | null>;
+  updateGoal(id: string, input: GoalUpdateInput): MaybePromise<Goal>;
+  archiveGoal(id: string): MaybePromise<Goal>;
+  unarchiveGoal(id: string): MaybePromise<Goal>;
 };
 
 const GOAL_ID_RE = /^G-[A-Z0-9]+(?:-[A-Z0-9]+)*$/i;
@@ -41,19 +47,17 @@ function getProjectIdFromRequest(req: Request): string | undefined {
 }
 
 function getGoalStore(store: TaskStore): GoalStoreLike {
-  // FNXC:PostgresBackend 2026-06-27-05:00:
-  // GoalStore is not yet ported (it has many sync CLI consumers that would break
-  // on an async flip). Degrade the dashboard goals routes to a clean 503 in PG
-  // backend mode instead of 500-ing.
-  if (store.backendMode) throw new ApiError(503, "Goals are not yet available in PG backend mode");
+  // FNXC:GoalStore 2026-06-27-18:10:
+  // GoalStore is now ported (AsyncGoalStore in PG backend mode); the interim PG
+  // 503 guard is removed. Every handler awaits the store calls so both the sync
+  // SQLite GoalStore and the async PG-backed AsyncGoalStore work.
   return store.getGoalStore();
 }
 
 function getMissionStore(store: TaskStore) {
   // FNXC:MissionStore 2026-06-27-15:30:
   // MissionStore is now ported (AsyncMissionStore in PG backend mode); the
-  // goal→mission routes await its calls so both backends work. GoalStore is NOT
-  // ported — its 503 guard (getGoalStore) stays.
+  // goal→mission routes await its calls so both backends work.
   return store.getMissionStore();
 }
 
@@ -131,7 +135,7 @@ export function createGoalsRouter(store: TaskStore): Router {
 
   router.get(
     "/",
-    catchHandler((req, res) => {
+    catchHandler(async (req, res) => {
       const rawStatus = req.query.status;
       if (rawStatus !== undefined && rawStatus !== null) {
         if (typeof rawStatus !== "string" || !GOAL_STATUSES.includes(rawStatus as GoalStatus)) {
@@ -140,7 +144,7 @@ export function createGoalsRouter(store: TaskStore): Router {
       }
 
       const goalStore = getGoalStore(getScopedStore());
-      const goals = goalStore.listGoals(rawStatus ? { status: rawStatus as GoalStatus } : undefined);
+      const goals = await goalStore.listGoals(rawStatus ? { status: rawStatus as GoalStatus } : undefined);
       res.json({ goals });
     }),
   );
@@ -156,7 +160,7 @@ export function createGoalsRouter(store: TaskStore): Router {
       const id = validateGoalId(req.params.id);
       const scopedStore = getScopedStore();
       const goalStore = getGoalStore(scopedStore);
-      if (!goalStore.getGoal(id)) {
+      if (!(await goalStore.getGoal(id))) {
         throw notFound(`Goal ${id} not found`);
       }
 
@@ -173,11 +177,11 @@ export function createGoalsRouter(store: TaskStore): Router {
 
   router.post(
     "/",
-    catchHandler((req, res) => {
+    catchHandler(async (req, res) => {
       try {
         const input = req.body as { title?: unknown; description?: unknown };
         const goalStore = getGoalStore(getScopedStore());
-        const goal = goalStore.createGoal({
+        const goal = await goalStore.createGoal({
           title: validateTitle(input.title),
           description: validateDescription(input.description),
         });
@@ -190,7 +194,7 @@ export function createGoalsRouter(store: TaskStore): Router {
 
   router.patch(
     "/:id",
-    catchHandler((req, res) => {
+    catchHandler(async (req, res) => {
       const id = validateGoalId(req.params.id);
       const input = req.body as { title?: unknown; description?: unknown };
       const updates: GoalUpdateInput = {};
@@ -205,38 +209,38 @@ export function createGoalsRouter(store: TaskStore): Router {
       }
 
       const goalStore = getGoalStore(getScopedStore());
-      if (!goalStore.getGoal(id)) {
+      if (!(await goalStore.getGoal(id))) {
         throw notFound(`Goal ${id} not found`);
       }
-      const updated = goalStore.updateGoal(id, updates);
+      const updated = await goalStore.updateGoal(id, updates);
       res.json(updated);
     }),
   );
 
   router.post(
     "/:id/archive",
-    catchHandler((req, res) => {
+    catchHandler(async (req, res) => {
       const id = validateGoalId(req.params.id);
       const goalStore = getGoalStore(getScopedStore());
-      if (!goalStore.getGoal(id)) {
+      if (!(await goalStore.getGoal(id))) {
         throw notFound(`Goal ${id} not found`);
       }
-      const archived = goalStore.archiveGoal(id);
+      const archived = await goalStore.archiveGoal(id);
       res.json(archived);
     }),
   );
 
   router.post(
     "/:id/unarchive",
-    catchHandler((req, res) => {
+    catchHandler(async (req, res) => {
       const id = validateGoalId(req.params.id);
       const goalStore = getGoalStore(getScopedStore());
-      if (!goalStore.getGoal(id)) {
+      if (!(await goalStore.getGoal(id))) {
         throw notFound(`Goal ${id} not found`);
       }
 
       try {
-        const unarchived = goalStore.unarchiveGoal(id);
+        const unarchived = await goalStore.unarchiveGoal(id);
         res.json(unarchived);
       } catch (error) {
         rethrowGoalCapError(error);

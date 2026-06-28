@@ -25,6 +25,7 @@ import {resolveDefaultOnOptionalGroupIds} from "../workflow-optional-steps.js";
 import {isBuiltinWorkflowId} from "../builtin-workflows.js";
 import {toJson} from "../db.js";
 import {GoalStore} from "../goal-store.js";
+import {AsyncGoalStore} from "../async-goal-store.js";
 import {normalizeTaskCommitAssociation} from "../task-lineage.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -673,9 +674,23 @@ export async function getTaskMovedCountsByDayImpl(store: TaskStore, options: { s
     return countsByDay;
   }
 
-export function getGoalStoreImpl(store: TaskStore): GoalStore {
+export function getGoalStoreImpl(store: TaskStore): GoalStore | AsyncGoalStore {
     if (!store.goalStore) {
-      store.goalStore = new GoalStore(store.fusionDir, store.db);
+      // FNXC:GoalStore 2026-06-27-18:05:
+      // PG backend mode returns the AsyncDataLayer-backed AsyncGoalStore (goal CRUD
+      // + ACTIVE_GOAL_LIMIT enforcement over project.goals). The sync SQLite
+      // GoalStore (store.db) is used only in legacy SQLite mode. Both expose the
+      // same method names; the dashboard goals routes, mission goal-resolution
+      // helpers, and CLI/agent goal tools await the result so either backend works.
+      if (store.backendMode) {
+        const layer = store.getAsyncLayer();
+        if (!layer) {
+          throw new Error("GoalStore is not available: AsyncDataLayer not initialized in backend mode");
+        }
+        store.goalStore = new AsyncGoalStore(layer);
+      } else {
+        store.goalStore = new GoalStore(store.fusionDir, store.db);
+      }
     }
     return store.goalStore;
   }

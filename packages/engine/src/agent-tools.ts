@@ -2637,8 +2637,8 @@ export function createGoalListTool(
     execute: async (_id: string, params: Static<typeof goalListParams>, _signal, _onUpdate, ctx) => {
       const goalStore = store.getGoalStore();
       const status = params.status ?? "active";
-      const goals = status === "all" ? goalStore.listGoals() : goalStore.listGoals({ status });
-      const activeCount = goalStore.listGoals({ status: "active" }).length;
+      const goals = status === "all" ? await goalStore.listGoals() : await goalStore.listGoals({ status });
+      const activeCount = (await goalStore.listGoals({ status: "active" })).length;
       const softWarning = activeCount >= GOAL_LIST_SOFT_WARNING_THRESHOLD;
       const goalEntries = goals.map(buildGoalListDetailsEntry);
 
@@ -2690,7 +2690,7 @@ export function createGoalShowTool(
     parameters: goalShowParams,
     execute: async (_id: string, params: Static<typeof goalShowParams>, _signal, _onUpdate, ctx) => {
       const goalStore = store.getGoalStore();
-      const goal = goalStore.getGoal(params.id);
+      const goal = await goalStore.getGoal(params.id);
       const auditContext = resolveGoalAuditContext(ctx, options?.runContext, options?.taskId);
 
       if (!goal) {

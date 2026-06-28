@@ -2776,8 +2776,8 @@ export default function kbExtension(pi: ExtensionAPI) {
       const store = await getStore(ctx.cwd);
       const goalStore = store.getGoalStore();
       const status = params.status ?? "active";
-      const goals = status === "all" ? goalStore.listGoals() : goalStore.listGoals({ status });
-      const activeCount = goalStore.listGoals({ status: "active" }).length;
+      const goals = status === "all" ? await goalStore.listGoals() : await goalStore.listGoals({ status });
+      const activeCount = (await goalStore.listGoals({ status: "active" })).length;
       const softWarning = activeCount >= GOAL_LIST_SOFT_WARNING_THRESHOLD;
       const goalEntries = goals.map(buildGoalListEntry);
 
@@ -2829,11 +2829,11 @@ export default function kbExtension(pi: ExtensionAPI) {
       const goalStore = store.getGoalStore();
 
       try {
-        const goal = goalStore.createGoal({
+        const goal = await goalStore.createGoal({
           title: params.title.trim(),
           description: params.description?.trim() || undefined,
         });
-        const activeCount = goalStore.listGoals({ status: "active" }).length;
+        const activeCount = (await goalStore.listGoals({ status: "active" })).length;
         const softWarning = activeCount >= 3;
 
         return {
@@ -2872,7 +2872,7 @@ export default function kbExtension(pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
       const goalStore = store.getGoalStore();
-      const goal = goalStore.getGoal(params.id);
+      const goal = await goalStore.getGoal(params.id);
 
       if (!goal) {
         return {
@@ -2889,7 +2889,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const archived = goalStore.archiveGoal(params.id);
+      const archived = await goalStore.archiveGoal(params.id);
       return {
         content: [{ type: "text", text: `Archived ${archived.id}: ${archived.title}` }],
         details: { goalId: archived.id, status: "archived" },
@@ -2919,7 +2919,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       };
       const store = await getStore(ctx.cwd);
       const goalStore = store.getGoalStore();
-      const goal = goalStore.getGoal(params.id);
+      const goal = await goalStore.getGoal(params.id);
 
       if (!goal) {
         emitGoalRetrievalAudit(store, fnCtx, {
@@ -3077,9 +3077,9 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const goals = (await missionStore.listGoalIdsForMission(params.missionId))
-        .map((goalId) => goalStore.getGoal(goalId))
-        .filter((goal): goal is NonNullable<typeof goal> => Boolean(goal));
+      const goals = (await Promise.all(
+        (await missionStore.listGoalIdsForMission(params.missionId)).map((goalId) => goalStore.getGoal(goalId)),
+      )).filter((goal): goal is NonNullable<typeof goal> => Boolean(goal));
 
       const lines = [`Linked goals for ${mission.id}: ${mission.title}`];
       if (goals.length === 0) {
@@ -3132,7 +3132,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const goal = goalStore.getGoal(params.goalId);
+      const goal = await goalStore.getGoal(params.goalId);
       if (!goal) {
         return {
           content: [{ type: "text", text: `Goal ${params.goalId} not found` }],
@@ -3149,9 +3149,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       await missionStore.linkGoal(params.missionId, params.goalId);
-      const goals = (await missionStore.listGoalIdsForMission(params.missionId))
-        .map((goalId) => goalStore.getGoal(goalId))
-        .filter((linkedGoal): linkedGoal is NonNullable<typeof linkedGoal> => Boolean(linkedGoal));
+      const goals = (await Promise.all(
+        (await missionStore.listGoalIdsForMission(params.missionId)).map((goalId) => goalStore.getGoal(goalId)),
+      )).filter((linkedGoal): linkedGoal is NonNullable<typeof linkedGoal> => Boolean(linkedGoal));
 
       return {
         content: [{ type: "text", text: `Linked ${goal.id}: ${goal.title} → ${mission.id}` }],
@@ -3195,7 +3195,7 @@ export default function kbExtension(pi: ExtensionAPI) {
         };
       }
 
-      const goal = goalStore.getGoal(params.goalId);
+      const goal = await goalStore.getGoal(params.goalId);
       if (!goal) {
         return {
           content: [{ type: "text", text: `Goal ${params.goalId} not found` }],
@@ -3205,9 +3205,9 @@ export default function kbExtension(pi: ExtensionAPI) {
       }
 
       await missionStore.unlinkGoal(params.missionId, params.goalId);
-      const goals = (await missionStore.listGoalIdsForMission(params.missionId))
-        .map((goalId) => goalStore.getGoal(goalId))
-        .filter((linkedGoal): linkedGoal is NonNullable<typeof linkedGoal> => Boolean(linkedGoal));
+      const goals = (await Promise.all(
+        (await missionStore.listGoalIdsForMission(params.missionId)).map((goalId) => goalStore.getGoal(goalId)),
+      )).filter((linkedGoal): linkedGoal is NonNullable<typeof linkedGoal> => Boolean(linkedGoal));
 
       return {
         content: [{ type: "text", text: `Unlinked ${goal.id}: ${goal.title} from ${mission.id}` }],
