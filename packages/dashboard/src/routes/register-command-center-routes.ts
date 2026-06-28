@@ -181,11 +181,10 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const groupBy = resolveGroupBy(req.query);
       const granularity = resolveTokenGranularity(req.query);
       const settings = await store.getGlobalSettingsStore().getSettings();
-      // FNXC:PostgresCutover 2026-06-27-09:40:
-      // These sync analytics functions are not yet ported to AsyncDataLayer.
-      // In backend mode, return 503 instead of letting store.getDatabase() throw.
-      if (store.backendMode) throw new ApiError(503, "Token analytics not yet available in PG backend mode");
-      const result = aggregateTokenAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Token analytics now runs on the AsyncDataLayer in backend mode; pass the
+      // async layer when present, otherwise the sync SQLite handle, and await.
+      const result = await aggregateTokenAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
         groupBy,
@@ -247,8 +246,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      if (store.backendMode) throw new ApiError(503, "Tool analytics not yet available in PG backend mode");
-      const result = aggregateToolAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Tool analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateToolAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
       });
@@ -294,8 +294,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      if (store.backendMode) throw new ApiError(503, "Productivity analytics not yet available in PG backend mode");
-      const result = aggregateProductivityAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Productivity analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateProductivityAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
       });
@@ -346,8 +347,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
       const settings = await store.getGlobalSettingsStore().getSettings();
-      if (store.backendMode) throw new ApiError(503, "Team analytics not yet available in PG backend mode");
-      const result = aggregateTeamAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+      // Team analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateTeamAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
         now: Date.now(),

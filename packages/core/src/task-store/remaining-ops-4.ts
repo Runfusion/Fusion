@@ -33,6 +33,7 @@ import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-contex
 import {upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync} from "../task-store/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async-audit.js";
+import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async-comments-attachments.js";
 import {recordGoalCitations as recordGoalCitationsAsync} from "../task-store/async-events.js";
 import type {TaskDocumentRow, GoalCitationRow, WorkflowWorkItemRow} from "../task-store/row-types.js";
 
@@ -496,6 +497,13 @@ export function rewriteBlockedByResidueDependentsForRemovalImpl(store: TaskStore
   }
 
 export async function getAllDocumentsImpl(store: TaskStore, options?: { searchQuery?: string; limit?: number; offset?: number; }): Promise<TaskDocumentWithTask[]> {
+    // FNXC:Documents 2026-06-27-12:15:
+    // PG backend mode: delegate to the AsyncDataLayer helper. The sync JOIN
+    // below dereferences store.db (no SQLite handle in backend mode) and 500'd
+    // the dashboard /api/documents list.
+    if (store.backendMode) {
+      return getAllDocumentsAsync(store.asyncLayer!.db, options);
+    }
     const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
     const offset = Math.max(0, options?.offset ?? 0);
 

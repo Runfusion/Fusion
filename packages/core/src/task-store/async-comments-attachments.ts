@@ -25,7 +25,7 @@
  *   on it). These helpers are the async target the migrating store and the
  *   PostgreSQL integration tests consume.
  */
-import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
@@ -33,8 +33,10 @@ import { ACTIVE_TASK_FILTER } from "./async-persistence.js";
 import type {
   Artifact,
   ArtifactCreateInput,
+  ArtifactWithTask,
   TaskDocument,
   TaskDocumentCreateInput,
+  TaskDocumentWithTask,
 } from "../types.js";
 import type {
   ArtifactRow,
@@ -409,13 +411,23 @@ export async function getArtifacts(
 
 /**
  * FNXC:TaskStoreCommentsAttachments 2026-06-24-10:00:
+ * FNXC:Artifacts 2026-06-27-12:00:
  * Cross-agent registry query: filter artifacts across tasks, authors, and
- * media types. A LEFT JOIN to `tasks` keeps task-less registry artifacts
- * visible while excluding artifacts attached to soft-deleted or archived tasks.
- * This is the async equivalent of `listArtifacts`.
+ * media types. This is the async equivalent of the sync `listArtifactsImpl`
+ * (branch-group-ops.ts) and backs the dashboard `/api/artifacts` list in PG
+ * backend mode (previously the sync `store.db` path 500'd).
+ *
+ * A LEFT JOIN to `tasks` keeps task-less registry artifacts visible while
+ * excluding artifacts whose parent task is soft-deleted, and surfaces the
+ * parent task's title/description/column (the `ArtifactWithTask` shape). Parity
+ * with the sync query: it filters only on `deletedAt IS NULL` (mirroring
+ * `TaskStore.ACTIVE_TASKS_WHERE`), so artifacts on archived-but-not-deleted
+ * tasks remain visible — a LEFT JOIN miss leaves `deletedAt` NULL and is kept,
+ * matching the sync `a.taskId IS NULL OR t.deletedAt IS NULL`.
  *
  * The query is metadata-only (does not select `content`) so large inline
- * payloads are not loaded on list paths.
+ * payloads are not loaded on list paths. `search` matches title/description
+ * (case-insensitive ILIKE), mirroring the sync filter.
  */
 export async function listArtifacts(
   db: AsyncDataLayer["db"] | DbTransaction,
@@ -425,10 +437,12 @@ export async function listArtifacts(
     taskId?: string;
     limit?: number;
     offset?: number;
+    search?: string;
   },
-): Promise<Artifact[]> {
-  // Build the conditions. For task-scoped artifacts, exclude those whose parent
-  // is soft-deleted or archived (LEFT JOIN + filter).
+): Promise<ArtifactWithTask[]> {
+  const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
+  const offset = Math.max(0, options?.offset ?? 0);
+
   const conditions = [];
   if (options?.type) {
     conditions.push(eq(schema.project.artifacts.type, options.type));
@@ -439,23 +453,21 @@ export async function listArtifacts(
   if (options?.taskId) {
     conditions.push(eq(schema.project.artifacts.taskId, options.taskId));
   }
+  // Live-parent filter: task-less artifacts (LEFT JOIN miss => deletedAt NULL)
+  // and artifacts whose parent task is not soft-deleted are included.
+  conditions.push(isNull(schema.project.tasks.deletedAt));
+  if (options?.search && options.search.trim() !== "") {
+    const query = `%${options.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(schema.project.artifacts.title, query),
+        ilike(schema.project.artifacts.description, query),
+      )!,
+    );
+  }
 
-  // Exclude artifacts attached to soft-deleted/archived tasks. A task-less
-  // artifact (taskId IS NULL) is always included.
-  conditions.push(
-    or(
-      isNull(schema.project.artifacts.taskId),
-      sql`EXISTS (
-        SELECT 1 FROM ${schema.project.tasks}
-        WHERE ${schema.project.tasks.id} = ${schema.project.artifacts.taskId}
-          AND ${ACTIVE_TASK_FILTER}
-          AND ${schema.project.tasks.column} != 'archived'
-      )`,
-    ),
-  );
-
-  // Select metadata-only (no content column) for list paths.
-  const query = db
+  // Select metadata-only (no content column) plus the joined task fields.
+  const rows = await db
     .select({
       id: schema.project.artifacts.id,
       type: schema.project.artifacts.type,
@@ -470,13 +482,93 @@ export async function listArtifacts(
       metadata: schema.project.artifacts.metadata,
       createdAt: schema.project.artifacts.createdAt,
       updatedAt: schema.project.artifacts.updatedAt,
+      taskTitle: schema.project.tasks.title,
+      taskDescription: schema.project.tasks.description,
+      taskColumn: schema.project.tasks.column,
     })
     .from(schema.project.artifacts)
+    .leftJoin(
+      schema.project.tasks,
+      eq(schema.project.artifacts.taskId, schema.project.tasks.id),
+    )
     .where(and(...conditions))
-    .orderBy(desc(schema.project.artifacts.createdAt));
+    .orderBy(desc(schema.project.artifacts.createdAt))
+    .limit(limit)
+    .offset(offset);
 
-  const rows = options?.limit
-    ? await query.limit(options.limit).offset(options.offset ?? 0)
-    : await query;
-  return (rows as ArtifactRow[]).map((row) => rowToArtifact(row));
+  return rows.map((row) => {
+    const artifact = rowToArtifact(row as unknown as ArtifactRow);
+    return {
+      ...artifact,
+      ...(row.taskTitle != null ? { taskTitle: row.taskTitle } : {}),
+      ...(row.taskDescription != null ? { taskDescription: row.taskDescription } : {}),
+      ...(row.taskColumn != null ? { taskColumn: row.taskColumn } : {}),
+    };
+  });
+}
+
+/**
+ * FNXC:Documents 2026-06-27-12:05:
+ * Cross-task document registry query backing the dashboard `/api/documents`
+ * list in PG backend mode (previously the sync `store.db` JOIN 500'd). Async
+ * equivalent of the sync `getAllDocumentsImpl` (remaining-ops-4.ts): INNER JOIN
+ * `task_documents` to `tasks`, filtered to live (non-soft-deleted) parent tasks
+ * (`ACTIVE_TASK_FILTER` mirrors `TaskStore.ACTIVE_TASKS_WHERE`), newest-updated
+ * first, returning the `TaskDocumentWithTask` shape (doc + joined task
+ * title/description/column). `searchQuery` matches the document key/content or
+ * the task title (case-insensitive ILIKE), mirroring the sync filter.
+ */
+export async function getAllDocuments(
+  db: AsyncDataLayer["db"] | DbTransaction,
+  options?: { searchQuery?: string; limit?: number; offset?: number },
+): Promise<TaskDocumentWithTask[]> {
+  const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
+  const offset = Math.max(0, options?.offset ?? 0);
+
+  const conditions = [ACTIVE_TASK_FILTER];
+  if (options?.searchQuery && options.searchQuery.trim() !== "") {
+    const query = `%${options.searchQuery.trim()}%`;
+    conditions.push(
+      or(
+        ilike(schema.project.taskDocuments.key, query),
+        ilike(schema.project.taskDocuments.content, query),
+        ilike(schema.project.tasks.title, query),
+      )!,
+    );
+  }
+
+  const rows = await db
+    .select({
+      id: schema.project.taskDocuments.id,
+      taskId: schema.project.taskDocuments.taskId,
+      key: schema.project.taskDocuments.key,
+      content: schema.project.taskDocuments.content,
+      revision: schema.project.taskDocuments.revision,
+      author: schema.project.taskDocuments.author,
+      metadata: schema.project.taskDocuments.metadata,
+      createdAt: schema.project.taskDocuments.createdAt,
+      updatedAt: schema.project.taskDocuments.updatedAt,
+      taskTitle: schema.project.tasks.title,
+      taskDescription: schema.project.tasks.description,
+      taskColumn: schema.project.tasks.column,
+    })
+    .from(schema.project.taskDocuments)
+    .innerJoin(
+      schema.project.tasks,
+      eq(schema.project.taskDocuments.taskId, schema.project.tasks.id),
+    )
+    .where(and(...conditions))
+    .orderBy(desc(schema.project.taskDocuments.updatedAt))
+    .limit(limit)
+    .offset(offset);
+
+  return rows.map((row) => {
+    const doc = rowToTaskDocument(row as unknown as TaskDocumentRow);
+    return {
+      ...doc,
+      ...(row.taskTitle != null ? { taskTitle: row.taskTitle } : {}),
+      taskDescription: row.taskDescription,
+      taskColumn: row.taskColumn,
+    };
+  });
 }

@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { costFor, type CostResult, type ModelPricingOverrides } from "./model-pricing.js";
 import type { TokenTotals } from "./token-analytics.js";
 
@@ -188,32 +190,23 @@ function makeSummary(agentId: string, agent?: AgentRow): TeamAgentSummary {
  * FNXC:CommandCenter 2026-06-18-16:57:
  * Team analytics derives per-agent tokens/cost, files changed, and tasks completed from the tasks+agents tables only; no new schema, no GitHub-issue data (that is FN-6653). Keep the aggregator pure/read-only and project-scoped by accepting the already-scoped Database handle from the HTTP layer.
  */
-export function aggregateTeamAnalytics(
-  db: Database,
+export async function aggregateTeamAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: TeamAnalyticsQuery = {},
-): TeamAnalytics {
-  const summaries = new Map<string, TeamAgentSummary>();
-  const costAccumulators = new Map<string, CostAccumulator>();
-  const totalTokens = emptyTokenTotals();
-  const totalCost = emptyCostAccumulator();
-  const pricingOverrides = query.pricingOverrides;
+): Promise<TeamAnalytics> {
+  // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+  // Backend (PostgreSQL) path. Fetch agents + the four task-derived row sets
+  // from schema-qualified project.* tables (snake_case columns; the async
+  // connection has no `project` on search_path), then run the identical pure
+  // per-agent aggregation as the sync branch via buildTeamAnalytics.
+  if ("ping" in dbOrLayer) {
+    return aggregateTeamAnalyticsAsync(dbOrLayer, query);
+  }
+  const db = dbOrLayer as Database;
 
   const agents = db
     .prepare(`SELECT id, name, role, state FROM agents ORDER BY id`)
     .all() as AgentRow[];
-  for (const agent of agents) {
-    summaries.set(agent.id, makeSummary(agent.id, agent));
-    costAccumulators.set(agent.id, emptyCostAccumulator());
-  }
-
-  const ensureSummary = (agentId: string): TeamAgentSummary => {
-    const existing = summaries.get(agentId);
-    if (existing) return existing;
-    const created = makeSummary(agentId);
-    summaries.set(agentId, created);
-    costAccumulators.set(agentId, emptyCostAccumulator());
-    return created;
-  };
 
   const tokenClauses = ["assignedAgentId IS NOT NULL", "tokenUsageLastUsedAt IS NOT NULL"];
   const tokenParams: string[] = [];
@@ -234,16 +227,6 @@ export function aggregateTeamAnalytics(
     )
     .all(...tokenParams) as TaskTokenRow[];
 
-  for (const row of tokenRows) {
-    const summary = ensureSummary(row.agentId);
-    const agentCost = costAccumulators.get(row.agentId) ?? emptyCostAccumulator();
-    costAccumulators.set(row.agentId, agentCost);
-    addTokenRow(summary.tokens, row);
-    addTokenRow(totalTokens, row);
-    addRowCost(agentCost, row, query.now, pricingOverrides);
-    addRowCost(totalCost, row, query.now, pricingOverrides);
-  }
-
   const completedClauses = ["assignedAgentId IS NOT NULL", `"column" = 'done'`, "columnMovedAt IS NOT NULL"];
   const completedParams: string[] = [];
   addRangeClauses("columnMovedAt", completedClauses, completedParams, query);
@@ -255,9 +238,6 @@ export function aggregateTeamAnalytics(
        GROUP BY assignedAgentId`,
     )
     .all(...completedParams) as CountByAgentRow[];
-  for (const row of completedRows) {
-    ensureSummary(row.agentId).tasksCompleted = row.count;
-  }
 
   const currentRows = db
     .prepare(
@@ -267,11 +247,6 @@ export function aggregateTeamAnalytics(
        GROUP BY assignedAgentId, "column"`,
     )
     .all() as Array<CountByAgentRow & { columnName: string }>;
-  for (const row of currentRows) {
-    const summary = ensureSummary(row.agentId);
-    if (row.columnName === "in-progress") summary.tasksInProgress = row.count;
-    if (row.columnName === "in-review") summary.tasksInReview = row.count;
-  }
 
   const filesClauses = ["assignedAgentId IS NOT NULL", "modifiedFiles IS NOT NULL", "modifiedFiles NOT IN ('', '[]')"];
   const filesParams: string[] = [];
@@ -283,6 +258,138 @@ export function aggregateTeamAnalytics(
        WHERE ${filesClauses.join(" AND ")}`,
     )
     .all(...filesParams) as ModifiedFilesRow[];
+
+  return buildTeamAnalytics(agents, tokenRows, completedRows, currentRows, fileRows, query);
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+ * PostgreSQL fetch path for {@link aggregateTeamAnalytics}. Modified-files is
+ * jsonb (postgres-js returns it parsed), so countModifiedFiles receives a
+ * re-stringified value to keep the legacy JSON.parse path identical.
+ */
+async function aggregateTeamAnalyticsAsync(
+  layer: AsyncDataLayer,
+  query: TeamAnalyticsQuery,
+): Promise<TeamAnalytics> {
+  const agents = (await layer.db.execute(
+    sql`SELECT id, name, role, state FROM project.agents ORDER BY id`,
+  )) as unknown as AgentRow[];
+
+  const tokFrom = query.from !== undefined ? sql`AND token_usage_last_used_at >= ${query.from}` : sql``;
+  const tokTo = query.to !== undefined ? sql`AND token_usage_last_used_at <= ${query.to}` : sql``;
+  const tokenRowsRaw = (await layer.db.execute(
+    sql`SELECT
+          assigned_agent_id               AS "agentId",
+          token_usage_input_tokens        AS "inputTokens",
+          token_usage_output_tokens       AS "outputTokens",
+          token_usage_cached_tokens       AS "cachedTokens",
+          token_usage_cache_write_tokens  AS "cacheWriteTokens",
+          token_usage_total_tokens        AS "totalTokens",
+          model_provider                  AS "modelProvider",
+          model_id                        AS "modelId"
+        FROM project.tasks
+        WHERE assigned_agent_id IS NOT NULL AND token_usage_last_used_at IS NOT NULL ${tokFrom} ${tokTo}`,
+  )) as Array<Record<string, unknown>>;
+  const tokenRows: TaskTokenRow[] = tokenRowsRaw.map((r) => ({
+    agentId: String(r.agentId),
+    inputTokens: r.inputTokens == null ? null : Number(r.inputTokens),
+    outputTokens: r.outputTokens == null ? null : Number(r.outputTokens),
+    cachedTokens: r.cachedTokens == null ? null : Number(r.cachedTokens),
+    cacheWriteTokens: r.cacheWriteTokens == null ? null : Number(r.cacheWriteTokens),
+    totalTokens: r.totalTokens == null ? null : Number(r.totalTokens),
+    modelProvider: (r.modelProvider as string | null) ?? null,
+    modelId: (r.modelId as string | null) ?? null,
+  }));
+
+  const compFrom = query.from !== undefined ? sql`AND column_moved_at >= ${query.from}` : sql``;
+  const compTo = query.to !== undefined ? sql`AND column_moved_at <= ${query.to}` : sql``;
+  const completedRows = (await layer.db.execute(
+    sql`SELECT assigned_agent_id AS "agentId", count(*)::int AS count
+        FROM project.tasks
+        WHERE assigned_agent_id IS NOT NULL AND "column" = 'done' AND column_moved_at IS NOT NULL ${compFrom} ${compTo}
+        GROUP BY assigned_agent_id`,
+  )) as unknown as CountByAgentRow[];
+
+  const currentRows = (await layer.db.execute(
+    sql`SELECT assigned_agent_id AS "agentId", "column" AS "columnName", count(*)::int AS count
+        FROM project.tasks
+        WHERE assigned_agent_id IS NOT NULL AND "column" IN ('in-progress', 'in-review')
+        GROUP BY assigned_agent_id, "column"`,
+  )) as unknown as Array<CountByAgentRow & { columnName: string }>;
+
+  const filesFrom = query.from !== undefined ? sql`AND updated_at >= ${query.from}` : sql``;
+  const filesTo = query.to !== undefined ? sql`AND updated_at <= ${query.to}` : sql``;
+  const fileRowsRaw = (await layer.db.execute(
+    sql`SELECT assigned_agent_id AS "agentId", modified_files AS "modifiedFiles"
+        FROM project.tasks
+        WHERE assigned_agent_id IS NOT NULL
+          AND modified_files IS NOT NULL
+          AND jsonb_typeof(modified_files) = 'array'
+          AND jsonb_array_length(modified_files) > 0
+          ${filesFrom} ${filesTo}`,
+  )) as Array<{ agentId: string; modifiedFiles: unknown }>;
+  const fileRows: ModifiedFilesRow[] = fileRowsRaw.map((r) => ({
+    agentId: String(r.agentId),
+    modifiedFiles: r.modifiedFiles == null ? null : JSON.stringify(r.modifiedFiles),
+  }));
+
+  return buildTeamAnalytics(agents, tokenRows, completedRows, currentRows, fileRows, query);
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+ * Pure per-agent aggregation shared by the sync (SQLite) and async (PostgreSQL)
+ * paths of {@link aggregateTeamAnalytics}. No I/O — takes already-fetched rows.
+ */
+function buildTeamAnalytics(
+  agents: AgentRow[],
+  tokenRows: TaskTokenRow[],
+  completedRows: CountByAgentRow[],
+  currentRows: Array<CountByAgentRow & { columnName: string }>,
+  fileRows: ModifiedFilesRow[],
+  query: TeamAnalyticsQuery,
+): TeamAnalytics {
+  const summaries = new Map<string, TeamAgentSummary>();
+  const costAccumulators = new Map<string, CostAccumulator>();
+  const totalTokens = emptyTokenTotals();
+  const totalCost = emptyCostAccumulator();
+  const pricingOverrides = query.pricingOverrides;
+
+  for (const agent of agents) {
+    summaries.set(agent.id, makeSummary(agent.id, agent));
+    costAccumulators.set(agent.id, emptyCostAccumulator());
+  }
+
+  const ensureSummary = (agentId: string): TeamAgentSummary => {
+    const existing = summaries.get(agentId);
+    if (existing) return existing;
+    const created = makeSummary(agentId);
+    summaries.set(agentId, created);
+    costAccumulators.set(agentId, emptyCostAccumulator());
+    return created;
+  };
+
+  for (const row of tokenRows) {
+    const summary = ensureSummary(row.agentId);
+    const agentCost = costAccumulators.get(row.agentId) ?? emptyCostAccumulator();
+    costAccumulators.set(row.agentId, agentCost);
+    addTokenRow(summary.tokens, row);
+    addTokenRow(totalTokens, row);
+    addRowCost(agentCost, row, query.now, pricingOverrides);
+    addRowCost(totalCost, row, query.now, pricingOverrides);
+  }
+
+  for (const row of completedRows) {
+    ensureSummary(row.agentId).tasksCompleted = row.count;
+  }
+
+  for (const row of currentRows) {
+    const summary = ensureSummary(row.agentId);
+    if (row.columnName === "in-progress") summary.tasksInProgress = row.count;
+    if (row.columnName === "in-review") summary.tasksInReview = row.count;
+  }
+
   for (const row of fileRows) {
     ensureSummary(row.agentId).filesChanged += countModifiedFiles(row.modifiedFiles);
   }

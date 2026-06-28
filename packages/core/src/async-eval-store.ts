@@ -19,16 +19,34 @@
  *   consume.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
 import * as schema from "./postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "./postgres/data-layer.js";
+import { EvalLifecycleError } from "./eval-store.js";
 import type {
   EvalRun,
+  EvalRunCreateInput,
   EvalRunListOptions,
   EvalRunStatus,
   EvalTaskResult,
+  EvalTaskResultCreateInput,
   EvalTaskResultListOptions,
   EvalRunEvent,
 } from "./eval-types.js";
+
+const ACTIVE_EVAL_RUN_STATUSES: ReadonlySet<EvalRunStatus> = new Set<EvalRunStatus>(["pending", "running"]);
+
+function generateRunId(): string {
+  return `ER-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+}
+
+function generateResultId(): string {
+  return `ETR-${randomUUID()}`;
+}
+
+function generateEventId(): string {
+  return `ERE-${randomUUID()}`;
+}
 
 /** A query-capable handle: either the top-level db or a transaction handle. */
 type QueryHandle = AsyncDataLayer["db"] | DbTransaction;
@@ -355,4 +373,123 @@ export async function listEvalRunEvents(handle: QueryHandle, runId: string): Pro
     .where(eq(schema.project.evalRunEvents.runId, runId))
     .orderBy(asc(schema.project.evalRunEvents.seq), asc(schema.project.evalRunEvents.id));
   return rows.map(rowToEvent);
+}
+
+/**
+ * FNXC:EvalStore 2026-06-27-12:25:
+ * PostgreSQL-backed EvalStore — the AsyncDataLayer counterpart of the sync
+ * SQLite `EvalStore` (eval-store.ts). It exposes the SAME public method names
+ * the dashboard evals routes (/api/evals) call (`listRuns`, `getTaskResult`,
+ * `listTaskResults`) plus the create/append helpers, so `getEvalStoreImpl`
+ * returns this in backend mode instead of constructing the sync store (which
+ * dereferences the absent SQLite handle and 500'd `/api/evals`). Id generation
+ * mirrors the sync store's `ER-`/`ETR-`/`ERE-` formats and the create paths
+ * preserve the active-run-conflict guard (EvalLifecycleError) for schedule/
+ * task_completion triggers.
+ *
+ * Known gap vs the sync store: the sync EvalStore is an EventEmitter that emits
+ * run:created/result:created/run:event for live SSE refresh and exposes
+ * updateRun/updateTaskResult/deleteRun. This wrapper performs the read +
+ * create/append surface the dashboard and integration tests exercise; mutating
+ * lifecycle transitions remain on the sync engine path (instanceof-guarded).
+ */
+export class AsyncEvalStore {
+  constructor(private readonly layer: AsyncDataLayer) {}
+
+  async getRun(id: string): Promise<EvalRun | undefined> {
+    return getEvalRun(this.layer.db, id);
+  }
+
+  async listRuns(options: EvalRunListOptions = {}): Promise<EvalRun[]> {
+    return listEvalRuns(this.layer.db, options);
+  }
+
+  async createRun(input: EvalRunCreateInput): Promise<EvalRun> {
+    const trigger = input.trigger ?? "manual";
+    if ((trigger === "schedule" || trigger === "task_completion") && (await this.hasActiveRun(input.projectId, trigger))) {
+      throw new EvalLifecycleError(
+        `Active eval run already exists for project ${input.projectId} trigger ${trigger}`,
+        "active_run_conflict",
+      );
+    }
+    const now = new Date().toISOString();
+    const requestedTaskIds = input.requestedTaskIds ?? [];
+    const run = await createEvalRun(this.layer.db, {
+      id: generateRunId(),
+      projectId: input.projectId,
+      trigger,
+      scope: input.scope,
+      window: (input.window ?? {}) as Record<string, unknown>,
+      requestedTaskIds,
+      counts: { totalTasks: requestedTaskIds.length, scoredTasks: 0, skippedTasks: 0, erroredTasks: 0 },
+      provenance: input.provenance as Record<string, unknown> | undefined,
+      metadata: input.metadata,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return run;
+  }
+
+  async getTaskResult(id: string): Promise<EvalTaskResult | undefined> {
+    return getEvalTaskResult(this.layer.db, id);
+  }
+
+  async listTaskResults(options: EvalTaskResultListOptions = {}): Promise<EvalTaskResult[]> {
+    return listEvalTaskResults(this.layer.db, options);
+  }
+
+  async createTaskResult(runId: string, input: EvalTaskResultCreateInput): Promise<EvalTaskResult> {
+    const run = await this.getRun(runId);
+    if (!run) throw new Error(`Eval run not found: ${runId}`);
+    const now = new Date().toISOString();
+    const result: EvalTaskResult = {
+      id: generateResultId(),
+      runId,
+      taskId: input.taskId,
+      taskSnapshot: input.taskSnapshot,
+      status: input.status,
+      overallScore: input.overallScore,
+      maxScore: input.maxScore,
+      categoryScores: input.categoryScores ?? [],
+      rationale: input.rationale,
+      summary: input.summary,
+      evidence: input.evidence ?? [],
+      evidenceBundle: input.evidenceBundle,
+      deterministicSignals: input.deterministicSignals ?? [],
+      aiSignals: input.aiSignals,
+      followUps: input.followUps ?? [],
+      provenance: input.provenance,
+      metadata: input.metadata,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await upsertEvalTaskResult(this.layer.db, result);
+    return (await getEvalTaskResultByRunTask(this.layer.db, runId, input.taskId)) ?? result;
+  }
+
+  async appendRunEvent(
+    runId: string,
+    event: Omit<EvalRunEvent, "id" | "runId" | "seq" | "createdAt">,
+  ): Promise<EvalRunEvent> {
+    const run = await this.getRun(runId);
+    if (!run) throw new Error(`Eval run not found: ${runId}`);
+    return appendEvalRunEvent(this.layer, {
+      id: generateEventId(),
+      runId,
+      type: event.type,
+      message: event.message,
+      status: event.status,
+      taskId: event.taskId,
+      metadata: event.metadata,
+    });
+  }
+
+  async listRunEvents(runId: string): Promise<EvalRunEvent[]> {
+    return listEvalRunEvents(this.layer.db, runId);
+  }
+
+  private async hasActiveRun(projectId: string, trigger: string): Promise<boolean> {
+    const runs = await listEvalRuns(this.layer.db, { projectId, trigger: trigger as EvalRun["trigger"] });
+    return runs.some((run) => ACTIVE_EVAL_RUN_STATUSES.has(run.status));
+  }
 }

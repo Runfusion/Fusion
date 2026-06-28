@@ -26,6 +26,7 @@ import {toJsonNullable} from "../db.js";
 import type {AsyncDataLayer, DbTransaction} from "../postgres/data-layer.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
 import {EvalStore} from "../eval-store.js";
+import {AsyncEvalStore} from "../async-eval-store.js";
 import {BackwardCompat, ProjectRequiredError} from "../migration.js";
 import {CentralCore} from "../central-core.js";
 import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
@@ -1023,9 +1024,21 @@ export async function recordActivityImpl(store: TaskStore, entry: Omit<ActivityL
     return fullEntry;
   }
 
-export function getEvalStoreImpl(store: TaskStore): EvalStore {
+export function getEvalStoreImpl(store: TaskStore): EvalStore | AsyncEvalStore {
     if (!store.evalStore) {
-      store.evalStore = new EvalStore(store.db);
+      // FNXC:EvalStore 2026-06-27-12:30:
+      // PG backend mode returns the AsyncDataLayer-backed AsyncEvalStore. The
+      // sync EvalStore(store.db) dereferences the absent SQLite handle, which
+      // 500'd the dashboard /api/evals routes.
+      if (store.backendMode) {
+        const layer = store.getAsyncLayer();
+        if (!layer) {
+          throw new Error("EvalStore is not available: AsyncDataLayer not initialized in backend mode");
+        }
+        store.evalStore = new AsyncEvalStore(layer);
+      } else {
+        store.evalStore = new EvalStore(store.db);
+      }
     }
     return store.evalStore;
   }

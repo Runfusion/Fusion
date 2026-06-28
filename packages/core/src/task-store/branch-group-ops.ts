@@ -15,6 +15,7 @@ import {isNearDuplicateCanonicalInactive} from "../near-duplicate-canonical.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import type {ArtifactRow} from "../task-store/row-types.js";
+import {listArtifacts as listArtifactsAsync} from "./async-comments-attachments.js";
 
 export function saveWorkflowRunBranchImpl(store: TaskStore, state: { taskId: string; runId: string; branchId: string; currentNodeId: string; status: string; }): void {
     try {
@@ -268,6 +269,13 @@ export function clearLinkedAgentTaskIdsImpl(store: TaskStore, taskId: string, up
   }
 
 export async function listArtifactsImpl(store: TaskStore, options?: { type?: ArtifactType; authorId?: string; taskId?: string; limit?: number; offset?: number; search?: string; }): Promise<ArtifactWithTask[]> {
+    // FNXC:Artifacts 2026-06-27-12:10:
+    // PG backend mode: delegate to the AsyncDataLayer helper. The sync path
+    // below dereferences store.db (no SQLite handle in backend mode) and 500'd
+    // the dashboard /api/artifacts list.
+    if (store.backendMode) {
+      return listArtifactsAsync(store.asyncLayer!.db, options);
+    }
     const limit = Math.min(Math.max(1, options?.limit ?? 200), 1000);
     const offset = Math.max(0, options?.offset ?? 0);
 

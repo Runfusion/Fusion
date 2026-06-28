@@ -245,7 +245,7 @@ export function startOtelExporter(deps: OtelExporterDeps): OtelExporterHandle {
     let body: string;
     try {
       const db = store.getDatabase();
-      const tokens = aggregateTokenAnalytics(db, { groupBy: "model", now: now() });
+      const tokens = await aggregateTokenAnalytics(db, { groupBy: "model", now: now() });
       const activity = await aggregateActivityAnalytics(db, {});
       const nowMs = now();
       const payload = mapAnalyticsToOtlp({

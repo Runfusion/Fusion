@@ -76,6 +76,7 @@ import { AsyncResearchStore } from "./async-research-store.js";
 import { GoalStore } from "./goal-store.js";
 import { AsyncGoalStore } from "./async-goal-store.js";
 import { EvalStore } from "./eval-store.js";
+import { AsyncEvalStore } from "./async-eval-store.js";
 import { CentralCore } from "./central-core.js";
 import { SecretsStore } from "./secrets-store.js";
 import { createLogger } from "./logger.js";
@@ -365,7 +366,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   public experimentSessionStore: ExperimentSessionStore | null = null;
   public todoStore: TodoStore | AsyncTodoStore | null = null;
   public goalStore: GoalStore | AsyncGoalStore | null = null;
-  public evalStore: EvalStore | null = null;
+  public evalStore: EvalStore | AsyncEvalStore | null = null;
   public secretsStore: SecretsStore | null = null;
   public secretsCentralCore: CentralCore | null = null;
   public distributedTaskIdAllocator: DistributedTaskIdAllocator | null = null;
@@ -2340,7 +2341,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
    getGoalStore(): GoalStore | AsyncGoalStore {
     return getGoalStoreImpl(this);
   }
-   getEvalStore(): EvalStore {
+   getEvalStore(): EvalStore | AsyncEvalStore {
     return getEvalStoreImpl(this);
   }
 

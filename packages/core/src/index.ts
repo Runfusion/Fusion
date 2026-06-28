@@ -1792,6 +1792,7 @@ export { isSandboxExperimentalEnabled } from "./sandbox-settings.js";
 export { TodoStore } from "./todo-store.js";
 export type { TodoStoreEvents } from "./todo-store.js";
 export { EvalLifecycleError, EvalStore } from "./eval-store.js";
+export { AsyncEvalStore } from "./async-eval-store.js";
 export { collectDeterministicSignals } from "./eval-signal-collector.js";
 export type { EvalRunContext } from "./eval-signal-collector.js";
 export type {
