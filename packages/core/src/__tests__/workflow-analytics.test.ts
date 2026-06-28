@@ -86,7 +86,7 @@ describe("workflow-analytics", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("groups selected and unselected tasks under resolved workflow names", () => {
+  it("groups selected and unselected tasks under resolved workflow names", async () => {
     insertWorkflow(db, "WF-custom", "Release workflow");
     insertTask(db, {
       id: "custom-tokens",
@@ -126,7 +126,7 @@ describe("workflow-analytics", () => {
       updatedAt: "2026-03-05T00:00:00.000Z",
     });
 
-    const result = aggregateWorkflowAnalytics(db, {
+    const result = await aggregateWorkflowAnalytics(db, {
       from: "2026-03-01T00:00:00.000Z",
       to: "2026-03-31T00:00:00.000Z",
       defaultWorkflowId: "builtin:coding",
@@ -169,7 +169,7 @@ describe("workflow-analytics", () => {
     expect(result.totals.tasksInReview).toBe(1);
   });
 
-  it("marks unpriced workflow costs unavailable instead of treating them as zero", () => {
+  it("marks unpriced workflow costs unavailable instead of treating them as zero", async () => {
     insertTask(db, {
       id: "unknown-model",
       workflowId: "builtin:quick-fix",
@@ -181,13 +181,13 @@ describe("workflow-analytics", () => {
       modelId: "unknown-model",
     });
 
-    const result = aggregateWorkflowAnalytics(db, {});
+    const result = await aggregateWorkflowAnalytics(db, {});
 
     expect(result.workflows[0].cost).toEqual({ usd: null, unavailable: true, stale: false });
     expect(result.totals.cost).toEqual({ usd: null, unavailable: true, stale: false });
   });
 
-  it("returns zeroed totals and an empty workflow array for an empty range", () => {
+  it("returns zeroed totals and an empty workflow array for an empty range", async () => {
     insertTask(db, {
       id: "outside",
       workflowId: "builtin:quick-fix",
@@ -213,7 +213,7 @@ describe("workflow-analytics", () => {
       updatedAt: "2026-02-28T23:59:59.999Z",
     });
 
-    const result = aggregateWorkflowAnalytics(db, {
+    const result = await aggregateWorkflowAnalytics(db, {
       from: "2026-03-01T00:00:00.000Z",
       to: "2026-03-31T00:00:00.000Z",
     });
@@ -236,7 +236,7 @@ describe("workflow-analytics", () => {
     expect(result.workflows).toEqual([]);
   });
 
-  it("uses inclusive upper and lower bounds for tokens, completions, and files", () => {
+  it("uses inclusive upper and lower bounds for tokens, completions, and files", async () => {
     insertTask(db, {
       id: "from-boundary",
       workflowId: "builtin:quick-fix",
@@ -291,7 +291,7 @@ describe("workflow-analytics", () => {
       updatedAt: "2026-03-31T00:00:00.001Z",
     });
 
-    const result = aggregateWorkflowAnalytics(db, {
+    const result = await aggregateWorkflowAnalytics(db, {
       from: "2026-03-01T00:00:00.000Z",
       to: "2026-03-31T00:00:00.000Z",
     });

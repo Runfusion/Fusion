@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
 import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
@@ -905,10 +906,20 @@ function signalsBreakdown(
  * FNXC:CommandCenterSignals 2026-06-25-23:35:
  * Connector resolution events must surface as a status breakdown, not only top-line open/resolved counts, so the UI and API can prove provider recovery signals changed incident state.
  */
-export function aggregateSignalsAnalytics(
-  db: Database,
+export async function aggregateSignalsAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ActivityAnalyticsQuery = {},
-): SignalsAnalytics {
+): Promise<SignalsAnalytics> {
+  // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+  // Backend (PostgreSQL) path. The async connection has no `project` on the
+  // search_path, so project.incidents is schema-qualified and columns are
+  // snake_case (opened_at, resolved_at, status, source, severity). Semantics
+  // (openedAt for total/open/breakdowns, resolvedAt for resolved/MTTR, unknown
+  // bucketing, MTTR sentinel) mirror the sync branch exactly.
+  if ("ping" in dbOrLayer) {
+    return aggregateSignalsAnalyticsAsync(dbOrLayer, query);
+  }
+  const db = dbOrLayer as Database;
   if (!tableExists(db, "incidents")) return emptySignalsAnalytics(query);
 
   const openedRange = rangeClauses("openedAt", query);
@@ -959,5 +970,70 @@ export function aggregateSignalsAnalytics(
       status: row.key,
       count: row.count,
     })),
+  };
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * PostgreSQL fetch path for {@link aggregateSignalsAnalytics}. project.incidents
+ * is schema-managed (always present), so no tableExists guard is needed — an
+ * empty project simply yields zero counts and the unavailable-MTTR sentinel.
+ * Breakdowns bucket NULL/blank source/severity/status as `unknown`, matching
+ * the sync `COALESCE(NULLIF(TRIM(col), ''), 'unknown')` shape.
+ */
+async function aggregateSignalsAnalyticsAsync(
+  layer: AsyncDataLayer,
+  query: ActivityAnalyticsQuery,
+): Promise<SignalsAnalytics> {
+  const openedFrom = query.from !== undefined ? sql`AND opened_at >= ${query.from}` : sql``;
+  const openedTo = query.to !== undefined ? sql`AND opened_at <= ${query.to}` : sql``;
+  const resolvedFrom = query.from !== undefined ? sql`AND resolved_at >= ${query.from}` : sql``;
+  const resolvedTo = query.to !== undefined ? sql`AND resolved_at <= ${query.to}` : sql``;
+
+  const totalRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`,
+  )) as Array<{ count: number }>;
+  const totalSignals = Number(totalRows[0]?.count ?? 0);
+
+  const openRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${openedFrom} ${openedTo}`,
+  )) as Array<{ count: number }>;
+  const open = Number(openRows[0]?.count ?? 0);
+
+  const resolvedRows = (await layer.db.execute(
+    sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt"
+        FROM project.incidents
+        WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`,
+  )) as Array<{ openedAt: string; resolvedAt: string }>;
+  const resolved = resolvedRows.length;
+
+  const breakdown = async (column: "source" | "severity" | "status"): Promise<Array<{ key: string; count: number }>> => {
+    const col = sql.raw(column);
+    const rows = (await layer.db.execute(
+      sql`SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'unknown') AS key, count(*)::int AS count
+          FROM project.incidents
+          WHERE 1=1 ${openedFrom} ${openedTo}
+          GROUP BY 1
+          ORDER BY count DESC, key ASC`,
+    )) as Array<{ key: string | null; count: number }>;
+    return rows.map((r) => ({ key: r.key ?? "unknown", count: Number(r.count) }));
+  };
+
+  const [bySource, bySeverity, byStatus] = await Promise.all([
+    breakdown("source"),
+    breakdown("severity"),
+    breakdown("status"),
+  ]);
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    totalSignals,
+    open,
+    resolved,
+    mttr: mttrFromResolvedRows(resolvedRows),
+    bySource: bySource.map((row) => ({ source: row.key, count: row.count })),
+    bySeverity: bySeverity.map((row) => ({ severity: row.key, count: row.count })),
+    byStatus: byStatus.map((row) => ({ status: row.key, count: row.count })),
   };
 }

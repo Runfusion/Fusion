@@ -126,7 +126,7 @@ export async function runResearchCreate(options: ResearchCreateOptions): Promise
     const store = await getStore(options.projectName);
     const { orchestrator, settings, resolved, availableProviderTypes } = await getResearchRuntime(store);
 
-    const runId = orchestrator.createRun({
+    const runId = await orchestrator.createRun({
       providers: availableProviderTypes
         .filter((type) => type !== "llm-synthesis")
         .map((type) => ({ type, config: { maxResults: resolved.limits.maxSourcesPerRun, timeoutMs: resolved.limits.requestTimeoutMs } })),
@@ -271,7 +271,7 @@ export async function runResearchCancel(runId: string, options: ResearchCommandO
     }
 
     const { orchestrator } = await getResearchRuntime(store);
-    const cancelled = orchestrator.cancelRun(runId);
+    const cancelled = await orchestrator.cancelRun(runId);
 
     if (options.json) {
       jsonOut({ cancelled, run });
@@ -299,7 +299,7 @@ export async function runResearchRetry(runId: string, options: ResearchCommandOp
     }
 
     const { orchestrator } = await getResearchRuntime(store);
-    const newRunId = orchestrator.retryRun(runId);
+    const newRunId = await orchestrator.retryRun(runId);
     const run = getSyncResearchStore(store).getRun(newRunId);
 
     if (options.json) {

@@ -372,7 +372,10 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
       const range = resolveRange(req.query);
       const settings = await store.getGlobalSettingsStore().getSettings();
       const defaultWorkflowId = (await store.getDefaultWorkflowId()) ?? "builtin:coding";
-      const result = aggregateWorkflowAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // Workflow analytics now runs on the AsyncDataLayer in backend mode; pass
+      // the async layer when present, otherwise the sync SQLite handle, and await.
+      const result = await aggregateWorkflowAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
         now: Date.now(),
@@ -398,8 +401,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      if (store.backendMode) throw new ApiError(503, "GitHub issue analytics not yet available in PG backend mode");
-      const result = aggregateGithubIssueAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // GitHub issue analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateGithubIssueAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
       });
@@ -442,8 +446,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
     try {
       const store = await getScopedStore(req);
       const range = resolveRange(req.query);
-      if (store.backendMode) throw new ApiError(503, "Signal analytics not yet available in PG backend mode");
-      const result = aggregateSignalsAnalytics(store.getDatabase(), {
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // Signal analytics now runs on the AsyncDataLayer in backend mode.
+      const result = await aggregateSignalsAnalytics(store.getAsyncLayer() ?? store.getDatabase(), {
         from: range.from,
         to: range.to,
       });
@@ -492,8 +497,9 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
   router.get("/command-center/live", async (req, res) => {
     try {
       const store = await getScopedStore(req);
-      if (store.backendMode) throw new ApiError(503, "Live snapshot not yet available in PG backend mode");
-      const result = composeLiveSnapshot(store.getDatabase());
+      // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+      // Live snapshot now runs on the AsyncDataLayer in backend mode.
+      const result = await composeLiveSnapshot(store.getAsyncLayer() ?? store.getDatabase());
       res.json(result);
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

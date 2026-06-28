@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { BUILTIN_WORKFLOWS, getBuiltinWorkflow, isBuiltinWorkflowId } from "./builtin-workflows.js";
 import { costFor, type CostResult, type ModelPricingOverrides } from "./model-pricing.js";
 import type { TokenTotals } from "./token-analytics.js";
@@ -172,7 +174,10 @@ function addRangeClauses(column: string, clauses: string[], params: string[], qu
   }
 }
 
-function resolveWorkflowName(db: Database, workflowId: string): { workflowName: string; isBuiltin: boolean } {
+/** Resolve a workflow's display name + builtin flag from a name lookup. */
+type WorkflowNameResolver = (workflowId: string) => { workflowName: string; isBuiltin: boolean };
+
+function resolveWorkflowNameSync(db: Database, workflowId: string): { workflowName: string; isBuiltin: boolean } {
   const builtin = getBuiltinWorkflow(workflowId) ?? BUILTIN_WORKFLOWS.find((workflow) => workflow.id === workflowId);
   if (builtin) return { workflowName: builtin.name, isBuiltin: true };
   const row = db.prepare("SELECT id, name FROM workflows WHERE id = ?").get(workflowId) as WorkflowNameRow | undefined;
@@ -182,26 +187,54 @@ function resolveWorkflowName(db: Database, workflowId: string): { workflowName: 
   };
 }
 
-function makeSummary(db: Database, workflowId: string): WorkflowSummary {
-  const resolved = resolveWorkflowName(db, workflowId);
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * Async (PostgreSQL) name resolver. Workflow names are prefetched once from
+ * project.workflows into a Map (the async connection cannot issue per-id sync
+ * prepared reads), so per-workflow name resolution is an in-memory lookup that
+ * mirrors resolveWorkflowNameSync's builtin-first / NULLIF-empty fallback.
+ */
+function resolveWorkflowNameFromMap(
+  names: Map<string, string>,
+  workflowId: string,
+): { workflowName: string; isBuiltin: boolean } {
+  const builtin = getBuiltinWorkflow(workflowId) ?? BUILTIN_WORKFLOWS.find((workflow) => workflow.id === workflowId);
+  if (builtin) return { workflowName: builtin.name, isBuiltin: true };
+  const name = names.get(workflowId);
+  return {
+    workflowName: name && name.length > 0 ? name : workflowId,
+    isBuiltin: isBuiltinWorkflowId(workflowId),
+  };
+}
+
+function makeSummary(resolveName: WorkflowNameResolver, workflowId: string): WorkflowSummary {
   return {
     workflowId,
-    ...resolved,
+    ...resolveName(workflowId),
     ...emptyMetricTotals(),
   };
 }
 
+/** Pre-fetched per-workflow row sets shared by the sync + async aggregation. */
+interface WorkflowAnalyticsRows {
+  tokenRows: TaskTokenRow[];
+  completedRows: CountByWorkflowRow[];
+  currentRows: Array<CountByWorkflowRow & { columnName: string }>;
+  fileRows: ModifiedFilesRow[];
+}
+
 /**
- * Aggregate store-derived per-workflow Command Center metrics over a date range.
- *
- * FNXC:CommandCenter 2026-06-27-12:00:
- * Per-workflow analytics derive from tasks ⨝ task_workflow_selection, with the project default workflow backfilling unselected tasks. The HTTP layer passes an already project-scoped Database handle, so this pure read-only aggregator adds observability for custom workflows without introducing schema or cross-project reads.
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * Pure per-workflow aggregation shared by the sync (SQLite) and async
+ * (PostgreSQL) fetch paths. No I/O — takes already-fetched row sets and a name
+ * resolver, so both backends produce byte-identical totals/sorting/cost
+ * semantics.
  */
-export function aggregateWorkflowAnalytics(
-  db: Database,
-  query: WorkflowAnalyticsQuery = {},
+function buildWorkflowAnalytics(
+  rows: WorkflowAnalyticsRows,
+  query: WorkflowAnalyticsQuery,
+  resolveName: WorkflowNameResolver,
 ): WorkflowAnalytics {
-  const defaultWorkflowId = query.defaultWorkflowId ?? "builtin:coding";
   const summaries = new Map<string, WorkflowSummary>();
   const costAccumulators = new Map<string, CostAccumulator>();
   const totalTokens = emptyTokenTotals();
@@ -211,35 +244,13 @@ export function aggregateWorkflowAnalytics(
   const ensureSummary = (workflowId: string): WorkflowSummary => {
     const existing = summaries.get(workflowId);
     if (existing) return existing;
-    const created = makeSummary(db, workflowId);
+    const created = makeSummary(resolveName, workflowId);
     summaries.set(workflowId, created);
     costAccumulators.set(workflowId, emptyCostAccumulator());
     return created;
   };
 
-  const workflowExpr = "COALESCE(NULLIF(s.workflowId, ''), ?)";
-
-  const tokenClauses = ["t.tokenUsageLastUsedAt IS NOT NULL"];
-  const tokenParams: string[] = [defaultWorkflowId];
-  addRangeClauses("t.tokenUsageLastUsedAt", tokenClauses, tokenParams, query);
-  const tokenRows = db
-    .prepare(
-      `SELECT
-         ${workflowExpr} AS workflowId,
-         t.tokenUsageInputTokens AS inputTokens,
-         t.tokenUsageOutputTokens AS outputTokens,
-         t.tokenUsageCachedTokens AS cachedTokens,
-         t.tokenUsageCacheWriteTokens AS cacheWriteTokens,
-         t.tokenUsageTotalTokens AS totalTokens,
-         t.modelProvider,
-         t.modelId
-       FROM tasks t
-       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
-       WHERE ${tokenClauses.join(" AND ")}`,
-    )
-    .all(...tokenParams) as TaskTokenRow[];
-
-  for (const row of tokenRows) {
+  for (const row of rows.tokenRows) {
     const summary = ensureSummary(row.workflowId);
     const workflowCost = costAccumulators.get(row.workflowId) ?? emptyCostAccumulator();
     costAccumulators.set(row.workflowId, workflowCost);
@@ -249,56 +260,17 @@ export function aggregateWorkflowAnalytics(
     addRowCost(totalCost, row, query.now, pricingOverrides);
   }
 
-  const completedClauses = [`t."column" = 'done'`, "t.columnMovedAt IS NOT NULL"];
-  const completedParams: string[] = [defaultWorkflowId];
-  addRangeClauses("t.columnMovedAt", completedClauses, completedParams, query);
-  const completedRows = db
-    .prepare(
-      `SELECT ${workflowExpr} AS workflowId, COUNT(*) AS count
-       FROM tasks t
-       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
-       WHERE ${completedClauses.join(" AND ")}
-       GROUP BY workflowId`,
-    )
-    .all(...completedParams) as CountByWorkflowRow[];
-  for (const row of completedRows) {
+  for (const row of rows.completedRows) {
     ensureSummary(row.workflowId).tasksCompleted = row.count;
   }
 
-  const currentClauses = [`t."column" IN ('in-progress', 'in-review')`];
-  const currentParams: string[] = [defaultWorkflowId];
-  /*
-   * FNXC:CommandCenter 2026-06-27-17:45:
-   * The Workflows tab describes all task counts as range-scoped analytics. Count active workflow tasks only when their current column transition (or updatedAt fallback for legacy rows) falls inside the selected range so stale in-progress/review tasks do not suppress the empty state for unrelated windows.
-   */
-  addRangeClauses("COALESCE(t.columnMovedAt, t.updatedAt)", currentClauses, currentParams, query);
-  const currentRows = db
-    .prepare(
-      `SELECT ${workflowExpr} AS workflowId, t."column" AS columnName, COUNT(*) AS count
-       FROM tasks t
-       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
-       WHERE ${currentClauses.join(" AND ")}
-       GROUP BY workflowId, t."column"`,
-    )
-    .all(...currentParams) as Array<CountByWorkflowRow & { columnName: string }>;
-  for (const row of currentRows) {
+  for (const row of rows.currentRows) {
     const summary = ensureSummary(row.workflowId);
     if (row.columnName === "in-progress") summary.tasksInProgress = row.count;
     if (row.columnName === "in-review") summary.tasksInReview = row.count;
   }
 
-  const filesClauses = ["t.modifiedFiles IS NOT NULL", "t.modifiedFiles NOT IN ('', '[]')"];
-  const filesParams: string[] = [defaultWorkflowId];
-  addRangeClauses("t.updatedAt", filesClauses, filesParams, query);
-  const fileRows = db
-    .prepare(
-      `SELECT ${workflowExpr} AS workflowId, t.modifiedFiles
-       FROM tasks t
-       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
-       WHERE ${filesClauses.join(" AND ")}`,
-    )
-    .all(...filesParams) as ModifiedFilesRow[];
-  for (const row of fileRows) {
+  for (const row of rows.fileRows) {
     ensureSummary(row.workflowId).filesChanged += countModifiedFiles(row.modifiedFiles);
   }
 
@@ -336,4 +308,201 @@ export function aggregateWorkflowAnalytics(
     },
     workflows: sortedWorkflows,
   };
+}
+
+/**
+ * Aggregate store-derived per-workflow Command Center metrics over a date range.
+ *
+ * FNXC:CommandCenter 2026-06-27-12:00:
+ * Per-workflow analytics derive from tasks ⨝ task_workflow_selection, with the project default workflow backfilling unselected tasks. The HTTP layer passes an already project-scoped Database handle, so this pure read-only aggregator adds observability for custom workflows without introducing schema or cross-project reads.
+ *
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * Now accepts a `Database | AsyncDataLayer` and is async. In backend (PostgreSQL)
+ * mode it branches on `"ping" in dbOrLayer` and runs schema-qualified `project.*`
+ * snake_case queries via the async layer; the sync SQLite branch is unchanged.
+ */
+export async function aggregateWorkflowAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
+  query: WorkflowAnalyticsQuery = {},
+): Promise<WorkflowAnalytics> {
+  const defaultWorkflowId = query.defaultWorkflowId ?? "builtin:coding";
+  if ("ping" in dbOrLayer) {
+    return aggregateWorkflowAnalyticsAsync(dbOrLayer, query, defaultWorkflowId);
+  }
+  const db = dbOrLayer as Database;
+
+  const workflowExpr = "COALESCE(NULLIF(s.workflowId, ''), ?)";
+
+  const tokenClauses = ["t.tokenUsageLastUsedAt IS NOT NULL"];
+  const tokenParams: string[] = [defaultWorkflowId];
+  addRangeClauses("t.tokenUsageLastUsedAt", tokenClauses, tokenParams, query);
+  const tokenRows = db
+    .prepare(
+      `SELECT
+         ${workflowExpr} AS workflowId,
+         t.tokenUsageInputTokens AS inputTokens,
+         t.tokenUsageOutputTokens AS outputTokens,
+         t.tokenUsageCachedTokens AS cachedTokens,
+         t.tokenUsageCacheWriteTokens AS cacheWriteTokens,
+         t.tokenUsageTotalTokens AS totalTokens,
+         t.modelProvider,
+         t.modelId
+       FROM tasks t
+       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
+       WHERE ${tokenClauses.join(" AND ")}`,
+    )
+    .all(...tokenParams) as TaskTokenRow[];
+
+  const completedClauses = [`t."column" = 'done'`, "t.columnMovedAt IS NOT NULL"];
+  const completedParams: string[] = [defaultWorkflowId];
+  addRangeClauses("t.columnMovedAt", completedClauses, completedParams, query);
+  const completedRows = db
+    .prepare(
+      `SELECT ${workflowExpr} AS workflowId, COUNT(*) AS count
+       FROM tasks t
+       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
+       WHERE ${completedClauses.join(" AND ")}
+       GROUP BY workflowId`,
+    )
+    .all(...completedParams) as CountByWorkflowRow[];
+
+  const currentClauses = [`t."column" IN ('in-progress', 'in-review')`];
+  const currentParams: string[] = [defaultWorkflowId];
+  /*
+   * FNXC:CommandCenter 2026-06-27-17:45:
+   * The Workflows tab describes all task counts as range-scoped analytics. Count active workflow tasks only when their current column transition (or updatedAt fallback for legacy rows) falls inside the selected range so stale in-progress/review tasks do not suppress the empty state for unrelated windows.
+   */
+  addRangeClauses("COALESCE(t.columnMovedAt, t.updatedAt)", currentClauses, currentParams, query);
+  const currentRows = db
+    .prepare(
+      `SELECT ${workflowExpr} AS workflowId, t."column" AS columnName, COUNT(*) AS count
+       FROM tasks t
+       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
+       WHERE ${currentClauses.join(" AND ")}
+       GROUP BY workflowId, t."column"`,
+    )
+    .all(...currentParams) as Array<CountByWorkflowRow & { columnName: string }>;
+
+  const filesClauses = ["t.modifiedFiles IS NOT NULL", "t.modifiedFiles NOT IN ('', '[]')"];
+  const filesParams: string[] = [defaultWorkflowId];
+  addRangeClauses("t.updatedAt", filesClauses, filesParams, query);
+  const fileRows = db
+    .prepare(
+      `SELECT ${workflowExpr} AS workflowId, t.modifiedFiles
+       FROM tasks t
+       LEFT JOIN task_workflow_selection s ON s.taskId = t.id
+       WHERE ${filesClauses.join(" AND ")}`,
+    )
+    .all(...filesParams) as ModifiedFilesRow[];
+
+  return buildWorkflowAnalytics(
+    { tokenRows, completedRows, currentRows, fileRows },
+    query,
+    (workflowId) => resolveWorkflowNameSync(db, workflowId),
+  );
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * PostgreSQL fetch path for {@link aggregateWorkflowAnalytics}. Every table is
+ * schema-qualified (`project.*`) with snake_case columns because the async
+ * connection has no `project` on the search_path. The `COALESCE(NULLIF(...))`
+ * default-workflow backfill, range columns, GROUP BY shape, and integer
+ * coercion mirror the sync branch exactly. `modified_files` is jsonb (postgres-js
+ * returns it parsed) so it is re-stringified to feed the shared
+ * countModifiedFiles helper unchanged.
+ */
+async function aggregateWorkflowAnalyticsAsync(
+  layer: AsyncDataLayer,
+  query: WorkflowAnalyticsQuery,
+  defaultWorkflowId: string,
+): Promise<WorkflowAnalytics> {
+  const wfExpr = sql`COALESCE(NULLIF(s.workflow_id, ''), ${defaultWorkflowId})`;
+
+  const tokFrom = query.from !== undefined ? sql`AND t.token_usage_last_used_at >= ${query.from}` : sql``;
+  const tokTo = query.to !== undefined ? sql`AND t.token_usage_last_used_at <= ${query.to}` : sql``;
+  const tokenRowsRaw = (await layer.db.execute(
+    sql`SELECT
+          ${wfExpr}                            AS "workflowId",
+          t.token_usage_input_tokens           AS "inputTokens",
+          t.token_usage_output_tokens          AS "outputTokens",
+          t.token_usage_cached_tokens          AS "cachedTokens",
+          t.token_usage_cache_write_tokens     AS "cacheWriteTokens",
+          t.token_usage_total_tokens           AS "totalTokens",
+          t.model_provider                     AS "modelProvider",
+          t.model_id                           AS "modelId"
+        FROM project.tasks t
+        LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
+        WHERE t.token_usage_last_used_at IS NOT NULL ${tokFrom} ${tokTo}`,
+  )) as Array<Record<string, unknown>>;
+  const tokenRows: TaskTokenRow[] = tokenRowsRaw.map((r) => ({
+    workflowId: String(r.workflowId),
+    inputTokens: r.inputTokens == null ? null : Number(r.inputTokens),
+    outputTokens: r.outputTokens == null ? null : Number(r.outputTokens),
+    cachedTokens: r.cachedTokens == null ? null : Number(r.cachedTokens),
+    cacheWriteTokens: r.cacheWriteTokens == null ? null : Number(r.cacheWriteTokens),
+    totalTokens: r.totalTokens == null ? null : Number(r.totalTokens),
+    modelProvider: (r.modelProvider as string | null) ?? null,
+    modelId: (r.modelId as string | null) ?? null,
+  }));
+
+  const compFrom = query.from !== undefined ? sql`AND t.column_moved_at >= ${query.from}` : sql``;
+  const compTo = query.to !== undefined ? sql`AND t.column_moved_at <= ${query.to}` : sql``;
+  const completedRowsRaw = (await layer.db.execute(
+    sql`SELECT ${wfExpr} AS "workflowId", count(*)::int AS count
+        FROM project.tasks t
+        LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
+        WHERE t."column" = 'done' AND t.column_moved_at IS NOT NULL ${compFrom} ${compTo}
+        GROUP BY 1`,
+  )) as Array<{ workflowId: string; count: number }>;
+  const completedRows: CountByWorkflowRow[] = completedRowsRaw.map((r) => ({
+    workflowId: String(r.workflowId),
+    count: Number(r.count),
+  }));
+
+  const curFrom = query.from !== undefined ? sql`AND COALESCE(t.column_moved_at, t.updated_at) >= ${query.from}` : sql``;
+  const curTo = query.to !== undefined ? sql`AND COALESCE(t.column_moved_at, t.updated_at) <= ${query.to}` : sql``;
+  const currentRowsRaw = (await layer.db.execute(
+    sql`SELECT ${wfExpr} AS "workflowId", t."column" AS "columnName", count(*)::int AS count
+        FROM project.tasks t
+        LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
+        WHERE t."column" IN ('in-progress', 'in-review') ${curFrom} ${curTo}
+        GROUP BY 1, t."column"`,
+  )) as Array<{ workflowId: string; columnName: string; count: number }>;
+  const currentRows: Array<CountByWorkflowRow & { columnName: string }> = currentRowsRaw.map((r) => ({
+    workflowId: String(r.workflowId),
+    columnName: String(r.columnName),
+    count: Number(r.count),
+  }));
+
+  const filesFrom = query.from !== undefined ? sql`AND t.updated_at >= ${query.from}` : sql``;
+  const filesTo = query.to !== undefined ? sql`AND t.updated_at <= ${query.to}` : sql``;
+  const fileRowsRaw = (await layer.db.execute(
+    sql`SELECT ${wfExpr} AS "workflowId", t.modified_files AS "modifiedFiles"
+        FROM project.tasks t
+        LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
+        WHERE t.modified_files IS NOT NULL
+          AND jsonb_typeof(t.modified_files) = 'array'
+          AND jsonb_array_length(t.modified_files) > 0
+          ${filesFrom} ${filesTo}`,
+  )) as Array<{ workflowId: string; modifiedFiles: unknown }>;
+  const fileRows: ModifiedFilesRow[] = fileRowsRaw.map((r) => ({
+    workflowId: String(r.workflowId),
+    modifiedFiles: r.modifiedFiles == null ? null : JSON.stringify(r.modifiedFiles),
+  }));
+
+  // Prefetch all custom workflow names once; builtins resolve in-memory.
+  const workflowNameRows = (await layer.db.execute(
+    sql`SELECT id, name FROM project.workflows`,
+  )) as Array<{ id: string; name: string | null }>;
+  const names = new Map<string, string>();
+  for (const row of workflowNameRows) {
+    if (row.name) names.set(String(row.id), row.name);
+  }
+
+  return buildWorkflowAnalytics(
+    { tokenRows, completedRows, currentRows, fileRows },
+    query,
+    (workflowId) => resolveWorkflowNameFromMap(names, workflowId),
+  );
 }

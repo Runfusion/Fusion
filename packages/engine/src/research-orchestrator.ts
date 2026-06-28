@@ -1,4 +1,4 @@
-import type { ResearchStore } from "@fusion/core";
+import type { AsyncResearchStore, ResearchStore } from "@fusion/core";
 import type {
   ResearchCancellationState,
   ResearchOrchestrationConfig,
@@ -13,6 +13,19 @@ import { createLogger, formatError } from "./logger.js";
 import type { ResearchStepRunnerApi } from "./research-step-runner.js";
 
 const log = createLogger("research-orchestrator");
+
+/*
+ * FNXC:ResearchStore 2026-06-28-11:30:
+ * Research run EXECUTION must drive both backends: the sync SQLite EventEmitter
+ * `ResearchStore` and the PostgreSQL-backed `AsyncResearchStore` (async). Both
+ * expose the same store method names/shapes, so the orchestrator types `store` as
+ * the union and `await`s every store call — a sync method's awaited return is
+ * identical to its direct return, so lifecycle semantics are preserved across both
+ * backends. Mirrors the InsightRunExecutor union+await port. Note: the async store
+ * exposes `appendEvent` (not the sync-only `addEvent`), so all event writes here go
+ * through `appendEvent`, which the sync store also implements as an alias.
+ */
+export type ResearchExecutorStore = ResearchStore | AsyncResearchStore;
 
 export interface ResearchOrchestratorStatus {
   runId: string;
@@ -29,7 +42,7 @@ export interface ResearchOrchestratorStartOptions {
 }
 
 export interface ResearchOrchestratorOptions {
-  store: ResearchStore;
+  store: ResearchExecutorStore;
   stepRunner: ResearchStepRunnerApi;
   maxConcurrentRuns?: number;
 }
@@ -46,7 +59,7 @@ interface ActiveRunState {
 const CANCELLATION_GRACE_MS = 2_000;
 
 export class ResearchOrchestrator {
-  private readonly store: ResearchStore;
+  private readonly store: ResearchExecutorStore;
   private readonly stepRunner: ResearchStepRunnerApi;
   private readonly semaphore: AgentSemaphore;
   private readonly activeRuns = new Map<string, ActiveRunState>();
@@ -58,8 +71,8 @@ export class ResearchOrchestrator {
     this.semaphore = new AgentSemaphore(options.maxConcurrentRuns ?? 3);
   }
 
-  createRun(config: ResearchOrchestrationConfig): string {
-    const run = this.store.createRun({
+  async createRun(config: ResearchOrchestrationConfig): Promise<string> {
+    const run = await this.store.createRun({
       query: "",
       providerConfig: config as unknown as Record<string, unknown>,
       metadata: {
@@ -74,7 +87,7 @@ export class ResearchOrchestrator {
   }
 
   async startRun(runId: string, query: string, options: ResearchOrchestratorStartOptions = {}): Promise<ResearchRun> {
-    const run = this.store.getRun(runId);
+    const run = await this.store.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
 
     const config = this.normalizeConfig(run.providerConfig);
@@ -92,30 +105,30 @@ export class ResearchOrchestrator {
       config,
     });
 
-    const queued = this.store.getRun(runId);
+    const queued = await this.store.getRun(runId);
     if (queued?.status === "retry_waiting") {
-      this.store.updateStatus(runId, "queued");
+      await this.store.updateStatus(runId, "queued");
     }
 
     await this.semaphore.run(async () => {
-      this.store.updateRun(runId, { query, startedAt: new Date().toISOString(), error: null });
-      this.store.updateStatus(runId, "running");
+      await this.store.updateRun(runId, { query, startedAt: new Date().toISOString(), error: null });
+      await this.store.updateStatus(runId, "running");
       await this.runPhases(runId, query, config, controller.signal);
     });
 
-    const updated = this.store.getRun(runId);
+    const updated = await this.store.getRun(runId);
     if (!updated) throw new Error(`Research run not found after start: ${runId}`);
     return updated;
   }
 
-  cancelRun(runId: string): boolean {
+  async cancelRun(runId: string): Promise<boolean> {
     const active = this.activeRuns.get(runId);
-    const run = this.store.getRun(runId);
+    const run = await this.store.getRun(runId);
     if (!run) return false;
-    this.store.requestCancellation(runId);
+    await this.store.requestCancellation(runId);
 
     if (!active) {
-      this.store.updateStatus(runId, "cancelled", { error: "Cancelled by user" });
+      await this.store.updateStatus(runId, "cancelled", { error: "Cancelled by user" });
       return true;
     }
 
@@ -131,19 +144,19 @@ export class ResearchOrchestrator {
     this.cancellation.set(runId, state);
     active.controller.abort(new Error("Research run cancelled"));
     active.cancellationTimer = setTimeout(() => {
-      this.onCancelled(runId);
+      void this.onCancelled(runId);
     }, CANCELLATION_GRACE_MS);
     return true;
   }
 
-  retryRun(runId: string): string {
-    const run = this.store.getRun(runId);
+  async retryRun(runId: string): Promise<string> {
+    const run = await this.store.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
     if (run.status !== "failed" && run.status !== "cancelled") {
       throw new Error(`Research run ${runId} is not retryable (status=${run.status})`);
     }
 
-    const next = this.store.createRun({
+    const next = await this.store.createRun({
       query: run.query,
       topic: run.topic,
       providerConfig: run.providerConfig,
@@ -153,7 +166,7 @@ export class ResearchOrchestrator {
         retryOfRunId: run.id,
       },
     });
-    this.store.addEvent(next.id, {
+    await this.store.appendEvent(next.id, {
       type: "info",
       message: `Retry run created from ${run.id}`,
       metadata: { retryOfRunId: run.id },
@@ -161,8 +174,8 @@ export class ResearchOrchestrator {
     return next.id;
   }
 
-  getRunStatus(runId: string): ResearchOrchestratorStatus {
-    const run = this.store.getRun(runId);
+  async getRunStatus(runId: string): Promise<ResearchOrchestratorStatus> {
+    const run = await this.store.getRun(runId);
     if (!run) throw new Error(`Research run not found: ${runId}`);
 
     const active = this.activeRuns.get(runId);
@@ -195,20 +208,20 @@ export class ResearchOrchestrator {
       const synthesis = await this.runSynthesis(runId, query, fetchedSources, config, signal);
       await this.runFinalizing(runId, synthesis.output, synthesis.citations, synthesis.confidence, signal);
 
-      this.store.updateStatus(runId, "completed");
-      this.transitionPhase(runId, "completed", "Research run completed");
+      await this.store.updateStatus(runId, "completed");
+      await this.transitionPhase(runId, "completed", "Research run completed");
     } catch (err) {
       if (signal.aborted) {
-        this.onCancelled(runId);
+        await this.onCancelled(runId);
       } else {
         const { message, detail } = formatError(err);
-        this.store.addEvent(runId, {
+        await this.store.appendEvent(runId, {
           type: "error",
           message: `Research run failed: ${message}`,
           metadata: { detail },
         });
-        this.store.updateStatus(runId, "failed", { error: message });
-        this.transitionPhase(runId, "failed", "Research run failed", { error: message });
+        await this.store.updateStatus(runId, "failed", { error: message });
+        await this.transitionPhase(runId, "failed", "Research run failed", { error: message });
       }
     } finally {
       const active = this.activeRuns.get(runId);
@@ -221,8 +234,8 @@ export class ResearchOrchestrator {
   }
 
   private async runPlanning(runId: string, query: string, config: ResearchOrchestrationConfig, _signal: AbortSignal): Promise<void> {
-    this.transitionPhase(runId, "planning", "Planning research execution");
-    this.stepStarted(runId, {
+    await this.transitionPhase(runId, "planning", "Planning research execution");
+    await this.stepStarted(runId, {
       id: `${runId}-planning`,
       type: "synthesis-pass",
       phase: "planning",
@@ -232,7 +245,7 @@ export class ResearchOrchestrator {
       input: { query, providerCount: config.providers.length },
       startedAt: new Date().toISOString(),
     });
-    this.stepCompleted(runId, `${runId}-planning`, { query });
+    await this.stepCompleted(runId, `${runId}-planning`, { query });
   }
 
   private async runSearching(
@@ -242,7 +255,7 @@ export class ResearchOrchestrator {
     signal: AbortSignal,
   ): Promise<ResearchSource[]> {
     this.throwIfAborted(signal);
-    this.transitionPhase(runId, "searching", "Searching sources");
+    await this.transitionPhase(runId, "searching", "Searching sources");
 
     const allSources: ResearchSource[] = [];
     for (const provider of config.providers) {
@@ -251,16 +264,16 @@ export class ResearchOrchestrator {
         query,
         provider: provider.type,
       });
-      this.stepStarted(runId, step);
+      await this.stepStarted(runId, step);
 
       const result = await this.stepRunner.runSourceQuery(query, provider.type, provider.config, signal);
       if (!result.ok || !result.data) {
-        this.stepFailed(runId, step.id, result.error?.message ?? `Provider ${provider.type} returned no data`, result.error);
+        await this.stepFailed(runId, step.id, result.error?.message ?? `Provider ${provider.type} returned no data`, result.error);
         continue;
       }
 
       for (const source of result.data.slice(0, Math.max(0, config.maxSources - allSources.length))) {
-        const saved = this.store.addSource(runId, {
+        const saved = await this.store.addSource(runId, {
         ...source,
         metadata: {
           ...(source.metadata ?? {}),
@@ -268,14 +281,14 @@ export class ResearchOrchestrator {
         },
       });
         allSources.push(saved);
-        this.store.addEvent(runId, {
+        await this.store.appendEvent(runId, {
           type: "source_added",
           message: `Source found: ${saved.reference}`,
           metadata: { sourceId: saved.id, provider: provider.type },
         });
       }
 
-      this.stepCompleted(runId, step.id, { sourceCount: result.data.length });
+      await this.stepCompleted(runId, step.id, { sourceCount: result.data.length });
       if (allSources.length >= config.maxSources) break;
     }
 
@@ -293,7 +306,7 @@ export class ResearchOrchestrator {
     signal: AbortSignal,
   ): Promise<ResearchSource[]> {
     this.throwIfAborted(signal);
-    this.transitionPhase(runId, "fetching", "Fetching source content");
+    await this.transitionPhase(runId, "fetching", "Fetching source content");
 
     const fetched: ResearchSource[] = [];
     const provider = config.providers[0];
@@ -302,13 +315,13 @@ export class ResearchOrchestrator {
       const step = this.createStep(runId, "content-fetch", "fetching", `Fetch ${source.reference}`, {
         sourceId: source.id,
       });
-      this.stepStarted(runId, step);
+      await this.stepStarted(runId, step);
 
       const sourceProvider = this.getSourceProviderType(source);
       const providerConfig = sourceProvider ? config.providers.find((p) => p.type === sourceProvider)?.config : provider?.config;
       const result = await this.stepRunner.runContentFetch(source.reference, sourceProvider, providerConfig, signal);
       if (!result.ok || !result.data) {
-        this.stepFailed(runId, step.id, result.error?.message ?? "Failed to fetch source content", result.error);
+        await this.stepFailed(runId, step.id, result.error?.message ?? "Failed to fetch source content", result.error);
         continue;
       }
 
@@ -322,9 +335,9 @@ export class ResearchOrchestrator {
         status: "completed",
         fetchedAt: new Date().toISOString(),
       };
-      this.store.updateSource(runId, source.id, updated);
+      await this.store.updateSource(runId, source.id, updated);
       fetched.push(updated);
-      this.stepCompleted(runId, step.id, { fetched: true });
+      await this.stepCompleted(runId, step.id, { fetched: true });
     }
 
     if (fetched.length === 0) {
@@ -342,7 +355,7 @@ export class ResearchOrchestrator {
     signal: AbortSignal,
   ): Promise<{ output: string; citations: string[]; confidence?: number }> {
     this.throwIfAborted(signal);
-    this.transitionPhase(runId, "synthesizing", "Synthesizing findings");
+    await this.transitionPhase(runId, "synthesizing", "Synthesizing findings");
 
     let final: { output: string; citations: string[]; confidence?: number } | undefined;
 
@@ -351,7 +364,7 @@ export class ResearchOrchestrator {
       const step = this.createStep(runId, "synthesis-pass", "synthesizing", `Synthesis round ${round}`, {
         round,
       });
-      this.stepStarted(runId, step);
+      await this.stepStarted(runId, step);
 
       const request: ResearchSynthesisRequest = {
         query,
@@ -361,17 +374,17 @@ export class ResearchOrchestrator {
       };
       const result = await this.stepRunner.runSynthesis(request, config.synthesisModel, signal);
       if (!result.ok || !result.data) {
-        this.stepFailed(runId, step.id, result.error?.message ?? "Synthesis failed", result.error);
+        await this.stepFailed(runId, step.id, result.error?.message ?? "Synthesis failed", result.error);
         continue;
       }
 
       final = result.data;
-      this.store.addEvent(runId, {
+      await this.store.appendEvent(runId, {
         type: "progress",
         message: `Synthesis round ${round} completed`,
         metadata: { round, confidence: result.data.confidence },
       });
-      this.stepCompleted(runId, step.id, { round, citations: result.data.citations.length });
+      await this.stepCompleted(runId, step.id, { round, citations: result.data.citations.length });
     }
 
     if (!final) {
@@ -389,9 +402,9 @@ export class ResearchOrchestrator {
     signal: AbortSignal,
   ): Promise<void> {
     this.throwIfAborted(signal);
-    this.transitionPhase(runId, "finalizing", "Finalizing research results");
-    if (!this.canWriteRunData(runId)) return;
-    this.store.setResults(runId, {
+    await this.transitionPhase(runId, "finalizing", "Finalizing research results");
+    if (!(await this.canWriteRunData(runId))) return;
+    await this.store.setResults(runId, {
       summary: output,
       findings: [
         {
@@ -406,11 +419,11 @@ export class ResearchOrchestrator {
     });
   }
 
-  private onCancelled(runId: string): void {
-    const run = this.store.getRun(runId);
+  private async onCancelled(runId: string): Promise<void> {
+    const run = await this.store.getRun(runId);
     if (!run || run.status === "cancelled") return;
     const cancellation = this.cancellation.get(runId);
-    this.store.addEvent(runId, {
+    await this.store.appendEvent(runId, {
       type: "warning",
       message: "Research run cancelled",
       metadata: {
@@ -418,25 +431,25 @@ export class ResearchOrchestrator {
         reason: cancellation?.reason,
       },
     });
-    this.store.updateStatus(runId, "cancelled", {
+    await this.store.updateStatus(runId, "cancelled", {
       cancelledAt: new Date().toISOString(),
       error: cancellation?.reason,
     });
-    this.transitionPhase(runId, "cancelled", "Research run cancelled");
+    await this.transitionPhase(runId, "cancelled", "Research run cancelled");
   }
 
-  private transitionPhase(
+  private async transitionPhase(
     runId: string,
     phase: ResearchOrchestrationPhase,
     message: string,
     metadata?: Record<string, unknown>,
-  ): void {
-    if (!this.canWriteRunData(runId) && phase !== "cancelled" && phase !== "completed" && phase !== "failed") return;
+  ): Promise<void> {
+    if (!(await this.canWriteRunData(runId)) && phase !== "cancelled" && phase !== "completed" && phase !== "failed") return;
     const active = this.activeRuns.get(runId);
     if (active) {
       active.phase = phase;
     }
-    this.store.updateRun(runId, {
+    await this.store.updateRun(runId, {
       metadata: {
         orchestration: {
           phase,
@@ -445,7 +458,7 @@ export class ResearchOrchestrator {
         },
       },
     });
-    this.store.addEvent(runId, {
+    await this.store.appendEvent(runId, {
       type: "progress",
       message,
       metadata: {
@@ -457,10 +470,10 @@ export class ResearchOrchestrator {
     log.log(`${runId}: phase changed -> ${phase}`);
   }
 
-  private stepStarted(runId: string, step: ResearchOrchestrationStep): void {
-    if (!this.canWriteRunData(runId)) return;
-    this.bumpStep(runId, step.order);
-    this.store.addEvent(runId, {
+  private async stepStarted(runId: string, step: ResearchOrchestrationStep): Promise<void> {
+    if (!(await this.canWriteRunData(runId))) return;
+    await this.bumpStep(runId, step.order);
+    await this.store.appendEvent(runId, {
       type: "progress",
       message: `${step.name} started`,
       metadata: {
@@ -470,9 +483,9 @@ export class ResearchOrchestrator {
     });
   }
 
-  private stepCompleted(runId: string, stepId: string, output?: Record<string, unknown>): void {
-    if (!this.canWriteRunData(runId)) return;
-    this.store.addEvent(runId, {
+  private async stepCompleted(runId: string, stepId: string, output?: Record<string, unknown>): Promise<void> {
+    if (!(await this.canWriteRunData(runId))) return;
+    await this.store.appendEvent(runId, {
       type: "progress",
       message: `${stepId} completed`,
       metadata: {
@@ -483,14 +496,14 @@ export class ResearchOrchestrator {
     });
   }
 
-  private stepFailed(
+  private async stepFailed(
     runId: string,
     stepId: string,
     errorMessage: string,
     errorMeta?: Record<string, unknown>,
-  ): void {
-    if (!this.canWriteRunData(runId)) return;
-    this.store.addEvent(runId, {
+  ): Promise<void> {
+    if (!(await this.canWriteRunData(runId))) return;
+    await this.store.appendEvent(runId, {
       type: "error",
       message: `${stepId} failed: ${errorMessage}`,
       metadata: {
@@ -501,11 +514,11 @@ export class ResearchOrchestrator {
     });
   }
 
-  private bumpStep(runId: string, stepIndex: number): void {
+  private async bumpStep(runId: string, stepIndex: number): Promise<void> {
     const active = this.activeRuns.get(runId);
     if (!active) return;
     active.stepIndex = stepIndex;
-    this.store.updateRun(runId, {
+    await this.store.updateRun(runId, {
       metadata: {
         orchestration: {
           phase: active.phase,
@@ -607,8 +620,8 @@ export class ResearchOrchestrator {
     return typeof providerType === "string" && providerType.length > 0 ? providerType : undefined;
   }
 
-  private canWriteRunData(runId: string): boolean {
-    const run = this.store.getRun(runId);
+  private async canWriteRunData(runId: string): Promise<boolean> {
+    const run = await this.store.getRun(runId);
     if (!run) return false;
     return !["cancelled", "completed", "failed", "timed_out", "retry_exhausted"].includes(run.status);
   }

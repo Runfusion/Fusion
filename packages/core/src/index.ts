@@ -1693,6 +1693,10 @@ export type {
 // ── Research System ───────────────────────────────────────────────────────
 
 export { ResearchLifecycleError, ResearchStore } from "./research-store.js";
+// FNXC:ResearchStore 2026-06-28-11:30: export the PostgreSQL-backed AsyncResearchStore
+// so the engine's ResearchOrchestrator/ResearchRunDispatcher can type their store as
+// the `ResearchStore | AsyncResearchStore` union (research run execution in PG mode).
+export { AsyncResearchStore } from "./async-research-store.js";
 export {
   RESEARCH_RUN_STATUSES,
   RESEARCH_SOURCE_STATUSES,

@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 
 /**
  * Live Mission-Control snapshot composer (U6a).
@@ -95,11 +97,26 @@ interface CountRow {
 /**
  * Compose a live Mission-Control snapshot from the current database state.
  *
- * Pure and synchronous: takes a {@link Database} handle and returns plain data.
- * `capturedAt` defaults to `new Date().toISOString()`; pass `now` (epoch ms) to
- * make the timestamp deterministic in tests — no other value reads the clock.
+ * Takes a {@link Database} handle (sync SQLite) or an {@link AsyncDataLayer}
+ * (PostgreSQL backend mode) and returns plain data. `capturedAt` defaults to
+ * `new Date().toISOString()`; pass `now` (epoch ms) to make the timestamp
+ * deterministic in tests — no other value reads the clock.
+ *
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * Now async and `Database | AsyncDataLayer`. In backend mode it branches on
+ * `"ping" in dbOrLayer` and reads schema-qualified `project.*` (cli_sessions,
+ * agent_runs, tasks) with snake_case columns; the sync SQLite branch is
+ * unchanged. agent_runs.data is jsonb (already parsed) so taskId is read
+ * directly rather than via JSON.parse.
  */
-export function composeLiveSnapshot(db: Database, now?: number): LiveSnapshot {
+export async function composeLiveSnapshot(
+  dbOrLayer: Database | AsyncDataLayer,
+  now?: number,
+): Promise<LiveSnapshot> {
+  if ("ping" in dbOrLayer) {
+    return composeLiveSnapshotAsync(dbOrLayer, now);
+  }
+  const db = dbOrLayer as Database;
   const capturedAt = new Date(now ?? Date.now()).toISOString();
 
   const terminalPlaceholders = TERMINAL_SESSION_STATES.map(() => "?").join(", ");
@@ -171,6 +188,84 @@ export function composeLiveSnapshot(db: Database, now?: number): LiveSnapshot {
   const columns: ColumnCount[] = columnRows.map((r) => ({
     column: r.column,
     count: r.count,
+  }));
+
+  return {
+    capturedAt,
+    activeSessions: sessions.length,
+    activeRuns,
+    activeNodes,
+    sessions,
+    runs,
+    columns,
+  };
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * PostgreSQL fetch path for {@link composeLiveSnapshot}. Mirrors the sync branch
+ * one-for-one: active (non-terminal, non-terminated) cli_sessions, active
+ * agent_runs (data is jsonb — taskId read directly), distinct active worktree
+ * nodes, and the present per-column task distribution. The column counts are
+ * NOT filtered by deleted_at, matching the sync `FROM tasks GROUP BY column`
+ * behavior so the live funnel distribution is identical across backends.
+ */
+async function composeLiveSnapshotAsync(layer: AsyncDataLayer, now?: number): Promise<LiveSnapshot> {
+  const capturedAt = new Date(now ?? Date.now()).toISOString();
+
+  const sessionRows = (await layer.db.execute(
+    sql`SELECT id,
+               task_id        AS "taskId",
+               purpose,
+               adapter_id     AS "adapterId",
+               agent_state    AS "agentState",
+               worktree_path  AS "worktreePath",
+               updated_at     AS "updatedAt"
+        FROM project.cli_sessions
+        WHERE agent_state NOT IN ('done', 'dead')
+          AND termination_reason IS NULL
+        ORDER BY updated_at DESC`,
+  )) as Array<Record<string, unknown>>;
+  const sessions: LiveSession[] = sessionRows.map((r) => ({
+    id: String(r.id),
+    taskId: (r.taskId as string | null) ?? null,
+    purpose: String(r.purpose),
+    adapterId: String(r.adapterId),
+    agentState: String(r.agentState),
+    worktreePath: (r.worktreePath as string | null) ?? null,
+    updatedAt: String(r.updatedAt),
+  }));
+
+  const activeNodes = new Set(
+    sessions
+      .map((s) => s.worktreePath)
+      .filter((p): p is string => typeof p === "string" && p.length > 0),
+  ).size;
+
+  const runRows = (await layer.db.execute(
+    sql`SELECT id, agent_id AS "agentId", started_at AS "startedAt", data
+        FROM project.agent_runs
+        WHERE status = 'active'
+        ORDER BY started_at DESC`,
+  )) as Array<{ id: string; agentId: string; startedAt: string; data: unknown }>;
+  const runs: LiveRun[] = runRows.map((r) => {
+    let taskId: string | null = null;
+    // agent_runs.data is jsonb (already parsed); read taskId without JSON.parse.
+    const data = r.data as { taskId?: unknown } | null;
+    if (data && typeof data.taskId === "string") taskId = data.taskId;
+    return { id: String(r.id), agentId: String(r.agentId), taskId, startedAt: String(r.startedAt) };
+  });
+  const activeRuns = runs.length;
+
+  const columnRows = (await layer.db.execute(
+    sql`SELECT "column" AS column, count(*)::int AS count
+        FROM project.tasks
+        GROUP BY "column"
+        ORDER BY count DESC`,
+  )) as Array<{ column: string; count: number }>;
+  const columns: ColumnCount[] = columnRows.map((r) => ({
+    column: String(r.column),
+    count: Number(r.count),
   }));
 
   return {

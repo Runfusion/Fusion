@@ -13,7 +13,7 @@ import type {
   ResearchSynthesisRequest,
   ResearchSynthesisResult,
 } from "@fusion/core";
-import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, isWorkspaceTask, normalizeMergerMode, ResearchStore, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
+import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, isWorkspaceTask, normalizeMergerMode, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
@@ -540,27 +540,23 @@ export class ProjectEngine {
 
     /*
      * FNXC:BackendFlip 2026-06-26-15:30:
-     * The ResearchStore (and its sibling sync SQLite satellite stores:
-     * InsightStore, TodoStore) have not been ported to the async PostgreSQL
-     * path yet. In backend mode, store.getResearchStore() throws because it
-     * constructs `new ResearchStore(store.db)` and store.db throws
-     * "SQLite Database is not available in backend mode". Wrap the research
-     * subsystem init in try/catch so the engine degrades gracefully (no
-     * research dispatcher) instead of failing the whole engine start — the
-     * same pattern used for MissionStore in InProcessRuntime.start(). This
-     * keeps `fn serve` / boot smoke booting against embedded PG.
+     * Wrap the research subsystem init in try/catch so the engine degrades
+     * gracefully (no research dispatcher) if getResearchStore() genuinely fails,
+     * instead of failing the whole engine start — the same pattern used for
+     * MissionStore in InProcessRuntime.start(). Keeps `fn serve` / boot smoke
+     * booting even when the research store is unavailable.
+     *
+     * FNXC:ResearchStore 2026-06-28-11:30:
+     * Research run EXECUTION now runs in BOTH backends. getResearchStore() returns
+     * the sync EventEmitter ResearchStore (SQLite) or the PG-backed AsyncResearchStore;
+     * the orchestrator/dispatcher take the `ResearchStore | AsyncResearchStore` union
+     * and await every store call, so a queued run advances queued→running→
+     * completed/failed and persists in PG mode. The prior instanceof gate that
+     * disabled the orchestrator in PG mode is removed.
      */
     if (typeof (store as { getResearchStore?: () => unknown }).getResearchStore === "function") {
       try {
         const researchStore = store.getResearchStore();
-        // FNXC:ResearchStore 2026-06-27-12:30:
-        // The ResearchOrchestrator/ResearchRunDispatcher are coupled to the sync
-        // EventEmitter ResearchStore. In PG backend mode getResearchStore() returns
-        // the AsyncResearchStore (CRUD-only), so skip orchestrator init — AI research
-        // EXECUTION stays degraded in PG mode (dashboard CRUD/lifecycle still works).
-        if (!(researchStore instanceof ResearchStore)) {
-          throw new Error("ResearchOrchestrator unavailable: async ResearchStore (PG backend mode)");
-        }
         const registry = new ResearchProviderRegistry(settings, cwd);
         const providers = registry.getAvailableProviders()
           .map((type) => registry.getProvider(type))

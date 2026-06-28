@@ -3810,7 +3810,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
 
       const registry = orchestratorState.providerRegistry;
       const availableProviderTypes = registry?.getAvailableProviders() ?? [];
-      const runId = orchestrator.createRun({
+      const runId = await orchestrator.createRun({
         providers: availableProviderTypes
           .filter((type) => type !== "llm-synthesis")
           .map((type) => ({ type, config: { maxResults: resolved.limits.maxSourcesPerRun, timeoutMs: resolved.limits.requestTimeoutMs } })),
@@ -3915,7 +3915,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       if (!orchestrator) {
         return researchUnavailable("provider-unavailable", "Research orchestrator is unavailable because research providers are not configured.");
       }
-      const cancelled = orchestrator.cancelRun(params.id);
+      const cancelled = await orchestrator.cancelRun(params.id);
       const run = resolveSyncResearchStore()?.getRun(params.id);
       if (!run) {
         return {
