@@ -10,10 +10,10 @@ content rendered by different skills shares the same HTML principles.
 
 The HTML artifact is the *only* artifact the skill produces for that run —
 output mode is exclusive (markdown OR HTML, never both). Downstream
-consumers that read HTML today (`ce-work`, `ce-doc-review` report-only mode,
+consumers that read HTML today (`ce-work`, `ce-doc-review` DOM-safe-or-report-only mode,
 human readers) do so directly; the agent-consumability rules below make that
-work. `ce-doc-review` reviews HTML without mutation: markdown autofix and
-Append-to-Open-Questions write-back remain disabled for `.html` artifacts.
+work. `ce-doc-review` may apply only parse5-backed DOM-safe helper mutations; markdown autofix and
+markdown Append-to-Open-Questions write-back remain disabled for `.html` artifacts, and any helper refusal falls back to report-only.
 
 ## Hard invariants
 
@@ -255,6 +255,12 @@ Linking every mention would clutter; readers expect clickable jumps
 where the doc presents itself as a reference index.
 
 ### Stable section anchors for unified plans
+
+<!--
+FNXC:CompoundEngineering 2026-06-27-22:35:
+FN-7149 keeps HTML plans as pinned single-file snapshots while allowing only parse5-backed DOM-safe ce-doc-review mutations. Stable section IDs remain the only anchors for in-place fixes; any ambiguity or parser instability must fall back to report-only instead of fabricating sections.
+-->
+
 
 When rendering a unified plan, every major logical section gets a stable
 anchor ID and visible heading text:
@@ -543,10 +549,10 @@ fine when the content suggests them.
 ## Agent-consumability rules
 
 Downstream agents that read HTML today (`ce-work`, `ce-doc-review` in
-report-only mode, a skill re-reading its own prior artifact on a resume run,
+DOM-safe-or-report-only mode, a skill re-reading its own prior artifact on a resume run,
 future consumers) reason over the HTML as text — the way they reason over
 markdown, not via DOM extraction or a script-style parse. `ce-doc-review`
-uses this consumable structure to produce findings without mutating HTML (see
+uses this consumable structure to produce findings and may mutate only through the FN-7149 DOM-safe helper (see
 opening note).
 
 These rules are why such a consumer can locate one item (a single

@@ -4,30 +4,30 @@ This file contains post-plan-writing instructions: document review, post-generat
 
 ## 5.3.8 Document Review
 
-**Format gate.** This phase runs for both markdown and HTML plans. Markdown plans use the full headless `ce-doc-review` path, including safe markdown-only autofixes. HTML plans use `ce-doc-review` in report-only mode: persona lenses run and findings are returned as structured text, but all mutation mechanics are suppressed because `gated_auto`/`manual` apply-set edits and Append-to-Open-Questions write-back are markdown-specific.
+**Format gate.** This phase runs for both markdown and HTML plans. Markdown plans use the full headless `ce-doc-review` path, including safe markdown-only autofixes. HTML plans use `ce-doc-review` with DOM-safe mutation enabled only when the FN-7149 helper proves safety; persona lenses always run, findings are returned as structured text, and any helper refusal falls back to report-only because `gated_auto`/`manual` apply-set edits and markdown Append-to-Open-Questions write-back are markdown-specific.
 
 <!--
 FNXC:CompoundEngineering 2026-06-27-00:00:
-FN-7147 replaces the prior HTML decline path with report-only ce-doc-review routing. HTML plans need review coverage, but markdown mutation mechanics (`safe_auto`, apply-set edits, and `##`/`###` Open Questions inserts) must never run against `.html` artifacts.
+FN-7147 replaces the prior HTML decline path with ce-doc-review routing. FN-7149 allows only parse5-backed DOM-safe helper mutations for HTML plans; markdown mutation mechanics (`safe_auto`, apply-set edits, and `##`/`###` Open Questions inserts) must never run against `.html` artifacts, and helper refusal keeps the report-only fallback.
 -->
 
-**When `OUTPUT_FORMAT=html`:** Run the `ce-doc-review` skill with `mode:headless` on the `.html` plan file and explicitly treat the invocation as report-only. Pass `mode:headless <plan-path>` as the skill arguments. Capture the returned envelope so the menu summary in 5.4 can name the report-only result:
-- `fixes_applied = 0` / `applied_fixes_count = 0`
+**When `OUTPUT_FORMAT=html`:** Run the `ce-doc-review` skill with `mode:headless` on the `.html` plan file and explicitly treat the invocation as DOM-safe-or-report-only. Pass `mode:headless <plan-path>` as the skill arguments. Capture the returned envelope so the menu summary in 5.4 can name either the safe mutation result or the report-only fallback:
+- `fixes_applied = 0` / `applied_fixes_count = 0` when the helper refuses or no safe mutation applies
 - `proposed_fixes_count`, `decisions_count`, and `fyi_count` from the reviewer output
 - no `skipped_reason` field
 
-Do not block on this — the optional workflow remains advisory — but do surface P0/P1 findings before returning control to the caller. Free-form requests for review in the post-generation menu re-run `ce-doc-review` on the HTML plan in report-only mode (present findings; no autofix; no Append-to-Open-Questions write-back).
+Do not block on this — the optional workflow remains advisory — but do surface P0/P1 findings before returning control to the caller. Free-form requests for review in the post-generation menu re-run `ce-doc-review` on the HTML plan in DOM-safe-or-report-only mode (present findings; apply only proven DOM-safe helper fixes; no markdown autofix; no markdown Append-to-Open-Questions write-back).
 
 **When `OUTPUT_FORMAT=md`:** Run the `ce-doc-review` skill with `mode:headless` on the plan file. Pass `mode:headless <plan-path>` as the skill arguments. When this step is reached for a markdown plan, it is mandatory — do not skip it because the confidence check already ran. The two tools catch different classes of issues.
 
-Headless is the default at this phase because most users want to start work after planning, not adjudicate every reviewer concern up front. For markdown, headless applies `safe_auto` fixes silently and returns structured findings text — no walkthrough, no per-finding routing, no blocking prompts. For HTML, headless returns the same structured findings text but applies nothing. The post-generation menu (see 5.4) offers `Decide on the review's open items` as a first-class option so users can opt into the full interactive walkthrough when they want it; for HTML that walkthrough stays report-only and omits apply/Append choices.
+Headless is the default at this phase because most users want to start work after planning, not adjudicate every reviewer concern up front. For markdown, headless applies `safe_auto` fixes silently and returns structured findings text — no walkthrough, no per-finding routing, no blocking prompts. For HTML, headless returns the same structured findings text and may apply only DOM-safe helper fixes; any safety failure applies nothing and reports `fixes_applied = 0`. The post-generation menu (see 5.4) offers `Decide on the review's open items` as a first-class option so users can opt into the full interactive walkthrough when they want it; for HTML that walkthrough stays DOM-safe-or-report-only and omits markdown apply/Append choices.
 
 The confidence check and ce-doc-review are complementary:
 - The confidence check strengthens rationale, sequencing, risk treatment, and grounding
 - Document-review checks coherence, feasibility, scope alignment, and surfaces role-specific issues
 
 Capture the headless envelope so it can drive the contextual summary above the post-generation menu:
-- The number of fixes auto-applied (always `0` for HTML)
+- The number of fixes auto-applied (`0` for HTML whenever the DOM-safe helper refuses or no allowlisted mutation applies)
 - The count of remaining findings, broken out by user-facing bucket (proposed fixes, decisions, FYI observations)
 - The severity breakdown of decisions and proposed fixes (specifically the P0/P1 count, since those benefit from explicit user attention)
 
@@ -46,11 +46,11 @@ If artifact-backed mode was used:
 - Clean up the temporary scratch directory after the plan is safely updated
 - If cleanup is not practical on the current platform, note where the artifacts were left
 
-**Format-specific composition.** When `OUTPUT_FORMAT=html` (resolved in SKILL.md Phase 0.0), the plan is written as a single self-contained `.html` file — there is no markdown sibling. Read `references/html-rendering.md` for composition rules: invariants, precedence stack, format principles, agent-consumability rules, and the post-compose audit. The `.html` file is the artifact downstream consumers (ce-work, human readers, and ce-doc-review's report-only path) read. `ce-doc-review` reviews HTML without mutation; its markdown autofix and Open Questions write-back mechanics remain markdown-only.
+**Format-specific composition.** When `OUTPUT_FORMAT=html` (resolved in SKILL.md Phase 0.0), the plan is written as a single self-contained `.html` file — there is no markdown sibling. Read `references/html-rendering.md` for composition rules: invariants, precedence stack, format principles, agent-consumability rules, and the post-compose audit. The `.html` file is the artifact downstream consumers (ce-work, human readers, and ce-doc-review's DOM-safe-or-report-only path) read. `ce-doc-review` reviews HTML with DOM-safe mutation only when the helper proves safety; its markdown autofix and Open Questions write-back mechanics remain markdown-only.
 
 When `OUTPUT_FORMAT=md`, write the markdown directly per `references/markdown-rendering.md`. No HTML is composed.
 
-After all mutations in this run have settled (initial write, deepening synthesis, ce-doc-review `safe_auto` fixes when `OUTPUT_FORMAT=md`), the artifact at its single path reflects the final state. Publishing to Proof is one-way and does not mutate the local file. HTML runs receive ce-doc-review findings but no autofix mutations (see 5.3.8 format gate).
+After all mutations in this run have settled (initial write, deepening synthesis, ce-doc-review `safe_auto` fixes when `OUTPUT_FORMAT=md`, and any DOM-safe ce-doc-review helper fixes when `OUTPUT_FORMAT=html`), the artifact at its single path reflects the final state. Publishing to Proof is one-way and does not mutate the local file. HTML runs receive ce-doc-review findings and may receive DOM-safe fixes only when validation succeeds (see 5.3.8 format gate).
 
 ## 5.4 Post-Generation Options
 
@@ -58,7 +58,7 @@ After all mutations in this run have settled (initial write, deepening synthesis
 
 **Path format:** Use absolute paths for chat-output file references — relative paths are not auto-linked as clickable in most terminals.
 
-**Summary line above the menu (always):** Print a single concise line summarizing the headless review state — e.g., `Doc review applied 3 fixes. 2 decisions, 1 proposed fix, 4 FYI observations remain (1 at P1).` When no fixes were applied and no findings remain, print `Doc review clean — no fixes needed.` For HTML envelopes, print `Doc review (report-only) found N findings; HTML plans are reviewed without autofix.` (or `Doc review (report-only) clean — HTML plan reviewed without autofix.` when no findings remain). This line establishes what the autofix/report-only pass did so the user has the context to choose between the menu options below.
+**Summary line above the menu (always):** Print a single concise line summarizing the headless review state — e.g., `Doc review applied 3 fixes. 2 decisions, 1 proposed fix, 4 FYI observations remain (1 at P1).` When no fixes were applied and no findings remain, print `Doc review clean — no fixes needed.` For HTML envelopes, print `Doc review (DOM-safe/report-only) applied N fixes and found M findings.` when safe fixes land; when no fixes land, print `Doc review (report-only) found N findings; HTML plans are reviewed without markdown autofix.` (or `Doc review (report-only) clean — HTML plan reviewed without markdown autofix.` when no findings remain). This line establishes what the autofix/report-only pass did so the user has the context to choose between the menu options below.
 
 **Question:** "Plan ready at `<absolute path to plan>`. What would you like to do next?"
 
@@ -67,7 +67,7 @@ After all mutations in this run have settled (initial write, deepening synthesis
 2. **Run it as a `/goal`** - Run this plan as an autonomous `/goal` to its Definition of Done — fewer check-ins; good for longer or unattended runs. The alternative to option 1, not an add-on — pick one. Show only when (a) the artifact is `artifact_readiness: implementation-ready` plus `execution: code` AND (b) the host has goal mode at all — a callable goal tool (Codex `create_goal`) or a user-typed `/goal` (Claude Code); omit it where neither exists. Where the host can start a goal directly the session begins it immediately; where it cannot, it hands over a copyable `/goal` prompt. See the routing below.
 
 **Recommended marker (dynamic):** `/goal` is the recommended default when its host supports it — render option 2 as **Run it as a `/goal`** *(recommended)* and leave option 1 unmarked. On hosts without `/goal` (option 2 omitted), mark option 1 **Start `/ce-work`** *(recommended)* instead. Exactly one option ever carries *(recommended)*.
-3. **Decide on the review's open items** - Confirm or skip the suggested edits, and settle the judgment calls the auto-pass left for you. (Markdown safe fixes were already applied; HTML reviews are report-only and do not offer apply or Open Questions write-back.)
+3. **Decide on the review's open items** - Confirm or skip the suggested edits, and settle the judgment calls the auto-pass left for you. (Markdown safe fixes were already applied; HTML reviews only apply proven DOM-safe helper fixes and do not offer markdown apply or markdown Open Questions write-back.)
 4. **Create Issue** - Create a tracked issue from this plan in your configured issue tracker (e.g., GitHub Issues, Linear, Jira)
 5. **Publish to Proof — shareable link** - Publish the plan to Every's Proof editor and get a shareable link to read, comment on, or share with others. One-way: the local plan file stays canonical. **Render only when `OUTPUT_FORMAT=md`.**
 5. **Open in browser** - Open the HTML plan file locally for review and sharing. **Render only when `OUTPUT_FORMAT=html`.**
@@ -100,7 +100,7 @@ Based on selection (the bare per-option routing is also stated inline in the SKI
 
   If the upload fails (network error, Proof API down), retry once after a short wait. If it still fails, tell the user the upload didn't succeed and briefly explain why, then return to the options — don't leave them wondering why the option did nothing.
 - **Open in browser** -> Display the absolute path to the `.html` plan file so the user can open it locally. Where the platform exposes a browser-opening primitive (e.g., `open` on macOS, `xdg-open` on Linux, `start` on Windows), the agent may invoke it directly; otherwise print the absolute path and let the user open it. After the path is displayed (or the browser is opened), return to the post-generation options so the user can pick a follow-up action.
-- **Free-form prompts that target the findings** (e.g., the user types "review", "walk through", "deep review" instead of picking a numbered option) -> route as if they had picked `Decide on the review's open items`. Do not loop back to the menu without firing the review. For HTML plans, fire ce-doc-review in report-only mode: present findings and decisions, apply nothing, and do not append markdown headings into the HTML artifact.
+- **Free-form prompts that target the findings** (e.g., the user types "review", "walk through", "deep review" instead of picking a numbered option) -> route as if they had picked `Decide on the review's open items`. Do not loop back to the menu without firing the review. For HTML plans, fire ce-doc-review in DOM-safe-or-report-only mode: present findings and decisions, apply only proven helper fixes, and do not append markdown headings into the HTML artifact.
 - **Other free-form input** -> Accept revisions to the plan and loop back to options.
 
 ## Issue Creation

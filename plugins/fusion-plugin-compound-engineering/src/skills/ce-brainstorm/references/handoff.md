@@ -55,9 +55,9 @@ Present only the options that apply. Renumber so visible options stay contiguous
 2. **Ship it autonomously with `lfg`** - Hand the requirements to the full autonomous pipeline: `lfg` plans (`ce-plan`), implements, simplifies, runs independent code review and applies the fixes, opens a PR, and watches CI to green — hands-off, no check-ins. It plans first (unlike a raw `/goal` straight from requirements), so it's the safer autonomous path. Best when you trust the requirements and want it built and shipped without steering. **Opens a PR and pushes a branch.** Shown only for software brainstorms (`execution: code`) with `Resolve Before Planning` empty **and a unified plan artifact was created** — `lfg` hands `ce-plan` that artifact path in pipeline mode and cannot prompt, so with no artifact (e.g. a brief-alignment brainstorm that skipped doc creation per the "Decide whether a doc is warranted" rule) there is nothing to enrich; offer option 1 instead, which can plan interactively from the conversation. For a quicker plan-then-decide flow, or to run a `/goal` yourself, pick option 1 and choose at the `ce-plan` handoff.
 <!--
 FNXC:CompoundEngineering 2026-06-27-18:23:
-FN-7147 requires HTML brainstorm artifacts to remain reviewable instead of hiding the pressure-test option. Route HTML through ce-doc-review's report-only mode so persona findings surface while markdown-only apply-set and Open Questions mutations stay disabled.
+FN-7147 requires HTML brainstorm artifacts to remain reviewable instead of hiding the pressure-test option. FN-7149 lets ce-doc-review use only proven DOM-safe HTML mutations; markdown-only apply-set and Open Questions mutations stay disabled, and helper refusal remains report-only.
 -->
-3. **Pressure-test the requirements** - Dispatch reviewer agents with `ce-doc-review` to find gaps, conflicts, weak premises, and scope issues in the requirements; auto-apply safe fixes for markdown; route the rest interactively. Shown when a unified plan artifact exists. Under `OUTPUT_FORMAT=html`, run `ce-doc-review` in report-only mode: persona lenses run and findings are presented, but no in-file mutations, markdown apply-set edits, or Append-to-Open-Questions write-back are offered.
+3. **Pressure-test the requirements** - Dispatch reviewer agents with `ce-doc-review` to find gaps, conflicts, weak premises, and scope issues in the requirements; auto-apply safe fixes for markdown; route the rest interactively. Shown when a unified plan artifact exists. Under `OUTPUT_FORMAT=html`, run `ce-doc-review` in DOM-safe-or-report-only mode: persona lenses run and findings are presented, only proven DOM-safe helper mutations may apply, and no markdown apply-set edits or markdown Append-to-Open-Questions write-back are offered.
 4. **Publish to Proof — shareable link** - Publish the markdown unified plan to Every's Proof editor and get a shareable link to read, comment on, or share with others. One-way: the local doc stays canonical. Shown only when a markdown unified plan exists. **Render only when `OUTPUT_FORMAT=md`** (Proof operates on markdown and cannot ingest HTML).
 4. **Open in browser** — open the HTML unified plan locally for review and sharing. Shown only when an HTML unified plan exists. **Render only when `OUTPUT_FORMAT=html`.** Replaces "Publish to Proof" at the same slot under exclusive output mode — the artifact is either markdown OR HTML, never both, so exactly one of the two labels applies per run.
 5. **More clarifying questions to sharpen the doc** - Keep refining scope, edge cases, constraints, and preferences through further dialogue. Always shown.
@@ -83,11 +83,11 @@ re-scanning the repo. Do not print the closing summary first.
 **If user selects "Pressure-test the requirements":**
 
 Load the `ce-doc-review` skill, passing the unified plan path as the argument.
-For `.html` artifacts, state that the review is report-only and that no
-autofix or Append-to-Open-Questions write-back will run. When ce-doc-review
+For `.html` artifacts, state that the review is DOM-safe-or-report-only and that no
+markdown autofix or markdown Append-to-Open-Questions write-back will run. When ce-doc-review
 returns "Review complete", return to the Phase 4 options and re-render the
-menu (the requirements may have changed for markdown; HTML findings are
-advisory unless the user chooses to edit the artifact manually, so still
+menu (the requirements may have changed for markdown or from proven DOM-safe HTML fixes; HTML findings are
+advisory when the helper refuses, so still
 re-evaluate `Resolve Before Planning`, the lfg software gate, and residual
 findings). If residual P0/P1 findings remain unaddressed, include the
 post-review nudge above the menu. Do not show the closing summary yet.

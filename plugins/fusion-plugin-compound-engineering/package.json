@@ -23,6 +23,7 @@
     "@fusion/core": "workspace:*",
     "@fusion/plugin-sdk": "workspace:*",
     "lucide-react": "^0.542.0",
+    "parse5": "^8.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.2.4"
   },

@@ -134,7 +134,7 @@ Fusion ships built-in workflows as read-only references:
 - `builtin:coding` — the default coding lifecycle and fallback for tasks without a workflow selection.
 - `builtin:quick-fix` — a short path for trivial or no-commit/decision work.
 - `builtin:review-heavy` — a standard execute/review/merge path with an additional gated security review.
-- `builtin:compound-engineering` — a plugin-gated Compound Engineering pipeline: `/ce-plan` writes the CE plan doc, optional `ce-doc-review` can pressure-test plans (markdown gets autofix/Open Questions write-back; HTML is report-only with no mutation), `/ce-work` implements, `/ce-code-review` gates merge, and autoMerge-off projects route through the CE PR/feedback skills before Fusion's manual merge seam.
+- `builtin:compound-engineering` — a plugin-gated Compound Engineering pipeline: `/ce-plan` writes the CE plan doc, optional `ce-doc-review` can pressure-test plans (markdown gets autofix/Open Questions write-back; HTML uses DOM-safe helper mutations only when safety is proven, otherwise report-only with no write), `/ce-work` implements, `/ce-code-review` gates merge, and autoMerge-off projects route through the CE PR/feedback skills before Fusion's manual merge seam.
 - `builtin:stepwise-coding` — a graph variant that models per-step parse, execute, review, and rework structure.
 - `builtin:design` — a UI-heavy work path with a gated design/UX review before standard review and merge.
 
