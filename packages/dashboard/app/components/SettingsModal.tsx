@@ -732,6 +732,7 @@ export function SettingsModal({
     mergeAdvanceAutoSync: "stash-and-ff",
     merger: { mode: "ai", maxReviewPasses: 3, allowDirtyLocalCheckoutSync: true },
     recycleWorktrees: false,
+    showWorktreeGrouping: false,
     executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
     worktreeCopyFiles: [],

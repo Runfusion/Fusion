@@ -40,6 +40,11 @@ export function WorktreesSection({ scopeBanner, form, setForm, gitRemotes, workt
         <small>{t("settings.worktrees.offByDefaultOptInWhenEnabledCompleted", "Off by default (opt-in). When enabled, completed task worktrees are returned to an idle pool instead of being deleted, preserving build caches for faster startup")}</small>
       </div>
       <div className="form-group">
+        <label htmlFor="showWorktreeGrouping" className="checkbox-label">
+          <input id="showWorktreeGrouping" type="checkbox" checked={form.showWorktreeGrouping === true} onChange={(e) => setForm((f) => ({ ...f, showWorktreeGrouping: e.target.checked }))}/>{t("settings.worktrees.showWorktreeGrouping", " Show worktree grouping on the board ")}</label>
+        <small>{t("settings.worktrees.showWorktreeGroupingHelp", "Off by default. When enabled, WIP and processing columns always group tasks by worktree and show worktree names, including workflow-mode processing columns.")}</small>
+      </div>
+      <div className="form-group">
         <label>{t("settings.worktrees.filesToCopyIntoNewWorktrees", "Files to copy into new worktrees")}</label>
         {/*
         FNXC:WorktreeCopyFiles 2026-06-24-00:00:
