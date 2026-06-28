@@ -330,6 +330,46 @@ describe("POST /tasks/:id/steer", () => {
     return app;
   }
 
+  function buildTaskWorkflowApp(scopedStore: TaskStore, triggerCommentWakeForAssignedAgent = vi.fn().mockResolvedValue(undefined)) {
+    const router = express.Router();
+    registerTaskWorkflowRoutes({
+      router,
+      store: scopedStore,
+      runtimeLogger: { error: vi.fn(), warn: vi.fn() },
+      planningLogger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() } as any,
+      chatLogger: { error: vi.fn(), warn: vi.fn(), log: vi.fn() } as any,
+      getProjectIdFromRequest: () => undefined,
+      getScopedStore: async () => scopedStore,
+      getProjectContext: async () => ({ store: scopedStore, projectId: undefined }),
+      prioritizeProjectsForCurrentDirectory: (projects) => projects,
+      emitRemoteRouteDiagnostic: vi.fn(),
+      emitAuthSyncAuditLog: vi.fn(),
+      parseScopeParam: () => undefined,
+      resolveAutomationStore: vi.fn() as any,
+      resolveRoutineStore: vi.fn() as any,
+      resolveRoutineRunner: vi.fn() as any,
+      registerDispose: vi.fn(),
+      dispose: vi.fn(),
+      rethrowAsApiError: (error) => { throw error; },
+    }, {
+      runtimeLogger: { error: vi.fn(), warn: vi.fn() },
+      upload: { single: vi.fn(() => (_req: unknown, _res: unknown, next: () => void) => next()) },
+      taskDetailActivityLogLimit: 100,
+      validateOptionalModelField: () => undefined,
+      normalizeModelSelectionPair: (provider, modelId) => ({ provider, modelId }),
+      runGitCommand: vi.fn(),
+      isGitRepo: vi.fn(),
+      resolveIntegrationBranch: vi.fn(),
+      trimTaskDetailActivityLog: (task) => task,
+      triggerCommentWakeForAssignedAgent,
+      resolveSelfHealingManager: () => undefined,
+    });
+    const app = express();
+    app.use(express.json());
+    app.use("/api", router);
+    return { app, triggerCommentWakeForAssignedAgent };
+  }
+
   it("passes the new steering comment id to the task-workflow wake dependency", async () => {
     const scopedStore = createMockStore();
     const updatedTask = {
@@ -514,6 +554,202 @@ describe("POST /tasks/:id/steer", () => {
         }),
       }));
     });
+  });
+
+  it("re-engages an ephemeral in-review task when chat steering is posted", async () => {
+    const scopedStore = createMockStore();
+    const inReviewTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review" as const,
+      status: "waiting for review",
+      error: "previous transient error",
+      sessionFile: null,
+      steps: [
+        { title: "Implement", status: "done" as const },
+        { title: "Review follow-up", status: "in-progress" as const },
+      ],
+      steeringComments: [{ id: "steer-in-review", text: "Please rename the helper", author: "user" as const, createdAt: "2026-06-28T00:00:00.000Z" }],
+    };
+    const movedTask = {
+      ...inReviewTask,
+      column: "in-progress" as const,
+      status: null,
+      error: null,
+      steps: [
+        { title: "Implement", status: "done" as const },
+        { title: "Review follow-up", status: "pending" as const },
+      ],
+    };
+    const triggerCommentWakeForAssignedAgent = vi.fn().mockResolvedValue(undefined);
+    (scopedStore.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
+    (scopedStore.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    const { app } = buildTaskWorkflowApp(scopedStore, triggerCommentWakeForAssignedAgent);
+
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-001/steer", JSON.stringify({ text: "Please rename the helper" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.addSteeringComment).toHaveBeenCalledWith("FN-001", "Please rename the helper", "user");
+    expect(scopedStore.updateTask).toHaveBeenCalledWith("FN-001", { status: null, error: null, sessionFile: null });
+    expect(scopedStore.updateStep).toHaveBeenCalledWith("FN-001", 1, "pending");
+    expect(scopedStore.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(triggerCommentWakeForAssignedAgent).toHaveBeenCalledWith(scopedStore, movedTask, {
+      triggeringCommentType: "steering",
+      triggeringCommentIds: ["steer-in-review"],
+      triggerDetail: "steering-comment",
+    });
+    expect(res.body.column).toBe("in-progress");
+    expect(res.body.steeringComments).toEqual(inReviewTask.steeringComments);
+  });
+
+  it("re-engages in-review chat requests even when autoMerge is disabled", async () => {
+    const scopedStore = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ autoMerge: false }),
+      getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: false }),
+    } as Partial<TaskStore>);
+    const inReviewTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review" as const,
+      sessionFile: null,
+      steps: [],
+      steeringComments: [{ id: "steer-automerge-off", text: "Please revise", author: "user" as const, createdAt: "2026-06-28T00:00:00.000Z" }],
+    };
+    const movedTask = { ...inReviewTask, column: "in-progress" as const };
+    (scopedStore.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
+    (scopedStore.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    const { app } = buildTaskWorkflowApp(scopedStore);
+
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-001/steer", JSON.stringify({ text: "Please revise" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(res.body.column).toBe("in-progress");
+  });
+
+  it("keeps chat send successful but suppresses in-review re-engagement when an open PR blocks the move", async () => {
+    const scopedStore = createMockStore({
+      getActivePrEntityBySource: vi.fn().mockReturnValue({ state: "open" }),
+    } as Partial<TaskStore>);
+    const inReviewTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review" as const,
+      sessionFile: null,
+      steps: [{ title: "Implement", status: "done" as const }],
+      steeringComments: [{ id: "steer-pr-blocked", text: "Please revise", author: "user" as const, createdAt: "2026-06-28T00:00:00.000Z" }],
+    };
+    const triggerCommentWakeForAssignedAgent = vi.fn().mockResolvedValue(undefined);
+    (scopedStore.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
+    const { app } = buildTaskWorkflowApp(scopedStore, triggerCommentWakeForAssignedAgent);
+
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-001/steer", JSON.stringify({ text: "Please revise" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.column).toBe("in-review");
+    expect(res.body.steeringComments).toEqual(inReviewTask.steeringComments);
+    expect(scopedStore.updateTask).not.toHaveBeenCalled();
+    expect(scopedStore.updateStep).not.toHaveBeenCalled();
+    expect(scopedStore.moveTask).not.toHaveBeenCalled();
+    expect(triggerCommentWakeForAssignedAgent).not.toHaveBeenCalled();
+    expect(scopedStore.logEntry).toHaveBeenCalledWith(
+      "FN-001",
+      "In-review user comment re-engagement suppressed",
+      "This task has an open PR. Merge or close the PR before moving it back.",
+    );
+  });
+
+  it("does not use in-review re-engagement for a live in-progress chat session", async () => {
+    const scopedStore = createMockStore();
+    const liveTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-progress" as const,
+      assignedAgentId: "agent-1",
+      sessionFile: "sessions/FN-001.json",
+      steeringComments: [{ id: "steer-live", text: "Please revise", author: "user" as const, createdAt: "2026-06-28T00:00:00.000Z" }],
+    };
+    const triggerCommentWakeForAssignedAgent = vi.fn().mockResolvedValue(undefined);
+    (scopedStore.addSteeringComment as ReturnType<typeof vi.fn>).mockResolvedValue(liveTask);
+    const { app } = buildTaskWorkflowApp(scopedStore, triggerCommentWakeForAssignedAgent);
+
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-001/steer", JSON.stringify({ text: "Please revise" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.updateTask).not.toHaveBeenCalled();
+    expect(scopedStore.updateStep).not.toHaveBeenCalled();
+    expect(scopedStore.moveTask).not.toHaveBeenCalled();
+    expect(triggerCommentWakeForAssignedAgent).toHaveBeenCalledWith(scopedStore, liveTask, {
+      triggeringCommentType: "steering",
+      triggeringCommentIds: ["steer-live"],
+      triggerDetail: "steering-comment",
+    });
+  });
+
+  it("re-engages in-review tasks when user-authored task comments are posted", async () => {
+    const scopedStore = createMockStore();
+    const inReviewTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review" as const,
+      sessionFile: null,
+      steps: [],
+      comments: [{ id: "task-comment-1", text: "Please also update docs", author: "user" as const, createdAt: "2026-06-28T00:00:00.000Z" }],
+    };
+    const movedTask = { ...inReviewTask, column: "in-progress" as const };
+    const triggerCommentWakeForAssignedAgent = vi.fn().mockResolvedValue(undefined);
+    (scopedStore.addTaskComment as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
+    (scopedStore.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    const { app } = buildTaskWorkflowApp(scopedStore, triggerCommentWakeForAssignedAgent);
+
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-001/comments", JSON.stringify({ text: "Please also update docs" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.addTaskComment).toHaveBeenCalledWith("FN-001", "Please also update docs", "user");
+    expect(scopedStore.moveTask).toHaveBeenCalledWith("FN-001", "in-progress", { preserveProgress: true });
+    expect(triggerCommentWakeForAssignedAgent).toHaveBeenCalledWith(scopedStore, movedTask, {
+      triggeringCommentType: "task",
+      triggeringCommentIds: ["task-comment-1"],
+      triggerDetail: "task-comment",
+    });
+    expect(res.body.column).toBe("in-progress");
+  });
+
+  it("does not re-engage in-review tasks for non-user-authored task comments", async () => {
+    const scopedStore = createMockStore();
+    const inReviewTask = {
+      ...FAKE_TASK_DETAIL,
+      id: "FN-001",
+      column: "in-review" as const,
+      sessionFile: null,
+      steps: [{ title: "Implement", status: "done" as const }],
+      comments: [{ id: "task-comment-agent", text: "Internal note", author: "agent" as const, createdAt: "2026-06-28T00:00:00.000Z" }],
+    };
+    const triggerCommentWakeForAssignedAgent = vi.fn().mockResolvedValue(undefined);
+    (scopedStore.addTaskComment as ReturnType<typeof vi.fn>).mockResolvedValue(inReviewTask);
+    const { app } = buildTaskWorkflowApp(scopedStore, triggerCommentWakeForAssignedAgent);
+
+    const res = await REQUEST(app, "POST", "/api/tasks/FN-001/comments", JSON.stringify({ text: "Internal note", author: "agent" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(scopedStore.addTaskComment).toHaveBeenCalledWith("FN-001", "Internal note", "agent");
+    expect(scopedStore.updateTask).not.toHaveBeenCalled();
+    expect(scopedStore.updateStep).not.toHaveBeenCalled();
+    expect(scopedStore.moveTask).not.toHaveBeenCalled();
+    expect(triggerCommentWakeForAssignedAgent).not.toHaveBeenCalled();
+    expect(res.body.column).toBe("in-review");
   });
 
   it.each([

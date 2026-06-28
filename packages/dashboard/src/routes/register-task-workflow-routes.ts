@@ -595,6 +595,73 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   } = deps;
   const TASK_DETAIL_ACTIVITY_LOG_LIMIT = taskDetailActivityLogLimit;
 
+  type InReviewUserCommentReengagementInput = {
+    triggeringCommentType: "steering" | "task";
+    triggeringCommentIds?: string[];
+    triggerDetail: string;
+  };
+
+  type InReviewUserCommentReengagementResult = {
+    task: Task;
+    reengaged: boolean;
+    suppressedReason?: "blocking-pr" | "live-session" | "not-in-review";
+  };
+
+  /**
+   * FNXC:InReviewChat 2026-06-28-00:00:
+   * User-authored Chat steering comments and Comments-tab task comments on an in-review task are explicit instructions to re-engage an executor, even when autoMerge is false. Reuse the review-address lifecycle path so the agent can respond/work and later hand the task back to review; suppress only when an open PR entity blocks the backward in-review → in-progress move.
+   * Non-user task-comment authors are persisted without re-engagement so agent/system/API notes cannot bounce review work back to execution.
+   */
+  async function reengageInReviewTaskForUserComment(
+    scopedStore: TaskStore,
+    task: Task,
+    wake: InReviewUserCommentReengagementInput,
+  ): Promise<InReviewUserCommentReengagementResult> {
+    if (task.column !== "in-review") {
+      return { task, reengaged: false, suppressedReason: "not-in-review" };
+    }
+    if (task.sessionFile) {
+      return { task, reengaged: false, suppressedReason: "live-session" };
+    }
+
+    const activePrEntity =
+      scopedStore.getActivePrEntityBySource?.("task", task.id) ??
+      (task.branchContext?.groupId
+        ? scopedStore.getActivePrEntityBySource?.("branch-group", task.branchContext.groupId)
+        : null);
+    if (
+      isBackwardMoveBlockedByOpenPr({
+        fromIndex: COLUMNS.indexOf(task.column as Column),
+        toIndex: COLUMNS.indexOf("in-progress"),
+        activePrEntity,
+      })
+    ) {
+      await scopedStore.logEntry(
+        task.id,
+        "In-review user comment re-engagement suppressed",
+        PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE,
+      );
+      return { task, reengaged: false, suppressedReason: "blocking-pr" };
+    }
+
+    await scopedStore.updateTask(task.id, {
+      status: null,
+      error: null,
+      sessionFile: null,
+    });
+    const lastDoneStep = [...(task.steps ?? [])]
+      .map((step, index) => ({ step, index }))
+      .reverse()
+      .find(({ step }) => step.status === "done" || step.status === "in-progress");
+    if (lastDoneStep) {
+      await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
+    }
+
+    const reengagedTask = await scopedStore.moveTask(task.id, "in-progress", { preserveProgress: true });
+    await triggerCommentWakeForAssignedAgent(scopedStore, reengagedTask, wake);
+    return { task: reengagedTask, reengaged: true };
+  }
+
   // Get recent integration-branch advance events for post-merge notice
   router.get("/tasks/merge-advance-events", async (req, res) => {
     try {
@@ -2527,18 +2594,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (author !== undefined && typeof author !== "string") {
         throw badRequest("author must be a string");
       }
-      const task = await scopedStore.addTaskComment(req.params.id, text, author?.trim() || "user");
+      const normalizedAuthor = author?.trim() || "user";
+      const task = await scopedStore.addTaskComment(req.params.id, text, normalizedAuthor);
 
       const newCommentId = task.comments?.at(-1)?.id;
-      void triggerCommentWakeForAssignedAgent(scopedStore, task, {
-        triggeringCommentType: "task",
+      const wake = {
+        triggeringCommentType: "task" as const,
         triggeringCommentIds: newCommentId ? [newCommentId] : undefined,
         triggerDetail: "task-comment",
-      }).catch((error) => {
-        runtimeLogger.warn(
-          `failed to trigger task-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
+      };
+      if (normalizedAuthor === "user") {
+        if (task.column === "in-review" && !task.sessionFile) {
+          const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
+          res.json(reengagedTask);
+          return;
+        }
+
+        void triggerCommentWakeForAssignedAgent(scopedStore, task, wake).catch((error) => {
+          runtimeLogger.warn(
+            `failed to trigger task-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      }
 
       res.json(task);
     } catch (err: unknown) {
@@ -2876,11 +2953,18 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       const task = await scopedStore.addSteeringComment(req.params.id, text, "user");
 
       const newSteeringCommentId = task.steeringComments?.at(-1)?.id;
-      void triggerCommentWakeForAssignedAgent(scopedStore, task, {
-        triggeringCommentType: "steering",
+      const wake = {
+        triggeringCommentType: "steering" as const,
         triggeringCommentIds: newSteeringCommentId ? [newSteeringCommentId] : undefined,
         triggerDetail: "steering-comment",
-      }).catch((error) => {
+      };
+      if (task.column === "in-review" && !task.sessionFile) {
+        const { task: reengagedTask } = await reengageInReviewTaskForUserComment(scopedStore, task, wake);
+        res.json(reengagedTask);
+        return;
+      }
+
+      void triggerCommentWakeForAssignedAgent(scopedStore, task, wake).catch((error) => {
         runtimeLogger.warn(
           `failed to trigger steering-comment heartbeat for ${task.id}: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -3716,28 +3800,20 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       let updatedTask: Task = await scopedStore.getTask(task.id);
 
       if (task.column === "in-review") {
-        await scopedStore.updateTask(task.id, {
-          status: null,
-          error: null,
-          sessionFile: null,
-        });
-        const lastDoneStep = [...task.steps]
-          .map((step, index) => ({ step, index }))
-          .reverse()
-          .find(({ step }) => step.status === "done" || step.status === "in-progress");
-        if (lastDoneStep) {
-          await scopedStore.updateStep(task.id, lastDoneStep.index, "pending");
-        }
-        updatedTask = await scopedStore.moveTask(task.id, "in-progress", { preserveProgress: true });
-      }
-
-      const hasActiveSession = Boolean(updatedTask.sessionFile);
-      if (steeringCommentId && updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
-        await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
+        updatedTask = (await reengageInReviewTaskForUserComment(scopedStore, updatedTask, {
           triggeringCommentType: "steering",
-          triggeringCommentIds: [steeringCommentId],
+          triggeringCommentIds: steeringCommentId ? [steeringCommentId] : undefined,
           triggerDetail: "review-address",
-        });
+        })).task;
+      } else {
+        const hasActiveSession = Boolean(updatedTask.sessionFile);
+        if (steeringCommentId && updatedTask.column === "in-progress" && updatedTask.assignedAgentId && !hasActiveSession) {
+          await triggerCommentWakeForAssignedAgent(scopedStore, updatedTask, {
+            triggeringCommentType: "steering",
+            triggeringCommentIds: [steeringCommentId],
+            triggerDetail: "review-address",
+          });
+        }
       }
 
       await scopedStore.logEntry(task.id, "Same-task review revision requested", `${selectedItems.length} item(s) submitted from review tab`);
