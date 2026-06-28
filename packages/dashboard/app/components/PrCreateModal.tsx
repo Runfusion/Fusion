@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, CheckCircle2, RefreshCw, Sparkles, X, XCircle } from "lucide-react";
 import { getErrorMessage, type PrInfo, type StructuredGhError } from "@fusion/core";
@@ -16,7 +15,7 @@ import {
   type PrPreflightResponse,
 } from "../api";
 import type { ToastType } from "../hooks/useToast";
-import { useModalResizePersist } from "../hooks/useModalResizePersist";
+import { FloatingWindow } from "./FloatingWindow";
 import "./PrCreateModal.css";
 
 interface PrCreateModalProps {
@@ -191,8 +190,6 @@ export function PrCreateModal({
   const [reviewers, setReviewers] = useState<PrOptionsUser[]>([]);
   const [assignees, setAssignees] = useState<PrOptionsUser[]>([]);
   const [labels, setLabels] = useState<PrOptionsLabel[]>([]);
-
-  useModalResizePersist(modalRef, open, "fusion:pr-create-modal-size");
 
   const applyPreferredBase = useCallback((baseOverride?: string, nextPreflight?: PrPreflightResponse | null, nextOptions?: PrOptionsResponse | null) => {
     if (baseBranchTouchedRef.current) {
@@ -498,8 +495,22 @@ export function PrCreateModal({
 
   if (!open) return null;
 
-  return createPortal(
-    <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && onClose()}>
+  return (
+    <FloatingWindow
+      windowKey="pr-create"
+      title={t("pr.createTitle", "Create Pull Request")}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".pr-create-modal__drag-handle"
+      className="floating-window--pr-create"
+      defaultSize={{ width: 720, height: 680 }}
+      minSize={{ width: 480, height: 420 }}
+      persistGeometryKey="floating-window:pr-create"
+    >
+      {/**
+       * FNXC:PrCreateModal 2026-06-27-00:00:
+       * FN-7170 moves Create PR onto the shared FloatingWindow shell so it matches Plan Mission, Automations, and New Task: desktop users can drag the embedded modal header and resize from every FloatingWindow edge/corner, mobile stays full-screen through CSS, and geometry persists with persistGeometryKey="floating-window:pr-create". Overlay click-to-dismiss is intentionally dropped because FloatingWindow is non-blocking/click-through; close remains available via X, Cancel, and Escape.
+       */}
       <div
         ref={modalRef}
         className="modal modal-lg pr-create-modal"
@@ -507,7 +518,7 @@ export function PrCreateModal({
         aria-modal="true"
         aria-labelledby={headingId}
       >
-        <div className="modal-header">
+        <div className="modal-header pr-create-modal__drag-handle">
           <h2 id={headingId}>{t("pr.createTitle", "Create Pull Request")}</h2>
           <button type="button" className="modal-close" onClick={onClose} aria-label={t("actions.close", "Close")}>
             <X size={20} />
@@ -708,7 +719,6 @@ export function PrCreateModal({
           </button>
         </div>
       </div>
-    </div>,
-    document.body,
+    </FloatingWindow>
   );
 }

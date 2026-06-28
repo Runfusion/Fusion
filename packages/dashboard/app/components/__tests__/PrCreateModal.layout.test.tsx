@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   fetchPrPreflight: vi.fn(),
   fetchPrOptions: vi.fn(),
   createPr: vi.fn(),
+  pushPrBranch: vi.fn(),
+  resolvePrConflicts: vi.fn(),
 }));
 
 vi.mock("../../api", () => ({
@@ -15,6 +17,8 @@ vi.mock("../../api", () => ({
   fetchPrPreflight: mocks.fetchPrPreflight,
   fetchPrOptions: mocks.fetchPrOptions,
   createPr: mocks.createPr,
+  pushPrBranch: mocks.pushPrBranch,
+  resolvePrConflicts: mocks.resolvePrConflicts,
 }));
 
 describe("PrCreateModal layout", () => {
@@ -56,7 +60,7 @@ describe("PrCreateModal layout", () => {
 
     await waitFor(() => expect(mocks.generatePrMetadata).toHaveBeenCalled());
 
-    const dialog = screen.getByRole("dialog");
+    const dialog = screen.getByRole("dialog", { name: "Create Pull Request" });
     const modal = dialog.classList.contains("modal") ? dialog : dialog.closest(".modal");
     expect(modal).toBeTruthy();
 

@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { act } from "react";
 import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PrCreateModal } from "../PrCreateModal";
 import type { PrInfo } from "@fusion/core";
+
+const prCreateModalCss = readFileSync("app/components/PrCreateModal.css", "utf8");
 
 const mocks = vi.hoisted(() => ({
   generatePrMetadata: vi.fn(),
@@ -74,6 +77,16 @@ async function renderModalLoaded(overrides?: Partial<ComponentProps<typeof PrCre
   return handles;
 }
 
+function setViewport(width: number, height: number) {
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
+}
+
+function stubPointerCapture(element: HTMLElement) {
+  Object.defineProperty(element, "setPointerCapture", { configurable: true, value: vi.fn() });
+  Object.defineProperty(element, "releasePointerCapture", { configurable: true, value: vi.fn() });
+}
+
 describe("PrCreateModal", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -92,7 +105,7 @@ describe("PrCreateModal", () => {
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("portals out of a container-type containing block", async () => {
+  it("renders inside the shared floating window and portals out of a container-type containing block", async () => {
     const { container } = render(
       <div data-testid="trap" style={{ containerType: "inline-size" }}>
         <PrCreateModal open taskId="FN-4756" onClose={vi.fn()} onCreated={vi.fn()} addToast={vi.fn()} />
@@ -103,10 +116,68 @@ describe("PrCreateModal", () => {
 
     const trap = within(container).getByTestId("trap");
     expect(trap.querySelector('[role="dialog"]')).toBeNull();
-    const dialog = screen.getByRole("dialog");
-    expect(dialog).toBeInTheDocument();
-    expect(dialog.parentElement).toHaveClass("modal-overlay", "open");
-    expect(dialog.parentElement?.parentElement).toBe(document.body);
+    const panel = screen.getByTestId("floating-window-pr-create");
+    expect(panel).toHaveClass("floating-window--pr-create", "floating-window--headerless");
+    expect(panel.style.width).toBe("720px");
+    expect(panel.style.height).toBe("680px");
+    expect(screen.queryByTestId("floating-window-drag-handle-pr-create")).toBeNull();
+    expect(panel.parentElement).toHaveClass("floating-window-overlay");
+    expect(panel.parentElement?.parentElement).toBe(document.body);
+
+    const dialog = screen.getByRole("dialog", { name: "Create Pull Request" });
+    expect(dialog).toHaveClass("modal", "pr-create-modal");
+    expect(screen.getAllByRole("button", { name: "Close" })).toHaveLength(1);
+    expect(dialog.querySelector(":scope > .modal-header")).toHaveClass("pr-create-modal__drag-handle");
+    expect(dialog.querySelector(":scope > .modal-actions")?.parentElement).toBe(dialog);
+  });
+
+  it("drags and resizes the Create PR floating window from the embedded header", async () => {
+    setViewport(1200, 1000);
+    await renderModalLoaded();
+
+    const panel = screen.getByTestId("floating-window-pr-create");
+    const header = screen.getByRole("dialog", { name: "Create Pull Request" }).querySelector(".pr-create-modal__drag-handle") as HTMLElement;
+    stubPointerCapture(panel);
+
+    const initialLeft = Number.parseFloat(panel.style.left);
+    const initialTop = Number.parseFloat(panel.style.top);
+
+    act(() => {
+      fireEvent.pointerDown(header, { pointerId: 7, clientX: 120, clientY: 80 });
+      fireEvent.pointerMove(panel, { pointerId: 7, clientX: 220, clientY: 150 });
+      fireEvent.pointerUp(panel, { pointerId: 7, clientX: 220, clientY: 150 });
+    });
+
+    await waitFor(() => {
+      expect(Number.parseFloat(panel.style.left)).toBeGreaterThan(initialLeft);
+      expect(Number.parseFloat(panel.style.top)).toBeGreaterThan(initialTop);
+    });
+
+    const initialWidth = Number.parseFloat(panel.style.width);
+    const initialHeight = Number.parseFloat(panel.style.height);
+    const resizeHandle = screen.getByTestId("floating-window-resize-se") as HTMLElement;
+    stubPointerCapture(resizeHandle);
+
+    act(() => {
+      fireEvent.pointerDown(resizeHandle, { pointerId: 8, clientX: 700, clientY: 600 });
+      fireEvent.pointerMove(resizeHandle, { pointerId: 8, clientX: 820, clientY: 720 });
+      fireEvent.pointerUp(resizeHandle, { pointerId: 8, clientX: 820, clientY: 720 });
+    });
+
+    await waitFor(() => {
+      expect(Number.parseFloat(panel.style.width)).toBeGreaterThan(initialWidth);
+      expect(Number.parseFloat(panel.style.height)).toBeGreaterThan(initialHeight);
+    });
+  });
+
+  it("keeps mobile Create PR full-screen and hides resize handles by CSS contract", () => {
+    const mobileBlock = prCreateModalCss.match(/@media\s*\(max-width:\s*768px\)\s*\{[\s\S]*?\.floating-window--pr-create \.modal\.pr-create-modal\s*\{[\s\S]*?\n\}/)?.[0];
+
+    expect(mobileBlock).toContain(".floating-window--pr-create");
+    expect(mobileBlock).toContain("width: 100vw !important;");
+    expect(mobileBlock).toContain("height: 100dvh !important;");
+    expect(mobileBlock).toContain(".floating-window--pr-create .floating-window__resize-handle");
+    expect(mobileBlock).toContain("display: none;");
   });
 
   it("portals independently of an outer modal overlay", async () => {
@@ -130,7 +201,8 @@ describe("PrCreateModal", () => {
     expect(outerShell.querySelector('[role="dialog"]')).toBeNull();
 
     const overlays = Array.from(document.body.querySelectorAll(".modal-overlay.open"));
-    expect(overlays).toHaveLength(2);
+    expect(overlays).toHaveLength(1);
+    expect(screen.getByTestId("floating-window-pr-create")).toBeInTheDocument();
 
     const outerOverlay = within(container).getByTestId("outer-overlay");
     const innerDialog = screen.getByRole("dialog", { name: "Create Pull Request" });
@@ -515,12 +587,12 @@ describe("PrCreateModal", () => {
     expect((await screen.findAllByText(/gh auth login/i)).length).toBeGreaterThan(0);
   });
 
-  it("closes on overlay click", async () => {
+  it("does not close from bare page clicks because the floating shell is non-blocking", async () => {
     const { onClose } = await renderModalLoaded();
-    const overlay = document.querySelector(".modal-overlay.open");
-    expect(overlay).toBeTruthy();
-    fireEvent.click(overlay as Element);
-    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.pointerDown(document.body);
+    fireEvent.click(document.body);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByTestId("floating-window-pr-create")).toBeInTheDocument();
   });
 
   it("closes on escape", async () => {

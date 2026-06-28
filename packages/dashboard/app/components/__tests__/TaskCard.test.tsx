@@ -1946,13 +1946,13 @@ describe("TaskCard", () => {
     );
 
     const stepNames = Array.from(container.querySelectorAll(".card-step-name")).map((el) => el.textContent);
-    // WS-003 has no result → name falls back to the raw id; all others resolve from result.workflowStepName.
+    // WS-003 has no result → name falls back to the humanized workflow id; all others resolve from result.workflowStepName.
     expect(stepNames).toEqual([
       "Step 0",
       "Step 1",
       "Browser Verification",
       "Frontend UX Design",
-      "WS-003",
+      "WS 003",
       "Code Review Gate",
     ]);
 
@@ -2032,8 +2032,8 @@ describe("TaskCard", () => {
     );
 
     const stepNames = Array.from(container.querySelectorAll(".card-step-name")).map((el) => el.textContent);
-    // Blank result name → fall back to id; WS-003 (no result) → id.
-    expect(stepNames).toEqual(["WS-002", "WS-003"]);
+    // Blank result name → fall back to the humanized id; WS-003 (no result) → humanized id.
+    expect(stepNames).toEqual(["WS 002", "WS 003"]);
   });
 
   it("shows drop indicator on file dragover and removes on dragleave", () => {
