@@ -711,7 +711,7 @@ export function registerAgentRuntimeRoutes(ctx: ApiRoutesContext, deps: AgentRun
   router.get("/agents/:id/token-usage", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const { AgentStore, aggregateAgentTokenUsage, isEphemeralAgent } = await import("@fusion/core");
+      const { AgentStore, aggregateAgentTokenUsage } = await import("@fusion/core");
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 

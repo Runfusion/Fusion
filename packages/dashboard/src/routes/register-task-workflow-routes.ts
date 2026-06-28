@@ -643,9 +643,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
 
     const activePrEntity =
-      scopedStore.getActivePrEntityBySource?.("task", task.id) ??
+      (await scopedStore.getActivePrEntityBySource?.("task", task.id)) ??
       (task.branchContext?.groupId
-        ? scopedStore.getActivePrEntityBySource?.("branch-group", task.branchContext.groupId)
+        ? await scopedStore.getActivePrEntityBySource?.("branch-group", task.branchContext.groupId)
         : null);
     if (
       isBackwardMoveBlockedByOpenPr({

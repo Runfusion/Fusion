@@ -112,13 +112,18 @@ describe("stop", () => {
 });
 
 describe("wake-on-message", () => {
-  it("executes heartbeat when messageResponseMode is immediate", () => {
+  it("executes heartbeat when messageResponseMode is immediate", async () => {
     let messageHook: ((message: Message) => void) | undefined;
     const messageStore = createMockMessageStore((hook) => {
       messageHook = hook;
     });
     const configStore = createMockStore({
       getCachedAgent: vi.fn().mockReturnValue({
+        id: "agent-1",
+        state: "active",
+        runtimeConfig: { messageResponseMode: "immediate" },
+      }),
+      getAgent: vi.fn().mockResolvedValue({
         id: "agent-1",
         state: "active",
         runtimeConfig: { messageResponseMode: "immediate" },
@@ -137,16 +142,20 @@ describe("wake-on-message", () => {
     customMonitor.start();
     messageHook?.(createMessage({ toId: "agent-1", toType: "agent" }));
 
-    expect(executeHeartbeatSpy).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      source: "on_demand",
-      triggerDetail: "wake-on-message",
-      wakeMessage: expect.objectContaining({
-        messageId: "msg-001",
-        fromType: "user",
-        fromId: "user-1",
-        forced: false,
-      }),
+    // FNXC:PostgresBackend 2026-06-28: wake-on-message is now async (getAgent);
+    // flush microtasks before asserting.
+    await vi.waitFor(() => {
+      expect(executeHeartbeatSpy).toHaveBeenCalledWith({
+        agentId: "agent-1",
+        source: "on_demand",
+        triggerDetail: "wake-on-message",
+        wakeMessage: expect.objectContaining({
+          messageId: "msg-001",
+          fromType: "user",
+          fromId: "user-1",
+          forced: false,
+        }),
+      });
     });
 
     customMonitor.stop();
@@ -226,13 +235,18 @@ describe("wake-on-message", () => {
     customMonitor.stop();
   });
 
-  it("forces a wake when metadata.wakeRecipient overrides on-heartbeat mode", () => {
+  it("forces a wake when metadata.wakeRecipient overrides on-heartbeat mode", async () => {
     let messageHook: ((message: Message) => void) | undefined;
     const messageStore = createMockMessageStore((hook) => {
       messageHook = hook;
     });
     const configStore = createMockStore({
       getCachedAgent: vi.fn().mockReturnValue({
+        id: "agent-1",
+        state: "active",
+        runtimeConfig: { messageResponseMode: "on-heartbeat" },
+      }),
+      getAgent: vi.fn().mockResolvedValue({
         id: "agent-1",
         state: "active",
         runtimeConfig: { messageResponseMode: "on-heartbeat" },
@@ -257,28 +271,35 @@ describe("wake-on-message", () => {
       }),
     );
 
-    expect(executeHeartbeatSpy).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      source: "on_demand",
-      triggerDetail: "wake-on-message-forced",
-      wakeMessage: expect.objectContaining({
-        messageId: "msg-001",
-        fromType: "user",
-        fromId: "user-1",
-        forced: true,
-      }),
+    await vi.waitFor(() => {
+      expect(executeHeartbeatSpy).toHaveBeenCalledWith({
+        agentId: "agent-1",
+        source: "on_demand",
+        triggerDetail: "wake-on-message-forced",
+        wakeMessage: expect.objectContaining({
+          messageId: "msg-001",
+          fromType: "user",
+          fromId: "user-1",
+          forced: true,
+        }),
+      });
     });
 
     customMonitor.stop();
   });
 
-  it("forces a wake even when messageResponseMode is unset", () => {
+  it("forces a wake even when messageResponseMode is unset", async () => {
     let messageHook: ((message: Message) => void) | undefined;
     const messageStore = createMockMessageStore((hook) => {
       messageHook = hook;
     });
     const configStore = createMockStore({
       getCachedAgent: vi.fn().mockReturnValue({
+        id: "agent-1",
+        state: "idle",
+        runtimeConfig: {},
+      }),
+      getAgent: vi.fn().mockResolvedValue({
         id: "agent-1",
         state: "idle",
         runtimeConfig: {},
@@ -303,16 +324,18 @@ describe("wake-on-message", () => {
       }),
     );
 
-    expect(executeHeartbeatSpy).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      source: "on_demand",
-      triggerDetail: "wake-on-message-forced",
-      wakeMessage: expect.objectContaining({
-        messageId: "msg-001",
-        fromType: "user",
-        fromId: "user-1",
-        forced: true,
-      }),
+    await vi.waitFor(() => {
+      expect(executeHeartbeatSpy).toHaveBeenCalledWith({
+        agentId: "agent-1",
+        source: "on_demand",
+        triggerDetail: "wake-on-message-forced",
+        wakeMessage: expect.objectContaining({
+          messageId: "msg-001",
+          fromType: "user",
+          fromId: "user-1",
+          forced: true,
+        }),
+      });
     });
 
     customMonitor.stop();
