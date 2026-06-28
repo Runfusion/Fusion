@@ -38,6 +38,7 @@ describe("HTML mutation helper", () => {
     const result = writeHtmlMutationsToFile(file, [{ type: "append-open-question", itemHtml: "<li>New?</li>" }], { rootDir: root });
 
     expect(result).toMatchObject({ ok: false, fixesApplied: 0 });
+    if (result.ok) throw new Error("expected unstable HTML write to be refused");
     expect(result.reason).toMatch(/round-trip stability/i);
     expect(readFileSync(file, "utf8")).toBe(unstable);
   });
