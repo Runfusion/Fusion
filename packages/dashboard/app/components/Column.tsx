@@ -241,13 +241,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const isArchived = workflowMode ? Boolean(columnFlags?.archived) : column === "archived";
   const isHoldColumn = workflowMode && Boolean(columnFlags?.hold);
   const isCollapsed = isArchived && collapsed;
-  const isLegacyInProgress = !workflowMode && column === "in-progress";
   const isWipProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
   /*
-  FNXC:WorktreeGroupingSetting 2026-06-27-00:00:
-  The default-off setting must preserve the existing legacy in-progress grouping exactly. When enabled, every WIP/processing column groups tasks by worktree and shows worktree labels, including workflow-mode columns flagged countsTowardWip.
+  FNXC:WorktreeGroupingSetting 2026-06-27-22:30:
+  The project setting is an explicit show/hide control: worktree grouping and labels render only when enabled and only for the board's WIP/processing column. Turning it off must leave plain task cards with no legacy group shell in either legacy or workflow-mode columns.
   */
-  const showWorktreeGroups = showWorktreeGrouping === true ? isWipProcessingColumn : isLegacyInProgress;
+  const showWorktreeGroups = showWorktreeGrouping === true && isWipProcessingColumn;
   // When search is active, skip pagination so all matching tasks are visible
   const shouldPaginate = !isArchived && !isSearchActive && !showWorktreeGroups && tasks.length > PAGINATED_COLUMN_THRESHOLD;
 

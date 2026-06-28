@@ -248,13 +248,22 @@ describe("Column workflow mode (U9)", () => {
 });
 
 describe("Column worktree grouping setting", () => {
-  it("keeps the default-off legacy in-progress worktree grouping behavior", () => {
+  it("renders legacy in-progress columns as plain cards when the setting is off", () => {
     const assigned = { ...makeTask("FN-001"), column: "in-progress" as ColumnType, worktree: "/repo/.worktrees/amber-finch" };
     render(<Column {...defaultProps} column="in-progress" tasks={[assigned]} allTasks={[assigned]} />);
 
+    expect(screen.queryByTestId("worktree-group")).toBeNull();
+    expect(screen.queryByText("amber-finch")).toBeNull();
+    expect(screen.getByTestId("task-FN-001")).toBeInTheDocument();
+  });
+
+  it("groups legacy in-progress tasks by worktree when the setting is on", () => {
+    const assigned = { ...makeTask("FN-001A"), column: "in-progress" as ColumnType, worktree: "/repo/.worktrees/amber-finch" };
+    render(<Column {...defaultProps} column="in-progress" showWorktreeGrouping tasks={[assigned]} allTasks={[assigned]} />);
+
     expect(screen.getByTestId("worktree-group")).toHaveAttribute("data-label", "amber-finch");
-    expect(screen.getByTestId("group-active-FN-001")).toBeInTheDocument();
-    expect(screen.queryByTestId("task-FN-001")).toBeNull();
+    expect(screen.getByTestId("group-active-FN-001A")).toBeInTheDocument();
+    expect(screen.queryByTestId("task-FN-001A")).toBeNull();
   });
 
   it("renders workflow processing columns as plain cards when the setting is off", () => {
@@ -417,9 +426,9 @@ describe("Column pagination", () => {
     expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
   });
 
-  it("does not paginate in-progress columns", () => {
+  it("does not paginate grouped in-progress columns", () => {
     const tasks = Array.from({ length: 110 }, (_, index) => ({ ...makeTask(`KB-${String(index + 1).padStart(3, "0")}`), column: "in-progress" as ColumnType }));
-    render(<Column {...defaultProps} column="in-progress" tasks={tasks} />);
+    render(<Column {...defaultProps} column="in-progress" showWorktreeGrouping tasks={tasks} />);
 
     expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
   });
