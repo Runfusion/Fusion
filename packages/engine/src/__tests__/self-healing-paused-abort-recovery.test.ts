@@ -96,7 +96,14 @@ describe("recoverPausedAbortFailures", () => {
     // not the dead releaseExecutorWorktreeOwnership option (PR #1687 review).
     expect(clearBinding).toHaveBeenCalledWith("FN-7000");
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ mutationType: "task:auto-recover-paused-abort-park", target: "FN-7000" }),
+      expect.objectContaining({
+        mutationType: "task:auto-recover-paused-abort-park",
+        target: "FN-7000",
+        metadata: expect.objectContaining({
+          recoveryRoute: "node-requeue",
+          recoveryReason: "pause-abort-active-work",
+        }),
+      }),
     );
   });
 
@@ -146,7 +153,12 @@ describe("recoverPausedAbortFailures", () => {
       expect.objectContaining({
         mutationType: "task:auto-recover-paused-abort-park",
         target: "FN-7002",
-        metadata: { fromColumn: "in-review", preservedInReview: true },
+        metadata: {
+          fromColumn: "in-review",
+          preservedInReview: true,
+          recoveryRoute: "work-item-resume",
+          recoveryReason: "pause-abort-review-progress",
+        },
       }),
     );
   });

@@ -9,15 +9,33 @@ for post-merge workflow steps (U7 spike). Mirrors `codeReviewOptionalGroupNode` 
   1. runs it only AFTER a successful merge (when wired off the merge region and the
      `graphNativePostMerge` flag is on), and
   2. records its WorkflowStepResult with `phase: "post-merge"` + emits `[post-merge]`
-     logs (failures are NON-BLOCKING — the merged task still completes).
+     logs. Advisory post-merge failures are non-blocking; explicit gate-mode
+     verification failures block final graph success after merge proof.
 
-There are NO built-in post-merge steps today, so this factory is intentionally generic
-and is NOT wired into `builtin:coding` (which stays byte-identical, the parity oracle).
-It is the reusable builder migrated/custom workflows (and the new test) use to author a
-post-merge step. The group node id is the STABLE per-task enable key (`enabledWorkflowSteps`),
-and the inner template node carries a DISTINCT id (`${id}-step`) — a template node id may
-not collide with the group/top-level node id (optional-group validation).
+FNXC:WorkflowPostMerge 2026-06-29-12:22:
+Full task built-ins need an explicit default-off post-merge verification node so
+post-merge audit/verification policy can live in workflow definitions instead of
+merger-only fallback code. The group node id is the STABLE per-task enable key
+(`enabledWorkflowSteps`), and the inner template node carries a DISTINCT id
+(`${id}-step`) — a template node id may not collide with the group/top-level node id
+(optional-group validation).
 */
+
+export const POST_MERGE_VERIFICATION_GROUP_ID = "post-merge-verification";
+
+const POST_MERGE_VERIFICATION_PROMPT = `You are a post-merge verification reviewer. Verify that the task's merged result is safe after integration.
+
+## Review focus
+1. Confirm the task has merge proof or already-on-main proof before treating the workflow as complete.
+2. Check the final merged diff and task summary for obvious mismatches, missing verification evidence, or integration-only regressions.
+3. If configured test/build commands are available in the task context, inspect their latest result or explain why no post-merge command was applicable.
+
+## Output Requirements
+- APPROVE: post-merge verification is acceptable.
+- APPROVE_WITH_NOTES: completion may proceed with non-blocking notes.
+- REVISE: completion should be blocked; include the concrete post-merge issue and the needed follow-up.
+- Final output: output exactly one trailing JSON object on the final line (no markdown fences, no surrounding prose):
+{"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
 export interface PostMergeOptionalGroupSpec {
   /** Stable per-task enable key + group node id. */
@@ -70,4 +88,16 @@ export function postMergeOptionalGroupNode(spec: PostMergeOptionalGroupSpec): Wo
       },
     },
   };
+}
+
+export function postMergeVerificationOptionalGroupNode(column = "done"): WorkflowIrNode {
+  return postMergeOptionalGroupNode({
+    id: POST_MERGE_VERIFICATION_GROUP_ID,
+    name: "Post-merge verification",
+    column,
+    prompt: POST_MERGE_VERIFICATION_PROMPT,
+    description: "Verify the integrated result after merge proof before final completion",
+    gateMode: "gate",
+    defaultOn: false,
+  });
 }

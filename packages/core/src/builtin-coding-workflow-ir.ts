@@ -5,6 +5,7 @@ import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
 import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
 import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
 import {
   browserVerificationRemediationNode,
@@ -112,6 +113,7 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
       config: { capability: "task-merge", reworkRegion: true, maxReworkCycles: 3 },
     },
     { id: "recovery-router", kind: "recovery-router", column: "in-review", config: { surfaces: ["merge", "retry"] } },
+    postMergeVerificationOptionalGroupNode("done"),
     { id: "end", kind: "end", column: "done" },
   ],
   edges: [
@@ -135,15 +137,19 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "branch-group-member-integration", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "branch-group-promotion", to: "merge-attempt", condition: "success" },
     { from: "branch-group-promotion", to: "merge-manual-hold", condition: "outcome:manual-required" },
-    { from: "merge-attempt", to: "end", condition: "success" },
+    { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
+    { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },
     { from: "planning", to: "end", condition: "failure" },
     { from: "plan-review", to: "plan-replan", condition: "failure" },
+    { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
     { from: "execute", to: "end", condition: "failure" },
     { from: "browser-verification", to: "browser-verification-remediation", condition: "failure" },
+    { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
     { from: "code-review", to: "code-review-remediation", condition: "failure" },
+    { from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" },
     { from: "review", to: "end", condition: "failure" },
     { from: "merge-attempt", to: "end", condition: "failure" },
   ],

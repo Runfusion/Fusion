@@ -113,6 +113,37 @@ describe("built-in workflows", () => {
     }
   });
 
+  it("engineering built-in review failures loop through graph-owned remediation", () => {
+    const expectedLoops = [
+      { gate: "plan-review", remediation: "plan-replan" },
+      { gate: "browser-verification", remediation: "browser-verification-remediation" },
+      { gate: "code-review", remediation: "code-review-remediation" },
+    ];
+
+    for (const workflow of BUILTIN_WORKFLOWS) {
+      const nodeIds = new Set(workflow.ir.nodes.map((node) => node.id));
+      if (!expectedLoops.some(({ gate }) => nodeIds.has(gate))) continue;
+
+      for (const { gate, remediation } of expectedLoops) {
+        if (!nodeIds.has(gate)) continue;
+        expect(workflow.ir.edges, `${workflow.id}:${gate}:failure`).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ from: gate, to: remediation, condition: "failure" }),
+          ]),
+        );
+        expect(workflow.ir.edges, `${workflow.id}:${remediation}:return`).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ from: remediation, to: gate, condition: "success", kind: "rework" }),
+          ]),
+        );
+        expect(workflow.ir.nodes.find((node) => node.id === gate)?.config, `${workflow.id}:${gate}:reworkRegion`).toMatchObject({
+          reworkRegion: true,
+          maxReworkCycles: 3,
+        });
+      }
+    }
+  });
+
   it("all built-in workflows generate a task completion summary as a graph node", () => {
     for (const workflow of BUILTIN_WORKFLOWS) {
       if (workflow.kind === "fragment") continue;
@@ -121,6 +152,38 @@ describe("built-in workflows", () => {
       expect(summaryNodes[0]?.kind, workflow.id).toBe("prompt");
       expect(summaryNodes[0]?.config?.summaryTarget, workflow.id).toBe("task");
       expect(summaryNodes[0]?.config?.toolMode, workflow.id).toBe("readonly");
+    }
+  });
+
+  it("merge-capable built-ins expose a default-off post-merge verification node after merge proof", () => {
+    for (const workflow of BUILTIN_WORKFLOWS) {
+      if (workflow.kind === "fragment") continue;
+      const mergeNode = workflow.ir.nodes.find((node) => node.id === "merge-attempt" || node.id === "merge");
+      if (!mergeNode) continue;
+
+      const postMerge = workflow.ir.nodes.find((node) => node.id === "post-merge-verification");
+      expect(postMerge?.kind, workflow.id).toBe("optional-group");
+      expect(postMerge?.config, workflow.id).toMatchObject({
+        phase: "post-merge",
+        defaultOn: false,
+      });
+      const template = postMerge?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
+      expect(template?.nodes?.[0]?.config?.gateMode, workflow.id).toBe("gate");
+      expect(workflow.ir.edges, `${workflow.id}:post-merge-entry`).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ from: mergeNode.id, to: "post-merge-verification", condition: "success" }),
+        ]),
+      );
+      if (mergeNode.id === "merge-attempt") {
+        expect(workflow.ir.edges, `${workflow.id}:no-direct-merge-end`).not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ from: "merge-attempt", to: "end", condition: "success" }),
+          ]),
+        );
+      }
+      expect(workflow.ir.nodes.map((node) => node.id).indexOf("post-merge-verification"), workflow.id).toBeGreaterThan(
+        workflow.ir.nodes.map((node) => node.id).indexOf(mergeNode.id),
+      );
     }
   });
 
@@ -524,6 +587,7 @@ describe("built-in workflows", () => {
       "review",
       "completion-summary",
       "merge",
+      "post-merge-verification",
       "plan-replan",
       "browser-verification-remediation",
       "code-review-remediation",
@@ -757,6 +821,7 @@ describe("built-in workflows", () => {
       "resolve-feedback",
       "completion-summary",
       "merge",
+      "post-merge-verification",
       "document",
       "plan-replan",
       "browser-verification-remediation",

@@ -108,6 +108,11 @@ export const MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES = 3;
 export const MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES = 3;
 const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 2;
 
+type WorkflowRecoveryRoute =
+  | { kind: "node-requeue"; reason: "pause-abort-active-work" }
+  | { kind: "work-item-resume"; reason: "pause-abort-review-progress" }
+  | { kind: "no-action"; reason: "not-pause-abort" | "unsafe-or-not-routable" };
+
 function extractTaskIdFromTempMergeDir(dirname: string): string | null {
   const match = /^fusion-ai-merge-(fn-\d+)-[a-z0-9]+$/i.exec(dirname);
   return match?.[1]?.toUpperCase() ?? null;
@@ -769,6 +774,50 @@ export class SelfHealingManager {
     private store: TaskStore,
     private options: SelfHealingOptions,
   ) {}
+
+  private classifyPausedAbortWorkflowRecovery(
+    task: Task,
+    settings: Settings,
+    isExecuting: boolean,
+  ): WorkflowRecoveryRoute {
+    const isPausedAbortPark =
+      task.status === "failed" &&
+      typeof task.error === "string" &&
+      task.error.includes(PAUSE_ABORT_PARK_OPERATOR_MARKER) &&
+      task.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER);
+    if (!isPausedAbortPark) return { kind: "no-action", reason: "not-pause-abort" };
+    if (task.paused || task.userPaused || isExecuting) return { kind: "no-action", reason: "unsafe-or-not-routable" };
+
+    const errorText = typeof task.error === "string" ? task.error.toLowerCase() : "";
+    const isTerminalMergePark = errorText.includes("conflict")
+      || errorText.includes("contamination")
+      || errorText.includes("foreign")
+      || errorText.includes("retry-exhausted")
+      || errorText.includes("retries exhausted")
+      || errorText.includes("max retries");
+    const hasReviewProgress =
+      task.column === "in-review"
+      && allowsAutoMergeProcessing(task, settings)
+      && task.mergeDetails?.mergeConfirmed !== true
+      && !isTerminalMergePark
+      && task.steps.length > 0
+      && task.steps.every((step) => step.status === "done" || step.status === "skipped");
+
+    /*
+    FNXC:WorkflowRecoveryRouter 2026-06-29-11:47:
+    Pause-abort self-healing should classify recovery intent before mutating task
+    state. Active work routes to a workflow node requeue in todo; completed review
+    progress routes to a work-item/review resume in-place. Unsafe rows stay
+    untouched so invariant repair and human holds remain separate decisions.
+    */
+    if (hasReviewProgress) {
+      return { kind: "work-item-resume", reason: "pause-abort-review-progress" };
+    }
+    if (task.column === "todo" || task.column === "in-progress") {
+      return { kind: "node-requeue", reason: "pause-abort-active-work" };
+    }
+    return { kind: "no-action", reason: "unsafe-or-not-routable" };
+  }
 
   public getActiveMergeTaskId(): string | null {
     return this.options.getActiveMergeTaskId?.() ?? null;
@@ -9074,39 +9123,8 @@ export class SelfHealingManager {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ slim: true });
 
-      const isPausedAbortPark = (t: Task): boolean =>
-        t.status === "failed" &&
-        typeof t.error === "string" &&
-        t.error.includes(PAUSE_ABORT_PARK_OPERATOR_MARKER) &&
-        t.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER);
-      const isTerminalMergePark = (t: Task): boolean => {
-        const text = typeof t.error === "string" ? t.error.toLowerCase() : "";
-        return text.includes("conflict")
-          || text.includes("contamination")
-          || text.includes("foreign")
-          || text.includes("retry-exhausted")
-          || text.includes("retries exhausted")
-          || text.includes("max retries");
-      };
-      const isRecoverableInReviewPauseAbortPark = (t: Task): boolean => {
-        /*
-        FNXC:WorkflowLifecycle 2026-06-20-00:00:
-        FN-6796 defense-in-depth: executor memory that distinguishes benign engine aborts from user hard-cancel is gone after restart, so self-healing may recover only persisted clean `in-review` pause-abort parks: non-paused, not executing, auto-merge eligible, completed steps, no terminal/confirmed merge evidence. User hard-cancel rows rest in `todo`; global/user pauses and autoMerge:false review rows remain operator-controlled.
-        */
-        return t.column === "in-review"
-          && allowsAutoMergeProcessing(t, settings)
-          && t.mergeDetails?.mergeConfirmed !== true
-          && !isTerminalMergePark(t)
-          && t.steps.length > 0
-          && t.steps.every((step) => step.status === "done" || step.status === "skipped");
-      };
-
       const parked = tasks.filter((t) =>
-        isPausedAbortPark(t) &&
-        !t.paused &&
-        !t.userPaused &&
-        !executingIds.has(t.id) &&
-        (t.column === "todo" || t.column === "in-progress" || isRecoverableInReviewPauseAbortPark(t)),
+        this.classifyPausedAbortWorkflowRecovery(t, settings, executingIds.has(t.id)).kind !== "no-action",
       );
 
       if (parked.length === 0) return 0;
@@ -9124,19 +9142,14 @@ export class SelfHealingManager {
           // applied (coderabbit Major + greptile, PR #1687).
           const fresh = await this.store.getTask(task.id);
           const latestExecutingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-          if (
-            !fresh ||
-            !isPausedAbortPark(fresh) ||
-            fresh.paused ||
-            fresh.userPaused ||
-            latestExecutingIds.has(fresh.id) ||
-            !(fresh.column === "todo" || fresh.column === "in-progress" || isRecoverableInReviewPauseAbortPark(fresh))
-          ) {
+          if (!fresh) continue;
+          const route = this.classifyPausedAbortWorkflowRecovery(fresh, settings, latestExecutingIds.has(fresh.id));
+          if (route.kind === "no-action") {
             continue;
           }
 
           await this.store.updateTask(task.id, { status: null, error: null });
-          if (fresh.column !== "todo" && fresh.column !== "in-review") {
+          if (route.kind === "node-requeue" && fresh.column !== "todo") {
             await this.store.moveTask(task.id, "todo", {
               preserveProgress: true,
               moveSource: "engine",
@@ -9168,7 +9181,12 @@ export class SelfHealingManager {
               domain: "database",
               mutationType: "task:auto-recover-paused-abort-park",
               target: task.id,
-              metadata: { fromColumn: fresh.column, preservedInReview: fresh.column === "in-review" },
+              metadata: {
+                fromColumn: fresh.column,
+                preservedInReview: route.kind === "work-item-resume",
+                recoveryRoute: route.kind,
+                recoveryReason: route.reason,
+              },
             });
           } catch (auditErr: unknown) {
             log.warn(`Pause-abort park audit emission failed for ${task.id}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);

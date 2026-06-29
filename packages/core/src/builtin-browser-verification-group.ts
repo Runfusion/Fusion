@@ -95,6 +95,8 @@ export function browserVerificationOptionalGroupNode(
     config: {
       name: BROWSER_VERIFICATION_NAME,
       defaultOn: options.defaultOn ?? false,
+      reworkRegion: true,
+      maxReworkCycles: 3,
       template: {
         nodes: [
           {

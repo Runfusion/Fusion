@@ -466,6 +466,77 @@ describe("WorkflowGraphExecutor optional-group", () => {
     ]));
   });
 
+  it("uses an explicit graph replan node for Plan Review REVISE and does not execute before replan completes", async () => {
+    const requestFix = vi.fn(async () => true);
+    const calls: string[] = [];
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "plan-review-explicit-replan-route",
+      columns: [{ id: "work", name: "Work", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        {
+          id: "plan-review",
+          kind: "optional-group",
+          config: {
+            name: "Plan Review",
+            defaultOn: true,
+            reworkRegion: true,
+            maxReworkCycles: 3,
+            template: {
+              nodes: [{ id: "plan-review-step", kind: "prompt", config: { prompt: "review plan" } }],
+              edges: [],
+            },
+          },
+        },
+        {
+          id: "plan-replan",
+          kind: "prompt",
+          config: {
+            name: "Plan Replan",
+            workflowAction: "plan-replan",
+            forWorkflowStepId: "plan-review",
+          },
+        },
+        { id: "execute", kind: "prompt", config: { prompt: "execute" } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "plan-review" },
+        { from: "plan-review", to: "execute", condition: "success" },
+        { from: "plan-review", to: "plan-replan", condition: "failure" },
+        { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
+        { from: "execute", to: "end" },
+      ],
+    };
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => {
+          calls.push(node.id);
+          return node.id === "plan-review-step"
+            ? { outcome: "failure", value: "REVISE", contextPatch: { output: "missing acceptance criteria" } }
+            : { outcome: "success" };
+        },
+      },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run(taskWith(["plan-review"]), settingsOn(), ir);
+
+    expect(result.outcome).toBe("success");
+    expect(result.visitedNodeIds).toContain("plan-review");
+    expect(result.visitedNodeIds).toContain("plan-replan");
+    expect(result.visitedNodeIds).not.toContain("execute");
+    expect(calls).not.toContain("execute");
+    expect(requestFix).toHaveBeenCalledWith("FN-OG", expect.objectContaining({
+      nodeId: "plan-review",
+      feedback: "missing acceptance criteria",
+      verdict: "REVISE",
+    }));
+    expect(result.context["node:plan-review:fixScheduled"]).toBe(true);
+    expect(result.context["node:plan-replan:value"]).toBe("remediation-scheduled");
+  });
+
   it("does not synthesize a Plan Review replan from advisory malformed output", async () => {
     const requestFix = vi.fn(async () => true);
     const calls: string[] = [];

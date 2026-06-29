@@ -1510,6 +1510,55 @@ Built-in workflow prompts need visible override state and a reset action without
   flex-wrap: wrap;
 }
 
+/*
+FNXC:WorkflowLifecycleValidation 2026-06-29-12:18:
+Workflow authors need store-produced lifecycle warnings visible in the editor before runtime. Keep them inline and non-blocking: parser/store/merge guards still enforce hard safety, while this banner exposes missing summary/merge/review-loop guidance during authoring.
+*/
+.wf-lifecycle-warnings {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--ws-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--ws-warning) 8%, var(--bg-secondary));
+  color: var(--text);
+}
+
+.wf-lifecycle-warnings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--ws-warning);
+}
+
+.wf-lifecycle-warnings ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wf-lifecycle-warnings li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.wf-lifecycle-warning-code,
+.wf-lifecycle-warning-node {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-family: var(--font-mono, monospace);
+}
+
 .wf-workflow-name,
 .wf-workflow-name--readonly {
   font-size: 0.95rem;

@@ -274,6 +274,15 @@ export class NotificationService {
         this.createTaskPayload(task, "awaiting-user-review"),
       );
     }
+
+    const workflowTransition = this.classifyWorkflowTransitionNotification(task);
+    if (workflowTransition) {
+      this.maybeNotify(
+        task.id,
+        workflowTransition.event,
+        this.createTaskPayload(task, workflowTransition.event, workflowTransition.metadata),
+      );
+    }
   };
 
   private handleTaskMerged = (result: MergeResult): void => {
@@ -697,12 +706,107 @@ export class NotificationService {
       typeof task.mergeDetails?.mergedAt === "string";
   }
 
-  private createTaskPayload(task: Task, event: NotificationEvent): NotificationPayload {
+  private classifyWorkflowTransitionNotification(task: Task): { event: NotificationEvent; metadata: Record<string, unknown> } | null {
+    /*
+     * FNXC:WorkflowNotifications 2026-06-29-11:50:
+     * Workflow-specific operator waits should notify from the durable task update that already represents the wait, not from a new lifecycle bus. Plan/remediation await-input, workflow CLI approval, manual merge holds, and workflow recovery requeues each use a stable dedupe key so repeated task:updated emissions stay quiet while unrelated task notifications can still fire.
+     */
+    if (task.status === "awaiting-user-input" && this.isWorkflowAwaitingUserInput(task)) {
+      return {
+        event: "planning-awaiting-input",
+        metadata: {
+          notificationDedupeKey: `workflow-transition:${task.id}:awaiting-user-input`,
+          notificationKind: "workflow-awaiting-user-input",
+          workflowStatus: task.status,
+          pausedReason: task.pausedReason,
+        },
+      };
+    }
+
+    if (task.status === "awaiting-cli-approval" && task.pausedReason?.startsWith("workflow-cli-approval:")) {
+      return {
+        event: "cli-agent-awaiting-input",
+        metadata: {
+          notificationDedupeKey: `workflow-transition:${task.id}:awaiting-cli-approval`,
+          notificationKind: "workflow_cli_approval",
+          workflowStatus: task.status,
+          pausedReason: task.pausedReason,
+        },
+      };
+    }
+
+    if (task.status !== "failed" && this.isManualMergeHold(task)) {
+      return {
+        event: "workflow-notify",
+        metadata: {
+          notificationDedupeKey: `workflow-transition:${task.id}:manual-merge-hold`,
+          notificationKind: "manual_merge_hold",
+          title: `Manual merge needed for ${task.id}`,
+          message: "Workflow is holding for manual merge action.",
+          pausedReason: task.pausedReason,
+        },
+      };
+    }
+
+    if (this.isWorkflowRecoveryRequeue(task)) {
+      return {
+        event: "workflow-notify",
+        metadata: {
+          notificationDedupeKey: `workflow-transition:${task.id}:recovery-requeue`,
+          notificationKind: "workflow_recovery_requeue",
+          title: `Workflow requeued ${task.id}`,
+          message: "Workflow recovery moved the task back to todo for another execution pass.",
+        },
+      };
+    }
+
+    return null;
+  }
+
+  private isWorkflowAwaitingUserInput(task: Task): boolean {
+    if (!task.paused) {
+      return false;
+    }
+    const pausedReason = task.pausedReason ?? "";
+    const latest = this.latestLogAction(task);
+    return pausedReason.startsWith("workflow-input:")
+      || latest.startsWith("Workflow paused for user input")
+      || (latest.startsWith("Workflow step ") && latest.includes(" is waiting for your input:"));
+  }
+
+  private isManualMergeHold(task: Task): boolean {
+    if (task.column !== "in-review") {
+      return false;
+    }
+    if (task.pausedReason === "manual-hold") {
+      return true;
+    }
+    const latest = this.latestLogAction(task).toLowerCase();
+    return latest.includes("manual-required")
+      || latest.includes("manual merge required")
+      || latest.includes("merge-manual-hold");
+  }
+
+  private isWorkflowRecoveryRequeue(task: Task): boolean {
+    if (task.column !== "todo" || task.status === "failed") {
+      return false;
+    }
+    const latest = this.latestLogAction(task).toLowerCase();
+    return latest.includes("workflow")
+      && (latest.includes("requeued") || latest.includes("moved back to todo"));
+  }
+
+  private latestLogAction(task: Task): string {
+    return task.log.at(-1)?.action ?? "";
+  }
+
+  private createTaskPayload(task: Task, event: NotificationEvent, metadata?: Record<string, unknown>): NotificationPayload {
     return {
       taskId: task.id,
       taskTitle: task.title,
       taskDescription: task.description,
       event,
+      ...(metadata ? { metadata } : {}),
     };
   }
 

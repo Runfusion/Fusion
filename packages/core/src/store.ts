@@ -115,6 +115,7 @@ import type {
   WorkflowNodeLayout,
 } from "./workflow-definition-types.js";
 import { compileWorkflowToSteps, isInterpreterDeferredWorkflowCompileError } from "./workflow-compiler.js";
+import { analyzeWorkflowLifecycle } from "./workflow-lifecycle-validation.js";
 import { resolveDefaultOnOptionalGroupIds } from "./workflow-optional-steps.js";
 import {
   BUILTIN_WORKFLOWS,
@@ -14738,14 +14739,17 @@ ${stepsSection}`;
     createdAt: string;
     updatedAt: string;
   }): WorkflowDefinition {
+    const kind = row.kind === "fragment" ? "fragment" : "workflow";
+    const ir = parseWorkflowIr(row.ir);
     return {
       id: row.id,
       name: row.name,
       description: row.description,
       // Legacy rows (pre-migration-109) have no kind column; default to "workflow".
-      kind: row.kind === "fragment" ? "fragment" : "workflow",
-      ir: parseWorkflowIr(row.ir),
+      kind,
+      ir,
       layout: this.parseWorkflowLayout(row.layout),
+      lifecycleWarnings: analyzeWorkflowLifecycle(ir, { kind }),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -14794,15 +14798,23 @@ ${stepsSection}`;
       const layout = input.layout ?? {};
       const now = new Date().toISOString();
       const id = this.nextWorkflowDefinitionId();
+      const kind = input.kind === "fragment" ? "fragment" : "workflow";
       const definition: WorkflowDefinition = {
         id,
         name,
         description: input.description ?? "",
         // KTD-1: fragments are pure-v1 IRs and pass through downgradeIrToV1IfPure
         // unchanged; default to "workflow" when the caller omits the kind.
-        kind: input.kind === "fragment" ? "fragment" : "workflow",
+        kind,
         ir,
         layout,
+        /*
+        FNXC:WorkflowLifecycleValidation 2026-06-29-11:47:
+        Persisted custom workflow definitions should carry computed lifecycle
+        warnings back to authoring/API surfaces without blocking advanced graphs.
+        Hard safety still lives in parser/store/merge proof guards.
+        */
+        lifecycleWarnings: analyzeWorkflowLifecycle(ir, { kind }),
         createdAt: now,
         updatedAt: now,
       };
@@ -15030,6 +15042,7 @@ ${stepsSection}`;
         description: updates.description !== undefined ? updates.description : existing.description,
         ir,
         layout: updates.layout !== undefined ? updates.layout : existing.layout,
+        lifecycleWarnings: analyzeWorkflowLifecycle(ir, { kind: existing.kind }),
         updatedAt: new Date().toISOString(),
       };
 

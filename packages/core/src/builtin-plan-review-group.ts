@@ -50,6 +50,12 @@ export function planReviewOptionalGroupNode(
     config: {
       name: PLAN_REVIEW_NAME,
       defaultOn: options.defaultOn ?? true,
+      /*
+       * FNXC:WorkflowRemediation 2026-06-29-12:14:
+       * Plan Review REVISE must loop through graph-owned replan and then return to Plan Review before execution. Mark the optional group as the bounded rework-region head so the top-level remediation edge is legal and cannot spin forever.
+       */
+      reworkRegion: true,
+      maxReworkCycles: 3,
       template: {
         nodes: [
           {

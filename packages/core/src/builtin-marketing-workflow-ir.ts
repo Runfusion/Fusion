@@ -2,6 +2,7 @@ import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
 
 /**
  * FNXC:WorkflowMarketing 2026-06-20-00:00:
@@ -91,6 +92,7 @@ const RAW_BUILTIN_MARKETING_WORKFLOW_IR: WorkflowIr = {
       config: { capability: "task-merge", reworkRegion: true, maxReworkCycles: 3 },
     },
     { id: "recovery-router", kind: "recovery-router", column: "editorial-review", config: { surfaces: ["merge", "retry"] } },
+    postMergeVerificationOptionalGroupNode("published"),
     { id: "end", kind: "end", column: "published" },
   ],
   edges: [
@@ -107,7 +109,8 @@ const RAW_BUILTIN_MARKETING_WORKFLOW_IR: WorkflowIr = {
     { from: "branch-group-member-integration", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "branch-group-promotion", to: "merge-attempt", condition: "success" },
     { from: "branch-group-promotion", to: "merge-manual-hold", condition: "outcome:manual-required" },
-    { from: "merge-attempt", to: "end", condition: "success" },
+    { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
+    { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },

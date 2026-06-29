@@ -364,12 +364,12 @@ export class WorkflowGraphExecutor {
      * `postMergeEntryNodeIds` = the (deterministic, id-sorted) set of edge targets `t`
      * such that an edge leaves a merge-region node to `t`, where `t` is itself NOT a
      * merge-region node and NOT `end`, the edge is not a rework back-edge, and the edge
-     * routes on success (no condition or `condition: "success"`). For `builtin:coding`
-     * this set is EMPTY (every merge-region exit goes to another merge-region node or
-     * `end`), so flag-ON is byte-identical to flag-OFF there — the parity oracle holds.
-     * When the flag is OFF the set is left empty and the post-merge hop is never taken,
-     * so existing merge routing (transient→retry, manual hold, branch-group
-     * integration/promotion, recovery-router, failure paths) is wholly unchanged.
+     * routes on success (no condition or `condition: "success"`). Full built-ins can now
+     * expose the default-off `post-merge-verification` optional group here, so workflow
+     * definitions own the post-merge verification policy while the merge seam still
+     * provides proof before the hop. When the flag is OFF the set is left empty and
+     * post-merge nodes are skipped for compatibility; normal merge failure/manual/retry
+     * routing remains unchanged.
      */
     const postMergeEnabled = isExperimentalFeatureEnabled(settings, GRAPH_NATIVE_POST_MERGE_FLAG);
     const postMergeEntryNodeIds: string[] = (() => {
@@ -935,35 +935,39 @@ export class WorkflowGraphExecutor {
            * Flag-gated post-merge hop. The merge already finished (the seam awaited the
            * merge Promise), so this runs strictly AFTER a successful merge. Walk each
            * post-merge entry node via the normal `walk` path (optional-group recording
-           * with phase:"post-merge"). Post-merge failures are NON-BLOCKING — they record
-           * a result but DO NOT mutate `aggregate`, so the merged task still completes
-           * with the merge-success outcome (matching legacy post-merge semantics). When
+           * with phase:"post-merge"). Advisory post-merge failures are NON-BLOCKING —
+           * they record a result but DO NOT mutate `aggregate`, so the merged task still
+           * completes with the merge-success outcome (matching legacy post-merge
+           * semantics). Explicit gate-mode post-merge failures do block final graph
+           * success so configured post-merge verification can prevent final done. When
            * the flag is OFF, `postMergeEntryNodeIds` is empty and this loop is inert, so
            * the merge region stays exactly as collapsed before.
            */
           for (const entryId of postMergeEntryNodeIds) {
             /*
-             * FNXC:WorkflowPostMerge 2026-06-26-15:30:
-             * Post-merge traversal must NEVER fail an already-merged run (non-blocking
-             * contract). A malformed post-merge IR or any traversal throw is caught,
-             * logged via the task log sink, and we CONTINUE to the next entry — the
-             * merged task still completes with the merge-success `aggregate`. Without
-             * this guard a throw would propagate out of the executor and flip a merged
-             * task into an executor failure.
+             * FNXC:WorkflowPostMerge 2026-06-29-11:47:
+             * Post-merge verification has two policies: advisory checks keep the
+             * legacy non-blocking behavior, while explicit gate-mode checks are allowed
+             * to block final workflow success after merge proof. Traversal errors remain
+             * logged/non-blocking because a malformed post-merge authoring path should
+             * not overwrite already-proven merge state.
              */
             try {
               const postMerge = await walk(entryId);
               // A post-merge entry node is never an enclosing rework head, so a
               // ReworkSignal here would be malformed IR; ignore it rather than bubble a
-              // rework loop out of the merge boundary. Result is intentionally discarded
-              // (non-blocking).
-              void postMerge;
+              // rework loop out of the merge boundary.
+              if (!isReworkSignal(postMerge) && postMerge.outcome === "failure") {
+                aggregate = postMerge;
+                break;
+              }
             } catch (err) {
               this.deps.logTaskEntry?.(
                 `[post-merge] traversal error: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
           }
+          if (aggregate.outcome === "failure") break;
           continue;
         }
         const child = await walk(edge.to);

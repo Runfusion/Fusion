@@ -9,6 +9,7 @@ import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
 import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
 import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
 import {
   browserVerificationRemediationNode,
@@ -56,6 +57,8 @@ function ceCodeReviewOptionalGroupNode(column: string): WorkflowIrNode {
        */
       name: "Code Review",
       defaultOn: true,
+      reworkRegion: true,
+      maxReworkCycles: 3,
       template: {
         nodes: [
           {
@@ -125,7 +128,7 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
   const specNodes = spec.engineeringOptionalGroups
     ? withEngineeringOptionalGroups(spec.nodes, spec.engineeringOptionalGroups)
     : spec.nodes;
-  const workflowNodes = withCompletionSummaryNode(specNodes);
+  const workflowNodes = withPostMergeVerificationNode(withCompletionSummaryNode(specNodes));
   const hasPlanReview = workflowNodes.some((node) => node.id === "plan-review");
   const hasBrowserVerification = workflowNodes.some((node) => node.id === "browser-verification");
   const hasCodeReview = workflowNodes.some((node) => node.id === "code-review");
@@ -160,6 +163,24 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
           : "end";
       edges.push({ from: node.id, to: failureTarget, condition: "failure" });
     }
+  }
+  /*
+   * FNXC:WorkflowRemediation 2026-06-29-12:12:
+   * Review failures are workflow policy, not terminal executor failures. Linear built-ins that opt into Plan Review, Browser Verification, or Code Review must route remediation success back to the owning gate so retry/restart keeps executing the graph instead of parking at an orphan remediation node or falling through to done.
+   */
+  if (hasPlanReview) {
+    edges.push({ from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" });
+  }
+  if (hasBrowserVerification) {
+    edges.push({
+      from: "browser-verification-remediation",
+      to: "browser-verification",
+      condition: "success",
+      kind: "rework",
+    });
+  }
+  if (hasCodeReview) {
+    edges.push({ from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" });
   }
   const layout: Record<string, { x: number; y: number }> = {};
   nodes.forEach((node, i) => {
@@ -231,6 +252,17 @@ function withCompletionSummaryNode(nodes: BuiltinSpec["nodes"]): BuiltinSpec["no
   ];
 }
 
+function withPostMergeVerificationNode(nodes: BuiltinSpec["nodes"]): BuiltinSpec["nodes"] {
+  if (nodes.some((node) => node.id === "post-merge-verification")) return nodes;
+  const mergeIndex = nodes.findIndex((node) => node.config?.seam === "merge" || node.id === "merge");
+  if (mergeIndex < 0) return nodes;
+  return [
+    ...nodes.slice(0, mergeIndex + 1),
+    postMergeVerificationOptionalGroupNode("done"),
+    ...nodes.slice(mergeIndex + 1),
+  ];
+}
+
 /**
  * Read-only built-in workflow templates. Selectable like any workflow; they
  * cannot be edited or deleted. In compile mode (flag off) only the custom
@@ -263,7 +295,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "merge-retry": { x: 2100, y: 80 },
       "recovery-router": { x: 2100, y: 240 },
       "merge-manual-hold": { x: 1590, y: 240 },
-      end: { x: 2270, y: 160 },
+      "post-merge-verification": { x: 2270, y: 160 },
+      end: { x: 2440, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -297,7 +330,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "merge-retry": { x: 2100, y: 80 },
       "recovery-router": { x: 2100, y: 240 },
       "merge-manual-hold": { x: 1590, y: 240 },
-      end: { x: 2270, y: 160 },
+      "post-merge-verification": { x: 2270, y: 160 },
+      end: { x: 2440, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -355,7 +389,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "merge-retry": { x: 1590, y: 80 },
       "recovery-router": { x: 1590, y: 240 },
       "merge-manual-hold": { x: 1080, y: 240 },
-      end: { x: 1760, y: 160 },
+      "post-merge-verification": { x: 1760, y: 160 },
+      end: { x: 1930, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -511,7 +546,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "merge-retry": { x: 2270, y: 80 },
       "recovery-router": { x: 2270, y: 240 },
       "merge-manual-hold": { x: 1760, y: 240 },
-      end: { x: 2440, y: 160 },
+      "post-merge-verification": { x: 2440, y: 160 },
+      end: { x: 2610, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,

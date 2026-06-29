@@ -91,6 +91,8 @@ export function codeReviewOptionalGroupNode(
       // Default-ON: runs for every coding task by default, but operators can toggle it
       // off per task (remove `code-review` from enabledWorkflowSteps).
       defaultOn: options.defaultOn ?? true,
+      reworkRegion: true,
+      maxReworkCycles: 3,
       template: {
         nodes: [
           {

@@ -404,16 +404,18 @@ describe("workflow-flow-mapping", () => {
   it("preserves duplicate and parallel built-in edges with valid endpoints and hit targets", () => {
     const { edges } = edgeRenderableAssertion(builtinDef());
     const failuresToEnd = edges.filter((edge) => edge.target === "end" && edge.data?.condition === "failure");
-    // FNXC:WorkflowOptionalGroup 2026-06-21-15:30: the coding built-in's pre-merge `workflow-step` seam was migrated to a `browser-verification` optional-group (U6), which now carries the failure->end edge in its place.
-    // FNXC:CodeReviewStep 2026-06-25-00:00: the default-on `code-review` optional-group is also on the pre-merge success path with its own failure->end edge (see builtin-code-review-group.test.ts), so it is an expected failure->end source too. This corrected a stale assertion that predated the code-review group's addition.
     expect(failuresToEnd.map((edge) => edge.source).sort()).toEqual([
-      "browser-verification",
-      "code-review",
       "execute",
       "merge-attempt",
       "planning",
       "review",
     ]);
+    expect(edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "browser-verification", target: "browser-verification-remediation" }),
+      expect.objectContaining({ source: "code-review", target: "code-review-remediation" }),
+      expect.objectContaining({ source: "browser-verification-remediation", target: "browser-verification" }),
+      expect.objectContaining({ source: "code-review-remediation", target: "code-review" }),
+    ]));
     expect(new Set(failuresToEnd.map((edge) => edge.id)).size).toBe(failuresToEnd.length);
     expect(failuresToEnd.every((edge) => edge.interactionWidth === WF_EDGE_INTERACTION_WIDTH)).toBe(true);
   });
@@ -452,6 +454,33 @@ describe("WorkflowNodeEditor", () => {
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
     expect(screen.queryByTestId("wf-mobile-select-note")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "QA" })[0]).toHaveClass("active");
+  });
+
+  it("renders workflow lifecycle warnings returned by the store", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      {
+        ...v2Def(),
+        lifecycleWarnings: [
+          {
+            code: "missing-merge-region",
+            message: "Full task workflows should include a merge region so done is backed by merge proof.",
+          },
+          {
+            code: "optional-group-after-execution",
+            nodeId: "plan-review",
+            message: "Plan Review should be ordered before parse/execution.",
+          },
+        ],
+      },
+    ]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    const banner = await screen.findByTestId("wf-lifecycle-warnings");
+    expect(banner).toHaveTextContent("Lifecycle warnings");
+    expect(banner).toHaveTextContent("missing-merge-region");
+    expect(banner).toHaveTextContent("optional-group-after-execution");
+    expect(banner).toHaveTextContent("plan-review");
   });
 
   it("lets desktop users collapse and restore the workflow sidebar", async () => {

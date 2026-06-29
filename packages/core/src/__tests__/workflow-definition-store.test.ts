@@ -52,6 +52,43 @@ describe("TaskStore workflow definitions (U1)", () => {
     expect(userList[0].layout.lint).toEqual({ x: 120, y: 0 });
   });
 
+  it("returns non-blocking lifecycle warnings for custom full workflows", async () => {
+    const created = await store.createWorkflowDefinition({
+      name: "Unsafe terminal",
+      ir: makeIr({
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "execute", kind: "prompt", config: { seam: "execute" } },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "execute" },
+          { from: "execute", to: "end", condition: "success" },
+        ],
+      }),
+    });
+
+    expect(created.lifecycleWarnings?.map((warning) => warning.code)).toEqual(expect.arrayContaining([
+      "missing-completion-summary",
+      "missing-merge-region",
+    ]));
+    const reloaded = await store.getWorkflowDefinition(created.id);
+    expect(reloaded?.lifecycleWarnings?.map((warning) => warning.code)).toEqual(expect.arrayContaining([
+      "missing-completion-summary",
+      "missing-merge-region",
+    ]));
+  });
+
+  it("does not add lifecycle warnings to fragment definitions", async () => {
+    const created = await store.createWorkflowDefinition({
+      name: "Fragment prompt",
+      kind: "fragment",
+      ir: makeIr(),
+    });
+
+    expect(created.lifecycleWarnings).toEqual([]);
+  });
+
   it("rejects a workflow whose IR is missing start/end", async () => {
     const bad = makeIr({ nodes: [{ id: "only", kind: "prompt" }], edges: [] });
     await expect(
