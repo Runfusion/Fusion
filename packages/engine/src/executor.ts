@@ -1164,6 +1164,18 @@ export function parseWorkflowStepOutput(rawOutput: string): {
   verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
   notes?: string;
   malformed?: boolean;
+};
+export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict: false }): {
+  output: string;
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  notes?: string;
+  malformed?: boolean;
+};
+export function parseWorkflowStepOutput(rawOutput: string, options: { requireVerdict?: boolean } = {}): {
+  output: string;
+  verdict?: "APPROVE" | "APPROVE_WITH_NOTES" | "REVISE";
+  notes?: string;
+  malformed?: boolean;
 } {
   const trimmed = rawOutput.trim();
   const parsed = parseWorkflowStepVerdict(trimmed);
@@ -1182,6 +1194,10 @@ export function parseWorkflowStepOutput(rawOutput: string): {
       verdict: inferred.verdict,
       notes: inferred.notes,
     };
+  }
+
+  if (options.requireVerdict === false) {
+    return { output: trimmed };
   }
 
   return { output: trimmed, malformed: true };
@@ -5764,6 +5780,12 @@ export class TaskExecutor {
         if (!this.mergeRequester) {
           return { outcome: "failure", value: "merge-unavailable", data: { status: "failed", reason: "merge-unavailable" } };
         }
+        const mergeTask = await this.ensureWorkflowMergeBoundaryTask(task, {
+          reason: "workflow-merge-boundary",
+          nodeId: ctx.node.node.id,
+          workflowId: ctx.run.workflowId,
+          runId: ctx.run.runId,
+        });
         const GRAPH_MERGE_TIMEOUT_MS = 30 * 60 * 1000;
         const controller = new AbortController();
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -5775,9 +5797,9 @@ export class TaskExecutor {
           timeoutHandle.unref?.();
         });
         try {
-          const result = await Promise.race([this.mergeRequester(task.id, { signal: controller.signal }), timeout]);
+          const result = await Promise.race([this.mergeRequester(mergeTask.id, { signal: controller.signal }), timeout]);
           if (result === "timeout") {
-            executorLog.warn(`${task.id}: workflow merge primitive timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
+            executorLog.warn(`${mergeTask.id}: workflow merge primitive timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
             return { outcome: "failure", value: "merge-timeout", data: { status: "timeout" } };
           }
           if (result.merged || result.noOp) {
@@ -5787,14 +5809,14 @@ export class TaskExecutor {
             */
             const finalization = await finalizeProvenAutoMergeTask({
               store: this.store,
-              taskId: task.id,
+              taskId: mergeTask.id,
               result,
               rootDir: this.rootDir,
               audit: createRunAuditor(this.store, {
                 runId: ctx.run.runId,
                 agentId: "executor",
-                taskId: task.id,
-                taskLineageId: task.lineageId,
+                taskId: mergeTask.id,
+                taskLineageId: mergeTask.lineageId,
                 phase: "workflow-merge",
               }),
               auditAgentId: "executor",
@@ -5822,7 +5844,7 @@ export class TaskExecutor {
           };
         } finally {
           if (timeoutHandle) clearTimeout(timeoutHandle);
-          await logAudit(task.id, {
+          await logAudit(mergeTask.id, {
             type: "merge-requested",
             message: `Workflow node ${ctx.node.node.id} requested merge`,
           });
@@ -5842,6 +5864,38 @@ export class TaskExecutor {
         await logAudit(ctx.run.taskId, input);
       },
     };
+  }
+
+  private async ensureWorkflowMergeBoundaryTask(
+    task: TaskDetail,
+    metadata: { reason: string; nodeId: string; workflowId: string; runId: string },
+  ): Promise<TaskDetail> {
+    const live = await this.store.getTask(task.id);
+    if (!live) return task;
+    if (live.column === "in-review" || live.column === "done") return live;
+    if (live.paused || live.userPaused) return live;
+
+    /*
+    FNXC:WorkflowMerge 2026-06-29-10:15:
+    User-authored workflows may legitimately route execution directly to a merge node without an explicit review node. Reaching that node is the workflow-owned merge boundary, so the engine must establish the durable in-review/merge lifecycle handoff before requesting merge instead of assuming a prior node already moved the card.
+    */
+    const moveOptions = {
+      preserveProgress: true,
+      moveSource: "engine" as const,
+      workflowMoveSource: "workflow-graph",
+      workflowMoveMetadata: metadata,
+    };
+    const storeWithMove = this.store as typeof this.store & {
+      moveTask?: (id: string, column: string, options?: unknown) => Promise<TaskDetail | undefined>;
+    };
+    if (typeof storeWithMove.moveTask === "function") {
+      const moved = await storeWithMove.moveTask(live.id, "in-review", moveOptions); // handoff-invariant-violation-allowlist: workflow merge node owns the merge lifecycle boundary for custom workflows.
+      await this.store.logEntry(live.id, "Workflow merge boundary moved task to in-review before requesting merge", undefined, this.getRunContextFor(live.id));
+      return moved ?? { ...live, column: "in-review" };
+    }
+    await this.store.updateTask(live.id, { column: "in-review" } as Partial<TaskDetail>, this.getRunContextFor(live.id));
+    await this.store.logEntry(live.id, "Workflow merge boundary moved task to in-review before requesting merge", undefined, this.getRunContextFor(live.id));
+    return { ...live, column: "in-review" };
   }
 
   public createAuthoritativeWorkflowSeams(_settings: Settings): WorkflowLegacySeams {
@@ -5905,6 +5959,12 @@ export class TaskExecutor {
         if (!this.mergeRequester) {
           return { outcome: "failure", value: "merge-unavailable" };
         }
+        const mergeTask = await this.ensureWorkflowMergeBoundaryTask(seamTask, {
+          reason: "workflow-merge-boundary",
+          nodeId: "legacy-merge-seam",
+          workflowId: "legacy-seams",
+          runId: this.getRunContextFor(seamTask.id)?.runId ?? "legacy-seam",
+        });
         // Bound the wait: a wedged merge queue must not strand the graph walk
         // holding the routing claim. On timeout the run fails cleanly and the
         // task is parked for human review; the queue can still finish later.
@@ -5915,9 +5975,9 @@ export class TaskExecutor {
           timeoutHandle.unref?.();
         });
         try {
-          const result = await Promise.race([this.mergeRequester(seamTask.id), timeout]);
+          const result = await Promise.race([this.mergeRequester(mergeTask.id), timeout]);
           if (result === "timeout") {
-            executorLog.warn(`${seamTask.id}: graph merge seam timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
+            executorLog.warn(`${mergeTask.id}: graph merge seam timed out after ${GRAPH_MERGE_TIMEOUT_MS}ms`);
             return { outcome: "failure", value: "merge-timeout" };
           }
           if (result.merged || result.noOp) {
@@ -6660,7 +6720,11 @@ export class TaskExecutor {
     columnBinding?: WorkflowColumnAgent,
   ): Promise<WorkflowNodeResult> {
     const cfg = node.config ?? {};
-    const live = await this.store.getTask(nodeTask.id);
+    let live = await this.store.getTask(nodeTask.id);
+
+    const staleInput = await this.resolveWorkflowInputMarkerForGraphNode(live, node.id);
+    if (staleInput === "waiting") return { outcome: "failure", value: "awaiting-user-input" };
+    if (staleInput === "clear") live = await this.store.getTask(nodeTask.id);
 
     // Await-input nodes never run a session — they pause for the user.
     if (cfg.awaitInput === true) {
@@ -7584,7 +7648,13 @@ export class TaskExecutor {
     executorLog.warn(`${live.id}: ${message}`);
     await this.store.logEntry(live.id, message, undefined, this.getRunContextFor(live.id));
     try {
-      await this.mergeRequester(live.id);
+      const mergeTask = await this.ensureWorkflowMergeBoundaryTask(live, {
+        reason: "workflow-merge-retry-boundary",
+        nodeId: failedNode,
+        workflowId: result.context?.["workflow:id"] as string | undefined ?? "workflow-graph",
+        runId: this.getRunContextFor(live.id)?.runId ?? "graph-merge-retry",
+      });
+      await this.mergeRequester(mergeTask.id);
     } catch (error) {
       executorLog.warn(`${live.id}: bounded auto-merge retry request failed after graph merge failure: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -13550,6 +13620,49 @@ ${failureFeedback}
     return parseWorkflowStepOutput(rawOutput);
   }
 
+  private workflowInputRepliesAfterWatermark(task: TaskDetail, marker: string): Array<{ createdAt?: string }> {
+    const pausedReason = task.pausedReason ?? "";
+    const watermark = (() => {
+      const match = pausedReason.slice(marker.length).match(/^@(\d+)/);
+      const parsed = match ? Number(match[1]) : NaN;
+      return Number.isFinite(parsed) ? parsed : undefined;
+    })();
+    const steering = Array.isArray(task.steeringComments) ? task.steeringComments : [];
+    return watermark === undefined
+      ? steering
+      : steering.filter((comment) => {
+          const created = Date.parse((comment as { createdAt?: string }).createdAt ?? "");
+          return Number.isFinite(created) ? created >= watermark : false;
+        });
+  }
+
+  private async resolveWorkflowInputMarkerForGraphNode(live: TaskDetail, nodeId: string): Promise<"clear" | "waiting" | "none"> {
+    const pausedReason = live.pausedReason ?? "";
+    if (!pausedReason.startsWith("workflow-input:")) return "none";
+    const markerMatch = /^workflow-input:([^:@\s]+)(?:@\d+)?[:]/.exec(pausedReason);
+    if (!markerMatch) return "none";
+    const marker = `workflow-input:${markerMatch[1]}`;
+    const replies = this.workflowInputRepliesAfterWatermark(live, marker);
+    if (live.paused || replies.length === 0) {
+      await this.store.updateTask(live.id, { status: "awaiting-user-input", paused: true }, this.getRunContextFor(live.id));
+      return "waiting";
+    }
+    /*
+     * FNXC:WorkflowInput 2026-06-29-10:00:
+     * A workflow graph can restart at an earlier node after pause/resume recovery while the durable pausedReason still points at the later skill node that asked the question. If the user already supplied a post-watermark reply, clear that stale marker before any node executes so Compound Engineering cannot loop at Plan while Commit & open PR's answered question remains attached.
+     */
+    await this.store.updateTask(live.id, { status: null, pausedReason: null }, this.getRunContextFor(live.id));
+    await this.store.logEntry(
+      live.id,
+      marker === `workflow-input:${nodeId}`
+        ? `Workflow input received for step '${nodeId}' — resuming`
+        : `Workflow input marker '${markerMatch[1]}' already has a reply — clearing stale marker before step '${nodeId}'`,
+      undefined,
+      this.getRunContextFor(live.id),
+    );
+    return "clear";
+  }
+
   /**
    * Execute a single workflow step by spawning an agent with the step's prompt.
    * Returns structured outcome with support for revision requests.
@@ -13949,7 +14062,7 @@ You have access to the file system to review changes.${verdictBlock}`;
         session.dispose();
         await agentLogger.flush();
 
-        const parsed = this.parseWorkflowStepOutput(output);
+        const parsed = requireVerdict ? parseWorkflowStepOutput(output) : parseWorkflowStepOutput(output, { requireVerdict: false });
         if (parsed.verdict) {
           const revisionRequested = parsed.verdict === "REVISE";
           if (workflowStep.requiresBrowser === true) {

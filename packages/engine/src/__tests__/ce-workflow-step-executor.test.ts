@@ -355,6 +355,104 @@ describe("CE workflow-step executor integration", () => {
       expect(store.updateTask).not.toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ column: "in-progress" }));
     });
 
+    it("moves direct-to-merge workflow tasks into in-review before requesting merge", async () => {
+      const store = createMockStore();
+      let live = baseStepTask({
+        column: "in-progress",
+        steps: [{ name: "Implement", status: "done" }],
+      });
+      store.getTask.mockImplementation(async () => live as any);
+      store.moveTask.mockImplementation(async (_id: string, column: string) => {
+        live = { ...live, column };
+        return live as any;
+      });
+      const { executor } = makeExecutor(store);
+      const mergeRequester = vi.fn(async () => ({
+        task: live,
+        branch: "fusion/fn-ce-1",
+        merged: false,
+        noOp: false,
+        reason: "queued",
+      }));
+      executor.setMergeRequester(mergeRequester as any);
+      const settings = await store.getSettings();
+      const primitives = (executor as any).createAuthoritativeWorkflowPrimitives(settings);
+
+      const result = await primitives.requestMerge(
+        {
+          run: { runId: "run-merge", taskId: "FN-CE-1", workflowId: "builtin:quick-fix" },
+          node: { node: { id: "merge", kind: "prompt", column: "in-review", config: { seam: "merge" } }, context: {} },
+        },
+        live,
+      );
+
+      expect(result).toEqual({
+        outcome: "failure",
+        value: "queued",
+        data: { status: "failed", reason: "queued" },
+      });
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-CE-1",
+        "in-review",
+        expect.objectContaining({
+          preserveProgress: true,
+          moveSource: "engine",
+          workflowMoveSource: "workflow-graph",
+          workflowMoveMetadata: expect.objectContaining({
+            reason: "workflow-merge-boundary",
+            nodeId: "merge",
+            workflowId: "builtin:quick-fix",
+            runId: "run-merge",
+          }),
+        }),
+      );
+      expect(mergeRequester).toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(live.column).toBe("in-review");
+    });
+
+    it("clears stale workflow input markers when a resumed graph restarts before the original node", async () => {
+      const store = createMockStore();
+      let live = baseStepTask({
+        paused: false,
+        status: null,
+        pausedReason: "workflow-input:commit-pr@1782751605619: Should I rewrite the PR?",
+        steeringComments: [{ text: "Yes", createdAt: "2026-06-29T16:47:05.075Z" }],
+      });
+      store.getTask.mockImplementation(async () => live as any);
+      store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        live = { ...live, ...patch };
+        return live as any;
+      });
+      const { executor } = makeExecutor(store);
+      vi.spyOn(executor as any, "executeWorkflowStep").mockResolvedValue({ success: true, output: "ok" });
+
+      const result = await (executor as any).runGraphCustomNode(
+        {
+          id: "plan",
+          kind: "prompt",
+          column: "in-progress",
+          config: { executor: "skill", skillName: "compound-engineering:ce-plan", prompt: "Plan the work." },
+        },
+        live,
+        {},
+        undefined,
+      );
+
+      expect(result.outcome).toBe("success");
+      expect(store.updateTask).toHaveBeenCalledWith(
+        "FN-CE-1",
+        { status: null, pausedReason: null },
+        undefined,
+      );
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-CE-1",
+        "Workflow input marker 'commit-pr' already has a reply — clearing stale marker before step 'plan'",
+        undefined,
+        undefined,
+      );
+      expect(live.pausedReason).toBeNull();
+    });
+
     it("treats terminal graph step projection as success when the legacy pass rejects", async () => {
       const store = createMockStore();
       store.getTask.mockResolvedValue(baseStepTask({

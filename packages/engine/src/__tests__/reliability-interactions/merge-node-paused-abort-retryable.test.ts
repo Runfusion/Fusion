@@ -212,7 +212,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     );
   });
 
-  it("does not retry merge-confirmed partial landing evidence", async () => {
+  it("finalizes merge-confirmed partial landing evidence without retrying merge", async () => {
     const { store, task, executor, mergeRequester } = makeHarness({ mergeDetails: { mergeConfirmed: true } as any });
 
     await invokeGraphFailure(executor, task, "merge");
@@ -220,8 +220,7 @@ describe("merge-node paused-abort retry classification (FN-6735)", () => {
     expect(mergeRequester).not.toHaveBeenCalled();
     expect(store.updateTask).toHaveBeenCalledWith(
       task.id,
-      expect.objectContaining({ status: "failed", error: expect.stringContaining("operator action required") }),
-      undefined,
+      expect.objectContaining({ status: null, error: null, paused: false }),
     );
   });
 });
