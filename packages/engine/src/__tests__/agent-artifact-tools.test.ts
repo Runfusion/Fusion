@@ -15,6 +15,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
 
 const TASK_ID = "FN-6778";
 const AUTHOR_ID = "agent-007";
+const PNG_IMAGE_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
 
 type ArtifactStore = Pick<TaskStore, "registerArtifact" | "getArtifact" | "listArtifacts">;
 
@@ -91,7 +92,6 @@ describe("artifact register tool", () => {
 
   it("decodes base64 image bytes before calling store.registerArtifact", async () => {
     const { store, registerArtifact } = createMockStore();
-    const imageBytes = Buffer.from("small-png-bytes");
     registerArtifact.mockResolvedValue(createMockArtifact({
       id: "art-image",
       type: "image",
@@ -106,7 +106,7 @@ describe("artifact register tool", () => {
       type: "image",
       title: "Screenshot",
       mimeType: "image/png",
-      dataBase64: imageBytes.toString("base64"),
+      dataBase64: PNG_IMAGE_BYTES.toString("base64"),
       taskId: TASK_ID,
     });
 
@@ -117,10 +117,42 @@ describe("artifact register tool", () => {
       taskId: TASK_ID,
       content: undefined,
       uri: undefined,
-      data: imageBytes,
+      data: PNG_IMAGE_BYTES,
     }));
     expect(getText(result)).toContain("Registered artifact");
     expect(getText(result)).not.toContain("ERROR:");
+  });
+
+  it("rejects empty, non-image, and arbitrary-byte base64 payloads without registering", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+
+    const emptyResult = await runTool(tool, "call-empty-image", {
+      type: "image",
+      title: "Empty screenshot",
+      mimeType: "image/png",
+      dataBase64: "   ",
+      taskId: TASK_ID,
+    });
+    const documentResult = await runTool(tool, "call-document-base64", {
+      type: "document",
+      title: "Document bytes",
+      mimeType: "text/plain",
+      dataBase64: PNG_IMAGE_BYTES.toString("base64"),
+      taskId: TASK_ID,
+    });
+    const arbitraryBytesResult = await runTool(tool, "call-arbitrary-image", {
+      type: "image",
+      title: "Text pretending to be PNG",
+      mimeType: "image/png",
+      dataBase64: Buffer.from("not-a-real-png").toString("base64"),
+      taskId: TASK_ID,
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(emptyResult)).toContain("dataBase64 must decode to non-empty artifact bytes");
+    expect(getText(documentResult)).toContain("dataBase64 is only supported for image artifacts");
+    expect(getText(arbitraryBytesResult)).toContain("dataBase64 must decode to valid image bytes matching mimeType");
   });
 
   it("returns an ERROR response without registering malformed base64 image payloads", async () => {
@@ -147,7 +179,7 @@ describe("artifact register tool", () => {
     const result = await runTool(tool, "call-register-missing-mime", {
       type: "image",
       title: "No MIME screenshot",
-      dataBase64: Buffer.from("bytes").toString("base64"),
+      dataBase64: PNG_IMAGE_BYTES.toString("base64"),
       taskId: TASK_ID,
     });
 
@@ -412,7 +444,6 @@ describe("chat artifact tools", () => {
 
   it("registers with explicit task_id, decoded image bytes, and fixed dashboard-chat author", async () => {
     const { store, registerArtifact } = createMockStore();
-    const imageBytes = Buffer.from("chat-image-bytes");
     registerArtifact.mockResolvedValue(createMockArtifact({
       id: "art-chat-image",
       authorId: "dashboard-chat",
@@ -431,7 +462,7 @@ describe("chat artifact tools", () => {
       type: "image",
       title: "Chat screenshot",
       mimeType: "image/png",
-      dataBase64: imageBytes.toString("base64"),
+      dataBase64: PNG_IMAGE_BYTES.toString("base64"),
     });
 
     expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
@@ -439,7 +470,7 @@ describe("chat artifact tools", () => {
       authorId: "dashboard-chat",
       authorType: "agent",
       title: "Chat screenshot",
-      data: imageBytes,
+      data: PNG_IMAGE_BYTES,
     }));
     expect(getText(result)).toContain("Registered artifact");
   });

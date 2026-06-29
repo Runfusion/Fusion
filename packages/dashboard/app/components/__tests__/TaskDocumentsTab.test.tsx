@@ -252,6 +252,31 @@ describe("TaskDocumentsTab", () => {
     });
   });
 
+  it("traps keyboard focus inside the image artifact lightbox", async () => {
+    mockUseArtifacts.mockReturnValue({
+      artifacts: mockArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<TaskDocumentsTab taskId="KB-001" addToast={addToast} projectId="project-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Expand image artifact Image artifact" }));
+    const closeButton = screen.getByRole("button", { name: "Close artifact preview" });
+    expect(closeButton).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeButton).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(closeButton).toHaveFocus();
+
+    screen.getAllByRole("button", { name: "Expand" })[0].focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(closeButton).toHaveFocus();
+  });
+
   it("surfaces artifact fetch errors", async () => {
     mockUseArtifacts.mockReturnValue({
       artifacts: [],

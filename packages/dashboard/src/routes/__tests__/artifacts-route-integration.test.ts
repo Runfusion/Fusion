@@ -3,6 +3,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import express from "express";
 import { mkdtempSync, rmSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TaskStore, type ArtifactWithTask } from "@fusion/core";
@@ -41,7 +42,7 @@ describe("artifacts route integration", () => {
       title: "Render screenshot",
       description: "Capture dashboard artifact rendering evidence",
     });
-    const imageBytes = Buffer.from("PNG-FN-7125-route-integration-image-bytes", "utf8");
+    const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
     const artifact = await store.registerArtifact({
       type: "image",
       title: "Dashboard screenshot",
@@ -52,6 +53,36 @@ describe("artifacts route integration", () => {
       taskId: task.id,
     });
     return { task, artifact, imageBytes };
+  }
+
+  async function requestRawBuffer(app: express.Express, path: string) {
+    /*
+     * FNXC:ArtifactRegistry 2026-06-29-17:11:
+     * Media route verification must compare the raw streamed bytes, not a UTF-8 string re-encoding, so binary image corruption fails the integration test.
+     */
+    const server = http.createServer(app);
+    return await new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          reject(new Error("Expected an ephemeral TCP address for raw media request"));
+          return;
+        }
+
+        const req = http.get({ host: "127.0.0.1", port: address.port, path }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            server.close();
+            resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) });
+          });
+        });
+        req.on("error", (error) => {
+          server.close();
+          reject(error);
+        });
+      });
+    });
   }
 
   it("an image artifact created on a task appears in the artifacts listing with task association", async () => {
@@ -77,15 +108,15 @@ describe("artifacts route integration", () => {
   it("the image artifact streams its real bytes with the correct content type", async () => {
     const { artifact, imageBytes } = await createTaskImageArtifact();
 
-    const res = await REQUEST(app, "GET", `/api/artifacts/${artifact.id}/media`);
+    const res = await requestRawBuffer(app, `/api/artifacts/${artifact.id}/media`);
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toBe("image/png");
-    expect(Buffer.from(res.body as string, "utf8")).toEqual(imageBytes);
+    expect(res.body).toEqual(imageBytes);
   });
 
   it("a global image artifact still streams from the managed global artifacts directory", async () => {
-    const imageBytes = Buffer.from("PNG-FN-7143-global-image-bytes", "utf8");
+    const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
     const artifact = await store.registerArtifact({
       type: "image",
       title: "Global screenshot",
@@ -95,11 +126,11 @@ describe("artifacts route integration", () => {
       authorType: "agent",
     });
 
-    const res = await REQUEST(app, "GET", `/api/artifacts/${artifact.id}/media`);
+    const res = await requestRawBuffer(app, `/api/artifacts/${artifact.id}/media`);
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toBe("image/png");
-    expect(Buffer.from(res.body as string, "utf8")).toEqual(imageBytes);
+    expect(res.body).toEqual(imageBytes);
   });
 
   it("a URI-only image artifact whose file is missing still returns 404", async () => {

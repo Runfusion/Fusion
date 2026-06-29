@@ -128,6 +128,7 @@ export function TaskDocumentsTab({
    * Task detail image artifacts must be viewable in-place from the task modal. Keep the expand target image-only so document, audio, video, and generic cards retain their current non-lightbox behavior without empty controls.
    */
   const [lightboxArtifact, setLightboxArtifact] = useState<ArtifactWithTask | null>(null);
+  const lightboxDialogRef = useRef<HTMLDivElement>(null);
   const lightboxCloseRef = useRef<HTMLButtonElement>(null);
   const lightboxReturnFocusRef = useRef<HTMLElement | null>(null);
   const { artifacts, loading: artifactsLoading, error: artifactsError } = useArtifacts({ projectId, taskId });
@@ -310,6 +311,40 @@ export function TaskDocumentsTab({
       if (event.key === "Escape") {
         event.preventDefault();
         handleCloseLightbox();
+        return;
+      }
+
+      if (event.key !== "Tab") {
+        return;
+      }
+
+      /*
+       * FNXC:ArtifactRegistry 2026-06-29-17:08:
+       * The artifact preview declares an aria-modal dialog, so keyboard focus must stay inside the lightbox until Escape, overlay click, or the close button dismisses it. Cycle Tab/Shift+Tab over current focusable controls instead of letting focus escape into the task-detail modal behind the overlay.
+       */
+      const dialog = lightboxDialogRef.current;
+      const focusableElements = Array.from(dialog?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? []).filter((element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true");
+
+      if (!dialog || focusableElements.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey && activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      } else if (!dialog.contains(activeElement)) {
+        event.preventDefault();
+        firstElement.focus();
       }
     };
 
@@ -612,6 +647,7 @@ export function TaskDocumentsTab({
 
       {lightboxArtifact && (
         <div
+          ref={lightboxDialogRef}
           className="modal-overlay open documents-artifact-lightbox-overlay"
           role="dialog"
           aria-modal="true"
