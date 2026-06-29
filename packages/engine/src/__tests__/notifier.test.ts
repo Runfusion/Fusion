@@ -26,6 +26,7 @@ describe("Ntfy notifier helpers", () => {
     expect(DEFAULT_NTFY_EVENTS).toContain("message:agent-to-user");
     expect(DEFAULT_NTFY_EVENTS).toContain("message:agent-to-agent");
     expect(DEFAULT_NTFY_EVENTS).toContain("message:room");
+    expect(DEFAULT_NTFY_EVENTS).toContain("workflow-notify");
   });
 
   it("checks awaiting-input event enablement", () => {

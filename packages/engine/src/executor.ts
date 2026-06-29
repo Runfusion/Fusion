@@ -5727,11 +5727,36 @@ export class TaskExecutor {
         return { outcome: "success", value: "steps-updated", data: { count: steps.length } };
       },
       transitionTask: async (_ctx, task, input) => {
+        const taskStore = this.store;
         const patch: Partial<TaskDetail> = {};
-        if (input.column !== undefined) patch.column = input.column;
+        /*
+        FNXC:WorkflowNotifications 2026-06-29-08:50:
+        Workflow graph lifecycle transitions must use TaskStore move semantics, not raw `updateTask({ column })`, because ntfy/webhook notification delivery is subscribed to `task:moved`. Direct column writes make graph-owned tasks invisible to in-review/done lifecycle notifications and bypass column hooks.
+        */
+        if (input.column !== undefined) {
+          const moveOptions = {
+            preserveProgress: input.preserveProgress,
+            moveSource: "engine" as const,
+            workflowMoveSource: "workflow-graph",
+            workflowMoveMetadata: {
+              reason: input.reason,
+              nodeId: _ctx.node.node.id,
+              workflowId: _ctx.run.workflowId,
+              runId: _ctx.run.runId,
+            },
+          };
+          const storeWithMove = taskStore as typeof taskStore & {
+            moveTask?: typeof taskStore.moveTask;
+          };
+          if (typeof storeWithMove.moveTask === "function") {
+            await storeWithMove.moveTask(task.id, input.column, moveOptions);
+          } else {
+            patch.column = input.column;
+          }
+        }
         if (input.status !== undefined && input.status !== null) patch.status = input.status;
         if (Object.keys(patch).length > 0) {
-          await this.store.updateTask(task.id, patch);
+          await taskStore.updateTask(task.id, patch);
         }
         return { outcome: "success", value: input.reason };
       },

@@ -314,6 +314,47 @@ describe("CE workflow-step executor integration", () => {
       expect(live.mergeDetails?.mergeConfirmed).toBe(true);
     });
 
+    it("uses moveTask for workflow graph column transitions so lifecycle notifications fire", async () => {
+      const store = createMockStore();
+      store.getTask.mockResolvedValue(baseStepTask({ column: "todo" }) as any);
+      const { executor } = makeExecutor(store);
+      const settings = await store.getSettings();
+      const primitives = (executor as any).createAuthoritativeWorkflowPrimitives(settings);
+
+      const result = await primitives.transitionTask(
+        {
+          run: { runId: "run-1", taskId: "FN-CE-1", workflowId: "builtin:coding" },
+          node: { node: { id: "schedule", kind: "prompt", column: "todo", config: {} }, context: {} },
+        },
+        baseStepTask({ column: "todo" }),
+        {
+          column: "in-progress",
+          status: "queued",
+          reason: "workflow-schedule",
+          preserveProgress: true,
+        },
+      );
+
+      expect(result).toEqual({ outcome: "success", value: "workflow-schedule" });
+      expect(store.moveTask).toHaveBeenCalledWith(
+        "FN-CE-1",
+        "in-progress",
+        expect.objectContaining({
+          moveSource: "engine",
+          preserveProgress: true,
+          workflowMoveSource: "workflow-graph",
+          workflowMoveMetadata: expect.objectContaining({
+            reason: "workflow-schedule",
+            nodeId: "schedule",
+            workflowId: "builtin:coding",
+            runId: "run-1",
+          }),
+        }),
+      );
+      expect(store.updateTask).toHaveBeenCalledWith("FN-CE-1", { status: "queued" });
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-CE-1", expect.objectContaining({ column: "in-progress" }));
+    });
+
     it("treats terminal graph step projection as success when the legacy pass rejects", async () => {
       const store = createMockStore();
       store.getTask.mockResolvedValue(baseStepTask({
