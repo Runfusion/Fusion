@@ -4,6 +4,7 @@ import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
+import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
 
 /**
  * The built-in default workflow as a v2 IR. Its six columns have ids that are
@@ -68,6 +69,7 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
       column: "triage",
       config: builtinPromptConfig("planning", "Plan / specify"),
     },
+    planReviewOptionalGroupNode("in-progress"),
     {
       id: "execute",
       kind: "prompt",
@@ -104,7 +106,8 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
   ],
   edges: [
     { from: "start", to: "planning" },
-    { from: "planning", to: "execute", condition: "success" },
+    { from: "planning", to: "plan-review", condition: "success" },
+    { from: "plan-review", to: "execute", condition: "success" },
     // execute → browser-verification (optional-group) → review. When the group is
     // disabled it passes through with outcome=success and routes straight to review.
     { from: "execute", to: "browser-verification", condition: "success" },
@@ -126,6 +129,7 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },
     { from: "planning", to: "end", condition: "failure" },
+    { from: "plan-review", to: "end", condition: "failure" },
     { from: "execute", to: "end", condition: "failure" },
     { from: "browser-verification", to: "end", condition: "failure" },
     { from: "code-review", to: "end", condition: "failure" },

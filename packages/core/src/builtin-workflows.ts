@@ -6,6 +6,9 @@ import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-w
 import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "./builtin-stepwise-final-review-coding-workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
+import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
+import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
+import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
 import type { WorkflowDefinition } from "./workflow-definition-types.js";
 import type { WorkflowIr, WorkflowIrColumn, WorkflowIrNode } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
@@ -35,6 +38,39 @@ export function defaultEnabledBuiltinWorkflowIds(): string[] {
   ).map((workflow) => workflow.id);
 }
 
+function ceCodeReviewOptionalGroupNode(column: string): WorkflowIrNode {
+  return {
+    id: "code-review",
+    kind: "optional-group",
+    column,
+    config: {
+      /*
+       * FNXC:Workflows 2026-06-29-10:24:
+       * Compound Engineering uses the same optional Code Review toggle as other engineering built-ins, but the inner reviewer remains the CE skill. Keep the stable `code-review` group id so per-task toggles work uniformly while preserving the CE review implementation.
+       */
+      name: "Code Review",
+      defaultOn: true,
+      template: {
+        nodes: [
+          {
+            id: "code-review-step",
+            kind: "gate",
+            config: {
+              name: "Code Review",
+              executor: "skill",
+              skillName: "compound-engineering:ce-code-review",
+              gateMode: "gate",
+              toolMode: "coding",
+              prompt: "Run /ce-code-review to perform a structured code review of the changes. Block merge on P0/P1 findings.",
+            },
+          },
+        ],
+        edges: [],
+      },
+    },
+  };
+}
+
 export function isBuiltinWorkflowEnabled(id: string, enabledIds?: readonly string[]): boolean {
   if (!isBuiltinWorkflowId(id)) return true;
   if (!enabledIds) return true;
@@ -50,6 +86,11 @@ interface BuiltinSpec {
   description: string;
   /** Ordered node specs between start and end; seams use {seam}. */
   nodes: Array<{ id: string; kind: WorkflowIr["nodes"][number]["kind"]; config?: Record<string, unknown> }>;
+  engineeringOptionalGroups?: {
+    planReviewDefaultOn?: boolean;
+    codeReviewDefaultOn?: boolean;
+    browserVerificationDefaultOn?: boolean;
+  };
 }
 
 function defaultColumnForLinearNode(node: WorkflowIrNode): string {
@@ -75,9 +116,12 @@ function canonicalBuiltinWorkflowColumns(): WorkflowIrColumn[] {
 
 /** Build a linear IR (start → nodes… → end) with simple x-spaced layout. */
 function linear(spec: BuiltinSpec): WorkflowDefinition {
+  const specNodes = spec.engineeringOptionalGroups
+    ? withEngineeringOptionalGroups(spec.nodes, spec.engineeringOptionalGroups)
+    : spec.nodes;
   const nodes: WorkflowIr["nodes"] = [
     { id: "start", kind: "start" },
-    ...spec.nodes,
+    ...specNodes,
     { id: "end", kind: "end" },
   ];
   const edges: WorkflowIr["edges"] = [];
@@ -85,8 +129,8 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
     edges.push({ from: nodes[i].id, to: nodes[i + 1].id, condition: "success" });
   }
   // Seam nodes also fail straight to end (mirrors the legacy pipeline).
-  for (const node of spec.nodes) {
-    if (typeof node.config?.seam === "string") {
+  for (const node of specNodes) {
+    if (typeof node.config?.seam === "string" || node.kind === "optional-group") {
       edges.push({ from: node.id, to: "end", condition: "failure" });
     }
   }
@@ -127,6 +171,26 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
   };
+}
+
+function withEngineeringOptionalGroups(
+  nodes: BuiltinSpec["nodes"],
+  options: NonNullable<BuiltinSpec["engineeringOptionalGroups"]>,
+): BuiltinSpec["nodes"] {
+  const executeIndex = nodes.findIndex((node) => node.id === "execute");
+  if (executeIndex < 0) return nodes;
+  /*
+   * FNXC:WorkflowBuiltins 2026-06-29-10:17:
+   * Engineering built-ins must expose the same operator toggles: Plan Review before execution, then Browser Verification and Code Review after implementation. Quick Fix keeps all three default-off; other engineering built-ins keep plan/code review default-on and browser verification default-off.
+   */
+  return [
+    ...nodes.slice(0, executeIndex),
+    planReviewOptionalGroupNode("in-progress", { defaultOn: options.planReviewDefaultOn ?? true }),
+    nodes[executeIndex],
+    browserVerificationOptionalGroupNode("in-progress", { defaultOn: options.browserVerificationDefaultOn ?? false }),
+    codeReviewOptionalGroupNode("in-progress", { defaultOn: options.codeReviewDefaultOn ?? true }),
+    ...nodes.slice(executeIndex + 1),
+  ];
 }
 
 /**
@@ -188,6 +252,11 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     id: "builtin:quick-fix",
     name: "Quick fix (built-in)",
     description: "Implement and merge with no review step — for trivial, low-risk changes.",
+    engineeringOptionalGroups: {
+      planReviewDefaultOn: false,
+      codeReviewDefaultOn: false,
+      browserVerificationDefaultOn: false,
+    },
     nodes: [
       { id: "execute", kind: "prompt", config: builtinPromptConfig("execute", "Execute") },
       { id: "merge", kind: "prompt", config: builtinPromptConfig("merge", "Merge boundary") },
@@ -197,6 +266,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     id: "builtin:review-heavy",
     name: "Review-heavy (built-in)",
     description: "Adds an extra security pass before merge, on top of the standard review.",
+    engineeringOptionalGroups: {},
     nodes: [
       { id: "execute", kind: "prompt", config: builtinPromptConfig("execute", "Execute") },
       { id: "review", kind: "prompt", config: builtinPromptConfig("review", "Review") },
@@ -287,6 +357,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           },
         },
       },
+      planReviewOptionalGroupNode("in-progress"),
       {
         id: "execute",
         kind: "prompt",
@@ -301,29 +372,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           prompt: "Run /ce-work to execute the plan for this task, following existing patterns and maintaining quality throughout.",
         },
       },
-      {
-        id: "code-review",
-        kind: "gate",
-        config: {
-          /*
-           * FNXC:Workflows 2026-06-25-00:00:
-           * FN-7045 requires every built-in code-review step display name to be title-case "Code Review" so compound-engineering matches WORKFLOW_STEP_TEMPLATES and the optional Code Review group.
-           */
-          name: "Code Review",
-          executor: "skill",
-          skillName: "compound-engineering:ce-code-review",
-          gateMode: "gate",
-          /*
-           * FNXC:Workflows 2026-06-21-00:00:
-           * FN-6891 requires the compound-engineering Review stage to invoke compound-engineering:ce-code-review directly. The prior generic reviewer seam was removed so CE review runs through the CE skill and still blocks merge as a gate.
-           */
-          // Coding mode so ce-code-review can fan out to its reviewer-persona
-          // subagents via fn_spawn_agent. As a gate step it still emits the
-          // verdict JSON (KTD-6); it is not meant to write the tree (Risk-1).
-          toolMode: "coding",
-          prompt: "Run /ce-code-review to perform a structured code review of the changes. Block merge on P0/P1 findings.",
-        },
-      },
+      browserVerificationOptionalGroupNode("in-progress"),
+      ceCodeReviewOptionalGroupNode("in-progress"),
       {
         id: "commit-pr",
         kind: "prompt",
@@ -418,6 +468,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     id: "builtin:design",
     name: "Design (built-in)",
     description: "Implement, then run a design/UX review gate before the standard review and merge — for UI-heavy work.",
+    engineeringOptionalGroups: {},
     nodes: [
       {
         id: "execute",

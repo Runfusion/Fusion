@@ -84,14 +84,17 @@ Note: Refs (@e1, @e2) are invalidated after page navigation. Re-snapshot after c
  * Mirrors `stepTemplateToNode(browser-verification)`: a single `prompt` node whose
  * config carries the inlined prompt + `toolMode: "coding"` + `gateMode: "advisory"`.
  */
-export function browserVerificationOptionalGroupNode(column: string): WorkflowIrNode {
+export function browserVerificationOptionalGroupNode(
+  column: string,
+  options: { defaultOn?: boolean } = {},
+): WorkflowIrNode {
   return {
     id: BROWSER_VERIFICATION_GROUP_ID,
     kind: "optional-group",
     column,
     config: {
       name: BROWSER_VERIFICATION_NAME,
-      defaultOn: false,
+      defaultOn: options.defaultOn ?? false,
       template: {
         nodes: [
           {

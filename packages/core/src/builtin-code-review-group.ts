@@ -73,7 +73,10 @@ Be specific: cite \`file:line\` for every finding and explain the concrete failu
  * Mirrors `stepTemplateToNode(code-review)`: a single `prompt` node whose config carries
  * the inlined prompt + `toolMode: "readonly"` + `gateMode: "advisory"`.
  */
-export function codeReviewOptionalGroupNode(column: string): WorkflowIrNode {
+export function codeReviewOptionalGroupNode(
+  column: string,
+  options: { defaultOn?: boolean } = {},
+): WorkflowIrNode {
   return {
     id: CODE_REVIEW_GROUP_ID,
     kind: "optional-group",
@@ -82,7 +85,7 @@ export function codeReviewOptionalGroupNode(column: string): WorkflowIrNode {
       name: CODE_REVIEW_NAME,
       // Default-ON: runs for every coding task by default, but operators can toggle it
       // off per task (remove `code-review` from enabledWorkflowSteps).
-      defaultOn: true,
+      defaultOn: options.defaultOn ?? true,
       template: {
         nodes: [
           {

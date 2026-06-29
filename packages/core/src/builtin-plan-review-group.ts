@@ -39,14 +39,17 @@ Be specific: cite the plan section or file path for every finding and explain th
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
 /** Build the `plan-review` optional-group node placed between planning and execution. */
-export function planReviewOptionalGroupNode(column: string): WorkflowIrNode {
+export function planReviewOptionalGroupNode(
+  column: string,
+  options: { defaultOn?: boolean } = {},
+): WorkflowIrNode {
   return {
     id: PLAN_REVIEW_GROUP_ID,
     kind: "optional-group",
     column,
     config: {
       name: PLAN_REVIEW_NAME,
-      defaultOn: true,
+      defaultOn: options.defaultOn ?? true,
       template: {
         nodes: [
           {

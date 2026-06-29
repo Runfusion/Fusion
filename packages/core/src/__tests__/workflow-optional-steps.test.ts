@@ -110,10 +110,17 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
   });
 
   it("resolves the built-in coding/stepwise optional-groups in execution order", () => {
-    // Legacy coding carries two optional-group toggles on the pre-merge path:
-    // `browser-verification` (default OFF) then `code-review` (default ON — runs by default
-    // but is toggleable off per task).
-    const legacyExpected = [
+    // Legacy/default/stepwise engineering workflows expose the same three toggles
+    // in execution order: plan review before execution, then browser verification
+    // and code review after implementation.
+    const engineeringExpected = [
+      {
+        templateId: "plan-review",
+        name: "Plan Review",
+        description: "",
+        phase: "pre-merge" as const,
+        defaultOn: true,
+      },
       {
         templateId: "browser-verification",
         name: "Browser Verification",
@@ -129,19 +136,9 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
         defaultOn: true,
       },
     ];
-    const stepwiseExpected = [
-      {
-        templateId: "plan-review",
-        name: "Plan Review",
-        description: "",
-        phase: "pre-merge" as const,
-        defaultOn: true,
-      },
-      ...legacyExpected,
-    ];
-    expect(resolveWorkflowOptionalSteps(BUILTIN_CODING_WORKFLOW_IR)).toEqual(legacyExpected);
-    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(stepwiseExpected);
-    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(stepwiseExpected);
+    expect(resolveWorkflowOptionalSteps(BUILTIN_CODING_WORKFLOW_IR)).toEqual(engineeringExpected);
+    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(engineeringExpected);
+    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(engineeringExpected);
   });
 
   it("orders Plan Review before execution even when the node is appended after Code Review", () => {
@@ -169,7 +166,7 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
   it("seeds default-on optional groups but not browser-verification for the built-ins", () => {
     // resolveDefaultOnOptionalGroupIds drives which groups a new task gets enabled by
     // default: review groups are on, browser-verification is off.
-    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_CODING_WORKFLOW_IR)).toEqual(["code-review"]);
+    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
     expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
     expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
   });

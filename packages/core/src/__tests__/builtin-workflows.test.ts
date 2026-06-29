@@ -10,6 +10,7 @@ import {
 } from "../builtin-workflows.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../builtin-browser-verification-group.js";
+import { CODE_REVIEW_STEP_NODE_ID } from "../builtin-code-review-group.js";
 import { PLAN_REVIEW_GROUP_ID, PLAN_REVIEW_STEP_NODE_ID } from "../builtin-plan-review-group.js";
 import { builtinPromptConfig, BUILTIN_SEAM_PROMPTS } from "../builtin-workflow-prompts.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "../builtin-workflow-settings.js";
@@ -52,7 +53,11 @@ describe("built-in workflows", () => {
   const NON_COMPILABLE_BUILTIN_IDS = new Set([
     "builtin:coding",
     "builtin:legacy-coding",
+    "builtin:quick-fix",
+    "builtin:review-heavy",
+    "builtin:design",
     "builtin:marketing",
+    "builtin:compound-engineering",
     "builtin:stepwise-coding",
     "builtin:pr-workflow",
   ]);
@@ -65,6 +70,34 @@ describe("built-in workflows", () => {
       if (!NON_COMPILABLE_BUILTIN_IDS.has(wf.id)) {
         expect(() => compileWorkflowToSteps(wf.ir)).not.toThrow();
       }
+    }
+  });
+
+  it("engineering built-ins expose plan, code, and browser optional groups with expected defaults", () => {
+    const expectedDefaults: Record<string, Record<string, boolean>> = {
+      "builtin:coding": { "plan-review": true, "code-review": true, "browser-verification": false },
+      "builtin:legacy-coding": { "plan-review": true, "code-review": true, "browser-verification": false },
+      "builtin:quick-fix": { "plan-review": false, "code-review": false, "browser-verification": false },
+      "builtin:review-heavy": { "plan-review": true, "code-review": true, "browser-verification": false },
+      "builtin:design": { "plan-review": true, "code-review": true, "browser-verification": false },
+      "builtin:compound-engineering": { "plan-review": true, "code-review": true, "browser-verification": false },
+      "builtin:stepwise-coding": { "plan-review": true, "code-review": true, "browser-verification": false },
+    };
+
+    for (const [workflowId, defaults] of Object.entries(expectedDefaults)) {
+      const workflow = getBuiltinWorkflow(workflowId)!;
+      const byId = new Map(workflow.ir.nodes.map((node) => [node.id, node]));
+      for (const [groupId, defaultOn] of Object.entries(defaults)) {
+        const group = byId.get(groupId);
+        expect(group?.kind, `${workflowId}:${groupId}`).toBe("optional-group");
+        expect(group?.config?.defaultOn, `${workflowId}:${groupId}`).toBe(defaultOn);
+      }
+      const nodeOrder = workflow.ir.nodes.map((node) => node.id);
+      const executionBoundary = nodeOrder.includes("execute") ? nodeOrder.indexOf("execute") : nodeOrder.indexOf("steps");
+      expect(executionBoundary, workflowId).toBeGreaterThanOrEqual(0);
+      expect(nodeOrder.indexOf("plan-review"), workflowId).toBeLessThan(executionBoundary);
+      expect(nodeOrder.indexOf("browser-verification"), workflowId).toBeGreaterThan(executionBoundary);
+      expect(nodeOrder.indexOf("code-review"), workflowId).toBeGreaterThan(nodeOrder.indexOf("browser-verification"));
     }
   });
 
@@ -446,10 +479,9 @@ describe("built-in workflows", () => {
     expect(design).toBeDefined();
     expect(design!.kind).toBe("workflow");
     expect(() => parseWorkflowIr(design!.ir)).not.toThrow();
-    expect(() => compileWorkflowToSteps(design!.ir)).not.toThrow();
 
     const authoredNodeIds = design!.ir.nodes.filter((node) => node.id !== "start" && node.id !== "end").map((node) => node.id);
-    expect(authoredNodeIds).toEqual(["execute", "design-review", "review", "merge"]);
+    expect(authoredNodeIds).toEqual(["plan-review", "execute", "browser-verification", "code-review", "design-review", "review", "merge"]);
 
     const execute = design!.ir.nodes.find((node) => node.id === "execute");
     expect(execute?.config?.seam).toBe("execute");
@@ -605,17 +637,13 @@ describe("built-in workflows", () => {
     }
   });
 
-  it("compound-engineering compiles exactly one ce-code-review step and no generic review seam", () => {
+  it("compound-engineering exposes ce-code-review as the optional Code Review group and no generic review seam", () => {
     const ce = getBuiltinWorkflow("builtin:compound-engineering")!;
-    const steps = compileWorkflowToSteps(ce.ir);
-    // plan + execute (ce-work) + code-review (pre-merge) + commit-pr +
-    // resolve-feedback + document (post-merge) — merge seams and graph-native
-    // optional-groups are skipped by the legacy step compiler.
-    expect(steps.length).toBeGreaterThanOrEqual(6);
-    expect(steps.some((s) => s.name === "Plan")).toBe(true);
-    expect(steps.filter((s) => s.skillName === "compound-engineering:ce-code-review")).toHaveLength(1);
-    expect(steps.some((s) => s.name === "CE Doc Review")).toBe(false);
-    expect(steps.some((s) => s.name === "Review" && !s.skillName)).toBe(false);
+    const codeReview = ce.ir.nodes.find((node) => node.id === "code-review");
+    const template = codeReview?.config?.template as { nodes?: Array<{ id: string; config?: Record<string, unknown> }> } | undefined;
+    expect(codeReview?.kind).toBe("optional-group");
+    expect(template?.nodes?.filter((node) => node.config?.skillName === "compound-engineering:ce-code-review")).toHaveLength(1);
+    expect(ce.ir.nodes.some((node) => node.config?.seam === "review")).toBe(false);
   });
 
   it("compound-engineering runs ce-work for the execute step in coding mode", () => {
@@ -625,11 +653,7 @@ describe("built-in workflows", () => {
     const executeNode = ce.ir.nodes.find((n) => n.id === "execute");
     expect(executeNode?.config?.executor).toBe("skill");
     expect(executeNode?.config?.skillName).toBe("compound-engineering:ce-work");
-    // The compiled step runs in coding mode so write/spawn tools are available.
-    const steps = compileWorkflowToSteps(ce.ir);
-    const execute = steps.find((s) => s.name === "Execute");
-    expect(execute).toBeDefined();
-    expect(execute!.toolMode).toBe("coding");
+    expect(executeNode?.config?.toolMode).toBe("coding");
   });
 
   it("compound-engineering skill-node prompts name their /ce- slash commands", () => {
@@ -638,7 +662,6 @@ describe("built-in workflows", () => {
     const expectedPrompts = new Map([
       ["plan", "/ce-plan"],
       ["execute", "/ce-work"],
-      ["code-review", "/ce-code-review"],
       ["commit-pr", "/ce-commit-push-pr"],
       ["resolve-feedback", "/ce-resolve-pr-feedback"],
       ["document", "/ce-compound"],
@@ -649,6 +672,8 @@ describe("built-in workflows", () => {
     }
     const docReviewTemplate = byId("ce-doc-review")?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
     expect(String(docReviewTemplate?.nodes?.[0]?.config?.prompt ?? "")).toContain("/ce-doc-review");
+    const codeReviewTemplate = byId("code-review")?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
+    expect(String(codeReviewTemplate?.nodes?.[0]?.config?.prompt ?? "")).toContain("/ce-code-review");
     expect(String(byId("merge")?.config?.prompt ?? "")).not.toContain("/ce-");
   });
 
@@ -678,7 +703,9 @@ describe("built-in workflows", () => {
     expect(authoredNodeIds).toEqual([
       "plan",
       "ce-doc-review",
+      "plan-review",
       "execute",
+      "browser-verification",
       "code-review",
       "commit-pr",
       "resolve-feedback",
@@ -703,11 +730,19 @@ describe("built-in workflows", () => {
     });
 
     const codeReview = byId("code-review");
-    expect(codeReview?.kind).toBe("gate");
+    expect(codeReview?.kind).toBe("optional-group");
     expect(codeReview?.config?.name).toBe("Code Review");
-    expect(codeReview?.config?.skillName).toBe("compound-engineering:ce-code-review");
-    expect(codeReview?.config?.gateMode).toBe("gate");
-    expect(codeReview?.config?.toolMode).toBe("coding");
+    expect(codeReview?.config?.defaultOn).toBe(true);
+    const codeReviewTemplate = codeReview?.config?.template as { nodes?: Array<{ id: string; kind: string; config?: Record<string, unknown> }> } | undefined;
+    expect(codeReviewTemplate?.nodes?.[0]).toMatchObject({
+      id: CODE_REVIEW_STEP_NODE_ID,
+      kind: "gate",
+      config: {
+        skillName: "compound-engineering:ce-code-review",
+        gateMode: "gate",
+        toolMode: "coding",
+      },
+    });
 
     const layout = ce.layout ?? {};
     expect(Object.keys(layout).sort()).toEqual(ce.ir.nodes.map((node) => node.id).sort());
@@ -715,8 +750,10 @@ describe("built-in workflows", () => {
       expect(layout[ce.ir.nodes[i].id].x - layout[ce.ir.nodes[i - 1].id].x).toBe(170);
     }
     expect(ce.ir.edges.some((edge) => edge.from === "plan" && edge.to === "ce-doc-review")).toBe(true);
-    expect(ce.ir.edges.some((edge) => edge.from === "ce-doc-review" && edge.to === "execute")).toBe(true);
-    expect(ce.ir.edges.some((edge) => edge.from === "execute" && edge.to === "code-review")).toBe(true);
+    expect(ce.ir.edges.some((edge) => edge.from === "ce-doc-review" && edge.to === "plan-review")).toBe(true);
+    expect(ce.ir.edges.some((edge) => edge.from === "plan-review" && edge.to === "execute")).toBe(true);
+    expect(ce.ir.edges.some((edge) => edge.from === "execute" && edge.to === "browser-verification")).toBe(true);
+    expect(ce.ir.edges.some((edge) => edge.from === "browser-verification" && edge.to === "code-review")).toBe(true);
     expect(ce.ir.edges.some((edge) => edge.from === "code-review" && edge.to === "commit-pr")).toBe(true);
   });
 
@@ -738,20 +775,12 @@ describe("built-in workflows", () => {
     // U4: fan-out steps (plan, code-review) need coding so fn_spawn_agent is
     // available for persona fan-out; document needs coding to WRITE docs/solutions.
     expect(byId("plan")?.config?.toolMode).toBe("coding");
-    expect(byId("code-review")?.config?.toolMode).toBe("coding");
     expect(byId("document")?.config?.toolMode).toBe("coding");
-    // U1: the compiler carries each node's skillName onto the materialized step so
-    // the step session can actually LOAD the skill (not just name it in prompt text).
-    const steps = compileWorkflowToSteps(ce.ir);
-    const plan = steps.find((s) => s.name === "Plan");
-    expect(plan?.skillName).toBe("compound-engineering:ce-plan");
-    expect(plan?.toolMode).toBe("coding");
-    const codeReviewSteps = steps.filter((s) => s.skillName === "compound-engineering:ce-code-review");
-    expect(codeReviewSteps).toHaveLength(1);
-    expect(codeReviewSteps[0].gateMode).toBe("gate");
-    expect(codeReviewSteps[0].toolMode).toBe("coding");
-    const document = steps.find((s) => s.skillName === "compound-engineering:ce-compound");
-    expect(document?.toolMode).toBe("coding");
+    const codeReview = byId("code-review");
+    const template = codeReview?.config?.template as { nodes?: Array<{ config?: Record<string, unknown> }> } | undefined;
+    expect(template?.nodes?.[0]?.config?.skillName).toBe("compound-engineering:ce-code-review");
+    expect(template?.nodes?.[0]?.config?.gateMode).toBe("gate");
+    expect(template?.nodes?.[0]?.config?.toolMode).toBe("coding");
   });
 
   describe("store integration", () => {
@@ -855,7 +884,7 @@ describe("built-in workflows", () => {
       // skipped the gate).
       const expectedGroups: Record<string, string[]> = {
         "builtin:coding": ["plan-review", "code-review"],
-        "builtin:legacy-coding": ["code-review"],
+        "builtin:legacy-coding": ["plan-review", "code-review"],
         "builtin:marketing": [],
         "builtin:stepwise-coding": ["plan-review", "code-review"],
       };
