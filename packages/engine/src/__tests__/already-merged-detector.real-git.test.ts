@@ -52,6 +52,29 @@ describeIfGit("findAlreadyMergedTaskCommit ownership anchoring (real git)", () =
     expect(result).not.toBeNull();
     expect(result!.sha).toBe(landedSha);
     expect(result!.strategy).toBe("trailer");
+    expect(result!.ownershipProof).toBe("task-trailer");
+  });
+
+  it("attributes legacy task-id trailer even when the commit also carries lineage but task has none", async () => {
+    const repo = setupRepo();
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "legacy-lineage.txt"), "owned legacy lineage\n", "utf-8");
+    git(
+      repo,
+      "git add src/legacy-lineage.txt && git commit -m 'feat: legacy lineage landed' -m 'Fusion-Task-Id: FN-AMD-LEGACY' -m 'Fusion-Task-Lineage: LINEAGE-OPTIONAL'",
+    );
+    const landedSha = git(repo, "git rev-parse HEAD");
+
+    const result = await findAlreadyMergedTaskCommit({
+      taskId: "FN-AMD-LEGACY",
+      repoDir: repo,
+      baseBranch: "main",
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.sha).toBe(landedSha);
+    expect(result!.strategy).toBe("trailer");
+    expect(result!.ownershipProof).toBe("task-trailer");
   });
 
   it("attributes via lineage trailer when present", async () => {
@@ -71,6 +94,7 @@ describeIfGit("findAlreadyMergedTaskCommit ownership anchoring (real git)", () =
     expect(result).not.toBeNull();
     expect(result!.sha).toBe(landedSha);
     expect(result!.strategy).toBe("trailer");
+    expect(result!.ownershipProof).toBe("lineage-trailer");
   });
 
   // Incident bug #2 regression: a commit that merely *mentions* the task ID in
@@ -124,6 +148,50 @@ describeIfGit("findAlreadyMergedTaskCommit ownership anchoring (real git)", () =
     }
   });
 
+  it("rejects a patch-id match when the landed candidate carries a foreign task trailer", async () => {
+    const repo = setupRepo();
+    git(repo, "git checkout -b fusion/fn-amd-foreign");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "foreign-patch.txt"), "same-content\n", "utf-8");
+    git(repo, "git add src/foreign-patch.txt && git commit -m 'work without owner'");
+    const branchBase = git(repo, "git merge-base main fusion/fn-amd-foreign");
+    git(repo, "git checkout main");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "foreign-patch.txt"), "same-content\n", "utf-8");
+    git(repo, "git add src/foreign-patch.txt && git commit -m 'feat: foreign landed' -m 'Fusion-Task-Id: FN-AMD-OTHER'");
+
+    const result = await findAlreadyMergedTaskCommit({
+      taskId: "FN-AMD-FOREIGN",
+      repoDir: repo,
+      baseBranch: "main",
+      taskBranch: "fusion/fn-amd-foreign",
+      baseCommitSha: branchBase,
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("rejects branch-fallback attribution when task metadata points at another task branch", async () => {
+    const repo = setupRepo();
+    git(repo, "git checkout -b fusion/fn-amd-other-tip");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "other-tip.txt"), "other\n", "utf-8");
+    git(repo, "git add src/other-tip.txt && git commit -m 'feat: other tip' -m 'Fusion-Task-Id: FN-AMD-OTHER-TIP'");
+    git(repo, "git checkout main");
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "other-tip.txt"), "other\n", "utf-8");
+    git(repo, "git add src/other-tip.txt && git commit -m 'land equivalent other tip'");
+
+    const result = await findAlreadyMergedTaskCommit({
+      taskId: "FN-AMD-RECOVERED",
+      repoDir: repo,
+      baseBranch: "main",
+      taskBranch: "fusion/fn-amd-other-tip",
+    });
+
+    expect(result).toBeNull();
+  });
+
   it("attributes via ancestry when the landed commit carries a conventional-subject anchor", async () => {
     const repo = setupRepo();
 
@@ -147,5 +215,6 @@ describeIfGit("findAlreadyMergedTaskCommit ownership anchoring (real git)", () =
     // Trailer path won't match (no trailer); ownership-anchored ancestry should.
     const subject = git(repo, `git show -s --format=%s ${result!.sha}`);
     expect(subject).toContain("FN-AMD-3");
+    expect(result!.ownershipProof).toBe("subject-anchor");
   });
 });

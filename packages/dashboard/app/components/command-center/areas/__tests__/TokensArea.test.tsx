@@ -83,6 +83,36 @@ function tokenFixture() {
   };
 }
 
+function glmMixedProviderTokenFixture() {
+  const groups = [
+    makeTokenGroup("glm-5.1", 2_400),
+    makeTokenGroup("glm-4.5-air", 2_200),
+    makeTokenGroup("glm-5v-turbo", 2_000),
+    makeTokenGroup("gpt-4o-mini", 1_800),
+    makeTokenGroup("claude-sonnet-4-5", 1_600),
+    makeTokenGroup("custom-model-v1", 1_400),
+    makeTokenGroup(null, 1_200),
+  ];
+  const totals = groups.reduce(
+    (acc, group) => ({
+      inputTokens: acc.inputTokens + group.inputTokens,
+      outputTokens: acc.outputTokens + group.outputTokens,
+      cachedTokens: acc.cachedTokens + group.cachedTokens,
+      cacheWriteTokens: acc.cacheWriteTokens + group.cacheWriteTokens,
+      totalTokens: acc.totalTokens + group.totalTokens,
+      nTasks: acc.nTasks + group.nTasks,
+    }),
+    { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 0, nTasks: 0 },
+  );
+
+  return {
+    ...tokenFixture(),
+    totals,
+    cost: { usd: null, unavailable: true, stale: false },
+    groups,
+  };
+}
+
 function manyModelTokenFixture() {
   const groups = [
     makeTokenGroup("claude-sonnet-4-5", 2_000),
@@ -150,6 +180,29 @@ describe("TokensArea provider model icons", () => {
     expect(screen.getByTestId("cc-tokens-pie")).toHaveTextContent("claude-sonnet-4-5");
     expect(screen.getByTestId("cc-tokens-pie")).toHaveTextContent("gpt-4o-mini");
     expect(screen.getByTestId("cc-tokens-pie")).toHaveTextContent("(unknown)");
+  });
+
+  it("renders standalone GLM model rows with Z.ai icons across bars and table", async () => {
+    apiMock.mockResolvedValue(glmMixedProviderTokenFixture());
+    render(<TokensArea range={range7d} />);
+
+    const table = await screen.findByTestId("cc-tokens-table");
+    const byModelChart = screen.getByRole("list", { name: "Tokens by model" });
+
+    for (const label of ["glm-5.1", "glm-4.5-air", "glm-5v-turbo"]) {
+      const row = screen.getByTestId(`cc-tokens-row-${label}`);
+      expect(within(row).getByText(label)).toBeTruthy();
+      expect(within(row).getByTestId("provider-icon-zai")).toHaveAttribute("data-provider", "zai");
+      const barLabel = within(byModelChart).getByText(label).closest(".cc-bar-label");
+      expect(barLabel?.firstElementChild).toHaveAttribute("data-testid", "provider-icon-zai");
+      expect(barLabel?.firstElementChild).toHaveAttribute("data-provider", "zai");
+    }
+
+    expect(within(screen.getByTestId("cc-tokens-row-gpt-4o-mini")).getByTestId("provider-icon-openai")).toBeTruthy();
+    expect(within(screen.getByTestId("cc-tokens-row-claude-sonnet-4-5")).getByTestId("provider-icon-anthropic")).toBeTruthy();
+    expect(within(screen.getByTestId("cc-tokens-row-custom-model-v1")).getByTestId("provider-icon-custom-model-v1")).toBeTruthy();
+    expect(within(screen.getByTestId("cc-tokens-row-unknown")).getByTestId("provider-icon-")).toBeTruthy();
+    expect(table.querySelectorAll('.provider-icon[data-provider="zai"]').length).toBe(3);
   });
 
   it("renders every analytics model group in detail bar, pie, and table even beyond the old cap", async () => {

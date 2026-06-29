@@ -287,7 +287,7 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     const calls: string[] = [];
     const getWorkflowDefinition = vi.fn(async () => undefined);
     const store: WorkflowGraphRunnerStore = {
-      getTaskWorkflowSelection: () => ({ workflowId: "builtin:coding", stepIds: [] }),
+      getTaskWorkflowSelection: () => ({ workflowId: "builtin:legacy-coding", stepIds: [] }),
       getWorkflowDefinition,
     };
     const runner = new WorkflowGraphTaskRunner({
@@ -299,8 +299,10 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     const result = await runner.run(task, flagOn);
 
     expect(result.disposition).toBe("completed");
-    // U6: the coding built-in no longer carries a `workflow-step` seam; its
-    // pre-merge browser-verification optional-group is default-OFF and bypassed.
+    // FNXC:WorkflowBuiltins 2026-06-28-23:29:
+    // Use Legacy coding here because default Coding is now stepwise and requires
+    // parse/foreach task-step context. This still proves built-in registry fallback
+    // works when the store intentionally does not return a persisted definition.
     expect(calls).toEqual(["planning", "execute", "review", "merge"]);
     expect(result.reason).toBeUndefined();
     expect(getWorkflowDefinition).not.toHaveBeenCalled();

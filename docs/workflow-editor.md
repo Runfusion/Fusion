@@ -165,12 +165,15 @@ Save is blocked by client-side issues such as unplaced nodes and blocking column
 
 Fusion ships built-in workflows as read-only references:
 
-- `builtin:coding` — the default coding lifecycle and fallback for tasks without a workflow selection.
+- `builtin:coding` — the default Stepwise-based coding lifecycle: plan steps, execute them one at a time, then run the optional final Code Review gate and merge.
+- `builtin:legacy-coding` — the original monolithic coding lifecycle for tasks that should not use graph-owned step execution.
 - `builtin:quick-fix` — a short path for trivial or no-commit/decision work.
 - `builtin:review-heavy` — a standard execute/review/merge path with an additional gated security review.
+- `builtin:marketing` — a marketing content pipeline with brief, draft, editorial review, and publish stages.
 - `builtin:compound-engineering` — a plugin-gated Compound Engineering pipeline: `/ce-plan` writes the CE plan doc, optional `ce-doc-review` can pressure-test plans (markdown gets autofix/Open Questions write-back; HTML uses DOM-safe helper mutations, including canonical checklist repair, only when safety is proven and otherwise report-only with no write), `/ce-work` implements, `/ce-code-review` gates merge, and autoMerge-off projects route through the CE PR/feedback skills before Fusion's manual merge seam.
-- `builtin:stepwise-coding` — a graph variant that models per-step parse, execute, review, and rework structure.
+- `builtin:stepwise-coding` — Coding (per-step review): a graph variant with optional Plan Review before execution, per-step parse/execute/review/rework, and optional final Code Review before the final review/merge region.
 - `builtin:design` — a UI-heavy work path with a gated design/UX review before standard review and merge.
+- `builtin:lead-generation` — a lead workflow for sourcing, qualifying, enriching, and contacting prospects.
 
 Built-ins can be viewed, exported, and used as templates, but their graph, columns, field declarations, and setting declarations are not editable. Their per-project setting **values** are editable from the Settings panel's Values tab. Selectable built-ins all use a capacity-released queue column (`todo` or a workflow-specific backlog) that dispatches to the active WIP column through the standard hold/release sweep.
 

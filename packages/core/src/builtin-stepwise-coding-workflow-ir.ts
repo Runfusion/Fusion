@@ -4,6 +4,7 @@ import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
+import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
 
 /**
  * The built-in **stepwise** coding workflow (KTD-9) — the demonstration of step
@@ -37,6 +38,11 @@ import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
  * planning seam. The IR is v2-only (foreach/step-review/parse-steps are v2 node
  * kinds), so `downgradeIrToV1IfPure` refuses it and the flag-OFF rollback contract
  * (KTD-8) is preserved automatically.
+ *
+ * FNXC:PlanReviewStep 2026-06-28-23:29:
+ * Coding (per-step review) also needs the default-on optional Plan Review gate before
+ * execution. The group sits between `plan` and `parse` so operators can toggle plan
+ * review independently while preserving the per-step code review/rework loop.
  */
 const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
@@ -68,6 +74,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { id: "start", kind: "start", column: "triage" },
     // Planning seam: produces PROMPT.md (the declared step-source artifact).
     { id: "plan", kind: "prompt", column: "in-progress", config: builtinPromptConfig("planning", "Plan") },
+    planReviewOptionalGroupNode("in-progress"),
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).
     {
@@ -165,8 +172,10 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   ],
   edges: [
     { from: "start", to: "plan" },
-    { from: "plan", to: "parse", condition: "success" },
+    { from: "plan", to: "plan-review", condition: "success" },
     { from: "plan", to: "end", condition: "failure" },
+    { from: "plan-review", to: "parse", condition: "success" },
+    { from: "plan-review", to: "end", condition: "failure" },
     { from: "parse", to: "steps", condition: "success" },
     // parse-steps no-steps defaults to success; route it explicitly to the foreach
     // (zero steps → foreach no-ops through its success edge, KTD-8/R8).

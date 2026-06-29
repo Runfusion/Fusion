@@ -250,7 +250,7 @@ describeIfGit("SelfHealingManager recoverAlreadyMergedReviewTasks (real git)", (
     const repo = setupRepo();
     mkdirSync(path.join(repo, "src"), { recursive: true });
     writeFileSync(path.join(repo, "src", "other.txt"), "other\n", "utf-8");
-    git(repo, "git add src/other.txt && git commit -m 'feat: unrelated' -m 'Fusion-Task-Id: FN-OTHER'");
+    git(repo, "git add src/other.txt && git commit -m 'feat: unrelated generic tip'");
     const unrelatedSha = git(repo, "git rev-parse HEAD");
 
     writeFileSync(path.join(repo, "src", "misbound.txt"), "landed\n", "utf-8");
@@ -278,6 +278,73 @@ describeIfGit("SelfHealingManager recoverAlreadyMergedReviewTasks (real git)", (
     expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(
       expect.objectContaining({ mutationType: "task:auto-recover-branch-misbound", target: "FN-TEST-MISBOUND" }),
     );
+  }, 20_000);
+
+  it("rejects already-merged recovery when the task branch tip belongs to a foreign task", async () => {
+    const repo = setupRepo();
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "foreign-tip.txt"), "foreign\n", "utf-8");
+    git(repo, "git add src/foreign-tip.txt && git commit -m 'feat: foreign landed' -m 'Fusion-Task-Id: FN-7187'");
+    const foreignSha = git(repo, "git rev-parse HEAD");
+
+    const worktreePath = path.join(repo, ".worktrees", "fn-7143");
+    mkdirSync(path.dirname(worktreePath), { recursive: true });
+    git(repo, `git branch fusion/fn-7143 ${foreignSha}`);
+    git(repo, `git worktree add ${JSON.stringify(worktreePath)} fusion/fn-7143`);
+
+    const tasks: TaskMap = new Map([
+      ["FN-7143", makeTask({ id: "FN-7143", column: "in-review", status: "failed", mergeRetries: 3, paused: false, baseBranch: "main", branch: "fusion/fn-7143", worktree: worktreePath })],
+    ]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    await (manager as any).runMaintenance();
+
+    const task = tasks.get("FN-7143")!;
+    expect(task.column).toBe("in-review");
+    expect(task.mergeDetails?.mergeConfirmed).not.toBe(true);
+    expect((store as any).moveTask).not.toHaveBeenCalledWith("FN-7143", "done");
+    expect((store.logEntry as any).mock.calls.some((call: unknown[]) => String(call[1]).includes("already-merged rejected FN-7143") && String(call[1]).includes("owner=FN-7187"))).toBe(true);
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-recover-already-merged-rejected",
+      target: "FN-7143",
+      metadata: expect.objectContaining({ reason: "foreign-task-tip", candidateOwner: "FN-7187" }),
+    }));
+  }, 20_000);
+
+  it("rejects branch-misbound finalization when the misbound tip belongs to a foreign task", async () => {
+    const repo = setupRepo();
+    mkdirSync(path.join(repo, "src"), { recursive: true });
+    writeFileSync(path.join(repo, "src", "other.txt"), "other\n", "utf-8");
+    git(repo, "git add src/other.txt && git commit -m 'feat: unrelated' -m 'Fusion-Task-Id: FN-OTHER'");
+    const foreignSha = git(repo, "git rev-parse HEAD");
+
+    writeFileSync(path.join(repo, "src", "owned.txt"), "owned\n", "utf-8");
+    git(repo, "git add src/owned.txt && git commit -m 'feat: landed' -m 'Fusion-Task-Id: FN-TEST-FOREIGN-MISBOUND'");
+
+    const worktreePath = path.join(repo, ".worktrees", "fn-test-foreign-misbound");
+    mkdirSync(path.dirname(worktreePath), { recursive: true });
+    git(repo, `git branch fusion/fn-test-foreign-misbound ${foreignSha}`);
+    git(repo, `git worktree add ${JSON.stringify(worktreePath)} fusion/fn-test-foreign-misbound`);
+
+    const tasks: TaskMap = new Map([
+      ["FN-TEST-FOREIGN-MISBOUND", makeTask({ id: "FN-TEST-FOREIGN-MISBOUND", column: "in-review", status: "failed", paused: false, baseBranch: "main", branch: "fusion/fn-test-foreign-misbound", worktree: worktreePath })],
+    ]);
+    const store = createStore(tasks);
+    const manager = new SelfHealingManager(store, { rootDir: repo, getExecutingTaskIds: () => new Set() });
+
+    await (manager as any).runMaintenance();
+
+    const task = tasks.get("FN-TEST-FOREIGN-MISBOUND")!;
+    expect(task.column).toBe("in-review");
+    expect(task.mergeDetails?.mergeConfirmed).not.toBe(true);
+    expect((store as any).moveTask).not.toHaveBeenCalledWith("FN-TEST-FOREIGN-MISBOUND", "done");
+    expect((store.logEntry as any).mock.calls.some((call: unknown[]) => String(call[1]).includes("already-merged rejected FN-TEST-FOREIGN-MISBOUND") && String(call[1]).includes("owner=FN-OTHER"))).toBe(true);
+    expect((store as any).recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-recover-already-merged-rejected",
+      target: "FN-TEST-FOREIGN-MISBOUND",
+      metadata: expect.objectContaining({ reason: "foreign-task-tip", candidateOwner: "FN-OTHER" }),
+    }));
   }, 20_000);
 
   it("is idempotent across two maintenance passes", async () => {

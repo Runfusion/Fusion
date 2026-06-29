@@ -281,7 +281,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     expect(logText(store)).toContain("operator action required");
   });
 
-  it("auto-recovers an in-review paused-aborted in-flight workflow node without operator-action parking", async () => {
+  it("classifies an in-review typed plan interruption as stale without operator-action parking", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" });
     const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
 
@@ -300,29 +300,22 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
     );
     expect(parkedFailed).toBe(false);
-    expect(logText(store)).toContain("Auto-recovered: re-entering paused-aborted workflow graph node 'plan'");
+    expect(logText(store)).toContain("stale replay ignored, in-review state preserved");
     expect(logText(store)).not.toContain("operator action required");
-    const bumpedRetry = store.updateTask.mock.calls.some(
-      (call: unknown[]) => {
-        const patch = call[1] as { graphResumeRetryCount?: number; status?: unknown; error?: unknown } | undefined;
-        return patch?.graphResumeRetryCount === 1 && patch?.status === null && patch?.error === null;
-      },
-    );
-    expect(bumpedRetry).toBe(true);
+    expect(store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { graphResumeRetryCount?: number } | undefined)?.graphResumeRetryCount !== undefined,
+    )).toBe(false);
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      mutationType: "task:reenter-paused-aborted-workflow-node",
+      mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
       metadata: expect.objectContaining({
         nodeId: "plan",
         fromColumn: "in-review",
-        attempt: 1,
-        maxAttempts: 2,
         abortProvenance: "hard-cancel",
-        preservedInReview: true,
         mode: "preserved-in-review",
       }),
     }));
     await flushScheduledRetry();
-    expect(graphSpy).toHaveBeenCalledTimes(1);
+    expect(graphSpy).not.toHaveBeenCalled();
   });
 
   it("fire-time guard skips in-review graph re-entry when a graph run is already active", async () => {
@@ -330,9 +323,9 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
 
     await invokeGraphFailure(executor, task, {
-      interruptedNodeId: "plan",
+      interruptedNodeId: "execute",
       interruptedAbortKind: "engine-pause",
-      context: { "node:plan:value": "aborted", "node:plan:abortKind": "engine-pause" },
+      context: { "node:execute:value": "aborted", "node:execute:abortKind": "engine-pause" },
     });
 
     (executor as any).activeWorkflowGraphAbortControllers.set(task.id, new AbortController());
@@ -390,6 +383,159 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     expect(executeSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("classifies a stale in-review plan pause/resume replay as benign without re-entering planning", async () => {
+    const { store, task, executor } = makeHarness({ column: "in-review", graphResumeRetryCount: 2 });
+    (executor as any).addActiveWorktree(task.id, task.worktree);
+    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan"],
+      context: { "node:plan:value": "aborted" },
+    });
+
+    const parkedFailed = store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
+    );
+    expect(parkedFailed).toBe(false);
+    expect(logText(store)).toContain("stale replay ignored, in-review state preserved");
+    expect(logText(store)).not.toContain("operator action required");
+    expect(store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { graphResumeRetryCount?: number } | undefined)?.graphResumeRetryCount !== undefined,
+    )).toBe(false);
+    expect((executor as any).pausedAborted.has(task.id)).toBe(false);
+    expect((executor as any).activeWorktrees.has(task.id)).toBe(false);
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
+      metadata: expect.objectContaining({
+        nodeId: "plan",
+        fromColumn: "in-review",
+        abortProvenance: "hard-cancel",
+        clearedStaleFailure: false,
+        graphResumeRetryCount: 2,
+        mode: "preserved-in-review",
+      }),
+    }));
+    await flushScheduledRetry();
+    expect(graphSpy).not.toHaveBeenCalled();
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("clears a prior stale operator-action failure for an in-review plan replay", async () => {
+    const { store, task, executor } = makeHarness({
+      column: "in-review",
+      status: "failed",
+      error: "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'plan' — operator action required; retry or explicitly unpause/resume after inspecting the task",
+    });
+    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan"],
+      context: { "node:plan:value": "aborted" },
+    });
+
+    expect(logText(store)).toContain("Auto-recovered: cleared stale in-review plan pause/resume replay failure");
+    expect(store.updateTask.mock.calls.some(
+      (call: unknown[]) => {
+        const patch = call[1] as { status?: unknown; error?: unknown } | undefined;
+        return patch?.status === null && patch?.error === null;
+      },
+    )).toBe(true);
+    expect(store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
+    )).toBe(false);
+    await flushScheduledRetry();
+    expect(graphSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps manual retry of a prior plan pause-abort park in review instead of fresh planning", async () => {
+    const { store, task, executor } = makeHarness({
+      column: "in-review",
+      status: null,
+      error: null,
+      log: [{
+        action: "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'plan' — operator action required; retry or explicitly unpause/resume after inspecting the task",
+        timestamp: now,
+      }],
+    });
+    const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
+    const executeSpy = vi.spyOn(executor as any, "execute").mockResolvedValue(undefined);
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan"],
+      context: { "node:plan:value": "aborted" },
+    });
+
+    expect(logText(store)).toContain("stale replay ignored, in-review state preserved");
+    expect(store.updateTask.mock.calls.some(
+      (call: unknown[]) => (call[1] as { status?: string } | undefined)?.status === "failed",
+    )).toBe(false);
+    await flushScheduledRetry();
+    expect(graphSpy).not.toHaveBeenCalled();
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT classify a global-pause generic plan replay while global pause remains active", async () => {
+    const { store, task, executor } = makeHarness({ column: "in-review" }, "global-pause");
+    store.getSettings.mockResolvedValue({
+      maxConcurrent: 2,
+      maxWorktrees: 4,
+      pollIntervalMs: 15000,
+      autoMerge: true,
+      globalPause: true,
+      maxAutoMergeRetries: 3,
+    });
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan"],
+      context: { "node:plan:value": "aborted" },
+    });
+
+    expect(logText(store)).toContain("operator action required");
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
+    }));
+  });
+
+  it.each([
+    { label: "explicit user pause", overrides: { userPaused: true }, value: "aborted" },
+    { label: "task pause", overrides: { paused: true }, value: "aborted" },
+    { label: "non-clean real failure", overrides: { status: "failed", error: "plugin handler failed" }, value: "aborted" },
+    { label: "human-gated autoMerge:false row", overrides: { autoMerge: false }, value: "aborted" },
+    { label: "terminal contamination value", overrides: {}, value: "foreign-branch-contamination" },
+  ])("does NOT classify a $label as stale in-review plan replay", async ({ overrides, value }) => {
+    const { store, task, executor } = makeHarness({ column: "in-review", ...overrides });
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan"],
+      context: { "node:plan:value": value },
+    });
+
+    expect(logText(store)).toContain("operator action required");
+    expect(logText(store)).not.toContain("stale replay ignored");
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
+    }));
+  });
+
+  it("keeps the completed in-review pause-abort classifier distinct from stale plan replay", async () => {
+    const { store, task, executor } = makeHarness({
+      column: "in-review",
+      steps: [{ name: "Implement", status: "done" }],
+    });
+
+    await invokeGraphFailure(executor, task, {
+      visitedNodeIds: ["plan"],
+      context: { "node:plan:value": "aborted" },
+    });
+
+    expect(logText(store)).toContain("Workflow graph run ended during engine pause/resume while already in-review");
+    expect(logText(store)).not.toContain("stale replay ignored");
+    expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
+    }));
+  });
+
   it("STILL parks a genuine in-review node failure with no paused-node audit", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" });
     const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
@@ -407,7 +553,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     expect(graphSpy).not.toHaveBeenCalled();
   });
 
-  it("auto-recovers a global-pause in-review interrupted node after global resume", async () => {
+  it("classifies a global-pause in-review plan interruption after global resume", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" }, "global-pause");
     const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
 
@@ -417,10 +563,10 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       context: { "node:plan:value": "aborted", "node:plan:abortKind": "engine-pause" },
     });
 
-    expect(logText(store)).toContain("Auto-recovered: re-entering paused-aborted workflow graph node 'plan'");
+    expect(logText(store)).toContain("stale replay ignored, in-review state preserved");
     expect(logText(store)).not.toContain("operator action required");
     expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
-      mutationType: "task:reenter-paused-aborted-workflow-node",
+      mutationType: "task:classify-stale-in-review-plan-pause-abort-replay",
       metadata: expect.objectContaining({
         nodeId: "plan",
         fromColumn: "in-review",
@@ -429,10 +575,10 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       }),
     }));
     await flushScheduledRetry();
-    expect(graphSpy).toHaveBeenCalledTimes(1);
+    expect(graphSpy).not.toHaveBeenCalled();
   });
 
-  it("does NOT auto-recover a global-pause in-review failure without an interrupted-node marker", async () => {
+  it("classifies a global-pause in-review plan replay without an interrupted-node marker after global resume", async () => {
     const { store, task, executor } = makeHarness({ column: "in-review" }, "global-pause");
     const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
 
@@ -441,7 +587,7 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
       context: { "node:plan:value": "aborted" },
     });
 
-    expect(logText(store)).toContain("operator action required");
+    expect(logText(store)).toContain("stale replay ignored, in-review state preserved");
     expect(store.recordRunAuditEvent).not.toHaveBeenCalledWith(expect.objectContaining({
       mutationType: "task:reenter-paused-aborted-workflow-node",
     }));
@@ -492,9 +638,9 @@ describe("pause-abort benign requeue-to-todo (FN-6782)", () => {
     const graphSpy = vi.spyOn(executor as any, "maybeExecuteWorkflowGraph").mockResolvedValue(true);
 
     await invokeGraphFailure(executor, task, {
-      interruptedNodeId: "plan",
+      interruptedNodeId: "execute",
       interruptedAbortKind: "engine-pause",
-      context: { "node:plan:value": "aborted", "node:plan:abortKind": "engine-pause" },
+      context: { "node:execute:value": "aborted", "node:execute:abortKind": "engine-pause" },
     });
 
     expect(logText(store)).toContain("operator action required");

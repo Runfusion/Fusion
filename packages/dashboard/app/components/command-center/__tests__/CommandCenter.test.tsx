@@ -106,6 +106,31 @@ function tokenFixture(totalTokens = 1_500) {
   };
 }
 
+function glmOverviewTokenFixture() {
+  const groups = [
+    makeTokenGroup("glm-5.1", 1_400),
+    makeTokenGroup("gpt-4o", 1_200),
+    makeTokenGroup("claude-sonnet", 1_000),
+  ];
+  const totals = groups.reduce(
+    (acc, group) => ({
+      inputTokens: acc.inputTokens + group.inputTokens,
+      outputTokens: acc.outputTokens + group.outputTokens,
+      cachedTokens: acc.cachedTokens + group.cachedTokens,
+      cacheWriteTokens: acc.cacheWriteTokens + group.cacheWriteTokens,
+      totalTokens: acc.totalTokens + group.totalTokens,
+      nTasks: acc.nTasks + group.nTasks,
+    }),
+    { inputTokens: 0, outputTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, totalTokens: 0, nTasks: 0 },
+  );
+
+  return {
+    ...tokenFixture(totals.totalTokens),
+    totals,
+    groups,
+  };
+}
+
 function manyModelTokenFixture() {
   const groups = [
     makeTokenGroup("model-01", 2_000),
@@ -637,6 +662,20 @@ describe("CommandCenter shell", () => {
       expect(within(overviewTokenChart).queryByText(label)).toBeNull();
       expect(within(overviewPie).queryByText(label)).toBeNull();
     }
+  });
+
+  it("renders standalone GLM model rows with the Z.ai icon in Overview token bars", async () => {
+    mockOverviewApi({ tokens: glmOverviewTokenFixture() });
+    render(<CommandCenter />);
+
+    const overviewTokenChart = await screen.findByTestId("command-center-overview-chart-tokens");
+    const glmBarLabel = within(overviewTokenChart).getByText("glm-5.1").closest(".cc-bar-label");
+    expect(glmBarLabel).toBeTruthy();
+    expect(providerIconIn(overviewTokenChart, "zai")).toBeTruthy();
+    expect(providerIconIn(overviewTokenChart, "openai")).toBeTruthy();
+    expect(providerIconIn(overviewTokenChart, "anthropic")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "zai glm-5.1: 1,400" })).toBeTruthy();
+    expect(providerIconIn(screen.getByTestId("cc-overview-pie"), "zai")).toBeNull();
   });
 
   it("renders Overview providerless and unknown model icons without touching pie labels", async () => {

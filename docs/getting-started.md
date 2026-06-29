@@ -130,7 +130,7 @@ You can also use expanded board controls (Refine, Deps, Attachments, model overr
 
 Most tasks can use the default **Coding** workflow. When the workflow selector is visible on a task or board creation surface, choose a different workflow if the work needs a shorter path, extra review, stepwise execution, Compound Engineering skills, or a custom policy your project authored.
 
-Built-ins include task-selectable Coding, Quick fix, Review-heavy, plugin-gated Compound engineering, Stepwise coding, and Design workflows, plus PR lifecycle fragments for workflow authors. For the full catalog and runtime behavior, see [Workflow Steps](./workflow-steps.md#workflow-overview). To inspect built-ins or author custom workflows, open the dashboard [Workflow Editor](./workflow-editor.md).
+Built-ins include task-selectable Coding, Legacy coding, Quick fix, Review-heavy, plugin-gated Compound engineering, Coding (per-step review), and Design workflows, plus PR lifecycle fragments for workflow authors. For the full catalog and runtime behavior, see [Workflow Steps](./workflow-steps.md#workflow-overview). To inspect built-ins or author custom workflows, open the dashboard [Workflow Editor](./workflow-editor.md).
 
 ## Understand the Task Lifecycle
 

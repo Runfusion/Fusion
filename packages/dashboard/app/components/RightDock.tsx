@@ -346,7 +346,22 @@ export function RightDock({
       {open ? (
         <>
           <div className="right-dock__header">
-            {showingDockTask ? <ArrowLeft size={16} /> : <SelectedIcon size={16} />}
+            {showingDockTask ? (
+              /*
+              FNXC:RightDockTasks 2026-06-28-18:31:
+              The task-detail header arrow is a real back button and shares the same close path as the top-right return affordance, so either visible control returns the dock to the Tasks list without leaving an inert icon or stale detail shell.
+              */
+              <button
+                type="button"
+                className="btn-icon right-dock__header-back"
+                aria-label={closeDockTaskLabel}
+                title={closeDockTaskLabel}
+                data-testid="right-dock-header-back-task"
+                onClick={onCloseDockTask}
+              >
+                <ArrowLeft size={16} />
+              </button>
+            ) : <SelectedIcon size={16} />}
             <div className="right-dock__title" role="heading" aria-level={3}>{showingDockTask ? t("rightDock.taskDetailTitle", "Task detail") : selectedEntry.label}</div>
           </div>
           <div className="right-dock__body" role="tabpanel" aria-label={showingDockTask ? t("rightDock.taskDetailTitle", "Task detail") : selectedEntry.label} data-testid="right-dock-body">

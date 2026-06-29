@@ -1,7 +1,7 @@
 import { exec, execSync } from "node:child_process";
 import { promisify } from "node:util";
 
-import { resolveTaskWorkingBranch } from "./worktree-names.js";
+import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
 
 const execAsync = promisify(exec);
 
@@ -16,9 +16,25 @@ export interface AlreadyMergedLookupInput {
   baseCommitSha?: string;
 }
 
+export type AlreadyMergedOwnershipProof =
+  | "task-trailer"
+  | "lineage-trailer"
+  | "subject-anchor"
+  | "canonical-branch-patch"
+  | "canonical-branch-tree";
+
 export interface AlreadyMergedLookupResult {
   sha: string;
   strategy: AlreadyMergedDetectionStrategy;
+  ownershipProof?: AlreadyMergedOwnershipProof;
+}
+
+export interface CommitTaskOwnership {
+  owned: boolean;
+  proof?: Extract<AlreadyMergedOwnershipProof, "task-trailer" | "lineage-trailer" | "subject-anchor">;
+  ownerTaskId?: string;
+  ownerLineageId?: string;
+  rejectionReason?: "foreign-task" | "foreign-lineage";
 }
 
 interface DetectAlreadyLandedInput {
@@ -38,33 +54,40 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function firstTrailerValue(body: string, trailer: "Fusion-Task-Id" | "Fusion-Task-Lineage"): string | undefined {
+  const match = body.match(new RegExp(`(?:^|\\n)${trailer}:\\s*([^\\n]+?)\\s*(?:\\n|$)`));
+  return match?.[1]?.trim();
+}
+
 /**
- * Ownership anchor shared with self-healing's `commitOwnedByTask`.
+ * Ownership anchor shared with self-healing's already-merged recovery guards.
  *
  * The 2026-05-23 lost-work incident (bug #2) was a `git log --grep=<taskId>`
  * first-hit attribution: a commit whose body merely *mentioned* a task ID in
  * prose was accepted as that task's landed commit, stranding/mis-attributing
- * the real work. The trailer strategies above are already anchored; the
- * ancestry strategy below uses a loose `--grep=<taskId>`, so its candidate must
- * be ownership-verified here before it is accepted.
- *
- * Accept when ANY of:
- *  - `Fusion-Task-Lineage: <lineageId>` is a complete trailer line in the body
- *  - `Fusion-Task-Id: <taskId>` is a complete trailer line in the body
- *  - the subject is anchored on the task ID in conventional-commit form:
- *      `<type>(<taskId>...): …` or `<taskId>: …`
+ * the real work. The FN-7143/FN-7187 incident added the inverse guard: explicit
+ * foreign Fusion trailers are rejection evidence even when a stale branch tip,
+ * patch-id, or tree-equality fallback otherwise appears to match.
  */
-function commitOwnedByTask(
+export function getCommitTaskOwnership(
   taskId: string,
   lineageId: string | undefined,
   subject: string,
   body: string,
-): boolean {
-  if (lineageId && new RegExp(`(?:^|\\n)Fusion-Task-Lineage: ${escapeRegex(lineageId)}\\s*(?:\\n|$)`).test(body)) {
-    return true;
+): CommitTaskOwnership {
+  const ownerTaskId = firstTrailerValue(body, "Fusion-Task-Id");
+  const ownerLineageId = firstTrailerValue(body, "Fusion-Task-Lineage");
+  if (ownerTaskId && ownerTaskId !== taskId) {
+    return { owned: false, ownerTaskId, ownerLineageId, rejectionReason: "foreign-task" };
   }
-  if (new RegExp(`(?:^|\\n)Fusion-Task-Id: ${escapeRegex(taskId)}\\s*(?:\\n|$)`).test(body)) {
-    return true;
+  if (lineageId && ownerLineageId && ownerLineageId !== lineageId) {
+    return { owned: false, ownerTaskId, ownerLineageId, rejectionReason: "foreign-lineage" };
+  }
+  if (ownerTaskId === taskId) {
+    return { owned: true, proof: "task-trailer", ownerTaskId, ownerLineageId };
+  }
+  if (lineageId && ownerLineageId === lineageId) {
+    return { owned: true, proof: "lineage-trailer", ownerTaskId, ownerLineageId };
   }
   // Subject anchor MUST mention the task ID — either inside a conventional
   // scope (`<type>(<…taskId…>): …`) or as a leading `<taskId>: …`. The scope
@@ -74,7 +97,26 @@ function commitOwnedByTask(
   const subjectAnchor = new RegExp(
     `^(?:[A-Za-z]+\\([^)]*\\b${escapeRegex(taskId)}\\b[^)]*\\):|${escapeRegex(taskId)}:)`,
   );
-  return subjectAnchor.test(subject);
+  if (subjectAnchor.test(subject)) {
+    return { owned: true, proof: "subject-anchor", ownerTaskId, ownerLineageId };
+  }
+  return { owned: false, ownerTaskId, ownerLineageId };
+}
+
+async function commitHasForeignTaskOwnership(
+  repoDir: string,
+  sha: string,
+  taskId: string,
+  lineageId: string | undefined,
+): Promise<boolean> {
+  const { stdout } = await execAsync(`git show -s --format=%s%x1f%b ${shellQuote(sha)}`, {
+    cwd: repoDir,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  const [subject = "", body = ""] = stdout.split("\x1f");
+  const ownership = getCommitTaskOwnership(taskId, lineageId, subject, body);
+  return ownership.rejectionReason === "foreign-task" || ownership.rejectionReason === "foreign-lineage";
 }
 
 export async function findAlreadyMergedTaskCommit(
@@ -100,7 +142,7 @@ export async function findAlreadyMergedTaskCommit(
       });
       const lineageSha = lineage.stdout.trim();
       if (lineageSha) {
-        return { sha: lineageSha, strategy: "trailer" };
+        return { sha: lineageSha, strategy: "trailer", ownershipProof: "lineage-trailer" };
       }
     }
 
@@ -120,7 +162,7 @@ export async function findAlreadyMergedTaskCommit(
     });
     const sha = stdout.trim();
     if (sha) {
-      return { sha, strategy: "trailer" };
+      return { sha, strategy: "trailer", ownershipProof: "task-trailer" };
     }
   } catch {
     // Fall through to ancestry/patch-id checks.
@@ -128,12 +170,23 @@ export async function findAlreadyMergedTaskCommit(
 
   let branchTip: string | null = null;
   const branchName = resolveTaskWorkingBranch({ id: taskId, branch: taskBranch });
+  const canonicalBranchName = canonicalFusionBranchName(taskId);
+  /*
+  FNXC:WorkflowRecovery 2026-06-28-21:36:
+  FN-7143/FN-7187 proved patch-id and tree-equal fallbacks need branch identity proof, not just content equivalence. Only the canonical task branch may imply ownership for fallback matches, and any explicit foreign Fusion trailer on the branch tip or candidate commit rejects the recovery.
+  */
+  const hasCanonicalBranchIdentity = branchName === canonicalBranchName;
+  let branchTipOwnershipVerified = false;
   try {
     branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
       cwd: repoDir,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
+    if (await commitHasForeignTaskOwnership(repoDir, branchTip, taskId, lineageId)) {
+      return null;
+    }
+    branchTipOwnershipVerified = true;
 
     execSync(`git merge-base --is-ancestor ${shellQuote(branchTip)} ${shellQuote(baseBranch)}`, {
       cwd: repoDir,
@@ -165,8 +218,9 @@ export async function findAlreadyMergedTaskCommit(
     for (const record of records) {
       const [candidateSha, candidateSubject = "", candidateBody = ""] = record.split("\x1f");
       const sha = candidateSha?.trim();
-      if (sha && commitOwnedByTask(taskId, lineageId, candidateSubject, candidateBody)) {
-        return { sha, strategy: "ancestry" };
+      const ownership = getCommitTaskOwnership(taskId, lineageId, candidateSubject, candidateBody);
+      if (sha && ownership.owned) {
+        return { sha, strategy: "ancestry", ownershipProof: ownership.proof };
       }
     }
   } catch {
@@ -174,12 +228,19 @@ export async function findAlreadyMergedTaskCommit(
   }
 
   try {
-    if (!branchTip) {
+    if (!hasCanonicalBranchIdentity) {
+      return null;
+    }
+    if (!branchTip || !branchTipOwnershipVerified) {
       branchTip = execSync(`git rev-parse --verify ${shellQuote(branchName)}`, {
         cwd: repoDir,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       }).trim();
+      if (await commitHasForeignTaskOwnership(repoDir, branchTip, taskId, lineageId)) {
+        return null;
+      }
+      branchTipOwnershipVerified = true;
     }
 
     let branchBase = baseCommitSha?.trim();
@@ -231,8 +292,8 @@ export async function findAlreadyMergedTaskCommit(
     }
 
     const matchedSha = basePatchMap.get(branchPatchId);
-    if (matchedSha) {
-      return { sha: matchedSha, strategy: "patch-id" };
+    if (matchedSha && !await commitHasForeignTaskOwnership(repoDir, matchedSha, taskId, lineageId)) {
+      return { sha: matchedSha, strategy: "patch-id", ownershipProof: "canonical-branch-patch" };
     }
   } catch {
     // Fall through to null when patch-id detection fails.
@@ -240,6 +301,9 @@ export async function findAlreadyMergedTaskCommit(
 
   try {
     const treeBranchName = resolveTaskWorkingBranch({ id: taskId, branch: taskBranch });
+    if (treeBranchName !== canonicalBranchName) {
+      return null;
+    }
     execSync(`git rev-parse --verify ${shellQuote(treeBranchName)}`, {
       cwd: repoDir,
       encoding: "utf-8",
@@ -266,8 +330,8 @@ export async function findAlreadyMergedTaskCommit(
         maxBuffer: 1024 * 1024,
       });
       const baseHead = baseHeadStdout.trim();
-      if (baseHead) {
-        return { sha: baseHead, strategy: "tree-equal" };
+      if (baseHead && !await commitHasForeignTaskOwnership(repoDir, baseHead, taskId, lineageId)) {
+        return { sha: baseHead, strategy: "tree-equal", ownershipProof: "canonical-branch-tree" };
       }
     }
   } catch {

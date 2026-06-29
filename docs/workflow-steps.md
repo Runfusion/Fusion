@@ -44,12 +44,13 @@ Decision-only or investigation tasks can also declare `noCommitsExpected` / `**N
 
 | Workflow | ID | Notes |
 |---|---|---|
-| Coding | `builtin:coding` | Default coding lifecycle and fallback for tasks without an explicit selection. |
+| Coding | `builtin:coding` | Default Stepwise-based coding lifecycle: plan steps, execute them one at a time, then run the optional final Code Review gate and merge. |
+| Legacy coding | `builtin:legacy-coding` | Original monolithic coding lifecycle for tasks that should not use graph-owned step execution. |
 | Quick fix | `builtin:quick-fix` | Short path for trivial or no-commit/decision work; omits the standard review stage. |
 | Review-heavy | `builtin:review-heavy` | Standard execute/review/merge path with an additional gated security review. |
 | Marketing | `builtin:marketing` | Content pipeline with custom Ideation, Backlog, Drafting, Editorial review, Published, and Archived columns plus structured marketing brief/draft/editorial prompts; drafts are persisted as task documents for review while the workflow reuses standard lifecycle traits and merge primitives. |
 | Compound engineering | `builtin:compound-engineering` | Plugin-gated CE workflow that invokes `/ce-plan`, optional advisory `ce-doc-review` (markdown autofix; HTML DOM-safe mutation with report-only fallback), `/ce-work`, merge-blocking `/ce-code-review`, CE PR/feedback skills, Fusion merge, and learnings capture. |
-| Stepwise coding | `builtin:stepwise-coding` | Graph-executor workflow that models per-step parse/execute/review/rework explicitly. |
+| Coding (per-step review) | `builtin:stepwise-coding` | Graph-executor workflow with default-on Plan Review before execution, per-step parse/execute/review/rework, and an optional final Code Review gate. |
 | Design | `builtin:design` | UI-heavy work path that implements, persists a user-facing design preview task document, runs a gated design/UX review, then performs the standard review and merge. |
 | PR lifecycle | `builtin:pr-workflow` | Reusable PR lifecycle graph fragment (create PR → await review → respond → gate → merge); it is a fragment, not directly selectable as a task workflow. |
 | Lead generation | `builtin:lead-generation` | Selectable business workflow for sourcing, qualifying, enriching, and contacting leads with custom lead fields, stage columns, and reviewable enrichment/outreach task documents; requires the workflow graph executor for custom board columns. |
@@ -177,11 +178,13 @@ The workflow runtime is the authoritative execution path for task lifecycle work
 
 The engine remains the substrate for scheduler dispatch, routing claims, persistence, concurrency limits, process supervision, storage, and audit plumbing. Lifecycle policy belongs in built-in or custom workflows.
 
-The default built-in catalog entry `builtin:coding` is backed by the canonical `BUILTIN_CODING_WORKFLOW_IR`, which is also the resolver/runtime fallback for tasks with no workflow selection or an explicit default selection. Missing/corrupt explicit custom selections fail closed as workflow-resolution failures instead of silently running the default. The built-in IR encodes the legacy lifecycle path as graph stages, with merge represented by workflow-native policy primitives rather than a single linear merge seam:
+The default built-in catalog entry `builtin:coding` is backed by a Stepwise-derived graph with two default-on, toggleable review gates: `plan-review` before execution and `code-review` at the end of implementation. It is the resolver/runtime fallback for tasks with no workflow selection or an explicit default selection. Missing/corrupt explicit custom selections fail closed as workflow-resolution failures instead of silently running the default. The built-in IR parses planned steps, executes them sequentially without per-step review, then routes optional quality gates into the merge region:
 
-- `triage/planning` → `execute` → `optional-group` quality gates → `review` → `merge-gate` / branch-group integration / `merge-attempt` / retry or manual hold → post-merge `optional-group` gates → `end`
+- `triage` → `plan` → `plan-review` (default-on optional plan review) → `parse-steps` → `foreach(step-execute)` → `browser-verification` (optional) → `code-review` (default-on optional final review) → `merge-gate` / branch-group integration / `merge-attempt` / retry or manual hold → `end`
 
-`builtin:stepwise-coding` is a separate graph variant backed by `BUILTIN_STEPWISE_CODING_WORKFLOW_IR`; it keeps the same lifecycle columns/traits while modeling per-step parse/execute/review/rework as authored graph structure.
+`builtin:legacy-coding` is backed by the original monolithic `BUILTIN_CODING_WORKFLOW_IR`: `planning` → `execute` → optional quality gates → `review` → merge region.
+
+`builtin:stepwise-coding` displays as Coding (per-step review). It is backed by `BUILTIN_STEPWISE_CODING_WORKFLOW_IR`; it keeps the same lifecycle columns/traits while adding the default-on optional Plan Review before `parse-steps`, modeling per-step parse/execute/review/rework as authored graph structure, and retaining the post-foreach optional Code Review gate before its final review/merge region.
 
 `builtin:marketing` is a non-coding content workflow with marketing-specific columns (`ideation`, `backlog`, `drafting`, `editorial-review`, `published`, `archived`) and prompt seams for content brief, draft, and editorial review. Its draft stage saves the primary content deliverable as a task document for human review, while the workflow uses the same lifecycle traits (`intake`, `hold`, `wip`, `merge-blocker`, `human-review`, `complete`, `archived`) and the same merge-gate/branch-group/merge-attempt primitive region as coding workflows, so scheduler, capacity, review blocking, and merge orchestration behavior remain standard.
 
@@ -251,7 +254,7 @@ A v2 column can optionally name a **permanent agent** from the agent registry, s
 
 ### Workflow IR v2 — step inversion (foreach, loop, step-review, parse-steps, code, notify)
 
-The **step-inversion** track makes task *steps* themselves workflow-modelable. Today the engine owns step policy end-to-end (PROMPT.md parsing, per-step review verdicts, RETHINK/REVISE control flow, merge blocking). Step inversion extracts exactly one new substrate capability — *run one step inside a task's session, and reset one step to its baseline* — and exposes everything else as authored graph structure. It is additive to IR v2 and gated by `experimentalFeatures.workflowGraphExecutor`. The default coding workflow is untouched and byte-identical (it keeps its monolithic `execute` seam and is the parity oracle); inversion is opt-in via custom workflows and a new built-in **stepwise coding workflow**.
+The **step-inversion** track makes task *steps* themselves workflow-modelable. The default Coding workflow now uses that graph-owned execution model: planning produces `PROMPT.md`, default-on Plan Review can approve the plan before execution, `parse-steps` writes the canonical step list, and `foreach` runs each step sequentially before the optional final Code Review gate. `builtin:legacy-coding` preserves the original monolithic `execute` seam for tasks that should not use graph-owned step execution, while `builtin:stepwise-coding` keeps the heavier per-step review/rework loop for work that needs review after every planned step. Step inversion remains additive to IR v2 for custom workflows that want to model their own step policy.
 
 #### `parse-steps` node — step list as graph structure
 
@@ -341,8 +344,9 @@ Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?
 
 Built-in optional gates ship as inlined IR builders, not as a template catalog:
 
-- `builtin:coding` carries the `browser-verification` optional-group node (`builtin-browser-verification-group.ts`), opt-in by default, so browser verification runs only for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
-- The `code-review` optional-group node (`builtin-code-review-group.ts`) is the inlined code-review gate.
+- `builtin:coding` carries the `browser-verification` optional-group node (`builtin-browser-verification-group.ts`), default-off, so browser verification runs only for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
+- `builtin:coding` and `builtin:stepwise-coding` carry the `plan-review` optional-group node (`builtin-plan-review-group.ts`), default-on, before `parse-steps` so the plan can be reviewed before execution begins.
+- The `code-review` optional-group node (`builtin-code-review-group.ts`) is the inlined code-review gate. On default `builtin:coding`, this is the only final review surface before merge; disabling it lets the graph continue from implementation/verification to the merge gate. On `builtin:stepwise-coding`, it remains a post-foreach optional final review gate before the workflow's final review seam.
 - A workflow (for example compound-engineering) can add a **post-merge** optional-group node via the generic `postMergeOptionalGroupNode(...)` builder (`builtin-post-merge-group.ts`) — e.g. a `document` step that runs after merge.
 
 Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. They resolve the workflow's optional-group nodes (plus plugin-contributed palette templates, see [Plugin-Contributed Steps](#plugin-contributed-steps)) into toggleable rows. Workflows with no optional groups render no trigger, and the selected node ids are submitted through `enabledWorkflowSteps` when the task is created. Unknown or removed ids are skipped during resolution so stale selections never render blank controls or break workflow loading.
@@ -422,7 +426,8 @@ FN-7039 (U6) DELETED the `WORKFLOW_STEP_TEMPLATES` built-in catalog array (the f
 
 The built-in quality gates ship as inlined `optional-group` node builders in `@fusion/core`, not as a template catalog (the former `WORKFLOW_STEP_TEMPLATES` array was removed):
 
-- **Browser Verification** (`browser-verification`, `builtin-browser-verification-group.ts`) — browser-automation-style checks for UI validation flows; an optional-group node on `builtin:coding` and `builtin:stepwise-coding`.
+- **Browser Verification** (`browser-verification`, `builtin-browser-verification-group.ts`) — browser-automation-style checks for UI validation flows; an optional-group node on `builtin:coding`, `builtin:legacy-coding`, and `builtin:stepwise-coding`.
+- **Plan Review** (`plan-review`, `builtin-plan-review-group.ts`) — default-on plan readiness review before `builtin:coding` or `builtin:stepwise-coding` moves from planning to step parsing/execution.
 - **Code Review** (`code-review`, `builtin-code-review-group.ts`) — the inlined code-review gate.
 
 The Browser Verification inner prompt node carries `requiresBrowser: true` while keeping `toolMode: "coding"`. When that step runs, the executor best-effort adds the `agent-browser-navigation` skill (when the agent-browser plugin is installed), runs a bounded non-fatal `agent-browser --version` preflight, and writes start, availability, and finish entries into both the task log and the task's agent log. A missing or timed-out `agent-browser` binary is logged as an actionable warning rather than failing the step solely because of the preflight; the prompt can still fast-bail or report a normal verification failure. Because Bash tool events are already streamed to the agent log, `agent-browser open ...`, `agent-browser snapshot ...`, and related commands appear as the browser-verification activity the step performed.

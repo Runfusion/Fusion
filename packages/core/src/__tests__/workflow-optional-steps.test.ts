@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "../builtin-stepwise-coding-workflow-ir.js";
+import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "../builtin-stepwise-final-review-coding-workflow-ir.js";
 import {
   resolveDefaultOnOptionalGroupIds,
   resolveWorkflowOptionalSteps,
@@ -108,11 +109,11 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
     ]);
   });
 
-  it("resolves the built-in coding/stepwise browser-verification (off) + code-review (on) optional-groups", () => {
-    // Both built-ins carry two optional-group toggles on the pre-merge path, in node order:
+  it("resolves the built-in coding/stepwise optional-groups in node order", () => {
+    // Legacy coding carries two optional-group toggles on the pre-merge path:
     // `browser-verification` (default OFF) then `code-review` (default ON — runs by default
     // but is toggleable off per task).
-    const expected = [
+    const legacyExpected = [
       {
         templateId: "browser-verification",
         name: "Browser Verification",
@@ -128,15 +129,27 @@ describe("resolveWorkflowOptionalSteps (optional-group nodes)", () => {
         defaultOn: true,
       },
     ];
-    expect(resolveWorkflowOptionalSteps(BUILTIN_CODING_WORKFLOW_IR)).toEqual(expected);
-    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(expected);
+    const stepwiseExpected = [
+      {
+        templateId: "plan-review",
+        name: "Plan Review",
+        description: "",
+        phase: "pre-merge" as const,
+        defaultOn: true,
+      },
+      ...legacyExpected,
+    ];
+    expect(resolveWorkflowOptionalSteps(BUILTIN_CODING_WORKFLOW_IR)).toEqual(legacyExpected);
+    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(stepwiseExpected);
+    expect(resolveWorkflowOptionalSteps(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(stepwiseExpected);
   });
 
-  it("seeds code-review (default ON) but not browser-verification (default OFF) for the built-ins", () => {
+  it("seeds default-on optional groups but not browser-verification for the built-ins", () => {
     // resolveDefaultOnOptionalGroupIds drives which groups a new task gets enabled by
-    // default: code-review is on, browser-verification is off.
+    // default: review groups are on, browser-verification is off.
     expect(resolveDefaultOnOptionalGroupIds(BUILTIN_CODING_WORKFLOW_IR)).toEqual(["code-review"]);
-    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(["code-review"]);
+    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
+    expect(resolveDefaultOnOptionalGroupIds(BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)).toEqual(["plan-review", "code-review"]);
   });
 });
 

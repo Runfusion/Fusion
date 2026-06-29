@@ -56,7 +56,7 @@ imported it from merger-ai while merger-ai imports `MIN_TEMP_WORKTREE_REAP_AGE_M
 self-healing — a real import cycle. Importing from the predicate module breaks the cycle.
 */
 import { isRepoLanded } from "./workspace-land-predicate.js";
-import { findAlreadyMergedTaskCommit } from "./already-merged-detector.js";
+import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./already-merged-detector.js";
 import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
@@ -1875,6 +1875,92 @@ export class SelfHealingManager {
     return findAlreadyMergedTaskCommit(input);
   }
 
+  private async readCommitTaskOwnership(sha: string, taskId: string, lineageId?: string) {
+    const { stdout } = await execAsync(`git show -s --format=%s%x1f%b ${shellQuote(sha)}`, {
+      cwd: this.options.rootDir,
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const [subject = "", body = ""] = stdout.split("\x1f");
+    return getCommitTaskOwnership(taskId, lineageId, subject, body);
+  }
+
+  private async rejectForeignAlreadyMergedCandidate(input: {
+    task: Pick<Task, "id" | "lineageId">;
+    candidateSha: string;
+    candidateOwner?: string;
+    taskBranch?: string | null;
+    baseBranch: string;
+    reason: "foreign-task-tip" | "foreign-lineage-tip" | "foreign-landed-commit" | "ownership-unverifiable";
+    phase: string;
+  }): Promise<void> {
+    const { task, candidateSha, candidateOwner, taskBranch, baseBranch, reason, phase } = input;
+    /*
+    FNXC:WorkflowRecovery 2026-06-28-21:32:
+    FN-7143 observed an already-merged tip that appeared to belong to FN-7187. Self-healing must make that cross-task proof visible and leave the review task alone; ambiguous or foreign tips are not safe evidence for mergeConfirmed/done finalization.
+
+    FNXC:WorkflowRecovery 2026-06-29-00:15:
+    Ownership lookup failures are also unsafe evidence. Record them through the same rejection audit path with `ownership-unverifiable` so transient git-show/rev-parse failures cannot proceed into reclaim or auto-finalize as if the tip were verified non-foreign.
+    */
+    await this.store.logEntry(
+      task.id,
+      `[recovery] already-merged rejected ${task.id} candidate=${candidateSha.slice(0, 12)} owner=${candidateOwner ?? "unknown"} branch=${taskBranch ?? "?"} base=${baseBranch} reason=${reason}`,
+    );
+    try {
+      await this.store.recordRunAuditEvent?.({
+        taskId: task.id,
+        agentId: "self-healing",
+        runId: generateSyntheticRunId("self-heal-already-merged-rejected", task.id),
+        domain: "database",
+        mutationType: "task:auto-recover-already-merged-rejected",
+        target: task.id,
+        metadata: {
+          reason,
+          phase,
+          candidateSha,
+          candidateOwner: candidateOwner ?? null,
+          taskBranch: taskBranch ?? null,
+          baseBranch,
+        },
+      });
+    } catch (err: unknown) {
+      log.warn(`Failed to record already-merged rejection audit for ${task.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async branchTipForeignOwnership(input: {
+    taskId: string;
+    lineageId?: string;
+    branch: string;
+  }): Promise<{ sha: string; owner?: string; reason: "foreign-task-tip" | "foreign-lineage-tip" | "ownership-unverifiable" } | null> {
+    const { taskId, lineageId, branch } = input;
+    let stdout = "";
+    try {
+      ({ stdout } = await execAsync(`git rev-parse ${shellQuote(branch)}`, {
+        cwd: this.options.rootDir,
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      }));
+    } catch {
+      return { sha: "unverified", reason: "ownership-unverifiable" };
+    }
+    const sha = stdout.trim();
+    if (!sha) return null;
+    let ownership: Awaited<ReturnType<SelfHealingManager["readCommitTaskOwnership"]>>;
+    try {
+      ownership = await this.readCommitTaskOwnership(sha, taskId, lineageId);
+    } catch {
+      return { sha, reason: "ownership-unverifiable" };
+    }
+    if (ownership.rejectionReason === "foreign-task") {
+      return { sha, owner: ownership.ownerTaskId, reason: "foreign-task-tip" };
+    }
+    if (ownership.rejectionReason === "foreign-lineage") {
+      return { sha, owner: ownership.ownerLineageId, reason: "foreign-lineage-tip" };
+    }
+    return null;
+  }
+
   private async resolveSelfHealingMergeTarget(
     task: Task,
     settings: Settings | undefined,
@@ -3007,6 +3093,33 @@ export class SelfHealingManager {
           }
           if (inspection.kind === "tip-already-merged") {
             const branchName = task.branch;
+            const ownership = await this.readCommitTaskOwnership(inspection.tipSha, task.id, task.lineageId).catch(async () => {
+              await this.rejectForeignAlreadyMergedCandidate({
+                task,
+                candidateSha: inspection.tipSha,
+                candidateOwner: undefined,
+                taskBranch: branchName,
+                baseBranch: inspection.integrationRef,
+                reason: "ownership-unverifiable",
+                phase: "tip-already-merged",
+              });
+              return null;
+            });
+            if (!ownership) {
+              continue;
+            }
+            if (ownership?.rejectionReason === "foreign-task" || ownership?.rejectionReason === "foreign-lineage") {
+              await this.rejectForeignAlreadyMergedCandidate({
+                task,
+                candidateSha: inspection.tipSha,
+                candidateOwner: ownership.rejectionReason === "foreign-task" ? ownership.ownerTaskId : ownership.ownerLineageId,
+                taskBranch: branchName,
+                baseBranch: inspection.integrationRef,
+                reason: ownership.rejectionReason === "foreign-task" ? "foreign-task-tip" : "foreign-lineage-tip",
+                phase: "tip-already-merged",
+              });
+              continue;
+            }
             let reclaimedCleanly = false;
             try {
               if (inspection.livePath && existsSync(inspection.livePath)) {
@@ -8260,6 +8373,21 @@ export class SelfHealingManager {
           const mergeTarget = await this.resolveSelfHealingMergeTarget(task, settings, "recover-already-merged-review");
           const baseBranch = mergeTarget.branch;
           if (!baseBranch) continue;
+          if (task.branch) {
+            const foreignTip = await this.branchTipForeignOwnership({ taskId: task.id, lineageId: task.lineageId, branch: task.branch }).catch(() => null);
+            if (foreignTip) {
+              await this.rejectForeignAlreadyMergedCandidate({
+                task,
+                candidateSha: foreignTip.sha,
+                candidateOwner: foreignTip.owner,
+                taskBranch: task.branch,
+                baseBranch,
+                reason: foreignTip.reason,
+                phase: "recover-already-merged-review",
+              });
+              continue;
+            }
+          }
 
           const landed = await this.findAlreadyMergedTaskCommit({
             taskId: task.id,
@@ -8564,22 +8692,23 @@ export class SelfHealingManager {
     taskId: string;
     lineageId?: string;
     baseBranch: string;
-  }): Promise<{ misbound: boolean; branchTip: string; landed: Awaited<ReturnType<typeof findAlreadyMergedTaskCommit>> }> {
+  }): Promise<{ misbound: boolean; branchTip: string; landed: Awaited<ReturnType<typeof findAlreadyMergedTaskCommit>>; rejection?: { reason: "foreign-task-tip" | "foreign-lineage-tip"; owner?: string } }> {
     const { branch, taskId, lineageId, baseBranch } = input;
-    const { stdout: bodyOut } = await execAsync(`git log -1 --format=%B ${shellQuote(branch)}`, {
-      cwd: this.options.rootDir,
-      timeout: 30_000,
-      maxBuffer: 1024 * 1024,
-    });
-    const body = bodyOut;
-    const hasTaskId = body.includes(`Fusion-Task-Id: ${taskId}`);
-    const hasLineage = lineageId ? body.includes(`Fusion-Task-Lineage: ${lineageId}`) : false;
     const { stdout: tipOut } = await execAsync(`git rev-parse ${shellQuote(branch)}`, {
       cwd: this.options.rootDir,
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
     });
     const branchTip = tipOut.trim();
+    const ownership = await this.readCommitTaskOwnership(branchTip, taskId, lineageId);
+    if (ownership.rejectionReason === "foreign-task") {
+      return { misbound: false, branchTip, landed: null, rejection: { reason: "foreign-task-tip", owner: ownership.ownerTaskId } };
+    }
+    if (ownership.rejectionReason === "foreign-lineage") {
+      return { misbound: false, branchTip, landed: null, rejection: { reason: "foreign-lineage-tip", owner: ownership.ownerLineageId } };
+    }
+    const hasTaskId = ownership.ownerTaskId === taskId;
+    const hasLineage = lineageId ? ownership.ownerLineageId === lineageId : false;
     const landed = await this.findAlreadyMergedTaskCommit({
       taskId,
       lineageId,
@@ -8627,6 +8756,18 @@ export class SelfHealingManager {
             lineageId: task.lineageId,
             baseBranch,
           });
+          if (check.rejection) {
+            await this.rejectForeignAlreadyMergedCandidate({
+              task,
+              candidateSha: check.branchTip,
+              candidateOwner: check.rejection.owner,
+              taskBranch: branch,
+              baseBranch,
+              reason: check.rejection.reason,
+              phase: "recover-branch-misbound-in-review",
+            });
+            continue;
+          }
           if (!check.misbound || !check.landed) continue;
 
           const mergeDetails: MergeDetails = {

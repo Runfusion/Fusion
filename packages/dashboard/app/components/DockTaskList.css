@@ -8,6 +8,17 @@
   padding: var(--space-sm);
 }
 
+.dock-task-list__controls {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.dock-task-list__toggle-done {
+  flex-shrink: 0;
+}
+
 .dock-task-list__row {
   min-width: 0;
 }
@@ -18,6 +29,18 @@
   text-align: center;
   color: var(--text-muted);
   padding: var(--space-lg);
+}
+
+.dock-task-list--empty .dock-task-list__controls {
+  justify-content: center;
+  width: 100%;
+}
+
+.dock-task-list__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
 }
 
 .dock-task-list__empty-title,
@@ -33,4 +56,18 @@
 .dock-task-list__empty-copy {
   max-width: calc(var(--space-xl) * 12);
   font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .dock-task-list {
+    padding: var(--space-sm);
+  }
+
+  .dock-task-list__controls {
+    justify-content: stretch;
+  }
+
+  .dock-task-list__toggle-done {
+    width: 100%;
+  }
 }

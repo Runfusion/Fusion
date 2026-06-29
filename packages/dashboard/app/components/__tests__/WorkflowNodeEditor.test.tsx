@@ -2262,7 +2262,7 @@ function builtinStepwiseDef(): WorkflowDefinition {
   return {
     id: "builtin:stepwise-coding",
     kind: "workflow",
-    name: "Stepwise coding (built-in)",
+    name: "Coding (per-step review) (built-in)",
     description: "",
     ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
     layout: {},

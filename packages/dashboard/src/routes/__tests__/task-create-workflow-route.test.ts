@@ -80,7 +80,7 @@ describe("POST /tasks workflowId (U6/R3)", () => {
   const post = (path: string, body: unknown) =>
     REQUEST(app, "POST", path, JSON.stringify(body), { "content-type": "application/json" });
 
-  it("workflowId → created task has populated enabledWorkflowSteps", async () => {
+  it("workflowId → created task records workflow selection", async () => {
     const wf = await store.createWorkflowDefinition({ name: "QA", ir: linearIr("qa") });
 
     const res = await post("/api/tasks", { description: "with workflow", workflowId: wf.id });
@@ -88,8 +88,100 @@ describe("POST /tasks workflowId (U6/R3)", () => {
     const created = res.body as { id: string };
 
     const detail = await store.getTask(created.id);
-    expect(detail.enabledWorkflowSteps).toHaveLength(2);
-    expect(store.getTaskWorkflowSelection(created.id)?.workflowId).toBe(wf.id);
+    expect(detail.enabledWorkflowSteps ?? []).toEqual([]);
+    expect(store.getTaskWorkflowSelection(created.id)).toEqual({ workflowId: wf.id, stepIds: [] });
+  });
+
+  it("workflowId plus enabledWorkflowSteps → created task keeps explicit workflow selection", async () => {
+    const res = await post("/api/tasks", {
+      description: "stepwise with toggles",
+      workflowId: "builtin:stepwise-coding",
+      enabledWorkflowSteps: ["code-review"],
+    });
+    expect(res.status).toBe(201);
+    const created = res.body as { id: string };
+
+    const detail = await store.getTask(created.id);
+    expect(detail.enabledWorkflowSteps ?? []).toEqual(["code-review"]);
+    expect(store.getTaskWorkflowSelection(created.id)).toEqual({
+      workflowId: "builtin:stepwise-coding",
+      stepIds: ["code-review"],
+    });
+  });
+
+  it("workflowId plus empty enabledWorkflowSteps → disables default optional groups and keeps selection", async () => {
+    const res = await post("/api/tasks", {
+      description: "coding with optional groups off",
+      workflowId: "builtin:coding",
+      enabledWorkflowSteps: [],
+    });
+    expect(res.status).toBe(201);
+    const created = res.body as { id: string };
+
+    const detail = await store.getTask(created.id);
+    expect(detail.enabledWorkflowSteps ?? []).toEqual([]);
+    expect(store.getTaskWorkflowSelection(created.id)).toEqual({
+      workflowId: "builtin:coding",
+      stepIds: [],
+    });
+  });
+
+  it.each([
+    ["default coding", "builtin:coding", ["plan-review", "code-review"]],
+    ["legacy coding", "builtin:legacy-coding", ["code-review"]],
+    ["coding per-step review", "builtin:stepwise-coding", ["plan-review", "code-review"]],
+  ])("%s workflow create/select/resolve works end to end", async (_label, workflowId, defaultSteps) => {
+    const res = await post("/api/tasks", {
+      description: `exercise ${workflowId}`,
+      workflowId,
+    });
+    expect(res.status).toBe(201);
+    const created = res.body as { id: string };
+
+    const detail = await store.getTask(created.id);
+    expect(detail.enabledWorkflowSteps ?? []).toEqual(defaultSteps);
+    expect(store.getTaskWorkflowSelection(created.id)).toEqual({
+      workflowId,
+      stepIds: defaultSteps,
+    });
+    const definition = await store.getWorkflowDefinition(workflowId);
+    expect(definition?.id).toBe(workflowId);
+    expect(definition?.kind).toBe("workflow");
+  });
+
+  it("unavailable Compound engineering workflow → 4xx instead of default coding fallback", async () => {
+    const before = (await store.listTasks({ includeArchived: true })).length;
+
+    const res = await post("/api/tasks", {
+      description: "compound unavailable",
+      workflowId: "builtin:compound-engineering",
+    });
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeLessThan(500);
+    expect(String((res.body as { error?: unknown }).error ?? "")).toContain("builtin:compound-engineering");
+    const after = (await store.listTasks({ includeArchived: true })).length;
+    expect(after).toBe(before);
+  });
+
+  it("registered Compound engineering plugin → created task keeps Compound workflow selection", async () => {
+    await store.getPluginStore().registerPlugin({
+      manifest: {
+        id: "fusion-plugin-compound-engineering",
+        name: "Compound Engineering",
+        version: "0.0.0",
+      },
+      path: rootDir,
+    });
+
+    const res = await post("/api/tasks", {
+      description: "compound available",
+      workflowId: "builtin:compound-engineering",
+    });
+    expect(res.status).toBe(201);
+    const created = res.body as { id: string };
+
+    expect(store.getTaskWorkflowSelection(created.id)?.workflowId).toBe("builtin:compound-engineering");
   });
 
   it("workflowId: null → task created with no workflow steps", async () => {

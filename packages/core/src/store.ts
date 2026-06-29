@@ -4556,12 +4556,12 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     // When a project default workflow is configured, new tasks inherit it
     // (compiled to steps) ahead of the legacy default-on step behavior.
     let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
-    // U6/R3/KTD-4: an explicit create-time workflowId beats the project default.
-    // `null` is an explicit opt-out (no workflow), `string` materializes that
-    // workflow, `undefined` falls through to the default-workflow behavior below.
-    // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
-    const explicitWorkflowId =
-      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    /*
+    FNXC:WorkflowCreation 2026-06-28-23:09:
+    User-facing task creation can submit a selected workflowId and optional-group toggles together. The visible workflow selection is operator intent and must persist as task_workflow_selection; enabledWorkflowSteps only overrides that workflow's default optional-group seed.
+    Legacy trusted callers that submit enabledWorkflowSteps without workflowId still bypass workflow selection materialization.
+    */
+    const explicitWorkflowId = input.workflowId;
     if (explicitWorkflowId !== undefined) {
       if (explicitWorkflowId === null) {
         // Explicit "No workflow": skip default materialization entirely.
@@ -4570,8 +4570,14 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         // Compile + materialize up front so unknown/fragment ids throw BEFORE
         // the task row is created (no orphaned steps, no half-created task).
         const selected = await this.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        resolvedWorkflowSteps = selected.stepIds;
-        pendingWorkflowSelection = selected;
+        const explicitStepIds = input.enabledWorkflowSteps !== undefined
+          ? (resolvedWorkflowSteps ?? [])
+          : undefined;
+        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+        pendingWorkflowSelection = {
+          workflowId: selected.workflowId,
+          stepIds: explicitStepIds ?? selected.stepIds,
+        };
       }
     } else if (input.enabledWorkflowSteps === undefined) {
       try {
@@ -4744,12 +4750,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       : undefined;
 
     let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
-    // U6/R3/KTD-4: an explicit create-time workflowId beats the project default,
-    // mirroring createTask(). `null` is an explicit opt-out, `string` materializes
-    // that workflow, `undefined` falls through to the default-workflow behavior.
-    // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
-    const explicitWorkflowId =
-      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    /*
+    FNXC:WorkflowCreation 2026-06-28-23:09:
+    Reserved-id task creation must match normal task creation: workflowId and enabledWorkflowSteps are independent create controls, so explicit optional toggles do not erase the selected workflow row.
+    */
+    const explicitWorkflowId = input.workflowId;
     if (explicitWorkflowId !== undefined) {
       if (explicitWorkflowId === null) {
         // Explicit "No workflow": skip default materialization entirely.
@@ -4758,8 +4763,14 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         // Compile + materialize up front so unknown/fragment ids throw BEFORE
         // the task row is created (no orphaned steps, no half-created task).
         const selected = await this.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        resolvedWorkflowSteps = selected.stepIds;
-        pendingWorkflowSelection = selected;
+        const explicitStepIds = input.enabledWorkflowSteps !== undefined
+          ? (resolvedWorkflowSteps ?? [])
+          : undefined;
+        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+        pendingWorkflowSelection = {
+          workflowId: selected.workflowId,
+          stepIds: explicitStepIds ?? selected.stepIds,
+        };
       }
     } else if (input.enabledWorkflowSteps === undefined && options.applyDefaultWorkflowSteps !== false) {
       // Mirror createTask: a configured project default workflow takes

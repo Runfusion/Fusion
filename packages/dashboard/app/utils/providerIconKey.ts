@@ -1,7 +1,12 @@
 /*
 FNXC:ProviderIcons 2026-06-25-00:00:
 Command Center model analytics group rows by model id only, so dashboard model-name surfaces must infer the provider icon from the model/provider text before handing off to ProviderIcon's fallback-safe renderer.
+
+FNXC:ProviderIcons 2026-06-28-20:46:
+Standalone GLM model ids such as glm-5.1, glm-4.5-air, and glm-5v-turbo are Z.ai/Zhipu-family models even when the analytics label omits zai/zhipu. Match GLM only at model-id segment boundaries so unrelated words do not hijack the Z.ai provider icon.
 */
+const GLM_MODEL_SEGMENT_PATTERN = /(?:^|[/:_-])glm(?:$|[\d._:-]|-[\da-z])/;
+
 export function inferProviderIconKey(modelOrProviderName: string): string {
   const normalized = modelOrProviderName.toLowerCase();
 
@@ -21,7 +26,7 @@ export function inferProviderIconKey(modelOrProviderName: string): string {
   if (normalized.includes("minimax")) {
     return "minimax";
   }
-  if (normalized.includes("zai") || normalized.includes("zhipu")) {
+  if (normalized.includes("zai") || normalized.includes("zhipu") || GLM_MODEL_SEGMENT_PATTERN.test(normalized)) {
     return "zai";
   }
   if (normalized.includes("kimi") || normalized.includes("moonshot")) {

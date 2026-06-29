@@ -13,6 +13,9 @@ describe("inferProviderIconKey", () => {
     ["minimax-text-01", "minimax"],
     ["zhipu-glm-4", "zai"],
     ["zai/glm-4.5", "zai"],
+    ["glm-5.1", "zai"],
+    ["glm-4.5-air", "zai"],
+    ["glm-5v-turbo", "zai"],
     ["kimi-k2", "kimi"],
     ["moonshot-v1", "kimi"],
     ["amazon-bedrock-claude", "anthropic"],
@@ -27,6 +30,7 @@ describe("inferProviderIconKey", () => {
 
   it("returns unknown ids unchanged so ProviderIcon can render its fallback", () => {
     expect(inferProviderIconKey("custom-model-v1")).toBe("custom-model-v1");
+    expect(inferProviderIconKey("not-a-glmish-model")).toBe("not-a-glmish-model");
     expect(inferProviderIconKey("")).toBe("");
   });
 });
