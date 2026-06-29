@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countRunningAgentTasks, isRunningAgentTask } from "../live-agent-count.js";
+import { countRunningAgentTasks, deriveRunningAgentCounts, isRunningAgentTask } from "../live-agent-count.js";
 import type { Task } from "../types.js";
 
 function task(overrides: Pick<Task, "column"> & Partial<Pick<Task, "status" | "paused">>): Pick<Task, "column" | "status" | "paused"> {
@@ -43,5 +43,21 @@ describe("live agent count predicates", () => {
       task({ column: "done" }),
       task({ column: "archived" }),
     ])).toBe(7);
+  });
+
+  it("normalizes display counts for zero, one, multi-project, unopened, and oversubscribed states", () => {
+    expect(deriveRunningAgentCounts({})).toEqual({ currentlyActive: 0, projectsActive: {} });
+    expect(deriveRunningAgentCounts({ proj_zero: 0, proj_one: 1 })).toEqual({
+      currentlyActive: 1,
+      projectsActive: { proj_one: 1 },
+    });
+    expect(deriveRunningAgentCounts({ proj_a: 2, proj_b: 4, proj_unopened: 0 })).toEqual({
+      currentlyActive: 6,
+      projectsActive: { proj_a: 2, proj_b: 4 },
+    });
+    expect(deriveRunningAgentCounts({ proj_over_limit: 12, proj_negative: -3, proj_nan: Number.NaN })).toEqual({
+      currentlyActive: 12,
+      projectsActive: { proj_over_limit: 12 },
+    });
   });
 });

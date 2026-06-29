@@ -203,7 +203,10 @@ describe("createServer options", () => {
 
   it("registers live counts for the already-open default store by central project id", async () => {
     const store = createMockStore({
-      listTasks: vi.fn().mockResolvedValue([{ id: "FN-1" }, { id: "FN-2" }]),
+      listTasks: vi.fn().mockResolvedValue([
+        { id: "FN-1", column: "in-progress" },
+        { id: "FN-2", column: "triage", status: "planning", paused: false },
+      ]),
     });
     const centralCore = {
       getDefaultProjectId: vi.fn().mockResolvedValue("proj_default"),
@@ -215,13 +218,13 @@ describe("createServer options", () => {
     expect(source).toBeDefined();
     if (!source) throw new Error("expected running-agent count source");
     await expect(source(["proj_default", "proj_unopened"])).resolves.toEqual({ proj_default: 2 });
-    expect(store.listTasks).toHaveBeenCalledWith({ column: "in-progress", slim: true });
+    expect(store.listTasks).toHaveBeenCalledWith({ slim: true });
   });
 
   it("registers live counts for already-open engine-manager stores without starting engines", async () => {
     const store = createMockStore();
     const engineStore = createMockStore({
-      listTasks: vi.fn().mockResolvedValue([{ id: "FN-3" }]),
+      listTasks: vi.fn().mockResolvedValue([{ id: "FN-3", column: "in-review", status: "merging", paused: false }]),
     });
     const getEngine = vi.fn((projectId: string) => projectId === "proj_engine"
       ? { getTaskStore: vi.fn(() => engineStore) }
@@ -236,7 +239,40 @@ describe("createServer options", () => {
     await expect(source(["proj_engine", "proj_unopened"])).resolves.toEqual({ proj_engine: 1 });
     expect(getEngine).toHaveBeenCalledWith("proj_engine");
     expect(getEngine).toHaveBeenCalledWith("proj_unopened");
-    expect(engineStore.listTasks).toHaveBeenCalledWith({ column: "in-progress", slim: true });
+    expect(engineStore.listTasks).toHaveBeenCalledWith({ slim: true });
+    expect(store.listTasks).not.toHaveBeenCalled();
+  });
+
+  it("prefers the live engine-manager store over the default fallback for the default project", async () => {
+    const store = createMockStore({
+      listTasks: vi.fn().mockResolvedValue([]),
+    });
+    const engineStore = createMockStore({
+      listTasks: vi.fn().mockResolvedValue([
+        { id: "FN-4", column: "in-progress" },
+        { id: "FN-5", column: "in-review", status: "reviewing", paused: false },
+      ]),
+    });
+    const getEngine = vi.fn((projectId: string) => projectId === "proj_default"
+      ? { getTaskStore: vi.fn(() => engineStore) }
+      : undefined);
+    const engineManager = { getEngine };
+    const centralCore = {
+      getDefaultProjectId: vi.fn().mockResolvedValue("proj_default"),
+    };
+
+    createServer(store, {
+      centralCore: centralCore as unknown as CentralCore,
+      engineManager: engineManager as unknown as import("@fusion/engine").ProjectEngineManager,
+    });
+    const source = getRunningAgentCountSource();
+
+    expect(source).toBeDefined();
+    if (!source) throw new Error("expected running-agent count source");
+    await expect(source(["proj_default", "proj_unopened"])).resolves.toEqual({ proj_default: 2 });
+    expect(getEngine).toHaveBeenCalledWith("proj_default");
+    expect(getEngine).toHaveBeenCalledWith("proj_unopened");
+    expect(engineStore.listTasks).toHaveBeenCalledWith({ slim: true });
     expect(store.listTasks).not.toHaveBeenCalled();
   });
 });

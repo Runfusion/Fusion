@@ -113,6 +113,44 @@ describe("ScopedAgentSemaphore", () => {
     expect(shared.activeCount).toBe(0);
   });
 
+  it("honors live global-limit changes across scoped project semaphores on the next acquire", async () => {
+    let globalLimit = 2;
+    const shared = new AgentSemaphore(() => globalLimit);
+    const projectA = new ScopedAgentSemaphore(shared);
+    const projectB = new ScopedAgentSemaphore(shared);
+
+    await projectA.acquire(PRIORITY_EXECUTE);
+    await projectB.acquire(PRIORITY_MERGE);
+    expect(shared.snapshot()).toEqual({ activeCount: 2, waitingCount: 0, availableCount: 0, limit: 2 });
+
+    globalLimit = 1;
+    let acquired = false;
+    const waiter = projectA.acquire(PRIORITY_EXECUTE).then(() => {
+      acquired = true;
+    });
+    await Promise.resolve();
+
+    expect(acquired).toBe(false);
+    expect(shared.snapshot()).toEqual({ activeCount: 2, waitingCount: 1, availableCount: 0, limit: 1 });
+
+    projectA.release();
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    expect(shared.snapshot()).toEqual({ activeCount: 1, waitingCount: 1, availableCount: 0, limit: 1 });
+
+    globalLimit = 2;
+    projectB.release();
+    await waiter;
+
+    expect(acquired).toBe(true);
+    expect(projectA.heldCount).toBe(1);
+    expect(projectB.heldCount).toBe(0);
+    expect(shared.snapshot()).toEqual({ activeCount: 1, waitingCount: 0, availableCount: 1, limit: 2 });
+
+    projectA.release();
+    expect(shared.activeCount).toBe(0);
+  });
+
   it("reconciles only this scope's slots when another project still holds global capacity", async () => {
     const shared = new AgentSemaphore(3);
     const idleProject = new ScopedAgentSemaphore(shared);

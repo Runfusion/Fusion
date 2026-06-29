@@ -838,6 +838,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   FNXC:GlobalConcurrencyControls 2026-06-26-23:41:
   The default in-process TaskStore is already open but is intentionally not part of the secondary project-store cache. Include it by central default project id, and include any engine-manager stores already resident in memory, so live reads cover every already-open store without calling getOrCreateProjectStore(), watch(), or runtime startup paths.
+
+  FNXC:GlobalConcurrencyControls 2026-06-28-16:48:
+  FN-7205 requires the footer and Command Center counters to reflect actual running top-level agents from the live runtime store. Prefer engine-manager stores over registered/default fallback stores, and only use the default store when no live engine/registered source has supplied that project, so stale bootstrap stores cannot overwrite the semaphore-facing runtime count after a slider or engine lifecycle change.
   */
   setRunningAgentCountSource(async (projectIds) => {
     const requestedProjectIds = new Set(projectIds);
@@ -845,9 +848,6 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
     if (options?.engineManager) {
       await Promise.all(projectIds.map(async (projectId) => {
-        if (counts[projectId] !== undefined) {
-          return;
-        }
         const engine = options.engineManager?.getEngine(projectId);
         if (!engine) {
           return;
@@ -857,7 +857,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
 
     const defaultProjectId = await options?.centralCore?.getDefaultProjectId?.();
-    if (defaultProjectId && requestedProjectIds.has(defaultProjectId)) {
+    if (defaultProjectId && requestedProjectIds.has(defaultProjectId) && counts[defaultProjectId] === undefined) {
       counts[defaultProjectId] = await countRunningAgentsInStore(store);
     }
 
