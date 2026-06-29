@@ -41,7 +41,7 @@ Be specific: cite the plan section or file path for every finding and explain th
 /** Build the `plan-review` optional-group node placed between planning and execution. */
 export function planReviewOptionalGroupNode(
   column: string,
-  options: { defaultOn?: boolean } = {},
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded" } = {},
 ): WorkflowIrNode {
   return {
     id: PLAN_REVIEW_GROUP_ID,
@@ -56,6 +56,11 @@ export function planReviewOptionalGroupNode(
        */
       reworkRegion: true,
       maxReworkCycles: 3,
+      /*
+       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
+       * Built-in Plan Review owns the pre-execution replan budget. Default to three graph-mediated revise→replan→review attempts while allowing workflow authors to override `maxRevisions`.
+       */
+      maxRevisions: options.maxRevisions ?? 3,
       template: {
         nodes: [
           {

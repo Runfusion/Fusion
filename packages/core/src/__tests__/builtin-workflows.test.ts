@@ -139,6 +139,7 @@ describe("built-in workflows", () => {
         expect(workflow.ir.nodes.find((node) => node.id === gate)?.config, `${workflow.id}:${gate}:reworkRegion`).toMatchObject({
           reworkRegion: true,
           maxReworkCycles: 3,
+          maxRevisions: 3,
         });
       }
     }

@@ -52,6 +52,7 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(node.config?.name).toBe("Code Review");
     // Default-ON (runs by default), but still an optional-group → toggleable per task.
     expect(node.config?.defaultOn).toBe(true);
+    expect(node.config?.maxRevisions).toBe(3);
 
     const template = node.config?.template as { nodes: { id: string; kind: string; config?: Record<string, unknown> }[] };
     expect(template.nodes).toHaveLength(1);
@@ -61,6 +62,11 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(inner.config?.toolMode).toBe("readonly");
     expect(inner.config?.gateMode).toBe("gate");
     expect(String(inner.config?.prompt)).toMatch(/"verdict":"APPROVE\|APPROVE_WITH_NOTES\|REVISE"/);
+  });
+
+  it("lets workflows override the default remediation attempt budget", () => {
+    expect(codeReviewOptionalGroupNode("in-progress", { maxRevisions: 1 }).config?.maxRevisions).toBe(1);
+    expect(codeReviewOptionalGroupNode("in-progress", { maxRevisions: "unbounded" }).config?.maxRevisions).toBe("unbounded");
   });
 });
 

@@ -80,7 +80,7 @@ Be specific: cite \`file:line\` for every finding and explain the concrete failu
  */
 export function codeReviewOptionalGroupNode(
   column: string,
-  options: { defaultOn?: boolean } = {},
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded" } = {},
 ): WorkflowIrNode {
   return {
     id: CODE_REVIEW_GROUP_ID,
@@ -93,6 +93,11 @@ export function codeReviewOptionalGroupNode(
       defaultOn: options.defaultOn ?? true,
       reworkRegion: true,
       maxReworkCycles: 3,
+      /*
+       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
+       * Built-in workflows own their optional-step remediation policy. Default Code Review to three fix→review attempts while preserving workflow-authored overrides through `config.maxRevisions`.
+       */
+      maxRevisions: options.maxRevisions ?? 3,
       template: {
         nodes: [
           {

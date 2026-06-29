@@ -440,6 +440,78 @@ describe("auto-merge proven finalization helper", () => {
     expect(store.moveTask).not.toHaveBeenCalled();
   });
 
+  it("allows workflow finalization when missing branch proof is outside the declared File Scope", async () => {
+    const strandedTask = {
+      id: "FN-SCOPED-PROOF",
+      title: "Scoped proof",
+      description: "Test",
+      column: "in-progress",
+      branch: "fusion/fn-scoped-proof",
+      baseBranch: "main",
+      dependencies: [],
+      steps: [{ status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sourceMetadata: {
+        fileScope: [
+          "packages/dashboard/app/components/EngineControlMenu.tsx",
+          "packages/dashboard/app/components/__tests__/EngineControlMenu.test.tsx",
+          "docs/dashboard-guide.md",
+          ".changeset/*.md",
+        ],
+      },
+      mergeDetails: {
+        mergeConfirmed: true,
+        commitSha: "abc123",
+        landedFiles: [
+          "packages/dashboard/app/components/EngineControlMenu.tsx",
+          "packages/dashboard/app/components/__tests__/EngineControlMenu.test.tsx",
+          "docs/dashboard-guide.md",
+          ".changeset/fn-7235-footer-concurrency-marker.md",
+        ],
+      },
+    } as Task;
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      updateTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      recordRunAuditEvent: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(strandedTask);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const command = String(cmd);
+      if (command.includes("rev-parse --verify")) return "ok\n" as any;
+      if (command.includes("git diff --name-only") && command.includes("main...fusion/fn-scoped-proof")) {
+        return [
+          "packages/dashboard/app/components/EngineControlMenu.tsx",
+          "packages/dashboard/app/components/__tests__/EngineControlMenu.test.tsx",
+          "docs/dashboard-guide.md",
+          ".changeset/fn-7235-footer-concurrency-marker.md",
+          "packages/engine/src/triage.ts",
+        ].join("\n") as any;
+      }
+      return "" as any;
+    });
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-SCOPED-PROOF",
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+      rootDir: "/repo",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ outcome: "done" }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-SCOPED-PROOF", "done", expect.objectContaining({
+      moveSource: "engine",
+      preserveProgress: true,
+      recoveryRehome: true,
+    }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-SCOPED-PROOF", expect.objectContaining({ status: "failed" }));
+  });
+
   it("treats already-done landed rows as idempotent success", async () => {
     const doneTask = {
       id: "FN-DONE",
