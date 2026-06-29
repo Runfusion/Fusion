@@ -4,6 +4,23 @@
 
 Fusion’s command-line interface is exposed through the `fn` command.
 
+<!--
+FNXC:AgentTools 2026-06-29-22:31:
+The published CLI/pi extension must document its agent-facing workflow authoring surface so operators know agents can inspect, create, update, configure, and delete custom workflows without using the dashboard editor.
+-->
+
+## Published agent extension workflow tools
+
+The published `@runfusion/fusion` CLI bundle also exposes the pi extension tool surface used by external agents. Alongside task and coordination helpers, agents can now author and manage workflow definitions:
+
+- `fn_workflow_list` / `fn_workflow_get` — discover built-in and custom workflows and inspect a workflow's IR before editing.
+- `fn_workflow_create` / `fn_workflow_update` — create or revise custom workflow definitions through Fusion's central workflow validator.
+- `fn_workflow_settings` — read and write typed per-project values for a workflow's declared settings.
+- `fn_workflow_delete` — delete custom workflows; built-in workflows remain protected.
+- `fn_trait_list` — list the column trait vocabulary used when authoring workflow columns.
+
+Agents should still use `fn_workflow_select` only when assigning a workflow to an explicit task context or to a task they created.
+
 ## Global Usage
 
 ```bash

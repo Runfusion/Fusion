@@ -13,26 +13,27 @@ import type { TaskStore } from "@fusion/core";
 
 /**
  * U11 / R12 drift guard (engine half): the workflow-authoring tool surface that
- * chat, planning, and the task executor all share must always expose the core
- * `fn_workflow_*` authoring tools. The lanes assemble most of their toolset
- * from `createWorkflowAuthoringTools` (chat/planning) and the executor mirrors
- * the same factories — so asserting factory completeness here guards every
- * lane's source of truth. `fn_workflow_settings` remains a standalone factory
- * that heartbeat/executor wire explicitly. Lane-wiring (that chat/planning
- * actually pass these to createFnAgent) is asserted in packages/dashboard's
- * exposure test.
+ * chat, planning, and the task executor all share must always expose workflow
+ * discovery, mutation, settings, selection, and trait vocabulary tools.
+ * The lanes assemble most of their toolset from `createWorkflowAuthoringTools`
+ * (chat/planning) and the executor mirrors the same factories — so asserting
+ * factory completeness here guards every lane's source of truth. Lane-wiring
+ * (that chat/planning actually pass these to createFnAgent) is asserted in
+ * packages/dashboard's exposure test.
  *
  * We invoke the REAL factories with a fake store — never mock the factories
  * themselves — so a renamed/removed tool name is caught.
  */
 
 const REQUIRED_WORKFLOW_TOOLS = [
-  "fn_workflow_create",
-  "fn_workflow_update",
-  "fn_workflow_delete",
   "fn_workflow_list",
   "fn_workflow_get",
   "fn_workflow_select",
+  "fn_workflow_create",
+  "fn_workflow_update",
+  "fn_workflow_delete",
+  "fn_workflow_settings",
+  "fn_trait_list",
 ] as const;
 
 // Minimal stand-in; the factories only capture the store reference at build
@@ -40,12 +41,9 @@ const REQUIRED_WORKFLOW_TOOLS = [
 const fakeStore = {} as unknown as TaskStore;
 
 describe("workflow tool exposure (engine factories)", () => {
-  it("createWorkflowAuthoringTools exposes all six fn_workflow_* tools plus fn_trait_list", () => {
+  it("createWorkflowAuthoringTools exposes the complete workflow authoring surface", () => {
     const names = createWorkflowAuthoringTools(fakeStore, "FN-1").map((t) => t.name);
-    for (const required of REQUIRED_WORKFLOW_TOOLS) {
-      expect(names).toContain(required);
-    }
-    expect(names).toContain("fn_trait_list");
+    expect(names).toEqual(REQUIRED_WORKFLOW_TOOLS);
   });
 
   it("each fn_workflow_* factory produces a tool with the expected name", () => {

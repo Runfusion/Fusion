@@ -30,13 +30,16 @@ Fusion workflows define the task lifecycle policy that moves work from an idea t
 
 ### Selecting workflows
 
-Operators can select workflows in the dashboard wherever the task or board workflow selector is shown. Agents and automation can discover and assign them with the workflow tools:
+Operators can select workflows in the dashboard wherever the task or board workflow selector is shown. Agents and automation can discover, author, tune, and assign them with the workflow tools:
 
-- `fn_workflow_list` — list built-in and custom workflow definitions.
+- `fn_workflow_list` / `fn_workflow_get` — list built-in and custom workflow definitions and inspect a definition's IR before editing.
+- `fn_trait_list` — list the column trait vocabulary needed when authoring workflow IR columns.
+- `fn_workflow_create` / `fn_workflow_update` / `fn_workflow_delete` — create, edit, or delete custom workflow definitions. Built-in workflow definitions are protected, malformed IRs are rejected by the central validator, and prompt-injectable lanes strip approval-bypass flags before saving.
+- `fn_workflow_settings` — read or write typed per-project values for a workflow's declared settings; invalid values reject atomically without partial persistence.
 - `fn_workflow_select` — assign a workflow to the current or named task.
 - `workflow_id` on `fn_task_create` / delegation tools — create a task with a workflow already selected.
 
-Agent-initiated workflow assignment is intentionally narrow: an agent may select or change a task's workflow only when the user explicitly requested that workflow, or when the agent created that task itself (for example by passing `workflow_id` to `fn_task_create` / delegation tools). Executors should not call `fn_workflow_select` to reroute the task they are currently executing unless that task's instructions or a user steering comment explicitly asks for the workflow change.
+Agent-initiated workflow assignment is intentionally narrow: an agent may select or change a task's workflow only when the user explicitly requested that workflow, or when the agent created that task itself (for example by passing `workflow_id` to `fn_task_create` / delegation tools). Executors should not call `fn_workflow_select` to reroute the task they are currently executing unless that task's instructions or a user steering comment explicitly asks for the workflow change. Lanes without an ambient task, such as dashboard chat, planning, and published/pi extension calls made outside a task, must pass an explicit `task_id` to `fn_workflow_select`; task-bound executor lanes may default to the current task.
 
 Decision-only or investigation tasks can also declare `noCommitsExpected` / `**No commits expected:** true`; that marker does not change workflow selection by itself. Tasks without an explicit workflow request or creator-owned workflow selection stay on the project default (`builtin:coding`).
 

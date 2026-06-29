@@ -272,6 +272,14 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
   describe("registration", () => {
     it("registers all expected tools", () => {
       const expected = [
+        "fn_workflow_list",
+        "fn_workflow_get",
+        "fn_workflow_create",
+        "fn_workflow_update",
+        "fn_workflow_delete",
+        "fn_workflow_settings",
+        "fn_trait_list",
+        "fn_workflow_select",
         "fn_task_create",
         "fn_task_update",
         "fn_task_list",

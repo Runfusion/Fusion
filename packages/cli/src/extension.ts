@@ -52,6 +52,15 @@ import {
   fetchWebContent,
   assertNoSecretPlaintext,
   emitGoalRetrievalAudit,
+  createWorkflowAuthoringTools,
+  workflowListParams,
+  workflowGetParams,
+  workflowSelectParams,
+  workflowCreateParams,
+  workflowUpdateParams,
+  workflowDeleteParams,
+  workflowSettingsParams,
+  traitListParams,
 } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
 import { resolve, basename, extname, join } from "node:path";
@@ -526,6 +535,90 @@ async function fetchGitHubIssueViaGh(
   }
 }
 
+type EngineWorkflowToolName =
+  | "fn_workflow_list"
+  | "fn_workflow_get"
+  | "fn_workflow_create"
+  | "fn_workflow_update"
+  | "fn_workflow_delete"
+  | "fn_workflow_settings"
+  | "fn_trait_list"
+  | "fn_workflow_select";
+
+const workflowExtensionToolSpecs: Array<{
+  name: EngineWorkflowToolName;
+  label: string;
+  description: string;
+  promptSnippet: string;
+  promptGuidelines: string[];
+  parameters: TSchema;
+}> = [
+  {
+    name: "fn_workflow_list",
+    label: "fn: List Workflows",
+    description: "List built-in and custom Fusion workflow definitions available in this project.",
+    promptSnippet: "List Fusion workflow definitions available in this project",
+    promptGuidelines: ["Use before selecting or editing workflows to discover valid workflow IDs."],
+    parameters: workflowListParams,
+  },
+  {
+    name: "fn_workflow_get",
+    label: "fn: Get Workflow",
+    description: "Fetch a Fusion workflow definition by ID, including its resolved workflow IR.",
+    promptSnippet: "Fetch a Fusion workflow definition by ID",
+    promptGuidelines: ["Use after fn_workflow_list to inspect the current IR before updating a workflow."],
+    parameters: workflowGetParams,
+  },
+  {
+    name: "fn_workflow_create",
+    label: "fn: Create Workflow",
+    description: "Create a custom Fusion workflow definition from a validated workflow IR.",
+    promptSnippet: "Create a custom Fusion workflow definition",
+    promptGuidelines: ["Use fn_trait_list first when choosing column traits for a new workflow IR."],
+    parameters: workflowCreateParams,
+  },
+  {
+    name: "fn_workflow_update",
+    label: "fn: Update Workflow",
+    description: "Update a custom Fusion workflow definition's metadata, IR, or layout.",
+    promptSnippet: "Update a custom Fusion workflow definition",
+    promptGuidelines: ["Fetch the existing workflow first and preserve intentional IR fields when editing."],
+    parameters: workflowUpdateParams,
+  },
+  {
+    name: "fn_workflow_delete",
+    label: "fn: Delete Workflow",
+    description: "Delete a custom Fusion workflow definition; built-in workflows are protected.",
+    promptSnippet: "Delete a custom Fusion workflow definition",
+    promptGuidelines: ["Only delete custom workflows; built-in workflows are protected."],
+    parameters: workflowDeleteParams,
+  },
+  {
+    name: "fn_workflow_settings",
+    label: "fn: Workflow Settings",
+    description: "Read or write per-project values for a workflow's declared settings.",
+    promptSnippet: "Read or write per-project values for a workflow's declared settings",
+    promptGuidelines: ["Use fn_workflow_get to inspect setting declarations before writing values."],
+    parameters: workflowSettingsParams,
+  },
+  {
+    name: "fn_trait_list",
+    label: "fn: List Workflow Traits",
+    description: "List column traits available when authoring Fusion workflow IR columns.",
+    promptSnippet: "List column traits available for Fusion workflow authoring",
+    promptGuidelines: ["Use when authoring or updating workflow IR column traits."],
+    parameters: traitListParams,
+  },
+  {
+    name: "fn_workflow_select",
+    label: "fn: Select Task Workflow",
+    description: "Assign a workflow definition to a task by workflow ID.",
+    promptSnippet: "Assign a Fusion workflow to a task",
+    promptGuidelines: ["Provide task_id unless the current agent context is already bound to the intended task."],
+    parameters: workflowSelectParams,
+  },
+];
+
 // ── Extension entry point ──────────────────────────────────────────
 
 export default function kbExtension(pi: ExtensionAPI) {
@@ -536,6 +629,55 @@ export default function kbExtension(pi: ExtensionAPI) {
     dashboard.registerGithubTrackingHook?.();
   } catch {
     // Tests may provide partial @fusion/dashboard mocks without this export.
+  }
+
+  for (const spec of workflowExtensionToolSpecs) {
+    pi.registerTool({
+      name: spec.name,
+      label: spec.label,
+      description: spec.description,
+      promptSnippet: spec.promptSnippet,
+      promptGuidelines: spec.promptGuidelines,
+      parameters: spec.parameters,
+      async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+        /*
+        FNXC:WorkflowAuthoringTools 2026-06-29-22:20:
+        The pi extension must expose the same workflow authoring surface agents get in engine lanes: list, get, create, update, delete, settings, trait vocabulary, and task selection when an ambient or explicit task target exists.
+        Reuse engine factories per call so validation and store-side behavior stay centralized; the extension only adapts cwd/task context to ExtensionAPI.registerTool.
+
+        FNXC:WorkflowAuthoringTools 2026-06-29-22:42:
+        The published/pi extension is prompt-injectable rather than executor-owner controlled, so workflow create/update must strip approval-bypass flags before persistence. Only task executor owner paths may keep cliSkipApproval/autoApprove intact.
+
+        FNXC:WorkflowAuthoringTools 2026-06-29-23:06:
+        fn_workflow_select may default only in task-bound extension contexts; no-task published API calls must pass task_id explicitly so an empty ambient task cannot accidentally route the wrong card.
+        */
+        const store = await getStore(ctx.cwd);
+        const extensionContext = ctx as typeof ctx & { taskId?: string };
+        const currentTaskId = typeof extensionContext.taskId === "string" ? extensionContext.taskId : "";
+        const workflowTools = createWorkflowAuthoringTools(store, currentTaskId, { stripApprovalFlags: true });
+        const tool = workflowTools.find((candidate) => candidate.name === spec.name);
+        if (!tool) {
+          return {
+            content: [{ type: "text" as const, text: `ERROR: Workflow tool '${spec.name}' is not available.` }],
+            details: {},
+            isError: true,
+          };
+        }
+        if (spec.name === "fn_workflow_select" && !currentTaskId) {
+          const explicitTaskId = typeof (params as { task_id?: unknown }).task_id === "string"
+            ? (params as { task_id: string }).task_id.trim()
+            : "";
+          if (!explicitTaskId) {
+            return {
+              content: [{ type: "text" as const, text: "ERROR: task_id is required when fn_workflow_select is called outside a task-bound extension context." }],
+              details: { error: "task_id_required" },
+              isError: true,
+            };
+          }
+        }
+        return tool.execute(toolCallId, params as never, _signal, _onUpdate, ctx);
+      },
+    });
   }
 
   // ── fn_task_create ───────────────────────────────────────────────
