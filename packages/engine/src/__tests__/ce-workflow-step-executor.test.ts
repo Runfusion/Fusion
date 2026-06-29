@@ -204,6 +204,97 @@ describe("CE workflow-step executor integration", () => {
       expect(captured.step.prompt).toContain("Plan the work.");
     });
 
+    it("acquires a task worktree when the first CE coding-mode node runs before execute", async () => {
+      const store = createMockStore();
+      let live = baseStepTask({
+        worktree: undefined,
+        branch: undefined,
+        steps: [{ name: "Preflight", status: "pending" }],
+      });
+      store.getTask.mockImplementation(async () => live as any);
+      store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        live = { ...live, ...patch };
+        return live as any;
+      });
+      const { executor } = makeExecutor(store);
+      vi.spyOn(executor as any, "createWorktree").mockResolvedValue({
+        path: "/tmp/test/.worktrees/swift-falcon",
+        branch: "fusion/fn-ce-1",
+      });
+      vi.spyOn(executor as any, "captureBaseCommitSha").mockResolvedValue(undefined);
+
+      const captured: { step?: any; worktreePath?: string } = {};
+      vi.spyOn(executor as any, "executeWorkflowStep").mockImplementation(async (...args: any[]) => {
+        captured.step = args[1];
+        captured.worktreePath = args[2];
+        return { success: true, output: "ok" };
+      });
+
+      const node = {
+        id: "plan",
+        kind: "prompt",
+        column: "in-progress",
+        config: {
+          executor: "skill",
+          skillName: "compound-engineering:ce-plan",
+          toolMode: "coding",
+          prompt: "Run /ce-plan.",
+        },
+      };
+
+      const result = await (executor as any).runGraphCustomNode(node, { id: "FN-CE-1" }, await store.getSettings(), undefined);
+
+      expect(result.outcome).toBe("success");
+      expect((executor as any).createWorktree).toHaveBeenCalled();
+      expect(captured.worktreePath).toBe("/tmp/test/.worktrees/swift-falcon");
+      expect(captured.step.toolMode).toBe("coding");
+      expect(live.worktree).toBe("/tmp/test/.worktrees/swift-falcon");
+    });
+
+    it("finalizes a merge-confirmed workflow graph task that is stranded before done", async () => {
+      const store = createMockStore();
+      let live = baseStepTask({
+        column: "in-progress",
+        status: null,
+        error: null,
+        mergeDetails: { mergeConfirmed: true, commitSha: "abc123" },
+        steps: [{ name: "Preflight", status: "done" }],
+      });
+      store.getTask.mockImplementation(async () => live as any);
+      store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        live = { ...live, ...patch };
+        return live as any;
+      });
+      store.moveTask.mockImplementation(async (_id: string, column: string) => {
+        live = { ...live, column };
+        return live as any;
+      });
+      const { executor } = makeExecutor(store);
+
+      const handled = await (executor as any).finalizeMergeConfirmedWorkflowGraphTask("FN-CE-1", "test");
+
+      expect(handled).toBe(true);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-CE-1", "done", expect.objectContaining({
+        recoveryRehome: true,
+        preserveProgress: true,
+      }));
+      expect(live.column).toBe("done");
+      expect(live.mergeDetails?.mergeConfirmed).toBe(true);
+    });
+
+    it("treats terminal graph step projection as success when the legacy pass rejects", async () => {
+      const store = createMockStore();
+      store.getTask.mockResolvedValue(baseStepTask({
+        steps: [{ name: "Preflight", status: "done" }],
+      }) as any);
+      const { executor } = makeExecutor(store);
+      vi.spyOn(executor as any, "runImplementationPhase").mockRejectedValue(new Error("Agent finished without calling fn_task_done"));
+
+      const result = await (executor as any).runGraphTaskStep(baseStepTask(), 0, "steps#0", "steps#0:step-execute");
+
+      expect(result).toEqual({ success: true });
+    });
+
     it("a non-skill (model) node synthesizes NO skillName and NO preamble", async () => {
       const store = createMockStore();
       store.getTask.mockResolvedValue(baseStepTask() as any);

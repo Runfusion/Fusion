@@ -585,13 +585,13 @@ export interface ParseStepsHandlerDeps {
    * expanded for this task+run — either persisted instance rows exist OR a
    * foreach expanded earlier in this walk. Re-parsing after expansion is illegal
    * (it would silently desynchronize the pinned instance set), so the handler
-   * fails with an audited `pin-mismatch` outcome. Optional — absent means no
+   * resumes without rewriting the step projection. Optional — absent means no
    * pin established (always safe to parse).
    */
   hasExpandedForeach?: (task: TaskDetail) => Promise<boolean> | boolean;
   /** Optional audit sink: called with a stable reason code on every routable
-   *  failure outcome (`parse-error`, `pin-mismatch`) so the run audit records it.
-   *  Never throws into the handler. */
+   *  parse outcome (`parse-error`, `pin-mismatch`, `pin-resume`) so the run audit
+   *  records it. Never throws into the handler. */
   audit?: (reason: string, detail: string) => void;
 }
 
@@ -605,7 +605,7 @@ export interface ParseStepsHandlerDeps {
  *   - missing artifact         → `outcome:failure value:"parse-error"` (audited)
  *   - parser throws            → `outcome:failure value:"parse-error"` (audited, never crashes)
  *   - clean empty parse        → `outcome:success value:"no-steps"` (routable; defaults to success)
- *   - foreach already expanded → `outcome:failure value:"pin-mismatch"` (audited, KTD-3)
+ *   - foreach already expanded → `outcome:success value:"already-expanded"` (audited, KTD-3)
  *   - steps parsed             → `outcome:success` (steps written through projection)
  */
 export function createParseStepsHandler(deps: ParseStepsHandlerDeps): WorkflowNodeHandler {
@@ -628,11 +628,15 @@ export function createParseStepsHandler(deps: ParseStepsHandlerDeps): WorkflowNo
     // Pin protection (KTD-3): re-parsing after a foreach has expanded is illegal.
     try {
       if (deps.hasExpandedForeach && (await deps.hasExpandedForeach(ctx.task))) {
+        /*
+        FNXC:WorkflowResume 2026-06-29-08:02:
+        Engine restart/retry re-enters the workflow from the start node, so `parse-steps` can be reached after a foreach already has persisted instance pins. That is a resume boundary, not a fatal graph error: preserve the pinned step list by not rewriting steps, then let foreach continue from its persisted instances. Probe exceptions still fail closed below because the engine cannot prove pins are valid.
+        */
         audit(
-          "pin-mismatch",
-          `parse-steps node '${node.id}' reached after a foreach already expanded for task ${ctx.task.id}`,
+          "pin-resume",
+          `parse-steps node '${node.id}' reached after a foreach already expanded for task ${ctx.task.id}; preserving pinned steps`,
         );
-        return { outcome: "failure", value: "pin-mismatch" };
+        return { outcome: "success", value: "already-expanded" };
       }
     } catch (err) {
       // A pin-probe failure must fail closed (never silently re-parse).

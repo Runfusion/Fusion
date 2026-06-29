@@ -498,6 +498,7 @@ export class WorkflowGraphExecutor {
             task,
             runId,
             steps,
+            getLiveSteps: () => this.resolveTaskSteps(task),
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
               this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig),

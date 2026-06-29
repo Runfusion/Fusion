@@ -145,17 +145,16 @@ describe("parse-steps node handler (U12, KTD-12)", () => {
     expect(written).toEqual([[]]);
   });
 
-  it("pin protection: parse after a foreach expanded → pin-mismatch failure, no write", async () => {
+  it("pin protection: parse after a foreach expanded resumes without rewriting steps", async () => {
     const { deps, written, audits } = makeDeps({
       hasExpandedForeach: async () => true,
     });
-    const ir = parseIr("step-headings", undefined, [
-      { from: "parse", to: "end", condition: "outcome:pin-mismatch" },
-    ]);
+    const ir = parseIr("step-headings");
     const result = await runParse(ir, deps);
     expect(written).toHaveLength(0);
-    expect(result.context["node:parse:value"]).toBe("pin-mismatch");
-    expect(audits.some((a) => a.reason === "pin-mismatch")).toBe(true);
+    expect(result.outcome).toBe("success");
+    expect(result.context["node:parse:value"]).toBe("already-expanded");
+    expect(audits.some((a) => a.reason === "pin-resume")).toBe(true);
   });
 
   it("default workflow parity: registry step-headings == direct parseStepHeadings call", async () => {

@@ -143,6 +143,26 @@ describe("WorkflowGraphExecutor foreach (U3)", () => {
     expect(executedStepIndexes).toEqual([3]);
   });
 
+  it("resume consults live steps before running a stale in-progress instance", async () => {
+    const exec = vi.fn(async () => ({ outcome: "failure" as const, value: "should-not-run" }));
+    const seams = baseSeams({ stepExecute: exec });
+    const executor = new WorkflowGraphExecutor({
+      seams,
+      getTaskSteps: async () => [
+        { name: "Step 1", status: "done" },
+        { name: "Step 2", status: "done" },
+      ] as TaskStep[],
+    });
+    const result = await executor.run(
+      taskWithStepStatuses(["done", "in-progress"]),
+      settingsOn(),
+      foreachIr(singleExecuteTemplate()),
+    );
+
+    expect(result.outcome).toBe("success");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it("resume skips mixed done and skipped instances and runs pending steps only", async () => {
     const executedStepIndexes: number[] = [];
     const seams = baseSeams({

@@ -12,6 +12,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
 import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, isSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget } from "@fusion/core";
+import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
 import {
@@ -4558,6 +4559,7 @@ export class TaskExecutor {
           getWorkflowDefinition: async (id: string) =>
             (await this.store.getWorkflowDefinition?.(id))
               ?? (id === "builtin:coding" ? getBuiltinWorkflow("builtin:coding") : undefined),
+          getTask: (taskId: string) => this.store.getTask(taskId),
         },
         runId: resolvedRunId,
         primitives: this.createAuthoritativeWorkflowPrimitives(settings),
@@ -4683,6 +4685,9 @@ export class TaskExecutor {
         await this.handleGraphFailure(task, result);
       } else if (result.disposition === "completed") {
         const live = await this.store.getTask(task.id).catch(() => task);
+        if ((live as TaskDetail).mergeDetails?.mergeConfirmed === true && (live as TaskDetail).column !== "done") {
+          await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "graph-completed");
+        }
         if ((live.graphResumeRetryCount ?? 0) !== 0) {
           await this.store.updateTask(task.id, { graphResumeRetryCount: 0 }, this.getRunContextFor(task.id));
         }
@@ -5452,6 +5457,22 @@ export class TaskExecutor {
       if (this.graphStepRunOnce.get(task.id) === phase) {
         this.graphStepRunOnce.delete(task.id);
       }
+      /*
+      FNXC:WorkflowExecution 2026-06-29-09:01:
+      Stepwise graph execution is projection-driven: a shared implementation pass can complete every task step and pass deterministic verification without using the legacy monolithic `task_done` sentinel. If the target step is already terminal in Task.steps[], the workflow node succeeds and the graph continues to its review/merge nodes instead of converting stale legacy completion failure into `steps#N:step-execute`.
+      */
+      try {
+        const live = await this.store.getTask(task.id);
+        const status = live.steps[stepIndex]?.status;
+        if (status === "done" || status === "skipped") {
+          executorLog.warn(
+            `${task.id}: graph step ${stepIndex} completed in projection despite implementation-pass error; continuing workflow (${err instanceof Error ? err.message : String(err)})`,
+          );
+          return { success: true };
+        }
+      } catch {
+        // Fall through to the original failure value below.
+      }
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
 
@@ -5591,6 +5612,18 @@ export class TaskExecutor {
           return { outcome: "failure" };
         }
         const live = await this.store.getTask(task.id);
+        /*
+        FNXC:WorkflowResume 2026-06-29-08:53:
+        `step-execute` is a workflow node and must be idempotent on replay. If the live projection already says this foreach instance is terminal, return success before invoking the step runner so retries/restarts cannot fail a fully completed task on a stale step snapshot.
+        */
+        const liveStatus = live.steps[stepIndex]?.status;
+        if (liveStatus === "done" || liveStatus === "skipped") {
+          return {
+            outcome: "success",
+            value: "step-already-terminal",
+            data: { status: liveStatus },
+          };
+        }
         const worktreePath = active.worktreePath || live.worktree || this.rootDir;
         this.graphStepActiveContext.set(this.graphActiveContextKey(task.id, active.instanceId), active);
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
@@ -5721,6 +5754,33 @@ export class TaskExecutor {
             return { outcome: "failure", value: "merge-timeout", data: { status: "timeout" } };
           }
           if (result.merged || result.noOp) {
+            /*
+            FNXC:WorkflowMerge 2026-06-29-09:24:
+            The workflow merge primitive owns the normal lifecycle transition after a graph merge node succeeds. Finalize the proven landed task here so `mergeConfirmed` cannot strand a card in `in-progress`; executor preflight recovery is only a fallback for rows already stranded by older runs.
+            */
+            const finalization = await finalizeProvenAutoMergeTask({
+              store: this.store,
+              taskId: task.id,
+              result,
+              audit: createRunAuditor(this.store, {
+                runId: ctx.run.runId,
+                agentId: "executor",
+                taskId: task.id,
+                taskLineageId: task.lineageId,
+                phase: "workflow-merge",
+              }),
+              auditAgentId: "executor",
+              auditPhase: "workflow-merge",
+              source: "workflow-graph-merge-finalize",
+              log: (message) => executorLog.warn(message),
+            });
+            if (finalization.outcome === "blocked" || finalization.outcome === "missing") {
+              return {
+                outcome: "failure",
+                value: `merge-finalize-${finalization.outcome}`,
+                data: { status: "failed", reason: finalization.reason ?? finalization.outcome },
+              };
+            }
             return {
               outcome: "success",
               value: result.noOp ? "merge-noop" : "merged",
@@ -6409,6 +6469,138 @@ export class TaskExecutor {
     };
   }
 
+  private async ensureGraphCustomNodeWorktree(
+    task: TaskDetail,
+    settings: Settings,
+    nodeId: string,
+  ): Promise<TaskDetail> {
+    /*
+    FNXC:WorkflowExecution 2026-06-29-08:21:
+    Custom graph nodes can be the first executable node in a workflow. If such a node is coding/script-capable, acquire the same task worktree the legacy executor would have acquired instead of failing with `no-worktree-for-write-node`; the node remains isolated from main and CE `plan` can run first.
+    */
+    if (this.workspaceConfig === undefined) {
+      this.workspaceConfig = await loadWorkspaceConfig(this.rootDir);
+    }
+    if (this.workspaceConfig && (this.workspaceConfig.repos.length ?? 0) > 0) {
+      return task;
+    }
+
+    const syntheticRunId = generateSyntheticRunId("workflow-node-worktree", task.id);
+    const audit = createRunAuditor(this.store, {
+      runId: syntheticRunId,
+      agentId: task.assignedAgentId ?? "executor",
+      taskId: task.id,
+      phase: "execute",
+    });
+    const commandAbortController = new AbortController();
+    this.registerConfiguredCommandController(task.id, commandAbortController);
+    try {
+      await this.store.logEntry(
+        task.id,
+        `Workflow node '${nodeId}' requires a task worktree — acquiring worktree before node execution`,
+        undefined,
+        this.getRunContextFor(task.id),
+      );
+      const acquisition = await acquireTaskWorktree({
+        task,
+        rootDir: this.rootDir,
+        store: this.store,
+        settings,
+        pool: this.options.pool,
+        logger: executorLog,
+        audit,
+        runContext: this.getRunContextFor(task.id),
+        runInitCommand: true,
+        createWorktree: this.createWorktree.bind(this),
+        runConfiguredCommand: (command, cwd, timeoutMs, env) =>
+          runConfiguredCommand(
+            command,
+            cwd,
+            timeoutMs,
+            env,
+            audit,
+            commandAbortController.signal,
+          ).then((result) => {
+            if (commandAbortController.signal.aborted) {
+              throw this.createConfiguredCommandAbortError(task.id, command);
+            }
+            return result;
+          }),
+        taskEnv: process.env,
+        secretsStore: this.options.secretsStore,
+      });
+      this.addActiveWorktree(task.id, acquisition.worktreePath);
+      if (!acquisition.isResume) {
+        await this.captureBaseCommitSha(task, acquisition.worktreePath, audit, { isResume: false });
+      }
+      this.options.onStart?.(task, acquisition.worktreePath);
+      executorLog.log(`${task.id}: workflow node '${nodeId}' acquired worktree at ${acquisition.worktreePath}`);
+      return await this.store.getTask(task.id);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.store.logEntry(
+        task.id,
+        `Workflow node '${nodeId}' failed to acquire task worktree: ${message}`,
+        undefined,
+        this.getRunContextFor(task.id),
+      );
+      throw error;
+    } finally {
+      this.unregisterConfiguredCommandController(task.id, commandAbortController);
+    }
+  }
+
+  private async finalizeMergeConfirmedWorkflowGraphTask(taskId: string, reason: string): Promise<boolean> {
+    const live = await this.store.getTask(taskId).catch(() => null);
+    if (!live || live.mergeDetails?.mergeConfirmed !== true || live.column === "done") return false;
+    /*
+    FNXC:WorkflowMerge 2026-06-29-08:32:
+    A workflow graph merge node can await a successful ProjectEngine merge request and return before the row reaches `done`. Merge confirmation is durable proof of landing; the executor must finalize that row from any non-terminal column instead of re-running parse or clearing mergeDetails.
+    */
+    await this.store.logEntry(
+      taskId,
+      `Workflow graph observed confirmed merge while task was '${live.column}' — finalizing to done (${reason})`,
+      undefined,
+      this.getRunContextFor(taskId),
+    );
+    const finalization = await finalizeProvenAutoMergeTask({
+      store: this.store,
+      taskId,
+      result: {
+        task: live,
+        ok: true,
+        merged: true,
+        commitSha: live.mergeDetails?.commitSha,
+        noOp: live.mergeDetails?.noOpMerge === true,
+        reason: live.mergeDetails?.noOpReason,
+        mergeConfirmed: true,
+      } as MergeResult,
+      audit: createRunAuditor(this.store, {
+        runId: generateSyntheticRunId("workflow-graph-merge-finalize", taskId),
+        agentId: "executor",
+        taskId,
+        taskLineageId: live.lineageId,
+        phase: "workflow-graph-merge-finalize",
+      }),
+      auditAgentId: "executor",
+      auditPhase: "workflow-graph-merge-finalize",
+      source: "workflow-graph-merge-finalize",
+      log: (message) => executorLog.warn(message),
+    });
+    if (finalization.outcome === "blocked") {
+      executorLog.warn(`${taskId}: workflow graph merge-confirmed finalization blocked — ${finalization.reason ?? "unknown"}`);
+      await this.store.logEntry(
+        taskId,
+        `Workflow graph merge-confirmed finalization blocked — ${finalization.reason ?? "unknown"}`,
+        undefined,
+        this.getRunContextFor(taskId),
+      );
+      return true;
+    }
+    executorLog.log(`${taskId}: workflow graph merge-confirmed task finalized (${finalization.outcome})`);
+    return true;
+  }
+
   /** Run a custom (non-seam) graph node on the proven WorkflowStep machinery.
    *
    *  `columnBinding` (plan U3) is the agent binding governing this node's
@@ -6504,17 +6696,18 @@ export class TaskExecutor {
     // main checkout and cross-contaminate other tasks. Reject such nodes until a
     // worktree exists. Read-only nodes (default toolMode) are safe against root.
     const writeCapable = cfg.toolMode === "coding" || node.kind === "script" || Boolean(scriptName) || Boolean(rawCliCommand);
-    if (writeCapable && !live.worktree) {
-      await this.store.logEntry(
-        live.id,
-        `Workflow node '${node.id}' is write-capable but no task worktree exists yet — place it after the execute seam`,
-        undefined,
-        this.getRunContextFor(live.id),
-      );
+    /*
+    FNXC:CompoundEngineering 2026-06-29-08:18:
+    Compound engineering starts with a coding-mode `ce-plan` skill node so it can load CE spawn tools before implementation. The graph custom-node path must therefore bootstrap the task worktree itself; requiring an earlier execute seam makes the built-in CE workflow fail at node `plan` before it can start.
+    */
+    const executionTarget = writeCapable && !live.worktree
+      ? await this.ensureGraphCustomNodeWorktree(live, settings, node.id)
+      : live;
+    if (writeCapable && !executionTarget.worktree && !this.workspaceConfig) {
       return { outcome: "failure", value: "no-worktree-for-write-node" };
     }
 
-    const worktreePath = live.worktree || this.rootDir;
+    const worktreePath = executionTarget.worktree || this.rootDir;
     let prompt = typeof cfg.prompt === "string" ? cfg.prompt : "";
     let modelProvider = typeof cfg.modelProvider === "string" && cfg.modelProvider.trim() ? cfg.modelProvider : undefined;
     let modelId = typeof cfg.modelId === "string" && cfg.modelId.trim() ? cfg.modelId : undefined;
@@ -6685,7 +6878,7 @@ export class TaskExecutor {
     if (executorKind === "cli" && prompt) {
       nodeEnv = { ...process.env, FUSION_NODE_PROMPT: prompt };
     } else if (mode === "prompt") {
-      const injected = await this.buildInjectedRuntimeEnv(live.id, worktreePath, live.branch ?? undefined);
+      const injected = await this.buildInjectedRuntimeEnv(live.id, worktreePath, executionTarget.branch ?? undefined);
       nodeEnv = injected.env;
       executorLog.log(
         `${live.id}: graph node '${node.id}' runtime env injected (${injected.pathEntryCount} PATH entries, ${injected.injectedKeyCount} env keys)`,
@@ -7377,6 +7570,12 @@ export class TaskExecutor {
         return;
       }
       const live = loadedLive;
+      if (live.mergeDetails?.mergeConfirmed === true && live.column !== "done") {
+        if (await this.finalizeMergeConfirmedWorkflowGraphTask(live.id, "graph-failure")) {
+          await this.persistTokenUsage(task.id);
+          return;
+        }
+      }
       // A paused/aborted implementation is not a graph failure while the task
       // is still in-progress — leave the pause machinery in charge instead of
       // parking the task in review.
@@ -8135,6 +8334,14 @@ export class TaskExecutor {
     // executor can still recover by falling through to the fresh-worktree
     // path below, but we emit a loud audit record so these states stop being
     // silent.
+    if (task.column === "in-progress" && task.mergeDetails?.mergeConfirmed === true) {
+      if (await this.finalizeMergeConfirmedWorkflowGraphTask(task.id, "execute-preflight")) {
+        this.executing.delete(task.id);
+        executingTaskLock.release(task.id);
+        return;
+      }
+    }
+
     if (task.column === "in-progress" && task.mergeDetails) {
       executorLog.warn(`${task.id}: stale mergeDetails found while executing in-progress task — resetting merge state before continuing`);
       task = await this.cleanupMergeStateForReverification(

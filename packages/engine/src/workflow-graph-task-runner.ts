@@ -66,6 +66,7 @@ export interface WorkflowGraphTaskRunResult {
 export interface WorkflowGraphRunnerStore {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
   getWorkflowDefinition(id: string): Promise<WorkflowDefinition | undefined>;
+  getTask?(taskId: string): Promise<TaskDetail>;
 }
 
 export interface WorkflowGraphTaskRunnerDeps {
@@ -274,6 +275,11 @@ export class WorkflowGraphTaskRunner {
         runCode: this.deps.runCode,
         notifyDispatch: this.deps.notifyDispatch,
         prNodes: this.deps.prNodes,
+        /*
+        FNXC:WorkflowResume 2026-06-29-08:49:
+        Production graph runs must fetch live task steps during foreach replay. The runner is the workflow boundary that has store access, so it supplies the fresh projection seam instead of making executor self-healing guess after a stale step node fails.
+        */
+        getTaskSteps: async (stepTask) => (await this.deps.store.getTask?.(stepTask.id))?.steps ?? stepTask.steps ?? [],
         // Step-inversion (KTD-11, U10): worktree isolation + parallel scheduling.
         allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
         resolveIntegrationBase: this.deps.resolveIntegrationBase,

@@ -131,6 +131,8 @@ export interface ForeachEnvironment {
   runId: string;
   /** Fresh step list (KTD-3: read at expansion, count pinned). */
   steps: TaskStep[];
+  /** Optional live step projection reader used during restart/replay checks. */
+  getLiveSteps?: () => Promise<TaskStep[]> | TaskStep[];
   /** The shared walk context; the active-instance key is threaded in/out of it. */
   context: Record<string, unknown>;
   /**
@@ -413,12 +415,12 @@ export async function runForeach(
       return { outcome: "failure", value: "aborted", visitedNodeIds };
     }
 
-    /**
-     * Engine restart resume semantics: shared-isolation foreach replays the
-     * graph from the foreach node, but task steps already persisted as terminal
-     * must not re-run their step-execute instance handlers.
-     */
-    const stepStatus = env.steps[stepIndex]?.status;
+    /*
+    FNXC:WorkflowResume 2026-06-29-08:49:
+    The workflow graph owns step replay after engine restarts. A shared-isolation foreach pins the step count at expansion, but must read the live projection before each instance so a completed task does not re-run a stale step snapshot and fail on an already-finished `step-execute` node.
+    */
+    const liveSteps = await Promise.resolve(env.getLiveSteps?.() ?? env.steps).catch(() => env.steps);
+    const stepStatus = liveSteps[stepIndex]?.status ?? env.steps[stepIndex]?.status;
     if (stepStatus === "done" || stepStatus === "skipped") {
       schedulerLog.log(
         `foreach ${foreachNode.id} for task ${env.task.id}: skipping step ${stepIndex} — already ${stepStatus}`,

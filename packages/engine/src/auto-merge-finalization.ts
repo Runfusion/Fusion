@@ -20,7 +20,7 @@ export interface FinalizeProvenAutoMergeTaskOptions {
   audit?: RunAuditor;
   auditAgentId?: string;
   auditPhase?: string;
-  source: "direct-ai-merge" | "merge-confirmed-fast-path" | "self-healing";
+  source: "direct-ai-merge" | "merge-confirmed-fast-path" | "self-healing" | "workflow-graph-merge-finalize";
   log?: (message: string) => void | Promise<void>;
 }
 
@@ -123,7 +123,11 @@ export async function finalizeProvenAutoMergeTask({
 
   const hardBlocker = getTaskHardMergeBlocker({
     ...latest,
-    column: latest.column === "todo" ? "in-review" : latest.column,
+    /*
+    FNXC:WorkflowMerge 2026-06-29-09:15:
+    Proven merge finalization is a recovery path: durable `mergeConfirmed` means the branch already landed, even if a workflow graph crash left the card in `in-progress` or `todo`. Evaluate hard blockers as review-eligible so the column mismatch itself does not block the recovery rehome to `done`; real blockers such as paused/error/incomplete steps still apply.
+    */
+    column: "in-review",
     paused: false,
     status: latest.status === "merging" || latest.status === "merging-pr" || latest.status === "queued" ? undefined : latest.status,
     error: undefined,
