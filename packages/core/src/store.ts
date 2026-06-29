@@ -16135,8 +16135,17 @@ ${stepsSection}`;
       this._archiveDb = null;
     }
     if (this.secretsCentralCore) {
-      void this.secretsCentralCore.close();
+      // Await the secrets central core close: CentralCore.close() is async, so a
+      // fire-and-forget call would let close() resolve while the secrets SQLite
+      // handle is still draining on a later microtask, racing temp-root cleanup
+      // under the loaded package test lane. Await it like the other handles above.
+      const secretsCentralCore = this.secretsCentralCore;
       this.secretsCentralCore = null;
+      try {
+        await secretsCentralCore.close();
+      } catch (err) {
+        console.warn(`[fusion] Could not close secrets central core on TaskStore close:`, err);
+      }
     }
     this.secretsStore = null;
     if (this.pluginStore) {
