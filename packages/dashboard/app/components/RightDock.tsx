@@ -148,6 +148,16 @@ export function RightDock({
     }
   }, [selectedKey, visibilityOptions]);
 
+  useEffect(() => {
+    if (!dockTask) return;
+    /*
+    FNXC:RightDockTasks 2026-06-28-16:55:
+    Programmatic dock-task opens (for example board-card clicks) land on the dedicated Tasks tab without lifting selectedKey to the controller. Persisting `tasks` restores the same first-class dock surface while keeping the no-storage default as Files.
+    */
+    setSelectedKey("tasks");
+    persistRightDockView("tasks");
+  }, [dockTask]);
+
   const selectedEntry = (findOverflowViewEntry(selectedKey, visibilityOptions)?.render
     ? findOverflowViewEntry(selectedKey, visibilityOptions)
     : findOverflowViewEntry("files", visibilityOptions)) ?? entries.find((entry) => entry.render);
@@ -160,13 +170,12 @@ export function RightDock({
     }
     if (!entry?.render) return;
     /*
-    FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
-    Selecting any normal right-dock tab leaves the task-detail overlay surface and restores the last overflow-view body. This avoids stacking task detail over Files/Goals and prevents orphaned task headers after the user intentionally switches dock context.
+    FNXC:RightDockTasks 2026-06-28-16:58:
+    Tab switches no longer clear the dock-task snapshot. Detail is anchored to the Tasks tab, so selecting Files/Chat hides the detail while preserving the last-viewed task for when the user returns to Tasks.
     */
-    onCloseDockTask?.();
     setSelectedKey(key);
     persistRightDockView(key);
-  }, [onCloseDockTask, renderProps, visibilityOptions]);
+  }, [renderProps, visibilityOptions]);
 
   const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -236,7 +245,11 @@ export function RightDock({
   }
 
   const SelectedIcon = selectedEntry.icon;
-  const showingDockTask = Boolean(dockTask && dockTaskContent);
+  /*
+  FNXC:RightDockTasks 2026-06-28-17:00:
+  Task detail is visible only on the Tasks tab; other tabs render their own registry bodies while the task snapshot persists in the controller. Back/close clears the snapshot and leaves the selected Tasks body to render the list.
+  */
+  const showingDockTask = Boolean(dockTask && dockTaskContent && selectedKey === "tasks");
   const dockWidth = `${width}px`;
   const expandSelectedViewLabel = t("rightDock.expandView", "Expand {{label}}", { label: selectedEntry.label });
   const closeDockTaskLabel = t("rightDock.closeTaskDetail", "Back to right dock views");
@@ -340,6 +353,9 @@ export function RightDock({
             {/*
             FNXC:RightDockFiles 2026-06-23-00:50:
             Thread the live dock width down to registry render functions as `dockWidth` (alongside surface="dock") so a view can deterministically choose its wide layout from the actual dock size. The Files entry uses this to force two-pane when the dock is wide enough, sidestepping the @container query that never reliably fired in the narrow-vs-wide dock body.
+
+            FNXC:RightDockTasks 2026-06-28-17:02:
+            The Tasks tab without an active snapshot falls through to its registry render, which is the compact DockTaskList. Only a selected Tasks tab with live dockTaskContent replaces this body with TaskDetailContent.
             */}
             {showingDockTask ? dockTaskContent : selectedEntry.render?.({ ...renderProps, surface: "dock", dockWidth: width })}
           </div>

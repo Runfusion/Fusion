@@ -2,6 +2,7 @@ import { Suspense, lazy, type ComponentType, type ReactNode } from "react";
 import {
   CheckSquare,
   Folder,
+  ListTodo,
   GitBranch,
   GitPullRequest,
   History,
@@ -21,6 +22,7 @@ import { PageErrorBoundary } from "./ErrorBoundary";
 import { getPluginNavIcon } from "./pluginNavIcon";
 import { ActivityLogModal } from "./ActivityLogModal";
 import { GitManagerModal } from "./GitManagerModal";
+import { DockTaskList } from "./DockTaskList";
 
 /*
 FNXC:Navigation 2026-06-22-00:40:
@@ -36,6 +38,7 @@ export type OverflowViewKey =
   | "usage"
   | "activity-log"
   | "git-manager"
+  | "tasks"
   | "files"
   | "chat"
   | "devserver"
@@ -75,6 +78,7 @@ export interface OverflowViewRenderProps {
   pluginContext?: PluginDashboardViewContext;
   onOpenSettings?: (section?: string) => void;
   onOpenTaskDetail?: (taskId: string) => void;
+  onOpenTaskInDock?: (task: Task | TaskDetail) => void;
   onOpenDetail?: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
   onSendSelectionToTask?: (description: string) => void;
   onCreateTaskFromInsight?: (payload: { insightId: string; title: string; description: string }) => Promise<void> | void;
@@ -139,7 +143,27 @@ FNXC:Navigation 2026-06-22-00:00:
 Right-dock tools render INLINE inside the dock container, not as popup modals: usage, activity-log, and git-manager use each modal's `presentation="embedded"` mode instead of launching an overlay. (github-import and automation remain launcher actions here only until their left-sidebar/main destinations land, then they leave the dock.)
 */
 export const STATIC_OVERFLOW_VIEW_ENTRIES: readonly OverflowViewEntry[] = [
-  /* FNXC:Navigation 2026-06-22-00:20: Files is the first/default right-dock tool. */
+  /*
+  FNXC:RightDockTasks 2026-06-28-16:45:
+  Tasks is the leading right-dock inline view, but the persisted/default selection remains Files. It hosts the compact task list on both dock and expand surfaces; the dock-only detail surface is selected by RightDock when a task snapshot exists.
+  */
+  {
+    key: "tasks",
+    label: "Tasks",
+    icon: ListTodo,
+    testId: "right-dock-tab-tasks",
+    render: (props) => wrapOverflowView(
+      <DockTaskList
+        tasks={props.tasks ?? []}
+        projectId={props.projectId}
+        onOpenTask={props.onOpenTaskInDock}
+        addToast={props.addToast}
+        prAuthAvailable={false}
+        autoMergeEnabled={false}
+      />,
+    ),
+  },
+  /* FNXC:Navigation 2026-06-22-00:20: Files remains the default right-dock tool when no valid stored view exists. */
   {
     key: "files",
     label: "Files",

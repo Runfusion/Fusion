@@ -186,6 +186,11 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
         .then((task) => input.openDetailTask(task as TaskDetail))
         .catch((error) => input.addToast(error instanceof Error ? error.message : "Failed to open task detail", "error"));
     },
+    /*
+    FNXC:RightDockTasks 2026-06-28-17:05:
+    DockTaskList rows must open the in-dock Tasks detail, not the canonical full task modal. Thread the existing dock snapshot setter into registry render props so both compact and expanded Tasks lists route TaskCard's internal open action to the Tasks tab.
+    */
+    onOpenTaskInDock: openTaskInDock,
     onOpenDetail: input.openDetailTask,
     onSendSelectionToTask: input.onSendSelectionToTask,
     onCreateTaskFromInsight: input.onCreateTaskFromInsight,
@@ -195,7 +200,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     renderTaskCard,
     subscribePluginEvents: input.subscribePluginEvents,
     openFile: input.openFileInBrowser,
-  }), [input, renderTaskCard]);
+  }), [input, openTaskInDock, renderTaskCard]);
 
   const dockTaskContent = resolvedDockTask ? (
     /*

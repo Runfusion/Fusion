@@ -1,0 +1,36 @@
+.dock-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-sm);
+}
+
+.dock-task-list__row {
+  min-width: 0;
+}
+
+.dock-task-list--empty {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--text-muted);
+  padding: var(--space-lg);
+}
+
+.dock-task-list__empty-title,
+.dock-task-list__empty-copy {
+  margin: 0;
+}
+
+.dock-task-list__empty-title {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.dock-task-list__empty-copy {
+  max-width: calc(var(--space-xl) * 12);
+  font-size: var(--font-size-sm);
+}

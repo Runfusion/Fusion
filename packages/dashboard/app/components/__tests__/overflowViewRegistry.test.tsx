@@ -12,6 +12,7 @@ describe("overflowViewRegistry", () => {
     const keys = entries.map((entry) => entry.key);
 
     expect(keys).toEqual([
+      "tasks",
       "files",
       "chat",
       "activity-log",
@@ -22,6 +23,7 @@ describe("overflowViewRegistry", () => {
       "pull-requests",
     ]);
     expect(entries.map((entry) => entry.label)).toEqual([
+      "Tasks",
       "Files",
       "Chat",
       "Activity Log",
@@ -40,7 +42,7 @@ describe("overflowViewRegistry", () => {
     const keys = getVisibleOverflowViewEntries().map((entry) => entry.key);
 
     // devserver requires experimentalFeatures.devServerView; todos requires todosEnabled.
-    expect(keys).toEqual(["files", "chat", "activity-log", "git-manager", "secrets", "pull-requests"]);
+    expect(keys).toEqual(["tasks", "files", "chat", "activity-log", "git-manager", "secrets", "pull-requests"]);
     expect(keys).not.toContain("devserver");
     expect(keys).not.toContain("todos");
     // Usage moved back to the top header; it is no longer a right-dock key.
@@ -108,6 +110,7 @@ describe("overflowViewRegistry", () => {
       pluginDashboardViews,
     });
     expect(entries.map((entry) => entry.key)).toEqual([
+      "tasks",
       "files",
       "chat",
       "activity-log",
