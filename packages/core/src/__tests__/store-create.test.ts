@@ -708,12 +708,15 @@ describe("TaskStore", () => {
       // Title not set synchronously
       expect(task.title).toBeUndefined();
 
-      // Wait for async summarization
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      // Verify title and PROMPT.md were updated
-      const updatedTask = await store.getTask(task.id);
-      expect(updatedTask.title).toBe("Generated Task Title");
+      // FNXC:CoreTests 2026-06-28-17:30: Await the deferred title-summarization write
+      // deterministically via vi.waitFor instead of a fixed real-time sleep (FN-5048:
+      // prefer deterministic polling over wall-clock waits — the old fixed 10ms wait was
+      // a latent under-load flake and pure wall-clock cost).
+      let updatedTask!: Task;
+      await vi.waitFor(async () => {
+        updatedTask = await store.getTask(task.id);
+        expect(updatedTask.title).toBe("Generated Task Title");
+      });
       expect(updatedTask.prompt).toMatch(/^# FN-\d+: Generated Task Title\n/);
     });
 
@@ -730,31 +733,45 @@ describe("TaskStore", () => {
       expect(task.title).toBeUndefined();
       expect(task.description).toBe(originalDescription);
 
-      // Wait for async summarization
-      await new Promise((resolve) => setTimeout(resolve, 10));
-
-      const updatedTask = await store.getTask(task.id);
-      expect(updatedTask.title).toBe("AI Summary Title");
+      // FNXC:CoreTests 2026-06-28-17:30: Deterministic await of the deferred summarization
+      // write (vi.waitFor) replaces a fixed real-time sleep (FN-5048).
+      let updatedTask!: Task;
+      await vi.waitFor(async () => {
+        updatedTask = await store.getTask(task.id);
+        expect(updatedTask.title).toBe("AI Summary Title");
+      });
       expect(updatedTask.description).toBe(originalDescription);
     });
 
     it("should not overwrite user-set title during async summarization", async () => {
+      // FNXC:CoreTests 2026-06-28-17:30: Drive create-vs-update ordering deterministically
+      // with a release gate instead of racing real setTimeout sleeps (FN-5048). onSummarize
+      // blocks on `summarizeGate` so the user's updateTask is guaranteed to land first; the
+      // deferred task-created hook (always invoked after the summarization chain) signals
+      // when the race-guarded post-summarization write attempt has fully settled, making the
+      // negative assertion timing-independent rather than dependent on a 50ms/100ms sleep.
+      let releaseSummarize!: () => void;
+      const summarizeGate = new Promise<void>((resolve) => {
+        releaseSummarize = resolve;
+      });
       const mockOnSummarize = vi.fn().mockImplementation(async () => {
-        // Simulate slow AI response
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await summarizeGate;
         return "AI Title";
       });
+      const taskCreatedHook = vi.fn();
+      setTaskCreatedHook(taskCreatedHook);
 
       const task = await store.createTask(
         { description: "a".repeat(201) },
         { onSummarize: mockOnSummarize, settings: { autoSummarizeTitles: true } }
       );
 
-      // Immediately update with user title
+      // User title lands before summarization is permitted to resolve.
       await store.updateTask(task.id, { title: "User Title" });
 
-      // Wait for delayed onSummarize to resolve
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Release the gated summarization and wait for the full deferred chain to settle.
+      releaseSummarize();
+      await vi.waitFor(() => expect(taskCreatedHook).toHaveBeenCalled());
 
       // Title should still be "User Title" (race guard should have prevented overwrite)
       const updatedTask = await store.getTask(task.id);
