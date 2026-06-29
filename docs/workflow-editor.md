@@ -170,7 +170,7 @@ Fusion ships built-in workflows as read-only references:
 - `builtin:quick-fix` — a short path for trivial or no-commit/decision work.
 - `builtin:review-heavy` — a standard execute/review/merge path with an additional gated security review.
 - `builtin:compound-engineering` — a plugin-gated Compound Engineering pipeline: `/ce-plan` writes the CE plan doc, optional `ce-doc-review` can pressure-test plans (markdown gets autofix/Open Questions write-back; HTML uses DOM-safe helper mutations, including canonical checklist repair, only when safety is proven and otherwise report-only with no write), `/ce-work` implements, `/ce-code-review` gates merge, and autoMerge-off projects route through the CE PR/feedback skills before Fusion's manual merge seam.
-- `builtin:stepwise-coding` — Coding (per-step review): a graph variant with optional Plan Review before execution and per-step parse, execute, review, and rework structure.
+- `builtin:stepwise-coding` — Coding (per-step review): a graph variant with optional Plan Review before execution, per-step parse/execute/review/rework, and optional final Code Review before the final review/merge region.
 - `builtin:design` — a UI-heavy work path with a gated design/UX review before standard review and merge.
 
 Built-ins can be viewed, exported, and used as templates, but their graph, columns, field declarations, and setting declarations are not editable. Their per-project setting **values** are editable from the Settings panel's Values tab. Selectable built-ins all use a capacity-released queue column (`todo` or a workflow-specific backlog) that dispatches to the active WIP column through the standard hold/release sweep.

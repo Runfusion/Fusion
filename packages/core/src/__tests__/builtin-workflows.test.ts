@@ -86,6 +86,11 @@ describe("built-in workflows", () => {
     expect(ir.nodes.some((n) => n.id === "plan-review" && n.kind === "optional-group")).toBe(true);
     expect(ir.edges.some((edge) => edge.from === "plan" && edge.to === "plan-review")).toBe(true);
     expect(ir.edges.some((edge) => edge.from === "plan-review" && edge.to === "parse")).toBe(true);
+    expect(ir.nodes.some((n) => n.id === "browser-verification" && n.kind === "optional-group")).toBe(true);
+    expect(ir.nodes.some((n) => n.id === "code-review" && n.kind === "optional-group")).toBe(true);
+    expect(ir.edges.some((edge) => edge.from === "steps" && edge.to === "browser-verification" && edge.condition === "success")).toBe(true);
+    expect(ir.edges.some((edge) => edge.from === "browser-verification" && edge.to === "code-review" && edge.condition === "success")).toBe(true);
+    expect(ir.edges.some((edge) => edge.from === "code-review" && edge.to === "review" && edge.condition === "success")).toBe(true);
     const foreach = ir.nodes.find((n) => n.kind === "foreach");
     expect(foreach).toBeDefined();
     const template = (
@@ -128,6 +133,15 @@ describe("built-in workflows", () => {
       expect.objectContaining({ from: "step-execute", to: "step-done", condition: "success" }),
     ]);
     expect(template.edges.some((edge) => edge.kind === "rework")).toBe(false);
+  });
+
+  it("all coding built-ins expose Browser Verification as an optional group", () => {
+    for (const workflowId of ["builtin:coding", "builtin:legacy-coding", "builtin:stepwise-coding"]) {
+      const workflow = getBuiltinWorkflow(workflowId)!;
+      const browserVerification = workflow.ir.nodes.find((node) => node.id === "browser-verification");
+      expect(browserVerification?.kind, workflowId).toBe("optional-group");
+      expect(browserVerification?.config?.defaultOn, workflowId).toBe(false);
+    }
   });
 
   it("includes the PR lifecycle built-in wiring the PR nodes end to end (U9)", () => {
