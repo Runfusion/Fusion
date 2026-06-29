@@ -2533,6 +2533,48 @@ describe("TaskChatTab", () => {
     expect(mainContentSource).toContain("<TaskDetailContent");
   });
 
+  it("keeps task detail chat block inner padding tokenized across text, tool, and thinking surfaces", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const entryRule = getCssRuleBlock(css, ".task-chat-entry");
+    const userRule = getCssRuleBlock(css, ".task-chat-entry--user");
+    const toolGroupRule = getCssRuleBlock(css, ".task-chat-tool-group");
+    const toolSummaryRule = getCssRuleBlock(getCssAfter(css, "FN-7215 aligns task-detail tool-call summaries"), ".task-chat-tool-group-summary");
+    const toolEntriesRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap"), ".task-chat-tool-group-entries");
+    const toolEntryRule = getCssRuleBlock(css, ".task-chat-tool-entry");
+    const thinkingRule = getCssRuleBlock(css, ".task-chat-thinking");
+    const thinkingBodyRule = getCssRuleBlock(css, ".task-chat-thinking-body");
+    const toolDetailRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-detail {"), ".task-chat-tool-detail");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileBlockPaddingCss = getCssAfter(mobileCss, ".task-chat-entry,\n  .task-chat-tool-group,\n  .task-chat-thinking");
+    const mobileEntryRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-entry");
+    const mobileToolGroupRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-tool-group");
+    const mobileThinkingRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-thinking");
+    const mobileToolEntryRule = getCssRuleBlock(mobileCss, ".task-chat-tool-entry");
+
+    expect(entryRule).toContain("box-sizing: border-box");
+    expect(entryRule).toContain("padding: var(--space-md)");
+    expect(userRule).not.toContain("padding");
+    expect(toolGroupRule).toContain("box-sizing: border-box");
+    expect(toolGroupRule).toContain("padding: var(--space-md)");
+    expect(thinkingRule).toContain("box-sizing: border-box");
+    expect(thinkingRule).toContain("padding: var(--space-md)");
+    expect(toolSummaryRule).toContain("padding: var(--space-xs)");
+    expect(toolEntriesRule).toContain("padding: 0 var(--space-xs) var(--space-xs)");
+    expect(thinkingBodyRule).toContain("padding: 0 var(--space-md) var(--space-md)");
+    expect(toolEntryRule).toContain("box-sizing: border-box");
+    expect(toolEntryRule).toContain("padding: var(--space-sm)");
+    expect(toolDetailRule).toContain("box-sizing: border-box");
+    expect(toolDetailRule).toContain("padding: var(--space-xs)");
+    expect(mobileEntryRule).toContain("padding: var(--space-sm)");
+    expect(mobileToolGroupRule).toContain("padding: var(--space-sm)");
+    expect(mobileThinkingRule).toContain("padding: var(--space-sm)");
+    expect(mobileToolEntryRule).toContain("padding: var(--space-xs)");
+    for (const rule of [entryRule, toolGroupRule, toolEntryRule, thinkingRule, toolDetailRule, mobileEntryRule]) {
+      expect(rule).not.toContain("px");
+      expect(rule).not.toContain("#");
+    }
+  });
+
   it("keeps task chat timestamp styling tokenized and mobile-safe", () => {
     const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
     const groupMetaRule = getCssRuleBlock(css, ".task-chat-group-meta");
