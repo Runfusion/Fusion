@@ -100,6 +100,30 @@ describe("runGraphTaskStep (FIX 3)", () => {
     expect(result.success).toBe(true);
   });
 
+  it("does not force step-session mode for final-review coding steps", async () => {
+    const { executor } = makeExecutor("done", { deferDoneToReview: false });
+    executor.runImplementationPhase = vi.fn().mockResolvedValue({ taskDone: true, modifiedFiles: [] });
+
+    const result = await executor.runGraphTaskStep(task, 0, "inst-0");
+
+    /*
+     * FNXC:WorkflowStepSessions 2026-06-30-00:00:
+     * Default Coding has no per-step review, so it must let `runStepsInNewSessions` control session reuse. The graph driver should not pin StepSessionExecutor for this shape.
+     */
+    expect(result.success).toBe(true);
+    expect(executor.graphStepSessionPinned.has("FN-001")).toBe(false);
+  });
+
+  it("forces step-session mode when step-review owns done-marking", async () => {
+    const { executor } = makeExecutor("in-progress", { deferDoneToReview: true });
+    executor.runImplementationPhase = vi.fn().mockResolvedValue({ taskDone: false, modifiedFiles: [] });
+
+    const result = await executor.runGraphTaskStep(task, 0, "inst-0");
+
+    expect(result.success).toBe(true);
+    expect(executor.graphStepSessionPinned.has("FN-001")).toBe(true);
+  });
+
   // T9: a RETHINK after a SUCCESSFUL pass must clear the memoized implementation
   // so the rework re-runs implementation rather than re-awaiting the resolved memo.
   it("clears the memo on rethink reset so implementation re-runs after a successful pass", async () => {

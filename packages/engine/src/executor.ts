@@ -4377,11 +4377,12 @@ export class TaskExecutor {
    *  Doubles as the re-entrancy guard for graph routing. */
   private graphCompletionInterceptors = new Map<string, (info: { modifiedFiles: string[] }) => void>();
 
-  /** Step-inversion (KTD-2/KTD-8, U6/U8): tasks whose graph-owned step-execute
-   *  driver has pinned step-session physics for the run. Forces the step-session
-   *  path in execute() regardless of the `runStepsInNewSessions` setting, so the
-   *  graph/step-sessions flag matrix cannot select an unsupported physics combo.
-   *  Cleared when the graph run ends (maybeExecuteWorkflowGraph finally). */
+  /** Step-inversion (KTD-2/KTD-8, U6/U8): graph-owned step-execute can pin
+   *  step-session physics for workflows that need a hard per-step boundary
+   *  before step-review. Default final-review coding does not pin here and
+   *  therefore respects `runStepsInNewSessions` (reuse one session when false,
+   *  fresh per-step sessions when true). Cleared when the graph run ends
+   *  (maybeExecuteWorkflowGraph finally). */
   private graphStepSessionPinned = new Set<string>();
 
   /** Step-inversion (U6/U8): caches the per-run implementation-phase result for a
@@ -5415,17 +5416,13 @@ export class TaskExecutor {
    * The U3 stand-in ran `runImplementationPhase` once per foreach instance, which
    * re-ran the whole implementation for every step. The real driver:
    *
-   *   1. PINS step-session physics for the run (graph-owned runs force
-   *      StepSessionExecutor regardless of `runStepsInNewSessions`, KTD-2/KTD-8) —
-   *      the only path with a discrete per-step boundary (`onStepStart`/
-   *      `onStepComplete`); the monolithic single-session path has no "run one
-   *      step and return control" seam.
-   *   2. Drives the (step-session) implementation phase exactly ONCE per run,
-   *      memoized by task id. StepSessionExecutor itself walks every step in step
-   *      order inside that single pass and writes the projection per step via its
-   *      `onStepStart`/`onStepComplete` callbacks (executor.ts step-session path).
-   *      Each foreach instance's `runTaskStep` therefore observes the projection
-   *      truth for its step rather than re-running the agent per step.
+   *   1. Pins step-session physics only when the workflow needs a discrete
+   *      per-step boundary before a step-review node. Final-review coding lets
+   *      `runStepsInNewSessions` choose between one reused executor session and
+   *      fresh per-step sessions.
+   *   2. Drives the implementation phase exactly ONCE per run, memoized by task
+   *      id. Each foreach instance's `runTaskStep` observes projection truth for
+   *      its step rather than re-running the agent per step.
    *
    * Worktree/taskEnv/agent/semaphore state is threaded exactly the way
    * `runImplementationPhase` gets it — by re-entering `execute()` under a
@@ -5441,8 +5438,14 @@ export class TaskExecutor {
     instanceId?: string,
     governingNodeId?: string,
   ): Promise<{ success: boolean; error?: string }> {
-    // Pin step-session physics for the run before the implementation pass.
-    this.graphStepSessionPinned.add(task.id);
+    const active = this.foreachActiveForTask(task.id, instanceId);
+    /*
+    FNXC:WorkflowStepSessions 2026-06-30-00:00:
+    Default Coding is graph-owned stepwise execution without per-step review. It should reuse the existing executor session when the workflow setting `runStepsInNewSessions` is false, and create fresh step sessions only when that setting is true. Workflows with a step-review node still pin StepSessionExecutor because review must run between step execution and done-marking.
+    */
+    if (active?.deferDoneToReview === true) {
+      this.graphStepSessionPinned.add(task.id);
+    }
 
     // Single-flight per attempt (KTD-2/KTD-8): the implementation phase runs once
     // per run, memoized by task id, so each foreach instance's `runStep` observes
@@ -5515,7 +5518,6 @@ export class TaskExecutor {
           error: `step ${stepIndex} live task unavailable after implementation pass`,
         };
       }
-      const active = this.foreachActiveForTask(task.id, instanceId);
       const status = live.steps[stepIndex]?.status;
       if (status === "done" || status === "skipped") return { success: true };
       // Step not terminal after the pass: when a review will author done-ness
@@ -6082,11 +6084,11 @@ export class TaskExecutor {
           {
             store: this.store,
             worktreePath,
-            // U6/U8: per-step session physics — graph-owned runs force
-            // step-session mode for the run (KTD-2/KTD-8) regardless of the
-            // runStepsInNewSessions setting. The agent authors the step's commit;
-            // this driver only observes (KTD-2). Thread the instanceId so the
-            // active-context read is per-instance (parallel-foreach safe).
+            // U6/U8: graph-owned per-step physics. Per-step-review workflows
+            // pin StepSessionExecutor inside runGraphTaskStep; final-review coding
+            // honors runStepsInNewSessions and may reuse one executor session.
+            // Thread the instanceId so the active-context read is per-instance
+            // (parallel-foreach safe).
             runStep: (stepIndex) =>
               this.runGraphTaskStep(
                 seamTask,
