@@ -138,15 +138,30 @@ The global `.description-with-refine textarea { padding-right: 70px }` (styles.c
 /*
 FNXC:QuickAddWorkflow 2026-06-30-00:00:
 Quick-add workflow targeting sits in the action row as a compact existing-button dropdown. Use tokenized sizing/colors so the selector wraps with Save/Plan controls on narrow Board and List surfaces without introducing a separate visual hierarchy.
+
+FNXC:QuickAddWorkflow 2026-06-30-12:38:
+Operators need workflow identity at quick-add time. Keep the trigger wide enough for realistic names, render shared WorkflowIcon output inline, and let no-icon custom workflows collapse without blank icon shells.
 */
 .quick-entry-workflow-wrap {
   position: relative;
   display: inline-flex;
+  flex: 1 1 calc(var(--space-xl) * 8);
   min-width: 0;
+  max-width: min(calc(var(--space-xl) * 11), 100%);
 }
 
 .quick-entry-workflow-trigger {
-  max-width: calc(var(--space-xl) * 8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  max-width: min(calc(var(--space-xl) * 11), calc(100vw - var(--space-lg)));
+}
+
+.quick-entry-workflow-icon {
+  flex: 0 0 auto;
 }
 
 .quick-entry-workflow-label {
@@ -160,7 +175,8 @@ Quick-add workflow targeting sits in the action row as a compact existing-button
   position: absolute;
   inset-block-start: calc(100% + var(--space-xs));
   inset-inline-start: 0;
-  min-width: min(calc(var(--space-xl) * 10), calc(100vw - var(--space-lg)));
+  width: min(calc(var(--space-xl) * 16), calc(100vw - var(--space-lg)));
+  min-width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)));
   max-width: calc(100vw - var(--space-lg));
   max-height: min(calc(var(--space-xl) * 10), calc(100vh - var(--space-xl) * 2));
   overflow-y: auto;
@@ -173,6 +189,28 @@ Quick-add workflow targeting sits in the action row as a compact existing-button
   background: transparent;
   color: inherit;
   text-align: left;
+  align-items: flex-start;
+}
+
+.quick-entry-workflow-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+}
+
+.quick-entry-workflow-option-name,
+.quick-entry-workflow-option-id {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-entry-workflow-option-id {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 @media (max-width: 768px) {
@@ -182,7 +220,8 @@ Quick-add workflow targeting sits in the action row as a compact existing-button
   }
 
   .quick-entry-workflow-menu {
-    min-width: min(calc(var(--space-xl) * 9), calc(100vw - var(--space-lg)));
+    width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)));
+    min-width: min(calc(var(--space-xl) * 11), calc(100vw - var(--space-lg)));
   }
 }
 

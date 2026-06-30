@@ -1655,6 +1655,30 @@ describe("QuickEntryBox", () => {
       expect(fetchWorkflowOptionalSteps).not.toHaveBeenCalledWith("__all_workflows__", TEST_PROJECT_ID);
     });
 
+    it("renders built-in and custom workflow icons without blank custom-icon shells", () => {
+      renderQuickEntryBox({
+        workflowId: "builtin:coding",
+        defaultWorkflowId: "builtin:coding",
+        workflowOptions: [
+          { id: "builtin:coding", name: "Coding", columns: [] },
+          { id: "wf-custom", name: "Custom workflow", icon: "🚀", columns: [] },
+          { id: "wf-no-icon", name: "No icon workflow", columns: [] },
+        ],
+      });
+
+      const trigger = screen.getByTestId("quick-entry-workflow-trigger");
+      expect(trigger.querySelector(".workflow-icon--builtin")).toBeTruthy();
+      expect(trigger.querySelector(".quick-entry-workflow-label")).toHaveTextContent("Coding");
+
+      fireEvent.click(trigger);
+      const customOption = screen.getByTestId("quick-entry-workflow-option-wf-custom");
+      expect(customOption.querySelector(".workflow-icon--custom")).toHaveTextContent("🚀");
+      expect(screen.getByTestId("quick-entry-workflow-option-wf-no-icon").querySelector(".workflow-icon")).toBeNull();
+
+      fireEvent.click(customOption);
+      expect(screen.getByTestId("quick-entry-workflow-trigger").querySelector(".workflow-icon--custom")).toHaveTextContent("🚀");
+    });
+
     it("hides the selector without real workflow choices and leaves no shell", () => {
       renderQuickEntryBox({ workflowId: "wf-default", workflowOptions: [{ id: "wf-default", name: "Coding", columns: [] }] });
 
@@ -1662,11 +1686,18 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-actions").querySelector(".quick-entry-workflow-wrap")).toBeNull();
     });
 
-    it("uses tokenized responsive CSS for the workflow selector", () => {
-      const selectorRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-menu");
-      expect(selectorRule).toContain("var(--space-");
-      expect(selectorRule).not.toMatch(/#[0-9a-f]{3,8}|rgb\(/i);
-      expect(QUICK_ENTRY_BOX_CSS).toMatch(/@media \(max-width: 768px\) \{[\s\S]*?quick-entry-workflow/);
+    it("uses tokenized responsive CSS for the wider workflow selector", () => {
+      const triggerRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-trigger");
+      const menuRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-menu");
+      const optionCopyRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-option-copy");
+
+      expect(triggerRule).toContain("max-width: min(calc(var(--space-xl) * 11), calc(100vw - var(--space-lg)))");
+      expect(triggerRule).toContain("gap: var(--space-xs)");
+      expect(menuRule).toContain("width: min(calc(var(--space-xl) * 16), calc(100vw - var(--space-lg)))");
+      expect(menuRule).toContain("min-width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)))");
+      expect(optionCopyRule).toContain("gap: var(--space-2xs)");
+      expect(`${triggerRule}\n${menuRule}\n${optionCopyRule}`).not.toMatch(/#[0-9a-f]{3,8}|rgb\(|\d+px/i);
+      expect(QUICK_ENTRY_BOX_CSS).toMatch(/@media \(max-width: 768px\) \{[\s\S]*?quick-entry-workflow-menu[\s\S]*?min-width: min\(calc\(var\(--space-xl\) \* 11\), calc\(100vw - var\(--space-lg\)\)\)/);
     });
   });
 

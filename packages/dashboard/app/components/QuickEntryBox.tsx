@@ -16,6 +16,7 @@ import { useNodes } from "../hooks/useNodes";
 import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
+import { WorkflowIcon } from "./WorkflowIcon";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -309,6 +310,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   }, [realWorkflowOptions]);
   const showWorkflowSelector = workflowId !== undefined && realWorkflowOptions.length >= 2 && quickEntryWorkflowId !== null;
   const quickEntryWorkflowLabel = selectedQuickEntryWorkflow?.name ?? t("tasks.workflow", "Workflow");
+  const selectedQuickEntryWorkflowIcon = selectedQuickEntryWorkflow?.icon;
   const selectedWorkflowForCreate = workflowId === undefined ? undefined : quickEntryWorkflowId;
 
   useEffect(() => {
@@ -1693,6 +1695,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                   }}
                   title={t("tasks.quickEntryWorkflowTitle", "Workflow for the next task")}
                 >
+                  <WorkflowIcon
+                    workflowId={selectedQuickEntryWorkflow?.id ?? quickEntryWorkflowId ?? ""}
+                    icon={selectedQuickEntryWorkflowIcon}
+                    className="quick-entry-workflow-icon"
+                    decorative
+                  />
                   <span className="quick-entry-workflow-label">{quickEntryWorkflowLabel}</span>
                   <ChevronDown size={12} aria-hidden="true" />
                 </button>
@@ -1719,8 +1727,11 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                             setShowWorkflowPicker(false);
                           }}
                         >
-                          <span className="dep-dropdown-title">{option.name}</span>
-                          {duplicateName ? <span className="dep-dropdown-subtitle">{option.id}</span> : null}
+                          <WorkflowIcon workflowId={option.id} icon={option.icon} className="quick-entry-workflow-icon" decorative />
+                          <span className="quick-entry-workflow-option-copy">
+                            <span className="dep-dropdown-title quick-entry-workflow-option-name">{option.name}</span>
+                            {duplicateName ? <span className="dep-dropdown-subtitle quick-entry-workflow-option-id">{option.id}</span> : null}
+                          </span>
                         </button>
                       );
                     })}
