@@ -16135,8 +16135,18 @@ ${stepsSection}`;
       this._archiveDb = null;
     }
     if (this.secretsCentralCore) {
-      void this.secretsCentralCore.close();
+      /**
+       * FNXC:TaskStoreShutdown 2026-06-29-13:04:
+       * TaskStore.close() must deterministically await the cached secrets CentralCore close before temp-root cleanup and test teardown continue.
+       * CentralCore.close() is currently synchronous internally, but awaiting the async contract prevents unhandled rejections and preserves shutdown safety if the central secrets handle gains asynchronous cleanup.
+       */
+      const secretsCentralCore = this.secretsCentralCore;
       this.secretsCentralCore = null;
+      try {
+        await secretsCentralCore.close();
+      } catch (err) {
+        console.warn(`[fusion] Could not close secrets central core on TaskStore close:`, err);
+      }
     }
     this.secretsStore = null;
     if (this.pluginStore) {
