@@ -185,6 +185,8 @@ The default built-in catalog entry `builtin:coding` is backed by a Stepwise-deri
 
 - `triage` → `plan` → `plan-review` (default-on optional plan review) → `parse-steps` → `foreach(step-execute)` → `browser-verification` (optional) → `code-review` (default-on optional final review) → `merge-gate` / branch-group integration / `merge-attempt` / retry or manual hold → `end`
 
+If the Plan Review reviewer is unavailable before producing a verdict, the task stays in triage as `status: "plan-review-unavailable"` with a short backoff. That retry state is not a replan: Fusion rereads the existing non-empty `PROMPT.md`, preserves it unchanged, and reruns only Plan Review/finalization while holding a global agent concurrency slot for the reviewer lane. A reviewer revision verdict moves the task to `needs-replan`; missing/empty/invalid prompt content fails clearly instead of restarting the planner.
+
 `builtin:legacy-coding` is backed by the original monolithic `BUILTIN_CODING_WORKFLOW_IR`: `planning` → `execute` → optional quality gates → `review` → merge region.
 
 `builtin:stepwise-coding` displays as Coding (per-step review). It is backed by `BUILTIN_STEPWISE_CODING_WORKFLOW_IR`; it keeps the same lifecycle columns/traits while adding the default-on optional Plan Review before `parse-steps`, modeling per-step parse/execute/review/rework as authored graph structure, and retaining the post-foreach optional Code Review gate before its final review/merge region.

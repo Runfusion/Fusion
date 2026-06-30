@@ -861,14 +861,27 @@ export class TriageProcessor {
 
     try {
       const detail = await this.store.getTask(task.id);
+      const currentTask = detail ?? task;
       // Merge per-task effective workflow settings (U3, KTD-3) over the base so the
       // planning-phase reads (requirePlanApproval, planning/validator model lanes)
       // pick up workflow values. Behavior-inert when nothing is customized.
-      const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
+      const settings = await mergeEffectiveSettings(this.store, currentTask, await this.store.getSettings());
       const promptPath = `.fusion/tasks/${task.id}/PROMPT.md`;
 
-      if (task.status === "plan-review-unavailable") {
-        await this.retryUnavailablePlanReview(task, promptPath, settings);
+      /*
+      FNXC:PlanReview 2026-06-29-12:58:
+      `plan-review-unavailable` is a reviewer-outage retry state, not a planning request. Dispatch it before any createFnAgent path so the existing PROMPT.md is reused and only Plan Review/finalization reruns.
+
+      FNXC:PlanReview 2026-06-29-23:02:
+      Retry still launches the Plan Review reviewer lane, so it must consume the same global AgentSemaphore slot as planning work while continuing to avoid the planner session and PROMPT.md rewrite path.
+      */
+      if (currentTask.status === "plan-review-unavailable") {
+        const retryWork = () => this.retryUnavailablePlanReview(currentTask, promptPath, settings);
+        if (this.options.semaphore) {
+          await this.options.semaphore.run(retryWork, PRIORITY_SPECIFY);
+        } else {
+          await retryWork();
+        }
         return;
       }
 
@@ -1196,7 +1209,7 @@ export class TriageProcessor {
           if (this.pauseAborted.has(task.id)) {
             this.pauseAborted.delete(task.id);
             planLog.log(`${task.id} aborted by pause — clearing status`);
-            const restoreStatus = task.status === "needs-replan" ? "needs-replan" : null;
+            const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
             await this.store.updateTask(task.id, { status: restoreStatus }).catch((err: unknown) => {
               const msg = err instanceof Error ? err.message : String(err);
               planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' during pause-abort cleanup: ${msg}`);
@@ -1282,7 +1295,7 @@ export class TriageProcessor {
                 `Generated plan failed deterministic validation (${deterministicSpecFailure}) — retry ${attempt}/${MAX_RECOVERY_RETRIES} in ${delay}.`;
               planLog.warn(`${task.id} ${retryMessage}`);
               await this.store.logEntry(task.id, retryMessage);
-              const restoreStatus = task.status === "needs-replan" ? "needs-replan" : null;
+              const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
               await this.store.updateTask(task.id, {
                 status: restoreStatus,
                 error: null,
@@ -1359,9 +1372,9 @@ export class TriageProcessor {
         // Pause (global or engine) — clear planning status without reporting an error
         this.pauseAborted.delete(task.id);
         planLog.log(`${task.id} aborted by pause — clearing status`);
-        // For re-planning, restore needs-replan status; otherwise clear to null
-        // so the next poll can re-pick this task up.
-        const restoreStatus = task.status === "needs-replan" ? "needs-replan" : null;
+        // For interrupted recovery states, restore the original triage-held status;
+        // otherwise clear to null so the next poll can re-pick ordinary tasks up.
+        const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
         await this.store.updateTask(task.id, { status: restoreStatus }).catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' during pause-abort error cleanup: ${msg}`);
@@ -1395,7 +1408,7 @@ export class TriageProcessor {
                 planLog.warn(`${task.id}: failed to log transient-error retry entry: ${msg}`);
               });
             }
-            const restoreStatus = task.status === "needs-replan" ? "needs-replan" : null;
+            const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
             await this.store.updateTask(task.id, {
               status: restoreStatus,
               recoveryRetryCount: decision.nextState.recoveryRetryCount,
@@ -1424,9 +1437,9 @@ export class TriageProcessor {
           this.options.onSpecifyError?.(task, err instanceof Error ? err : new Error(errorMessage));
           return;
         }
-        // For re-planning, restore needs-replan status so it can be retried;
-        // otherwise clear to null so the next poll can re-pick the task up.
-        const restoreStatus = task.status === "needs-replan" ? "needs-replan" : null;
+        // For interrupted recovery states, restore the original triage-held status;
+        // otherwise clear to null so the next poll can re-pick ordinary tasks up.
+        const restoreStatus = this.restoreStatusAfterInterruptedTriageWork(task);
         await this.store.updateTask(task.id, { status: restoreStatus }).catch((restoreErr: unknown) => {
           const msg = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
           planLog.warn(`${task.id}: failed to restore status to '${restoreStatus}' after planning error: ${msg}`);
@@ -1749,18 +1762,27 @@ export class TriageProcessor {
     return [taskList, taskSearch, taskShow, taskCreate];
   }
 
+  private restoreStatusAfterInterruptedTriageWork(task: Task): Task["status"] | null {
+    /*
+    FNXC:PlanReview 2026-06-29-16:56:
+    Reviewer-outage retry is not an unplanned task. If a lifecycle write fails while rerunning Plan Review, preserve `plan-review-unavailable` so the next poll returns to the review-only retry path instead of clearing status and launching the planner.
+    */
+    if (task.status === "needs-replan" || task.status === "plan-review-unavailable") {
+      return task.status;
+    }
+    return null;
+  }
+
   private async retryUnavailablePlanReview(task: Task, promptPath: string, settings: Settings): Promise<void> {
     /*
     FNXC:PlanReview 2026-06-29-12:35:
     A reviewer outage parks tasks as plan-review-unavailable after PROMPT.md is already accepted. Backoff retry must reuse that exact PROMPT.md and rerun only the Plan Review gate; sending the task through the planner again would rewrite an approved draft without reviewer feedback.
     */
-    const written = await readFile(join(this.rootDir, promptPath), "utf-8").catch(async (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      const failure = `Plan Review retry could not read existing PROMPT.md (${promptPath}): ${message}`;
+    const parkInvalidRetry = async (failure: string): Promise<void> => {
       planLog.warn(`${task.id}: ${failure}`);
       await this.store.logEntry(task.id, failure).catch((logError: unknown) => {
         const logMessage = logError instanceof Error ? logError.message : String(logError);
-        planLog.warn(`${task.id}: failed to log missing PROMPT.md during Plan Review retry: ${logMessage}`);
+        planLog.warn(`${task.id}: failed to log invalid PROMPT.md during Plan Review retry: ${logMessage}`);
       });
       await this.store.updateTask(task.id, {
         status: "failed",
@@ -1768,12 +1790,30 @@ export class TriageProcessor {
         nextRecoveryAt: null,
       }).catch((updateError: unknown) => {
         const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
-        planLog.warn(`${task.id}: failed to persist missing PROMPT.md Plan Review retry failure: ${updateMessage}`);
+        planLog.warn(`${task.id}: failed to persist invalid PROMPT.md Plan Review retry failure: ${updateMessage}`);
       });
-      return "";
+    };
+
+    const written = await readFile(join(this.rootDir, promptPath), "utf-8").catch(async (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      await parkInvalidRetry(`Plan Review retry could not read existing PROMPT.md (${promptPath}): ${message}`);
+      return null;
     });
 
+    if (written === null) {
+      return;
+    }
+
     if (!written.trim()) {
+      await parkInvalidRetry(`Plan Review retry found existing PROMPT.md (${promptPath}) but it is empty or whitespace-only.`);
+      return;
+    }
+
+    const deterministicSpecFailure = await this.validateGeneratedPrompt(task.id, written);
+    if (deterministicSpecFailure) {
+      await parkInvalidRetry(
+        `Plan Review retry PROMPT.md failed deterministic validation (${deterministicSpecFailure}). Fix the existing PROMPT.md or request a replan; reviewer-outage retry will not restart planning.`,
+      );
       return;
     }
 
@@ -1786,7 +1826,10 @@ export class TriageProcessor {
       { ...task, status: "planning" },
       written,
       settings,
-      { recoveryLogAction: "Plan Review retry approved existing PROMPT.md — moved to execution" },
+      {
+        recoveryLogAction: "Plan Review retry approved existing PROMPT.md — moved to execution",
+        preservePromptContent: true,
+      },
     );
   }
 
@@ -1832,7 +1875,11 @@ export class TriageProcessor {
   }
 
   private async recordPlanReviewWorkflowResult(task: Task, result: WorkflowStepResult): Promise<void> {
-    const live = await this.store.getTask(task.id).catch(() => task);
+    const live = await this.store.getTask(task.id).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: failed to load existing Plan Review workflow results; preserving in-memory result baseline: ${message}`);
+      return task;
+    });
     const existing = Array.isArray(live?.workflowStepResults)
       ? [...live.workflowStepResults]
       : [];
@@ -2006,6 +2053,7 @@ export class TriageProcessor {
       isReplan?: boolean;
       feedback?: string;
       recoveryLogAction?: string;
+      preservePromptContent?: boolean;
     } = {},
   ): Promise<void> {
     let written = writtenInput;
@@ -2112,15 +2160,17 @@ export class TriageProcessor {
       // Fail open on persisted PROMPT.md parsing and keep using the in-memory parse.
     }
 
-    const promptWithFrontendUxCriteria = applyFrontendUxCriteria(written, parsedFileScope);
-    if (promptWithFrontendUxCriteria !== written) {
-      const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
-      try {
-        await writeFile(promptPath, promptWithFrontendUxCriteria, "utf-8");
-        written = promptWithFrontendUxCriteria;
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        planLog.warn(`${task.id}: failed to write Frontend UX Criteria to PROMPT.md (${message})`);
+    if (!options.preservePromptContent) {
+      const promptWithFrontendUxCriteria = applyFrontendUxCriteria(written, parsedFileScope);
+      if (promptWithFrontendUxCriteria !== written) {
+        const promptPath = join(this.rootDir, ".fusion", "tasks", task.id, "PROMPT.md");
+        try {
+          await writeFile(promptPath, promptWithFrontendUxCriteria, "utf-8");
+          written = promptWithFrontendUxCriteria;
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          planLog.warn(`${task.id}: failed to write Frontend UX Criteria to PROMPT.md (${message})`);
+        }
       }
     }
 
