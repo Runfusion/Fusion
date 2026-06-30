@@ -3582,18 +3582,22 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
           const prunedActivityLog = this.db.prepare("DELETE FROM activityLog WHERE taskId = ?").run(id).changes;
           this.db.prepare("DELETE FROM agentRuns WHERE agentId IN (SELECT id FROM agents WHERE taskId = ?)").run(id);
           const prunedAgents = this.db.prepare("DELETE FROM agents WHERE taskId = ?").run(id).changes;
-          this.insertRunAuditEventRow({
-            mutationType: "task:reconcile-phantom-committed-reservation",
-            taskId: id,
-            domain: "database",
-            target: id,
-            metadata: {
-              reservationStatus: reservation.status,
-              prunedActivityLog,
-              prunedAgents,
-            },
-          });
+          /*
+           * FNXC:TaskStoreConsistency 2026-06-30-00:00:
+           * Idempotency guard: emit the audit event only when real orphaned child rows were pruned. On a prior pass the activityLog/agents rows are already gone, so the reservation re-matches every maintenance tick but prunes zero rows. Recording a no-op event per tick produced ~19k wasted runAuditEvents writes/day (FN-7069 observation). The FN-7069 contract is unchanged: the committed reservation stays committed so the ID is never reused; we simply stop re-auditing the empty prune.
+           */
           if (prunedActivityLog > 0 || prunedAgents > 0) {
+            this.insertRunAuditEventRow({
+              mutationType: "task:reconcile-phantom-committed-reservation",
+              taskId: id,
+              domain: "database",
+              target: id,
+              metadata: {
+                reservationStatus: reservation.status,
+                prunedActivityLog,
+                prunedAgents,
+              },
+            });
             this.db.bumpLastModified();
           }
         });
