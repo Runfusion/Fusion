@@ -14,6 +14,10 @@
   gap: var(--space-md);
 }
 
+.shadcn-color-picker-heading {
+  min-width: 0;
+}
+
 .shadcn-color-picker-title {
   margin: 0;
   color: var(--text);
@@ -25,6 +29,21 @@
   margin: var(--space-xs) 0 0;
   color: var(--text-muted);
   font-size: var(--font-size-xs);
+}
+
+.shadcn-color-picker-toggle {
+  flex: 0 0 auto;
+}
+
+.shadcn-color-picker-controls-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.shadcn-color-picker-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .shadcn-color-picker-grid {
@@ -85,9 +104,14 @@
 @media (max-width: 768px) {
   .shadcn-color-picker-header,
   .shadcn-color-picker-row,
-  .shadcn-color-picker-controls {
+  .shadcn-color-picker-controls,
+  .shadcn-color-picker-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .shadcn-color-picker-toggle {
+    align-self: flex-start;
   }
 
   .shadcn-color-picker-grid {

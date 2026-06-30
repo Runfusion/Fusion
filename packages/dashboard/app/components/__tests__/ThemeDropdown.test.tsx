@@ -77,6 +77,17 @@ describe("ThemeDropdown", () => {
       />,
     );
     expect(screen.getByTestId("shadcn-color-picker")).toBeDefined();
+    const showCustomColors = screen.getByRole("button", { name: "Show custom colors" });
+    expect(showCustomColors).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("shadcn-color-picker-controls")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset custom colors" })).toBeNull();
+    expect(screen.queryByTestId("shadcn-color---accent")).toBeNull();
+
+    fireEvent.click(showCustomColors);
+    expect(screen.getByRole("button", { name: "Collapse custom colors" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("shadcn-color-picker-controls")).toBeDefined();
+    const accentRow = screen.getByTestId("shadcn-color---accent");
+    expect(within(accentRow).getByRole("textbox")).toHaveValue("#123456");
   });
 
   it("renders compact theme mode controls when mode props are supplied", () => {
