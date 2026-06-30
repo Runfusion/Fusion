@@ -170,10 +170,10 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-workflow-badge")).toBeNull();
     });
 
-    it("renders in the mobile back-header variant", async () => {
+    it("renders beside the Updated timestamp in the mobile back-header variant", async () => {
       vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce(workflowPayload);
 
-      render(
+      const { container } = render(
         <TaskDetailModal
           initialTab="definition"
           mobileHeaderMode="back"
@@ -188,6 +188,12 @@ describe("TaskDetailModal", () => {
       );
 
       expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Docs");
+      const mobileBadge = screen.getByTestId("task-detail-workflow-badge-mobile");
+      const timestamps = container.querySelector(".detail-timestamps");
+      const updatedLabel = screen.getByText("Updated").closest(".detail-timestamp-item");
+      expect(mobileBadge).toHaveTextContent("Docs");
+      expect(mobileBadge.parentElement).toBe(timestamps);
+      expect(updatedLabel?.nextElementSibling).toBe(mobileBadge);
       expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
     });
   });

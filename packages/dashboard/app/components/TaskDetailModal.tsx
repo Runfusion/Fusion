@@ -2717,7 +2717,7 @@ export function TaskDetailContent({
               {columnLabel(task.column)}
             </span>
             {taskWorkflowName && (
-              <span className="detail-workflow-badge" data-testid="task-detail-workflow-badge">
+              <span className="detail-workflow-badge detail-workflow-badge--desktop" data-testid="task-detail-workflow-badge">
                 {taskWorkflowName}
               </span>
             )}
@@ -3093,6 +3093,11 @@ export function TaskDetailContent({
                       {formatTimestamp(task.updatedAt)}
                     </time>
                   </span>
+                  {taskWorkflowName && (
+                    <span className="detail-workflow-badge detail-workflow-badge--mobile" data-testid="task-detail-workflow-badge-mobile">
+                      {taskWorkflowName}
+                    </span>
+                  )}
                 </div>
               </div>
               {task.branchContext?.groupId && (

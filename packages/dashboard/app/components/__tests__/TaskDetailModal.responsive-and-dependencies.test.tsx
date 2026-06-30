@@ -120,6 +120,20 @@ describe("TaskDetailModal", () => {
       expect(css).not.toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.detail-timestamps\s*\{[^}]*flex-direction:\s*column;/);
       expect(css).not.toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.detail-timestamp-separator\s*\{[^}]*display:\s*none;/);
     });
+
+    it("places only the mobile workflow badge inside the timestamp group at the mobile breakpoint", () => {
+      const css = readDashboardStylesSource();
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-timestamps .detail-workflow-badge--mobile");
+      const mobileTimestampBadgeBlock = getCssRuleBlock(mobileBlock, ".detail-timestamps .detail-workflow-badge--mobile");
+      const mobileDesktopBadgeBlock = getCssRuleBlock(mobileBlock, ".detail-workflow-badge--desktop");
+
+      expectBaseRule(css, ".detail-workflow-badge--mobile", "display: none;");
+      expect(mobileDesktopBadgeBlock).toContain("display: none;");
+      expect(mobileTimestampBadgeBlock).toContain("display: inline-flex;");
+      expect(mobileTimestampBadgeBlock).toContain("align-items: center;");
+      expect(mobileTimestampBadgeBlock).toContain("flex: 0 0 auto;");
+      expect(css).not.toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.detail-title-row\s+\.detail-workflow-badge--mobile\s*\{/);
+    });
     it("keeps desktop and mobile modal sizing guards unchanged", () => {
       const css = readDashboardStylesSource();
       const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".modal-overlay:has(.task-detail-modal)");
@@ -737,7 +751,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("button", { name: "Finish & Close" })).toBeNull();
     });
 
-    it("shows Start PR Review and calls onMergeTask for pull-request strategy when autoMerge is off and no PR exists", async () => {
+    it("shows Start PR Review and opens PR creation for pull-request strategy when autoMerge is off and no PR exists", async () => {
       const { fetchSettings } = await import("../../api");
       const onMergeTask = vi.fn(async () => ({ merged: false } as MergeResult));
       vi.mocked(fetchSettings).mockResolvedValueOnce({
@@ -764,9 +778,8 @@ describe("TaskDetailModal", () => {
       const button = await screen.findByRole("button", { name: "Start PR Review" });
       fireEvent.click(button);
 
-      await waitFor(() => {
-        expect(onMergeTask).toHaveBeenCalledWith("FN-099");
-      });
+      expect(await screen.findByRole("heading", { name: "Create Pull Request" })).toBeInTheDocument();
+      expect(onMergeTask).not.toHaveBeenCalled();
     });
 
     it("refreshes PR status for Check PR Status without merge prompt", async () => {

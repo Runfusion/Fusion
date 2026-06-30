@@ -57,6 +57,10 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   background: var(--surface-raised);
   border: 1px solid var(--border);
 }
+
+.detail-workflow-badge--mobile {
+  display: none;
+}
 .badge-triage {
   background: var(--status-triage-bg);
   color: var(--triage);
@@ -308,10 +312,24 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
     align-items: center;
   }
 
+  /*
+  FNXC:TaskDetailWorkflow 2026-06-30-07:37:
+  Mobile task details need the workflow-name badge to read with the Updated timestamp instead of the compact header band. Keep desktop's header badge placement while showing exactly one mobile badge inside the timestamp group.
+  */
+  .detail-workflow-badge--desktop {
+    display: none;
+  }
+
   .detail-timestamps {
     display: flex;
     align-items: center;
     flex-wrap: nowrap;
+  }
+
+  .detail-timestamps .detail-workflow-badge--mobile {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
   }
 
   .detail-provenance-context {
