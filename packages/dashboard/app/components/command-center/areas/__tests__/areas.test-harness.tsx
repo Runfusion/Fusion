@@ -112,6 +112,22 @@ export function productivityFixture() {
       totalMs: 270 * 60 * 1000,
       unavailable: false,
     },
+    taskDurationTrend: [
+      {
+        bucket: "2026-06-08",
+        completedTasks: 1,
+        averageMs: 60 * 60 * 1000,
+        medianMs: 60 * 60 * 1000,
+        unavailable: false,
+      },
+      {
+        bucket: "2026-06-09",
+        completedTasks: 2,
+        averageMs: 105 * 60 * 1000,
+        medianMs: 105 * 60 * 1000,
+        unavailable: false,
+      },
+    ],
   };
 }
 

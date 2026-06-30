@@ -22,6 +22,8 @@ export interface LineChartProps {
   width?: number | string;
   height?: number | string;
   emptyLabel?: string;
+  xAxisLabels?: string[];
+  valueFormatter?: (value: number) => string;
   /**
    * `shared` keeps comparable values on one absolute axis. `series` normalizes each series to its own max so mixed-unit trends remain legible.
    */
@@ -183,13 +185,24 @@ function useMeasuredChartDimensions() {
  *
  * FNXC:CommandCenterCharts 2026-06-23-08:47:
  * Daily activity line and token/model line graphs must load even when Recharts cannot resolve a percentage `ResponsiveContainer` during the card's first layout pass. Measure the chart wrapper directly and pass concrete usable dimensions into Recharts, with a first-paint fallback that is replaced by ResizeObserver only after the observed box is large enough to draw a legible chart.
+ *
+ * FNXC:CommandCenterProductivity 2026-06-30-10:25:
+ * Duration trend callers need the shared line chart to keep real millisecond values while labeling axes/tooltips as human durations and dates. Formatting stays opt-in so existing Command Center charts preserve their numeric legends and normalized mixed-unit behavior.
  */
-export function LineChart({ series, ariaLabel, width, height, emptyLabel = "No chart data", scaleMode = "shared" }: LineChartProps) {
+export function LineChart({ series, ariaLabel, width, height, emptyLabel = "No chart data", xAxisLabels, valueFormatter, scaleMode = "shared" }: LineChartProps) {
   const theme = getCommandCenterChartTheme();
   const { ref, dimensions } = useMeasuredChartDimensions();
   const chartDimensions = resolvedDimensions(dimensions, width, height);
   const chartSeries = sanitizeSeries(series, scaleMode);
   const chartData = lineChartData(chartSeries);
+  const formatXAxisLabel = (value: unknown) => {
+    const index = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(index) ? (xAxisLabels?.[index - 1] ?? String(value)) : String(value);
+  };
+  const formatChartValue = (value: unknown) => {
+    const numericValue = typeof value === "number" ? value : Number(value);
+    return valueFormatter && Number.isFinite(numericValue) ? valueFormatter(numericValue) : String(value);
+  };
 
   if (chartSeries.length === 0 || chartData.length === 0) {
     return (
@@ -212,12 +225,12 @@ export function LineChart({ series, ariaLabel, width, height, emptyLabel = "No c
     >
       <RechartsLineChart width={chartDimensions.width} height={chartDimensions.height} data={chartData}>
         <CartesianGrid stroke={theme.grid} />
-        <XAxis dataKey="index" stroke={theme.tick} tick={{ fill: theme.tick }} />
+        <XAxis dataKey="index" stroke={theme.tick} tick={{ fill: theme.tick }} tickFormatter={xAxisLabels ? formatXAxisLabel : undefined} />
         <YAxis
           stroke={theme.tick}
           tick={{ fill: theme.tick }}
           domain={scaleMode === "series" ? [0, 100] : undefined}
-          tickFormatter={scaleMode === "series" ? (value) => `${value}%` : undefined}
+          tickFormatter={scaleMode === "series" ? (value) => `${value}%` : valueFormatter}
         />
         <Tooltip
           contentStyle={{
@@ -227,6 +240,8 @@ export function LineChart({ series, ariaLabel, width, height, emptyLabel = "No c
           }}
           itemStyle={{ color: theme.tooltipText }}
           labelStyle={{ color: theme.tooltipText }}
+          formatter={valueFormatter ? (value) => formatChartValue(value) : undefined}
+          labelFormatter={xAxisLabels ? formatXAxisLabel : undefined}
         />
         <Legend wrapperStyle={{ color: theme.legendText }} />
         {chartSeries.map((entry, index) => (

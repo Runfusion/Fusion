@@ -170,6 +170,54 @@ describe("productivity-analytics", () => {
     });
   });
 
+  it("buckets completed-task duration trend by executionCompletedAt day with average and median", () => {
+    insertCompletedTask(db, "day2-short", { cumulativeActiveMs: 30 * 60 * 1000, executionCompletedAt: "2026-03-02T09:00:00.000Z" });
+    insertCompletedTask(db, "day1-short", { cumulativeActiveMs: 30 * 60 * 1000, executionCompletedAt: "2026-03-01T09:00:00.000Z" });
+    insertCompletedTask(db, "day1-mid", { cumulativeActiveMs: 60 * 60 * 1000, executionCompletedAt: "2026-03-01T10:00:00.000Z" });
+    insertCompletedTask(db, "day1-long", { cumulativeActiveMs: 120 * 60 * 1000, executionCompletedAt: "2026-03-01T11:00:00.000Z" });
+    insertCompletedTask(db, "day2-long", { cumulativeActiveMs: 90 * 60 * 1000, executionCompletedAt: "2026-03-02T12:00:00.000Z" });
+
+    const result = aggregateProductivityAnalytics(db, { from: "2026-03-01T00:00:00.000Z", to: "2026-03-31T23:59:59.999Z" });
+    expect(result.taskDurationTrend).toEqual([
+      {
+        bucket: "2026-03-01",
+        completedTasks: 3,
+        averageMs: 70 * 60 * 1000,
+        medianMs: 60 * 60 * 1000,
+        unavailable: false,
+      },
+      {
+        bucket: "2026-03-02",
+        completedTasks: 2,
+        averageMs: 60 * 60 * 1000,
+        medianMs: 60 * 60 * 1000,
+        unavailable: false,
+      },
+    ]);
+  });
+
+  it("excludes non-qualifying tasks from completed-task duration trend without fake zero buckets", () => {
+    insertCompletedTask(db, "before", { cumulativeActiveMs: 10_000, executionCompletedAt: "2026-02-28T23:59:59.999Z" });
+    insertCompletedTask(db, "todo", { cumulativeActiveMs: 20_000, executionCompletedAt: "2026-03-01T00:00:00.000Z", column: "todo" });
+    insertCompletedTask(db, "null-duration", { cumulativeActiveMs: null, executionCompletedAt: "2026-03-02T00:00:00.000Z" });
+    insertCompletedTask(db, "zero-duration", { cumulativeActiveMs: 0, executionCompletedAt: "2026-03-03T00:00:00.000Z" });
+    insertCompletedTask(db, "valid", { cumulativeActiveMs: 45_000, executionCompletedAt: "2026-03-04T00:00:00.000Z" });
+    insertCompletedTask(db, "after", { cumulativeActiveMs: 30_000, executionCompletedAt: "2026-04-01T00:00:00.000Z" });
+
+    const result = aggregateProductivityAnalytics(db, { from: "2026-03-01T00:00:00.000Z", to: "2026-03-31T23:59:59.999Z" });
+    expect(result.taskDurationTrend).toEqual([
+      {
+        bucket: "2026-03-04",
+        completedTasks: 1,
+        averageMs: 45_000,
+        medianMs: 45_000,
+        unavailable: false,
+      },
+    ]);
+    expect(result.taskDurationTrend).not.toContainEqual(expect.objectContaining({ averageMs: 0 }));
+    expect(result.taskDurationTrend).not.toContainEqual(expect.objectContaining({ medianMs: 0 }));
+  });
+
   it("excludes completed-task durations outside the executionCompletedAt range", () => {
     insertCompletedTask(db, "before", { cumulativeActiveMs: 9_000, executionCompletedAt: "2026-02-28T23:59:59.999Z" });
     insertCompletedTask(db, "inside", { cumulativeActiveMs: 2_000, executionCompletedAt: "2026-03-01T00:00:00.000Z" });
@@ -220,6 +268,7 @@ describe("productivity-analytics", () => {
     expect(result.taskDuration.medianMs).not.toBe(0);
     expect(result.taskDuration.p90Ms).not.toBe(0);
     expect(result.taskDuration.totalMs).not.toBe(0);
+    expect(result.taskDurationTrend).toEqual([]);
   });
 
   it("empty range returns zeroed structures, not nulls", () => {
@@ -246,6 +295,7 @@ describe("productivity-analytics", () => {
       unavailable: true,
     });
     expect(result.taskDuration.totalMs).not.toBe(0);
+    expect(result.taskDurationTrend).toEqual([]);
   });
 
   it("includes a boundary task exactly at `from`", () => {

@@ -73,6 +73,18 @@ export interface TaskDurationSummary {
   unavailable: boolean;
 }
 
+/**
+ * FNXC:CommandCenterProductivity 2026-06-30-10:17:
+ * Operators need average and median task active duration over time from real completed-task `cumulativeActiveMs` history. Trend buckets are emitted only for days with qualifying completed tasks; missing history must stay absent/unavailable, never fabricated as zero-duration chart points.
+ */
+export interface TaskDurationTrendBucket {
+  bucket: string;
+  completedTasks: number;
+  averageMs: number | null;
+  medianMs: number | null;
+  unavailable: boolean;
+}
+
 export interface ProductivityAnalytics {
   from: string | null;
   to: string | null;
@@ -90,6 +102,8 @@ export interface ProductivityAnalytics {
   hoursSaved: HoursSavedSummary;
   /** Active execution duration for done tasks completed in range. */
   taskDuration: TaskDurationSummary;
+  /** Per-day active execution duration for done tasks completed in range. */
+  taskDurationTrend: TaskDurationTrendBucket[];
 }
 
 interface CountRow {
@@ -109,6 +123,7 @@ interface ModifiedFilesRow {
 
 interface TaskDurationRow {
   cumulativeActiveMs: number;
+  executionCompletedAt: string;
 }
 
 /** Extract a coarse language key from a file path (its lowercased extension). */
@@ -234,10 +249,10 @@ export function aggregateProductivityAnalytics(
   }
   const durationRows = db
     .prepare(
-      `SELECT cumulativeActiveMs FROM tasks WHERE ${durationClauses.join(" AND ")} ORDER BY cumulativeActiveMs ASC`,
+      `SELECT cumulativeActiveMs, executionCompletedAt FROM tasks WHERE ${durationClauses.join(" AND ")} ORDER BY executionCompletedAt ASC`,
     )
     .all(...durationParams) as TaskDurationRow[];
-  const durations = durationRows.map((row) => row.cumulativeActiveMs);
+  const durations = durationRows.map((row) => row.cumulativeActiveMs).sort((a, b) => a - b);
   const totalDurationMs = durations.reduce((sum, durationMs) => sum + durationMs, 0);
   const taskDuration: TaskDurationSummary = durations.length > 0
     ? {
@@ -256,6 +271,25 @@ export function aggregateProductivityAnalytics(
       totalMs: null,
       unavailable: true,
     };
+
+  const durationBuckets = new Map<string, number[]>();
+  for (const row of durationRows) {
+    const bucket = row.executionCompletedAt.slice(0, 10);
+    const bucketDurations = durationBuckets.get(bucket) ?? [];
+    bucketDurations.push(row.cumulativeActiveMs);
+    durationBuckets.set(bucket, bucketDurations);
+  }
+  const taskDurationTrend: TaskDurationTrendBucket[] = [...durationBuckets.entries()].map(([bucket, bucketDurations]) => {
+    const sortedBucketDurations = [...bucketDurations].sort((a, b) => a - b);
+    const bucketTotalMs = sortedBucketDurations.reduce((sum, durationMs) => sum + durationMs, 0);
+    return {
+      bucket,
+      completedTasks: sortedBucketDurations.length,
+      averageMs: sortedBucketDurations.length > 0 ? bucketTotalMs / sortedBucketDurations.length : null,
+      medianMs: median(sortedBucketDurations),
+      unavailable: sortedBucketDurations.length === 0,
+    };
+  });
 
   // Pull requests. `pull_requests.createdAt` is an INTEGER epoch-ms column, so
   // convert the ISO bounds to epoch ms for comparison.
@@ -286,5 +320,6 @@ export function aggregateProductivityAnalytics(
     loc,
     hoursSaved,
     taskDuration,
+    taskDurationTrend,
   };
 }
