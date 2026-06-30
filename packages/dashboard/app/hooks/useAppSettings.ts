@@ -11,6 +11,7 @@ export interface UseAppSettingsResult {
   maxConcurrent: number;
   rootDir: string;
   autoMerge: boolean;
+  mergeStrategy: string;
   showWorktreeGrouping: boolean;
   testMode: boolean;
   isTestMode: boolean;
@@ -53,6 +54,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
+  const [mergeStrategy, setMergeStrategy] = useState("direct");
   const [showWorktreeGrouping, setShowWorktreeGrouping] = useState(false);
   const [testMode, setTestMode] = useState(false);
   const [isTestMode, setIsTestMode] = useState(false);
@@ -98,6 +100,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     if (settingsResult.status === "fulfilled") {
       const settings = settingsResult.value;
       setAutoMerge(Boolean(settings.autoMerge));
+      /*
+      FNXC:BoardCardActions 2026-06-30-00:42:
+      Board and List context menus need the project merge strategy before PR creation so manual PR projects can show Start PR Review with the same availability as Task Detail.
+      */
+      setMergeStrategy(typeof settings.mergeStrategy === "string" ? settings.mergeStrategy : "direct");
       setShowWorktreeGrouping(settings.showWorktreeGrouping === true);
       const nextTestMode = settings.testMode === true;
       const nextIsTestMode = nextTestMode || settings.defaultProvider?.trim().toLowerCase() === "mock";
@@ -245,6 +252,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     maxConcurrent,
     rootDir,
     autoMerge,
+    mergeStrategy,
     showWorktreeGrouping,
     testMode,
     isTestMode,

@@ -10,6 +10,7 @@
     border-color var(--transition-fast),
     transform var(--transition-fast),
     opacity var(--transition-normal);
+  position: relative;
   user-select: none;
   touch-action: pan-x pan-y;
   container-type: inline-size;
@@ -34,6 +35,17 @@
 .card.file-drop-target {
   border: 2px dashed var(--todo);
   background: color-mix(in srgb, var(--todo) 8%, transparent);
+}
+
+.task-card-context-menu-popover {
+  position: absolute;
+  left: var(--task-card-context-menu-x);
+  top: var(--task-card-context-menu-y);
+  z-index: 30;
+}
+
+.task-card-context-menu-popover .task-context-menu {
+  position: static;
 }
 
 /*

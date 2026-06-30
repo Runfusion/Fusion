@@ -1,7 +1,7 @@
 import "./Lane.css";
 import { memo, useCallback, useEffect, useMemo, useRef, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, Column as ColumnType, ColumnId, TaskCreateInput, GithubIssueAction } from "@fusion/core";
 import { Column } from "./Column";
 import { sortTasksForDisplayColumn } from "./taskSorting";
 import type { ModelInfo, BoardWorkflowDefinition } from "../api";
@@ -32,7 +32,7 @@ export interface LaneProps {
   projectId?: string;
   maxConcurrent: number;
   showWorktreeGrouping?: boolean;
-  onMoveTask: (id: string, column: ColumnType, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onPromote: (taskId: string) => Promise<void>;
   /** Drag pre-check: null = allowed, else an i18n messageKey (R17). */
   canDropTask: (taskId: string, targetColumnId: string, workflowId: string) => string | null;
@@ -81,6 +81,12 @@ function LaneComponent(props: LaneProps) {
   // Visible columns: archived / hidden-from-board columns are hidden per lane.
   const visibleColumns = useMemo(
     () => workflow.columns.filter((col) => !col.flags.archived && !col.flags.hiddenFromBoard),
+    [workflow.columns],
+  );
+  const contextMenuColumns = useMemo(
+    () => workflow.columns
+      .filter((col) => !col.flags.hiddenFromBoard)
+      .map((col) => ({ id: col.id, label: col.name, flags: col.flags })),
     [workflow.columns],
   );
   const createColumnId = useMemo(() => (
@@ -174,6 +180,7 @@ function LaneComponent(props: LaneProps) {
               workflowId={workflow.id}
               columnDisplayName={col.name}
               columnFlags={col.flags}
+              workflowContextMenuColumns={contextMenuColumns}
               tasks={tasksByColumn[col.id] ?? []}
               allTasks={tasks}
               projectId={props.projectId}

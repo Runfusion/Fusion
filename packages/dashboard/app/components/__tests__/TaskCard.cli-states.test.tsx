@@ -39,6 +39,7 @@ vi.mock("../../api", () => ({
   fetchMission: vi.fn(),
   fetchAgent: vi.fn(),
   fetchAgents: vi.fn(),
+  rebuildTaskSpec: vi.fn(),
 }));
 
 vi.mock("../../hooks/useConfirm", () => ({

@@ -71,6 +71,7 @@ export function MainContent({
   openFileInBrowser,
   prAuthAvailable,
   autoMerge,
+  mergeStrategy,
   settingsLoaded,
   skillsEnabled,
   experimentalFeatures,
@@ -694,10 +695,15 @@ export function MainContent({
             onPlanningMode={openPlanningWithInitialPlanWithNav}
             onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
             autoMerge={autoMerge}
+            mergeStrategy={mergeStrategy}
             onToggleAutoMerge={toggleAutoMerge}
             globalPaused={globalPaused}
             onUpdateTask={updateTask}
             onRetryTask={retryTask}
+            onUnpauseTask={unpauseTask}
+            onResetTask={resetTask}
+            onDuplicateTask={duplicateTask}
+            onMergeTask={mergeTask}
             onArchiveTask={archiveTask}
             onUnarchiveTask={unarchiveTask}
             onDeleteTask={deleteTask}
@@ -790,10 +796,15 @@ export function MainContent({
           onPlanningMode={openPlanningWithInitialPlanWithNav}
           onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
           autoMerge={autoMerge}
+          mergeStrategy={mergeStrategy}
           onToggleAutoMerge={toggleAutoMerge}
           globalPaused={globalPaused}
           onUpdateTask={updateTask}
           onRetryTask={retryTask}
+          onUnpauseTask={unpauseTask}
+          onResetTask={resetTask}
+          onDuplicateTask={duplicateTask}
+          onMergeTask={mergeTask}
           onArchiveTask={archiveTask}
           onUnarchiveTask={unarchiveTask}
           onDeleteTask={deleteTask}
@@ -854,6 +865,7 @@ export function MainContent({
         lastFetchTimeMs={lastFetchTimeMs}
         prAuthAvailable={prAuthAvailable}
         autoMerge={autoMerge}
+        mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}
         workflowColumnsEnabled

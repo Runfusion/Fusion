@@ -15,8 +15,6 @@ import {
   DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
   TASK_PRIORITIES,
-  VALID_TRANSITIONS,
-  isColumn,
   getErrorMessage,
 } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
@@ -66,6 +64,7 @@ import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/f
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
+import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
 
 const STALE_PAUSED_REVIEW_LOG_REGEX = /^Stale paused review surfaced \[([^\]]+)\]/;
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
@@ -2192,15 +2191,15 @@ export function TaskDetailContent({
     handleMove(column);
   }, [closeMenus]);
 
-  const handleActionsMenuItemClick = useCallback((action: () => void) => {
-    closeMenus();
-    action();
-  }, [closeMenus]);
-
   const handleMergeMenuItemClick = useCallback(() => {
     closeMenus();
     void handleMerge();
   }, [closeMenus, handleMerge]);
+
+  const handleStartPrReviewMenuItemClick = useCallback(() => {
+    closeMenus();
+    setPrCreateOpen(true);
+  }, [closeMenus]);
 
   const handleCheckPrStatus = useCallback(async () => {
     if (isCheckingPrStatus) return;
@@ -2583,14 +2582,63 @@ export function TaskDetailContent({
     return providers;
   }, [workingTask.modelProvider, workingTask.validatorModelProvider, workingTask.planningModelProvider]);
 
-  // #1403: legacy transitions only exist for legacy columns; a custom column id
-  // has no VALID_TRANSITIONS row, so the move menu shows no legacy targets.
-  const transitions: Column[] = isColumn(task.column) ? [...VALID_TRANSITIONS[task.column]] : [];
-  const inReviewMoveTransitions: Column[] = ["todo", "in-progress"];
-  const moveTransitions = task.column === "in-review" ? inReviewMoveTransitions : transitions;
-  const primaryMoveTransition = moveTransitions[0];
-  const secondaryMoveTransitions = moveTransitions.slice(1);
+
+  const prAutomationLabel = getTaskPrAutomationLabel(t, task.status);
+  const mergeStrategy = settings?.mergeStrategy ?? "direct";
+  const autoMergeEnabled = autoMergeEnabledProp ?? (settings?.autoMerge ?? false);
+  const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMergeEnabled });
+  const isManualPrFlow = mergeStrategy === "pull-request" && !effectiveAutoMerge;
+  const isChatExpanded = chatExpanded && activeTab === "chat" && !isEditing;
+
+  const taskActionMenuModel = useMemo(() => buildTaskActionMenuModel({
+    task,
+    t,
+    columnLabel,
+    canRetryTask,
+    hasDuplicateHandler: Boolean(onDuplicateTask),
+    hasRetryHandler: Boolean(onRetryTask),
+    hasResetHandler: Boolean(onResetTask),
+    mergeStrategy,
+    autoMergeEnabled: effectiveAutoMerge,
+    prAutomationLabel,
+    isCheckingPrStatus,
+    onDelete: handleDelete,
+    onDuplicate: handleDuplicate,
+    onOpenRefine: handleOpenRefineModal,
+    onRespecify: handleRespecify,
+    onRetry: handleRetry,
+    onReset: handleReset,
+    onTogglePause: handleTogglePause,
+    onMerge: handleMergeMenuItemClick,
+    onStartPrReview: handleStartPrReviewMenuItemClick,
+    onCheckPrStatus: handleCheckPrStatus,
+  }), [
+    task,
+    t,
+    columnLabel,
+    canRetryTask,
+    onDuplicateTask,
+    onRetryTask,
+    onResetTask,
+    mergeStrategy,
+    effectiveAutoMerge,
+    prAutomationLabel,
+    isCheckingPrStatus,
+    handleDelete,
+    handleDuplicate,
+    handleOpenRefineModal,
+    handleRespecify,
+    handleRetry,
+    handleReset,
+    handleTogglePause,
+    handleMergeMenuItemClick,
+    handleStartPrReviewMenuItemClick,
+    handleCheckPrStatus,
+  ]);
+  const primaryMoveTransition = taskActionMenuModel.moveTransitions[0]?.column;
+  const secondaryMoveTransitions = taskActionMenuModel.moveTransitions.slice(1);
   const hasSecondaryMoveOptions = secondaryMoveTransitions.length > 0;
+  const reviewAction = taskActionMenuModel.reviewAction;
 
   const closeMoveMenuAndFocusTrigger = useCallback(() => {
     setShowMoveMenu(false);
@@ -2600,7 +2648,7 @@ export function TaskDetailContent({
   const handleMoveButtonClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     if (!hasSecondaryMoveOptions) {
       if (primaryMoveTransition) {
-        void handleMoveMenuItemClick(primaryMoveTransition);
+        void handleMoveMenuItemClick(primaryMoveTransition as Column);
       }
       return;
     }
@@ -2618,7 +2666,7 @@ export function TaskDetailContent({
     }
 
     if (primaryMoveTransition) {
-      void handleMoveMenuItemClick(primaryMoveTransition);
+      void handleMoveMenuItemClick(primaryMoveTransition as Column);
     }
   }, [hasSecondaryMoveOptions, primaryMoveTransition, handleMoveMenuItemClick]);
 
@@ -2655,31 +2703,6 @@ export function TaskDetailContent({
     const firstMenuItem = moveMenuRef.current?.querySelector<HTMLButtonElement>(".detail-move-menu-item");
     firstMenuItem?.focus();
   }, [showMoveMenu]);
-
-  const prAutomationStatusLabels: Record<string, string> = {
-    "creating-pr": t("taskDetail.pr.creatingPr", "Creating PR…"),
-    "awaiting-pr-checks": t("taskDetail.pr.awaitingChecks", "Awaiting PR checks"),
-    "merging-pr": t("taskDetail.pr.mergingPr", "Merging PR…"),
-    "merging-fix": t("taskDetail.pr.mergingFixes", "Merging fixes…"),
-  };
-  const prAutomationLabel = task.status ? prAutomationStatusLabels[task.status] : undefined;
-  const mergeStrategy = settings?.mergeStrategy ?? "direct";
-  const autoMergeEnabled = autoMergeEnabledProp ?? (settings?.autoMerge ?? false);
-  const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMergeEnabled });
-  const isManualPrFlow = mergeStrategy === "pull-request" && !autoMergeEnabled;
-  const isChatExpanded = chatExpanded && activeTab === "chat" && !isEditing;
-
-  const isCheckPrStatusAction = isManualPrFlow && !prAutomationLabel && task.prInfo?.status === "open";
-  let manualReviewActionLabel = t("taskDetail.pr.mergeAndClose", "Merge & Close");
-  if (isManualPrFlow && !prAutomationLabel) {
-    if (!task.prInfo) {
-      manualReviewActionLabel = t("taskDetail.pr.startPrReview", "Start PR Review");
-    } else if (task.prInfo.status === "open") {
-      manualReviewActionLabel = t("taskDetail.pr.checkPrStatus", "Check PR Status");
-    } else if (task.prInfo.status === "merged") {
-      manualReviewActionLabel = t("taskDetail.pr.finishAndClose", "Finish & Close");
-    }
-  }
 
   return (
     <div
@@ -4284,13 +4307,7 @@ export function TaskDetailContent({
               )}
 
               {/* Actions dropdown — less common operations */}
-              {(
-                task.column !== "triage"
-                || task.status === "awaiting-approval"
-                || canRetryTask
-                || isTaskPaused
-                || Boolean(task.assignedAgentId)
-              ) && (
+              {taskActionMenuModel.shouldShowActionsMenu && (
                 <div className="detail-actions-dropdown" ref={actionsMenuRef}>
                   <button
                     className="btn btn-sm"
@@ -4305,91 +4322,23 @@ export function TaskDetailContent({
                     <ChevronDown size={12} />
                   </button>
                   {showActionsMenu && (
-                    <div className="detail-actions-menu" role="menu">
-                      {/* Delete — destructive, always first */}
-                      <button
-                        className="detail-actions-menu-item detail-actions-menu-item-danger"
-                        role="menuitem"
-                        onClick={() => handleActionsMenuItemClick(handleDelete)}
-                      >
-                        {t("taskDetail.delete.btn", "Delete")}
-                      </button>
-
-                      {/* Duplicate */}
-                      {onDuplicateTask && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleDuplicate)}
-                        >
-                          {t("taskDetail.duplicate.btn", "Duplicate")}
-                        </button>
-                      )}
-
-                      {/* Refine */}
-                      {(task.column === "done" || task.column === "in-review") && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleOpenRefineModal)}
-                        >
-                          {t("taskDetail.refine.btn", "Refine")}
-                        </button>
-                      )}
-
-                      {/* Respecify */}
-                      <button
-                        className="detail-actions-menu-item"
-                        role="menuitem"
-                        onClick={() => handleActionsMenuItemClick(handleRespecify)}
-                      >
-                        {t("taskDetail.respecify.btn", "Respecify")}
-                      </button>
-
-                      {/* Retry */}
-                      {canRetryTask && onRetryTask && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleRetry)}
-                        >
-                          {t("taskDetail.retry.btn", "Retry")}
-                        </button>
-                      )}
-
-                      {/* Reset (nuclear) — wipes all progress and reallocates worktree */}
-                      {onResetTask && task.column !== "done" && task.column !== "archived" && (
-                        <button
-                          className="detail-actions-menu-item detail-actions-menu-item-danger"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleReset)}
-                        >
-                          {t("taskDetail.reset.btn", "Reset")}
-                        </button>
-                      )}
-
+                    <>
                       {/*
                       FNXC:TaskPauseControls 2026-06-21-00:00:
                       Users may pause or unpause agent-assigned and agent-paused tasks at any time from the detail Actions menu. The Paused by agent note remains informational context, not a substitute for the actionable unpause control.
                       */}
-                      {task.column !== "done" && task.column !== "archived" && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleTogglePause)}
-                        >
-                          {isTaskPaused ? t("taskDetail.pause.unpauseBtn", "Unpause") : t("taskDetail.pause.pauseBtn", "Pause")}
-                        </button>
-                      )}
-                      {task.column !== "done" && task.column !== "archived" && task.paused && task.pausedByAgentId && (
-                        <span
-                          className="detail-actions-menu-item detail-actions-menu-note"
-                          role="note"
-                        >
-                          {t("taskDetail.pause.pausedByAgent", "Paused by agent")}
-                        </span>
-                      )}
-                    </div>
+                      <TaskContextMenu
+                        actions={taskActionMenuModel.actions}
+                        className="detail-actions-menu"
+                        itemClassName="detail-actions-menu-item"
+                        dangerItemClassName="detail-actions-menu-item-danger"
+                        noteItemClassName="detail-actions-menu-note"
+                        onActionSelect={(action) => {
+                          closeMenus();
+                          if (action.tone === "note") return;
+                        }}
+                      />
+                    </>
                   )}
                 </div>
               )}
@@ -4422,31 +4371,27 @@ export function TaskDetailContent({
                       </button>
                       {showMoveMenu && hasSecondaryMoveOptions && (
                         <div className="detail-move-menu" role="menu" onKeyDown={handleMoveMenuKeyDown}>
-                          {secondaryMoveTransitions.map((col) => (
+                          {secondaryMoveTransitions.map((moveAction) => (
                             <button
-                              key={col}
+                              key={moveAction.column}
                               className="detail-move-menu-item"
                               role="menuitem"
-                              onClick={() => handleMoveMenuItemClick(col)}
+                              onClick={() => handleMoveMenuItemClick(moveAction.column as Column)}
                               onKeyDown={handleMoveMenuKeyDown}
                             >
-                              {col === "in-progress" ? t("taskDetail.move.backToInProgress", "Back to In Progress") : t("taskDetail.move.moveTo", "Move to {{column}}", { column: columnLabel(col) })}
+                              {moveAction.label}
                             </button>
                           ))}
                         </div>
                       )}
                     </div>
-                    {prAutomationLabel ? (
-                      <button className="btn btn-primary btn-sm" disabled>
-                        {prAutomationLabel}
-                      </button>
-                    ) : (
+                    {reviewAction && (
                       <button
                         className="btn btn-primary btn-sm"
-                        onClick={isCheckPrStatusAction ? handleCheckPrStatus : handleMergeMenuItemClick}
-                        disabled={isCheckPrStatusAction && isCheckingPrStatus}
+                        onClick={reviewAction.onSelect}
+                        disabled={reviewAction.disabled}
                       >
-                        {manualReviewActionLabel}
+                        {reviewAction.label}
                       </button>
                     )}
                   </div>
@@ -4473,15 +4418,15 @@ export function TaskDetailContent({
                     </button>
                     {showMoveMenu && hasSecondaryMoveOptions && (
                       <div className="detail-move-menu" role="menu" onKeyDown={handleMoveMenuKeyDown}>
-                        {secondaryMoveTransitions.map((col) => (
+                        {secondaryMoveTransitions.map((moveAction) => (
                           <button
-                            key={col}
+                            key={moveAction.column}
                             className="detail-move-menu-item"
                             role="menuitem"
-                            onClick={() => handleMoveMenuItemClick(col)}
+                            onClick={() => handleMoveMenuItemClick(moveAction.column as Column)}
                             onKeyDown={handleMoveMenuKeyDown}
                           >
-                            {t("taskDetail.move.moveTo", "Move to {{column}}", { column: columnLabel(col) })}
+                            {moveAction.label}
                           </button>
                         ))}
                       </div>

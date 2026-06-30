@@ -1,11 +1,12 @@
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
-import type { Task, TaskDetail } from "@fusion/core";
+import type { Task, TaskDetail, MergeResult, GithubIssueAction, ColumnId } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
+import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 
 interface WorktreeGroupProps {
   label: string;
@@ -14,13 +15,26 @@ interface WorktreeGroupProps {
   allTasks?: Task[];
   projectId?: string;
   onOpenDetail: (task: Task | TaskDetail) => void;
+  onMoveTask?: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   addToast: (message: string, type?: ToastType) => void;
   globalPaused?: boolean;
   onUpdateTask?: (
     id: string,
     updates: { title?: string; description?: string; dependencies?: string[] }
   ) => Promise<Task>;
+  onPauseTask?: (id: string) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onUnpauseTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string) => Promise<Task>;
+  onDuplicateTask?: (id: string) => Promise<Task>;
+  onMergeTask?: (id: string) => Promise<MergeResult>;
+  onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
+  onUnarchiveTask?: (id: string) => Promise<Task>;
+  onDeleteTask?: (id: string, options?: {
+    removeDependencyReferences?: boolean;
+    removeLineageReferences?: boolean;
+    githubIssueAction?: GithubIssueAction;
+  }) => Promise<Task>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
@@ -38,6 +52,12 @@ interface WorktreeGroupProps {
   prAuthAvailable?: boolean;
   /** Whether project-level auto-merge is enabled, which hides manual Create PR card actions. */
   autoMergeEnabled?: boolean;
+  /** Project merge strategy for Task Detail-equivalent card context actions. */
+  mergeStrategy?: string;
+  /** Ordered workflow columns for deriving context-menu move targets in workflow mode. */
+  workflowContextMenuColumns?: readonly TaskContextMenuColumnMetadata[];
+  /** Per-task workflow columns for aggregate Board cards whose tasks come from different workflows. */
+  taskContextMenuColumnsByTaskId?: ReadonlyMap<string, readonly TaskContextMenuColumnMetadata[]>;
 }
 
 function WorktreeGroupComponent({
@@ -47,10 +67,19 @@ function WorktreeGroupComponent({
   allTasks,
   projectId,
   onOpenDetail,
+  onMoveTask,
   addToast,
   globalPaused,
   onUpdateTask,
+  onPauseTask,
   onRetryTask,
+  onUnpauseTask,
+  onResetTask,
+  onDuplicateTask,
+  onMergeTask,
+  onArchiveTask,
+  onUnarchiveTask,
+  onDeleteTask,
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
   onOpenMission,
@@ -60,6 +89,9 @@ function WorktreeGroupComponent({
   blockerFanoutMap,
   prAuthAvailable,
   autoMergeEnabled,
+  mergeStrategy = "direct",
+  workflowContextMenuColumns,
+  taskContextMenuColumnsByTaskId,
 }: WorktreeGroupProps) {
   const { t } = useTranslation("app");
   const upNextLabel = t("worktree.upNext", "Up Next");
@@ -69,6 +101,8 @@ function WorktreeGroupComponent({
     if (typeof nearDuplicateOf !== "string" || !allTasks) return undefined;
     return isNearDuplicateCanonicalInactive(allTasks.find((candidate) => candidate.id === nearDuplicateOf));
   };
+  const getTaskContextMenuColumns = (task: Task) => taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns;
+  const getTaskColumnFlags = (task: Task) => getTaskContextMenuColumns(task)?.find((candidate) => candidate.id === task.column)?.flags;
 
   return (
     <div className="worktree-group">
@@ -84,10 +118,21 @@ function WorktreeGroupComponent({
           task={task}
           projectId={projectId}
           onOpenDetail={onOpenDetail}
+          onMoveTask={onMoveTask}
+          taskColumnFlags={getTaskColumnFlags(task)}
+          taskMoveColumns={getTaskContextMenuColumns(task)}
           addToast={addToast}
           globalPaused={globalPaused}
           onUpdateTask={onUpdateTask}
+          onPauseTask={onPauseTask}
           onRetryTask={onRetryTask}
+          onUnpauseTask={onUnpauseTask}
+          onResetTask={onResetTask}
+          onDuplicateTask={onDuplicateTask}
+          onMergeTask={onMergeTask}
+          onArchiveTask={onArchiveTask}
+          onUnarchiveTask={onUnarchiveTask}
+          onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
@@ -97,6 +142,7 @@ function WorktreeGroupComponent({
           fanout={blockerFanoutMap?.get(task.id)}
           prAuthAvailable={prAuthAvailable}
           autoMergeEnabled={autoMergeEnabled}
+          mergeStrategy={mergeStrategy}
           nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
         />
       ))}
@@ -107,10 +153,21 @@ function WorktreeGroupComponent({
           projectId={projectId}
           queued
           onOpenDetail={onOpenDetail}
+          onMoveTask={onMoveTask}
+          taskColumnFlags={getTaskColumnFlags(task)}
+          taskMoveColumns={getTaskContextMenuColumns(task)}
           addToast={addToast}
           globalPaused={globalPaused}
           onUpdateTask={onUpdateTask}
+          onPauseTask={onPauseTask}
           onRetryTask={onRetryTask}
+          onUnpauseTask={onUnpauseTask}
+          onResetTask={onResetTask}
+          onDuplicateTask={onDuplicateTask}
+          onMergeTask={onMergeTask}
+          onArchiveTask={onArchiveTask}
+          onUnarchiveTask={onUnarchiveTask}
+          onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
           onOpenMission={onOpenMission}
@@ -120,6 +177,7 @@ function WorktreeGroupComponent({
           fanout={blockerFanoutMap?.get(task.id)}
           prAuthAvailable={prAuthAvailable}
           autoMergeEnabled={autoMergeEnabled}
+          mergeStrategy={mergeStrategy}
           nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
         />
       ))}

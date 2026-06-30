@@ -550,6 +550,7 @@ function AppInner() {
   const {
     maxConcurrent,
     autoMerge,
+    mergeStrategy,
     showWorktreeGrouping,
     globalPaused,
     isTestMode,
@@ -1216,6 +1217,7 @@ function AppInner() {
     openFileInBrowser,
     prAuthAvailable,
     autoMerge,
+    mergeStrategy,
     settingsLoaded,
     skillsEnabled,
     experimentalFeatures,

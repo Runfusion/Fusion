@@ -1,0 +1,57 @@
+.task-context-menu {
+  --task-context-menu-min-width: calc(var(--space-xl) * 6 + var(--space-lg));
+  --task-context-menu-max-width: min(calc(var(--space-xl) * 9 + var(--space-md)), calc(100vw - var(--space-xl)));
+
+  position: absolute;
+  z-index: 20;
+  min-width: var(--task-context-menu-min-width);
+  max-width: var(--task-context-menu-max-width);
+  padding: var(--space-xs) 0;
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.task-context-menu__item {
+  display: block;
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-context-menu__item:hover,
+.task-context-menu__item:focus {
+  outline: none;
+  background: var(--surface-hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.task-context-menu__item--danger {
+  color: var(--color-error);
+}
+
+.task-context-menu__item--danger:hover,
+.task-context-menu__item--danger:focus {
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+.task-context-menu__item--note {
+  color: var(--text-muted);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.75);
+  cursor: default;
+}
+
+@media (max-width: 768px) {
+  .task-context-menu {
+    --task-context-menu-min-width: min(calc(100vw - var(--space-xl)), calc(var(--space-xl) * 6));
+  }
+
+  .task-context-menu__item {
+    padding: var(--space-md);
+  }
+}

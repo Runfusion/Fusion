@@ -106,6 +106,7 @@ function mainContentProps(overrides: Partial<MainContentProps> = {}): MainConten
     workflowStepNameLookup: new Map(),
     prAuthAvailable: false,
     autoMerge: true,
+    mergeStrategy: "direct",
     settingsLoaded: true,
     skillsEnabled: true,
     experimentalFeatures: {},

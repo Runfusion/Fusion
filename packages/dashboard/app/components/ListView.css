@@ -229,6 +229,21 @@ View options was oversized (full-width stacked button). Render it as a compact i
   cursor: not-allowed;
 }
 
+/*
+FNXC:ListContextMenu 2026-06-29-00:00:
+List rows and mobile cards expose the same task lifecycle menu as Board cards from right-click or mobile long-press. The popover is portal-positioned so table rows, split-pane sizing, and mobile card layout do not gain new in-flow width or height.
+*/
+.list-context-menu-popover {
+  position: fixed;
+  z-index: 1000;
+}
+
+.list-context-menu {
+  position: static;
+  min-width: var(--task-context-menu-min-width);
+  max-width: var(--task-context-menu-max-width);
+}
+
 /* Checkbox column in table */
 .list-header-checkbox,
 .list-cell-checkbox {
@@ -572,6 +587,11 @@ No border-left on the detail pane. Keeping a border-left here would produce a se
 
 .list-row:hover {
   background: var(--card-hover);
+}
+
+.list-row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .list-row--selected {
@@ -1058,6 +1078,11 @@ In the split sidebar the title cell must allow the title to wrap to two lines (h
   .list-card:hover {
     background: var(--card-hover);
     border-color: var(--text-muted);
+  }
+
+  .list-card:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring-strong);
   }
 
   .list-card:active {
