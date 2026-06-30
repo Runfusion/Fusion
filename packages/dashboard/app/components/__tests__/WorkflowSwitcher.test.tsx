@@ -242,6 +242,56 @@ describe("WorkflowSwitcher", () => {
     expect(screen.queryByRole("listbox", { name: "Workflow" })).not.toBeInTheDocument();
   });
 
+  it("renders an accessible aggregate option before workflows without an edit shell", () => {
+    const onChange = vi.fn();
+    const onEditWorkflow = vi.fn();
+    render(
+      <WorkflowSwitcher
+        workflows={workflows}
+        value="__all_workflows__"
+        onChange={onChange}
+        counts={countMap([["__all_workflows__", { todo: 4, inProgress: 3, done: 2, merging: 1 }]])}
+        aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
+        onEditWorkflow={onEditWorkflow}
+      />,
+    );
+
+    expect(screen.getByTestId("workflow-switcher")).toHaveAccessibleName("Select workflow. Current workflow: All workflows");
+    fireEvent.click(screen.getByTestId("workflow-switcher"));
+
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual(expect.arrayContaining([expect.stringContaining("All workflows")]));
+    expect(options[0]).toHaveAttribute("data-testid", "workflow-switcher-option-__all_workflows__");
+    expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("workflow-switcher-edit-__all_workflows__")).toBeNull();
+    expect(screen.getByTestId("workflow-switcher-edit-coding")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toHaveTextContent("4");
+
+    fireEvent.click(screen.getByTestId("workflow-switcher-option-design"));
+    expect(onChange).toHaveBeenCalledWith("design");
+    expect(onEditWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("supports keyboard selection of the aggregate option", () => {
+    const onChange = vi.fn();
+    render(
+      <WorkflowSwitcher
+        workflows={workflows}
+        value="coding"
+        onChange={onChange}
+        counts={countMap()}
+        aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
+      />,
+    );
+
+    const trigger = screen.getByTestId("workflow-switcher");
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.keyDown(trigger, { key: "ArrowUp" });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+
+    expect(onChange).toHaveBeenCalledWith("__all_workflows__");
+  });
+
   it("supports keyboard navigation and escape dismissal", () => {
     const onChange = vi.fn();
     render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={onChange} counts={countMap()} />);

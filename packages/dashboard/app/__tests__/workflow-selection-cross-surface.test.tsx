@@ -202,7 +202,7 @@ describe("workflow selection across dashboard surfaces", () => {
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-disabled"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
-    expect(localStorage.getItem("kb:project-disabled:kb-dashboard-board-workflow-selection")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:project-disabled:kb-dashboard-board-workflow-selection")).toBeNull());
     for (const task of TASKS) {
       expect(screen.getByTestId(`graph-task-${task.id}`)).toBeInTheDocument();
     }
@@ -215,7 +215,7 @@ describe("workflow selection across dashboard surfaces", () => {
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-empty"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
-    expect(localStorage.getItem("kb:project-empty:kb-dashboard-board-workflow-selection")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:project-empty:kb-dashboard-board-workflow-selection")).toBeNull());
     empty.unmount();
 
     sessionStorage.clear();
@@ -225,6 +225,6 @@ describe("workflow selection across dashboard surfaces", () => {
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-single"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
-    expect(localStorage.getItem("kb:project-single:kb-dashboard-board-workflow-selection")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:project-single:kb-dashboard-board-workflow-selection")).toBeNull());
   });
 });

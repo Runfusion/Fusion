@@ -4801,6 +4801,44 @@ describe("TaskCard memo comparator provenance behavior", () => {
       ),
     ).toBe(false);
   });
+
+  it("detects workflow badge metadata changes", () => {
+    const task = makeTask();
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task, workflowBadge: { workflowId: "builtin:coding", workflowName: "Coding" }, onOpenDetail: noop, addToast: noop } as any,
+        { task, workflowBadge: { workflowId: "wf-custom", workflowName: "Custom Flow" }, onOpenDetail: noop, addToast: noop } as any,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("TaskCard workflow badges", () => {
+  it("renders a compact accessible workflow badge only when metadata is present", () => {
+    const { rerender } = render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={noop}
+        addToast={noop}
+        workflowBadge={{ workflowId: "wf-custom", workflowName: "Custom Flow" }}
+      />,
+    );
+
+    const badge = screen.getByTestId("card-workflow-badge");
+    expect(badge).toHaveTextContent("Custom Flow");
+    expect(badge).toHaveAttribute("data-workflow-id", "wf-custom");
+    expect(badge).toHaveAccessibleName("Workflow Custom Flow");
+
+    rerender(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={noop}
+        addToast={noop}
+        workflowBadge={{ workflowId: "", workflowName: "" }}
+      />,
+    );
+    expect(screen.queryByTestId("card-workflow-badge")).toBeNull();
+  });
 });
 
 describe("TaskCard mission badge", () => {

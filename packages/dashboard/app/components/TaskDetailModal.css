@@ -39,13 +39,23 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   color: var(--text-muted);
 }
 
-.detail-column-badge {
+.detail-column-badge,
+.detail-workflow-badge {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.detail-column-badge {
+  text-transform: uppercase;
+}
+
+.detail-workflow-badge {
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
 }
 .badge-triage {
   background: var(--status-triage-bg);

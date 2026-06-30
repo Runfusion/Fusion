@@ -7,13 +7,13 @@ import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { promoteTask, type ModelInfo, type BoardWorkflowsPayload } from "../api";
+import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn } from "../api";
 import { useBlockerFanout } from "../hooks/useBlockerFanout";
 import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import { getBoardCanDropTaskRejection } from "./boardCanDropTask";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
-import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
+import { computeWorkflowStatusCounts, type WorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 
@@ -123,6 +123,11 @@ function scheduleDocumentHorizontalScrollReset() {
   setTimeout(run, 0);
 }
 
+export const ALL_WORKFLOWS_BOARD_VIEW_ID = "__all_workflows__";
+
+type AggregateBoardColumn = BoardWorkflowColumn & { sourceWorkflowIds: string[] };
+type AggregateQuickCreateTarget = { columnId: string; workflowId: string };
+
 function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
   return (
     <main className="board board-workflows-skeleton" id="board" aria-busy={!empty} aria-label={empty ? "No workflow lanes available" : "Loading workflow lanes"} data-testid={empty ? "board-workflows-empty" : "board-workflows-skeleton"}>
@@ -144,6 +149,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
   Board owns one Done sort mode so legacy and built-in workflow Done surfaces stay in sync; the default remains completion-date descending to preserve existing first-load ordering.
   */
   const [doneSortMode, setDoneSortMode] = useState<DoneColumnSortMode>("completion-date-desc");
+  const [isAllWorkflowsViewSelected, setIsAllWorkflowsViewSelected] = useState(false);
   const archivedLoadedRef = useRef(false);
   const boardRef = useRef<HTMLElement | null>(null);
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
@@ -352,6 +358,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     workflowMode,
     workflowOptions,
     selectedWorkflow,
+    selectedWorkflowId,
     setSelectedWorkflowId,
     refreshBoardWorkflows,
     setBoardWorkflowsState,
@@ -371,18 +378,61 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
 
   const getDraggingTaskId = useCallback(() => draggingTaskIdRef.current, []);
 
-  const workflowStatusCounts = useMemo(
-    () => computeWorkflowStatusCounts(tasks, boardWorkflows),
-    [boardWorkflows, tasks],
-  );
+  const workflowStatusCounts = useMemo(() => {
+    const counts = computeWorkflowStatusCounts(tasks, boardWorkflows);
+    const aggregateCounts: WorkflowStatusCounts = { todo: 0, inProgress: 0, done: 0, merging: 0 };
+    for (const workflowCounts of counts.values()) {
+      aggregateCounts.todo += workflowCounts.todo;
+      aggregateCounts.inProgress += workflowCounts.inProgress;
+      aggregateCounts.done += workflowCounts.done;
+      aggregateCounts.merging += workflowCounts.merging;
+    }
+    counts.set(ALL_WORKFLOWS_BOARD_VIEW_ID, aggregateCounts);
+    return counts;
+  }, [boardWorkflows, tasks]);
+
+  const handleWorkflowSwitcherChange = useCallback((workflowId: string) => {
+    /*
+    FNXC:WorkflowBoard 2026-06-29-16:00:
+    "All workflows" is a Board-only aggregate filter sentinel. Selecting it must not write to the durable workflow-selection store or flow into task creation, workflow editing, or workflow settings APIs that expect a real workflow id.
+    Real workflow selections still use useBoardWorkflows so FN-7234 project-scoped persistence remains the only durable path.
+    */
+    if (workflowId === ALL_WORKFLOWS_BOARD_VIEW_ID) {
+      setIsAllWorkflowsViewSelected(true);
+      return;
+    }
+    setIsAllWorkflowsViewSelected(false);
+    setSelectedWorkflowId(workflowId);
+  }, [setSelectedWorkflowId]);
+
+  useEffect(() => {
+    if (!workflowMode) {
+      setIsAllWorkflowsViewSelected(false);
+    }
+  }, [workflowMode]);
+
+  const knownWorkflowIds = useMemo(() => new Set(boardWorkflows?.workflows.map((workflow) => workflow.id) ?? []), [boardWorkflows]);
+
+  const workflowColumnsByWorkflowId = useMemo(() => {
+    const byWorkflow = new Map<string, Map<string, BoardWorkflowColumn>>();
+    for (const workflow of boardWorkflows?.workflows ?? []) {
+      byWorkflow.set(workflow.id, new Map(workflow.columns.map((column) => [column.id, column])));
+    }
+    return byWorkflow;
+  }, [boardWorkflows]);
+
+  const getEffectiveTaskWorkflowId = useCallback((task: Task) => {
+    if (!boardWorkflows) return null;
+    const assignedWorkflowId = boardWorkflows.taskWorkflowIds[task.id];
+    return assignedWorkflowId && knownWorkflowIds.has(assignedWorkflowId)
+      ? assignedWorkflowId
+      : boardWorkflows.defaultWorkflowId;
+  }, [boardWorkflows, knownWorkflowIds]);
 
   const selectedWorkflowTasks = useMemo(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return [];
-    return tasks.filter((task) => {
-      const workflowId = boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId;
-      return workflowId === selectedWorkflow.id;
-    });
-  }, [boardWorkflows, selectedWorkflow, tasks, workflowMode]);
+    return tasks.filter((task) => getEffectiveTaskWorkflowId(task) === selectedWorkflow.id);
+  }, [boardWorkflows, getEffectiveTaskWorkflowId, selectedWorkflow, tasks, workflowMode]);
 
   const applyOptimisticTaskWorkflow = useCallback((taskId: string, workflowId: string) => {
     setBoardWorkflowsState((previous) => {
@@ -415,6 +465,22 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     }
     return created;
   }, [applyOptimisticTaskWorkflow, onQuickCreate, refreshBoardWorkflows, selectedWorkflow]);
+
+  /**
+   * FNXC:WorkflowBoard 2026-06-29-23:58:
+   * The aggregate All workflows board is a read-side union, not a real workflow. Quick create must attach to one real workflow intake/default column so custom-default projects never submit synthetic `triage` or an empty workflow id to the backend.
+   */
+  const handleAggregateWorkflowQuickCreate = useCallback(async (input: TaskCreateInput) => {
+    if (!onQuickCreate) return undefined;
+    const created = await onQuickCreate(input);
+    const targetWorkflowId = typeof input.workflowId === "string" ? input.workflowId : undefined;
+    if (created?.id && targetWorkflowId) {
+      const createdWorkflowId = (created as Task & { workflowId?: string }).workflowId ?? targetWorkflowId;
+      applyOptimisticTaskWorkflow(created.id, createdWorkflowId);
+      refreshBoardWorkflows();
+    }
+    return created;
+  }, [applyOptimisticTaskWorkflow, onQuickCreate, refreshBoardWorkflows]);
 
   const selectedWorkflowArchivedColumn = useMemo(() => {
     if (!selectedWorkflow) return null;
@@ -469,14 +535,141 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     const map = new Map<string, import("../api").WorkflowFieldDefinition[]>();
     if (cardDefsByWorkflow.size === 0) return map;
     if (!boardWorkflows) return map;
-    const { taskWorkflowIds, defaultWorkflowId } = boardWorkflows;
     for (const task of tasks) {
-      const workflowId = taskWorkflowIds[task.id] ?? defaultWorkflowId;
-      const defs = cardDefsByWorkflow.get(workflowId);
+      const workflowId = getEffectiveTaskWorkflowId(task);
+      const defs = workflowId ? cardDefsByWorkflow.get(workflowId) : undefined;
       if (defs) map.set(task.id, defs);
     }
     return map;
-  }, [cardDefsByWorkflow, tasks, boardWorkflows]);
+  }, [cardDefsByWorkflow, getEffectiveTaskWorkflowId, tasks, boardWorkflows]);
+
+  const workflowNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!boardWorkflows) return map;
+    for (const workflow of boardWorkflows.workflows) {
+      map.set(workflow.id, workflow.name);
+    }
+    return map;
+  }, [boardWorkflows]);
+
+  /*
+  FNXC:WorkflowBoard 2026-06-29-00:00:
+  All-workflows Board cards need trustworthy workflow-name badges, but per-workflow Board views and other TaskCard callers must not render empty shells. Derive badges only from board-workflows metadata, falling stale or missing task assignments back to the default workflow without persisting the aggregate sentinel.
+  */
+  const aggregateTaskWorkflowBadges = useMemo(() => {
+    const map = new Map<string, { workflowId: string; workflowName: string }>();
+    if (!boardWorkflows) return map;
+    for (const task of tasks) {
+      const assignedWorkflowId = boardWorkflows.taskWorkflowIds[task.id] ?? boardWorkflows.defaultWorkflowId;
+      const workflowId = workflowNameById.has(assignedWorkflowId) ? assignedWorkflowId : boardWorkflows.defaultWorkflowId;
+      const workflowName = workflowNameById.get(workflowId);
+      if (workflowName) {
+        map.set(task.id, { workflowId, workflowName });
+      }
+    }
+    return map;
+  }, [boardWorkflows, tasks, workflowNameById]);
+
+  /*
+  FNXC:WorkflowBoard 2026-06-29-16:00:
+  The aggregate Board view must not hide cards from custom workflow columns. Build a non-persisted union of visible workflow column ids and append canonical lifecycle columns so all task columns have a rendered destination without inventing a backend workflow id.
+
+  FNXC:WorkflowBoard 2026-06-29-18:37:
+  Shared aggregate column ids must use the default workflow's label and trait flags when that workflow declares them; otherwise preserve the first workflow definition that introduced the id. This keeps "All workflows" deterministic for duplicate column names without OR-merging incompatible workflow traits.
+
+  FNXC:WorkflowBoard 2026-06-29-23:54:
+  Aggregate Board rendering separates active columns from archived columns after the deterministic union is built. This preserves the existing collapsed archived-column behavior while the main All workflows lane set stays limited to non-hidden, non-archived destinations.
+  */
+  const aggregateBoardColumns = useMemo<AggregateBoardColumn[]>(() => {
+    const byId = new Map<string, AggregateBoardColumn>();
+    if (boardWorkflows) {
+      const defaultWorkflow = boardWorkflows.workflows.find((workflow) => workflow.id === boardWorkflows.defaultWorkflowId);
+      const orderedWorkflows = [
+        ...(defaultWorkflow ? [defaultWorkflow] : []),
+        ...boardWorkflows.workflows.filter((workflow) => workflow.id !== boardWorkflows.defaultWorkflowId),
+      ];
+      for (const workflow of orderedWorkflows) {
+        for (const column of workflow.columns) {
+          if (column.flags.hiddenFromBoard) continue;
+          const existing = byId.get(column.id);
+          if (existing) {
+            existing.sourceWorkflowIds.push(workflow.id);
+            continue;
+          }
+          byId.set(column.id, { ...column, flags: { ...column.flags }, sourceWorkflowIds: [workflow.id] });
+        }
+      }
+    }
+    for (const column of COLUMNS) {
+      if (!byId.has(column)) {
+        byId.set(column, {
+          id: column,
+          name: column,
+          flags: { archived: column === "archived", complete: column === "done", intake: column === "triage", countsTowardWip: column === "in-progress", mergeBlocker: column === "in-review" },
+          sourceWorkflowIds: [],
+        });
+      }
+    }
+    const order = new Map(COLUMNS.map((column, index) => [column, index]));
+    return [...byId.values()].sort((a, b) => {
+      const aOrder = order.get(a.id as ColumnType) ?? (a.flags.archived ? 10_000 : 1_000);
+      const bOrder = order.get(b.id as ColumnType) ?? (b.flags.archived ? 10_000 : 1_000);
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.name.localeCompare(b.name);
+    });
+  }, [boardWorkflows]);
+
+  const aggregateQuickCreateTarget = useMemo<AggregateQuickCreateTarget | null>(() => {
+    if (!boardWorkflows) return null;
+    const defaultWorkflow = boardWorkflows.workflows.find((workflow) => workflow.id === boardWorkflows.defaultWorkflowId);
+    const orderedWorkflows = [
+      ...(defaultWorkflow ? [defaultWorkflow] : []),
+      ...boardWorkflows.workflows.filter((workflow) => workflow.id !== boardWorkflows.defaultWorkflowId),
+    ];
+    for (const workflow of orderedWorkflows) {
+      const column = workflow.columns.find((candidate) => candidate.flags.intake && !candidate.flags.archived && !candidate.flags.hiddenFromBoard)
+        ?? workflow.columns.find((candidate) => !candidate.flags.archived && !candidate.flags.hiddenFromBoard);
+      if (column) return { columnId: column.id, workflowId: workflow.id };
+    }
+    return null;
+  }, [boardWorkflows]);
+
+  const aggregateVisibleBoardColumns = useMemo(
+    () => aggregateBoardColumns.filter((column) => column.flags.archived !== true),
+    [aggregateBoardColumns],
+  );
+
+  const aggregateArchivedBoardColumns = useMemo(
+    () => aggregateBoardColumns.filter((column) => column.flags.archived === true),
+    [aggregateBoardColumns],
+  );
+
+  const aggregateRenderedBoardColumns = useMemo(
+    () => [...aggregateVisibleBoardColumns, ...aggregateArchivedBoardColumns],
+    [aggregateArchivedBoardColumns, aggregateVisibleBoardColumns],
+  );
+
+  const aggregateTasksByColumn = useMemo(() => {
+    const grouped: Record<string, Task[]> = {};
+    for (const column of aggregateBoardColumns) grouped[column.id] = [];
+    for (const task of tasks) {
+      const workflowId = getEffectiveTaskWorkflowId(task);
+      const workflowColumn = workflowId ? workflowColumnsByWorkflowId.get(workflowId)?.get(task.column) : null;
+      /*
+      FNXC:WorkflowBoard 2026-06-29-23:59:
+      Aggregate Board grouping must resolve the task's effective workflow before using a shared column id. If one workflow hides `qa` while another shows it, tasks assigned to the hidden `qa` column stay hidden instead of leaking into the visible aggregate lane.
+      */
+      if (!workflowColumn || workflowColumn.flags.hiddenFromBoard) continue;
+      (grouped[task.column] ??= []).push(task);
+    }
+    for (const column of aggregateBoardColumns) {
+      const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
+      grouped[column.id] = isDoneLikeColumn
+        ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
+        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType);
+    }
+    return grouped;
+  }, [aggregateBoardColumns, doneSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);
 
   // Drag pre-check (R17): adjacency + capacity from the lane's column metadata.
   // Cross-lane drag → workflow-mismatch. Deterministic rejections return a
@@ -505,15 +698,17 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
   }
 
   if (workflowMode && selectedWorkflow) {
-    const shouldRenderWorkflowControls = workflowOptions.length > 1 || Boolean(onCreateWorkflow || onOpenWorkflowEditor);
-    const workflowToolbar = shouldRenderWorkflowControls && workflowOptions.length > 0 ? (
+    const shouldRenderWorkflowControls = workflowOptions.length > 0;
+    const workflowSwitcherValue = isAllWorkflowsViewSelected ? ALL_WORKFLOWS_BOARD_VIEW_ID : (selectedWorkflowId ?? selectedWorkflow.id);
+    const workflowToolbar = shouldRenderWorkflowControls ? (
       <div className="board-workflow-toolbar">
         <div className="board-workflow-selector">
           <WorkflowSwitcher
             workflows={workflowOptions}
-            value={selectedWorkflow.id}
-            onChange={setSelectedWorkflowId}
+            value={workflowSwitcherValue}
+            onChange={handleWorkflowSwitcherChange}
             counts={workflowStatusCounts}
+            aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
             onOpen={refreshBoardWorkflows}
             onEditWorkflow={onOpenWorkflowEditor}
             onCreateWorkflow={onCreateWorkflow}
@@ -531,10 +726,70 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     const relocatedWorkflowToolbar = workflowControlsInHeader && headerWorkflowSlot && workflowToolbar
       ? createPortal(workflowToolbar, headerWorkflowSlot)
       : null;
+    const renderedWorkflowToolbar = workflowControlsInHeader && headerWorkflowSlot ? relocatedWorkflowToolbar : workflowToolbar;
+
+    if (isAllWorkflowsViewSelected) {
+      return (
+        <div className="board-workflow-view">
+          {renderedWorkflowToolbar}
+          <main className="board board-workflow-columns" id="board" ref={boardRef}>
+            {aggregateRenderedBoardColumns.map((columnDef) => {
+              const isCreateColumn = aggregateQuickCreateTarget?.columnId === columnDef.id;
+              const isDoneLikeColumn = columnDef.flags.complete === true && columnDef.flags.archived !== true;
+              return (
+                <Column
+                  key={columnDef.id}
+                  column={columnDef.id as ColumnType}
+                  workflowMode
+                  columnDisplayName={columnDef.name}
+                  columnFlags={columnDef.flags}
+                  tasks={aggregateTasksByColumn[columnDef.id] ?? []}
+                  projectId={projectId}
+                  maxConcurrent={maxConcurrent}
+                  showWorktreeGrouping={showWorktreeGrouping}
+                  onMoveTask={onMoveTask}
+                  onPauseTask={onPauseTask}
+                  onOpenDetail={onOpenDetail}
+                  onOpenGroupModal={onOpenGroupModal}
+                  addToast={addToast}
+                  globalPaused={globalPaused}
+                  onUpdateTask={onUpdateTask}
+                  onRetryTask={onRetryTask}
+                  onArchiveTask={onArchiveTask}
+                  onUnarchiveTask={onUnarchiveTask}
+                  onDeleteTask={onDeleteTask}
+                  allTasks={tasks}
+                  availableModels={availableModels}
+                  onOpenDetailWithTab={onOpenDetailWithTab}
+                  favoriteProviders={favoriteProviders}
+                  favoriteModels={favoriteModels}
+                  onToggleFavorite={onToggleFavorite}
+                  onToggleModelFavorite={onToggleModelFavorite}
+                  isSearchActive={isSearchActive}
+                  taskStuckTimeoutMs={taskStuckTimeoutMs}
+                  onOpenMission={onOpenMission}
+                  lastFetchTimeMs={lastFetchTimeMs}
+                  taskCardFieldDefs={taskCardFieldDefs}
+                  taskWorkflowBadges={aggregateTaskWorkflowBadges}
+                  blockerFanoutMap={blockerFanoutMap}
+                  prAuthAvailable={prAuthAvailable}
+                  autoMerge={autoMerge}
+                  {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
+                  {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
+                  {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
+                  {...(isDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
+                  {...(columnDef.flags.archived ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
+                />
+              );
+            })}
+          </main>
+        </div>
+      );
+    }
 
     return (
       <div className="board-workflow-view">
-        {workflowControlsInHeader && headerWorkflowSlot ? relocatedWorkflowToolbar : workflowToolbar}
+        {renderedWorkflowToolbar}
         <main
           className="board board-workflow-columns"
           id="board"
