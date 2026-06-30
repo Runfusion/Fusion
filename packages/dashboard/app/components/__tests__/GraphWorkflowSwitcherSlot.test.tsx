@@ -46,6 +46,7 @@ function appendHeaderWorkflowSlot() {
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   fetchBoardWorkflowsMock.mockReset();
   subscribeSseMock.mockClear();
   fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload());
@@ -138,6 +139,62 @@ describe("GraphWorkflowSwitcherSlot", () => {
     await waitFor(() => {
       const lastSelection = onWorkflowSelectionChange.mock.calls.at(-1)?.[0] as GraphWorkflowSelection | null;
       expect(lastSelection?.selectedWorkflow.id).toBe("wf-review");
+    });
+  });
+
+  it("hydrates a remounted graph selector from durable project storage while fetch is pending", async () => {
+    appendHeaderWorkflowSlot();
+    const { unmount } = render(<GraphWorkflowSwitcherSlot projectId="project-graph-persist" />);
+
+    fireEvent.click(await screen.findByTestId("workflow-switcher"));
+    fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-review"));
+    await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent(CUSTOM_WORKFLOW.name));
+
+    unmount();
+    fetchBoardWorkflowsMock.mockImplementation(() => new Promise<BoardWorkflowsPayload>(() => {}));
+    render(<GraphWorkflowSwitcherSlot projectId="project-graph-persist" />);
+
+    expect(await screen.findByTestId("workflow-switcher")).toHaveTextContent(CUSTOM_WORKFLOW.name);
+  });
+
+  it("repairs a stale stored graph workflow id to the default workflow", async () => {
+    appendHeaderWorkflowSlot();
+    localStorage.setItem("kb:project-graph-stale:kb-dashboard-board-workflow-selection", "wf-deleted");
+    const onWorkflowSelectionChange = vi.fn();
+
+    render(<GraphWorkflowSwitcherSlot projectId="project-graph-stale" onWorkflowSelectionChange={onWorkflowSelectionChange} />);
+
+    expect(await screen.findByTestId("workflow-switcher")).toHaveTextContent(DEFAULT_WORKFLOW.name);
+    await waitFor(() => {
+      const lastSelection = onWorkflowSelectionChange.mock.calls.at(-1)?.[0] as GraphWorkflowSelection | null;
+      expect(lastSelection?.selectedWorkflow.id).toBe(DEFAULT_WORKFLOW.id);
+    });
+    expect(localStorage.getItem("kb:project-graph-stale:kb-dashboard-board-workflow-selection")).toBe(DEFAULT_WORKFLOW.id);
+  });
+
+  it("keeps a valid graph workflow selection through focus refreshes", async () => {
+    appendHeaderWorkflowSlot();
+    const onWorkflowSelectionChange = vi.fn();
+    render(<GraphWorkflowSwitcherSlot projectId="project-focus" onWorkflowSelectionChange={onWorkflowSelectionChange} />);
+
+    fireEvent.click(await screen.findByTestId("workflow-switcher"));
+    fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-review"));
+    await waitFor(() => {
+      const lastSelection = onWorkflowSelectionChange.mock.calls.at(-1)?.[0] as GraphWorkflowSelection | null;
+      expect(lastSelection?.selectedWorkflow.id).toBe(CUSTOM_WORKFLOW.id);
+    });
+
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({
+      defaultWorkflowId: DEFAULT_WORKFLOW.id,
+      workflows: [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+    }));
+    const callsBeforeFocus = fetchBoardWorkflowsMock.mock.calls.length;
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledTimes(callsBeforeFocus + 1));
+    await waitFor(() => {
+      const lastSelection = onWorkflowSelectionChange.mock.calls.at(-1)?.[0] as GraphWorkflowSelection | null;
+      expect(lastSelection?.selectedWorkflow.id).toBe(CUSTOM_WORKFLOW.id);
     });
   });
 

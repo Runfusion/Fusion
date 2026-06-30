@@ -32,7 +32,7 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(node.config?.name).toBe("Code Review");
     const inner = (node.config?.template as { nodes: { config?: Record<string, unknown> }[] }).nodes[0];
     expect(inner.config?.toolMode).toBe("readonly");
-    expect(inner.config?.gateMode).toBe("advisory");
+    expect(inner.config?.gateMode).toBe("gate");
     const prompt = String(inner.config?.prompt);
     expect(prompt).toMatch(/"verdict":"APPROVE\|APPROVE_WITH_NOTES\|REVISE"/);
     expect(prompt).not.toContain('"verdict":"PASS"');
@@ -52,6 +52,7 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(node.config?.name).toBe("Code Review");
     // Default-ON (runs by default), but still an optional-group → toggleable per task.
     expect(node.config?.defaultOn).toBe(true);
+    expect(node.config?.maxRevisions).toBe(3);
 
     const template = node.config?.template as { nodes: { id: string; kind: string; config?: Record<string, unknown> }[] };
     expect(template.nodes).toHaveLength(1);
@@ -59,8 +60,13 @@ describe("codeReviewOptionalGroupNode", () => {
     expect(inner.id).toBe(CODE_REVIEW_STEP_NODE_ID);
     expect(inner.kind).toBe("prompt");
     expect(inner.config?.toolMode).toBe("readonly");
-    expect(inner.config?.gateMode).toBe("advisory");
+    expect(inner.config?.gateMode).toBe("gate");
     expect(String(inner.config?.prompt)).toMatch(/"verdict":"APPROVE\|APPROVE_WITH_NOTES\|REVISE"/);
+  });
+
+  it("lets workflows override the default remediation attempt budget", () => {
+    expect(codeReviewOptionalGroupNode("in-progress", { maxRevisions: 1 }).config?.maxRevisions).toBe(1);
+    expect(codeReviewOptionalGroupNode("in-progress", { maxRevisions: "unbounded" }).config?.maxRevisions).toBe("unbounded");
   });
 });
 
@@ -76,12 +82,12 @@ describe("built-in coding + stepwise workflows wire code-review as a default-ON 
     expect(group?.config?.defaultOn).toBe(true);
     expect(group?.column).toBe("in-progress");
 
-    // Pre-merge wiring: ... → browser-verification → code-review → review; failure → end.
+    // Pre-merge wiring: ... → browser-verification → code-review → completion-summary; failure → remediation node.
     expect(ir.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ from: "browser-verification", to: "code-review", condition: "success" }),
-        expect.objectContaining({ from: "code-review", to: "review", condition: "success" }),
-        expect.objectContaining({ from: "code-review", to: "end", condition: "failure" }),
+        expect.objectContaining({ from: "code-review", to: "completion-summary", condition: "success" }),
+        expect.objectContaining({ from: "code-review", to: "code-review-remediation", condition: "failure" }),
       ]),
     );
 

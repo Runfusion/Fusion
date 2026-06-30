@@ -14,6 +14,7 @@ import type { ToastType } from "../hooks/useToast";
 import { ChevronDown, ChevronUp, Archive, MoreVertical } from "lucide-react";
 import type { ModelInfo, BoardWorkflowColumnFlags } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
+import type { DoneColumnSortMode } from "./taskSorting";
 
 const PAGINATED_COLUMN_THRESHOLD = 100;
 const VISIBLE_TASKS_INITIAL = 50;
@@ -115,6 +116,10 @@ interface ColumnProps {
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
   onArchiveAllDone?: () => Promise<Task[]>;
+  /** Current Done-column display order, supplied only for the board's Done surface. */
+  doneSortMode?: DoneColumnSortMode;
+  /** Updates the board-local Done-column display order. */
+  onDoneSortModeChange?: (mode: DoneColumnSortMode) => void;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
   allTasks?: Task[];
@@ -172,7 +177,7 @@ interface ColumnProps {
   getDraggingTaskId?: () => string | null;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, columnDisplayName, columnFlags, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, columnDisplayName, columnFlags, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -535,6 +540,14 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
     }
   }, [tasks, columnLabelText, onMoveTask, addToast, confirm, t]);
 
+  /*
+  FNXC:DoneColumnSorting 2026-06-29-20:23:
+  In workflow mode, the Done-sort control belongs to non-archived complete lanes even when the workflow uses a custom column id such as `shipped`; legacy mode remains limited to the literal Done column.
+  */
+  const isDoneSortColumn = workflowMode ? columnFlags?.complete === true && columnFlags?.archived !== true : column === "done";
+  const showDoneSortControl = isDoneSortColumn && doneSortMode !== undefined && !!onDoneSortModeChange;
+  const doneSortControlLabel = t("column.doneSortControlLabel", "Sort Done tasks");
+
   const handleArchiveAll = useCallback(async () => {
     if (!onArchiveAllDone) return;
     if (tasks.length === 0) return;
@@ -581,6 +594,24 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
           <button className="btn btn-task-create btn-sm" onClick={onNewTask}>
             + {t("column.newTask", "New Task")}
           </button>
+        )}
+        {showDoneSortControl && (
+          <label className="done-sort-control" title={doneSortControlLabel}>
+            {/*
+            FNXC:DoneColumnSorting 2026-06-29-18:09:
+            The Done header needs an accessible, Done-only control that preserves Archive All and other header actions while allowing operators to switch between completion-date-desc and task-id-desc display orders.
+            */}
+            <span className="done-sort-control__label">{t("column.doneSortLabel", "Sort")}</span>
+            <select
+              className="done-sort-control__select"
+              aria-label={doneSortControlLabel}
+              value={doneSortMode}
+              onChange={(event) => onDoneSortModeChange(event.target.value as DoneColumnSortMode)}
+            >
+              <option value="completion-date-desc">{t("column.doneSortCompletionDateDesc", "Completion date (newest first)")}</option>
+              <option value="task-id-desc">{t("column.doneSortTaskIdDesc", "Task ID (newest first)")}</option>
+            </select>
+          </label>
         )}
         {column === "done" && onArchiveAllDone && (
           <button

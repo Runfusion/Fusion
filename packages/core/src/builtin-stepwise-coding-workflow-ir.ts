@@ -4,7 +4,14 @@ import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
+import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
 import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
+import {
+  browserVerificationRemediationNode,
+  codeReviewRemediationNode,
+  planReplanNode,
+} from "./builtin-workflow-remediation-nodes.js";
 
 /**
  * The built-in **stepwise** coding workflow (KTD-9) — the demonstration of step
@@ -75,6 +82,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // Planning seam: produces PROMPT.md (the declared step-source artifact).
     { id: "plan", kind: "prompt", column: "in-progress", config: builtinPromptConfig("planning", "Plan") },
     planReviewOptionalGroupNode("in-progress"),
+    planReplanNode("triage"),
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).
     {
@@ -142,14 +150,17 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // disabled the group passes through inert. Both the normal foreach-success path
     // and the rework-exhausted manual-release path flow through this node.
     browserVerificationOptionalGroupNode("in-progress"),
+    browserVerificationRemediationNode("in-progress"),
     // FNXC:CodeReviewStep 2026-06-25-15:00:
-    // Pre-merge Code Review as a DEFAULT-ON optional-group (advisory), on the post-foreach
+    // Pre-merge Code Review as a DEFAULT-ON optional-group (blocking gate), on the post-foreach
     // success path between browser-verification and review (steps → browser-verification →
     // code-review → review). It sits after the foreach so it runs EXACTLY ONCE pre-merge
     // (never per step-instance); both the foreach-success and rework-exhausted manual-
     // release paths flow through it. Runs for every task by default (defaultOn:true) but is
     // toggleable off per task; disabled → byte-inert pass-through.
     codeReviewOptionalGroupNode("in-progress"),
+    codeReviewRemediationNode("in-progress"),
+    completionSummaryNode("in-review"),
     { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
@@ -168,6 +179,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
       config: { capability: "task-merge", reworkRegion: true, maxReworkCycles: 3 },
     },
     { id: "recovery-router", kind: "recovery-router", column: "in-review", config: { surfaces: ["merge", "retry"] } },
+    postMergeVerificationOptionalGroupNode("done"),
     { id: "end", kind: "end", column: "done" },
   ],
   edges: [
@@ -175,7 +187,8 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "plan", to: "plan-review", condition: "success" },
     { from: "plan", to: "end", condition: "failure" },
     { from: "plan-review", to: "parse", condition: "success" },
-    { from: "plan-review", to: "end", condition: "failure" },
+    { from: "plan-review", to: "plan-replan", condition: "failure" },
+    { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
     { from: "parse", to: "steps", condition: "success" },
     // parse-steps no-steps defaults to success; route it explicitly to the foreach
     // (zero steps → foreach no-ops through its success edge, KTD-8/R8).
@@ -193,9 +206,12 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // browser-verification → code-review → review; each optional-group passes through
     // (outcome=success) when disabled, so a task with both off routes straight to review.
     { from: "browser-verification", to: "code-review", condition: "success" },
-    { from: "code-review", to: "review", condition: "success" },
-    { from: "browser-verification", to: "end", condition: "failure" },
-    { from: "code-review", to: "end", condition: "failure" },
+    { from: "code-review", to: "completion-summary", condition: "success" },
+    { from: "completion-summary", to: "review", condition: "success" },
+    { from: "browser-verification", to: "browser-verification-remediation", condition: "failure" },
+    { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
+    { from: "code-review", to: "code-review-remediation", condition: "failure" },
+    { from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" },
     { from: "steps", to: "end", condition: "failure" },
     { from: "review", to: "merge-gate", condition: "success" },
     { from: "review", to: "end", condition: "failure" },
@@ -207,7 +223,8 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "branch-group-member-integration", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "branch-group-promotion", to: "merge-attempt", condition: "success" },
     { from: "branch-group-promotion", to: "merge-manual-hold", condition: "outcome:manual-required" },
-    { from: "merge-attempt", to: "end", condition: "success" },
+    { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
+    { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },

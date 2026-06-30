@@ -1,4 +1,5 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
+import type { WorkflowLifecycleWarning } from "./workflow-lifecycle-validation.js";
 
 /** Editor layout position for a single workflow IR node. Persisted separately
  *  from the IR because the v1 IR contract deliberately excludes node geometry. */
@@ -27,6 +28,8 @@ export interface WorkflowDefinition {
   ir: WorkflowIr;
   /** Editor node positions keyed by IR node id. May be empty (auto-layout). */
   layout: Record<string, WorkflowNodeLayout>;
+  /** Non-blocking lifecycle guidance for custom workflow authors. */
+  lifecycleWarnings?: WorkflowLifecycleWarning[];
   /** ISO-8601 timestamp of creation. */
   createdAt: string;
   /** ISO-8601 timestamp of last update. */

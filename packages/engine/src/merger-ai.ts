@@ -840,7 +840,7 @@ export async function runAiMerge(
       target: branch,
       metadata: { taskId, kind: alreadyMerged ? "already-merged" : "never-executed" },
     });
-    return await finalizeTask(store, taskId, noOpResult(task, branch, alreadyMerged ? "already-merged" : "no-branch"));
+    return await finalizeTask(store, taskId, noOpResult(task, branch, alreadyMerged ? "already-merged" : "no-branch"), undefined, undefined, projectRootDir);
   }
 
   // The target branch must exist as a LOCAL ref to merge into it — surface a
@@ -1554,7 +1554,7 @@ async function finalizeMerged(
   };
   await audit.git({ type: "merge:ai-landed", target: integrationBranch, metadata: { taskId, landedSha, empty: opts.empty } }).catch(() => undefined);
   await log(opts.empty ? `AI merge: finalized ${taskId} (no-op), finalizing task row` : `AI merge: landed ${short(landedSha)}, finalizing task row`);
-  const finalized = await finalizeTask(store, taskId, result, audit, log);
+  const finalized = await finalizeTask(store, taskId, result, audit, log, projectRootDir);
   await log(opts.empty ? `AI merge: finalized ${taskId} (no-op) → done` : `AI merge: landed ${short(landedSha)}, task → done`);
   return finalized;
 }
@@ -1566,6 +1566,7 @@ async function finalizeTask(
   result: MergeResult,
   audit?: RunAuditor,
   log?: (message: string) => Promise<void>,
+  rootDir?: string,
 ): Promise<MergeResult> {
   const finalization = await finalizeProvenAutoMergeTask({
     store,
@@ -1575,6 +1576,7 @@ async function finalizeTask(
     auditAgentId: "merger",
     auditPhase: "direct-ai-merge-finalize",
     source: "direct-ai-merge",
+    rootDir,
     log,
   });
   if (finalization.outcome === "blocked") {

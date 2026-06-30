@@ -81,6 +81,7 @@ function CrossSurfaceHarness({ projectId = "project-cross" }: { projectId?: stri
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   fetchBoardWorkflowsMock.mockReset();
   subscribeSseMock.mockClear();
   fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload());
@@ -92,7 +93,11 @@ afterEach(() => {
 });
 
 describe("workflow selection across dashboard surfaces", () => {
-  it("hydrates remounted surfaces from the persisted board-workflows payload", async () => {
+  /*
+  FNXC:BoardWorkflowSelection 2026-06-29-13:30:
+  Board workflow selectors keep independent mounted state for Header and Graph, but remounts intentionally hydrate from the same project-scoped durable workflow selection so fetch latency cannot bounce operators back to the default workflow.
+  */
+  it("hydrates remounted Header and Graph surfaces from durable storage while fetch is pending", async () => {
     const { unmount } = render(<CrossSurfaceHarness />);
 
     expect(await screen.findAllByTestId("workflow-switcher")).toHaveLength(2);
@@ -113,12 +118,12 @@ describe("workflow selection across dashboard surfaces", () => {
 
     const remountedSwitchers = screen.getAllByTestId("workflow-switcher");
     expect(remountedSwitchers).toHaveLength(2);
-    expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
-    expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+    expect(screen.getByTestId("header-selection")).toHaveTextContent(GRAPH_WORKFLOW.id);
+    expect(screen.getByTestId("graph-selection")).toHaveTextContent(GRAPH_WORKFLOW.id);
     expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-cross");
   });
 
-  it("keeps Graph and Header workflow selections isolated while Graph filtering follows only Graph", async () => {
+  it("keeps mounted Graph and Header workflow selections isolated while Graph filtering follows only Graph", async () => {
     render(<CrossSurfaceHarness />);
 
     const switchers = await screen.findAllByTestId("workflow-switcher");
@@ -154,31 +159,72 @@ describe("workflow selection across dashboard surfaces", () => {
     });
   });
 
-  it("preserves boundary behavior for disabled, empty, and single-workflow payloads", async () => {
-    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ flagEnabled: false, workflows: [] }));
-    const { unmount } = render(<CrossSurfaceHarness />);
+  it("rehydrates selection per project instead of carrying it across projects", async () => {
+    const { rerender } = render(<CrossSurfaceHarness projectId="project-alpha" />);
 
-    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-cross"));
+    const alphaSwitchers = await screen.findAllByTestId("workflow-switcher");
+    fireEvent.click(alphaSwitchers[1]);
+    fireEvent.click(screen.getByTestId(`workflow-switcher-option-${GRAPH_WORKFLOW.id}`));
+    await waitFor(() => expect(screen.getByTestId("graph-selection")).toHaveTextContent(GRAPH_WORKFLOW.id));
+
+    rerender(<CrossSurfaceHarness projectId="project-beta" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+    });
+  });
+
+  it("repairs stale stored workflow ids to the default workflow without hiding graph tasks", async () => {
+    localStorage.setItem("kb:project-cross:kb-dashboard-board-workflow-selection", "wf-deleted");
+
+    render(<CrossSurfaceHarness />);
+
+    expect(await screen.findAllByTestId("workflow-switcher")).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+    });
+    expect(localStorage.getItem("kb:project-cross:kb-dashboard-board-workflow-selection")).toBe(DEFAULT_WORKFLOW.id);
+
+    const graphTasks = screen.getByTestId("graph-tasks");
+    expect(within(graphTasks).getByTestId("graph-task-FN-default")).toBeInTheDocument();
+    expect(within(graphTasks).getByTestId("graph-task-FN-unassigned")).toBeInTheDocument();
+    expect(within(graphTasks).getByTestId("graph-task-FN-deleted")).toBeInTheDocument();
+    expect(within(graphTasks).queryByTestId("graph-task-FN-graph")).toBeNull();
+  });
+
+  it("preserves boundary behavior for disabled, empty, and single-workflow payloads", async () => {
+    localStorage.setItem("kb:project-disabled:kb-dashboard-board-workflow-selection", GRAPH_WORKFLOW.id);
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ flagEnabled: false, workflows: [] }));
+    const { unmount } = render(<CrossSurfaceHarness projectId="project-disabled" />);
+
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-disabled"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
+    expect(localStorage.getItem("kb:project-disabled:kb-dashboard-board-workflow-selection")).toBeNull();
     for (const task of TASKS) {
       expect(screen.getByTestId(`graph-task-${task.id}`)).toBeInTheDocument();
     }
 
     unmount();
     sessionStorage.clear();
+    localStorage.setItem("kb:project-empty:kb-dashboard-board-workflow-selection", GRAPH_WORKFLOW.id);
     fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ workflows: [] }));
-    const empty = render(<CrossSurfaceHarness />);
-    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-cross"));
+    const empty = render(<CrossSurfaceHarness projectId="project-empty" />);
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-empty"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
+    expect(localStorage.getItem("kb:project-empty:kb-dashboard-board-workflow-selection")).toBeNull();
     empty.unmount();
 
     sessionStorage.clear();
+    localStorage.setItem("kb:project-single:kb-dashboard-board-workflow-selection", GRAPH_WORKFLOW.id);
     fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ workflows: [DEFAULT_WORKFLOW] }));
-    render(<CrossSurfaceHarness />);
-    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-cross"));
+    render(<CrossSurfaceHarness projectId="project-single" />);
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-single"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
+    expect(localStorage.getItem("kb:project-single:kb-dashboard-board-workflow-selection")).toBeNull();
   });
 });

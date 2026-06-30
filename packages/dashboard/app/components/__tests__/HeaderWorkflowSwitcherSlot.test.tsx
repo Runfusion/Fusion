@@ -54,6 +54,7 @@ function renderWithHeader(children: ReactNode) {
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   fetchBoardWorkflowsMock.mockReset();
   subscribeSseMock.mockClear();
   fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload());
@@ -99,6 +100,37 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     expect(headerSlot.contains(selector)).toBe(true);
   });
 
+  it("hydrates a remounted desktop header selector from durable project storage", async () => {
+    const { unmount } = renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-header-persist" />);
+
+    fireEvent.click(await screen.findByTestId("workflow-switcher"));
+    fireEvent.click(screen.getByTestId("workflow-switcher-option-wf-missions"));
+    await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent(MISSION_WORKFLOW.name));
+
+    unmount();
+    fetchBoardWorkflowsMock.mockImplementation(() => new Promise<BoardWorkflowsPayload>(() => {}));
+    renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-header-persist" />);
+
+    expect(await screen.findByTestId("workflow-switcher")).toHaveTextContent(MISSION_WORKFLOW.name);
+  });
+
+  it("repairs a stale stored header workflow id to the default workflow", async () => {
+    localStorage.setItem("kb:project-header-stale:kb-dashboard-board-workflow-selection", "wf-deleted");
+    const onWorkflowSelectionChange = vi.fn<(selection: HeaderWorkflowSelection | null) => void>();
+
+    renderWithHeader(
+      <HeaderWorkflowSwitcherSlot projectId="project-header-stale" onWorkflowSelectionChange={onWorkflowSelectionChange} />,
+    );
+
+    expect(await screen.findByTestId("workflow-switcher")).toHaveTextContent(DEFAULT_WORKFLOW.name);
+    await waitFor(() => {
+      expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+        selectedWorkflow: expect.objectContaining({ id: DEFAULT_WORKFLOW.id }),
+      }));
+    });
+    expect(localStorage.getItem("kb:project-header-stale:kb-dashboard-board-workflow-selection")).toBe(DEFAULT_WORKFLOW.id);
+  });
+
   it("forwards dropdown edit workflow ids from the shared header slot", async () => {
     const onOpenWorkflowEditor = vi.fn();
     renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-header-edit" onOpenWorkflowEditor={onOpenWorkflowEditor} />);
@@ -109,7 +141,7 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-missions");
   });
 
-  it("renders no toolbar shell when workflow mode is off or only one workflow exists", async () => {
+  it("renders no toolbar shell when workflow mode is off, empty, or only one workflow exists", async () => {
     fetchBoardWorkflowsMock.mockResolvedValueOnce(workflowPayload({ flagEnabled: false, workflows: [] }));
     const { unmount } = renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-off" />);
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-off"));
@@ -117,6 +149,14 @@ describe("HeaderWorkflowSwitcherSlot", () => {
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
 
     unmount();
+    sessionStorage.clear();
+    fetchBoardWorkflowsMock.mockResolvedValueOnce(workflowPayload({ workflows: [] }));
+    const empty = renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-empty" />);
+    await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-empty"));
+    expect(screen.queryByTestId("workflow-switcher")).toBeNull();
+    expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
+
+    empty.unmount();
     sessionStorage.clear();
     fetchBoardWorkflowsMock.mockResolvedValueOnce(workflowPayload({ workflows: [DEFAULT_WORKFLOW] }));
     renderWithHeader(<HeaderWorkflowSwitcherSlot projectId="project-one" />);

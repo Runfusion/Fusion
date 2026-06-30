@@ -2,8 +2,8 @@ import type { Task, WorkflowStepResult, WorkflowStepPhase, StepStatus } from "@f
 
 /*
 FNXC:WorkflowSteps 2026-06-25-00:00:
-Graph-native workflow steps (plan U3). Workflow step status now comes entirely from the graph-written
-`task.workflowStepResults` entries (keyed by node id === enabledWorkflowSteps[i]); the legacy
+Graph-native workflow steps (plan U3). Optional workflow step status now comes from graph-written
+`task.workflowStepResults` entries keyed by node id === enabledWorkflowSteps[i]; top-level workflow nodes can also record explicit `source:"node"` progress for workflows that do not project every stage into `task.steps`. The legacy
 `/api/workflow-steps` DB-row name lookup was dropped, so step names resolve from `result.workflowStepName`
 with a fallback to the raw id.
 
@@ -15,7 +15,7 @@ Render states (design-lens): the progress model distinguishes
 - `failed` (blocking gate failure — red)
 - `skipped`
 Disabled optional steps are simply absent from `enabledWorkflowSteps`, so they never appear in the
-counter/bar.
+counter/bar. Recorded workflow-node progress is included independently because it represents an actual graph stage that ran, not a toggle placeholder.
 */
 
 export type UnifiedTaskProgressStatus = StepStatus | "failed" | "advisory_failure" | "running";
@@ -112,6 +112,20 @@ export function getUnifiedTaskProgress(
       phase: result?.phase ?? "pre-merge",
     };
   });
+  const enabledWorkflowStepIds = new Set(task.enabledWorkflowSteps ?? []);
+  /*
+  FNXC:TaskCardWorkflowProgress 2026-06-29-15:05:
+  Compound Engineering runs top-level skill nodes (Plan, Execute, Commit/PR, Resolve feedback) that do real work but are not optional toggles and do not update `task.steps`. Include recorded `source:"node"` results even when `enabledWorkflowSteps` is empty so task cards and detail progress match the graph's actual active stage, while stale disabled optional-group results remain hidden.
+  */
+  const recordedNodeItems: UnifiedTaskProgressItem[] = (task.workflowStepResults ?? [])
+    .filter((result) => result.source === "node" && !enabledWorkflowStepIds.has(result.workflowStepId))
+    .map((result) => ({
+      id: `workflow-${result.workflowStepId}`,
+      name: resolveWorkflowStepName(result.workflowStepId, result),
+      status: mapWorkflowStatus(result),
+      source: "workflow",
+      phase: result.phase ?? "pre-merge",
+    }));
 
   /*
   FNXC:TaskCardWorkflowProgress 2026-06-29-00:41:
@@ -119,7 +133,7 @@ export function getUnifiedTaskProgress(
   */
   const preExecutionWorkflowItems = workflowItems.filter((item) => item.id === "workflow-plan-review");
   const remainingWorkflowItems = workflowItems.filter((item) => item.id !== "workflow-plan-review");
-  const items = [...preExecutionWorkflowItems, ...stepItems, ...remainingWorkflowItems];
+  const items = [...preExecutionWorkflowItems, ...stepItems, ...remainingWorkflowItems, ...recordedNodeItems];
   const total = items.length;
   const completed = items.filter((item) => isCompleted(item.status)).length;
 

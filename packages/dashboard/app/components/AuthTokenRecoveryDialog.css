@@ -1,6 +1,7 @@
-.auth-token-recovery-overlay {
-  z-index: 210;
-}
+/*
+FNXC:AuthTokenRecovery 2026-06-29-00:00:
+The daemon-auth recovery dialog is blocking but must use the shared modal-overlay stacking contract. Do not add auth-specific z-index rules; the dashboard banner stack is suppressed separately while recovery is open.
+*/
 
 .auth-token-recovery-header h3 {
   margin: 0;

@@ -143,7 +143,9 @@ describe("gating-classifications parity", () => {
         "fn_task_log",
         "fn_task_search",
         "fn_task_show",
+        "fn_trait_list",
         "fn_update_identity",
+        "fn_workflow_get",
         "fn_workflow_list",
         "grep",
         "ls",
@@ -274,18 +276,19 @@ describe("gating-classifications parity", () => {
     expect(permanent).toMatchObject({ category, disposition: "block", recognized: true });
   });
 
-  it("recognizes fn_workflow_list as read-only coordination instead of an unknown fallback", () => {
-    const permanent = classifyPermanentAgentToolCall("fn_workflow_list");
+  it.each(["fn_workflow_list", "fn_workflow_get", "fn_trait_list"] as const)("recognizes %s as read-only coordination instead of an unknown fallback", (toolName) => {
+    const permanent = classifyPermanentAgentToolCall(toolName);
     const action = evaluateAgentActionGate({
       agentId: "a1",
-      toolName: "fn_workflow_list",
+      toolName,
       args: {},
       permissionPolicy: blockedPolicy,
     });
 
+    expect(READONLY_FN_TOOLS.has(toolName)).toBe(true);
     expect(permanent).toEqual({ category: "none", recognized: true });
-    expect(action).toMatchObject({ category: "exempt", disposition: "allow" });
-    expect((COORDINATION_EXEMPT_TOOLS as readonly string[]).includes("fn_workflow_list")).toBe(true);
+    expect(action).toMatchObject({ category: "exempt", disposition: "allow", operation: toolName });
+    expect((COORDINATION_EXEMPT_TOOLS as readonly string[]).includes(toolName)).toBe(true);
   });
 
   it.each(["fn_task_search", "fn_task_get", "fn_task_list", "fn_task_show"] as const)("classifies task read tool %s as read-only", (toolName) => {

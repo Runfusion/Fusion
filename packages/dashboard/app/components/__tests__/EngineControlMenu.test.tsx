@@ -54,6 +54,12 @@ function mockGlobalConcurrency(overrides: Partial<{
   });
 }
 
+// FNXC:EngineControls 2026-06-29-12:00: FN-7235 reproduces the footer mismatch by asserting running-count markers use the loaded cap (`current / cap`) rather than expanded slider-track coordinates; both global and project renderers must move 1 running agent above zero.
+// FNXC:EngineControls 2026-06-29-13:25: Keep the footer marker guard aligned with the Command Center representative states: zero, one active, mid-track utilization, over-cap clamping, loading, and error.
+function expectUseMarkerPct(testId: string, pct: string) {
+  expect(screen.getByTestId(testId).style.getPropertyValue("--use-pct")).toBe(pct);
+}
+
 describe("EngineControlMenu", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -218,7 +224,7 @@ describe("EngineControlMenu", () => {
     expect(screen.getByLabelText(/max worktrees/i)).toHaveAttribute("max", "50");
   });
 
-  it("renders running counts and current-use markers with clamped slider positions", async () => {
+  it("renders running counts and current-use markers with clamped absolute utilization", async () => {
     legacyMocks.fetchSettings.mockResolvedValue({
       ...defaultSettings,
       maxConcurrent: 50,
@@ -237,20 +243,66 @@ describe("EngineControlMenu", () => {
     expect(screen.getByTestId("engine-control-project-use-marker")).toHaveStyle({ "--use-pct": "100%" });
   });
 
-  it("positions current-use markers at zero and mid-track for representative running counts", async () => {
+  it("positions current-use markers by absolute utilization instead of slider-coordinate math", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      maxConcurrent: 50,
+    });
     mockGlobalConcurrency({
-      globalMaxConcurrent: 33,
+      globalMaxConcurrent: 50,
       currentlyActive: 17,
-      projectsActive: { proj_123: 0 },
+      projectsActive: { proj_123: 17 },
     });
 
     await openMenu();
 
-    expect(await screen.findByTestId("engine-control-global-use-marker")).toHaveStyle({ "--use-pct": "50%" });
-    expect(screen.getByTestId("engine-control-project-use-marker")).toHaveStyle({ "--use-pct": "0%" });
+    await screen.findByTestId("engine-control-global-use-marker");
+    expectUseMarkerPct("engine-control-global-use-marker", "34%");
+    expectUseMarkerPct("engine-control-project-use-marker", "34%");
+    expect(screen.getByTestId("engine-control-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe(`${((17 - 1) / (50 - 1)) * 100}%`);
+    expect(screen.getByTestId("engine-control-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe(`${((17 - 1) / (50 - 1)) * 100}%`);
+    expect(screen.queryAllByTestId(/engine-control-.*-use-marker/)).toHaveLength(2);
   });
 
-  it("defaults the current-project running count to zero for empty projectsActive and missing projectId", async () => {
+  it("positions mid-track footer markers using absolute utilization", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      maxConcurrent: 10,
+    });
+    mockGlobalConcurrency({
+      globalMaxConcurrent: 10,
+      currentlyActive: 6,
+      projectsActive: { proj_123: 6 },
+    });
+
+    await openMenu();
+
+    await screen.findByTestId("engine-control-global-use-marker");
+    expectUseMarkerPct("engine-control-global-use-marker", "18.75%");
+    expectUseMarkerPct("engine-control-project-use-marker", "12%");
+  });
+
+  it("keeps one active agent visibly above zero on both footer markers", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      maxConcurrent: 10,
+    });
+    mockGlobalConcurrency({
+      globalMaxConcurrent: 10,
+      currentlyActive: 1,
+      projectsActive: { proj_123: 1 },
+    });
+
+    await openMenu();
+
+    await screen.findByTestId("engine-control-global-use-marker");
+    expectUseMarkerPct("engine-control-global-use-marker", "3.125%");
+    expectUseMarkerPct("engine-control-project-use-marker", "2%");
+    expect(screen.getByTestId("engine-control-global-use-marker").style.getPropertyValue("--use-pct")).not.toBe("0%");
+    expect(screen.getByTestId("engine-control-project-use-marker").style.getPropertyValue("--use-pct")).not.toBe("0%");
+  });
+
+  it("positions zero running at the start of both footer markers", async () => {
     mockGlobalConcurrency({
       globalMaxConcurrent: 6,
       currentlyActive: 0,
@@ -265,7 +317,7 @@ describe("EngineControlMenu", () => {
     expect(screen.getByTestId("engine-control-project-use-marker")).toHaveStyle({ "--use-pct": "0%" });
   });
 
-  it("does not render running counts or markers while global concurrency is loading", async () => {
+  it("suppresses footer running counts and markers while utilization is loading", async () => {
     let resolveGlobalConcurrency!: (value: {
       globalMaxConcurrent: number;
       currentlyActive: number;
@@ -293,7 +345,7 @@ describe("EngineControlMenu", () => {
     });
   });
 
-  it("does not render running counts or markers when global concurrency fails to load", async () => {
+  it("suppresses footer running counts and markers when utilization fails", async () => {
     legacyMocks.fetchGlobalConcurrency.mockRejectedValue(new Error("global concurrency unavailable"));
 
     await openMenu();

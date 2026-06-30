@@ -22,7 +22,7 @@ const POST_MERGE_STEP_ID = `${POST_MERGE_ID}-step`;
 
 /** Minimal IR: start → execute → merge-attempt (collapses to the merge seam) with a
  *  post-merge optional-group hanging off merge-attempt success → end. */
-function postMergeIr(): WorkflowIr {
+function postMergeIr(options: { gateMode?: "advisory" | "gate" } = {}): WorkflowIr {
   return {
     version: "v2",
     name: "post-merge-test",
@@ -40,6 +40,7 @@ function postMergeIr(): WorkflowIr {
         name: "Post Merge Docs",
         column: "done",
         prompt: "post-merge doc check",
+        gateMode: options.gateMode,
         defaultOn: false,
       }),
       { id: "end", kind: "end", column: "done" },
@@ -77,6 +78,13 @@ function handler(innerValue: string): WorkflowNodeHandler {
   return async (node) =>
     node.id === POST_MERGE_STEP_ID
       ? { outcome: "success", value: innerValue }
+      : { outcome: "success" };
+}
+
+function failureHandler(innerValue: string): WorkflowNodeHandler {
+  return async (node) =>
+    node.id === POST_MERGE_STEP_ID
+      ? { outcome: "failure", value: innerValue }
       : { outcome: "success" };
 }
 
@@ -133,6 +141,34 @@ describe("WorkflowGraphExecutor graph-native post-merge steps", () => {
     expect(recorder.results).toHaveLength(1);
     expect(recorder.results[0].phase).toBe("post-merge");
     expect(recorder.results[0].status).toBe("advisory_failure");
+  });
+
+  it("flag ON: a gate-mode post-merge failure records failure and blocks final graph success", async () => {
+    const recorder = makeRecorder();
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: failureHandler("REVISE") },
+      recordWorkflowStepResult: recorder.record,
+    });
+
+    const result = await executor.run(
+      taskWith([POST_MERGE_ID]),
+      { experimentalFeatures: { graphNativePostMerge: true } },
+      postMergeIr({ gateMode: "gate" }),
+    );
+
+    /*
+     * FNXC:WorkflowPostMerge 2026-06-29-11:47:
+     * Explicit gate-mode post-merge verification must block final workflow success;
+     * advisory post-merge checks remain non-blocking for legacy parity.
+    */
+    expect(result.outcome).toBe("failure");
+    expect(recorder.results).toHaveLength(1);
+    expect(recorder.results[0]).toMatchObject({
+      workflowStepId: POST_MERGE_ID,
+      phase: "post-merge",
+      status: "failed",
+      verdict: "REVISE",
+    });
   });
 
   it("flag explicitly OFF (opt-out): the post-merge node is NOT run via the graph and records nothing", async () => {

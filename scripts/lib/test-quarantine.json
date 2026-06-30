@@ -1,4 +1,10 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
-  "entries": []
+  "entries": [
+    {
+      "file": "packages/engine/src/__tests__/executor-pause.test.ts",
+      "reason": "FN-7239: stale post-cutover direct-dispatch StepSessionExecutor/legacy pause assertions fail after builtin:coding graph cutover; equivalent direct step-session, pause-abort graph, and graph rerun coverage remains active. Local targeted run: pnpm --filter @fusion/engine exec vitest run --project engine-default src/__tests__/workflow-graph-executor-retry-coding-workflow.test.ts src/__tests__/executor-pause.test.ts --silent=passed-only --reporter=dot (2026-06-29).",
+      "quarantinedAt": "2026-06-29"
+    }
+  ]
 }

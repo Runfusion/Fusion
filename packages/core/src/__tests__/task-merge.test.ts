@@ -4,7 +4,9 @@ import {
   BLOCKING_TASK_STATUSES,
   HARD_BLOCKING_TASK_STATUSES,
   SCHEDULER_TRANSIENT_STATUSES,
+  TASK_DONE_BYPASS_BLOCKER_MESSAGE,
   getTaskCompletionBlocker,
+  getTaskDoneBypassBlocker,
   getTaskHardMergeBlocker,
   getTaskMergeBlocker,
   isTaskReadyForMerge,
@@ -615,6 +617,28 @@ describe("getTaskMergeBlocker", () => {
       ],
     });
     expect(result).toBeUndefined();
+  });
+});
+
+describe("getTaskDoneBypassBlocker", () => {
+  it("requires merge proof or explicit no-commits policy", () => {
+    expect(getTaskDoneBypassBlocker({ noCommitsExpected: undefined, mergeDetails: undefined, prInfo: undefined, prInfos: undefined }))
+      .toBe(TASK_DONE_BYPASS_BLOCKER_MESSAGE);
+  });
+
+  it("allows explicit no-commits policy", () => {
+    expect(getTaskDoneBypassBlocker({ noCommitsExpected: true, mergeDetails: undefined, prInfo: undefined, prInfos: undefined }))
+      .toBeUndefined();
+  });
+
+  it("allows durable merge confirmation", () => {
+    expect(getTaskDoneBypassBlocker({ noCommitsExpected: undefined, mergeDetails: { mergeConfirmed: true }, prInfo: undefined, prInfos: undefined }))
+      .toBeUndefined();
+  });
+
+  it("allows observed merged PR proof", () => {
+    expect(getTaskDoneBypassBlocker({ noCommitsExpected: undefined, mergeDetails: undefined, prInfo: prInfo({ status: "merged" }), prInfos: undefined }))
+      .toBeUndefined();
   });
 });
 

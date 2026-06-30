@@ -1,6 +1,6 @@
 import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIssueAction } from "@fusion/core";
 import { COLUMNS, DEFAULT_COLUMN, isColumn } from "@fusion/core";
-import { sortTasksForDisplayColumn } from "./taskSorting";
+import { sortTasksForDisplayColumn, type DoneColumnSortMode } from "./taskSorting";
 import { Column } from "./Column";
 import "./Lane.css";
 import "./Board.css";
@@ -139,6 +139,11 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
 
 export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
+  /*
+  FNXC:DoneColumnSorting 2026-06-29-16:57:
+  Board owns one Done sort mode so legacy and built-in workflow Done surfaces stay in sync; the default remains completion-date descending to preserve existing first-load ordering.
+  */
+  const [doneSortMode, setDoneSortMode] = useState<DoneColumnSortMode>("completion-date-desc");
   const archivedLoadedRef = useRef(false);
   const boardRef = useRef<HTMLElement | null>(null);
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
@@ -223,7 +228,9 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     const stableGrouped = {} as Record<ColumnType, Task[]>;
 
     for (const column of COLUMNS) {
-      const sortedTasks = sortTasksForDisplayColumn(nextGrouped[column], column);
+      const sortedTasks = column === "done"
+        ? sortTasksForDisplayColumn(nextGrouped[column], column, doneSortMode)
+        : sortTasksForDisplayColumn(nextGrouped[column], column);
       stableGrouped[column] = areTaskArraysEqual(previousGrouped[column], sortedTasks)
         ? previousGrouped[column]
         : sortedTasks;
@@ -231,7 +238,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
 
     tasksByColumnCacheRef.current = stableGrouped;
     return stableGrouped;
-  }, [tasks]);
+  }, [tasks, doneSortMode]);
 
   // FN-4574 + FN-001 diagnosis: on iOS Safari, the mobile board can occasionally
   // snap against stale layout/visualViewport metrics before flex columns resolve,
@@ -432,10 +439,17 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       (grouped[task.column] ??= []).push(task);
     }
     for (const column of selectedWorkflow.columns) {
-      grouped[column.id] = sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType);
+      /*
+      FNXC:DoneColumnSorting 2026-06-29-20:20:
+      Workflow-mode Done sorting follows the workflow trait, not only the built-in `done` id, so custom complete lanes get the same descending completion-date/task-id selector while archived lanes keep their own behavior.
+      */
+      const isWorkflowDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
+      grouped[column.id] = isWorkflowDoneLikeColumn
+        ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
+        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType);
     }
     return grouped;
-  }, [selectedWorkflow, selectedWorkflowTasks]);
+  }, [doneSortMode, selectedWorkflow, selectedWorkflowTasks]);
 
   // Card-placed field defs grouped by workflow id (U13/KTD-14). Only recomputes
   // when the board-workflows payload changes, not on every SSE task tick.
@@ -535,6 +549,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
         >
           {selectedWorkflowColumns.map((columnDef) => {
             const isCreateColumn = columnDef.id === selectedWorkflowCreateColumnId;
+            const isWorkflowDoneLikeColumn = columnDef.flags.complete === true && columnDef.flags.archived !== true;
             return (
               <Column
                 key={columnDef.id}
@@ -579,6 +594,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 {...(isCreateColumn ? { onQuickCreate: handleWorkflowQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
+                {...(isWorkflowDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
               />
             );
           })}
@@ -671,7 +687,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
             autoMerge={autoMerge}
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
-            {...(col === "done" ? { onArchiveAllDone } : {})}
+            {...(col === "done" ? { onArchiveAllDone, doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
             {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
           />
         ))}

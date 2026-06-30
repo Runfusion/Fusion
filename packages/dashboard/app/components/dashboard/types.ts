@@ -238,6 +238,7 @@ export interface MainContentProps {
 export interface DashboardBannersProps {
   viewMode: ViewMode;
   currentProject: ProjectInfo | null;
+  authTokenRecoveryOpen: boolean;
   isTestMode: boolean;
   dashboardHealth: DashboardHealthResponse | null;
   setDashboardHealth: Dispatch<SetStateAction<DashboardHealthResponse | null>>;

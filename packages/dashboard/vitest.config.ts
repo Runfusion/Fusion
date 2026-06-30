@@ -185,6 +185,7 @@ const qualityAppComponentTests = [
   "TaskCard.footer-wrap",
   "TaskChangesTab",
   "TaskComments",
+  "TaskDetail.swipe-back",
   "TaskDetailModal",
   "TaskDetailModal.allow-resurrection",
   "TaskDetailModal.create-pr-e2e",
@@ -252,6 +253,8 @@ const qualityAppChatOnlyTests = [
   "app/components/__tests__/ChatView.core.test.tsx",
   "app/components/__tests__/ChatView.sessions-rooms.test.tsx",
   "app/components/__tests__/ChatView.mobile.test.tsx",
+  // FNXC:DashboardTests 2026-06-29-14:14: Task-detail chat typography regressions must run in the same chat quality lane as the required FN-7240 targeted command, so CSS-content assertions cannot fall through to broad backfill only.
+  "app/components/__tests__/TaskChatTab.test.tsx",
 ];
 const qualityAppSettingsOnlyTests = [
   "app/components/__tests__/SettingsModal.general.test.tsx",

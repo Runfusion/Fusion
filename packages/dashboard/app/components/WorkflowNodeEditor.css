@@ -836,18 +836,48 @@ Flow's SVG attributes and makes the graph preview read blank.
   overflow: hidden;
 }
 
+/*
+FNXC:WorkflowSimpleEditor 2026-06-29-13:20:
+Mobile simple-editor tabs must stay inside the editor width while remaining horizontally swipeable/reachable. The tab strip owns horizontal overflow, and both the scroller and tab button touch targets opt into pan-x because the global mobile reset applies `touch-action: pan-y` per element, not by inheritance.
+
+FNXC:WorkflowSimpleEditor 2026-06-29-13:32:
+Keep the scroller border-box explicit so the strip's padding and border are included in its 100% inline size even if future CSS narrows the global reset.
+
+FNXC:WorkflowSimpleEditor 2026-06-29-16:22:
+Use both physical and logical width clamps because this tab strip is reused by automatic mobile simple layout and compact simple layout. The scroller may overflow internally, but its own border box must stay pinned to the editor width so the page never expands.
+
+FNXC:WorkflowSimpleEditor 2026-06-29-16:48:
+Keep logical overflow and tab intrinsic-size declarations beside the physical fallbacks so the simple-editor tab strip remains the only horizontal scroll owner while tab-button touches can start pan-x gestures under the global mobile `touch-action: pan-y` reset.
+*/
 .wf-mobile-tabs {
+  box-sizing: border-box;
   display: flex;
   flex: 0 0 auto;
+  width: 100%;
+  inline-size: 100%;
+  max-width: 100%;
+  max-inline-size: 100%;
+  min-width: 0;
+  min-inline-size: 0;
   gap: var(--space-xs);
   padding: var(--space-sm);
   overflow-x: auto;
-  overflow-y: visible;
+  overflow-y: hidden;
+  overflow-inline: auto;
+  overflow-block: hidden;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
   border-bottom: 1px solid var(--border);
 }
 
 .wf-mobile-tab {
+  box-sizing: border-box;
   flex: 0 0 auto;
+  min-width: max-content;
+  min-inline-size: max-content;
+  white-space: nowrap;
+  touch-action: pan-x pan-y;
   min-height: var(--wf-editor-touch-target);
   padding: var(--space-sm) var(--space-md);
   border: 1px solid var(--border);
@@ -1508,6 +1538,55 @@ Built-in workflow prompts need visible override state and a reset action without
   padding: var(--space-xs) var(--space-sm);
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
+}
+
+/*
+FNXC:WorkflowLifecycleValidation 2026-06-29-12:18:
+Workflow authors need store-produced lifecycle warnings visible in the editor before runtime. Keep them inline and non-blocking: parser/store/merge guards still enforce hard safety, while this banner exposes missing summary/merge/review-loop guidance during authoring.
+*/
+.wf-lifecycle-warnings {
+  display: grid;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-bottom: 1px solid color-mix(in srgb, var(--ws-warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--ws-warning) 8%, var(--bg-secondary));
+  color: var(--text);
+}
+
+.wf-lifecycle-warnings-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--ws-warning);
+}
+
+.wf-lifecycle-warnings ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wf-lifecycle-warnings li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.wf-lifecycle-warning-code,
+.wf-lifecycle-warning-node {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-family: var(--font-mono, monospace);
 }
 
 .wf-workflow-name,

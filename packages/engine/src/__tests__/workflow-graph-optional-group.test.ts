@@ -466,6 +466,77 @@ describe("WorkflowGraphExecutor optional-group", () => {
     ]));
   });
 
+  it("uses an explicit graph replan node for Plan Review REVISE and does not execute before replan completes", async () => {
+    const requestFix = vi.fn(async () => true);
+    const calls: string[] = [];
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "plan-review-explicit-replan-route",
+      columns: [{ id: "work", name: "Work", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        {
+          id: "plan-review",
+          kind: "optional-group",
+          config: {
+            name: "Plan Review",
+            defaultOn: true,
+            reworkRegion: true,
+            maxReworkCycles: 3,
+            template: {
+              nodes: [{ id: "plan-review-step", kind: "prompt", config: { prompt: "review plan" } }],
+              edges: [],
+            },
+          },
+        },
+        {
+          id: "plan-replan",
+          kind: "prompt",
+          config: {
+            name: "Plan Replan",
+            workflowAction: "plan-replan",
+            forWorkflowStepId: "plan-review",
+          },
+        },
+        { id: "execute", kind: "prompt", config: { prompt: "execute" } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "plan-review" },
+        { from: "plan-review", to: "execute", condition: "success" },
+        { from: "plan-review", to: "plan-replan", condition: "failure" },
+        { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
+        { from: "execute", to: "end" },
+      ],
+    };
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        prompt: async (node) => {
+          calls.push(node.id);
+          return node.id === "plan-review-step"
+            ? { outcome: "failure", value: "REVISE", contextPatch: { output: "missing acceptance criteria" } }
+            : { outcome: "success" };
+        },
+      },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run(taskWith(["plan-review"]), settingsOn(), ir);
+
+    expect(result.outcome).toBe("success");
+    expect(result.visitedNodeIds).toContain("plan-review");
+    expect(result.visitedNodeIds).toContain("plan-replan");
+    expect(result.visitedNodeIds).not.toContain("execute");
+    expect(calls).not.toContain("execute");
+    expect(requestFix).toHaveBeenCalledWith("FN-OG", expect.objectContaining({
+      nodeId: "plan-review",
+      feedback: "missing acceptance criteria",
+      verdict: "REVISE",
+    }));
+    expect(result.context["node:plan-review:fixScheduled"]).toBe(true);
+    expect(result.context["node:plan-replan:value"]).toBe("remediation-scheduled");
+  });
+
   it("does not synthesize a Plan Review replan from advisory malformed output", async () => {
     const requestFix = vi.fn(async () => true);
     const calls: string[] = [];
@@ -723,7 +794,11 @@ describe("WorkflowGraphExecutor optional-group", () => {
             calls.push(node.id);
             if ((groupId === "code-review" && node.id === "code-review-step")
               || (groupId === "browser-verification" && node.id === "browser-verification-step")) {
-              return { outcome: "success", value: "REVISE", contextPatch: { output: `${groupId} finding` } };
+              return {
+                outcome: groupId === "code-review" ? "failure" : "success",
+                value: "REVISE",
+                contextPatch: { output: `${groupId} finding` },
+              };
             }
             return { outcome: "success" };
           },
@@ -753,8 +828,12 @@ describe("WorkflowGraphExecutor optional-group", () => {
         expect(node).toMatchObject({ kind: "optional-group" });
         expect(node?.config?.phase).toBeUndefined();
         expect(ir.edges).toEqual(expect.arrayContaining([
-          expect.objectContaining({ from: groupId, to: groupId === "browser-verification" ? "code-review" : "review", condition: "success" }),
-          expect.objectContaining({ from: groupId, to: "end", condition: "failure" }),
+          expect.objectContaining({ from: groupId, to: groupId === "browser-verification" ? "code-review" : "completion-summary", condition: "success" }),
+          expect.objectContaining({
+            from: groupId,
+            to: groupId === "browser-verification" ? "browser-verification-remediation" : "code-review-remediation",
+            condition: "failure",
+          }),
         ]));
       }
     }
@@ -767,7 +846,11 @@ describe("WorkflowGraphExecutor optional-group", () => {
           prompt: async (node) => {
             if ((groupId === "code-review" && node.id === "code-review-step")
               || (groupId === "browser-verification" && node.id === "browser-verification-step")) {
-              return { outcome: "success", value: "REVISE", contextPatch: { output: `stepwise ${groupId} finding` } };
+              return {
+                outcome: groupId === "code-review" ? "failure" : "success",
+                value: "REVISE",
+                contextPatch: { output: `stepwise ${groupId} finding` },
+              };
             }
             return { outcome: "success" };
           },
@@ -789,5 +872,57 @@ describe("WorkflowGraphExecutor optional-group", () => {
       }));
       expect(stepwiseResult.context[`node:${groupId}:fixScheduled`]).toBe(true);
     }
+  });
+
+  it("blocks builtin coding review and merge when Code Review requests revision and no remediation is scheduled", async () => {
+    const requestFix = vi.fn(async () => false);
+    const calls: string[] = [];
+    const executor = new WorkflowGraphExecutor({
+      handlers: {
+        "parse-steps": async () => ({ outcome: "success", value: "no-steps" }),
+        prompt: async (node) => {
+          calls.push(node.id);
+          if (node.id === "code-review-step") {
+            return {
+              outcome: "failure",
+              value: "REVISE",
+              contextPatch: { output: "blocking code review finding" },
+            };
+          }
+          return { outcome: "success" };
+        },
+      },
+      requestPreMergeOptionalStepFix: requestFix,
+    });
+
+    const result = await executor.run({
+      ...taskWith(["plan-review", "code-review"]),
+      id: "FN-7228-regression",
+      steps: [],
+      workflowStepResults: [
+        {
+          workflowStepId: "plan-review",
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "passed",
+          startedAt: "2026-06-29T17:00:00.000Z",
+          completedAt: "2026-06-29T17:00:01.000Z",
+        },
+      ],
+    } as TaskDetail, settingsOn(), BUILTIN_CODING_WORKFLOW_IR);
+
+    expect(requestFix).toHaveBeenCalledWith("FN-7228-regression", expect.objectContaining({
+      stepName: "Code Review",
+      feedback: "blocking code review finding",
+      nodeId: "code-review",
+      status: "failed",
+      verdict: "REVISE",
+    }));
+    expect(result.outcome).toBe("failure");
+    expect(result.visitedNodeIds).toContain("code-review::code-review-step");
+    expect(result.visitedNodeIds).not.toContain("review");
+    expect(result.visitedNodeIds).not.toContain("merge-gate");
+    expect(result.visitedNodeIds).not.toContain("merge-attempt");
+    expect(calls).not.toContain("review");
   });
 });

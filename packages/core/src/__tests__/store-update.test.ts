@@ -37,6 +37,33 @@ describe("TaskStore", () => {
   const createSourceIssueFixture = () => harness.createSourceIssueFixture();
   const insertLogEntryWithTimestamp = (...args: any[]) => (harness as any).insertLogEntryWithTimestamp(...args);
 
+  describe("updateTask — workflow transition notifications", () => {
+    it("persists and clears typed workflow transition notification markers", async () => {
+      const task = await createTestTask();
+      const marker: NonNullable<Task["workflowTransitionNotification"]> = {
+        kind: "recovery-requeue",
+        column: "todo",
+        transitionId: `recovery-requeue:${task.id}:pause-abort-active-work`,
+        nodeId: "pause-abort-recovery-router",
+        reason: "pause-abort-active-work",
+        createdAt: "2026-06-29T20:05:00.000Z",
+      };
+
+      const updated = await store.updateTask(task.id, { workflowTransitionNotification: marker });
+      expect(updated.workflowTransitionNotification).toEqual(marker);
+
+      const fetched = await store.getTask(task.id);
+      expect(fetched?.workflowTransitionNotification).toEqual(marker);
+
+      const limitedDetail = await store.getTask(task.id, { activityLogLimit: 1 });
+      expect(limitedDetail?.workflowTransitionNotification).toEqual(marker);
+
+      const cleared = await store.updateTask(task.id, { workflowTransitionNotification: null });
+      expect(cleared.workflowTransitionNotification).toBeUndefined();
+      expect((await store.getTask(task.id))?.workflowTransitionNotification).toBeUndefined();
+    });
+  });
+
   describe("updateTask — dependencies", () => {
     it("adds dependencies to a task with none", async () => {
       const task = await createTestTask();

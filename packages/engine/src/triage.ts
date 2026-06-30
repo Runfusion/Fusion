@@ -866,6 +866,12 @@ export class TriageProcessor {
       // pick up workflow values. Behavior-inert when nothing is customized.
       const settings = await mergeEffectiveSettings(this.store, task, await this.store.getSettings());
       const promptPath = `.fusion/tasks/${task.id}/PROMPT.md`;
+
+      if (task.status === "plan-review-unavailable") {
+        await this.retryUnavailablePlanReview(task, promptPath, settings);
+        return;
+      }
+
       const isFast = task.executionMode === "fast";
       // FN-6236: this is the only legacy executionMode="fast" bridge. Downstream
       // triage policy reads resolved workflow flags instead of the raw string.
@@ -1062,7 +1068,7 @@ export class TriageProcessor {
           defaultModelId: planningModel.modelId,
         };
 
-        let { session } = await createResolvedAgentSession({
+        const { session } = await createResolvedAgentSession({
           sessionPurpose: "triage",
           runtimeHint: triageRuntimeHint,
           pluginRunner: this.options.pluginRunner,
@@ -1741,6 +1747,47 @@ export class TriageProcessor {
     };
 
     return [taskList, taskSearch, taskShow, taskCreate];
+  }
+
+  private async retryUnavailablePlanReview(task: Task, promptPath: string, settings: Settings): Promise<void> {
+    /*
+    FNXC:PlanReview 2026-06-29-12:35:
+    A reviewer outage parks tasks as plan-review-unavailable after PROMPT.md is already accepted. Backoff retry must reuse that exact PROMPT.md and rerun only the Plan Review gate; sending the task through the planner again would rewrite an approved draft without reviewer feedback.
+    */
+    const written = await readFile(join(this.rootDir, promptPath), "utf-8").catch(async (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      const failure = `Plan Review retry could not read existing PROMPT.md (${promptPath}): ${message}`;
+      planLog.warn(`${task.id}: ${failure}`);
+      await this.store.logEntry(task.id, failure).catch((logError: unknown) => {
+        const logMessage = logError instanceof Error ? logError.message : String(logError);
+        planLog.warn(`${task.id}: failed to log missing PROMPT.md during Plan Review retry: ${logMessage}`);
+      });
+      await this.store.updateTask(task.id, {
+        status: "failed",
+        error: failure,
+        nextRecoveryAt: null,
+      }).catch((updateError: unknown) => {
+        const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+        planLog.warn(`${task.id}: failed to persist missing PROMPT.md Plan Review retry failure: ${updateMessage}`);
+      });
+      return "";
+    });
+
+    if (!written.trim()) {
+      return;
+    }
+
+    await this.store.updateTask(task.id, { status: "planning", error: null }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: failed to mark Plan Review retry as planning: ${message}`);
+    });
+
+    await this.finalizeApprovedTask(
+      { ...task, status: "planning" },
+      written,
+      settings,
+      { recoveryLogAction: "Plan Review retry approved existing PROMPT.md — moved to execution" },
+    );
   }
 
   private async validateGeneratedPrompt(taskId: string, promptContent: string): Promise<string | null> {

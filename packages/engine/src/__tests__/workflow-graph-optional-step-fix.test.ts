@@ -164,7 +164,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
   });
 
-  it("clears stale pause-abort provenance before a fresh unpaused execution dispatch", async () => {
+  it("clears stale pause-abort provenance silently before a fresh unpaused execution dispatch", async () => {
     const store = createMockStore();
     const liveTask = task({ column: "todo", paused: false, userPaused: false });
     store.getSettings.mockResolvedValue({ globalPause: false });
@@ -174,12 +174,7 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     await (executor as any).clearStalePauseAbortBeforeDispatch(liveTask);
 
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-7066",
-      "Cleared stale pause-abort marker before unpaused execution dispatch",
-      undefined,
-      undefined,
-    );
+    expect(store.logEntry).not.toHaveBeenCalled();
   });
 
   it("clears pause-abort provenance for manual retry", () => {
@@ -273,6 +268,28 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
         expect(sendBack).not.toHaveBeenCalled();
       }
     }
+  });
+
+  it("adds declared File Scope boundaries to optional-step remediation instructions", () => {
+    const store = createMockStore();
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const guard = (executor as any).buildWorkflowFailureScopeGuard(
+      task({ sourceMetadata: { fileScope: ["packages/dashboard/app/components/WorkflowTabs.tsx"] } }),
+      [
+        "# Task",
+        "",
+        "## File Scope",
+        "- `packages/dashboard/app/components/WorkflowTabs.css`",
+        "",
+        "## Steps",
+        "- Implement",
+      ].join("\n"),
+    );
+
+    expect(guard).toContain("Treat the declared File Scope as the remediation boundary");
+    expect(guard).toContain("packages/dashboard/app/components/WorkflowTabs.css");
+    expect(guard).toContain("packages/dashboard/app/components/WorkflowTabs.tsx");
+    expect(guard).toContain("split them into a separate task");
   });
 
   it("honors unbounded and zero per-step maxRevisions states", async () => {

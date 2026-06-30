@@ -201,14 +201,24 @@ describe("installAuthFetch", () => {
     window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
   });
 
-  it("does not fire the recovery signal for unrelated 401 payloads", async () => {
+  it("fires recovery only for the exact daemon-auth 401 shape on same-origin /api requests", async () => {
     window.localStorage.setItem("fn.authToken", "stale-token");
-    window.fetch = vi.fn(async () => {
-      return new Response(JSON.stringify({ error: "Unauthorized", message: "Project auth required" }), {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      const payload = url.includes("project-auth")
+        ? { error: "Unauthorized", message: "Project auth required" }
+        : { error: "Unauthorized", message: "Valid bearer token required" };
+
+      return new Response(JSON.stringify(payload), {
         status: 401,
         headers: { "content-type": "application/json" },
       });
-    }) as unknown as typeof window.fetch;
+    });
+    window.fetch = fetchSpy as unknown as typeof window.fetch;
 
     const { installAuthFetch, AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } = await loadAuthModule();
     installAuthFetch();
@@ -216,11 +226,20 @@ describe("installAuthFetch", () => {
     const eventHandler = vi.fn();
     window.addEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
 
-    const response = await fetch("/api/tasks");
-    expect(await response.json()).toEqual({ error: "Unauthorized", message: "Project auth required" });
-
+    await fetch("https://example.com/api/tasks");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(eventHandler).not.toHaveBeenCalled();
+
+    const projectAuthResponse = await fetch("/api/project-auth");
+    expect(await projectAuthResponse.json()).toEqual({ error: "Unauthorized", message: "Project auth required" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(eventHandler).not.toHaveBeenCalled();
+
+    const daemonAuthResponse = await fetch("/api/tasks");
+    expect(await daemonAuthResponse.json()).toEqual({ error: "Unauthorized", message: "Valid bearer token required" });
+    await vi.waitFor(() => {
+      expect(eventHandler).toHaveBeenCalledTimes(1);
+    });
 
     window.removeEventListener(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT, eventHandler);
   });

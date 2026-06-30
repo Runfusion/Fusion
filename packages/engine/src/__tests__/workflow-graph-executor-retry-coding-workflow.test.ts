@@ -27,14 +27,27 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.outcome).toBe("success");
     expect(executeCalls).toBe(2);
     expect(result.context["node:execute:outcome"]).toBe("success");
-    // U6: the legacy `workflow-step` seam is gone; the pre-merge browser-verification
-    // optional-group is bypassed here (task has no enabledWorkflowSteps), so its
-    // group node is visited but its template body is not.
-    expect(result.visitedNodeIds).toEqual(
-      expect.arrayContaining(["execute", "browser-verification", "review", "merge"]),
-    );
+    /*
+     * FNXC:WorkflowGraphTests 2026-06-29-13:50:
+     * Retry coverage must pin the post-cutover builtin:coding node order. The default path now routes planning through the default-on plan-review group before execute, bypasses default-off browser/post-merge groups at the group node, and runs the default-on code-review template before review and the collapsed legacy merge seam.
+     */
+    expect(result.visitedNodeIds).toEqual([
+      "start",
+      "planning",
+      "plan-review",
+      "plan-review::plan-review-step",
+      "execute",
+      "browser-verification",
+      "code-review",
+      "code-review::code-review-step",
+      "completion-summary",
+      "review",
+      "merge",
+      "post-merge-verification",
+    ]);
     expect(result.visitedNodeIds).not.toContain("workflow-step");
     expect(result.visitedNodeIds).not.toContain("browser-verification::browser-verification-step");
+    expect(result.visitedNodeIds).not.toContain("post-merge-verification::post-merge-verification-step");
   });
 
   it("exhausts execute node retries and routes failure to end", async () => {
@@ -56,7 +69,13 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.context["node:execute:error"]).toBe("persistent execute failure");
     expect(result.outcome).toBe("failure");
     expect(BUILTIN_CODING_WORKFLOW_IR.edges).toContainEqual({ from: "execute", to: "end", condition: "failure" });
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute"]);
+    expect(result.visitedNodeIds).toEqual([
+      "start",
+      "planning",
+      "plan-review",
+      "plan-review::plan-review-step",
+      "execute",
+    ]);
     expect(result.visitedNodeIds).not.toContain("browser-verification");
   });
 
@@ -79,7 +98,13 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.context["node:execute:error"]).toBeUndefined();
     expect(result.outcome).toBe("failure");
     expect(BUILTIN_CODING_WORKFLOW_IR.edges).toContainEqual({ from: "execute", to: "end", condition: "failure" });
-    expect(result.visitedNodeIds).toEqual(["start", "planning", "execute"]);
+    expect(result.visitedNodeIds).toEqual([
+      "start",
+      "planning",
+      "plan-review",
+      "plan-review::plan-review-step",
+      "execute",
+    ]);
   });
 
   it("uses the executor default retry count for a review node without maxRetries config", async () => {
@@ -100,14 +125,17 @@ describe("WorkflowGraphExecutor built-in coding workflow retries", () => {
     expect(result.context["node:review:value"]).toBe("exception");
     expect(result.context["node:review:error"]).toBe("review seam failed");
     expect(result.outcome).toBe("failure");
-    // U6: with browser-verification disabled (bypassed), the group node sits
-    // between execute and review where the workflow-step seam used to.
+    // FNXC:WorkflowGraphTests 2026-06-29-13:50: Review retry coverage follows the current builtin:coding success path through plan-review, bypassed browser verification, default-on code-review, completion summary, then review; a review failure stops before merge/post-merge traversal.
     expect(result.visitedNodeIds).toEqual([
       "start",
       "planning",
+      "plan-review",
+      "plan-review::plan-review-step",
       "execute",
       "browser-verification",
       "code-review",
+      "code-review::code-review-step",
+      "completion-summary",
       "review",
     ]);
   });

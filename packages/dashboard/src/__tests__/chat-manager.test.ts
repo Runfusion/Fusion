@@ -389,9 +389,10 @@ describe("ChatManager.sendMessage", () => {
     expect(assistantCall?.[1].content).toBe("Hello world!");
   });
 
-  // U11 / R12 drift guard: the chat lane must expose all six fn_workflow_*
-  // tools to the agent when a scoped task store is available.
-  it("exposes all six fn_workflow_* tools to the chat agent when a task store is present", async () => {
+  // U11 / R12 drift guard: the chat lane must expose workflow discovery,
+  // mutation, settings, selection, and trait vocabulary to the agent when a
+  // scoped task store is available.
+  it("exposes the full workflow authoring surface to the chat agent when a task store is present", async () => {
     let capturedTools: Array<{ name: string }> = [];
     __setCreateFnAgent(async (options: any) => {
       capturedTools = options.customTools ?? [];
@@ -412,9 +413,11 @@ describe("ChatManager.sendMessage", () => {
       "fn_workflow_create",
       "fn_workflow_update",
       "fn_workflow_delete",
+      "fn_workflow_settings",
       "fn_workflow_list",
       "fn_workflow_get",
       "fn_workflow_select",
+      "fn_trait_list",
     ]) {
       expect(names).toContain(required);
     }

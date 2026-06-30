@@ -100,6 +100,12 @@ export {
   WORKFLOW_SETTING_TYPES,
   SETTING_RENDER_WIDGETS,
 } from "./workflow-ir.js";
+export {
+  analyzeWorkflowLifecycle,
+  type AnalyzeWorkflowLifecycleOptions,
+  type WorkflowLifecycleWarning,
+  type WorkflowLifecycleWarningCode,
+} from "./workflow-lifecycle-validation.js";
 export type {
   WorkflowIr,
   WorkflowIrV1,
@@ -1726,7 +1732,11 @@ export type {
 } from "./research-types.js";
 
 export { isExperimentalFeatureEnabled, GRAPH_NATIVE_POST_MERGE_FLAG } from "./experimental-features.js";
-export { postMergeOptionalGroupNode } from "./builtin-post-merge-group.js";
+export {
+  POST_MERGE_VERIFICATION_GROUP_ID,
+  postMergeOptionalGroupNode,
+  postMergeVerificationOptionalGroupNode,
+} from "./builtin-post-merge-group.js";
 export type { PostMergeOptionalGroupSpec } from "./builtin-post-merge-group.js";
 export {
   WORKFLOW_COMPARABLE_AUDIT_MUTATIONS,

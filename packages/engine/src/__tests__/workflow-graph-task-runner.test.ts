@@ -102,6 +102,41 @@ describe("WorkflowGraphTaskRunner (CU-U2)", () => {
     expect(result.visitedNodeIds).toEqual(["start", "lint", "execute", "review", "merge", "notify"]);
   });
 
+  it("projects agent-generated completion summaries from workflow nodes onto the task", async () => {
+    const ir: WorkflowIr = {
+      version: "v1",
+      name: "summary",
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "summary", kind: "prompt", config: { prompt: "summarize", summaryTarget: "task" } },
+        { id: "zend", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "summary" },
+        { from: "summary", to: "zend", condition: "success" },
+      ],
+    };
+    const projections: Array<{ taskId: string; summary?: string }> = [];
+    const runner = new WorkflowGraphTaskRunner({
+      store: storeWith(definition(ir)),
+      seams: recordingSeams([]),
+      runCustomNode: async () => ({
+        outcome: "success",
+        contextPatch: { summary: "Implemented the workflow and verified the result." },
+      }),
+      publishTaskProjection: async (taskId, patch) => {
+        projections.push({ taskId, summary: patch.summary });
+      },
+    });
+
+    const result = await runner.run(task, flagOn);
+
+    expect(result.disposition).toBe("completed");
+    expect(projections).toEqual([
+      { taskId: "FN-9001", summary: "Implemented the workflow and verified the result." },
+    ]);
+  });
+
   it("selected workflows reaching the merge seam produce the canonical merged notification once", async () => {
     const emitter = new EventEmitter();
     const graphTask = {

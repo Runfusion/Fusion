@@ -4,6 +4,14 @@ import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
 import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
 import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
+import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
+import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
+import {
+  browserVerificationRemediationNode,
+  codeReviewRemediationNode,
+  planReplanNode,
+} from "./builtin-workflow-remediation-nodes.js";
 
 /**
  * The built-in default workflow as a v2 IR. Its six columns have ids that are
@@ -68,6 +76,8 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
       column: "triage",
       config: builtinPromptConfig("planning", "Plan / specify"),
     },
+    planReviewOptionalGroupNode("in-progress"),
+    planReplanNode("triage"),
     {
       id: "execute",
       kind: "prompt",
@@ -76,12 +86,15 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     },
     // Pre-merge optional browser-verification (optional-group, default OFF).
     browserVerificationOptionalGroupNode("in-progress"),
+    browserVerificationRemediationNode("in-progress"),
     // FNXC:CodeReviewStep 2026-06-25-15:00:
-    // Pre-merge Code Review as a DEFAULT-ON optional-group (advisory), on the success path
+    // Pre-merge Code Review as a DEFAULT-ON optional-group (blocking gate), on the success path
     // between browser-verification and review (execute → browser-verification →
     // code-review → review). Runs for every coding task by default (defaultOn:true) but is
     // toggleable off per task; disabled → byte-inert pass-through.
     codeReviewOptionalGroupNode("in-progress"),
+    codeReviewRemediationNode("in-progress"),
+    completionSummaryNode("in-review"),
     { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
@@ -100,18 +113,21 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
       config: { capability: "task-merge", reworkRegion: true, maxReworkCycles: 3 },
     },
     { id: "recovery-router", kind: "recovery-router", column: "in-review", config: { surfaces: ["merge", "retry"] } },
+    postMergeVerificationOptionalGroupNode("done"),
     { id: "end", kind: "end", column: "done" },
   ],
   edges: [
     { from: "start", to: "planning" },
-    { from: "planning", to: "execute", condition: "success" },
+    { from: "planning", to: "plan-review", condition: "success" },
+    { from: "plan-review", to: "execute", condition: "success" },
     // execute → browser-verification (optional-group) → review. When the group is
     // disabled it passes through with outcome=success and routes straight to review.
     { from: "execute", to: "browser-verification", condition: "success" },
     // browser-verification → code-review → review. Each optional-group passes through with
     // outcome=success when disabled, so a task with both off routes straight to review.
     { from: "browser-verification", to: "code-review", condition: "success" },
-    { from: "code-review", to: "review", condition: "success" },
+    { from: "code-review", to: "completion-summary", condition: "success" },
+    { from: "completion-summary", to: "review", condition: "success" },
     { from: "review", to: "merge-gate", condition: "success" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },
@@ -121,14 +137,19 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
     { from: "branch-group-member-integration", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "branch-group-promotion", to: "merge-attempt", condition: "success" },
     { from: "branch-group-promotion", to: "merge-manual-hold", condition: "outcome:manual-required" },
-    { from: "merge-attempt", to: "end", condition: "success" },
+    { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
+    { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },
     { from: "planning", to: "end", condition: "failure" },
+    { from: "plan-review", to: "plan-replan", condition: "failure" },
+    { from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" },
     { from: "execute", to: "end", condition: "failure" },
-    { from: "browser-verification", to: "end", condition: "failure" },
-    { from: "code-review", to: "end", condition: "failure" },
+    { from: "browser-verification", to: "browser-verification-remediation", condition: "failure" },
+    { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
+    { from: "code-review", to: "code-review-remediation", condition: "failure" },
+    { from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" },
     { from: "review", to: "end", condition: "failure" },
     { from: "merge-attempt", to: "end", condition: "failure" },
   ],

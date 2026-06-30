@@ -7,12 +7,19 @@ describe("useAuthTokenRecovery", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  it("opens when the daemon auth-failure event fires", () => {
+  it("opens on daemon auth-failure events and stays open for duplicate signals", () => {
     const { result } = renderHook(() => useAuthTokenRecovery());
 
     expect(result.current.open).toBe(false);
 
     act(() => {
+      window.dispatchEvent(new Event(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
+    });
+
+    expect(result.current.open).toBe(true);
+
+    act(() => {
+      window.dispatchEvent(new Event(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
       window.dispatchEvent(new Event(AUTH_TOKEN_RECOVERY_REQUIRED_EVENT));
     });
 

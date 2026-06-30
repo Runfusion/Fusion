@@ -315,6 +315,203 @@ describe("auto-merge proven finalization helper", () => {
     );
   });
 
+  it("blocks loose merged results that lack durable merge confirmation", async () => {
+    const strandedTask = {
+      id: "FN-MERGED-PROOF",
+      title: "Merged proof",
+      description: "Test",
+      column: "in-progress",
+      status: null,
+      error: null,
+      blockedBy: null,
+      overlapBlockedBy: null,
+      dependencies: [],
+      steps: [{ status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      mergeDetails: undefined,
+    } as Task;
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      updateTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      recordRunAuditEvent: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(strandedTask);
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-MERGED-PROOF",
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123" } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ outcome: "blocked", reason: "missing-merge-confirmation" }));
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-merge-finalize-column-mismatch-no-action",
+      metadata: expect.objectContaining({ previousColumn: "in-progress", reason: "missing-merge-confirmation" }),
+    }));
+  });
+
+  it("blocks workflow finalization while planned steps are still incomplete", async () => {
+    const strandedTask = {
+      id: "FN-INCOMPLETE",
+      title: "Incomplete workflow",
+      description: "Test",
+      column: "in-progress",
+      dependencies: [],
+      steps: [{ status: "done" }, { status: "pending" }],
+      currentStep: 1,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      mergeDetails: { mergeConfirmed: true, commitSha: "abc123", landedFiles: ["packages/engine/src/executor.ts"] },
+    } as Task;
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      updateTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      recordRunAuditEvent: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(strandedTask);
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-INCOMPLETE",
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+      rootDir: "/repo",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ outcome: "blocked", reason: "task has incomplete steps" }));
+    expect(store.updateTask).toHaveBeenCalledWith("FN-INCOMPLETE", expect.objectContaining({
+      status: "failed",
+      error: "Merge confirmed but finalization blocked: task has incomplete steps",
+    }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("blocks workflow finalization when the task branch has files missing from merge proof", async () => {
+    const strandedTask = {
+      id: "FN-BRANCH-PROOF",
+      title: "Stale proof",
+      description: "Test",
+      column: "in-progress",
+      branch: "fusion/fn-branch-proof",
+      baseBranch: "main",
+      dependencies: [],
+      steps: [{ status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      mergeDetails: { mergeConfirmed: true, commitSha: "abc123", landedFiles: ["packages/engine/src/executor.ts"] },
+    } as Task;
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      updateTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      recordRunAuditEvent: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(strandedTask);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const command = String(cmd);
+      if (command.includes("rev-parse --verify")) return "ok\n" as any;
+      if (command.includes("git diff --name-only") && command.includes("main...fusion/fn-branch-proof")) {
+        return "packages/dashboard/app/TaskChatTab.css\n" as any;
+      }
+      return "" as any;
+    });
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-BRANCH-PROOF",
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+      rootDir: "/repo",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ outcome: "blocked", reason: "branch-diff-missing-from-merge-proof" }));
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("allows workflow finalization when missing branch proof is outside the declared File Scope", async () => {
+    const strandedTask = {
+      id: "FN-SCOPED-PROOF",
+      title: "Scoped proof",
+      description: "Test",
+      column: "in-progress",
+      branch: "fusion/fn-scoped-proof",
+      baseBranch: "main",
+      dependencies: [],
+      steps: [{ status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sourceMetadata: {
+        fileScope: [
+          "packages/dashboard/app/components/EngineControlMenu.tsx",
+          "packages/dashboard/app/components/__tests__/EngineControlMenu.test.tsx",
+          "docs/dashboard-guide.md",
+          ".changeset/*.md",
+        ],
+      },
+      mergeDetails: {
+        mergeConfirmed: true,
+        commitSha: "abc123",
+        landedFiles: [
+          "packages/dashboard/app/components/EngineControlMenu.tsx",
+          "packages/dashboard/app/components/__tests__/EngineControlMenu.test.tsx",
+          "docs/dashboard-guide.md",
+          ".changeset/fn-7235-footer-concurrency-marker.md",
+        ],
+      },
+    } as Task;
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      updateTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      recordRunAuditEvent: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(strandedTask);
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const command = String(cmd);
+      if (command.includes("rev-parse --verify")) return "ok\n" as any;
+      if (command.includes("git diff --name-only") && command.includes("main...fusion/fn-scoped-proof")) {
+        return [
+          "packages/dashboard/app/components/EngineControlMenu.tsx",
+          "packages/dashboard/app/components/__tests__/EngineControlMenu.test.tsx",
+          "docs/dashboard-guide.md",
+          ".changeset/fn-7235-footer-concurrency-marker.md",
+          "packages/engine/src/triage.ts",
+        ].join("\n") as any;
+      }
+      return "" as any;
+    });
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-SCOPED-PROOF",
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "abc123", mergeConfirmed: true } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+      rootDir: "/repo",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ outcome: "done" }));
+    expect(store.moveTask).toHaveBeenCalledWith("FN-SCOPED-PROOF", "done", expect.objectContaining({
+      moveSource: "engine",
+      preserveProgress: true,
+      recoveryRehome: true,
+    }));
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-SCOPED-PROOF", expect.objectContaining({ status: "failed" }));
+  });
+
   it("treats already-done landed rows as idempotent success", async () => {
     const doneTask = {
       id: "FN-DONE",
@@ -350,6 +547,44 @@ describe("auto-merge proven finalization helper", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(store.recordRunAuditEvent).not.toHaveBeenCalled();
+  });
+
+  it("blocks already-done rows that lack merge confirmation instead of accepting the column", async () => {
+    const doneTask = {
+      id: "FN-DONE-NOPROOF",
+      title: "Already done without proof",
+      description: "Test",
+      column: "done",
+      dependencies: [],
+      steps: [{ status: "done" }],
+      currentStep: 0,
+      log: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      mergeDetails: { mergeConfirmed: false, noOpMerge: true },
+    } as Task;
+    const store = createMockStore(doneTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      updateTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      recordRunAuditEvent: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(doneTask);
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-DONE-NOPROOF",
+      result: { task: doneTask, ok: true, merged: true, noOp: true } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+    });
+
+    expect(result).toEqual(expect.objectContaining({ outcome: "blocked", reason: "done-without-merge-confirmation" }));
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+      mutationType: "task:auto-merge-finalize-column-mismatch-no-action",
+      metadata: expect.objectContaining({ previousColumn: "done", reason: "done-without-merge-confirmation" }),
+    }));
   });
 
   it("diagnoses rows without merge proof instead of finalizing them", async () => {
@@ -3405,4 +3640,3 @@ describe("aiMergeTask post-squash audit gate", () => {
     ).toBe(false);
   });
 });
-

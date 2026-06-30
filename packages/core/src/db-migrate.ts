@@ -180,11 +180,11 @@ async function migrateTasks(fusionDir: string, db: Database): Promise<void> {
       columnMovedAt, dependencies, steps, log, attachments, steeringComments,
       comments, workflowStepResults, prInfo, issueInfo,
       sourceIssueProvider, sourceIssueRepository, sourceIssueExternalIssueId, sourceIssueNumber, sourceIssueUrl, sourceIssueClosedAt,
-      mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, sliceId,
+      mergeDetails, breakIntoSubtasks, noCommitsExpected, enabledWorkflowSteps, modifiedFiles, workflowTransitionNotification, sliceId,
       workspaceWorktrees
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `);
 
@@ -254,6 +254,9 @@ async function migrateTasks(fusionDir: string, db: Database): Promise<void> {
         task.noCommitsExpected ? 1 : 0,
         toJson(task.enabledWorkflowSteps || []),
         toJson(task.modifiedFiles || []),
+        // FNXC:WorkflowNotifications 2026-06-29-13:10: preserve typed workflow
+        // transition markers during task.json -> SQLite rebuilds.
+        toJsonNullable(task.workflowTransitionNotification),
         task.sliceId ?? null,
         // FNXC:Workspace 2026-06-24-15:30: carry the per-sub-repo worktree map through the legacy
         // task.json→SQLite rebuild so a workspace task migrated from disk keeps its acquired worktrees.

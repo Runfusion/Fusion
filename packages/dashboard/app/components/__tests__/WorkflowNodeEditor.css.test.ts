@@ -284,6 +284,35 @@ describe("WorkflowNodeEditor mobile CSS contract", () => {
     expect(collapsedToggleRule).toMatch(/bottom\s*:\s*var\(--space-sm\)\s*;/);
   });
 
+  it("FN-7236 keeps simple-editor tabs as the touch-pannable horizontal scroller", () => {
+    const editorCss = readComponentCss("WorkflowNodeEditor.css");
+
+    // Surface Enumeration: the same .wf-mobile-tabs/.wf-mobile-tab rules render for mobile automatic simple layout and desktop/tablet compact simple layout because they intentionally live outside the mobile media query.
+    const tabsRule = findRule([editorCss], /\.wf-mobile-tabs\s*\{[^}]*\}/);
+    expect(tabsRule).toMatch(/box-sizing\s*:\s*border-box\s*;/);
+    expect(tabsRule).toMatch(/display\s*:\s*flex\s*;/);
+    expect(tabsRule).toMatch(/flex\s*:\s*0 0 auto\s*;/);
+    expect(tabsRule).toMatch(/width\s*:\s*100%\s*;/);
+    expect(tabsRule).toMatch(/inline-size\s*:\s*100%\s*;/);
+    expect(tabsRule).toMatch(/max-width\s*:\s*100%\s*;/);
+    expect(tabsRule).toMatch(/max-inline-size\s*:\s*100%\s*;/);
+    expect(tabsRule).toMatch(/min-width\s*:\s*0\s*;/);
+    expect(tabsRule).toMatch(/min-inline-size\s*:\s*0\s*;/);
+    expect(tabsRule).toMatch(/overflow-x\s*:\s*auto\s*;/);
+    expect(tabsRule).toMatch(/overflow-y\s*:\s*hidden\s*;/);
+    expect(tabsRule).toMatch(/overscroll-behavior-inline\s*:\s*contain\s*;/);
+    expect(tabsRule).toMatch(/touch-action\s*:\s*pan-x pan-y\s*;/);
+    expect(tabsRule).toMatch(/-webkit-overflow-scrolling\s*:\s*touch\s*;/);
+
+    const tabRule = findRule([editorCss], /\.wf-mobile-tab\s*\{[^}]*\}/);
+    expect(tabRule).toMatch(/box-sizing\s*:\s*border-box\s*;/);
+    expect(tabRule).toMatch(/flex\s*:\s*0 0 auto\s*;/);
+    expect(tabRule).toMatch(/min-width\s*:\s*max-content\s*;/);
+    expect(tabRule).toMatch(/white-space\s*:\s*nowrap\s*;/);
+    expect(tabRule).toMatch(/touch-action\s*:\s*pan-x pan-y\s*;/);
+    expect(tabRule).toMatch(/min-height\s*:\s*var\(--wf-editor-touch-target\)\s*;/);
+  });
+
   it("FN-6034 keeps the desktop graph canvas shrinkable while FloatingWindow owns the modal minimum", () => {
     const baseCss = loadAllAppCssBaseOnly();
 

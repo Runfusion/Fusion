@@ -22,6 +22,7 @@ export type WorkflowSeamName =
   | "planning"
   | "execute"
   | "review"
+  | "review-handoff"
   | "merge"
   | "schedule"
   | "step-execute";
@@ -33,6 +34,7 @@ export interface WorkflowLegacySeams {
   planning: (task: TaskDetail, context: Record<string, unknown>) => Promise<WorkflowNodeResult>;
   execute: (task: TaskDetail, context: Record<string, unknown>) => Promise<WorkflowNodeResult>;
   review: (task: TaskDetail, context: Record<string, unknown>) => Promise<WorkflowNodeResult>;
+  "review-handoff"?: (task: TaskDetail, context: Record<string, unknown>) => Promise<WorkflowNodeResult>;
   merge: (task: TaskDetail, context: Record<string, unknown>) => Promise<WorkflowNodeResult>;
   schedule: (task: TaskDetail, context: Record<string, unknown>) => Promise<WorkflowNodeResult>;
   /**
@@ -211,6 +213,7 @@ export function resolveSeamName(node: { config?: Record<string, unknown> }): Wor
     seam === "planning" ||
     seam === "execute" ||
     seam === "review" ||
+    seam === "review-handoff" ||
     seam === "merge" ||
     seam === "schedule" ||
     seam === "step-execute"
@@ -353,6 +356,15 @@ export function createPrimitivePromptLikeHandler(
       }
       if (seam === "review") {
         const result = await primitives.runReview(primitiveCtx, context.task, { type: "code" });
+        return { outcome: result.outcome, value: result.value, contextPatch: result.contextPatch };
+      }
+      if (seam === "review-handoff") {
+        const result = await primitives.transitionTask(primitiveCtx, context.task, {
+          column: "in-review",
+          status: null,
+          reason: "workflow-review-handoff",
+          preserveProgress: true,
+        });
         return { outcome: result.outcome, value: result.value, contextPatch: result.contextPatch };
       }
       if (seam === "merge") {
@@ -585,13 +597,13 @@ export interface ParseStepsHandlerDeps {
    * expanded for this task+run — either persisted instance rows exist OR a
    * foreach expanded earlier in this walk. Re-parsing after expansion is illegal
    * (it would silently desynchronize the pinned instance set), so the handler
-   * fails with an audited `pin-mismatch` outcome. Optional — absent means no
+   * resumes without rewriting the step projection. Optional — absent means no
    * pin established (always safe to parse).
    */
   hasExpandedForeach?: (task: TaskDetail) => Promise<boolean> | boolean;
   /** Optional audit sink: called with a stable reason code on every routable
-   *  failure outcome (`parse-error`, `pin-mismatch`) so the run audit records it.
-   *  Never throws into the handler. */
+   *  parse outcome (`parse-error`, `pin-mismatch`, `pin-resume`) so the run audit
+   *  records it. Never throws into the handler. */
   audit?: (reason: string, detail: string) => void;
 }
 
@@ -605,7 +617,7 @@ export interface ParseStepsHandlerDeps {
  *   - missing artifact         → `outcome:failure value:"parse-error"` (audited)
  *   - parser throws            → `outcome:failure value:"parse-error"` (audited, never crashes)
  *   - clean empty parse        → `outcome:success value:"no-steps"` (routable; defaults to success)
- *   - foreach already expanded → `outcome:failure value:"pin-mismatch"` (audited, KTD-3)
+ *   - foreach already expanded → `outcome:success value:"already-expanded"` (audited, KTD-3)
  *   - steps parsed             → `outcome:success` (steps written through projection)
  */
 export function createParseStepsHandler(deps: ParseStepsHandlerDeps): WorkflowNodeHandler {
@@ -628,11 +640,15 @@ export function createParseStepsHandler(deps: ParseStepsHandlerDeps): WorkflowNo
     // Pin protection (KTD-3): re-parsing after a foreach has expanded is illegal.
     try {
       if (deps.hasExpandedForeach && (await deps.hasExpandedForeach(ctx.task))) {
+        /*
+        FNXC:WorkflowResume 2026-06-29-08:02:
+        Engine restart/retry re-enters the workflow from the start node, so `parse-steps` can be reached after a foreach already has persisted instance pins. That is a resume boundary, not a fatal graph error: preserve the pinned step list by not rewriting steps, then let foreach continue from its persisted instances. Probe exceptions still fail closed below because the engine cannot prove pins are valid.
+        */
         audit(
-          "pin-mismatch",
-          `parse-steps node '${node.id}' reached after a foreach already expanded for task ${ctx.task.id}`,
+          "pin-resume",
+          `parse-steps node '${node.id}' reached after a foreach already expanded for task ${ctx.task.id}; preserving pinned steps`,
         );
-        return { outcome: "failure", value: "pin-mismatch" };
+        return { outcome: "success", value: "already-expanded" };
       }
     } catch (err) {
       // A pin-probe failure must fail closed (never silently re-parse).
@@ -956,6 +972,7 @@ export function createNoopLegacySeams(): WorkflowLegacySeams {
     execute: success,
     // U4 (KTD-2): no `workflow-step` seam — workflow gates run as graph nodes.
     review: success,
+    "review-handoff": success,
     merge: success,
     schedule: success,
   };

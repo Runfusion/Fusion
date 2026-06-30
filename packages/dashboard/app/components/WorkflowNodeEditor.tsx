@@ -927,6 +927,7 @@ function InnerEditor({
 
   const activeWorkflow = useMemo(() => workflows.find((w) => w.id === activeId), [workflows, activeId]);
   const isBuiltin = !!activeWorkflow && isBuiltinWorkflowId(activeWorkflow.id);
+  const lifecycleWarnings = activeWorkflow?.lifecycleWarnings ?? [];
 
   // Live mirror of the active workflow id, readable inside async callbacks that
   // captured an earlier value before an await (e.g. the AI-design round-trip).
@@ -2806,6 +2807,23 @@ function InnerEditor({
                     </button>
                   )}
                 </div>
+                {lifecycleWarnings.length > 0 && (
+                  <div className="wf-lifecycle-warnings" role="status" data-testid="wf-lifecycle-warnings">
+                    <div className="wf-lifecycle-warnings-title">
+                      <Shield size={14} aria-hidden />
+                      <span>{t("workflows.lifecycleWarningsTitle", "Lifecycle warnings")}</span>
+                    </div>
+                    <ul>
+                      {lifecycleWarnings.map((warning, index) => (
+                        <li key={`${warning.code}:${warning.nodeId ?? ""}:${index}`}>
+                          <span className="wf-lifecycle-warning-code">{warning.code}</span>
+                          {warning.nodeId && <span className="wf-lifecycle-warning-node">{warning.nodeId}</span>}
+                          <span>{warning.message}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {simpleLayoutEnabled && (
                   <div className="wf-mobile-shell" data-testid="wf-mobile-shell">
                     <nav className="wf-mobile-tabs" aria-label={t("workflows.mobileEditorNav", "Workflow editor sections")}>

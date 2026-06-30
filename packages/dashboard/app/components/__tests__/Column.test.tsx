@@ -651,6 +651,164 @@ describe("Column in-progress/in-review bulk actions", () => {
   });
 });
 
+describe("Column Done sort control", () => {
+  it("renders an accessible Done-only sort selector with clear labels", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByRole("combobox", { name: "Sort Done tasks" });
+    expect(select.closest(".done-sort-control")).toHaveAttribute("title", "Sort Done tasks");
+    expect(screen.getByText("Sort")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Completion date (newest first)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Task ID (newest first)" })).toBeInTheDocument();
+    expect(select.closest(".done-sort-control")).not.toBeNull();
+    expect(select.closest(".column-header")).not.toBeNull();
+  });
+
+  it("renders the selector for workflow complete columns with custom ids", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column={"shipped" as ColumnType}
+        workflowMode
+        columnDisplayName="Shipped"
+        columnFlags={{ complete: true }}
+        tasks={[{ ...makeTask("FN-001"), column: "shipped" as ColumnType }]}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Shipped" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Sort Done tasks" })).toBeInTheDocument();
+  });
+
+  it("selects task ID descending from the Done header", async () => {
+    const user = userEvent.setup();
+    const onDoneSortModeChange = vi.fn();
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={onDoneSortModeChange}
+      />,
+    );
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort Done tasks" }), "task-id-desc");
+
+    expect(onDoneSortModeChange).toHaveBeenCalledWith("task-id-desc");
+  });
+
+  it("selects completion-date descending from the Done header", async () => {
+    const user = userEvent.setup();
+    const onDoneSortModeChange = vi.fn();
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-002"), column: "done" }]}
+        doneSortMode="task-id-desc"
+        onDoneSortModeChange={onDoneSortModeChange}
+      />,
+    );
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sort Done tasks" }), "completion-date-desc");
+
+    expect(onDoneSortModeChange).toHaveBeenCalledWith("completion-date-desc");
+  });
+
+  it("keeps the Done sort selector available when Done is empty", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[]}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "Sort Done tasks" })).toBeInTheDocument();
+    expect(screen.getByText("0")).toHaveClass("column-count");
+  });
+
+  it("coexists with Archive All Done without disabling sort selection", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+        onArchiveAllDone={vi.fn().mockResolvedValue([])}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("combobox", { name: "Sort Done tasks" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Archive all done tasks" })).toBeEnabled();
+    const header = screen.getByRole("heading", { name: "Done" }).closest(".column-header") as HTMLElement;
+    expect(header.querySelector(".done-sort-control")).not.toBeNull();
+    expect(header.querySelector(".btn-icon")).not.toBeNull();
+  });
+
+  it("keeps Done header actions in the wrapping-friendly header structure", () => {
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+        onArchiveAllDone={vi.fn().mockResolvedValue([])}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    const header = screen.getByRole("heading", { name: "Done" }).closest(".column-header") as HTMLElement;
+    expect(header).toBeInTheDocument();
+    expect(header.querySelector(".column-count")?.textContent).toBe("1");
+    expect(screen.getByRole("combobox", { name: "Sort Done tasks" }).closest(".done-sort-control")?.parentElement).toBe(header);
+    expect(screen.getByRole("button", { name: "Archive all done tasks" }).parentElement).toBe(header);
+  });
+
+  it("hides the sort control and leaves no wrapper on non-Done columns", () => {
+    const { container } = render(
+      <Column
+        {...defaultProps}
+        column="todo"
+        tasks={[{ ...makeTask("FN-001"), column: "todo" }]}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
+    expect(container.querySelector(".done-sort-control")).toBeNull();
+    expect(container.querySelector("[aria-label='Sort Done tasks']")).toBeNull();
+  });
+
+  it("hides the sort control on Done when sort props are absent", () => {
+    const { container } = render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+      />,
+    );
+
+    expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
+    expect(container.querySelector(".done-sort-control")).toBeNull();
+  });
+});
+
 describe("Column same-column drop", () => {
   it("does not call onMoveTask when dropping task into its current column", () => {
     const onMoveTask = vi.fn().mockResolvedValue({} as Task);

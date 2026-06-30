@@ -851,6 +851,10 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
   });
 
   describe("merge-state reset when returning to in-progress (FN-2883)", () => {
+    /*
+    FNXC:ExecutorReverification 2026-06-29-17:20:
+    Post-cutover re-verification must follow cleanupMergeStateForReverification() through reopenLastStepForRevision(): a completed task reopens the nearest preceding non-pending work step plus any trailing verification/delivery suffix instead of hard-coding only the previously current legacy step.
+    */
     it("resets merge state on in-review → in-progress move", async () => {
       const store = createMockStore();
       const executor = new TaskExecutor(store, "/tmp/test");
@@ -895,7 +899,10 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
         verificationFailureCount: 0,
         workflowStepResults: [],
       }));
+      expect(store.updateStep).toHaveBeenCalledWith("FN-2883-A", 1, "pending");
+      expect(store.updateStep).toHaveBeenCalledWith("FN-2883-A", 2, "pending");
       expect(store.updateStep).toHaveBeenCalledWith("FN-2883-A", 3, "pending");
+      expect(store.updateTask).toHaveBeenCalledWith("FN-2883-A", expect.objectContaining({ currentStep: 1 }));
       await waitForAsyncExpectation(() => {
         expect(store.logEntry).toHaveBeenCalledWith(
           "FN-2883-A",
@@ -949,7 +956,10 @@ describe("TaskExecutor agent execution flow (FN-978)", () => {
         verificationFailureCount: 0,
         workflowStepResults: [],
       }));
+      expect(store.updateStep).toHaveBeenCalledWith("FN-2883-B", 0, "pending");
+      expect(store.updateStep).toHaveBeenCalledWith("FN-2883-B", 1, "pending");
       expect(store.updateStep).toHaveBeenCalledWith("FN-2883-B", 2, "pending");
+      expect(store.updateTask).toHaveBeenCalledWith("FN-2883-B", expect.objectContaining({ currentStep: 0 }));
       await waitForAsyncExpectation(() => {
         expect(store.logEntry).toHaveBeenCalledWith(
           "FN-2883-B",

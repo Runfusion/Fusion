@@ -84,14 +84,24 @@ Note: Refs (@e1, @e2) are invalidated after page navigation. Re-snapshot after c
  * Mirrors `stepTemplateToNode(browser-verification)`: a single `prompt` node whose
  * config carries the inlined prompt + `toolMode: "coding"` + `gateMode: "advisory"`.
  */
-export function browserVerificationOptionalGroupNode(column: string): WorkflowIrNode {
+export function browserVerificationOptionalGroupNode(
+  column: string,
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded" } = {},
+): WorkflowIrNode {
   return {
     id: BROWSER_VERIFICATION_GROUP_ID,
     kind: "optional-group",
     column,
     config: {
       name: BROWSER_VERIFICATION_NAME,
-      defaultOn: false,
+      defaultOn: options.defaultOn ?? false,
+      reworkRegion: true,
+      maxReworkCycles: 3,
+      /*
+       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
+       * Built-in browser verification owns its remediation attempt policy. Default to three workflow-scoped attempts, with custom workflow `maxRevisions` values able to override this node config.
+       */
+      maxRevisions: options.maxRevisions ?? 3,
       template: {
         nodes: [
           {

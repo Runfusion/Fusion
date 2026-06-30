@@ -162,6 +162,46 @@ function getTimestampMs(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function getLatestEntryTimestamp(entries: readonly AgentLogEntry[]): string {
+  let latestTimestamp = "";
+  let latestTimestampMs = 0;
+  for (const entry of entries) {
+    const timestampMs = getTimestampMs(entry.timestamp);
+    if (timestampMs > latestTimestampMs) {
+      latestTimestamp = entry.timestamp;
+      latestTimestampMs = timestampMs;
+    }
+  }
+  return latestTimestamp;
+}
+
+/*
+FNXC:TaskChatTimestamps 2026-06-29-14:37:
+Task Detail Chat requires per-block timestamps in addition to existing group and user headers so operators can scan when each text, tool, thinking, or steering block was produced. Reuse the shared relative-time formatter and return null for empty or invalid dates so transcript blocks never render timestamp shells without meaningful time text.
+*/
+function getRelativeTimestamp(timestamp: string | undefined): string {
+  return timestamp ? formatRelativeTimeAgo(timestamp) : "";
+}
+
+function TaskChatTimestamp({ timestamp, testId = "task-chat-block-time", label = "Message timestamp" }: { timestamp: string | undefined; testId?: string; label?: string }) {
+  const relativeTime = getRelativeTimestamp(timestamp);
+  if (!relativeTime) return null;
+  return (
+    <span className="task-chat-timestamp" data-testid={testId} aria-label={label}>
+      {relativeTime}
+    </span>
+  );
+}
+
+function TaskChatTimestampMeta({ timestamp, label }: { timestamp: string | undefined; label: string }) {
+  if (!getRelativeTimestamp(timestamp)) return null;
+  return (
+    <div className="task-chat-entry-meta">
+      <TaskChatTimestamp timestamp={timestamp} label={label} />
+    </div>
+  );
+}
+
 function getLatestTranscriptTimestampMs(entries: readonly AgentLogEntry[], userMessages: readonly UserChatMessage[]): number {
   return Math.max(
     0,
@@ -334,6 +374,7 @@ function TaskChatText({ entries }: { entries: AgentLogEntry[] }) {
       className={`task-chat-entry task-chat-entry--${firstEntry.type.replace("_", "-")}`}
       data-testid={`task-chat-entry-${firstEntry.type}`}
     >
+      <TaskChatTimestampMeta timestamp={getLatestEntryTimestamp(entries)} label="Text block timestamp" />
       <div className="markdown-body task-chat-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
           {entries.map((entry) => entry.text).join("")}
@@ -351,7 +392,10 @@ function TaskChatToolEntry({ entry }: { entry: AgentLogEntry }) {
       className={`task-chat-tool-entry task-chat-tool-entry--${entry.type.replace("_", "-")}`}
       data-testid={`task-chat-entry-${entry.type}`}
     >
-      <div className="task-chat-entry-kicker">{formatEntryLabel(entry, t)}</div>
+      <div className="task-chat-entry-label-row">
+        <span className="task-chat-entry-kicker">{formatEntryLabel(entry, t)}</span>
+        <TaskChatTimestamp timestamp={entry.timestamp} label="Tool entry timestamp" />
+      </div>
       <div className="task-chat-entry-text">{entry.text}</div>
       {entry.detail ? <pre className="task-chat-tool-detail">{linkifyFilePaths(entry.detail)}</pre> : null}
     </article>
@@ -393,8 +437,9 @@ function TaskChatToolInvocation({ row }: { row: Extract<TaskChatToolGroupRow, { 
 
   return (
     <article className={className} data-testid="task-chat-tool-invocation">
-      <div className="task-chat-entry-kicker">
-        {completionLabel ? t("taskChat.toolCallTo", "Tool call → {{label}}", { label: completionLabel }) : t("taskChat.toolCall", "Tool call")}
+      <div className="task-chat-entry-label-row">
+        <span className="task-chat-entry-kicker">{completionLabel ? t("taskChat.toolCallTo", "Tool call → {{label}}", { label: completionLabel }) : t("taskChat.toolCall", "Tool call")}</span>
+        <TaskChatTimestamp timestamp={completion?.timestamp ?? row.call.timestamp} label="Tool invocation timestamp" />
       </div>
       <div className="task-chat-entry-text">{row.call.text}</div>
       {row.call.detail ? (
@@ -440,6 +485,7 @@ function TaskChatToolGroup({ entries }: { entries: AgentLogEntry[] }) {
             {formatErrorCount(errorCount, t)}
           </span>
         ) : null}
+        <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Tool group timestamp" />
       </summary>
       <div className="task-chat-tool-group-entries">
         {rows.map((row) => (
@@ -460,7 +506,10 @@ function TaskChatThinking({ entries }: { entries: AgentLogEntry[] }) {
 
   return (
     <details className="task-chat-thinking" data-testid="task-chat-thinking" open>
-      <summary className="task-chat-thinking-summary">{t("taskChat.thinking", "Thinking")}</summary>
+      <summary className="task-chat-thinking-summary">
+        <span>{t("taskChat.thinking", "Thinking")}</span>
+        <TaskChatTimestamp timestamp={getLatestEntryTimestamp(entries)} label="Thinking block timestamp" />
+      </summary>
       <div className="task-chat-thinking-body">
         <div
           className="markdown-body task-chat-markdown task-chat-thinking-markdown"
@@ -504,6 +553,7 @@ function TaskChatUserMessage({ message }: { message: UserChatMessage }) {
         ) : null}
       </div>
       <article className="task-chat-entry task-chat-entry--user" data-testid="task-chat-entry-user">
+        <TaskChatTimestampMeta timestamp={message.createdAt} label="User message block timestamp" />
         <div className="markdown-body task-chat-markdown">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
             {message.text}
@@ -839,7 +889,6 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
 
             const segments = segmentGroupEntries(item.entries);
             const latestEntryTimestamp = item.entries[item.entries.length - 1]?.timestamp ?? "";
-            const relativeTime = formatRelativeTimeAgo(latestEntryTimestamp);
             const modelInfo = getModelForRole(task, item.role, item.entries, effectiveModels);
             return (
               <section className="task-chat-group" key={`${item.role ?? "agent"}-${itemIndex}`} aria-label={t("taskChat.agentMessages", "{{label}} messages", { label: item.label })}>
@@ -849,11 +898,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
                     <div className="task-chat-role-label">{item.label}</div>
                     <div className="task-chat-group-meta">
                       <span>{formatEntryCount(item.entries.length, t)}</span>
-                      {relativeTime ? (
-                        <span className="task-chat-timestamp" data-testid="task-chat-group-time">
-                          {relativeTime}
-                        </span>
-                      ) : null}
+                      <TaskChatTimestamp timestamp={latestEntryTimestamp} testId="task-chat-group-time" label="Agent group timestamp" />
                     </div>
                   </div>
                 </header>

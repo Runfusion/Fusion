@@ -21,6 +21,7 @@ import {
   type PrEntity,
   type PrEntityCreateInput,
   type PrEntityUpdate,
+  type PrInfo,
   type TaskDetail,
   type WorkflowIrNode,
 } from "@fusion/core";
@@ -46,6 +47,7 @@ export interface PrNodeStore extends PrResponseRunStore {
   getPrEntity(id: string): PrEntity | null;
   getActivePrEntityBySource(sourceType: PrEntity["sourceType"], sourceId: string): PrEntity | null;
   updatePrEntity(id: string, patch: PrEntityUpdate): PrEntity;
+  updatePrInfo?(id: string, prInfo: PrInfo | null): Promise<unknown>;
 }
 
 /**
@@ -362,6 +364,24 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
       prUrl: created.prUrl,
       headOid: created.headOid ?? null,
     });
+    /*
+     * FNXC:WorkflowPrPolicy 2026-06-29-16:42:
+     * PRs opened by workflow PR nodes must become first-class Fusion task state immediately. The dashboard already renders `task.prInfo`/`task.prInfos`; linking the created PR here keeps manual PR review lanes visible on task cards/details and lets PR monitoring attach when the workflow moves into review.
+     */
+    try {
+      await store.updatePrInfo?.(ctx.task.id, {
+        url: created.prUrl,
+        number: created.prNumber,
+        status: "open",
+        title: ctx.task.title ?? `Task ${ctx.task.id}`,
+        headBranch: creating.headBranch,
+        baseBranch: creating.baseBranch ?? "main",
+        commentCount: 0,
+        manual: true,
+      });
+    } catch (err) {
+      audit("pr-create-task-link-failed", `pr-create node '${node.id}' opened PR but could not link task ${ctx.task.id}: ${classifyError(err)}`);
+    }
     return { outcome: "success", value: "open" };
   };
 

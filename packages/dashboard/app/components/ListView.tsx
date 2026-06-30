@@ -8,9 +8,9 @@ import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, 
 import { COLUMNS, DEFAULT_COLUMN, getErrorMessage, isColumn } from "@fusion/core";
 import { useColumnLabel } from "../i18n/labels";
 import { sortTasksForDisplayColumn } from "./taskSorting";
-import { batchUpdateTaskModels, fetchBoardWorkflows, fetchNodes, fetchTaskDetail } from "../api";
+import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
-import type { BoardWorkflowColumn, BoardWorkflowDefinition, BoardWorkflowsPayload, ModelInfo, NodeInfo } from "../api";
+import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
@@ -21,10 +21,10 @@ import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/project
 import { getUnifiedTaskProgress } from "../utils/taskProgress";
 import { useConfirm } from "../hooks/useConfirm";
 import { extractDependencyDeleteConflict, extractLineageDeleteConflict } from "../utils/taskDelete";
-import { subscribeSse } from "../sse-bus";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
-import { readBoardWorkflowsCache, writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
+import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
+import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -333,14 +333,21 @@ export function ListView({
   /*
   FNXC:BoardWorkflows 2026-06-20-09:07:
   ListView shares the board-workflows first-paint invariant with Board: hydrate per-project workflow metadata from sessionStorage and gate legacy list columns while workflowColumns settings or uncached lane metadata are still unknown.
+
+  FNXC:BoardWorkflowSelection 2026-06-29-12:35:
+  ListView must use the same project-scoped durable workflow selection invariant as Board/Header/Graph so task refreshes, respecification route returns, and remounts do not reset operators from a custom workflow back to the default workflow. Keep this separate from list task-selection storage keys.
   */
   const shouldHydrateBoardWorkflowsCache = workflowColumnsEnabled === true || settingsLoaded === false;
-  const [boardWorkflowsState, setBoardWorkflowsState] = useState<{ projectId?: string; payload: BoardWorkflowsPayload } | null>(() => {
-    const cached = shouldHydrateBoardWorkflowsCache ? readBoardWorkflowsCache(projectId) : null;
-    return cached ? { projectId, payload: cached } : null;
-  });
-  const boardWorkflows = boardWorkflowsState?.projectId === projectId && boardWorkflowsState ? boardWorkflowsState.payload : null;
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const {
+    boardWorkflows,
+    workflowMode,
+    workflowOptions,
+    selectedWorkflow,
+    selectedWorkflowId,
+    setSelectedWorkflowId,
+    refreshBoardWorkflows,
+    setBoardWorkflowsState,
+  } = useBoardWorkflows({ projectId, shouldHydrateCache: shouldHydrateBoardWorkflowsCache });
   const [headerWorkflowSlot, setHeaderWorkflowSlot] = useState<HTMLElement | null>(() => {
     if (typeof document === "undefined") return null;
     return document.getElementById("header-workflow-slot");
@@ -414,7 +421,6 @@ export function ListView({
   // FNXC:ListView 2026-06-22-18:00: Holds the active pointer-drag teardown so move/up/cancel/unmount all detach the same listeners — prevents the "window mousemove with no cleanup" leak called out by the frontend-races review.
   const splitResizeTeardownRef = useRef<(() => void) | null>(null);
   const previousStorageProjectIdRef = useRef(projectId);
-  const boardWorkflowsFetchSeqRef = useRef(0);
 
   useEffect(() => {
     if (previousStorageProjectIdRef.current === projectId) return;
@@ -432,55 +438,6 @@ export function ListView({
     );
     setSidebarWidth(readSidebarWidth(projectId));
   }, [projectId, tasks]);
-
-  useEffect(() => {
-    const cached = shouldHydrateBoardWorkflowsCache ? readBoardWorkflowsCache(projectId) : null;
-    setBoardWorkflowsState(cached ? { projectId, payload: cached } : null);
-  }, [projectId, shouldHydrateBoardWorkflowsCache]);
-
-  /*
-  FNXC:WorkflowControls 2026-06-21-00:00:
-  Opening the workflow switcher must refresh the board-workflows payload because task workflow assignment changes do not emit workflow definition SSE events.
-  Share this path with mount, visibility/focus, and workflow-definition SSE refetches so desktop sidebar and mobile toolbar counts cannot drift.
-  */
-  const refreshBoardWorkflows = useCallback(() => {
-    const seq = ++boardWorkflowsFetchSeqRef.current;
-    fetchBoardWorkflows(projectId)
-      .then((payload) => {
-        if (seq === boardWorkflowsFetchSeqRef.current) {
-          setBoardWorkflowsState({ projectId, payload });
-          writeBoardWorkflowsCache(projectId, payload);
-        }
-      })
-      .catch(() => {
-        if (seq === boardWorkflowsFetchSeqRef.current) {
-          setBoardWorkflowsState({ projectId, payload: { flagEnabled: false, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} } });
-        }
-      });
-  }, [projectId]);
-
-  useEffect(() => {
-    refreshBoardWorkflows();
-    const onVisible = () => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") refreshBoardWorkflows();
-    };
-    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
-    if (typeof window !== "undefined") window.addEventListener("focus", onVisible);
-    const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-    const unsubscribe = subscribeSse(`/api/events${query}`, {
-      events: {
-        "workflow:created": refreshBoardWorkflows,
-        "workflow:updated": refreshBoardWorkflows,
-        "workflow:deleted": refreshBoardWorkflows,
-      },
-    });
-    return () => {
-      boardWorkflowsFetchSeqRef.current++;
-      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
-      if (typeof window !== "undefined") window.removeEventListener("focus", onVisible);
-      unsubscribe();
-    };
-  }, [projectId, refreshBoardWorkflows]);
 
   // Persist selection to localStorage
   useEffect(() => {
@@ -617,34 +574,6 @@ export function ListView({
     });
   }, []);
 
-  const workflowMode = boardWorkflows?.flagEnabled === true && boardWorkflows.workflows.length > 0;
-  const workflowOptions = useMemo<BoardWorkflowDefinition[]>(() => {
-    if (!workflowMode || !boardWorkflows) return [];
-    return [...boardWorkflows.workflows].sort((a, b) => {
-      if (a.id === boardWorkflows.defaultWorkflowId) return -1;
-      if (b.id === boardWorkflows.defaultWorkflowId) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [boardWorkflows, workflowMode]);
-
-  const selectedWorkflow = useMemo<BoardWorkflowDefinition | null>(() => {
-    if (!workflowMode) return null;
-    return workflowOptions.find((workflow) => workflow.id === selectedWorkflowId)
-      ?? workflowOptions.find((workflow) => workflow.id === boardWorkflows?.defaultWorkflowId)
-      ?? workflowOptions[0]
-      ?? null;
-  }, [boardWorkflows?.defaultWorkflowId, selectedWorkflowId, workflowMode, workflowOptions]);
-
-  useEffect(() => {
-    if (!workflowMode) {
-      setSelectedWorkflowId(null);
-      return;
-    }
-    if (selectedWorkflow && selectedWorkflow.id !== selectedWorkflowId) {
-      setSelectedWorkflowId(selectedWorkflow.id);
-    }
-  }, [selectedWorkflow, selectedWorkflowId, workflowMode]);
-
   useEffect(() => {
     setSelectedColumn(null);
   }, [selectedWorkflowId]);
@@ -743,6 +672,11 @@ export function ListView({
     return create(input);
   }, [addToast, applyOptimisticTaskWorkflow, createTargetColumn, onQuickCreate, refreshBoardWorkflows, selectedWorkflow, t, workflowMode]);
 
+  /*
+  FNXC:ListWorkflowSelection 2026-06-29-00:00:
+  List quick-add Plan/Subtask handoffs must inherit the same active workflow as direct quick-create. Passing null only while workflow mode has no selected workflow preserves stale-id fallback behavior without reverting to the project default lane.
+  */
+  const listQuickEntryWorkflowId = workflowMode ? selectedWorkflow?.id ?? null : undefined;
 
   // Column display labels
   const COLUMN_LABELS_MAP: Record<ListColumn, string> = {
@@ -1997,6 +1931,7 @@ export function ListView({
                 availableModels={availableModels}
                 onPlanningMode={onPlanningMode}
                 onSubtaskBreakdown={onSubtaskBreakdown}
+                workflowId={listQuickEntryWorkflowId}
                 projectId={projectId}
                 autoExpand={false}
                 defaultExpanded={false}

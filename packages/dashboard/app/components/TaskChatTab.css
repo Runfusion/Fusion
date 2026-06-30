@@ -205,9 +205,14 @@ List View split-pane detail can be narrow while the global viewport is desktop-s
   color: var(--text-muted);
 }
 
+/*
+FNXC:TaskDetailChat 2026-06-29-07:41:
+FN-7231 requires task-detail chat text, user, tool, and thinking blocks to keep tokenized inner padding so transcript content does not sit against bordered block edges. Include padding inside block sizing so user bubbles still honor the responsive max width. Keep the spacing scoped to TaskChatTab selectors so regular ChatView spacing is unchanged.
+*/
 .task-chat-entry {
+  box-sizing: border-box;
   min-width: 0;
-  padding: var(--space-sm) var(--space-md);
+  padding: var(--space-md);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -251,7 +256,9 @@ FN-7207 makes the right-side dock and narrow desktop detail hosts use the same r
 
 .task-chat-tool-group,
 .task-chat-thinking {
+  box-sizing: border-box;
   min-width: 0;
+  padding: var(--space-md);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -276,6 +283,9 @@ FN-7207 makes the right-side dock and narrow desktop detail hosts use the same r
 /*
 FNXC:TaskChat 2026-06-28-00:00:
 FN-7215 aligns task-detail tool-call summaries with regular Chat's compact collapsed treatment. Keep the clickable row token-sized, single-line by default, and ellipsis-friendly so completed tool history does not dominate task transcripts while details remain available through native <details> expansion.
+
+FNXC:TaskChat 2026-06-29-14:00:
+FN-7240 raises the FN-7225 follow-up tool-call typography to the readable base spacing token while preserving FN-7215's compact collapsed summary treatment, so task-detail summaries, counts, names, and errors inherit consistent sizing without expanding their padding.
 */
 .task-chat-tool-group-summary {
   min-width: 0;
@@ -284,7 +294,7 @@ FN-7215 aligns task-detail tool-call summaries with regular Chat's compact colla
   padding: var(--space-xs);
   color: var(--text-muted);
   border-radius: var(--radius-sm);
-  font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)));
+  font-size: var(--space-md);
 }
 
 .task-chat-tool-group-summary::-webkit-details-marker,
@@ -347,8 +357,9 @@ FN-7215 aligns task-detail tool-call summaries with regular Chat's compact colla
 }
 
 .task-chat-tool-entry {
+  box-sizing: border-box;
   min-width: 0;
-  padding: var(--space-xs);
+  padding: var(--space-sm);
   border: var(--btn-border-width) solid color-mix(in srgb, var(--border) 85%, transparent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface) 35%, transparent);
@@ -371,10 +382,52 @@ FN-7215 aligns task-detail tool-call summaries with regular Chat's compact colla
   font-weight: 600;
 }
 
-.task-chat-entry-kicker {
-  margin-bottom: calc(var(--space-xs) / 2);
+/*
+FNXC:TaskChatTimestamps 2026-06-29-14:47:
+FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep block-level timestamps visually quieter than content, token-sized, and flex-contained so text bubbles, tool rows, native details summaries, and thinking summaries remain readable in both wide and narrow hosts.
+*/
+.task-chat-entry-meta .task-chat-timestamp,
+.task-chat-entry-label-row .task-chat-timestamp,
+.task-chat-tool-group-summary .task-chat-timestamp,
+.task-chat-thinking-summary .task-chat-timestamp {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
   color: var(--text-muted);
-  font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)));
+  font-size: calc(var(--space-md) - (var(--space-xs) / 2));
+  font-weight: 400;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.task-chat-entry-meta .task-chat-timestamp {
+  margin-left: auto;
+}
+
+.task-chat-entry-label-row .task-chat-timestamp,
+.task-chat-tool-group-summary .task-chat-timestamp,
+.task-chat-thinking-summary .task-chat-timestamp {
+  max-inline-size: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-chat-entry-label-row,
+.task-chat-entry-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  margin-bottom: calc(var(--space-xs) / 2);
+}
+
+.task-chat-entry-meta {
+  justify-content: flex-end;
+}
+
+.task-chat-entry-kicker {
+  color: var(--text-muted);
+  font-size: var(--space-md);
   font-weight: 600;
   text-transform: none;
   letter-spacing: normal;
@@ -404,17 +457,19 @@ FN-7215 aligns task-detail tool-call summaries with regular Chat's compact colla
 
 .task-chat-tool-detail-label {
   color: var(--text-muted);
-  font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)));
+  font-size: var(--space-md);
   font-weight: 600;
 }
 
 .task-chat-tool-detail {
+  box-sizing: border-box;
   margin: var(--space-xs) 0 0;
   max-width: 100%;
+  padding: var(--space-xs);
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)));
+  font-size: var(--space-md);
 }
 
 .task-chat-composer {
@@ -522,6 +577,12 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
 
   .task-chat-entry--user {
     max-width: 100%;
+  }
+
+  .task-chat-entry,
+  .task-chat-tool-group,
+  .task-chat-thinking {
+    padding: var(--space-sm);
   }
 
   .task-chat-tool-group-summary {

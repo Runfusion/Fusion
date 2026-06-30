@@ -102,6 +102,9 @@ function getCssDeclaration(rule: string, propertyName: string): string {
   return declarationMatch?.[1]?.trim() ?? "";
 }
 
+const TOO_SMALL_TASK_TOOL_FONT_SIZE = "font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)))";
+const READABLE_TASK_TOOL_FONT_SIZE = "font-size: var(--space-md)";
+
 function getRootTokenPxValues(css: string): Record<string, number> {
   const rootRule = getCssRuleBlock(css, ":root");
   const tokenValues: Record<string, number> = {};
@@ -362,6 +365,19 @@ describe("TaskChatTab", () => {
     expect(within(transcript).getByText(/No agent output yet/)).toBeTruthy();
     expect(within(transcript).queryByTestId("task-chat-group-time")).not.toBeInTheDocument();
     expect(within(transcript).queryByTestId("task-chat-user-time")).not.toBeInTheDocument();
+    expect(within(transcript).queryByTestId("task-chat-block-time")).not.toBeInTheDocument();
+    expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
+  });
+
+  it("renders loading state without timestamp shells or invalid-date text", () => {
+    mockLogs([], true);
+    render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
+
+    const transcript = screen.getByTestId("task-chat-transcript");
+    expect(within(transcript).getByText("Loading agent output…")).toBeTruthy();
+    expect(within(transcript).queryByTestId("task-chat-group-time")).not.toBeInTheDocument();
+    expect(within(transcript).queryByTestId("task-chat-user-time")).not.toBeInTheDocument();
+    expect(within(transcript).queryByTestId("task-chat-block-time")).not.toBeInTheDocument();
     expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
   });
 
@@ -597,6 +613,37 @@ describe("TaskChatTab", () => {
     expect(groupMeta).not.toBeNull();
     expect(within(groupMeta as HTMLElement).getByText("2 entries")).toBeVisible();
     expect(within(groupMeta as HTMLElement).getByTestId("task-chat-group-time")).toHaveTextContent("2m ago");
+  });
+
+  it("renders per-block timestamps for text tool thinking and user blocks", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T15:00:00.000Z"));
+    mockLogs([
+      makeEntry({ agent: "executor", text: "older text chunk ", timestamp: "2026-06-17T14:58:30.000Z" }),
+      makeEntry({ agent: "executor", text: "latest text chunk", timestamp: "2026-06-17T14:59:00.000Z" }),
+      makeEntry({ agent: "executor", type: "tool", text: "bash", detail: "pnpm test", timestamp: "2026-06-17T14:56:00.000Z" }),
+      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: "ok", timestamp: "2026-06-17T14:57:00.000Z" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "first thought", timestamp: "2026-06-17T14:54:00.000Z" }),
+      makeEntry({ agent: "executor", type: "thinking", text: "latest thought", timestamp: "2026-06-17T14:55:00.000Z" }),
+    ]);
+
+    render(
+      <TaskChatTab
+        task={makeTask({
+          steeringComments: [makeSteeringComment({ id: "block-user", text: "block-level user guidance", createdAt: "2026-06-17T14:52:00.000Z" })],
+        })}
+        active
+        addToast={vi.fn()}
+      />,
+    );
+
+    const textBlock = screen.getByTestId("task-chat-entry-text");
+    expect(textBlock).toHaveTextContent("older text chunk latest text chunk");
+    expect(within(textBlock).getByLabelText("Text block timestamp")).toHaveTextContent("1m ago");
+    expect(screen.getByLabelText("Tool group timestamp")).toHaveTextContent("3m ago");
+    expect(screen.getByLabelText("Tool invocation timestamp")).toHaveTextContent("3m ago");
+    expect(screen.getByLabelText("Thinking block timestamp")).toHaveTextContent("5m ago");
+    expect(screen.getByLabelText("User message block timestamp")).toHaveTextContent("8m ago");
   });
 
   it("keeps agent and user timestamp parity in the inline chat surface", () => {
@@ -865,6 +912,7 @@ describe("TaskChatTab", () => {
     expect(screen.getByText("Tool call → error")).toBeVisible();
     expect(screen.getByText("Error")).toBeVisible();
     expect(screen.getByText("stderr")).toBeVisible();
+    expect(screen.getByLabelText("Tool invocation timestamp")).toBeVisible();
   });
 
   it("renders a single tool entry as one collapsed group and tolerates missing detail", () => {
@@ -883,10 +931,14 @@ describe("TaskChatTab", () => {
     expect(screen.queryByText("Arguments")).not.toBeInTheDocument();
   });
 
-  it("falls back to result entries when a tool completion has no preceding call", async () => {
-    const user = userEvent.setup();
+  it.each([
+    ["result", "tool_result", "Tool result", "ok", "4m ago"],
+    ["error", "tool_error", "Tool error", "stderr", "2m ago"],
+  ] as const)("falls back to standalone %s entries when a tool completion has no preceding call", (_label, type, kickerText, detail, expectedTime) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-17T15:00:00.000Z"));
     mockLogs([
-      makeEntry({ agent: "executor", type: "tool_result", text: "bash", detail: "ok" }),
+      makeEntry({ agent: "executor", type, text: "bash", detail, timestamp: type === "tool_result" ? "2026-06-17T14:56:00.000Z" : "2026-06-17T14:58:00.000Z" }),
     ]);
 
     render(<TaskChatTab task={makeTask()} active addToast={vi.fn()} />);
@@ -897,14 +949,16 @@ describe("TaskChatTab", () => {
     expect(toolGroup).not.toHaveAttribute("open");
     expect(within(summary as HTMLElement).getByText("1 tool call")).toBeVisible();
     expect(within(summary as HTMLElement).getByText("bash")).toBeVisible();
+    expect(within(summary as HTMLElement).getByLabelText("Tool group timestamp")).toHaveTextContent(expectedTime);
     expect(screen.queryByText("0 tool calls")).not.toBeInTheDocument();
 
-    await user.click(within(summary as HTMLElement).getByText("1 tool call"));
+    fireEvent.click(within(summary as HTMLElement).getByText("1 tool call"));
 
-    const standaloneEntry = screen.getByTestId("task-chat-entry-tool_result");
-    const standaloneKicker = screen.getByText("Tool result");
+    const standaloneEntry = screen.getByTestId(`task-chat-entry-${type}`);
+    const standaloneKicker = screen.getByText(kickerText);
     expect(standaloneEntry).toHaveClass("task-chat-tool-entry");
     expect(standaloneKicker).toHaveClass("task-chat-entry-kicker");
+    expect(within(standaloneEntry).getByLabelText("Tool entry timestamp")).toHaveTextContent(expectedTime);
   });
 
   it("renders thinking in an expanded-by-default collapsible block", async () => {
@@ -1620,6 +1674,7 @@ describe("TaskChatTab", () => {
     const transcript = screen.getByTestId("task-chat-transcript");
     expect(within(transcript).getByText("Optimistic timestamp")).toBeVisible();
     expect(within(transcript).getByTestId("task-chat-user-time")).toHaveTextContent("just now");
+    expect(within(transcript).getByLabelText("User message block timestamp")).toHaveTextContent("just now");
   });
 
   it("renders a sent user message after pre-existing agent output under client-behind-server clock skew", () => {
@@ -1764,6 +1819,7 @@ describe("TaskChatTab", () => {
     expect(within(transcript).getByText("invalid user timestamp")).toBeVisible();
     expect(within(transcript).queryByTestId("task-chat-group-time")).not.toBeInTheDocument();
     expect(within(transcript).queryByTestId("task-chat-user-time")).not.toBeInTheDocument();
+    expect(within(transcript).queryByTestId("task-chat-block-time")).not.toBeInTheDocument();
     expect(transcript).not.toHaveTextContent(/NaN|Invalid Date/);
   });
 
@@ -2504,6 +2560,7 @@ describe("TaskChatTab", () => {
     expect(narrowHostGroupRule).toContain("grid-template-columns: 1fr");
     expect(narrowHostHeaderRule).toContain("min-width: 0");
     expect(narrowHostUserEntryRule).toContain("max-width: 100%");
+    expect(narrowHostCss).not.toContain(TOO_SMALL_TASK_TOOL_FONT_SIZE);
     expect(listSplitGroupRule).toContain("grid-template-columns: 1fr");
     expect(mobileGroupRule).toContain("grid-template-columns: 1fr");
   });
@@ -2533,11 +2590,56 @@ describe("TaskChatTab", () => {
     expect(mainContentSource).toContain("<TaskDetailContent");
   });
 
+  it("keeps task detail chat block inner padding tokenized across text, tool, and thinking surfaces", () => {
+    const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
+    const entryRule = getCssRuleBlock(css, ".task-chat-entry");
+    const userRule = getCssRuleBlock(css, ".task-chat-entry--user");
+    const toolGroupRule = getCssRuleBlock(css, ".task-chat-tool-group");
+    const toolSummaryRule = getCssRuleBlock(getCssAfter(css, "FN-7215 aligns task-detail tool-call summaries"), ".task-chat-tool-group-summary");
+    const toolEntriesRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap"), ".task-chat-tool-group-entries");
+    const toolEntryRule = getCssRuleBlock(css, ".task-chat-tool-entry");
+    const thinkingRule = getCssRuleBlock(css, ".task-chat-thinking");
+    const thinkingBodyRule = getCssRuleBlock(css, ".task-chat-thinking-body");
+    const toolDetailRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-detail {"), ".task-chat-tool-detail");
+    const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
+    const mobileBlockPaddingCss = getCssAfter(mobileCss, ".task-chat-entry,\n  .task-chat-tool-group,\n  .task-chat-thinking");
+    const mobileEntryRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-entry");
+    const mobileToolGroupRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-tool-group");
+    const mobileThinkingRule = getCssRuleBlock(mobileBlockPaddingCss, ".task-chat-thinking");
+    const mobileToolEntryRule = getCssRuleBlock(mobileCss, ".task-chat-tool-entry");
+
+    expect(entryRule).toContain("box-sizing: border-box");
+    expect(entryRule).toContain("padding: var(--space-md)");
+    expect(userRule).not.toContain("padding");
+    expect(toolGroupRule).toContain("box-sizing: border-box");
+    expect(toolGroupRule).toContain("padding: var(--space-md)");
+    expect(thinkingRule).toContain("box-sizing: border-box");
+    expect(thinkingRule).toContain("padding: var(--space-md)");
+    expect(toolSummaryRule).toContain("padding: var(--space-xs)");
+    expect(toolEntriesRule).toContain("padding: 0 var(--space-xs) var(--space-xs)");
+    expect(thinkingBodyRule).toContain("padding: 0 var(--space-md) var(--space-md)");
+    expect(toolEntryRule).toContain("box-sizing: border-box");
+    expect(toolEntryRule).toContain("padding: var(--space-sm)");
+    expect(toolDetailRule).toContain("box-sizing: border-box");
+    expect(toolDetailRule).toContain("padding: var(--space-xs)");
+    expect(mobileEntryRule).toContain("padding: var(--space-sm)");
+    expect(mobileToolGroupRule).toContain("padding: var(--space-sm)");
+    expect(mobileThinkingRule).toContain("padding: var(--space-sm)");
+    expect(mobileToolEntryRule).toContain("padding: var(--space-xs)");
+    for (const rule of [entryRule, toolGroupRule, toolEntryRule, thinkingRule, toolDetailRule, mobileEntryRule]) {
+      expect(rule).not.toContain("px");
+      expect(rule).not.toContain("#");
+    }
+  });
+
   it("keeps task chat timestamp styling tokenized and mobile-safe", () => {
     const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
     const groupMetaRule = getCssRuleBlock(css, ".task-chat-group-meta");
     const userHeaderRule = getCssRuleBlock(css, ".task-chat-user-header");
     const timestampRule = getCssRuleBlock(css, ".task-chat-timestamp");
+    const blockTimestampRule = getCssRuleBlock(css, ".task-chat-entry-meta .task-chat-timestamp,");
+    const blockTimestampMetaRule = getCssRuleBlock(getCssAfter(css, ".task-chat-entry-meta .task-chat-timestamp {"), ".task-chat-entry-meta .task-chat-timestamp");
+    const summaryTimestampRule = getCssRuleBlock(getCssAfter(css, ".task-chat-entry-meta .task-chat-timestamp {\n  margin-left: auto;\n}\n\n"), ".task-chat-entry-label-row .task-chat-timestamp,");
     const mobileCss = getCssAfter(css, "@media (max-width: 768px)");
     const mobileUserHeaderRule = getCssRuleBlock(mobileCss, ".task-chat-user-header");
     const mobileTimestampRule = getCssRuleBlock(mobileCss, ".task-chat-timestamp");
@@ -2549,13 +2651,25 @@ describe("TaskChatTab", () => {
     expect(timestampRule).toContain("font-size: calc(var(--space-md) - (var(--space-xs) / 2))");
     expect(timestampRule).not.toContain("px");
     expect(timestampRule).not.toContain("#");
+    expect(blockTimestampRule).toContain("display: inline-flex");
+    expect(blockTimestampRule).toContain("flex: 0 0 auto");
+    expect(blockTimestampRule).toContain("font-size: calc(var(--space-md) - (var(--space-xs) / 2))");
+    expect(blockTimestampRule).toContain("white-space: nowrap");
+    expect(blockTimestampMetaRule).toContain("margin-left: auto");
+    expect(summaryTimestampRule).toContain("max-inline-size: 40%");
+    expect(summaryTimestampRule).toContain("overflow: hidden");
+    expect(summaryTimestampRule).toContain("text-overflow: ellipsis");
+    expect(blockTimestampRule).not.toContain("px");
+    expect(blockTimestampRule).not.toContain("#");
+    expect(summaryTimestampRule).not.toContain("px");
+    expect(summaryTimestampRule).not.toContain("#");
     expect(userHeaderRule).toContain("display: inline-flex");
     expect(userHeaderRule).toContain("flex-wrap: wrap");
     expect(mobileUserHeaderRule).toContain("justify-content: flex-end");
     expect(mobileTimestampRule).toContain("white-space: normal");
   });
 
-  it("keeps task-chat tool summaries compact like regular chat on desktop and mobile", () => {
+  it("keeps task-chat tool summaries compact and tool text readable on desktop and mobile", () => {
     const css = readFileSync(resolve(__dirname, "../TaskChatTab.css"), "utf8");
     const chatCss = readFileSync(resolve(__dirname, "../ChatView.css"), "utf8");
     const compactCss = getCssAfter(css, "FN-7215 aligns task-detail tool-call summaries");
@@ -2565,6 +2679,8 @@ describe("TaskChatTab", () => {
     const errorRule = getCssRuleBlock(css, ".task-chat-tool-group-error-count");
     const entriesRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-group-entries {\n  gap"), ".task-chat-tool-group-entries");
     const entryRule = getCssRuleBlock(css, ".task-chat-tool-entry");
+    const kickerRule = getCssRuleBlock(css, ".task-chat-entry-kicker");
+    const detailLabelRule = getCssRuleBlock(css, ".task-chat-tool-detail-label");
     const detailRule = getCssRuleBlock(getCssAfter(css, ".task-chat-tool-detail {"), ".task-chat-tool-detail");
     const chatSummaryRule = getCssRuleBlock(chatCss, ".chat-tool-calls-group-summary");
     const chatNamesRule = getCssRuleBlock(chatCss, ".chat-tool-calls-names");
@@ -2575,7 +2691,7 @@ describe("TaskChatTab", () => {
 
     expect(summaryRule).toContain("flex-wrap: nowrap");
     expect(summaryRule).toContain("padding: var(--space-xs)");
-    expect(summaryRule).toContain("font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)))");
+    expect(summaryRule).toContain(READABLE_TASK_TOOL_FONT_SIZE);
     expect(summaryRule).toContain("border-radius: var(--radius-sm)");
     expect(summaryRule).not.toContain("px");
     expect(summaryRule).not.toContain("#");
@@ -2588,12 +2704,25 @@ describe("TaskChatTab", () => {
     expect(errorRule).toContain("white-space: nowrap");
     expect(entriesRule).toContain("padding: 0 var(--space-xs) var(--space-xs)");
     expect(entryRule).toContain("border-radius: var(--radius-sm)");
-    expect(detailRule).toContain("font-size: calc(var(--space-md) - (var(--space-xs) + (var(--space-xs) / 4)))");
+    /*
+     * FNXC:TaskDetailChat 2026-06-29-14:13:
+     * FN-7240 regression coverage must fail if task-detail tool-call typography returns to the too-small FN-7225 calc. The summary, kicker, detail label, and detail body all use the readable base token while retaining compact spacing.
+     */
+    for (const [selector, readableToolTextRule] of [
+      [".task-chat-tool-group-summary", summaryRule],
+      [".task-chat-entry-kicker", kickerRule],
+      [".task-chat-tool-detail-label", detailLabelRule],
+      [".task-chat-tool-detail", detailRule],
+    ] as const) {
+      expect(readableToolTextRule, `${selector} uses readable tool-call typography`).toContain(READABLE_TASK_TOOL_FONT_SIZE);
+      expect(readableToolTextRule, `${selector} does not restore the too-small calc`).not.toContain(TOO_SMALL_TASK_TOOL_FONT_SIZE);
+    }
     expect(chatSummaryRule).toContain("padding: var(--space-xs)");
     expect(chatSummaryRule).toContain("border-radius: var(--radius-sm)");
     expect(chatNamesRule).toContain("text-overflow: ellipsis");
     expect(mobileSummaryRule).toContain("flex-direction: row");
     expect(mobileSummaryRule).toContain("flex-wrap: nowrap");
+    expect(mobileCss).not.toContain(TOO_SMALL_TASK_TOOL_FONT_SIZE);
     expect(mobileNamesRule).toContain("width: auto");
     expect(mobileErrorRule).toContain("width: auto");
   });

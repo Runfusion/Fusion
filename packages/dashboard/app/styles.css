@@ -1111,6 +1111,7 @@ body {
 .column-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   padding: calc(var(--space-lg) - 2px) calc(var(--space-lg) - 2px) 0;
   min-width: 0;
@@ -1171,6 +1172,40 @@ body {
 
 .column-count.count-flash {
   animation: count-flash-bg 1400ms ease-out;
+}
+
+/*
+FNXC:DoneColumnSorting 2026-06-29-18:11:
+The Done sort selector lives in the column header beside Archive All; compact inline-flex styling keeps desktop headers tight while flex wrapping lets narrow/mobile headers move the selector without leaving empty action shells on non-Done columns.
+*/
+.done-sort-control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.done-sort-control__label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.done-sort-control__select {
+  max-width: 150px;
+  min-height: 28px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.75rem;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+}
+
+.done-sort-control__select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
 }
 
 .column-desc {

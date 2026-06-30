@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Settings, TaskDetail, WorkflowIr, WorkflowWorkItem, WorkflowWorkItemState } from "@fusion/core";
 
 import { WorkflowTaskRuntime, type WorkflowTaskRuntimeDeps } from "../workflow-task-runtime.js";
@@ -180,6 +180,72 @@ describe("WorkflowTaskRuntime", () => {
     expect(workflowSelectionReads).toBe(1);
   });
 
+  it("records a completion summary when a workflow run completes without fn_task_done", async () => {
+    const updates: Array<{ taskId: string; summary: string }> = [];
+    const logs: Array<{ taskId: string; action: string; detail?: string }> = [];
+    const completedTask = {
+      ...task,
+      title: "Ship workflow summaries",
+      steps: [
+        { title: "Implement summary persistence", status: "done" },
+        { title: "Verify workflow completion", status: "done" },
+      ],
+      modifiedFiles: ["packages/engine/src/workflow-task-runtime.ts"],
+    } as TaskDetail;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => completedTask,
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: selectedIr() }),
+        updateTask: async (taskId, update) => {
+          updates.push({ taskId, summary: update.summary });
+        },
+        logEntry: async (taskId, action, detail) => {
+          logs.push({ taskId, action, detail });
+        },
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      parseStepsDeps,
+    });
+
+    const result = await runtime.run(completedTask, flagOff);
+
+    expect(result.disposition).toBe("completed");
+    expect(updates).toEqual([
+      {
+        taskId: task.id,
+        summary: expect.stringContaining("Workflow completed: Ship workflow summaries."),
+      },
+    ]);
+    expect(updates[0]?.summary).toContain("Completed 2/2 task steps.");
+    expect(updates[0]?.summary).toContain("Changed files: packages/engine/src/workflow-task-runtime.ts.");
+    expect(logs).toEqual([
+      expect.objectContaining({ taskId: task.id, action: "Workflow completion summary recorded" }),
+    ]);
+  });
+
+  it("preserves an existing workflow completion summary", async () => {
+    const updateTask = vi.fn();
+    const summarizedTask = { ...task, summary: "Agent-authored completion summary." } as TaskDetail;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => summarizedTask,
+        getTaskWorkflowSelection: () => ({ workflowId: "WF-001", stepIds: [] }),
+        getWorkflowDefinition: async () => ({ ir: selectedIr() }),
+        updateTask,
+      },
+      primitives: recordingPrimitives([]),
+      runCustomNode: async () => ({ outcome: "success" }),
+      parseStepsDeps,
+    });
+
+    const result = await runtime.run(summarizedTask, flagOff);
+
+    expect(result.disposition).toBe("completed");
+    expect(updateTask).not.toHaveBeenCalled();
+  });
+
   it("preserves attachments through selected workflow execution", async () => {
     const calls: string[] = [];
     const attachments = [
@@ -253,7 +319,7 @@ describe("WorkflowTaskRuntime", () => {
     expect(result.disposition).toBe("completed");
     // Default Coding is stepwise: planning writes PROMPT.md, parse projects steps,
     // then foreach runs `runTaskStep` before merge. No legacy execute/review seam.
-    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:code-review-step", "merge"]);
+    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:code-review-step", "custom:completion-summary", "merge"]);
     expect(observed.executedTasks).toHaveLength(1);
     expect(observed.executedTasks[0]?.attachments).toEqual(attachments);
   });
@@ -322,7 +388,7 @@ describe("WorkflowTaskRuntime", () => {
     const result = await runtime.run(defaultTask, flagOff);
 
     expect(result.disposition).toBe("completed");
-    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:code-review-step", "merge"]);
+    expect(calls).toEqual(["planning", "custom:plan-review-step", "step:0", "custom:code-review-step", "custom:completion-summary", "merge"]);
     expect(result.visitedNodeIds).toContain("plan");
     expect(result.visitedNodeIds).toContain("plan-review");
     expect(result.visitedNodeIds).toContain("parse");
@@ -362,6 +428,7 @@ describe("WorkflowTaskRuntime", () => {
       "step:0",
       "custom:browser-verification-step",
       "custom:code-review-step",
+      "custom:completion-summary",
       "merge",
     ]);
     expect(result.visitedNodeIds).toContain("plan-review::plan-review-step");
@@ -718,6 +785,63 @@ describe("WorkflowTaskRuntime", () => {
     expect(observed.mergeWorkflowId).toBe("builtin:coding");
     expect(transitions).toEqual([
       expect.objectContaining({ id: "work-merge-attempt", state: "succeeded" }),
+    ]);
+  });
+
+  it("backfills a workflow completion summary before resumed merge work items run", async () => {
+    const observed: { mergeAttempt?: number; mergeRunId?: string; mergeWorkflowId?: string } = {};
+    const updates: Array<{ taskId: string; summary: string }> = [];
+    const transitions: Array<{ id: string; state: WorkflowWorkItemState; patch?: Record<string, unknown> }> = [];
+    const workItem = {
+      id: "work-merge-summary",
+      runId: "run-merge-summary",
+      taskId: task.id,
+      nodeId: "merge-attempt",
+      kind: "merge",
+      state: "running",
+      attempt: 0,
+      retryAfter: null,
+      leaseOwner: "scheduler-a",
+      leaseExpiresAt: "2026-06-09T00:01:00.000Z",
+      lastError: null,
+      blockedReason: null,
+      createdAt: "2026-06-09T00:00:00.000Z",
+      updatedAt: "2026-06-09T00:00:00.000Z",
+    } satisfies WorkflowWorkItem;
+    const runtime = new WorkflowTaskRuntime({
+      store: {
+        getTask: async () => ({
+          ...task,
+          title: "Resume merge with summary",
+          steps: [{ title: "Finish work", status: "done" }],
+        } as TaskDetail),
+        getTaskWorkflowSelection: () => undefined,
+        getWorkflowDefinition: async () => undefined,
+        updateTask: async (taskId, update) => {
+          updates.push({ taskId, summary: update.summary });
+        },
+        transitionWorkflowWorkItem: (id, state, patch) => {
+          transitions.push({ id, state, patch });
+          return { ...workItem, state };
+        },
+      },
+      primitives: recordingPrimitives([], {}, observed),
+      runCustomNode: async () => ({ outcome: "success" }),
+    });
+
+    const result = await runtime.runWorkItem(workItem, flagOff);
+
+    expect(result.disposition).toBe("completed");
+    expect(updates).toEqual([
+      {
+        taskId: task.id,
+        summary: expect.stringContaining("Workflow completed: Resume merge with summary."),
+      },
+    ]);
+    expect(updates[0]?.summary).toContain("Completion source: workflow-work-item:merge (builtin:coding).");
+    expect(observed.mergeRunId).toBe("run-merge-summary");
+    expect(transitions).toEqual([
+      expect.objectContaining({ id: "work-merge-summary", state: "succeeded" }),
     ]);
   });
 

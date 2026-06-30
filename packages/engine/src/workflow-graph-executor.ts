@@ -55,6 +55,16 @@ export interface WorkflowNodeResult {
   contextPatch?: Record<string, unknown>;
 }
 
+interface PreMergeOptionalStepFailureContext {
+  stepName: string;
+  feedback: string;
+  phase: WorkflowStepResult["phase"];
+  status: WorkflowStepResult["status"];
+  verdict?: string;
+  nodeId?: string;
+  maxRevisions?: unknown;
+}
+
 export interface WorkflowTaskProjection {
   modifiedFiles?: string[];
   mergeDetails?: {
@@ -76,6 +86,11 @@ export interface WorkflowNodeExecutionContext {
 
 export type WorkflowNodeHandler = (node: WorkflowIrNode, context: WorkflowNodeExecutionContext) => Promise<WorkflowNodeResult>;
 
+export interface WorkflowNodePreparationRequirement {
+  requiresWorktree: boolean;
+  reason?: string;
+}
+
 export interface WorkflowGraphExecutorDeps {
   handlers?: Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>>;
   /** Workflow-native runtime primitives. When present, default nodes call these
@@ -84,6 +99,15 @@ export interface WorkflowGraphExecutorDeps {
   seams?: WorkflowLegacySeams;
   /** Executes custom (non-seam) prompt/script/gate nodes. */
   runCustomNode?: WorkflowCustomNodeRunner;
+  /*
+   * FNXC:WorkflowExecution 2026-06-29-09:43:
+   * Workflow nodes own lifecycle prerequisites. The graph classifies a node's execution requirements (for example a coding/script node needing a task worktree) before dispatching the handler; executor adapters only fulfill that request with concrete git/session mechanics.
+   */
+  prepareNodeExecution?: (
+    node: WorkflowIrNode,
+    task: TaskDetail,
+    requirement: WorkflowNodePreparationRequirement,
+  ) => void | Promise<void>;
   /** Step-inversion (U12, KTD-12): dependencies for the `parse-steps` node
    *  handler (artifact read, projection write, pin-protection probe, audit).
    *  Absent → a parse-steps node fails cleanly. */
@@ -219,6 +243,10 @@ function isMergeRegionKind(kind: WorkflowIrNodeKind): boolean {
   return MERGE_REGION_KINDS.has(kind);
 }
 
+function optionalStepFailureContextKey(stepId: string): string {
+  return `workflow:optional-step-failure:${stepId}`;
+}
+
 function normalizeTouchedFile(value: unknown): string | undefined {
   if (typeof value === "string") {
     const trimmed = value.trim().replaceAll("\\", "/").replace(/^\.\//, "");
@@ -300,7 +328,7 @@ export class WorkflowGraphExecutor {
 
   public async run(
     task: TaskDetail,
-    settings: Pick<Settings, "experimentalFeatures"> | undefined,
+    settings: (Pick<Settings, "experimentalFeatures"> & Partial<Pick<Settings, "autoMerge">>) | undefined,
     ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR,
   ): Promise<WorkflowGraphExecutorResult> {
     const startNode = ir.nodes.find((node) => node.kind === "start");
@@ -336,12 +364,12 @@ export class WorkflowGraphExecutor {
      * `postMergeEntryNodeIds` = the (deterministic, id-sorted) set of edge targets `t`
      * such that an edge leaves a merge-region node to `t`, where `t` is itself NOT a
      * merge-region node and NOT `end`, the edge is not a rework back-edge, and the edge
-     * routes on success (no condition or `condition: "success"`). For `builtin:coding`
-     * this set is EMPTY (every merge-region exit goes to another merge-region node or
-     * `end`), so flag-ON is byte-identical to flag-OFF there — the parity oracle holds.
-     * When the flag is OFF the set is left empty and the post-merge hop is never taken,
-     * so existing merge routing (transient→retry, manual hold, branch-group
-     * integration/promotion, recovery-router, failure paths) is wholly unchanged.
+     * routes on success (no condition or `condition: "success"`). Full built-ins can now
+     * expose the default-off `post-merge-verification` optional group here, so workflow
+     * definitions own the post-merge verification policy while the merge seam still
+     * provides proof before the hop. When the flag is OFF the set is left empty and
+     * post-merge nodes are skipped for compatibility; normal merge failure/manual/retry
+     * routing remains unchanged.
      */
     const postMergeEnabled = isExperimentalFeatureEnabled(settings, GRAPH_NATIVE_POST_MERGE_FLAG);
     const postMergeEntryNodeIds: string[] = (() => {
@@ -498,9 +526,10 @@ export class WorkflowGraphExecutor {
             task,
             runId,
             steps,
+            getLiveSteps: () => this.resolveTaskSteps(task),
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
-              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig),
+              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig, false),
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             persistence: this.deps.stepInstancePersistence,
             onReworkReset: this.deps.onReworkReset,
@@ -528,7 +557,7 @@ export class WorkflowGraphExecutor {
           const loopResult = await runLoop(node, {
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
-              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig),
+              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig, false),
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             signal: this.deps.signal,
             now: this.deps.runLoopNowForTests,
@@ -569,7 +598,13 @@ export class WorkflowGraphExecutor {
           const enabled = Array.isArray(task.enabledWorkflowSteps)
             ? task.enabledWorkflowSteps.includes(node.id)
             : node.config?.defaultOn === true;
-          if (!enabled) {
+          const requiresAutoMergeOff = node.config?.requiresAutoMergeOff === true;
+          const autoMergeOff = task.autoMerge === false || (settings?.autoMerge === false && task.autoMerge !== true);
+          /*
+           * FNXC:WorkflowPrPolicy 2026-06-29-16:42:
+           * Manual PR review lanes are operator-selected workflow branches, not the default CE/automerge path. An optional-group with `requiresAutoMergeOff` is inert unless the task explicitly enables the group and effective auto-merge is off, so selected manual PR creation cannot hijack the normal Fusion auto-merge route.
+           */
+          if (!enabled || (requiresAutoMergeOff && !autoMergeOff)) {
             // FNXC:WorkflowOptionalGroup 2026-06-21-16:30: record the group's own
             // outcome on bypass too (mirrors the enabled path + every other node
             // kind), so a downstream node reading `node:<id>:outcome` from context
@@ -641,6 +676,7 @@ export class WorkflowGraphExecutor {
             workflowStepName: groupName,
             phase: stepPhase,
             status: "pending",
+            source: "optional-group",
             startedAt: stepStartedAt,
           });
           this.deps.logTaskEntry?.(`${logPrefix} Starting workflow step: ${groupName}`);
@@ -648,7 +684,7 @@ export class WorkflowGraphExecutor {
           const groupResult = await runOptionalGroup(node, {
             context,
             runTemplateNode: (tNode, sig, contextOverride) =>
-              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig),
+              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig, false),
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             signal: this.deps.signal,
           });
@@ -676,6 +712,7 @@ export class WorkflowGraphExecutor {
             workflowStepId: node.id,
             workflowStepName: groupName,
             phase: stepPhase,
+            source: "optional-group",
             status: stepStatus,
             ...(verdict ? { verdict } : {}),
             ...(stepOutput !== undefined ? { output: stepOutput } : {}),
@@ -728,7 +765,7 @@ export class WorkflowGraphExecutor {
               || (node.id === PLAN_REVIEW_GROUP_ID
                 ? "Plan Review failed before execution. Re-run triage to revise PROMPT.md before implementation continues."
                 : "(no feedback captured)");
-            const fixScheduled = await this.deps.requestPreMergeOptionalStepFix?.(task.id, {
+            const failureContext: PreMergeOptionalStepFailureContext = {
               stepName: groupName,
               feedback,
               phase: stepPhase,
@@ -736,13 +773,61 @@ export class WorkflowGraphExecutor {
               verdict: verdict ?? (node.id === PLAN_REVIEW_GROUP_ID ? "REVISE" : undefined),
               nodeId: node.id,
               maxRevisions: node.config?.maxRevisions,
+            };
+            context[optionalStepFailureContextKey(node.id)] = failureContext;
+            /*
+             * FNXC:WorkflowRemediation 2026-06-29-16:22:
+             * New built-in and custom workflows can author an explicit failure edge
+             * from an optional review gate to a remediation/replan node. When such a
+             * node exists, traversal owns the handoff so the workflow definition shows
+             * the lifecycle policy. Older stored specs without that node keep the
+             * compatibility scheduler here.
+             */
+            const remediationRouteSource: WorkflowNodeResult = { outcome: "failure", value: result.value };
+            const explicitWorkflowRemediationRoute = (outgoingMap.get(node.id) ?? []).some((edge) => {
+              if (!this.shouldTraverseEdge(edge, remediationRouteSource)) return false;
+              const target = nodeMap.get(edge.to);
+              const action = target?.config?.workflowAction;
+              return action === "plan-replan" || action === "pre-merge-remediation";
             });
+            if (explicitWorkflowRemediationRoute) {
+              return await traverseChildren(node, remediationRouteSource);
+            }
+            const fixScheduled = await this.deps.requestPreMergeOptionalStepFix?.(task.id, failureContext);
             if (fixScheduled) {
               context[`node:${node.id}:fixScheduled`] = true;
               return { outcome: "success", value: "pre-merge-optional-step-fix-scheduled" };
             }
           }
           return await traverseChildren(node, result);
+        }
+
+        const workflowAction = node.config?.workflowAction;
+        if (workflowAction === "plan-replan" || workflowAction === "pre-merge-remediation") {
+          const stepId = typeof node.config?.forWorkflowStepId === "string"
+            ? node.config.forWorkflowStepId
+            : undefined;
+          const failureContext = stepId
+            ? context[optionalStepFailureContextKey(stepId)] as PreMergeOptionalStepFailureContext | undefined
+            : undefined;
+          if (!failureContext) {
+            return { outcome: "failure", value: "missing-remediation-context" };
+          }
+          const scheduled = await this.deps.requestPreMergeOptionalStepFix?.(task.id, failureContext);
+          if (!scheduled) {
+            return { outcome: "failure", value: "remediation-not-scheduled" };
+          }
+          /*
+           * FNXC:WorkflowRemediation 2026-06-29-16:27:
+           * A remediation/replan node schedules asynchronous task work rather than
+           * fixing the branch inside this graph call. Stop traversal after a successful
+           * handoff so the rerun starts from fresh task state instead of immediately
+           * re-reviewing unchanged PROMPT.md or unchanged code.
+           */
+          if (failureContext.nodeId) context[`node:${failureContext.nodeId}:fixScheduled`] = true;
+          context[`node:${node.id}:outcome`] = "success";
+          context[`node:${node.id}:value`] = "remediation-scheduled";
+          return { outcome: "success", value: "remediation-scheduled" };
         }
 
         const result = await this.executeNodeWithRetries(node, task, settings, context, ir, this.deps.signal);
@@ -858,35 +943,39 @@ export class WorkflowGraphExecutor {
            * Flag-gated post-merge hop. The merge already finished (the seam awaited the
            * merge Promise), so this runs strictly AFTER a successful merge. Walk each
            * post-merge entry node via the normal `walk` path (optional-group recording
-           * with phase:"post-merge"). Post-merge failures are NON-BLOCKING — they record
-           * a result but DO NOT mutate `aggregate`, so the merged task still completes
-           * with the merge-success outcome (matching legacy post-merge semantics). When
+           * with phase:"post-merge"). Advisory post-merge failures are NON-BLOCKING —
+           * they record a result but DO NOT mutate `aggregate`, so the merged task still
+           * completes with the merge-success outcome (matching legacy post-merge
+           * semantics). Explicit gate-mode post-merge failures do block final graph
+           * success so configured post-merge verification can prevent final done. When
            * the flag is OFF, `postMergeEntryNodeIds` is empty and this loop is inert, so
            * the merge region stays exactly as collapsed before.
            */
           for (const entryId of postMergeEntryNodeIds) {
             /*
-             * FNXC:WorkflowPostMerge 2026-06-26-15:30:
-             * Post-merge traversal must NEVER fail an already-merged run (non-blocking
-             * contract). A malformed post-merge IR or any traversal throw is caught,
-             * logged via the task log sink, and we CONTINUE to the next entry — the
-             * merged task still completes with the merge-success `aggregate`. Without
-             * this guard a throw would propagate out of the executor and flip a merged
-             * task into an executor failure.
+             * FNXC:WorkflowPostMerge 2026-06-29-11:47:
+             * Post-merge verification has two policies: advisory checks keep the
+             * legacy non-blocking behavior, while explicit gate-mode checks are allowed
+             * to block final workflow success after merge proof. Traversal errors remain
+             * logged/non-blocking because a malformed post-merge authoring path should
+             * not overwrite already-proven merge state.
              */
             try {
               const postMerge = await walk(entryId);
               // A post-merge entry node is never an enclosing rework head, so a
               // ReworkSignal here would be malformed IR; ignore it rather than bubble a
-              // rework loop out of the merge boundary. Result is intentionally discarded
-              // (non-blocking).
-              void postMerge;
+              // rework loop out of the merge boundary.
+              if (!isReworkSignal(postMerge) && postMerge.outcome === "failure") {
+                aggregate = postMerge;
+                break;
+              }
             } catch (err) {
               this.deps.logTaskEntry?.(
                 `[post-merge] traversal error: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
           }
+          if (aggregate.outcome === "failure") break;
           continue;
         }
         const child = await walk(edge.to);
@@ -1046,6 +1135,7 @@ export class WorkflowGraphExecutor {
     context: Record<string, unknown>,
     workflow: WorkflowIr,
     signal?: AbortSignal,
+    recordProgress = true,
   ): Promise<WorkflowNodeResult> {
     const handler = this.handlers[node.kind];
 
@@ -1060,21 +1150,33 @@ export class WorkflowGraphExecutor {
       // Fail-fast cancellation: a branch or top-level graph abort mid-retry stops re-trying.
       if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
       try {
+        await this.prepareNodeExecution(node, task);
+        const progressRecord = recordProgress && this.shouldRecordNodeProgress(node)
+          ? await this.recordNodeProgressStart(task.id, node)
+          : null;
         const pluginResult = await this.executePluginNodeHandler(node, task, workflow, context, signal);
         if (pluginResult) {
           const projected = await this.publishTaskProjectionFromResult(task.id, node, pluginResult);
-          return signal?.aborted || this.isAbortNodeResult(projected)
-            ? this.withEnginePauseAbortContext(node, projected)
-            : projected;
+          if (signal?.aborted || this.isAbortNodeResult(projected)) {
+            return this.withEnginePauseAbortContext(node, projected);
+          }
+          if (progressRecord) {
+            await this.recordNodeProgressFinish(task.id, node, progressRecord, projected);
+          }
+          return projected;
         }
         if (!handler) {
           throw new WorkflowIrError(`No handler registered for node kind: ${node.kind}`);
         }
         const result = await handler(node, { task, settings, context, signal });
         const projected = await this.publishTaskProjectionFromResult(task.id, node, result);
-        return signal?.aborted || this.isAbortNodeResult(projected)
-          ? this.withEnginePauseAbortContext(node, projected)
-          : projected;
+        if (signal?.aborted || this.isAbortNodeResult(projected)) {
+          return this.withEnginePauseAbortContext(node, projected);
+        }
+        if (progressRecord) {
+          await this.recordNodeProgressFinish(task.id, node, progressRecord, projected);
+        }
+        return projected;
       } catch (error) {
         if (signal?.aborted) return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
         lastError = error;
@@ -1085,12 +1187,90 @@ export class WorkflowGraphExecutor {
       return this.withEnginePauseAbortContext(node, { outcome: "failure", value: "aborted" });
     }
 
-    return {
+    const failureResult: WorkflowNodeResult = {
       outcome: "failure",
       value: "exception",
       contextPatch: {
         [`node:${node.id}:error`]: lastError instanceof Error ? lastError.message : String(lastError),
       },
+    };
+    if (recordProgress && this.shouldRecordNodeProgress(node)) {
+      await this.recordNodeProgressFinish(task.id, node, null, failureResult);
+    }
+    return failureResult;
+  }
+
+  private shouldRecordNodeProgress(node: WorkflowIrNode): boolean {
+    /*
+     * FNXC:WorkflowNodeProgress 2026-06-29-15:05:
+     * Compound Engineering stages are top-level skill prompt/gate nodes, not parsed implementation steps or optional toggles. Record those skill nodes into `task.workflowStepResults` so cards and task details show the active CE stage while avoiding duplicate records for ordinary model prompts and optional-group template internals.
+     */
+    const skillName = typeof node.config?.skillName === "string" ? node.config.skillName.trim() : "";
+    return skillName.length > 0 && (node.kind === "prompt" || node.kind === "gate");
+  }
+
+  private workflowNodeProgressName(node: WorkflowIrNode): string {
+    const configuredName = typeof node.config?.name === "string" ? node.config.name.trim() : "";
+    return configuredName || node.id;
+  }
+
+  private async recordNodeProgressStart(taskId: string, node: WorkflowIrNode): Promise<WorkflowStepResult | null> {
+    const startedAt = new Date().toISOString();
+    const result: WorkflowStepResult = {
+      workflowStepId: node.id,
+      workflowStepName: this.workflowNodeProgressName(node),
+      phase: node.config?.phase === "post-merge" ? "post-merge" : "pre-merge",
+      source: "node",
+      status: "pending",
+      startedAt,
+    };
+    await this.recordOptionalGroupStepResult(taskId, result);
+    return result;
+  }
+
+  private async recordNodeProgressFinish(
+    taskId: string,
+    node: WorkflowIrNode,
+    started: WorkflowStepResult | null,
+    nodeResult: WorkflowNodeResult,
+  ): Promise<void> {
+    const status: WorkflowStepResult["status"] = nodeResult.outcome === "success" ? "passed" : "failed";
+    const contextPatch = nodeResult.contextPatch ?? {};
+    const output = typeof contextPatch.output === "string" ? contextPatch.output : undefined;
+    const notes = typeof contextPatch.notes === "string" ? contextPatch.notes : undefined;
+    await this.recordOptionalGroupStepResult(taskId, {
+      workflowStepId: node.id,
+      workflowStepName: this.workflowNodeProgressName(node),
+      phase: started?.phase ?? (node.config?.phase === "post-merge" ? "post-merge" : "pre-merge"),
+      source: "node",
+      status,
+      ...(output !== undefined ? { output } : {}),
+      ...(notes !== undefined ? { notes } : {}),
+      startedAt: started?.startedAt ?? new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    });
+  }
+
+  private async prepareNodeExecution(node: WorkflowIrNode, task: TaskDetail): Promise<void> {
+    const requirement = this.classifyNodePreparation(node);
+    if (!requirement.requiresWorktree) return;
+    await this.deps.prepareNodeExecution?.(node, task, requirement);
+  }
+
+  private classifyNodePreparation(node: WorkflowIrNode): WorkflowNodePreparationRequirement {
+    const cfg = node.config ?? {};
+    const executorKind = typeof cfg.executor === "string" ? cfg.executor : "model";
+    const hasScriptName = typeof cfg.scriptName === "string" && cfg.scriptName.trim().length > 0;
+    const hasCliCommand = executorKind === "cli" && typeof cfg.cliCommand === "string" && cfg.cliCommand.trim().length > 0;
+    const requiresWorktree =
+      cfg.toolMode === "coding"
+      || node.kind === "script"
+      || executorKind === "cli-agent"
+      || hasScriptName
+      || hasCliCommand;
+    return {
+      requiresWorktree,
+      reason: requiresWorktree ? "write-capable-node" : undefined,
     };
   }
 

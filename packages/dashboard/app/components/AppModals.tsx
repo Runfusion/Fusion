@@ -144,6 +144,9 @@ export function AppModals({
   /*
   FNXC:TaskDetailBack 2026-06-25-00:00:
   Modal task detail uses the same idempotent close path for explicit Close and browser/Android Back so deep-link URL cleanup is not skipped during popstate. Each open records the pushed history callback because nested task-detail links can create multiple detail entries with otherwise identical close behavior.
+
+  FNXC:TaskDetailSwipeBack 2026-06-29-14:20:
+  Mobile swipe-back (`popstate`) for modal task detail must step back through nested task-detail opens before dismissing the modal. The latest pushed callback restores the previous task/tab/origin snapshot when one exists, and explicit close falls back to the original first-open callback (`modalManager.closeDetailTask`) so programmatic closes still consume the matching history entry.
   */
   const closeDetailFromHistory = useCallback(() => {
     modalManager.closeDetailTask();
@@ -152,9 +155,9 @@ export function AppModals({
   }, [deepLink, modalManager]);
 
   const closeDetailWithNav = useCallback(() => {
-    removeNav(detailNavCloseRef.current ?? closeDetailFromHistory);
+    removeNav(detailNavCloseRef.current ?? modalManager.closeDetailTask);
     closeDetailFromHistory();
-  }, [closeDetailFromHistory, removeNav]);
+  }, [closeDetailFromHistory, modalManager, removeNav]);
 
   const closeGroupWithNav = useCallback(() => {
     removeNav(modalManager.closeGroupModal);
@@ -244,13 +247,26 @@ export function AppModals({
       task: Parameters<typeof modalManager.openDetailTask>[0],
       tab?: Parameters<typeof modalManager.openDetailTask>[1],
     ) => {
+      const previousDetailTask = modalManager.detailTask;
+      const previousDetailTab = modalManager.detailTaskInitialTab;
+      const previousDetailOrigin = modalManager.detailTaskOrigin;
+      const previousNavClose = detailNavCloseRef.current;
+
       modalManager.openDetailTask(task, tab);
       const closeFromHistory = () => {
+        if (detailNavCloseRef.current === closeFromHistory) {
+          detailNavCloseRef.current = previousNavClose;
+        }
+        if (previousDetailTask) {
+          modalManager.openDetailTask(
+            previousDetailTask,
+            previousDetailTab,
+            previousDetailOrigin ? { origin: previousDetailOrigin } : undefined,
+          );
+          return;
+        }
         modalManager.closeDetailTask();
         deepLink.handleDetailClose();
-        if (detailNavCloseRef.current === closeFromHistory) {
-          detailNavCloseRef.current = null;
-        }
       };
       detailNavCloseRef.current = closeFromHistory;
       pushNav({ type: "modal", close: closeFromHistory });

@@ -7,7 +7,7 @@ import * as projectMemory from "../project-memory.js";
 import { AgentStore } from "../agent-store.js";
 import { CentralDatabase } from "../central-db.js";
 import { TaskStore, TaskHasDependentsError } from "../store.js";
-import { allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../task-merge.js";
+import { TASK_DONE_BYPASS_BLOCKER_MESSAGE, allowsAutoMergeProcessing, resolveEffectiveAutoMerge } from "../task-merge.js";
 import { buildResearchDocumentKey, type Task } from "../types.js";
 import { createSharedTaskStoreTestHarness, makeTmpDir } from "./store-test-helpers.js";
 
@@ -635,6 +635,68 @@ describe("TaskStore", () => {
       await expect(store.moveTask(task.id, "done")).rejects.toThrow(
         "task has incomplete steps",
       );
+    });
+
+    it("blocks workflow task done bypass without merge proof", async () => {
+      const task = await store.createTask({ description: "test workflow done bypass guard", workflowId: "builtin:coding" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      await expect(store.moveTask(task.id, "done", { moveSource: "engine", skipMergeBlocker: true }))
+        .rejects.toThrow(TASK_DONE_BYPASS_BLOCKER_MESSAGE);
+
+      const events = store.getRunAuditEvents({ taskId: task.id, mutationType: "task:finalize-unproven-blocked" });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.metadata).toMatchObject({
+        from: "in-review",
+        to: "done",
+        reason: TASK_DONE_BYPASS_BLOCKER_MESSAGE,
+        workflowId: "builtin:coding",
+      });
+    });
+
+    it("allows workflow task done bypass with merge proof", async () => {
+      const task = await store.createTask({ description: "test workflow done bypass proof", workflowId: "builtin:coding" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const moved = await store.moveTask(task.id, "done", { moveSource: "engine", skipMergeBlocker: true });
+
+      expect(moved.column).toBe("done");
+    });
+
+    it("allows explicit no-commits workflow task done bypass", async () => {
+      const task = await store.createTask({
+        description: "test workflow done bypass no commits",
+        workflowId: "builtin:coding",
+        noCommitsExpected: true,
+      });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+
+      const moved = await store.moveTask(task.id, "done", { moveSource: "engine", skipMergeBlocker: true });
+
+      expect(moved.column).toBe("done");
+    });
+
+    it("blocks default workflow work-item done bypass without explicit selection", async () => {
+      const task = await store.createTask({ description: "test default workflow work item done bypass guard" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      store.upsertWorkflowWorkItem({
+        taskId: task.id,
+        runId: "run-default-workflow",
+        nodeId: "merge-attempt",
+        kind: "merge",
+      });
+
+      await expect(store.moveTask(task.id, "done", { moveSource: "engine", skipMergeBlocker: true }))
+        .rejects.toThrow(TASK_DONE_BYPASS_BLOCKER_MESSAGE);
     });
 
     it("allows reopening done tasks back to todo", async () => {

@@ -184,6 +184,9 @@ const NON_TERMINAL_WORKFLOW_STATUSES = new Set<WorkflowStepResult["status"]>([
   "pending",
 ]);
 
+export const TASK_DONE_BYPASS_BLOCKER_MESSAGE =
+  "done bypass requires merge confirmation or explicit no-commits policy";
+
 /**
  * Returns a human-readable reason when a task in review is not safe to finalize.
  * Undefined means the task is eligible to move from `in-review` to `done`.
@@ -244,6 +247,16 @@ export function getTaskHardMergeBlocker(
     status: task.status === "failed" ? undefined : task.status,
     error: undefined,
   });
+}
+
+export function getTaskDoneBypassBlocker(
+  task: Pick<Task, "noCommitsExpected" | "mergeDetails" | "prInfo" | "prInfos">,
+): string | undefined {
+  if (task.noCommitsExpected === true) return undefined;
+  if (task.mergeDetails?.mergeConfirmed === true) return undefined;
+  if (task.prInfo?.status === "merged") return undefined;
+  if (task.prInfos?.some((pr) => pr.status === "merged")) return undefined;
+  return TASK_DONE_BYPASS_BLOCKER_MESSAGE;
 }
 
 export function isTaskReadyForMerge(

@@ -1,6 +1,8 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
+import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
 
 /**
  * FNXC:WorkflowMarketing 2026-06-20-00:00:
@@ -72,6 +74,7 @@ const RAW_BUILTIN_MARKETING_WORKFLOW_IR: WorkflowIr = {
           "You are an independent editorial reviewer. Use the task description, the content brief, the marketing draft, and any persisted marketing-draft task document to assess publication readiness. Structure the review with: 1) verdict and publication recommendation, 2) brief-compliance findings, 3) brand voice, audience fit, channel fit, and CTA clarity notes, 4) factual accuracy and unsupported-claim checks, 5) required edits that block publication, and 6) non-blocking polish suggestions. Good editorial review is specific, evidence-backed, and focused on substantive quality issues; block only issues that would harm publication readiness, compliance with the brief, or customer trust, and avoid subjective nits without a clear publication impact.",
       },
     },
+    completionSummaryNode("editorial-review"),
     { id: "merge-gate", kind: "merge-gate", column: "editorial-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "editorial-review", config: { policy: "merge", maxAttempts: 3 } },
     { id: "merge-manual-hold", kind: "manual-merge-hold", column: "editorial-review", config: { release: "manual" } },
@@ -89,13 +92,15 @@ const RAW_BUILTIN_MARKETING_WORKFLOW_IR: WorkflowIr = {
       config: { capability: "task-merge", reworkRegion: true, maxReworkCycles: 3 },
     },
     { id: "recovery-router", kind: "recovery-router", column: "editorial-review", config: { surfaces: ["merge", "retry"] } },
+    postMergeVerificationOptionalGroupNode("published"),
     { id: "end", kind: "end", column: "published" },
   ],
   edges: [
     { from: "start", to: "brief" },
     { from: "brief", to: "draft", condition: "success" },
     { from: "draft", to: "editorial", condition: "success" },
-    { from: "editorial", to: "merge-gate", condition: "success" },
+    { from: "editorial", to: "completion-summary", condition: "success" },
+    { from: "completion-summary", to: "merge-gate", condition: "success" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },
     { from: "merge-retry", to: "merge-attempt", condition: "success", kind: "rework" },
@@ -104,7 +109,8 @@ const RAW_BUILTIN_MARKETING_WORKFLOW_IR: WorkflowIr = {
     { from: "branch-group-member-integration", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "branch-group-promotion", to: "merge-attempt", condition: "success" },
     { from: "branch-group-promotion", to: "merge-manual-hold", condition: "outcome:manual-required" },
-    { from: "merge-attempt", to: "end", condition: "success" },
+    { from: "merge-attempt", to: "post-merge-verification", condition: "success" },
+    { from: "post-merge-verification", to: "end", condition: "success" },
     { from: "merge-attempt", to: "merge-retry", condition: "outcome:transient-failure" },
     { from: "merge-attempt", to: "merge-manual-hold", condition: "outcome:manual-required" },
     { from: "recovery-router", to: "merge-attempt", condition: "outcome:wake-merge", kind: "rework" },

@@ -203,7 +203,11 @@ function WorkflowFixture({ simple }: { simple: boolean }) {
           </div>
           <div className="wf-mobile-shell">
             <nav className="wf-mobile-tabs" aria-label="Workflow editor sections">
-              <button className="wf-mobile-tab wf-mobile-tab--active">Add</button>
+              <button className="wf-mobile-tab wf-mobile-tab--active">Graph</button>
+              <button className="wf-mobile-tab">Add</button>
+              <button className="wf-mobile-tab">Settings</button>
+              <button className="wf-mobile-tab">Fields</button>
+              <button className="wf-mobile-tab">Columns</button>
               <button className="wf-mobile-tab">Actions</button>
             </nav>
             <div className="wf-mobile-panel">
@@ -330,7 +334,18 @@ describe("dashboard overflow containment shared mobile/tablet net (FN-6385)", ()
     expect(mobileCanvasBlock).toContain("overflow: hidden;");
     expect(mobileShellBlock).toContain("overflow: hidden;");
     expect(simpleShellBlock).toContain("overflow: hidden;");
+    expect(simpleTabsBlock).toContain("width: 100%;");
+    expect(simpleTabsBlock).toContain("max-inline-size: 100%;");
+    expect(simpleTabsBlock).toContain("min-width: 0;");
     expect(simpleTabsBlock).toContain("overflow-x: auto;");
+    expect(simpleTabsBlock).toContain("overflow-y: hidden;");
+    expect(simpleTabsBlock).toContain("overscroll-behavior-inline: contain;");
+    expect(simpleTabsBlock).toContain("touch-action: pan-x pan-y;");
+    expect(simpleTabsBlock).toContain("-webkit-overflow-scrolling: touch;");
+    const simpleTabBlock = ruleBlock(baseCss, ".wf-mobile-tab");
+    expect(simpleTabBlock).toContain("flex: 0 0 auto;");
+    expect(simpleTabBlock).toContain("min-width: max-content;");
+    expect(simpleTabBlock).toContain("touch-action: pan-x pan-y;");
   });
 
   it("resolves viewport helper modes for mobile, tablet, and landscape-phone breakpoints", () => {
@@ -409,11 +424,26 @@ describe("dashboard overflow containment shared mobile/tablet net (FN-6385)", ()
       assertInViewport(within(surface).getByRole("button", { name: /close workflow editor/i }), viewport, "workflow close action");
     }
 
+    const simpleWorkflow = screen.getByTestId("simple-workflow");
+    const simpleBody = simpleWorkflow.querySelector(".wf-editor-body");
+    const simpleShell = simpleWorkflow.querySelector(".wf-mobile-shell");
     const tabStrip = screen.getAllByRole("navigation", { name: /workflow editor sections/i })[1];
+    expect(simpleBody).not.toBeNull();
+    expect(simpleShell).not.toBeNull();
+    defineMetric(simpleBody!, "clientWidth", viewport.width);
+    defineMetric(simpleBody!, "scrollWidth", viewport.width);
+    defineMetric(simpleShell!, "clientWidth", viewport.width);
+    defineMetric(simpleShell!, "scrollWidth", viewport.width);
     defineMetric(tabStrip, "clientWidth", viewport.width);
     defineMetric(tabStrip, "scrollWidth", viewport.width * 2);
+    const tabButtons = within(tabStrip).getAllByRole("button");
+    // FNXC:WorkflowSimpleEditor 2026-06-29-15:42: The shared overflow net must prove the complete six-tab simple-editor strip owns horizontal scroll while its editor body/shell remain contained at both mobile and tablet breakpoints.
+    expect(tabButtons.map((button) => button.textContent)).toEqual(["Graph", "Add", "Settings", "Fields", "Columns", "Actions"]);
     expect(ruleBlock(baseCss, ".wf-mobile-tabs")).toContain("overflow-x: auto;");
     expect(tabStrip.scrollWidth).toBeGreaterThan(tabStrip.clientWidth);
+    assertContained(simpleShell!, `${viewport.name} simple workflow shell`);
+    assertContained(simpleBody!, `${viewport.name} simple workflow body`);
+    expect(simpleWorkflow.scrollWidth).toBeLessThanOrEqual(simpleWorkflow.clientWidth + 1);
 
     assertNoDocumentHorizontalOverflow(`${viewport.name} workflow root`);
   });

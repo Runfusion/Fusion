@@ -18,7 +18,7 @@ export interface ResolvedWorkflowOptionalStep {
 FNXC:WorkflowOptionalGroup 2026-06-21-14:05:
 Re-pointed the per-task optional-step toggle SOURCE from the execution-inert `ir.optionalSteps` declaration to v2 `optional-group` NODES (one resolved entry per group). The legacy `WorkflowOptionalStep` type + `optionalSteps` IR field are now REMOVED (FNXC:WorkflowOptionalGroup 2026-06-21-18:00); a legacy persisted `optionalSteps` key on an old v2 row is tolerated/ignored at parse.
 KEYING: the resolved entry is keyed by the group node `id`. The output field is still named `templateId` (not renamed) so the four consuming UI surfaces — inline quick-create card, New Task modal/TaskForm, task-detail Workflow tab, and the optional-steps dropdown — keep reading the same shape unchanged; they now toggle group ids into `enabledWorkflowSteps` instead of template ids. Renaming/recreating a group resets per-task state, identical to the prior `templateId` keying.
-Display metadata: `name` comes from `config.name` (falling back to the node id), `defaultOn` from `config.defaultOn ?? false`. The group node carries no description/icon/phase, so `description` is "" and `phase` defaults to "pre-merge" — keeping every field the consumers read populated and non-blank.
+Display metadata: `name` comes from `config.name` (falling back to the node id), `defaultOn` from `config.defaultOn ?? false`, and `phase` from `config.phase ?? "pre-merge"`. `description` remains "" because optional-group nodes do not carry display copy for it.
 */
 
 function isOptionalGroupNode(
@@ -93,7 +93,11 @@ export function resolveWorkflowOptionalSteps(
       templateId: node.id,
       name: typeof config.name === "string" && config.name.trim() ? config.name : node.id,
       description: "",
-      phase: "pre-merge",
+      /*
+      FNXC:WorkflowOptionalSteps 2026-06-29-12:47:
+      Post-merge verification is now a graph-native optional group. Task creation and detail surfaces need the resolver to preserve `config.phase` so post-merge toggles do not look like pre-merge gates.
+      */
+      phase: config.phase === "post-merge" ? "post-merge" : "pre-merge",
       defaultOn: config.defaultOn === true,
       /*
       FNXC:WorkflowDefinitionSteps 2026-06-29-00:41:

@@ -819,6 +819,8 @@ export interface WorkflowStepResult {
   workflowStepName: string;
   /** Lifecycle phase at execution time */
   phase?: WorkflowStepPhase;
+  /** Runtime source for distinguishing graph-authored node progress from optional-toggle checks. */
+  source?: "optional-group" | "node";
   /** Execution status */
   status: "passed" | "failed" | "advisory_failure" | "skipped" | "pending";
   /** Output from the workflow step agent (findings, errors, etc.) */
@@ -1078,6 +1080,19 @@ export interface TaskLogEntry {
   outcome?: string;
   /** Correlation metadata linking this entry to the agent run that produced it. */
   runContext?: RunMutationContext;
+}
+
+export type WorkflowTransitionNotificationKind =
+  | "manual-merge-hold"
+  | "recovery-requeue";
+
+export interface WorkflowTransitionNotificationMarker {
+  kind: WorkflowTransitionNotificationKind;
+  column: ColumnId;
+  transitionId: string;
+  nodeId?: string;
+  reason?: string;
+  createdAt: string;
 }
 
 export type ActivityEventType =
@@ -2221,6 +2236,16 @@ export interface Task {
   /** Server-computed stale paused todo diagnostic signal. Undefined when no rule matches.
    *  Diagnostic-only: must not trigger automatic state mutation. */
   stalePausedTodo?: StalePausedTodoSignal;
+  /*
+   * FNXC:WorkflowNotifications 2026-06-29-12:44:
+   * Workflow transition notifications should use typed task state instead of
+   * parsing human-readable task log text. Producers set this marker when a
+   * workflow transition needs operator notification; NotificationService only
+   * consumes it while the task remains in the recorded target column. The marker
+   * column prevents stale task movement from triggering a later notification,
+   * and transitionId provides stable dedupe across repeated task:updated events.
+   */
+  workflowTransitionNotification?: WorkflowTransitionNotificationMarker;
   /** Heuristic stalled-review diagnostic signal (legacy compatibility contract). */
   stalledReview?: StalledReviewSignal;
   /** Durable aggregate token usage totals for the task. Undefined when no usage has been recorded yet. */
@@ -6250,7 +6275,8 @@ export const AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES: Record<
   file_write_delete: ["write", "edit", "fn_task_attach"],
   command_execution: ["bash (non-git)", "fn_run_verification", "fn_acquire_repo_worktree", "read", "find", "grep", "ls"],
   network_api: ["fn_research_run (web/research)", "fn_research_cancel", "fn_web_fetch", "worktrunk_install"],
-  /* FNXC:ToolGovernance 2026-06-27-16:51: Dashboard policy examples must mirror action-gate mutation exports. Identity reflection is exempt heartbeat coordination, so it is intentionally not advertised as task_agent_mutation. */
+  /* FNXC:ToolGovernance 2026-06-27-16:51: Dashboard policy examples must mirror action-gate mutation exports. Identity reflection is exempt heartbeat coordination, so it is intentionally not advertised as task_agent_mutation.
+   * FNXC:WorkflowAuthoringTools 2026-06-29-23:40: Published workflow authoring tools are now agent-visible, so policy examples include the mutating workflow create/update/delete/settings/select surface operators can approve or block. */
   task_agent_mutation: [
     "fn_task_create",
     "fn_delegate_task",
@@ -6278,6 +6304,9 @@ export const AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES: readonly string[] = [
   "fn_heartbeat_done",
   "fn_task_document_write",
   "fn_task_document_read",
+  "fn_workflow_list",
+  "fn_workflow_get",
+  "fn_trait_list",
   "fn_memory_search",
   "fn_memory_get",
   "fn_memory_append",

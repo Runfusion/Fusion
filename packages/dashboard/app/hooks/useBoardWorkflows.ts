@@ -9,10 +9,18 @@ import {
   readBoardWorkflowsCache as defaultReadBoardWorkflowsCache,
   writeBoardWorkflowsCache as defaultWriteBoardWorkflowsCache,
 } from "../utils/boardWorkflowsCache";
+import {
+  readBoardWorkflowSelection,
+  removeBoardWorkflowSelection,
+  writeBoardWorkflowSelection,
+} from "../utils/boardWorkflowSelection";
 
 /*
 FNXC:Workflows 2026-06-22-17:00:
-Single source of truth for board-workflow fetch/cache/SSE/selection, shared verbatim by Board.tsx and the Planning header slot (PlanningWorkflowSwitcherSlot.tsx). Both surfaces must show the SAME workflow dropdown driven by the SAME data path: refetch on mount, on tab visibility/focus, and on `workflow:created|updated|deleted` SSE; every fetch is guarded by a monotonic sequence ref that drops out-of-order responses; successful payloads persist to the per-project session cache; failures collapse to a flag-off payload. Selection (`selectedWorkflowId`) is local per-consumer and auto-syncs to the resolved default/first workflow.
+Single source of truth for board-workflow fetch/cache/SSE/selection, shared verbatim by Board.tsx and the Planning header slot (PlanningWorkflowSwitcherSlot.tsx). Both surfaces must show the SAME workflow dropdown driven by the SAME data path: refetch on mount, on tab visibility/focus, and on `workflow:created|updated|deleted` SSE; every fetch is guarded by a monotonic sequence ref that drops out-of-order responses; successful payloads persist to the per-project session cache. Selection (`selectedWorkflowId`) hydrates from project-scoped durable storage, user changes write immediately, and stale stored ids are repaired only after the current payload proves the workflow no longer exists.
+
+FNXC:Workflows 2026-06-29-14:45:
+Transient board-workflows fetch failures are not authoritative workflow-mode disable signals. Preserve the last payload and durable workflow selection on API/focus/refresh blips so operators return to their selected lane unless the server explicitly returns workflow mode off, an empty list, or a single unswitchable workflow.
 
 Per-consumer subscription semantics are preserved: each call to this hook installs its OWN visibilitychange/focus listeners and its OWN SSE subscription, so two consumers (Board + Planning slot) each subscribe and unsubscribe independently — the hook does not dedupe across consumers. Dependencies (fetch, subscribeSse, cache helpers) are injectable to keep the hook DI-friendly and free of App-level singletons.
 */
@@ -65,7 +73,23 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     return cached ? { projectId, payload: cached } : null;
   });
   const boardWorkflows = boardWorkflowsState?.projectId === projectId && boardWorkflowsState ? boardWorkflowsState.payload : null;
-  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [selectedWorkflowId, setSelectedWorkflowIdState] = useState<string | null>(() => readBoardWorkflowSelection(projectId));
+  const storedSelectionRef = useRef<string | null>(selectedWorkflowId);
+
+  const setSelectedWorkflowId = useCallback<Dispatch<SetStateAction<string | null>>>((nextSelection) => {
+    setSelectedWorkflowIdState((previousSelection) => {
+      const resolvedSelection = typeof nextSelection === "function"
+        ? nextSelection(previousSelection)
+        : nextSelection;
+      storedSelectionRef.current = resolvedSelection;
+      if (resolvedSelection) {
+        writeBoardWorkflowSelection(projectId, resolvedSelection);
+      } else {
+        removeBoardWorkflowSelection(projectId);
+      }
+      return resolvedSelection;
+    });
+  }, [projectId]);
 
   // Stale-response guard: a monotonic sequence ref drops out-of-order responses.
   const boardWorkflowsFetchSeqRef = useRef(0);
@@ -73,6 +97,9 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
   // Re-hydrate from the per-project cache on project change (and gate change).
   useEffect(() => {
     const cached = shouldHydrateCache ? readBoardWorkflowsCache(projectId) : null;
+    const storedSelection = readBoardWorkflowSelection(projectId);
+    storedSelectionRef.current = storedSelection;
+    setSelectedWorkflowIdState(storedSelection);
     setBoardWorkflowsState(cached ? { projectId, payload: cached } : null);
   }, [projectId, shouldHydrateCache, readBoardWorkflowsCache]);
 
@@ -86,9 +113,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
         }
       })
       .catch(() => {
-        if (seq === boardWorkflowsFetchSeqRef.current) {
-          setBoardWorkflowsState({ projectId, payload: { flagEnabled: false, defaultWorkflowId: "builtin:coding", workflows: [], taskWorkflowIds: {} } });
-        }
+        // Fetch failures are non-authoritative: keep the current/cache-hydrated payload so the cleanup effect does not erase durable selection.
       });
   }, [projectId, fetchBoardWorkflows, writeBoardWorkflowsCache]);
 
@@ -137,14 +162,37 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
   }, [boardWorkflows?.defaultWorkflowId, selectedWorkflowId, workflowMode, workflowOptions]);
 
   useEffect(() => {
-    if (!workflowMode) {
-      setSelectedWorkflowId(null);
+    if (!boardWorkflows) {
       return;
     }
-    if (selectedWorkflow && selectedWorkflow.id !== selectedWorkflowId) {
-      setSelectedWorkflowId(selectedWorkflow.id);
+
+    if (!workflowMode) {
+      if (storedSelectionRef.current !== null) {
+        removeBoardWorkflowSelection(projectId);
+        storedSelectionRef.current = null;
+      }
+      setSelectedWorkflowIdState(null);
+      return;
     }
-  }, [selectedWorkflow, selectedWorkflowId, workflowMode]);
+
+    if (workflowOptions.length < 2) {
+      if (storedSelectionRef.current !== null) {
+        removeBoardWorkflowSelection(projectId);
+        storedSelectionRef.current = null;
+      }
+      setSelectedWorkflowIdState(selectedWorkflow?.id ?? null);
+      return;
+    }
+
+    if (selectedWorkflow && selectedWorkflow.id !== selectedWorkflowId) {
+      const shouldRepairStoredSelection = storedSelectionRef.current !== null;
+      setSelectedWorkflowIdState(selectedWorkflow.id);
+      if (shouldRepairStoredSelection) {
+        writeBoardWorkflowSelection(projectId, selectedWorkflow.id);
+        storedSelectionRef.current = selectedWorkflow.id;
+      }
+    }
+  }, [boardWorkflows, projectId, selectedWorkflow, selectedWorkflowId, workflowMode, workflowOptions.length]);
 
   return {
     boardWorkflows,

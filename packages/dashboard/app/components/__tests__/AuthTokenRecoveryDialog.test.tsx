@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AuthTokenRecoveryDialog } from "../AuthTokenRecoveryDialog";
@@ -26,7 +27,7 @@ describe("AuthTokenRecoveryDialog", () => {
     expect(screen.queryByRole("dialog", { name: "Authentication token required" })).toBeNull();
   });
 
-  it("renders a blocking dialog with disabled set button until token is entered", () => {
+  it("renders a blocking shared-modal dialog, focuses the token input, and disables set until input is populated", () => {
     render(<AuthTokenRecoveryDialog open={true} />);
 
     const dialog = screen.getByRole("dialog", { name: "Authentication token required" });
@@ -40,13 +41,47 @@ describe("AuthTokenRecoveryDialog", () => {
       throw new Error("Expected auth token recovery overlay");
     }
 
-    expect(dialog.className).toContain("modal-md");
+    expect(overlay.classList.contains("modal-overlay")).toBe(true);
+    expect(overlay.classList.contains("open")).toBe(true);
+    expect(dialog.classList.contains("modal")).toBe(true);
+    expect(dialog.classList.contains("modal-md")).toBe(true);
+
+    const input = screen.getByLabelText("Replacement token");
+    expect(document.activeElement).toBe(input);
 
     const setTokenButton = screen.getByRole("button", { name: "Set token and reload" });
     expect(setTokenButton).toBeDisabled();
 
-    fireEvent.change(screen.getByLabelText("Replacement token"), { target: { value: "abc123" } });
+    fireEvent.change(input, { target: { value: "   " } });
+    expect(setTokenButton).toBeDisabled();
+
+    fireEvent.change(input, { target: { value: "abc123" } });
     expect(setTokenButton).toBeEnabled();
+  });
+
+  it("focuses the token input when recovery opens after the app shell was already mounted", () => {
+    const { rerender } = render(<AuthTokenRecoveryDialog open={false} />);
+
+    rerender(<AuthTokenRecoveryDialog open={true} />);
+
+    const tokenInput = screen.getByLabelText("Replacement token");
+    expect(screen.getByRole("dialog", { name: "Authentication token required" })).toBeInTheDocument();
+    expect(tokenInput).toBe(document.activeElement);
+  });
+
+  it("keeps a single blocking dialog when duplicate open signals rerender it", () => {
+    const { rerender } = render(<AuthTokenRecoveryDialog open={true} />);
+
+    rerender(<AuthTokenRecoveryDialog open={true} />);
+
+    expect(screen.getAllByRole("dialog", { name: "Authentication token required" })).toHaveLength(1);
+    expect(document.querySelectorAll(".auth-token-recovery-overlay")).toHaveLength(1);
+  });
+
+  it("does not define auth-specific modal layering outside the shared modal classes", () => {
+    const css = readFileSync("app/components/AuthTokenRecoveryDialog.css", "utf8");
+
+    expect(css).not.toMatch(/auth-token-recovery-overlay\s*\{[^}]*z-index/s);
   });
 
   it("trims and stores replacement token before reloading", () => {

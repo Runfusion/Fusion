@@ -2,11 +2,27 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AiSessionSummary } from "../../../api";
 import type { ModalManager } from "../../../hooks/useModalManager";
+import { AuthTokenRecoveryDialog } from "../../AuthTokenRecoveryDialog";
 import type { DashboardBannersProps } from "../types";
 
 vi.mock("../../TestModeBanner", () => ({ TestModeBanner: () => null }));
-vi.mock("../../EngineUnavailableBanner", () => ({ EngineUnavailableBanner: () => null }));
-vi.mock("../../EngineStatusBanner", () => ({ EngineStatusBanner: () => null }));
+vi.mock("../../EngineUnavailableBanner", () => ({
+  EngineUnavailableBanner: ({ isVisible }: { isVisible: boolean }) => (
+    isVisible ? (
+      <section role="status" aria-live="polite" data-testid="engine-unavailable-banner">
+        <button type="button">Start engine</button>
+      </section>
+    ) : null
+  ),
+}));
+vi.mock("../../EngineStatusBanner", () => ({
+  EngineStatusBanner: ({ projectId }: { projectId: string }) => (
+    <section role="status" aria-live="polite" data-testid="engine-status-banner">
+      <span>Engine status for {projectId}</span>
+      <button type="button">Start engine</button>
+    </section>
+  ),
+}));
 vi.mock("../../OAuthReloginBanner", () => ({ OAuthReloginBanner: () => null }));
 vi.mock("../../CliBinaryInstallBanner", () => ({ CliBinaryInstallBanner: () => null }));
 vi.mock("../../OnboardingResumeCard", () => ({ OnboardingResumeCard: () => null }));
@@ -138,6 +154,7 @@ function buildProps(overrides: Partial<DashboardBannersProps> = {}): DashboardBa
   return {
     viewMode: "project",
     currentProject: { id: "proj-1", name: "Project", path: "/tmp/project" } as DashboardBannersProps["currentProject"],
+    authTokenRecoveryOpen: false,
     isTestMode: false,
     dashboardHealth: null,
     setDashboardHealth: vi.fn(),
@@ -182,6 +199,123 @@ function buildProps(overrides: Partial<DashboardBannersProps> = {}): DashboardBa
 function querySessionBanner(): HTMLElement | null {
   return screen.queryByRole("region", { name: /AI sessions needing input or failed/i });
 }
+
+function unavailableEngineHealth(): DashboardBannersProps["dashboardHealth"] {
+  return {
+    status: "degraded",
+    engine: { available: false, status: "unavailable" },
+    database: { healthy: true, corruptionDetected: false, corruptionErrors: [], lastCheckedAt: null },
+    taskIdIntegrity: { status: "ok" },
+  } as DashboardBannersProps["dashboardHealth"];
+}
+
+function AuthRecoveryBannerShell({
+  open,
+  currentProject = buildProps().currentProject,
+  dashboardHealth = unavailableEngineHealth(),
+}: {
+  open: boolean;
+  currentProject?: DashboardBannersProps["currentProject"];
+  dashboardHealth?: DashboardBannersProps["dashboardHealth"] | undefined;
+}) {
+  return (
+    <>
+      <DashboardBanners
+        {...buildProps({
+          authTokenRecoveryOpen: open,
+          currentProject,
+          dashboardHealth: dashboardHealth as DashboardBannersProps["dashboardHealth"],
+          sessionsNeedingInput: [],
+        })}
+      />
+      <AuthTokenRecoveryDialog open={open} />
+    </>
+  );
+}
+
+function expectNoEngineRemediationShell(): void {
+  expect(screen.queryByTestId("engine-status-banner")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("engine-unavailable-banner")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /start engine/i })).not.toBeInTheDocument();
+  expect(
+    document.querySelector(
+      '[data-testid="engine-status-banner"][aria-live="polite"], [data-testid="engine-unavailable-banner"][aria-live="polite"]',
+    ),
+  ).not.toBeInTheDocument();
+}
+
+describe("DashboardBanners engine remediation visibility", () => {
+  /*
+  FNXC:AuthRecovery 2026-06-29-00:00:
+  FN-7243 surface enumeration: DashboardBanners is the app-shell project banner stack that mounts EngineStatusBanner and EngineUnavailableBanner. Auth token recovery must suppress both engine-remediation components while preserving the existing project/currentProject guard, so unauthorized daemon-token recovery does not leave empty aria-live regions, start buttons, or banner shells behind.
+  */
+  it("shows only the auth-token recovery dialog when unauthorized recovery opens over visible engine remediation", () => {
+    const { rerender } = render(<AuthRecoveryBannerShell open={false} />);
+
+    expect(screen.getByTestId("engine-status-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("engine-unavailable-banner")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /start engine/i })).toHaveLength(2);
+
+    rerender(<AuthRecoveryBannerShell open={true} />);
+
+    const dialog = screen.getByRole("dialog", { name: "Authentication token required" });
+    const tokenInput = screen.getByLabelText("Replacement token");
+    expect(dialog).toBeInTheDocument();
+    expect(tokenInput).toBeInTheDocument();
+    expect(document.activeElement).toBe(tokenInput);
+    expectNoEngineRemediationShell();
+  });
+
+  it("does not create stale engine output when auth recovery is open without a current project or health", () => {
+    render(
+      <AuthRecoveryBannerShell
+        open={true}
+        currentProject={null}
+        dashboardHealth={undefined}
+      />,
+    );
+
+    expect(screen.getAllByRole("dialog", { name: "Authentication token required" })).toHaveLength(1);
+    expect(screen.getByLabelText("Replacement token")).toBe(document.activeElement);
+    expectNoEngineRemediationShell();
+  });
+
+  it("suppresses engine remediation banners and shells while auth token recovery is open", () => {
+    render(
+      <DashboardBanners
+        {...buildProps({
+          authTokenRecoveryOpen: true,
+          dashboardHealth: unavailableEngineHealth(),
+        })}
+      />,
+    );
+
+    expectNoEngineRemediationShell();
+  });
+
+  it("mounts engine remediation banners when auth token recovery is closed and engine requires attention", () => {
+    render(
+      <DashboardBanners
+        {...buildProps({
+          authTokenRecoveryOpen: false,
+          dashboardHealth: unavailableEngineHealth(),
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId("engine-status-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("engine-unavailable-banner")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /start engine/i })).toHaveLength(2);
+  });
+
+  it("preserves the current project guard while auth recovery is closed", () => {
+    render(<DashboardBanners {...buildProps({ authTokenRecoveryOpen: false, currentProject: null })} />);
+
+    expect(screen.queryByTestId("engine-status-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("engine-unavailable-banner")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /start engine/i })).not.toBeInTheDocument();
+  });
+});
 
 describe("DashboardBanners session notification visibility", () => {
   /*

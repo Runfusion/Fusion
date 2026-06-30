@@ -2163,6 +2163,7 @@ export class ProjectEngine {
                   reason: task.mergeDetails?.noOpReason,
                   mergeConfirmed: task.mergeDetails?.mergeConfirmed === true,
                 } as MergeResult,
+                rootDir: cwd,
                 audit: auditor,
                 auditAgentId: "merger",
                 auditPhase: "auto-merge-fast-path-finalize",

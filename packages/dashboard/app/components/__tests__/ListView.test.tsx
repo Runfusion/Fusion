@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { ListView } from "../ListView";
 import type { Task, TaskDetail } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
+import { BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { loadAllAppCss } from "../../test/cssFixture";
 
 // Mock the API
@@ -46,9 +47,15 @@ vi.mock("../QuickEntryBox", () => ({
   QuickEntryBox: ({
     onCreate,
     addToast,
+    onPlanningMode,
+    onSubtaskBreakdown,
+    workflowId,
   }: {
     onCreate?: (input: { description: string }) => Promise<unknown>;
     addToast: (message: string, type?: "error" | "success" | "info" | "warning") => void;
+    onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
+    onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
+    workflowId?: string | null;
   }) => {
     const [value, setValue] = useState("");
     const [expanded, setExpanded] = useState(false);
@@ -63,6 +70,16 @@ vi.mock("../QuickEntryBox", () => ({
       } catch (err) {
         addToast(err instanceof Error ? err.message : "Failed to create task", "error");
       }
+    };
+
+    const handoff = (callback?: (description: string, workflowId?: string | null) => void) => {
+      const description = value.trim();
+      if (!description || !callback) return;
+      if (workflowId !== undefined) {
+        callback(description, workflowId);
+        return;
+      }
+      callback(description);
     };
 
     return (
@@ -96,6 +113,12 @@ vi.mock("../QuickEntryBox", () => ({
             Models
           </button>
           <button type="button" data-testid="quick-entry-deps">Deps</button>
+          <button type="button" data-testid="quick-entry-plan" onClick={() => handoff(onPlanningMode)}>
+            Plan
+          </button>
+          <button type="button" data-testid="quick-entry-subtask" onClick={() => handoff(onSubtaskBreakdown)}>
+            Subtask
+          </button>
           <button type="button" data-testid="quick-entry-save" onClick={() => void submit()}>
             Save
           </button>
@@ -695,6 +718,72 @@ describe("ListView", () => {
 
     expect(fetchBoardWorkflows).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("listbox", { name: "Workflow" })).toBeInTheDocument();
+  });
+
+  it("keeps a custom list workflow selected after task refresh and workflow payload revalidation", async () => {
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        {
+          id: "builtin:coding",
+          name: "Coding",
+          columns: [
+            { id: "todo", name: "Todo", flags: { intake: true } },
+            { id: "done", name: "Done", flags: { complete: true } },
+          ],
+        },
+        {
+          id: "wf-custom",
+          name: "Custom Flow",
+          columns: [
+            { id: "backlog", name: "Backlog", flags: { intake: true } },
+            { id: "done", name: "Done", flags: { complete: true } },
+          ],
+        },
+      ],
+      taskWorkflowIds: { "FN-001": "wf-custom" },
+    });
+
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-columns"), JSON.stringify(["title", "status"]));
+    localStorage.setItem(scopedStorageKey("kb-dashboard-selected-tasks"), JSON.stringify(["FN-002"]));
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-collapsed"), JSON.stringify(["archived"]));
+    localStorage.setItem(scopedStorageKey("kb-dashboard-list-sidebar-width"), "420");
+
+    const listProps: React.ComponentProps<typeof ListView> = {
+      tasks: [createMockTask({ id: "FN-001", column: "backlog", title: "Custom workflow task" })],
+      onMoveTask: vi.fn(async () => createMockTask()),
+      onRetryTask: vi.fn(async () => createMockTask()),
+      onDeleteTask: vi.fn(async () => createMockTask()),
+      onMergeTask: vi.fn(async () => ({ merged: false })),
+      onResetTask: vi.fn(async () => createMockTask()),
+      onDuplicateTask: vi.fn(async () => createMockTask()),
+      onOpenDetail: vi.fn(),
+      addToast: mockAddToast,
+      globalPaused: false,
+      onNewTask: vi.fn(),
+      projectId: TEST_PROJECT_ID,
+    };
+    const rendered = render(<ListView {...listProps} />);
+
+    await selectWorkflow("wf-custom");
+    await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("Custom Flow"));
+    expect(window.localStorage.getItem(scopedStorageKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY))).toBe("wf-custom");
+    expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-list-columns"))).toBe(JSON.stringify(["title", "status"]));
+    expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-selected-tasks"))).toBe(JSON.stringify(["FN-002"]));
+    expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-list-collapsed"))).toBe(JSON.stringify(["archived"]));
+    expect(window.localStorage.getItem(scopedStorageKey("kb-dashboard-list-sidebar-width"))).toBe("420");
+    expect(screen.getByText("Custom workflow task")).toBeInTheDocument();
+
+    await act(async () => {
+      rendered.rerender(<ListView {...listProps} tasks={[createMockTask({ id: "FN-001", column: "done", title: "Custom workflow task after respec" })]} />);
+    });
+    await act(async () => {
+      listViewSseHandlers["workflow:updated"]?.();
+    });
+
+    await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("Custom Flow"));
+    expect(screen.getByText("Custom workflow task after respec")).toBeInTheDocument();
   });
 
   it("re-homes a preserved-column task to the new workflow after workflow invalidation", async () => {
@@ -2822,6 +2911,39 @@ describe("ListView Quick Entry", () => {
         workflowId: "builtin:coding",
       }));
     });
+  });
+
+  it("passes the selected workflow id to list quick-entry Plan and Subtask handoffs", async () => {
+    const onPlanningMode = vi.fn();
+    const onSubtaskBreakdown = vi.fn();
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:default",
+      workflows: [
+        {
+          id: "builtin:default",
+          name: "Default",
+          columns: [{ id: "triage", name: "Triage", flags: { intake: true } }],
+        },
+        {
+          id: "wf-list-active",
+          name: "List Active",
+          columns: [{ id: "triage", name: "Triage", flags: { intake: true } }],
+        },
+      ],
+      taskWorkflowIds: {},
+    });
+    renderListView({ onPlanningMode, onSubtaskBreakdown });
+
+    await selectWorkflow("wf-list-active");
+    const input = screen.getByTestId("quick-entry-input");
+    fireEvent.change(input, { target: { value: "Plan on selected list workflow" } });
+    fireEvent.click(screen.getByTestId("quick-entry-toggle"));
+    fireEvent.click(screen.getByTestId("quick-entry-plan"));
+    fireEvent.click(screen.getByTestId("quick-entry-subtask"));
+
+    expect(onPlanningMode).toHaveBeenCalledWith("Plan on selected list workflow", "wf-list-active");
+    expect(onSubtaskBreakdown).toHaveBeenCalledWith("Plan on selected list workflow", "wf-list-active");
   });
 
   it("shows error toast when onQuickCreate fails and keeps input content", async () => {

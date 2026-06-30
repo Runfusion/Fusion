@@ -14,16 +14,21 @@ The group sits on the pre-merge success path (execute → [browser-verification 
 key; the inner template node carries a DISTINCT id (`code-review-step`) because a template
 node id may not collide with the group/top-level node id (U1 validation).
 
-The inner node mirrors the dashboard's `stepTemplateToNode` projection of the canonical
-`code-review` step: a `prompt` node carrying the prompt, `toolMode` (readonly — review
-reads the diff, never mutates), and `gateMode` (advisory — non-blocking, like the
-existing review; operators can promote to a gate).
+The inner node is a blocking gate: a REVISE verdict must stop review/merge until
+the executor remediates the finding or the task exhausts its revision budget.
 
 FNXC:CodeReviewStep 2026-06-25-00:00:
 U6 deleted the built-in step-template catalog; the inner node's literal
-name/description/prompt/toolMode/gateMode are now inlined here directly (byte-identical
-to the former `code-review` catalog entry). These built-ins are the parity oracle, so
-the produced node bytes must NOT change.
+name/description/prompt/toolMode/gateMode are now inlined here directly. These built-ins
+are the parity oracle; intentional behavior changes must update this file and the
+built-in workflow tests together.
+
+FNXC:CodeReviewStep 2026-06-29-10:42:
+Code Review is not advisory. FN-7228 reached merge after Code Review returned REVISE
+because the generic built-in was authored as advisory and the graph continued after the
+remediation budget was exhausted. Keep browser verification advisory, but make Code
+Review a gate so REVISE records a blocking failed workflow step and cannot advance to
+review or merge.
 */
 
 /** Stable per-task enable key + group node id. */
@@ -70,10 +75,13 @@ Be specific: cite \`file:line\` for every finding and explain the concrete failu
  * matches where the browser-verification group sits (in-progress) so the editor renders
  * the group in the implementation column.
  *
- * Mirrors `stepTemplateToNode(code-review)`: a single `prompt` node whose config carries
- * the inlined prompt + `toolMode: "readonly"` + `gateMode: "advisory"`.
+ * A single `prompt` node whose config carries the inlined prompt +
+ * `toolMode: "readonly"` + blocking `gateMode: "gate"`.
  */
-export function codeReviewOptionalGroupNode(column: string): WorkflowIrNode {
+export function codeReviewOptionalGroupNode(
+  column: string,
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded" } = {},
+): WorkflowIrNode {
   return {
     id: CODE_REVIEW_GROUP_ID,
     kind: "optional-group",
@@ -82,7 +90,14 @@ export function codeReviewOptionalGroupNode(column: string): WorkflowIrNode {
       name: CODE_REVIEW_NAME,
       // Default-ON: runs for every coding task by default, but operators can toggle it
       // off per task (remove `code-review` from enabledWorkflowSteps).
-      defaultOn: true,
+      defaultOn: options.defaultOn ?? true,
+      reworkRegion: true,
+      maxReworkCycles: 3,
+      /*
+       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
+       * Built-in workflows own their optional-step remediation policy. Default Code Review to three fix→review attempts while preserving workflow-authored overrides through `config.maxRevisions`.
+       */
+      maxRevisions: options.maxRevisions ?? 3,
       template: {
         nodes: [
           {
@@ -93,7 +108,7 @@ export function codeReviewOptionalGroupNode(column: string): WorkflowIrNode {
               description: CODE_REVIEW_DESCRIPTION,
               prompt: CODE_REVIEW_PROMPT,
               toolMode: "readonly",
-              gateMode: "advisory",
+              gateMode: "gate",
             },
           },
         ],

@@ -45,7 +45,7 @@ import {
 import { classifyError, extractMissingModulePath, isNonContinuableSessionError, isOperatorActionableAgentError, isStaleWorktreeModuleResolutionError } from "./transient-error-detector.js";
 import { classifyForeignOnlyContamination, deriveTaskIdFromFusionBranch, inspectBranchConflict, listUniqueBranchCommits } from "./branch-conflicts.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type RunAuditor } from "./run-audit.js";
-import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
+import { finalizeProvenAutoMergeTask, validateWorkflowDoneMergeProof } from "./auto-merge-finalization.js";
 import { AutoRecoveryDispatcher } from "./auto-recovery.js";
 import { activeSessionRegistry, executingTaskLock } from "./active-session-registry.js";
 /*
@@ -107,6 +107,11 @@ export const COMPLETION_HANDOFF_LIMBO_GRACE_MS = 5 * 60_000;
 export const MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES = 3;
 export const MAX_POST_DONE_NONCONTINUABLE_WEDGE_RECOVERIES = 3;
 const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 2;
+
+type WorkflowRecoveryRoute =
+  | { kind: "node-requeue"; reason: "pause-abort-active-work" }
+  | { kind: "work-item-resume"; reason: "pause-abort-review-progress" }
+  | { kind: "no-action"; reason: "not-pause-abort" | "unsafe-or-not-routable" };
 
 function extractTaskIdFromTempMergeDir(dirname: string): string | null {
   const match = /^fusion-ai-merge-(fn-\d+)-[a-z0-9]+$/i.exec(dirname);
@@ -769,6 +774,50 @@ export class SelfHealingManager {
     private store: TaskStore,
     private options: SelfHealingOptions,
   ) {}
+
+  private classifyPausedAbortWorkflowRecovery(
+    task: Task,
+    settings: Settings,
+    isExecuting: boolean,
+  ): WorkflowRecoveryRoute {
+    const isPausedAbortPark =
+      task.status === "failed" &&
+      typeof task.error === "string" &&
+      task.error.includes(PAUSE_ABORT_PARK_OPERATOR_MARKER) &&
+      task.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER);
+    if (!isPausedAbortPark) return { kind: "no-action", reason: "not-pause-abort" };
+    if (task.paused || task.userPaused || isExecuting) return { kind: "no-action", reason: "unsafe-or-not-routable" };
+
+    const errorText = typeof task.error === "string" ? task.error.toLowerCase() : "";
+    const isTerminalMergePark = errorText.includes("conflict")
+      || errorText.includes("contamination")
+      || errorText.includes("foreign")
+      || errorText.includes("retry-exhausted")
+      || errorText.includes("retries exhausted")
+      || errorText.includes("max retries");
+    const hasReviewProgress =
+      task.column === "in-review"
+      && allowsAutoMergeProcessing(task, settings)
+      && task.mergeDetails?.mergeConfirmed !== true
+      && !isTerminalMergePark
+      && task.steps.length > 0
+      && task.steps.every((step) => step.status === "done" || step.status === "skipped");
+
+    /*
+    FNXC:WorkflowRecoveryRouter 2026-06-29-11:47:
+    Pause-abort self-healing should classify recovery intent before mutating task
+    state. Active work routes to a workflow node requeue in todo; completed review
+    progress routes to a work-item/review resume in-place. Unsafe rows stay
+    untouched so invariant repair and human holds remain separate decisions.
+    */
+    if (hasReviewProgress) {
+      return { kind: "work-item-resume", reason: "pause-abort-review-progress" };
+    }
+    if (task.column === "todo" || task.column === "in-progress") {
+      return { kind: "node-requeue", reason: "pause-abort-active-work" };
+    }
+    return { kind: "no-action", reason: "unsafe-or-not-routable" };
+  }
 
   public getActiveMergeTaskId(): string | null {
     return this.options.getActiveMergeTaskId?.() ?? null;
@@ -7128,7 +7177,10 @@ export class SelfHealingManager {
             continue;
           }
 
-          await this.store.updateTask(task.id, { status: null, error: null });
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+          });
           await this.store.logEntry(
             task.id,
             "Auto-recovered: stale merge status cleared; merge will be retried",
@@ -7692,6 +7744,23 @@ export class SelfHealingManager {
             const liveShortstat = await this.readShortstatForSha(storedSha, task.mergeDetails?.rebaseBaseSha);
             const liveLandedFiles = await this.readLandedFilesForSha(storedSha, task.mergeDetails?.rebaseBaseSha);
             const currentLandedFiles = task.mergeDetails?.landedFiles;
+            const confirmedProofVerdict = await validateWorkflowDoneMergeProof({
+              ...task,
+              mergeDetails: {
+                ...task.mergeDetails,
+                landedFiles: liveLandedFiles ?? currentLandedFiles,
+                mergeConfirmed: true,
+              },
+            } as Task, { rootDir: this.options.rootDir });
+            if (!confirmedProofVerdict.ok) {
+              /*
+              FNXC:WorkflowMerge 2026-06-29-10:42:
+              Done-task metadata repair is not allowed to convert stale workflow proof into truth. If the branch still carries files outside the recorded landed commit, or the workflow still has pending steps, leave the row unchanged so workflow retry/recovery can resume the merge path instead of hiding unmerged work.
+              */
+              log.warn(`recoverDoneTaskMergeMetadata: skipped ${task.id} — invalid done merge proof (${confirmedProofVerdict.reason})`);
+              await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid workflow merge proof (${confirmedProofVerdict.reason})`).catch(() => undefined);
+              continue;
+            }
             const landedFilesMismatch = Boolean(
               liveLandedFiles && (
                 !currentLandedFiles ||
@@ -7765,6 +7834,20 @@ export class SelfHealingManager {
             deletions: landed.deletions ?? 0,
           };
           const landedFiles = await this.readLandedFilesForSha(landed.sha, task.mergeDetails?.rebaseBaseSha ?? landed.rebaseBaseSha);
+          const repairedProofVerdict = await validateWorkflowDoneMergeProof({
+            ...task,
+            mergeDetails: {
+              ...task.mergeDetails,
+              commitSha: landed.sha,
+              landedFiles: landedFiles ?? task.mergeDetails?.landedFiles,
+              mergeConfirmed: true,
+            },
+          } as Task, { rootDir: this.options.rootDir });
+          if (!repairedProofVerdict.ok) {
+            log.warn(`recoverDoneTaskMergeMetadata: skipped ${task.id} — invalid repaired merge proof (${repairedProofVerdict.reason})`);
+            await this.store.logEntry(task.id, `Done-task merge metadata repair skipped: invalid repaired workflow merge proof (${repairedProofVerdict.reason})`).catch(() => undefined);
+            continue;
+          }
 
           const needsRepair =
             task.mergeDetails?.commitSha !== landed.sha ||
@@ -9043,39 +9126,8 @@ export class SelfHealingManager {
       const executingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
       const tasks = await this.store.listTasks({ slim: true });
 
-      const isPausedAbortPark = (t: Task): boolean =>
-        t.status === "failed" &&
-        typeof t.error === "string" &&
-        t.error.includes(PAUSE_ABORT_PARK_OPERATOR_MARKER) &&
-        t.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER);
-      const isTerminalMergePark = (t: Task): boolean => {
-        const text = typeof t.error === "string" ? t.error.toLowerCase() : "";
-        return text.includes("conflict")
-          || text.includes("contamination")
-          || text.includes("foreign")
-          || text.includes("retry-exhausted")
-          || text.includes("retries exhausted")
-          || text.includes("max retries");
-      };
-      const isRecoverableInReviewPauseAbortPark = (t: Task): boolean => {
-        /*
-        FNXC:WorkflowLifecycle 2026-06-20-00:00:
-        FN-6796 defense-in-depth: executor memory that distinguishes benign engine aborts from user hard-cancel is gone after restart, so self-healing may recover only persisted clean `in-review` pause-abort parks: non-paused, not executing, auto-merge eligible, completed steps, no terminal/confirmed merge evidence. User hard-cancel rows rest in `todo`; global/user pauses and autoMerge:false review rows remain operator-controlled.
-        */
-        return t.column === "in-review"
-          && allowsAutoMergeProcessing(t, settings)
-          && t.mergeDetails?.mergeConfirmed !== true
-          && !isTerminalMergePark(t)
-          && t.steps.length > 0
-          && t.steps.every((step) => step.status === "done" || step.status === "skipped");
-      };
-
       const parked = tasks.filter((t) =>
-        isPausedAbortPark(t) &&
-        !t.paused &&
-        !t.userPaused &&
-        !executingIds.has(t.id) &&
-        (t.column === "todo" || t.column === "in-progress" || isRecoverableInReviewPauseAbortPark(t)),
+        this.classifyPausedAbortWorkflowRecovery(t, settings, executingIds.has(t.id)).kind !== "no-action",
       );
 
       if (parked.length === 0) return 0;
@@ -9093,24 +9145,43 @@ export class SelfHealingManager {
           // applied (coderabbit Major + greptile, PR #1687).
           const fresh = await this.store.getTask(task.id);
           const latestExecutingIds = this.options.getExecutingTaskIds?.() ?? new Set<string>();
-          if (
-            !fresh ||
-            !isPausedAbortPark(fresh) ||
-            fresh.paused ||
-            fresh.userPaused ||
-            latestExecutingIds.has(fresh.id) ||
-            !(fresh.column === "todo" || fresh.column === "in-progress" || isRecoverableInReviewPauseAbortPark(fresh))
-          ) {
+          if (!fresh) continue;
+          const route = this.classifyPausedAbortWorkflowRecovery(fresh, settings, latestExecutingIds.has(fresh.id));
+          if (route.kind === "no-action") {
             continue;
           }
 
-          await this.store.updateTask(task.id, { status: null, error: null });
-          if (fresh.column !== "todo" && fresh.column !== "in-review") {
+          const workflowTransitionNotification = route.kind === "node-requeue"
+            ? {
+                /*
+                 * FNXC:WorkflowNotifications 2026-06-29-12:47:
+                 * Recovery-driven workflow notifications should be keyed by
+                 * typed task state, not by human-readable recovery log text.
+                 * Stamp the target column so stale markers cannot describe
+                 * later task movement.
+                 */
+                kind: "recovery-requeue" as const,
+                column: "todo" as const,
+                transitionId: `recovery-requeue:${task.id}:pause-abort-active-work`,
+                nodeId: "pause-abort-recovery-router",
+                reason: route.reason,
+                createdAt: new Date().toISOString(),
+              }
+            : undefined;
+          await this.store.updateTask(task.id, {
+            status: null,
+            error: null,
+            ...(fresh.column === "todo" && workflowTransitionNotification
+              ? { workflowTransitionNotification }
+              : {}),
+          });
+          if (route.kind === "node-requeue" && fresh.column !== "todo") {
             await this.store.moveTask(task.id, "todo", {
               preserveProgress: true,
               moveSource: "engine",
               recoveryRehome: true,
             });
+            await this.store.updateTask(task.id, { workflowTransitionNotification });
           }
           // Release any in-memory worktree ownership the leaked park may still
           // pin, so the requeued task does not re-block the concurrency gate.
@@ -9137,7 +9208,12 @@ export class SelfHealingManager {
               domain: "database",
               mutationType: "task:auto-recover-paused-abort-park",
               target: task.id,
-              metadata: { fromColumn: fresh.column, preservedInReview: fresh.column === "in-review" },
+              metadata: {
+                fromColumn: fresh.column,
+                preservedInReview: route.kind === "work-item-resume",
+                recoveryRoute: route.kind,
+                recoveryReason: route.reason,
+              },
             });
           } catch (auditErr: unknown) {
             log.warn(`Pause-abort park audit emission failed for ${task.id}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`);

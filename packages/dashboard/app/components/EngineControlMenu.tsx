@@ -54,9 +54,13 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function getUseMarkerRatio(current: number, min: number, max: number) {
-  if (max <= min) return 0;
-  return clamp((current - min) / (max - min), 0, 1);
+/*
+FNXC:GlobalConcurrencyControls 2026-06-29-10:30:
+FN-7235 keeps the footer current-use marker consistent with FN-7160 Command Center behavior: it shows absolute utilization on a 0..cap scale. Do not subtract the range input floor of 1, because one running agent must render above zero even though the editable slider cannot be set to 0.
+*/
+function getUseMarkerRatio(current: number, max: number) {
+  if (max <= 0) return 0;
+  return clamp(current / max, 0, 1);
 }
 
 function getUseMarkerStyle(ratio: number): CSSProperties {
@@ -244,8 +248,8 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
   const globalCountsLoaded = gc.status === "loaded";
   const projectActive = gc.projectActiveCount(projectId);
   const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
-  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, gc.min, gc.sliderMax);
-  const projectUseMarkerRatio = getUseMarkerRatio(projectActive, CONCURRENCY_SLIDER_LIMITS.maxConcurrent.min, maxConcurrentSliderMax);
+  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, gc.sliderMax);
+  const projectUseMarkerRatio = getUseMarkerRatio(projectActive, maxConcurrentSliderMax);
 
   return (
     <div className="engine-control-menu" ref={menuRef}>

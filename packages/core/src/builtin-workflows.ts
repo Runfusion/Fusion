@@ -6,6 +6,16 @@ import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-w
 import { BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR } from "./builtin-stepwise-final-review-coding-workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
 import { builtinPromptConfig } from "./builtin-workflow-prompts.js";
+import { browserVerificationOptionalGroupNode } from "./builtin-browser-verification-group.js";
+import { codeReviewOptionalGroupNode } from "./builtin-code-review-group.js";
+import { completionSummaryNode } from "./builtin-completion-summary-node.js";
+import { postMergeVerificationOptionalGroupNode } from "./builtin-post-merge-group.js";
+import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
+import {
+  browserVerificationRemediationNode,
+  codeReviewRemediationNode,
+  planReplanNode,
+} from "./builtin-workflow-remediation-nodes.js";
 import type { WorkflowDefinition } from "./workflow-definition-types.js";
 import type { WorkflowIr, WorkflowIrColumn, WorkflowIrNode } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
@@ -35,6 +45,96 @@ export function defaultEnabledBuiltinWorkflowIds(): string[] {
   ).map((workflow) => workflow.id);
 }
 
+function ceCodeReviewOptionalGroupNode(column: string): WorkflowIrNode {
+  return {
+    id: "code-review",
+    kind: "optional-group",
+    column,
+    config: {
+      /*
+       * FNXC:Workflows 2026-06-29-10:24:
+       * Compound Engineering uses the same optional Code Review toggle as other engineering built-ins, but the inner reviewer remains the CE skill. Keep the stable `code-review` group id so per-task toggles work uniformly while preserving the CE review implementation.
+       */
+      name: "Code Review",
+      defaultOn: true,
+      reworkRegion: true,
+      maxReworkCycles: 3,
+      /*
+       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
+       * The CE Code Review group is custom because it invokes the CE skill, but its workflow-owned remediation budget must match the other built-in optional gates by defaulting to three attempts while remaining editable in workflow config.
+       */
+      maxRevisions: 3,
+      template: {
+        nodes: [
+          {
+            id: "code-review-step",
+            kind: "gate",
+            config: {
+              name: "Code Review",
+              executor: "skill",
+              skillName: "compound-engineering:ce-code-review",
+              gateMode: "gate",
+              toolMode: "coding",
+              prompt: "Run /ce-code-review to perform a structured code review of the changes. Block merge on P0/P1 findings.",
+            },
+          },
+        ],
+        edges: [],
+      },
+    },
+  };
+}
+
+function ceManualPrReviewOptionalGroupNode(column: string): WorkflowIrNode {
+  return {
+    id: "manual-pr-review",
+    kind: "optional-group",
+    column,
+    config: {
+      /*
+       * FNXC:WorkflowPrPolicy 2026-06-29-16:42:
+       * Compound Engineering's PR path is manual-review policy, not the default delivery path. Keep it default-off and require effective auto-merge to be off; when enabled, CE commits the work while Fusion PR nodes open/link the PR and own feedback response so the dashboard, PR monitor, and merge gates see first-class PR state.
+       */
+      name: "Manual PR Review",
+      defaultOn: false,
+      requiresAutoMergeOff: true,
+      template: {
+        nodes: [
+          {
+            id: "commit",
+            kind: "prompt",
+            config: {
+              name: "Commit",
+              executor: "skill",
+              skillName: "compound-engineering:ce-commit",
+              toolMode: "coding",
+              prompt: "Run /ce-commit to commit the completed work in logical commits. Do not push or open a pull request; the following Fusion PR node owns PR creation and dashboard linkage.",
+            },
+          },
+          {
+            id: "open-pr",
+            kind: "pr-create",
+            config: {
+              name: "Open PR",
+            },
+          },
+          {
+            id: "resolve-feedback",
+            kind: "pr-respond",
+            config: {
+              name: "Resolve PR feedback",
+            },
+          },
+        ],
+        edges: [
+          { from: "commit", to: "open-pr", condition: "success" },
+          { from: "open-pr", to: "resolve-feedback", condition: "success" },
+        ],
+      },
+    },
+  };
+}
+
 export function isBuiltinWorkflowEnabled(id: string, enabledIds?: readonly string[]): boolean {
   if (!isBuiltinWorkflowId(id)) return true;
   if (!enabledIds) return true;
@@ -50,6 +150,11 @@ interface BuiltinSpec {
   description: string;
   /** Ordered node specs between start and end; seams use {seam}. */
   nodes: Array<{ id: string; kind: WorkflowIr["nodes"][number]["kind"]; config?: Record<string, unknown> }>;
+  engineeringOptionalGroups?: {
+    planReviewDefaultOn?: boolean;
+    codeReviewDefaultOn?: boolean;
+    browserVerificationDefaultOn?: boolean;
+  };
 }
 
 function defaultColumnForLinearNode(node: WorkflowIrNode): string {
@@ -75,20 +180,62 @@ function canonicalBuiltinWorkflowColumns(): WorkflowIrColumn[] {
 
 /** Build a linear IR (start → nodes… → end) with simple x-spaced layout. */
 function linear(spec: BuiltinSpec): WorkflowDefinition {
+  const specNodes = spec.engineeringOptionalGroups
+    ? withEngineeringOptionalGroups(spec.nodes, spec.engineeringOptionalGroups)
+    : spec.nodes;
+  const workflowNodes = withPostMergeVerificationNode(withCompletionSummaryNode(specNodes));
+  const hasPlanReview = workflowNodes.some((node) => node.id === "plan-review");
+  const hasBrowserVerification = workflowNodes.some((node) => node.id === "browser-verification");
+  const hasCodeReview = workflowNodes.some((node) => node.id === "code-review");
+  const remediationNodes = hasPlanReview || hasBrowserVerification || hasCodeReview
+    ? [
+        ...(hasPlanReview ? [planReplanNode("triage")] : []),
+        ...(hasBrowserVerification ? [browserVerificationRemediationNode("in-progress")] : []),
+        ...(hasCodeReview ? [codeReviewRemediationNode("in-progress")] : []),
+      ]
+    : [];
   const nodes: WorkflowIr["nodes"] = [
     { id: "start", kind: "start" },
-    ...spec.nodes,
+    ...workflowNodes,
+    ...remediationNodes,
     { id: "end", kind: "end" },
   ];
   const edges: WorkflowIr["edges"] = [];
-  for (let i = 0; i < nodes.length - 1; i += 1) {
-    edges.push({ from: nodes[i].id, to: nodes[i + 1].id, condition: "success" });
+  const successPathNodes: WorkflowIr["nodes"] = [{ id: "start", kind: "start" }, ...workflowNodes, { id: "end", kind: "end" }];
+  for (let i = 0; i < successPathNodes.length - 1; i += 1) {
+    edges.push({ from: successPathNodes[i].id, to: successPathNodes[i + 1].id, condition: "success" });
   }
   // Seam nodes also fail straight to end (mirrors the legacy pipeline).
-  for (const node of spec.nodes) {
-    if (typeof node.config?.seam === "string") {
-      edges.push({ from: node.id, to: "end", condition: "failure" });
+  for (const node of workflowNodes) {
+    if ((typeof node.config?.seam === "string" || node.kind === "optional-group") && node.config?.summaryTarget !== "task") {
+      const failureTarget =
+        node.id === "plan-review"
+          ? "plan-replan"
+          : node.id === "browser-verification"
+          ? "browser-verification-remediation"
+          : node.id === "code-review"
+          ? "code-review-remediation"
+          : "end";
+      edges.push({ from: node.id, to: failureTarget, condition: "failure" });
     }
+  }
+  /*
+   * FNXC:WorkflowRemediation 2026-06-29-12:12:
+   * Review failures are workflow policy, not terminal executor failures. Linear built-ins that opt into Plan Review, Browser Verification, or Code Review must route remediation success back to the owning gate so retry/restart keeps executing the graph instead of parking at an orphan remediation node or falling through to done.
+   */
+  if (hasPlanReview) {
+    edges.push({ from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" });
+  }
+  if (hasBrowserVerification) {
+    edges.push({
+      from: "browser-verification-remediation",
+      to: "browser-verification",
+      condition: "success",
+      kind: "rework",
+    });
+  }
+  if (hasCodeReview) {
+    edges.push({ from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" });
   }
   const layout: Record<string, { x: number; y: number }> = {};
   nodes.forEach((node, i) => {
@@ -129,6 +276,48 @@ function linear(spec: BuiltinSpec): WorkflowDefinition {
   };
 }
 
+function withEngineeringOptionalGroups(
+  nodes: BuiltinSpec["nodes"],
+  options: NonNullable<BuiltinSpec["engineeringOptionalGroups"]>,
+): BuiltinSpec["nodes"] {
+  const executeIndex = nodes.findIndex((node) => node.id === "execute");
+  if (executeIndex < 0) return nodes;
+  /*
+   * FNXC:WorkflowBuiltins 2026-06-29-10:17:
+   * Engineering built-ins must expose the same operator toggles: Plan Review before execution, then Browser Verification and Code Review after implementation. Quick Fix keeps all three default-off; other engineering built-ins keep plan/code review default-on and browser verification default-off.
+   */
+  return [
+    ...nodes.slice(0, executeIndex),
+    planReviewOptionalGroupNode("in-progress", { defaultOn: options.planReviewDefaultOn ?? true }),
+    nodes[executeIndex],
+    browserVerificationOptionalGroupNode("in-progress", { defaultOn: options.browserVerificationDefaultOn ?? false }),
+    codeReviewOptionalGroupNode("in-progress", { defaultOn: options.codeReviewDefaultOn ?? true }),
+    ...nodes.slice(executeIndex + 1),
+  ];
+}
+
+function withCompletionSummaryNode(nodes: BuiltinSpec["nodes"]): BuiltinSpec["nodes"] {
+  if (nodes.some((node) => node.id === "completion-summary")) return nodes;
+  const mergeIndex = nodes.findIndex((node) => node.config?.seam === "merge" || node.id === "merge");
+  const insertIndex = mergeIndex >= 0 ? mergeIndex : nodes.length;
+  return [
+    ...nodes.slice(0, insertIndex),
+    completionSummaryNode("in-review"),
+    ...nodes.slice(insertIndex),
+  ];
+}
+
+function withPostMergeVerificationNode(nodes: BuiltinSpec["nodes"]): BuiltinSpec["nodes"] {
+  if (nodes.some((node) => node.id === "post-merge-verification")) return nodes;
+  const mergeIndex = nodes.findIndex((node) => node.config?.seam === "merge" || node.id === "merge");
+  if (mergeIndex < 0) return nodes;
+  return [
+    ...nodes.slice(0, mergeIndex + 1),
+    postMergeVerificationOptionalGroupNode("done"),
+    ...nodes.slice(mergeIndex + 1),
+  ];
+}
+
 /**
  * Read-only built-in workflow templates. Selectable like any workflow; they
  * cannot be edited or deleted. In compile mode (flag off) only the custom
@@ -146,18 +335,23 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       start: { x: 60, y: 160 },
       plan: { x: 230, y: 160 },
       "plan-review": { x: 400, y: 160 },
+      "plan-replan": { x: 400, y: 320 },
       parse: { x: 570, y: 160 },
       steps: { x: 740, y: 160 },
       "browser-verification": { x: 910, y: 160 },
+      "browser-verification-remediation": { x: 910, y: 320 },
       "code-review": { x: 1080, y: 160 },
-      "merge-gate": { x: 1250, y: 160 },
-      "branch-group-member-integration": { x: 1420, y: 80 },
-      "branch-group-promotion": { x: 1590, y: 80 },
-      "merge-attempt": { x: 1760, y: 160 },
-      "merge-retry": { x: 1930, y: 80 },
-      "recovery-router": { x: 1930, y: 240 },
-      "merge-manual-hold": { x: 1420, y: 240 },
-      end: { x: 2100, y: 160 },
+      "code-review-remediation": { x: 1080, y: 320 },
+      "completion-summary": { x: 1250, y: 160 },
+      "merge-gate": { x: 1420, y: 160 },
+      "branch-group-member-integration": { x: 1590, y: 80 },
+      "branch-group-promotion": { x: 1760, y: 80 },
+      "merge-attempt": { x: 1930, y: 160 },
+      "merge-retry": { x: 2100, y: 80 },
+      "recovery-router": { x: 2100, y: 240 },
+      "merge-manual-hold": { x: 1590, y: 240 },
+      "post-merge-verification": { x: 2270, y: 160 },
+      end: { x: 2440, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -168,18 +362,31 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     description: "The original monolithic coding pipeline: implement, review, then merge without graph-owned per-step execution.",
     kind: "workflow",
     ir: BUILTIN_CODING_WORKFLOW_IR,
+    /*
+     * FNXC:WorkflowBuiltins 2026-06-29-08:33:
+     * Legacy coding now exposes the same optional Plan Review, Browser Verification, and Code Review nodes as the IR. Keep layout keys in graph order so task details and workflow definition cards do not render review steps out of sequence or at fallback coordinates.
+     */
     layout: {
       start: { x: 60, y: 160 },
-      execute: { x: 230, y: 160 },
-      review: { x: 400, y: 160 },
-      "merge-gate": { x: 570, y: 160 },
-      "branch-group-member-integration": { x: 740, y: 80 },
-      "branch-group-promotion": { x: 910, y: 80 },
-      "merge-attempt": { x: 1080, y: 160 },
-      "merge-retry": { x: 1250, y: 80 },
-      "recovery-router": { x: 1250, y: 240 },
-      "merge-manual-hold": { x: 740, y: 240 },
-      end: { x: 1420, y: 160 },
+      planning: { x: 230, y: 160 },
+      "plan-review": { x: 400, y: 160 },
+      "plan-replan": { x: 400, y: 320 },
+      execute: { x: 570, y: 160 },
+      "browser-verification": { x: 740, y: 160 },
+      "browser-verification-remediation": { x: 740, y: 320 },
+      "code-review": { x: 910, y: 160 },
+      "code-review-remediation": { x: 910, y: 320 },
+      "completion-summary": { x: 1080, y: 160 },
+      review: { x: 1250, y: 160 },
+      "merge-gate": { x: 1420, y: 160 },
+      "branch-group-member-integration": { x: 1590, y: 80 },
+      "branch-group-promotion": { x: 1760, y: 80 },
+      "merge-attempt": { x: 1930, y: 160 },
+      "merge-retry": { x: 2100, y: 80 },
+      "recovery-router": { x: 2100, y: 240 },
+      "merge-manual-hold": { x: 1590, y: 240 },
+      "post-merge-verification": { x: 2270, y: 160 },
+      end: { x: 2440, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -188,6 +395,11 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     id: "builtin:quick-fix",
     name: "Quick fix (built-in)",
     description: "Implement and merge with no review step — for trivial, low-risk changes.",
+    engineeringOptionalGroups: {
+      planReviewDefaultOn: false,
+      codeReviewDefaultOn: false,
+      browserVerificationDefaultOn: false,
+    },
     nodes: [
       { id: "execute", kind: "prompt", config: builtinPromptConfig("execute", "Execute") },
       { id: "merge", kind: "prompt", config: builtinPromptConfig("merge", "Merge boundary") },
@@ -197,6 +409,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     id: "builtin:review-heavy",
     name: "Review-heavy (built-in)",
     description: "Adds an extra security pass before merge, on top of the standard review.",
+    engineeringOptionalGroups: {},
     nodes: [
       { id: "execute", kind: "prompt", config: builtinPromptConfig("execute", "Execute") },
       { id: "review", kind: "prompt", config: builtinPromptConfig("review", "Review") },
@@ -223,14 +436,16 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       brief: { x: 230, y: 160 },
       draft: { x: 400, y: 160 },
       editorial: { x: 570, y: 160 },
-      "merge-gate": { x: 740, y: 160 },
-      "branch-group-member-integration": { x: 910, y: 80 },
-      "branch-group-promotion": { x: 1080, y: 80 },
-      "merge-attempt": { x: 1250, y: 160 },
-      "merge-retry": { x: 1420, y: 80 },
-      "recovery-router": { x: 1420, y: 240 },
-      "merge-manual-hold": { x: 910, y: 240 },
-      end: { x: 1590, y: 160 },
+      "completion-summary": { x: 740, y: 160 },
+      "merge-gate": { x: 910, y: 160 },
+      "branch-group-member-integration": { x: 1080, y: 80 },
+      "branch-group-promotion": { x: 1250, y: 80 },
+      "merge-attempt": { x: 1420, y: 160 },
+      "merge-retry": { x: 1590, y: 80 },
+      "recovery-router": { x: 1590, y: 240 },
+      "merge-manual-hold": { x: 1080, y: 240 },
+      "post-merge-verification": { x: 1760, y: 160 },
+      end: { x: 1930, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -287,6 +502,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           },
         },
       },
+      planReviewOptionalGroupNode("in-progress"),
       {
         id: "execute",
         kind: "prompt",
@@ -301,62 +517,14 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
           prompt: "Run /ce-work to execute the plan for this task, following existing patterns and maintaining quality throughout.",
         },
       },
+      browserVerificationOptionalGroupNode("in-progress"),
+      ceCodeReviewOptionalGroupNode("in-progress"),
       {
-        id: "code-review",
-        kind: "gate",
-        config: {
-          /*
-           * FNXC:Workflows 2026-06-25-00:00:
-           * FN-7045 requires every built-in code-review step display name to be title-case "Code Review" so compound-engineering matches WORKFLOW_STEP_TEMPLATES and the optional Code Review group.
-           */
-          name: "Code Review",
-          executor: "skill",
-          skillName: "compound-engineering:ce-code-review",
-          gateMode: "gate",
-          /*
-           * FNXC:Workflows 2026-06-21-00:00:
-           * FN-6891 requires the compound-engineering Review stage to invoke compound-engineering:ce-code-review directly. The prior generic reviewer seam was removed so CE review runs through the CE skill and still blocks merge as a gate.
-           */
-          // Coding mode so ce-code-review can fan out to its reviewer-persona
-          // subagents via fn_spawn_agent. As a gate step it still emits the
-          // verdict JSON (KTD-6); it is not meant to write the tree (Risk-1).
-          toolMode: "coding",
-          prompt: "Run /ce-code-review to perform a structured code review of the changes. Block merge on P0/P1 findings.",
-        },
-      },
-      {
-        id: "commit-pr",
+        id: "review-handoff",
         kind: "prompt",
-        config: {
-          name: "Commit & open PR",
-          executor: "skill",
-          skillName: "compound-engineering:ce-commit-push-pr",
-          // Coding mode: this step runs git + gh. Per KTD-6 it OWNS commit /
-          // push / PR creation; it does NOT perform the board-state merge — that
-          // stays with Fusion's merge seam below (workflow-owned merge), so the
-          // two never race the same branch state.
-          /*
-           * FNXC:Workflows 2026-06-27-00:00:
-           * FN-7144 confirms the autoMerge-off CE route: ce-commit-push-pr and ce-resolve-pr-feedback prepare the human PR flow, while the later Fusion merge seam no-ops into manual review instead of forcing an unattended board merge.
-           */
-          toolMode: "coding",
-          prompt: "Run /ce-commit-push-pr to commit the work in logical commits, push the branch, and open a pull request with a value-first description. When project autoMerge is off, this PR is the human merge/review path; do not perform the Fusion board-state merge here.",
-        },
+        config: { seam: "review-handoff", name: "Review handoff", prompt: "" },
       },
-      {
-        id: "resolve-feedback",
-        kind: "prompt",
-        config: {
-          name: "Resolve PR feedback",
-          executor: "skill",
-          skillName: "compound-engineering:ce-resolve-pr-feedback",
-          toolMode: "coding",
-          // Resolves open PR review threads. On the first autonomous pass there
-          // may be no feedback yet (review is async); the skill no-ops when there
-          // are no threads, and a re-run picks up later feedback.
-          prompt: "Run /ce-resolve-pr-feedback to resolve open PR review feedback: evaluate each thread, fix valid issues, and reply.",
-        },
-      },
+      ceManualPrReviewOptionalGroupNode("in-review"),
       { id: "merge", kind: "prompt", config: builtinPromptConfig("merge", "Merge boundary") },
       {
         id: "document",
@@ -389,20 +557,25 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       start: { x: 60, y: 160 },
       plan: { x: 230, y: 160 },
       "plan-review": { x: 400, y: 160 },
+      "plan-replan": { x: 400, y: 320 },
       parse: { x: 570, y: 160 },
       steps: { x: 740, y: 160 },
       "rework-hold": { x: 740, y: 320 },
       "browser-verification": { x: 910, y: 160 },
+      "browser-verification-remediation": { x: 910, y: 320 },
       "code-review": { x: 1080, y: 160 },
-      review: { x: 1250, y: 160 },
-      "merge-gate": { x: 1420, y: 160 },
-      "branch-group-member-integration": { x: 1590, y: 80 },
-      "branch-group-promotion": { x: 1760, y: 80 },
-      "merge-attempt": { x: 1930, y: 160 },
-      "merge-retry": { x: 2100, y: 80 },
-      "recovery-router": { x: 2100, y: 240 },
-      "merge-manual-hold": { x: 1590, y: 240 },
-      end: { x: 2270, y: 160 },
+      "code-review-remediation": { x: 1080, y: 320 },
+      "completion-summary": { x: 1250, y: 160 },
+      review: { x: 1420, y: 160 },
+      "merge-gate": { x: 1590, y: 160 },
+      "branch-group-member-integration": { x: 1760, y: 80 },
+      "branch-group-promotion": { x: 1930, y: 80 },
+      "merge-attempt": { x: 2100, y: 160 },
+      "merge-retry": { x: 2270, y: 80 },
+      "recovery-router": { x: 2270, y: 240 },
+      "merge-manual-hold": { x: 1760, y: 240 },
+      "post-merge-verification": { x: 2440, y: 160 },
+      end: { x: 2610, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,
@@ -418,6 +591,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     id: "builtin:design",
     name: "Design (built-in)",
     description: "Implement, then run a design/UX review gate before the standard review and merge — for UI-heavy work.",
+    engineeringOptionalGroups: {},
     nodes: [
       {
         id: "execute",
@@ -470,6 +644,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "pr-respond": { x: 400, y: 320 },
       "await-review-hold": { x: 570, y: 320 },
       gate: { x: 570, y: 160 },
+      "manual-merge-hold": { x: 740, y: 80 },
       "await-rebase": { x: 740, y: 320 },
       "pr-merge": { x: 740, y: 160 },
       end: { x: 910, y: 160 },
@@ -491,7 +666,8 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "qualification-gate": { x: 570, y: 160 },
       "enrich-lead": { x: 740, y: 160 },
       "draft-outreach": { x: 910, y: 160 },
-      end: { x: 1080, y: 160 },
+      "completion-summary": { x: 1080, y: 160 },
+      end: { x: 1250, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,

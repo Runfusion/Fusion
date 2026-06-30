@@ -36,6 +36,7 @@ export const DEFAULT_NTFY_EVENTS: readonly NtfyNotificationEvent[] = [
   "db-corruption-detected",
   "fallback-used",
   "token-budget",
+  "workflow-notify",
   "message:agent-to-user",
   "message:agent-to-agent",
   "message:room",

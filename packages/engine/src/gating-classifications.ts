@@ -140,8 +140,10 @@ export const READONLY_FN_TOOLS: ReadonlySet<string> = new Set([
   "fn_insight_run_show",
   "fn_goal_list",
   "fn_goal_show",
-  // FNXC:ToolGovernance 2026-06-27-12:06: Workflow listing is read-only discovery and must stay positively recognized instead of relying on an unknown-tool fallback.
+  // FNXC:ToolGovernance 2026-06-29-23:36: Workflow and trait discovery tools are read-only authoring support. Positively classify list/get/trait vocabulary so newly exposed published and prompt-injectable lanes never rely on unknown-tool fallback.
   "fn_workflow_list",
+  "fn_workflow_get",
+  "fn_trait_list",
   "fn_mission_list",
   "fn_mission_show",
   "fn_list_agents",
@@ -201,6 +203,8 @@ export const COORDINATION_EXEMPT_TOOLS = [
   "fn_agent_show",
   "fn_agent_org_chart",
   "fn_workflow_list",
+  "fn_workflow_get",
+  "fn_trait_list",
   /**
    * FNXC:ToolGovernance 2026-06-28-00:00:
    * FN-7191 requires fn_ask_question to bypass permanent-agent approval gates like other user-messaging coordination tools; membership here makes the action gate classify it as exempt/allow even under locked-down policies.

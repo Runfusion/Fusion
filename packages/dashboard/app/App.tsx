@@ -781,7 +781,10 @@ function AppInner() {
     };
   }, [currentProject?.id]);
 
-  // History-aware modal open handlers — push nav entries for back-navigation.
+  /*
+  FNXC:TaskDetailSwipeBack 2026-06-29-14:21:
+  Mobile task-detail opens that use the modal path must still push a history entry even when the originating surface is the single-pane mobile list. AppModals owns nested-detail restoration, while this first-open path keeps the baseline dismiss-to-origin callback (`modalManager.closeDetailTask`) for the top-level modal entry.
+  */
   const openDetailTask = useCallback((task: Task | TaskDetail, tab?: Parameters<typeof modalManager.openDetailTask>[1], opts?: { origin?: DetailTaskOrigin }) => {
     modalManager.openDetailTask(task, tab, opts);
     pushNav({ type: "modal", close: modalManager.closeDetailTask });
@@ -1293,6 +1296,7 @@ function AppInner() {
   const dashboardBannersProps: DashboardBannersProps = {
     viewMode,
     currentProject,
+    authTokenRecoveryOpen,
     isTestMode,
     dashboardHealth,
     setDashboardHealth,

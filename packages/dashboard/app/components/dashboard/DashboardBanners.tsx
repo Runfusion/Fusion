@@ -27,6 +27,7 @@ function isMailboxApprovalCandidate(candidate: DashboardBannersProps["approvalBa
 export function DashboardBanners({
   viewMode,
   currentProject,
+  authTokenRecoveryOpen,
   isTestMode,
   dashboardHealth,
   setDashboardHealth,
@@ -67,15 +68,22 @@ export function DashboardBanners({
 }: DashboardBannersProps) {
   /* FNXC:DashboardBanners 2026-06-26-00:00: The Open Mailbox approval banner is gated by an approval:<id> candidate from a real ApprovalRequest. The count floor remains only for the approval-SSE/count-refresh race and must not fabricate a mailbox request for task awaiting-approval states. */
   const showMailboxApprovalBanner = isMailboxApprovalCandidate(approvalBannerCandidate);
+  /* FNXC:AuthRecovery 2026-06-29-00:00: Daemon-auth token recovery owns unauthorized remediation while its blocking dialog is open. Suppress engine remediation banners in parallel so operators fix the token once without seeing stale engine restart/start controls or live-region shells. */
+  const showEngineRemediationBanners = !authTokenRecoveryOpen;
+
 
   return (
     <>
       {viewMode === "project" && currentProject && (
         <>
           <TestModeBanner isActive={isTestMode} />
-          <EngineUnavailableBanner isVisible={dashboardHealth?.engine?.available === false} />
-          {/* FNXC:EngineStatusBanner 2026-06-22-00:00: Project-scoped engine remediation belongs in the same project-only banner guard family as the existing operational notices, and the key resets polling immediately when the user switches projects. */}
-          <EngineStatusBanner key={currentProject.id} projectId={currentProject.id} />
+          {showEngineRemediationBanners && (
+            <EngineUnavailableBanner isVisible={dashboardHealth?.engine?.available === false} />
+          )}
+          {showEngineRemediationBanners && (
+            /* FNXC:EngineStatusBanner 2026-06-22-00:00: Project-scoped engine remediation belongs in the same project-only banner guard family as the existing operational notices, and the key resets polling immediately when the user switches projects. */
+            <EngineStatusBanner key={currentProject.id} projectId={currentProject.id} />
+          )}
           <OAuthReloginBanner
             onReLogin={(_providerId) => openSettingsWithNav("authentication" as SectionId)}
           />

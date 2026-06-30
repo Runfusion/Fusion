@@ -183,7 +183,7 @@ export function isFts5CorruptionError(error: unknown): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 132;
+const SCHEMA_VERSION = 133;
 
 const TASKS_FTS_AUTOMERGE = 8;
 const TASKS_FTS_CRISISMERGE = 16;
@@ -350,6 +350,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   noCommitsExpected INTEGER DEFAULT 0,
   enabledWorkflowSteps TEXT DEFAULT '[]',
   modifiedFiles TEXT DEFAULT '[]',
+  -- FNXC:WorkflowNotifications 2026-06-29-13:10: typed transition markers are JSON text.
+  workflowTransitionNotification TEXT,
   missionId TEXT,
   sliceId TEXT,
   scopeOverride INTEGER,
@@ -5474,6 +5476,14 @@ export class Database {
     if (version < 132) {
       this.applyMigration(132, () => {
         this.db.exec("DROP TABLE IF EXISTS workflow_steps");
+      });
+    }
+
+    if (version < 133) {
+      // FNXC:WorkflowNotifications 2026-06-29-13:10: add the JSON marker column so
+      // recovery/manual-hold notification state survives the SQLite persistence path.
+      this.applyMigration(133, () => {
+        this.addColumnIfMissing("tasks", "workflowTransitionNotification", "TEXT");
       });
     }
 

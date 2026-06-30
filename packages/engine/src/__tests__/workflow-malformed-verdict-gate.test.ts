@@ -44,6 +44,7 @@ describe("workflow malformed-verdict gate", () => {
       notes: "",
     });
     expect(parseWorkflowStepOutput("lorem ipsum")).toEqual({ output: "lorem ipsum", malformed: true });
+    expect(parseWorkflowStepOutput("native skill output", { requireVerdict: false })).toEqual({ output: "native skill output" });
   });
 
   it("keeps a malformed blocking graph gate from producing a passing outcome", async () => {

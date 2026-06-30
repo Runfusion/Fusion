@@ -135,6 +135,14 @@ describe("agent-action-gate", () => {
     expect(blockedDecision.disposition).toBe("block");
   });
 
+  it.each(["fn_workflow_list", "fn_workflow_get", "fn_trait_list"] as const)("allows workflow discovery tool %s as a known coordination exemption", (toolName) => {
+    expect(evaluateAgentActionGate({ agentId: "a1", toolName, args: {}, permissionPolicy: lockedDownPolicy })).toMatchObject({
+      category: "exempt",
+      disposition: "allow",
+      operation: toolName,
+    });
+  });
+
   it.each([
     "fn_workflow_create",
     "fn_workflow_update",

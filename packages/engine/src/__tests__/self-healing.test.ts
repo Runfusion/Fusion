@@ -4974,7 +4974,10 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(0);
       expect(store.updateTask).not.toHaveBeenCalled();
       expect(store.moveTask).not.toHaveBeenCalled();
-      expect(store.logEntry).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-1",
+        expect.stringContaining("already-merged rejected FN-1"),
+      );
 
       managerWithRecovery.stop();
     });
@@ -7984,6 +7987,55 @@ describe("recoverDoneTaskMergeMetadata", () => {
       modifiedFiles: undefined,
     }));
 
+    manager.stop();
+  });
+
+  it("skips done-task metadata repair when branch diff is missing from merge proof", async () => {
+    const store = createMockStore();
+    const manager = new SelfHealingManager(store, { rootDir: "/tmp/test-project" });
+
+    (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        id: "FN-7231",
+        column: "done",
+        paused: false,
+        branch: "fusion/fn-7231",
+        baseBranch: "main",
+        steps: [{ status: "done" }],
+        mergeDetails: {
+          commitSha: "merge1",
+          mergeConfirmed: true,
+          filesChanged: 1,
+          insertions: 1,
+          deletions: 0,
+          mergeCommitMessage: "fix(FN-7231): stale proof",
+          landedFiles: ["packages/engine/src/executor.ts"],
+        },
+      },
+    ]);
+
+    mockedExecSync.mockImplementation((command) => {
+      const cmd = String(command);
+      if (cmd.includes("merge-base --is-ancestor") && cmd.includes("merge1")) return "" as any;
+      if (cmd.includes("log -1 --format=%H%x1f%s%x1f%b") && cmd.includes("merge1")) return "merge1\u001ffix(FN-7231): stale proof\u001fFusion-Task-Id: FN-7231" as any;
+      if (cmd.includes("show --shortstat --format=") && cmd.includes("merge1")) return "1 file changed, 1 insertion(+)" as any;
+      if (cmd.includes("show --name-only --format=") && cmd.includes("merge1")) return "packages/engine/src/executor.ts\n" as any;
+      if (cmd.includes("rev-parse --verify")) return "ok\n" as any;
+      if (cmd.includes("git diff --name-only") && cmd.includes("main...fusion/fn-7231")) return "packages/dashboard/app/TaskChatTab.css\n" as any;
+      if (cmd.includes("Fusion-Task-Id: FN-7231")) return "merge1\u001ffix(FN-7231): stale proof\n" as any;
+      return "" as any;
+    });
+
+    const repaired = await manager.recoverDoneTaskMergeMetadata();
+
+    expect(repaired).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-7231",
+      expect.stringContaining("invalid workflow merge proof (branch-diff-missing-from-merge-proof)"),
+    );
+
+    mockedExecSync.mockReset();
     manager.stop();
   });
 

@@ -75,9 +75,8 @@ describe("built-in Compound Engineering workflow skill alignment", () => {
       ["plan", "compound-engineering:ce-plan"],
       ["ce-doc-review > ce-doc-review-step", "compound-engineering:ce-doc-review"],
       ["execute", "compound-engineering:ce-work"],
-      ["code-review", "compound-engineering:ce-code-review"],
-      ["commit-pr", "compound-engineering:ce-commit-push-pr"],
-      ["resolve-feedback", "compound-engineering:ce-resolve-pr-feedback"],
+      ["code-review > code-review-step", "compound-engineering:ce-code-review"],
+      ["manual-pr-review > commit", "compound-engineering:ce-commit"],
       ["document", "compound-engineering:ce-compound"],
     ]);
     expect(workflowBareSkillIds).toEqual(expect.arrayContaining(["ce-plan", "ce-work", "ce-code-review"]));

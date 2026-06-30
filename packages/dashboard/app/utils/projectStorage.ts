@@ -36,6 +36,7 @@ export const PROJECT_STORAGE_KEYS: string[] = [
   "kb-capacity-risk-banner-dismissed",
   "kb-files-line-numbers",
   "kb-dashboard-dock-files-current",
+  "kb-dashboard-board-workflow-selection",
   "fusion-plugin-dependency-graph:positions",
 ];
 

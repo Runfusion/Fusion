@@ -2,6 +2,7 @@ import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_STEPWISE_CODING_WORKFLOW_IR } from "./builtin-stepwise-coding-workflow-ir.js";
 import { planReviewOptionalGroupNode } from "./builtin-plan-review-group.js";
+import { planReplanNode } from "./builtin-workflow-remediation-nodes.js";
 
 function cloneWorkflowIr(ir: WorkflowIr): WorkflowIr {
   return JSON.parse(JSON.stringify(ir)) as WorkflowIr;
@@ -39,6 +40,9 @@ const RAW_BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR: WorkflowIr = (() => 
   if (!ir.nodes.some((node) => node.id === "plan-review")) {
     ir.nodes.splice(planIndex + 1, 0, planReviewOptionalGroupNode("in-progress"));
   }
+  if (!ir.nodes.some((node) => node.id === "plan-replan")) {
+    ir.nodes.splice(planIndex + 2, 0, planReplanNode("triage"));
+  }
 
   template.nodes = template.nodes.filter((node) => node.id !== "step-review");
   template.edges = [
@@ -57,11 +61,18 @@ const RAW_BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR: WorkflowIr = (() => 
   if (!ir.edges.some((edge) => edge.from === "plan-review" && edge.to === "parse")) {
     ir.edges.push({ from: "plan-review", to: "parse", condition: "success" });
   }
-  if (!ir.edges.some((edge) => edge.from === "plan-review" && edge.to === "end" && edge.condition === "failure")) {
-    ir.edges.push({ from: "plan-review", to: "end", condition: "failure" });
+  ir.edges = ir.edges.filter((edge) => !(edge.from === "plan-review" && edge.to === "end" && edge.condition === "failure"));
+  if (!ir.edges.some((edge) => edge.from === "plan-review" && edge.to === "plan-replan" && edge.condition === "failure")) {
+    ir.edges.push({ from: "plan-review", to: "plan-replan", condition: "failure" });
   }
-  if (!ir.edges.some((edge) => edge.from === "code-review" && edge.to === "merge-gate" && edge.condition === "success")) {
-    ir.edges.push({ from: "code-review", to: "merge-gate", condition: "success" });
+  if (!ir.edges.some((edge) => edge.from === "plan-replan" && edge.to === "plan-review" && edge.condition === "success")) {
+    ir.edges.push({ from: "plan-replan", to: "plan-review", condition: "success", kind: "rework" });
+  }
+  if (!ir.edges.some((edge) => edge.from === "code-review" && edge.to === "completion-summary" && edge.condition === "success")) {
+    ir.edges.push({ from: "code-review", to: "completion-summary", condition: "success" });
+  }
+  if (!ir.edges.some((edge) => edge.from === "completion-summary" && edge.to === "merge-gate" && edge.condition === "success")) {
+    ir.edges.push({ from: "completion-summary", to: "merge-gate", condition: "success" });
   }
 
   return ir;

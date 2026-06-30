@@ -23,6 +23,8 @@ describe("useBoardWorkflows", () => {
   beforeEach(() => {
     subscribeHandlers = {};
     unsubscribe = vi.fn();
+    localStorage.clear();
+    sessionStorage.clear();
   });
 
   function makeDeps(fetchImpl: () => Promise<BoardWorkflowsPayload>) {
@@ -195,6 +197,33 @@ describe("useBoardWorkflows", () => {
       expect(result.current.selectedWorkflow).toBeNull();
       expect(result.current.selectedWorkflowId).toBeNull();
     });
+  });
+
+  it("preserves the current payload and durable selection when a refresh fetch fails", async () => {
+    let shouldReject = false;
+    const deps = makeDeps(() => {
+      if (shouldReject) return Promise.reject(new Error("temporary workflow API failure"));
+      return Promise.resolve(makePayload());
+    });
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...deps }));
+
+    await waitFor(() => expect(result.current.selectedWorkflow?.id).toBe("wf-a"));
+    act(() => { result.current.setSelectedWorkflowId("wf-b"); });
+    await waitFor(() => expect(result.current.selectedWorkflow?.id).toBe("wf-b"));
+    expect(localStorage.getItem("kb:p1:kb-dashboard-board-workflow-selection")).toBe("wf-b");
+
+    shouldReject = true;
+    await act(async () => {
+      result.current.refreshBoardWorkflows();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(deps.fetchBoardWorkflows).toHaveBeenCalledTimes(2));
+    expect(result.current.workflowMode).toBe(true);
+    expect(result.current.boardWorkflows).toEqual(makePayload());
+    expect(result.current.selectedWorkflow?.id).toBe("wf-b");
+    expect(result.current.selectedWorkflowId).toBe("wf-b");
+    expect(localStorage.getItem("kb:p1:kb-dashboard-board-workflow-selection")).toBe("wf-b");
   });
 
   it("keeps selected workflow state isolated per hook consumer", async () => {

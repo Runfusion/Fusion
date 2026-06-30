@@ -1,6 +1,7 @@
 import type { WorkflowIr } from "./workflow-ir-types.js";
 import { parseWorkflowIr } from "./workflow-ir.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
+import { completionSummaryNode } from "./builtin-completion-summary-node.js";
 
 /**
  * FNXC:Workflows 2026-06-20-00:25:
@@ -126,6 +127,7 @@ const RAW_BUILTIN_LEAD_GENERATION_WORKFLOW_IR: WorkflowIr = {
           "Draft concise personalized outreach for the enriched lead or prospect. Use the task description, the lead-enrichment task document when present, enrichment output, and declared lead fields (company, contactName, contactEmail, leadSource, leadScore, leadStatus). Structure the deliverable with: 1) outreach strategy and persona assumption, 2) ready-to-send initial message with subject line when appropriate, 3) personalization rationale tied to the strongest trigger or customer pain evidence, 4) low-friction call to action, 5) follow-up timing and alternate follow-up copy, and 6) any compliance or do-not-send caveats. Good outreach is brief, specific, respectful, value-led, and truthful; avoid spammy urgency, unsupported claims, and over-personalization from weak evidence. Persist the outreach draft as a task document using fn_task_document_write with key \"outreach-draft\" so the human can review it. If an artifact-registry tool (fn_artifact_register) is available, also register the deliverable as a previewable artifact.",
       },
     },
+    completionSummaryNode("outreach"),
     { id: "end", kind: "end", column: "converted" },
   ],
   edges: [
@@ -134,7 +136,8 @@ const RAW_BUILTIN_LEAD_GENERATION_WORKFLOW_IR: WorkflowIr = {
     { from: "qualify-lead", to: "qualification-gate", condition: "success" },
     { from: "qualification-gate", to: "enrich-lead", condition: "success" },
     { from: "enrich-lead", to: "draft-outreach", condition: "success" },
-    { from: "draft-outreach", to: "end", condition: "success" },
+    { from: "draft-outreach", to: "completion-summary", condition: "success" },
+    { from: "completion-summary", to: "end", condition: "success" },
   ],
   settings: BUILTIN_WORKFLOW_SETTINGS,
 };

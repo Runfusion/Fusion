@@ -8,6 +8,7 @@ import {
   serializeWorkflowIr,
 } from "../index.js";
 import { BROWSER_VERIFICATION_GROUP_ID, BROWSER_VERIFICATION_STEP_NODE_ID } from "../builtin-browser-verification-group.js";
+import { CODE_REVIEW_GROUP_ID, CODE_REVIEW_STEP_NODE_ID } from "../builtin-code-review-group.js";
 import type { WorkflowIrV2 } from "../workflow-ir-types.js";
 
 const EXECUTE_NODE_MAX_RETRIES = 2;
@@ -17,6 +18,15 @@ function browserVerificationInnerConfig(ir: WorkflowIrV2): Record<string, unknow
   expect(group?.kind).toBe("optional-group");
   const template = group?.config?.template as { nodes?: Array<{ id: string; config?: Record<string, unknown> }> } | undefined;
   const inner = template?.nodes?.find((node) => node.id === BROWSER_VERIFICATION_STEP_NODE_ID);
+  expect(inner).toBeDefined();
+  return inner?.config ?? {};
+}
+
+function codeReviewInnerConfig(ir: WorkflowIrV2): Record<string, unknown> {
+  const group = ir.nodes.find((node) => node.id === CODE_REVIEW_GROUP_ID);
+  expect(group?.kind).toBe("optional-group");
+  const template = group?.config?.template as { nodes?: Array<{ id: string; config?: Record<string, unknown> }> } | undefined;
+  const inner = template?.nodes?.find((node) => node.id === CODE_REVIEW_STEP_NODE_ID);
   expect(inner).toBeDefined();
   return inner?.config ?? {};
 }
@@ -69,14 +79,20 @@ describe("builtin coding workflow ir", () => {
       gateMode: "advisory",
       requiresBrowser: true,
     });
-    // execute → browser-verification → code-review → review on the success path; the
-    // pre-merge code-review optional-group sits next to browser-verification. failure → end.
+    expect(codeReviewInnerConfig(BUILTIN_CODING_WORKFLOW_IR)).toMatchObject({
+      toolMode: "readonly",
+      gateMode: "gate",
+    });
+    // execute → browser-verification → code-review → completion-summary → review on the success path; the
+    // pre-merge code-review optional-group sits next to browser-verification. failures route to remediation nodes.
     expect(BUILTIN_CODING_WORKFLOW_IR.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ from: "execute", to: "browser-verification", condition: "success" }),
         expect.objectContaining({ from: "browser-verification", to: "code-review", condition: "success" }),
-        expect.objectContaining({ from: "code-review", to: "review", condition: "success" }),
-        expect.objectContaining({ from: "browser-verification", to: "end", condition: "failure" }),
+        expect.objectContaining({ from: "code-review", to: "completion-summary", condition: "success" }),
+        expect.objectContaining({ from: "completion-summary", to: "review", condition: "success" }),
+        expect.objectContaining({ from: "browser-verification", to: "browser-verification-remediation", condition: "failure" }),
+        expect.objectContaining({ from: "code-review", to: "code-review-remediation", condition: "failure" }),
       ]),
     );
     // The legacy optionalSteps declaration is gone (the group replaces it).

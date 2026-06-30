@@ -76,6 +76,59 @@ function innerHandler(reviewResult: WorkflowNodeResult): WorkflowNodeHandler {
 }
 
 describe("WorkflowGraphExecutor optional-group → task.workflowStepResults (plan U2)", () => {
+  it("records top-level skill node progress so Compound Engineering stages show on cards", async () => {
+    const recorder = makeRecorder();
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "ce-node-progress-test",
+      columns: [{ id: "work", name: "Work", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        {
+          id: "execute",
+          kind: "prompt",
+          config: {
+            name: "Execute",
+            executor: "skill",
+            skillName: "compound-engineering:ce-work",
+            toolMode: "coding",
+            prompt: "Run /ce-work",
+          },
+        },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "execute" },
+        { from: "execute", to: "end" },
+      ],
+    };
+    const executor = new WorkflowGraphExecutor({
+      handlers: { prompt: async () => ({ outcome: "success" }) },
+      recordWorkflowStepResult: recorder.record,
+    });
+
+    await executor.run(taskWith([]), settingsOn(), ir);
+
+    expect(recorder.calls).toHaveLength(2);
+    expect(recorder.calls[0]).toEqual(expect.objectContaining({
+      workflowStepId: "execute",
+      workflowStepName: "Execute",
+      source: "node",
+      status: "pending",
+      startedAt: expect.any(String),
+    }));
+    expect(recorder.results).toEqual([
+      expect.objectContaining({
+        workflowStepId: "execute",
+        workflowStepName: "Execute",
+        source: "node",
+        status: "passed",
+        startedAt: recorder.calls[0].startedAt,
+        completedAt: expect.any(String),
+      }),
+    ]);
+  });
+
   it("(a) enabled group + APPROVE verdict → one entry keyed by the group node id with status 'passed'", async () => {
     const recorder = makeRecorder();
     const executor = new WorkflowGraphExecutor({

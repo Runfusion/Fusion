@@ -39,14 +39,28 @@ Be specific: cite the plan section or file path for every finding and explain th
 {"verdict":"APPROVE|APPROVE_WITH_NOTES|REVISE","notes":"..."}`;
 
 /** Build the `plan-review` optional-group node placed between planning and execution. */
-export function planReviewOptionalGroupNode(column: string): WorkflowIrNode {
+export function planReviewOptionalGroupNode(
+  column: string,
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded" } = {},
+): WorkflowIrNode {
   return {
     id: PLAN_REVIEW_GROUP_ID,
     kind: "optional-group",
     column,
     config: {
       name: PLAN_REVIEW_NAME,
-      defaultOn: true,
+      defaultOn: options.defaultOn ?? true,
+      /*
+       * FNXC:WorkflowRemediation 2026-06-29-12:14:
+       * Plan Review REVISE must loop through graph-owned replan and then return to Plan Review before execution. Mark the optional group as the bounded rework-region head so the top-level remediation edge is legal and cannot spin forever.
+       */
+      reworkRegion: true,
+      maxReworkCycles: 3,
+      /*
+       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
+       * Built-in Plan Review owns the pre-execution replan budget. Default to three graph-mediated revise→replan→review attempts while allowing workflow authors to override `maxRevisions`.
+       */
+      maxRevisions: options.maxRevisions ?? 3,
       template: {
         nodes: [
           {
@@ -57,7 +71,7 @@ export function planReviewOptionalGroupNode(column: string): WorkflowIrNode {
               description: PLAN_REVIEW_DESCRIPTION,
               prompt: PLAN_REVIEW_PROMPT,
               toolMode: "readonly",
-              gateMode: "advisory",
+              gateMode: "gate",
             },
           },
         ],

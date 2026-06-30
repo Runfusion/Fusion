@@ -114,6 +114,39 @@ function getPromptFullscreenTextarea() {
   return within(overlay!).getByLabelText("Prompt") as HTMLTextAreaElement;
 }
 
+function defineElementMetric(element: Element, property: "clientWidth" | "scrollWidth", value: number) {
+  Object.defineProperty(element, property, { configurable: true, value });
+}
+
+function assertSimpleEditorTabScrollOwner(shell: HTMLElement, width: number) {
+  const tabStrip = within(shell).getByRole("navigation", { name: /workflow editor sections/i });
+  const editorBody = shell.closest(".wf-editor-body");
+  const editorModal = shell.closest(".wf-editor-modal");
+  expect(editorBody).not.toBeNull();
+  expect(editorModal).not.toBeNull();
+
+  defineElementMetric(tabStrip, "clientWidth", width);
+  defineElementMetric(tabStrip, "scrollWidth", width * 2);
+  for (const containedElement of [shell, editorBody!, editorModal!, document.documentElement, document.body]) {
+    defineElementMetric(containedElement, "clientWidth", width);
+    defineElementMetric(containedElement, "scrollWidth", width);
+  }
+
+  const tabButtons = within(tabStrip).getAllByRole("button");
+  // FNXC:WorkflowSimpleEditor 2026-06-29-13:16: The regression invariant is the complete six-tab simple-editor strip; do not let a test pass by measuring a reduced or renamed tab set that hides overflow instead of preserving horizontal scroll.
+  expect(tabButtons.map((button) => button.textContent)).toEqual(["Graph", "Add", "Settings", "Fields", "Columns", "Actions"]);
+  expect(tabStrip).toHaveClass("wf-mobile-tabs");
+  for (const tabButton of tabButtons) {
+    expect(tabButton).toHaveClass("wf-mobile-tab");
+  }
+  expect(tabStrip.scrollWidth).toBeGreaterThan(tabStrip.clientWidth);
+  expect(shell.scrollWidth).toBeLessThanOrEqual(shell.clientWidth + 1);
+  expect(editorBody!.scrollWidth).toBeLessThanOrEqual(editorBody!.clientWidth + 1);
+  expect(editorModal!.scrollWidth).toBeLessThanOrEqual(editorModal!.clientWidth + 1);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth + 1);
+  expect(document.body.scrollWidth).toBeLessThanOrEqual(document.body.clientWidth + 1);
+}
+
 function mockWorkflowEditorViewport(mode: "desktop" | "mobile" | "tablet" = "desktop") {
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -406,14 +439,20 @@ describe("workflow-flow-mapping", () => {
     const failuresToEnd = edges.filter((edge) => edge.target === "end" && edge.data?.condition === "failure");
     // FNXC:WorkflowOptionalGroup 2026-06-21-15:30: the coding built-in's pre-merge `workflow-step` seam was migrated to a `browser-verification` optional-group (U6), which now carries the failure->end edge in its place.
     // FNXC:CodeReviewStep 2026-06-25-00:00: the default-on `code-review` optional-group is also on the pre-merge success path with its own failure->end edge (see builtin-code-review-group.test.ts), so it is an expected failure->end source too. This corrected a stale assertion that predated the code-review group's addition.
+    // FNXC:WorkflowPlanReview 2026-06-29-00:00: the built-in coding workflow now includes a `plan-review` gate on the normal path; its failure edge must remain renderable and independently clickable like the existing parallel failure-to-end edges.
     expect(failuresToEnd.map((edge) => edge.source).sort()).toEqual([
-      "browser-verification",
-      "code-review",
       "execute",
       "merge-attempt",
+      "plan-review",
       "planning",
       "review",
     ]);
+    expect(edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "browser-verification", target: "browser-verification-remediation" }),
+      expect.objectContaining({ source: "code-review", target: "code-review-remediation" }),
+      expect.objectContaining({ source: "browser-verification-remediation", target: "browser-verification" }),
+      expect.objectContaining({ source: "code-review-remediation", target: "code-review" }),
+    ]));
     expect(new Set(failuresToEnd.map((edge) => edge.id)).size).toBe(failuresToEnd.length);
     expect(failuresToEnd.every((edge) => edge.interactionWidth === WF_EDGE_INTERACTION_WIDTH)).toBe(true);
   });
@@ -452,6 +491,33 @@ describe("WorkflowNodeEditor", () => {
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
     expect(screen.queryByTestId("wf-mobile-select-note")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "QA" })[0]).toHaveClass("active");
+  });
+
+  it("renders workflow lifecycle warnings returned by the store", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      {
+        ...v2Def(),
+        lifecycleWarnings: [
+          {
+            code: "missing-merge-region",
+            message: "Full task workflows should include a merge region so done is backed by merge proof.",
+          },
+          {
+            code: "optional-group-after-execution",
+            nodeId: "plan-review",
+            message: "Plan Review should be ordered before parse/execution.",
+          },
+        ],
+      },
+    ]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    const banner = await screen.findByTestId("wf-lifecycle-warnings");
+    expect(banner).toHaveTextContent("Lifecycle warnings");
+    expect(banner).toHaveTextContent("missing-merge-region");
+    expect(banner).toHaveTextContent("optional-group-after-execution");
+    expect(banner).toHaveTextContent("plan-review");
   });
 
   it("lets desktop users collapse and restore the workflow sidebar", async () => {
@@ -536,6 +602,7 @@ describe("WorkflowNodeEditor", () => {
     for (const panel of ["graph", "add", "settings", "fields", "columns", "actions"]) {
       expect(within(shell).getByTestId(`wf-mobile-tab-${panel}`)).toBeInTheDocument();
     }
+    assertSimpleEditorTabScrollOwner(shell, 1024);
 
     fireEvent.click(screen.getByTestId("wf-mobile-tab-actions"));
     expect(screen.getByTestId("wf-mobile-save")).toBeInTheDocument();
@@ -550,6 +617,19 @@ describe("WorkflowNodeEditor", () => {
     expect(screen.getByTestId("wf-mobile-add-gate-gate")).toBeInTheDocument();
   });
 
+  it("renders automatic mobile simple layout with the tab strip as scroll owner", async () => {
+    mockWorkflowEditorViewport("mobile");
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "QA" }));
+
+    const shell = await screen.findByTestId("wf-mobile-shell");
+    expect(screen.queryByTestId("wf-layout-toggle")).not.toBeInTheDocument();
+    assertSimpleEditorTabScrollOwner(shell, 375);
+  });
+
   it("creates a condition-capable edge from the mobile simple graph without the canvas", async () => {
     mockWorkflowEditorViewport("mobile");
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
@@ -559,6 +639,7 @@ describe("WorkflowNodeEditor", () => {
     fireEvent.click(await screen.findByRole("button", { name: "QA" }));
     await screen.findByText("Save");
     const shell = await screen.findByTestId("wf-mobile-shell");
+    assertSimpleEditorTabScrollOwner(shell, 375);
     expect(within(shell).queryByTestId("rf__wrapper")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-wf-connect-start")).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-wf-connect-end")).not.toBeInTheDocument();
@@ -702,8 +783,9 @@ describe("WorkflowNodeEditor", () => {
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
     fireEvent.click(screen.getByTestId("wf-layout-toggle"));
 
-    expect(await screen.findByTestId("wf-mobile-shell")).toBeInTheDocument();
+    const shell = await screen.findByTestId("wf-mobile-shell");
     expect(screen.getByTestId("wf-mobile-tab-actions")).toBeInTheDocument();
+    assertSimpleEditorTabScrollOwner(shell, 834);
   });
 
   it("preselects the matching initial workflow id on desktop", async () => {

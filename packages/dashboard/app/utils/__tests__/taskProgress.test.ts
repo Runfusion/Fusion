@@ -141,6 +141,46 @@ describe("getUnifiedTaskProgress", () => {
     expect(progress.items.some((i) => i.id === "workflow-disabled-step")).toBe(false);
   });
 
+  it("includes recorded graph-node progress that is not an optional toggle", () => {
+    const progress = getUnifiedTaskProgress(
+      makeTask({
+        enabledWorkflowSteps: [],
+        workflowStepResults: [
+          {
+            workflowStepId: "plan",
+            workflowStepName: "Plan",
+            source: "node",
+            status: "passed",
+            startedAt: "2026-06-29T21:49:55.355Z",
+            completedAt: "2026-06-29T21:51:00.000Z",
+          },
+          {
+            workflowStepId: "execute",
+            workflowStepName: "Execute",
+            source: "node",
+            status: "pending",
+            startedAt: "2026-06-29T21:51:00.996Z",
+          },
+          {
+            workflowStepId: "code-review",
+            workflowStepName: "Code Review",
+            source: "optional-group",
+            status: "passed",
+            startedAt: "2026-06-29T21:52:00.000Z",
+            completedAt: "2026-06-29T21:52:20.000Z",
+          },
+        ],
+      }),
+    );
+
+    expect(progress.items.map((item) => [item.id, item.name, item.status])).toEqual([
+      ["workflow-plan", "Plan", "done"],
+      ["workflow-execute", "Execute", "running"],
+    ]);
+    expect(progress.total).toBe(2);
+    expect(progress.completed).toBe(1);
+  });
+
   it("produces 8 items with the correct completed count for 6 impl steps + 2 workflow steps", () => {
     const progress = getUnifiedTaskProgress(
       makeTask({

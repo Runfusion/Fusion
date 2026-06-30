@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Board } from "../Board";
 import { COLUMNS } from "@fusion/core";
+import { BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
+import { scopedKey } from "../../utils/projectStorage";
 
 import type { Task } from "@fusion/core";
 
@@ -48,11 +50,44 @@ const columnRenderCounts: Record<string, number> = {};
 
 // Mock child components so we only test Board's own rendering
 vi.mock("../Column", () => ({
-  Column: React.memo(({ column, tasks, collapsed, onToggleCollapse, onQuickCreate, onNewTask, onToggleAutoMerge, onArchiveAllDone, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive }: { column: string; tasks: Task[]; collapsed?: boolean; onToggleCollapse?: () => void; onQuickCreate?: unknown; onNewTask?: unknown; onToggleAutoMerge?: () => void; onArchiveAllDone?: unknown; favoriteProviders?: string[]; favoriteModels?: string[]; onToggleFavorite?: (provider: string) => void; onToggleModelFavorite?: (modelId: string) => void; isSearchActive?: boolean }) => {
+  Column: React.memo(({
+    column,
+    tasks,
+    collapsed,
+    onToggleCollapse,
+    onQuickCreate,
+    onNewTask,
+    onToggleAutoMerge,
+    onArchiveAllDone,
+    favoriteProviders,
+    favoriteModels,
+    onToggleFavorite,
+    onToggleModelFavorite,
+    isSearchActive,
+    doneSortMode,
+    onDoneSortModeChange,
+  }: {
+    column: string;
+    tasks: Task[];
+    collapsed?: boolean;
+    onToggleCollapse?: () => void;
+    onQuickCreate?: unknown;
+    onNewTask?: unknown;
+    onToggleAutoMerge?: () => void;
+    onArchiveAllDone?: unknown;
+    favoriteProviders?: string[];
+    favoriteModels?: string[];
+    onToggleFavorite?: (provider: string) => void;
+    onToggleModelFavorite?: (modelId: string) => void;
+    isSearchActive?: boolean;
+    doneSortMode?: string;
+    onDoneSortModeChange?: (mode: "completion-date-desc" | "task-id-desc") => void;
+  }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"}>
         {onToggleCollapse && <button onClick={onToggleCollapse}>toggle-{column}</button>}
+        {onDoneSortModeChange && <button type="button" onClick={() => onDoneSortModeChange("task-id-desc")}>sort-{column}-by-id</button>}
       </div>
     );
   }),
@@ -493,6 +528,40 @@ describe("Board", () => {
 
         const doneTasks = JSON.parse(screen.getByTestId("column-done").getAttribute("data-tasks") || "[]") as Task[];
         expect(doneTasks.map((t: Task) => t.id)).toEqual(["FN-012", "FN-011", "FN-010"]);
+      });
+
+      it("threads Done sort state through the legacy board without altering other columns", () => {
+        const tasks: Task[] = [
+          createTask({ id: "FN-003", description: "Old done", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
+          createTask({ id: "FN-001", description: "New done", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
+          createTask({ id: "FN-002", description: "Tie low id", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-004", description: "Tie high id", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-050", description: "Todo fifty", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+          createTask({ id: "FN-010", description: "Todo ten", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+        ];
+
+        renderBoard({ tasks });
+
+        const readIds = (column: string) => (JSON.parse(screen.getByTestId(`column-${column}`).getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
+        expect(readIds("done")).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
+        expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+        expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "no");
+
+        fireEvent.click(screen.getByRole("button", { name: "sort-done-by-id" }));
+
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
+        expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);
+        expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+      });
+
+      it("passes Done sort state to an empty legacy Done column", () => {
+        renderBoard({ tasks: [] });
+
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-tasks", "[]");
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
+        expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
       });
 
       it("orders todo by priority before age", () => {
@@ -962,6 +1031,49 @@ describe("Board", () => {
       expect(screen.queryByTestId(/^lane-/)).toBeNull();
     });
 
+    it("hydrates remounted board workflow selection from durable project storage", async () => {
+      const projectId = "project-board-persist";
+      enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      const { unmount } = renderBoard({ projectId });
+
+      await selectWorkflow(CUSTOM_WORKFLOW.id);
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent(CUSTOM_WORKFLOW.name));
+      expect(window.localStorage.getItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId))).toBe(CUSTOM_WORKFLOW.id);
+
+      unmount();
+      enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      renderBoard({ projectId });
+
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent(CUSTOM_WORKFLOW.name));
+    });
+
+    it("keeps a custom board workflow selected after task refresh and workflow payload revalidation", async () => {
+      fetchBoardWorkflowsMock.mockResolvedValue({
+        flagEnabled: true,
+        defaultWorkflowId: "builtin:coding",
+        workflows: [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+        taskWorkflowIds: { "FN-1": "wf-custom" },
+      });
+      const { rerender } = renderBoard({
+        projectId: "project-board-refresh",
+        tasks: [mkTask({ id: "FN-1", column: "intake", title: "Custom task" })],
+      });
+
+      await selectWorkflow(CUSTOM_WORKFLOW.id);
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent(CUSTOM_WORKFLOW.name));
+
+      rerender(<Board {...createBoardProps({
+        projectId: "project-board-refresh",
+        tasks: [mkTask({ id: "FN-1", column: "done", title: "Custom task after respec" })],
+      })} />);
+      await act(async () => {
+        sseHandlers["workflow:updated"]?.();
+      });
+
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent(CUSTOM_WORKFLOW.name));
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-tasks", expect.stringContaining("FN-1"));
+    });
+
     it("tasks with no selection render in the default selected workflow", async () => {
       enableFlag({ "FN-1": "builtin:coding", "FN-2": "builtin:coding" });
       renderBoard({ tasks: [mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "in-progress" })] });
@@ -1275,6 +1387,68 @@ describe("Board", () => {
 
       await waitFor(() => expect(screen.getByTestId("column-intake")).toBeDefined());
       expect(screen.queryByTestId("column-archived")).toBeNull();
+    });
+
+    it("built-in workflow Done uses the selected Done sort mode", async () => {
+      const tasks = [
+        mkTask({ id: "FN-003", column: "done", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
+        mkTask({ id: "FN-001", column: "done", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
+        mkTask({ id: "FN-002", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
+        mkTask({ id: "FN-004", column: "done", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
+        mkTask({ id: "FN-050", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+        mkTask({ id: "FN-010", column: "todo", priority: "normal", createdAt: "2024-01-01T10:00:00.000Z" }),
+      ];
+      enableFlag(Object.fromEntries(tasks.map((task) => [task.id, "builtin:coding"])));
+      renderBoard({ tasks });
+
+      const readIds = (column: string) => (JSON.parse(screen.getByTestId(`column-${column}`).getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
+      await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
+      expect(readIds("done")).toEqual(["FN-001", "FN-002", "FN-004", "FN-003"]);
+      expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-has-done-sort-handler", "no");
+
+      fireEvent.click(screen.getByRole("button", { name: "sort-done-by-id" }));
+
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
+      expect(readIds("done")).toEqual(["FN-004", "FN-003", "FN-002", "FN-001"]);
+      expect(readIds("todo")).toEqual(["FN-010", "FN-050"]);
+    });
+
+    it("passes Done sort state to an empty built-in workflow Done column", async () => {
+      enableFlag({});
+      renderBoard({ tasks: [] });
+
+      await waitFor(() => expect(screen.getByTestId("column-done")).toHaveAttribute("data-tasks", "[]"));
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-done-sort-mode", "completion-date-desc");
+      expect(screen.getByTestId("column-done")).toHaveAttribute("data-has-done-sort-handler", "yes");
+    });
+
+    it("uses the selected Done sort mode for custom complete workflow columns", async () => {
+      const workflow = {
+        id: "wf-shipped",
+        name: "Custom shipped",
+        columns: [
+          { id: "todo", name: "Todo", flags: { intake: true } },
+          { id: "shipped", name: "Shipped", flags: { complete: true } },
+        ],
+      };
+      const tasks = [
+        mkTask({ id: "FN-003", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T09:00:00.000Z" }),
+        mkTask({ id: "FN-001", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T11:00:00.000Z" }),
+        mkTask({ id: "FN-002", column: "shipped", priority: "normal", columnMovedAt: "2024-01-01T10:00:00.000Z" }),
+      ];
+      enableFlag({ "FN-003": workflow.id, "FN-001": workflow.id, "FN-002": workflow.id }, [workflow]);
+      renderBoard({ tasks });
+
+      const readIds = () => (JSON.parse(screen.getByTestId("column-shipped").getAttribute("data-tasks") || "[]") as Task[]).map((task) => task.id);
+      await waitFor(() => expect(screen.getByTestId("column-shipped")).toHaveAttribute("data-done-sort-mode", "completion-date-desc"));
+      expect(screen.getByTestId("column-shipped")).toHaveAttribute("data-has-done-sort-handler", "yes");
+      expect(readIds()).toEqual(["FN-001", "FN-002", "FN-003"]);
+
+      fireEvent.click(screen.getByRole("button", { name: "sort-shipped-by-id" }));
+
+      expect(screen.getByTestId("column-shipped")).toHaveAttribute("data-done-sort-mode", "task-id-desc");
+      expect(readIds()).toEqual(["FN-003", "FN-002", "FN-001"]);
     });
 
     it("done column in workflow mode receives onArchiveAllDone prop", async () => {

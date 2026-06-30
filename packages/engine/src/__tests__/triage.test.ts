@@ -1388,6 +1388,53 @@ describe("TriageProcessor", () => {
     }));
   });
 
+  it("retries unavailable Plan Review without launching the planning agent", async () => {
+    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-");
+    const taskId = "FN-PLAN-RETRY";
+    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
+    const prompt = "# Task: FN-PLAN-RETRY - Retry review\n\n## Mission\n\nReuse this existing plan.\n";
+
+    try {
+      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
+      await writeFile(promptPath, prompt, "utf-8");
+
+      const retryTask = createTriageTask({
+        id: taskId,
+        title: "Retry review",
+        status: "plan-review-unavailable",
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+      } as Partial<Task>);
+      const retryStore = createMockStore();
+      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
+      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ requirePlanApproval: false } as Settings);
+      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
+
+      mockCreateFnAgent.mockClear();
+      mockReviewStep.mockResolvedValue({
+        verdict: "APPROVE",
+        review: "### Verdict: APPROVE\n\n### Summary\nReady.",
+        summary: "Ready.",
+      });
+
+      await retryProcessor.specifyTask(retryTask);
+
+      expect(mockCreateFnAgent).not.toHaveBeenCalled();
+      expect(mockReviewStep).toHaveBeenCalledWith(
+        tempRoot,
+        taskId,
+        0,
+        "PROMPT.md",
+        "plan",
+        prompt,
+        undefined,
+        expect.objectContaining({ taskId }),
+      );
+      expect(retryStore.moveTask).toHaveBeenCalledWith(taskId, "todo");
+    } finally {
+      await cleanupTriageFixtureRoot(tempRoot);
+    }
+  });
+
   it("includes workflow discovery and selection tools in the full triage toolset", async () => {
     const task = createTriageTask({ id: "FN-WORKFLOW-TOOLS" });
     const detailedTask = { ...mockTaskDetail, id: task.id, attachments: [], comments: [] };

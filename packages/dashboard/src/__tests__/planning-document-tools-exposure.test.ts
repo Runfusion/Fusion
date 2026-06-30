@@ -35,6 +35,17 @@ async function waitFor(condition: () => boolean): Promise<void> {
   throw new Error("Timed out waiting for condition");
 }
 
+const REQUIRED_WORKFLOW_AUTHORING_TOOLS = [
+  "fn_workflow_list",
+  "fn_workflow_get",
+  "fn_workflow_select",
+  "fn_workflow_create",
+  "fn_workflow_update",
+  "fn_workflow_delete",
+  "fn_workflow_settings",
+  "fn_trait_list",
+] as const;
+
 describe("planning task-document tools", () => {
   let rootDir: string;
   let globalDir: string;
@@ -55,7 +66,7 @@ describe("planning task-document tools", () => {
     rmSync(globalDir, { recursive: true, force: true });
   });
 
-  it("exposes task-document tools from both planning customTools assembly sites", async () => {
+  it("exposes task-document and workflow authoring tools from both planning customTools assembly sites", async () => {
     const capturedNonStreaming: any[] = [];
     __setCreateFnAgent(async (options: any) => {
       capturedNonStreaming.push(options);
@@ -67,6 +78,9 @@ describe("planning task-document tools", () => {
     const nonStreamingToolNames = capturedNonStreaming[0]?.customTools?.map((tool: any) => tool.name) ?? [];
     expect(nonStreamingToolNames).toContain("fn_task_document_write");
     expect(nonStreamingToolNames).toContain("fn_task_document_read");
+    for (const toolName of REQUIRED_WORKFLOW_AUTHORING_TOOLS) {
+      expect(nonStreamingToolNames).toContain(toolName);
+    }
 
     const capturedStreaming: any[] = [];
     __resetPlanningState();
@@ -92,6 +106,9 @@ describe("planning task-document tools", () => {
     const streamingToolNames = capturedStreaming[0]?.customTools?.map((tool: any) => tool.name) ?? [];
     expect(streamingToolNames).toContain("fn_task_document_write");
     expect(streamingToolNames).toContain("fn_task_document_read");
+    for (const toolName of REQUIRED_WORKFLOW_AUTHORING_TOOLS) {
+      expect(streamingToolNames).toContain(toolName);
+    }
   });
 
   it("uses explicit task_id when planning document tools write and read task documents", async () => {

@@ -20,6 +20,7 @@ import {
   type WorkflowCustomNodeRunner,
 } from "./workflow-node-handlers.js";
 import type { WorkflowRuntimePrimitives } from "./runtime-primitives.js";
+import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
 
 export type WorkflowTaskRuntimeDisposition = "completed" | "failed" | "manual-required";
 
@@ -35,6 +36,8 @@ export interface WorkflowTaskRuntimeDeps extends Omit<WorkflowGraphExecutorDeps,
   store: WorkflowIrResolverStore & {
     getTask?: (taskId: string) => Promise<TaskDetail>;
     getTaskDocument?: (taskId: string, key: string) => Promise<unknown | null>;
+    updateTask?: (taskId: string, updates: { summary: string }) => Promise<unknown> | unknown;
+    logEntry?: (taskId: string, action: string, detail?: string) => Promise<unknown> | unknown;
     transitionWorkflowWorkItem?: (
       id: string,
       state: WorkflowWorkItemState,
@@ -130,6 +133,12 @@ export class WorkflowTaskRuntime {
           reason,
         };
       }
+      const latestTask = await this.deps.store.getTask?.(task.id).catch(() => undefined);
+      await ensureWorkflowCompletionSummary(this.deps.store, latestTask ?? task, {
+        reason: "workflow-runtime-completed",
+        workflowId: target.workflowId,
+        runId: this.deps.runId ?? `${task.id}:${target.workflowId}`,
+      }).catch(() => undefined);
     }
 
     const disposition: WorkflowTaskRuntimeDisposition = result.outcome === "success" ? "completed" : "failed";
@@ -178,6 +187,14 @@ export class WorkflowTaskRuntime {
     const node = target.ir.nodes.find((candidate) => candidate.id === workItem.nodeId);
     if (!node) {
       return this.failWorkItem(workItem, `workflow-work-item-node-missing:${workItem.nodeId}`);
+    }
+
+    if (workItem.kind === "merge" || workItem.kind === "manual-hold") {
+      await ensureWorkflowCompletionSummary(this.deps.store, task, {
+        reason: `workflow-work-item:${workItem.kind}`,
+        workflowId: target.workflowId,
+        runId: workItem.runId,
+      }).catch(() => undefined);
     }
 
     const invoked: string[] = [];

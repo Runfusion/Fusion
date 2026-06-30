@@ -88,6 +88,11 @@ export default defineConfig({
             "src/__tests__/hold-release.test.ts",
             "src/__tests__/workflow-graph-task-runner.test.ts",
             "src/__tests__/workflow-graph-executor-parity.test.ts",
+            /*
+            FNXC:EngineTests 2026-06-29-00:00:
+            The minimal task-pipeline smoke belongs in engine-core because the default builtin:coding path is now a merge-gate canary: it proves the unselected-task runtime reaches merge with deterministic in-memory seams only, without real git, network, subprocesses, timers, or broad e2e scope.
+            */
+            "src/__tests__/task-pipeline-smoke.test.ts",
             "src/__tests__/scheduler-workflow-cutover.test.ts",
             "src/__tests__/executor-base-commit-capture.test.ts",
             "src/__tests__/executor-capture-modified-files-attribution.test.ts",
@@ -144,6 +149,11 @@ export default defineConfig({
             FNXC:EngineTests 2026-06-14-02:11:
             FN-6433 rescued the AI-merge suites by replacing broad activeSessionRegistry cleanup with path-scoped cleanup, so the default engine lane should execute them again. The soft-delete blocker residue suite was deleted under the ratchet because deterministic soft-delete deadlock coverage already owns that invariant.
             */
+            /*
+            FNXC:EngineTests 2026-06-29-13:55:
+            FN-7239 quarantines executor-pause.test.ts under the deletion ratchet because it still asserts obsolete direct-dispatch StepSessionExecutor and legacy pause paths after builtin:coding moved to graph execution. Keep graph-path equivalents active in step-session-executor, executor-paused-abort-todo-benign, and workflow-graph-step-rerun before rescuing or deleting this file.
+            */
+            "src/__tests__/executor-pause.test.ts",
           ],
         },
       },

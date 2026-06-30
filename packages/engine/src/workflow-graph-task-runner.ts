@@ -13,6 +13,7 @@ import {
   WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND,
   WorkflowGraphExecutor,
   type WorkflowGraphExecutorDeps,
+  type WorkflowNodePreparationRequirement,
   type WorkflowNodeAbortKind,
   type WorkflowNodeOutcome,
   type WorkflowTaskProjection,
@@ -66,6 +67,7 @@ export interface WorkflowGraphTaskRunResult {
 export interface WorkflowGraphRunnerStore {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined;
   getWorkflowDefinition(id: string): Promise<WorkflowDefinition | undefined>;
+  getTask?(taskId: string): Promise<TaskDetail>;
 }
 
 export interface WorkflowGraphTaskRunnerDeps {
@@ -73,6 +75,12 @@ export interface WorkflowGraphTaskRunnerDeps {
   seams: WorkflowLegacySeams;
   primitives?: WorkflowRuntimePrimitives;
   runCustomNode: WorkflowCustomNodeRunner;
+  /** Workflow-node prerequisite fulfillment, invoked after graph-level classification. */
+  prepareNodeExecution?: (
+    node: WorkflowIr["nodes"][number],
+    task: TaskDetail,
+    requirement: WorkflowNodePreparationRequirement,
+  ) => void | Promise<void>;
   maxRetriesPerNode?: number;
   /** Optional diagnostics hook (audit/log emission). Never throws into the run. */
   onEvent?: (event: { type: "start" | "terminal" | "fallback"; taskId: string; detail: string }) => void;
@@ -265,6 +273,7 @@ export class WorkflowGraphTaskRunner {
         seams: wrappedSeams,
         primitives: wrappedPrimitives,
         runCustomNode: wrappedRunCustomNode,
+        prepareNodeExecution: this.deps.prepareNodeExecution,
         maxRetriesPerNode: this.deps.maxRetriesPerNode,
         branchPersistence: this.deps.branchPersistence,
         branchSemaphore: this.deps.branchSemaphore,
@@ -274,6 +283,11 @@ export class WorkflowGraphTaskRunner {
         runCode: this.deps.runCode,
         notifyDispatch: this.deps.notifyDispatch,
         prNodes: this.deps.prNodes,
+        /*
+        FNXC:WorkflowResume 2026-06-29-08:49:
+        Production graph runs must fetch live task steps during foreach replay. The runner is the workflow boundary that has store access, so it supplies the fresh projection seam instead of making executor self-healing guess after a stale step node fails.
+        */
+        getTaskSteps: async (stepTask) => (await this.deps.store.getTask?.(stepTask.id))?.steps ?? stepTask.steps ?? [],
         // Step-inversion (KTD-11, U10): worktree isolation + parallel scheduling.
         allocateInstanceWorktree: this.deps.allocateInstanceWorktree,
         resolveIntegrationBase: this.deps.resolveIntegrationBase,

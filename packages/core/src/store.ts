@@ -115,6 +115,7 @@ import type {
   WorkflowNodeLayout,
 } from "./workflow-definition-types.js";
 import { compileWorkflowToSteps, isInterpreterDeferredWorkflowCompileError } from "./workflow-compiler.js";
+import { analyzeWorkflowLifecycle } from "./workflow-lifecycle-validation.js";
 import { resolveDefaultOnOptionalGroupIds } from "./workflow-optional-steps.js";
 import {
   BUILTIN_WORKFLOWS,
@@ -160,7 +161,7 @@ import { CentralCore } from "./central-core.js";
 import { SecretsStore } from "./secrets-store.js";
 import { MasterKeyManager } from "./master-key.js";
 import { hasSyncPassphraseConfigured } from "./secrets-sync-passphrase.js";
-import { getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
+import { getTaskDoneBypassBlocker, getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
 import { getInReviewStallReason } from "./in-review-stall.js";
 import { getInReviewStalledSignal } from "./in-review-stalled.js";
 import { getStalePausedReviewSignal } from "./stale-paused-review.js";
@@ -324,6 +325,7 @@ interface TaskRow {
   noCommitsExpected: number | null;
   enabledWorkflowSteps: string | null;
   modifiedFiles: string | null;
+  workflowTransitionNotification: string | null;
   missionId: string | null;
   sliceId: string | null;
   scopeOverride: number | null;
@@ -482,6 +484,10 @@ const TASK_COLUMN_DESCRIPTORS: TaskColumnDescriptor[] = [
   defineTaskColumn("noCommitsExpected", (task) => task.noCommitsExpected ? 1 : 0),
   defineTaskColumn("enabledWorkflowSteps", (task) => toJson(task.enabledWorkflowSteps || [])),
   defineTaskColumn("modifiedFiles", (task) => toJson(task.modifiedFiles || [])),
+  // FNXC:WorkflowNotifications 2026-06-29-13:10: persist typed workflow transition
+  // notification markers as JSON text so self-healing recovery alerts survive
+  // SQLite row round-trips and task:updated emits from the durable task shape.
+  defineTaskColumn("workflowTransitionNotification", (task) => toJsonNullable(task.workflowTransitionNotification)),
   defineTaskColumn("missionId", (task) => task.missionId ?? null),
   defineTaskColumn("sliceId", (task) => task.sliceId ?? null),
   defineTaskColumn("scopeOverride", (task) => task.scopeOverride ? 1 : null),
@@ -2206,6 +2212,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       */
       enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return Array.isArray(e) ? e : undefined; })(),
       modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
+      workflowTransitionNotification: fromJson<Task["workflowTransitionNotification"]>(row.workflowTransitionNotification) ?? undefined,
       missionId: row.missionId || undefined,
       sliceId: row.sliceId || undefined,
       assignedAgentId: row.assignedAgentId || undefined,
@@ -2644,7 +2651,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "columnDwellMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "comments", "review", "reviewState", "workflowStepResults", "steeringComments",
       "attachments", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
-      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
+      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "workflowTransitionNotification",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
@@ -2693,7 +2700,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
       "createdAt", "updatedAt", "columnMovedAt", "firstExecutionAt", "cumulativeActiveMs", "columnDwellMs", "executionStartedAt", "executionCompletedAt",
       "dependencies", "steps", "customFields", "attachments", "steeringComments",
       "comments", "review", "reviewState", "workflowStepResults", "prInfo", "prInfos", "issueInfo", "githubTracking", "sourceIssueProvider", "sourceIssueRepository", "sourceIssueExternalIssueId", "sourceIssueNumber", "sourceIssueUrl", "sourceIssueClosedAt", "mergeDetails", "workspaceWorktrees",
-      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles",
+      "breakIntoSubtasks", "noCommitsExpected", "enabledWorkflowSteps", "modifiedFiles", "workflowTransitionNotification",
       "missionId", "sliceId", "scopeOverride", "scopeOverrideReason", "scopeAutoWiden", "assignedAgentId", "pausedByAgentId", "assigneeUserId", "nodeId", "effectiveNodeId", "effectiveNodeSource",
       "sourceType", "sourceAgentId", "sourceRunId", "sourceSessionId", "sourceMessageId", "sourceParentTaskId", "sourceMetadata",
       "checkedOutBy", "checkedOutAt", "checkoutNodeId", "checkoutRunId", "checkoutLeaseRenewedAt", "checkoutLeaseEpoch", "deletedAt", "allowResurrection",
@@ -7020,6 +7027,11 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         (options?.moveSource === "engine" || options?.moveSource === "scheduler" || options?.skipMergeBlocker === true));
   }
 
+  private isWorkflowDoneBypassGuardedTask(id: string, task: Pick<Task, "enabledWorkflowSteps">): boolean {
+    const selection = this.getTaskWorkflowSelection(id);
+    return Boolean(selection) || (task.enabledWorkflowSteps?.length ?? 0) > 0 || this.listWorkflowWorkItemsForTask(id).length > 0;
+  }
+
   private shouldSkipWorkflowMovePolicies(params: {
     fromColumn: string;
     toColumn: string;
@@ -7237,6 +7249,36 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     }
 
     const fromColumn = task.column;
+    const shouldValidateWorkflowDoneBypass =
+      toColumn === "done" &&
+      options?.skipMergeBlocker === true &&
+      this.isWorkflowDoneBypassGuardedTask(id, task);
+    const workflowDoneBypassBlocker = shouldValidateWorkflowDoneBypass
+      ? getTaskDoneBypassBlocker(task)
+      : undefined;
+    if (workflowDoneBypassBlocker) {
+      /*
+      FNXC:WorkflowMerge 2026-06-29-12:02:
+      Engine/recovery callers still need `skipMergeBlocker` for stale status cleanup, but workflow tasks must not use it as a generic "mark done" escape hatch. Require durable merge proof or the explicit decision-only `noCommitsExpected` policy before any workflow-selected task can bypass merge blockers into done.
+      */
+      this.insertRunAuditEventRow({
+        taskId: id,
+        agentId: internal.runContext?.agentId,
+        runId: internal.runContext?.runId,
+        domain: "database",
+        mutationType: "task:finalize-unproven-blocked",
+        target: id,
+        metadata: {
+          from: fromColumn,
+          to: toColumn,
+          moveSource,
+          reason: workflowDoneBypassBlocker,
+          workflowId: this.getTaskWorkflowSelection(id)?.workflowId ?? null,
+          enabledWorkflowSteps: task.enabledWorkflowSteps ?? [],
+        },
+      });
+      throw new Error(`Cannot move ${id} to done: ${workflowDoneBypassBlocker}`);
+    }
 
     if (useWorkflow && workflowIr) {
       // ── Flag-ON validation + sync guards (typed rejections, KTD-3/R13) ─────
@@ -8110,7 +8152,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
   async updateTask(
     id: string,
-    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; graphResumeRetryCount?: number | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; missionId?: string | null; sliceId?: string | null },
+    updates: { title?: string; description?: string; priority?: TaskPriority | null; prompt?: string; worktree?: string | null; workspaceWorktrees?: import("./types.js").Task["workspaceWorktrees"]; status?: string | null; dependencies?: string[]; steps?: import("./types.js").TaskStep[]; customFields?: Record<string, unknown>; currentStep?: number; blockedBy?: string | null; overlapBlockedBy?: string | null; assignedAgentId?: string | null; pausedByAgentId?: string | null; pausedReason?: string | null; tokenBudgetSoftAlertedAt?: string | null; worktrunkFallbackAlertedAt?: string | null; worktrunkFailure?: import("./types.js").Task["worktrunkFailure"] | null; tokenBudgetHardAlertedAt?: string | null; tokenBudgetOverride?: import("./types.js").TaskTokenBudgetOverride | null; dispatchStormCount?: number | null; lastDispatchAt?: string | null; assigneeUserId?: string | null; scopeOverride?: boolean | null; scopeOverrideReason?: string | null; scopeAutoWiden?: string[] | null; nodeId?: string | null; effectiveNodeId?: string | null; effectiveNodeSource?: string | null; checkedOutBy?: string | null; checkedOutAt?: string | null; checkoutNodeId?: string | null; checkoutRunId?: string | null; checkoutLeaseRenewedAt?: string | null; checkoutLeaseEpoch?: number | null; paused?: boolean; baseBranch?: string | null; autoMerge?: boolean | null; branch?: string | null; executionStartBranch?: string | null; baseCommitSha?: string | null; size?: "S" | "M" | "L"; reviewLevel?: number; executionMode?: import("./types.js").ExecutionMode | null; mergeRetries?: number; workflowStepRetries?: number; stuckKillCount?: number | null; resumeLimboCount?: number | null; graphResumeRetryCount?: number | null; resumeLimboTipSha?: string | null; resumeLimboStepSignature?: string | null; postReviewFixCount?: number | null; recoveryRetryCount?: number | null; taskDoneRetryCount?: number | null; worktreeSessionRetryCount?: number | null; completionHandoffLimboRecoveryCount?: number | null; verificationFailureCount?: number | null; mergeConflictBounceCount?: number | null; mergeAuditBounceCount?: number | null; mergeTransientRetryCount?: number | null; branchConflictRecoveryCount?: number | null; reviewerContextRetryCount?: number | null; reviewerFallbackRetryCount?: number | null; nextRecoveryAt?: string | null; enabledWorkflowSteps?: string[]; noCommitsExpected?: boolean | null; modelProvider?: string | null; modelId?: string | null; validatorModelProvider?: string | null; validatorModelId?: string | null; planningModelProvider?: string | null; planningModelId?: string | null; thinkingLevel?: string | null; error?: string | null; summary?: string | null; sessionFile?: string | null; firstExecutionAt?: string | null; cumulativeActiveMs?: number | null; executionStartedAt?: string | null; executionCompletedAt?: string | null; review?: import("./types.js").TaskReview | null; reviewState?: import("./types.js").TaskReviewState | null; workflowStepResults?: import("./types.js").WorkflowStepResult[] | null; mergeDetails?: import("./types.js").MergeDetails | null; sourceIssue?: import("./types.js").TaskSourceIssue | null; sourceMetadataPatch?: Record<string, unknown> | null; githubTracking?: import("./types.js").TaskGithubTracking | null; tokenUsage?: import("./types.js").TaskTokenUsage | null; modifiedFiles?: string[] | null; workflowTransitionNotification?: import("./types.js").Task["workflowTransitionNotification"] | null; missionId?: string | null; sliceId?: string | null },
     runContext?: RunMutationContext,
   ): Promise<Task> {
     return this.withTaskLock(id, () => this.updateTaskUnlocked(id, updates, runContext));
@@ -9052,6 +9094,17 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         task.modifiedFiles = undefined;
       } else if (updates.modifiedFiles !== undefined) {
         task.modifiedFiles = updates.modifiedFiles;
+      }
+      if (updates.workflowTransitionNotification === null) {
+        task.workflowTransitionNotification = undefined;
+      } else if (updates.workflowTransitionNotification !== undefined) {
+        /*
+        FNXC:WorkflowNotifications 2026-06-29-13:05:
+        Typed workflow transition notification markers must persist through the
+        ordinary task update authority. Self-healing and workflow nodes rely on
+        the emitted task:updated row, not log text, to trigger ntfy alerts.
+        */
+        task.workflowTransitionNotification = updates.workflowTransitionNotification;
       }
       if (updates.missionId === null) {
         task.missionId = undefined;
@@ -14703,14 +14756,17 @@ ${stepsSection}`;
     createdAt: string;
     updatedAt: string;
   }): WorkflowDefinition {
+    const kind = row.kind === "fragment" ? "fragment" : "workflow";
+    const ir = parseWorkflowIr(row.ir);
     return {
       id: row.id,
       name: row.name,
       description: row.description,
       // Legacy rows (pre-migration-109) have no kind column; default to "workflow".
-      kind: row.kind === "fragment" ? "fragment" : "workflow",
-      ir: parseWorkflowIr(row.ir),
+      kind,
+      ir,
       layout: this.parseWorkflowLayout(row.layout),
+      lifecycleWarnings: analyzeWorkflowLifecycle(ir, { kind }),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
@@ -14759,15 +14815,23 @@ ${stepsSection}`;
       const layout = input.layout ?? {};
       const now = new Date().toISOString();
       const id = this.nextWorkflowDefinitionId();
+      const kind = input.kind === "fragment" ? "fragment" : "workflow";
       const definition: WorkflowDefinition = {
         id,
         name,
         description: input.description ?? "",
         // KTD-1: fragments are pure-v1 IRs and pass through downgradeIrToV1IfPure
         // unchanged; default to "workflow" when the caller omits the kind.
-        kind: input.kind === "fragment" ? "fragment" : "workflow",
+        kind,
         ir,
         layout,
+        /*
+        FNXC:WorkflowLifecycleValidation 2026-06-29-11:47:
+        Persisted custom workflow definitions should carry computed lifecycle
+        warnings back to authoring/API surfaces without blocking advanced graphs.
+        Hard safety still lives in parser/store/merge proof guards.
+        */
+        lifecycleWarnings: analyzeWorkflowLifecycle(ir, { kind }),
         createdAt: now,
         updatedAt: now,
       };
@@ -14995,6 +15059,7 @@ ${stepsSection}`;
         description: updates.description !== undefined ? updates.description : existing.description,
         ir,
         layout: updates.layout !== undefined ? updates.layout : existing.layout,
+        lifecycleWarnings: analyzeWorkflowLifecycle(ir, { kind: existing.kind }),
         updatedAt: new Date().toISOString(),
       };
 

@@ -76,6 +76,7 @@ describe("PR node handlers (U3)", () => {
   }
 
   it("pr-create success → entity open with persisted PR fields, value:open", async () => {
+    const updatePrInfo = vi.spyOn(store, "updatePrInfo").mockResolvedValue({ id: "T-1" } as any);
     const handlers = createPrNodeHandlers(deps());
     const result = await handlers["pr-create"](NODE, ctx());
     expect(result).toEqual({ outcome: "success", value: "open" });
@@ -85,6 +86,14 @@ describe("PR node handlers (U3)", () => {
     expect(entity?.prNumber).toBe(42);
     expect(entity?.prUrl).toBe("https://github.com/owner/repo/pull/42");
     expect(entity?.headOid).toBe("abc123");
+    expect(updatePrInfo).toHaveBeenCalledWith("T-1", expect.objectContaining({
+      url: "https://github.com/owner/repo/pull/42",
+      number: 42,
+      status: "open",
+      headBranch: "fusion/t-1",
+      baseBranch: "main",
+      manual: true,
+    }));
   });
 
   it("pr-create failure → entity failed + failureReason, value:failed (routable, never throws)", async () => {
