@@ -215,14 +215,26 @@ The global mobile touch-action reset applies to descendants, and browsers inters
 /*
 FNXC:WorkflowBoard 2026-06-29-00:00:
 Aggregate Board cards need a compact workflow-name badge so operators can identify each card's source workflow while shared columns combine multiple workflows. The badge is opt-in metadata from Board and uses neutral card tokens so non-board TaskCard callers do not render empty workflow shells.
+
+FNXC:WorkflowBoard 2026-06-30-00:00:
+All workflows cards need workflow identity at the bottom-left below every other card icon/action/meta row, so the wrapper is rendered after those rows and left-aligns the neutral badge without adding click targets.
 */
+.card-workflow-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: var(--space-xs);
+}
+
 .card-workflow-badge {
-  max-width: 18ch;
+  max-width: min(100%, 18ch);
   background: var(--surface-2);
   border-color: var(--border);
   color: var(--text-muted);
   text-transform: none;
   letter-spacing: 0;
+  flex: 0 1 auto;
 }
 
 .card-no-commits-expected-badge {
@@ -1581,6 +1593,14 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
     margin-top: var(--space-xs);
     gap: var(--space-xs);
     row-gap: var(--space-xs);
+  }
+
+  .card-workflow-badge-row {
+    margin-top: var(--space-xs);
+  }
+
+  .card-workflow-badge {
+    max-width: 100%;
   }
 
   .card-time-indicator,

@@ -4993,7 +4993,7 @@ describe("TaskCard memo comparator provenance behavior", () => {
 
 describe("TaskCard workflow badges", () => {
   it("renders a compact accessible workflow badge only when metadata is present", () => {
-    const { rerender } = render(
+    const { container, rerender } = render(
       <TaskCard
         task={makeTask()}
         onOpenDetail={noop}
@@ -5003,9 +5003,13 @@ describe("TaskCard workflow badges", () => {
     );
 
     const badge = screen.getByTestId("card-workflow-badge");
+    const row = screen.getByTestId("card-workflow-badge-row");
     expect(badge).toHaveTextContent("Custom Flow");
     expect(badge).toHaveAttribute("data-workflow-id", "wf-custom");
     expect(badge).toHaveAccessibleName("Workflow Custom Flow");
+    expect(row).toContainElement(badge);
+    expect(badge.closest(".card-meta-badges")).toBeNull();
+    expect(container.querySelector(".card-meta-badges")).toBeNull();
 
     rerender(
       <TaskCard
@@ -5016,6 +5020,49 @@ describe("TaskCard workflow badges", () => {
       />,
     );
     expect(screen.queryByTestId("card-workflow-badge")).toBeNull();
+    expect(screen.queryByTestId("card-workflow-badge-row")).toBeNull();
+  });
+
+  it("keeps top badges in the meta cluster while rendering workflow identity below card rows", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T12:10:00.000Z"));
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          priority: "high",
+          executionMode: "fast",
+          sourceType: "automation",
+          sourceMetadata: { agentName: "Task Robot" },
+          assignedAgentId: "agent-1",
+          columnMovedAt: "2026-06-30T12:00:00.000Z",
+          updatedAt: "2026-06-30T12:00:00.000Z",
+          dependencies: ["FN-1"],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        workflowBadge={{ workflowId: "wf-long", workflowName: "Very long custom workflow name for aggregate cards" }}
+      />,
+    );
+
+    const metaBadges = screen.getByTestId("card-meta-badges");
+    const badge = screen.getByTestId("card-workflow-badge");
+    const workflowRow = screen.getByTestId("card-workflow-badge-row");
+    expect(metaBadges.querySelector(".card-priority-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-execution-mode-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-workflow-badge")).toBeNull();
+    expect(workflowRow).toContainElement(badge);
+
+    [".card-footer-row", ".card-meta", ".card-agent-row"].forEach((selector) => {
+      const row = container.querySelector(selector);
+      expect(row, `${selector} should render for the placement fixture`).not.toBeNull();
+      expect(row!.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    expect(badge.closest(".card-action-row")).toBeNull();
+    vi.useRealTimers();
   });
 });
 

@@ -2285,8 +2285,7 @@ function TaskCardComponent({
     && workflowBadge.workflowName.trim().length > 0;
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
-    || isAgentCreated
-    || hasWorkflowBadge;
+    || isAgentCreated;
 
   if (isEditing) {
     return (
@@ -2505,17 +2504,6 @@ function TaskCardComponent({
         )}
         {hasCardMetaBadges && (
           <div className="card-meta-badges" data-testid="card-meta-badges">
-            {hasWorkflowBadge && (
-              <span
-                className="card-workflow-badge"
-                title={t("tasks.workflowBadgeTitle", "Workflow: {{name}}", { name: workflowBadge.workflowName })}
-                aria-label={t("tasks.workflowBadgeAriaLabel", "Workflow {{name}}", { name: workflowBadge.workflowName })}
-                data-testid="card-workflow-badge"
-                data-workflow-id={workflowBadge.workflowId}
-              >
-                {workflowBadge.workflowName}
-              </span>
-            )}
             {showPriorityBadge && (
               <span className={`card-priority-badge card-priority-badge--${normalizedPriority}`}>
                 {normalizedPriority}
@@ -3043,6 +3031,23 @@ function TaskCardComponent({
             </button>
           )}
           {showInReviewMoveControl && !metaRowVisible && renderInReviewMoveControl()}
+        </div>
+      )}
+      {hasWorkflowBadge && (
+        <div className="card-workflow-badge-row" data-testid="card-workflow-badge-row">
+          {/*
+          FNXC:WorkflowBoard 2026-06-30-00:00:
+          All workflows Board cards need workflow identity anchored at the card's bottom-left, below footer chips, dependency/meta rows, provider icons, and action controls, while per-workflow cards keep omitting this opt-in metadata.
+          */}
+          <span
+            className="card-workflow-badge"
+            title={t("tasks.workflowBadgeTitle", "Workflow: {{name}}", { name: workflowBadge.workflowName })}
+            aria-label={t("tasks.workflowBadgeAriaLabel", "Workflow {{name}}", { name: workflowBadge.workflowName })}
+            data-testid="card-workflow-badge"
+            data-workflow-id={workflowBadge.workflowId}
+          >
+            {workflowBadge.workflowName}
+          </span>
         </div>
       )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />
