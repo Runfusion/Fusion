@@ -187,6 +187,43 @@ describe("useNavigationHistory", () => {
     expect(pushStateSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("dismisses the reopened top entry after a deferred self-pop leaves stale navIndex state", () => {
+    const closeA = vi.fn();
+    const closeB = vi.fn();
+    const { result } = renderHookWithHistory();
+
+    act(() => {
+      result.current.pushNav({ type: "modal", close: closeA });
+      result.current.removeNav(closeA);
+      result.current.pushNav({ type: "modal", close: closeB });
+    });
+
+    // The deferred removeNav pop arrives after the reopen and is consumed.
+    dispatchPopState({ navIndex: 1 });
+    expect(closeA).not.toHaveBeenCalled();
+    expect(closeB).not.toHaveBeenCalled();
+
+    // FNXC:TaskDetailSwipeBack 2026-06-30-09:25:
+    // Mobile swipe-back must still dismiss the reopened surface even when
+    // history retained a stale navIndex from the pre-close entry.
+    dispatchPopState({ navIndex: 1 });
+
+    expect(closeB).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to dismissing the top entry when popstate carries a stale navIndex", () => {
+    const close = vi.fn();
+    const { result } = renderHookWithHistory();
+
+    act(() => {
+      result.current.pushNav({ type: "modal", close });
+    });
+
+    dispatchPopState({ navIndex: 3 });
+
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps stack order consistent after removing the top entry", () => {
     const close1 = vi.fn();
     const close2 = vi.fn();
@@ -297,7 +334,7 @@ describe("useNavigationHistory", () => {
   });
 
   // 9. Duplicate-consecutive-push guard
-  it("skips duplicate consecutive pushes with the same callback", () => {
+  it("reconciles duplicate consecutive pushes with the same callback without adding history", () => {
     const close = vi.fn();
     const { result } = renderHookWithHistory();
 
@@ -307,12 +344,12 @@ describe("useNavigationHistory", () => {
 
     expect(pushStateSpy).toHaveBeenCalledTimes(1);
 
-    // Push the same entry again — should be skipped
     act(() => {
       result.current.pushNav({ type: "modal", close });
     });
 
-    expect(pushStateSpy).toHaveBeenCalledTimes(1); // still only 1 call
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+    expect(replaceStateSpy).toHaveBeenCalledWith(expect.objectContaining({ navIndex: 1 }), "");
   });
 
   // 10. Handles rapid popstate (iOS fast swipe) — pops multiple entries

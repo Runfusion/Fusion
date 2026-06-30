@@ -71,6 +71,10 @@ export function useNavigationHistoryContext(): UseNavigationHistoryResult {
  * When `enabled` is false, all operations are no-ops and no `popstate`
  * listener is registered.
  */
+function getEntryCallback(entry: NavEntry): () => void {
+  return entry.type === "modal" ? entry.close : entry.revert;
+}
+
 export function useNavigationHistory(
   options: UseNavigationHistoryOptions,
 ): UseNavigationHistoryResult {
@@ -95,6 +99,30 @@ export function useNavigationHistory(
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
+  const readExistingState = useCallback(() => {
+    if (typeof window === "undefined") return {};
+    return window.history.state && typeof window.history.state === "object"
+      ? window.history.state
+      : {};
+  }, []);
+
+  const writeHistoryState = useCallback(
+    (mode: "push" | "replace", navIndex: number) => {
+      const nextState = {
+        ...readExistingState(),
+        navIndex,
+      };
+
+      if (mode === "push") {
+        window.history.pushState(nextState, "");
+        return;
+      }
+
+      window.history.replaceState(nextState, "");
+    },
+    [readExistingState],
+  );
+
   const pushNav = useCallback(
     (entry: NavEntry) => {
       if (!enabledRef.current) return;
@@ -102,26 +130,20 @@ export function useNavigationHistory(
       // Prevent re-push during pop handling
       if (isPoppingRef.current) return;
 
-      // Guard against duplicate consecutive pushes (rapid taps)
+      // Guard against duplicate consecutive pushes (rapid taps). If a stale
+      // top entry still uses the same callback, reconcile it in place instead
+      // of silently dropping the reopen and leaving history/stack out of sync.
       const top = stackRef.current[stackRef.current.length - 1];
-      if (top) {
-        const topCallback = top.type === "modal" ? top.close : top.revert;
-        const newCallback = entry.type === "modal" ? entry.close : entry.revert;
-        if (topCallback === newCallback) return;
+      if (top && getEntryCallback(top) === getEntryCallback(entry)) {
+        stackRef.current[stackRef.current.length - 1] = entry;
+        writeHistoryState("replace", stackRef.current.length);
+        return;
       }
 
       stackRef.current.push(entry);
-
-      // Preserve existing history.state properties (e.g. from useDeepLink)
-      // while adding our navIndex.
-      const navIndex = stackRef.current.length;
-      const existingState =
-        typeof window !== "undefined" && window.history.state
-          ? window.history.state
-          : {};
-      window.history.pushState({ ...existingState, navIndex }, "");
+      writeHistoryState("push", stackRef.current.length);
     },
-    [], // stable — reads from refs
+    [writeHistoryState],
   );
 
   const replaceCurrent = useCallback(
@@ -130,16 +152,9 @@ export function useNavigationHistory(
       if (stackRef.current.length === 0) return;
 
       stackRef.current[stackRef.current.length - 1] = entry;
-
-      // Preserve existing history.state properties while updating navIndex
-      const navIndex = stackRef.current.length;
-      const existingState =
-        typeof window !== "undefined" && window.history.state
-          ? window.history.state
-          : {};
-      window.history.replaceState({ ...existingState, navIndex }, "");
+      writeHistoryState("replace", stackRef.current.length);
     },
-    [], // stable — reads from refs
+    [writeHistoryState],
   );
 
   const removeNav = useCallback(
@@ -148,8 +163,7 @@ export function useNavigationHistory(
 
       for (let i = stackRef.current.length - 1; i >= 0; i -= 1) {
         const entry = stackRef.current[i];
-        const callback = entry.type === "modal" ? entry.close : entry.revert;
-        if (callback !== closeOrRevert) continue;
+        if (getEntryCallback(entry) !== closeOrRevert) continue;
 
         stackRef.current.splice(i, 1);
         selfPopRef.current = true;
@@ -198,13 +212,25 @@ export function useNavigationHistory(
         return;
       }
 
-      const targetIndex = event.state?.navIndex ?? 0;
+      const targetIndex = typeof event.state?.navIndex === "number" ? event.state.navIndex : null;
       const currentLength = stackRef.current.length;
 
-      if (targetIndex >= currentLength) return;
+      if (currentLength === 0) return;
 
-      // Calculate how many entries were popped
-      const poppedCount = currentLength - targetIndex;
+      const staleOrDesyncedIndex =
+        targetIndex === null ||
+        targetIndex < 0 ||
+        targetIndex >= currentLength;
+
+      /*
+      FNXC:TaskDetailSwipeBack 2026-06-30-09:40:
+      Mobile swipe-back must deterministically dismiss the top Fusion surface
+      even when browser history carries a stale navIndex from a close→reopen
+      race, remount, or interleaved non-Fusion pushState. Falling back to one
+      top-entry pop keeps the live stack authoritative instead of silently
+      no-oping on `targetIndex >= currentLength`.
+      */
+      const poppedCount = staleOrDesyncedIndex ? 1 : currentLength - targetIndex;
 
       if (poppedCount <= 0) return;
 
@@ -215,11 +241,7 @@ export function useNavigationHistory(
         for (let i = 0; i < poppedCount; i++) {
           const entry = stackRef.current.pop();
           if (entry) {
-            if (entry.type === "modal") {
-              entry.close();
-            } else {
-              entry.revert();
-            }
+            getEntryCallback(entry)();
           }
         }
       } finally {

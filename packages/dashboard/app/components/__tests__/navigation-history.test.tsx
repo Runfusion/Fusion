@@ -627,7 +627,7 @@ describe("Navigation history integration", () => {
     });
   });
 
-  it("dismisses task detail on mobile popstate after close and reopen", async () => {
+  it("dismisses task detail on mobile popstate after a close-and-quick-reopen race", async () => {
     mockUseViewportMode.mockReturnValue("mobile");
     const task = makeTask("FN-1", "Mobile Swipe Detail");
     mockUseTasks.mockImplementation(() => ({
@@ -647,7 +647,13 @@ describe("Navigation history integration", () => {
 
     await renderMobileAppAndWait();
 
-    // FNXC:Navigation 2026-06-22-00:00: Board card click opens the full main-panel detail; the "Back to board" button reverts to the board, and a subsequent reopen + mobile popstate must also dismiss it (the regression this test guards).
+    /*
+    FNXC:TaskDetailSwipeBack 2026-06-30-09:29:
+    Reproduces the real FN-7275 race: Back-to-board queues a self-pop through
+    history.back(), but the user can reopen the detail before that popstate
+    resolves. The next swipe-back must still dismiss the reopened detail even
+    when history surfaces the stale pre-close navIndex first.
+    */
     fireEvent.click(screen.getByTestId("open-task-FN-1"));
 
     await waitFor(() => {
@@ -655,9 +661,6 @@ describe("Navigation history integration", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
-    // removeNav drives history.back(); consume the self-triggered popstate
-    // before reopening so the next popstate represents the user's swipe-back.
-    dispatchPopState({ navIndex: 0 });
 
     await waitFor(() => {
       expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
@@ -670,7 +673,10 @@ describe("Navigation history integration", () => {
       expect(screen.getByTestId("task-detail-main-panel-content")).toBeTruthy();
     });
 
-    dispatchPopState({ navIndex: 0 });
+    dispatchPopState({ navIndex: 1 });
+    expect(screen.getByTestId("task-detail-main-panel-content")).toBeTruthy();
+
+    dispatchPopState({ navIndex: 1 });
 
     await waitFor(() => {
       expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
