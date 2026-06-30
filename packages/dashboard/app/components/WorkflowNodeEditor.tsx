@@ -10,9 +10,11 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  applyEdgeChanges,
   type Connection,
   type Node as FlowNode,
   type Edge as FlowEdge,
+  type EdgeChange,
 } from "@xyflow/react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -79,6 +81,7 @@ import {
   edgeConditionEditability,
   buildConnectionEdge,
   cascadeDelete,
+  refreshOptionalGroupVisualBoundaries,
   WF_EDGE_INTERACTION_WIDTH,
   FOREACH_GROUP_WIDTH,
   FOREACH_GROUP_HEIGHT,
@@ -748,7 +751,7 @@ function InnerEditor({
   // validationError used for genuine problems.
   const [interpreterOnly, setInterpreterOnly] = useState<boolean>(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode<WorkflowFlowNodeData>>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdge>([]);
+  const [edges, setEdges] = useEdgesState<FlowEdge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
@@ -1332,17 +1335,38 @@ function InnerEditor({
             t("workflowNodes.duplicateBlocked", "That connection already exists"),
             "warning",
           );
+        } else if (result.error === "reserved-handle") {
+          addToast(
+            t("workflowNodes.reservedHandleBlocked", "Optional-block boundary guides cannot be connected manually"),
+            "warning",
+          );
         }
         return;
       }
-      setEdges((eds) => [...eds, result.edge]);
+      setEdges((eds) => {
+        const refreshed = refreshOptionalGroupVisualBoundaries(nodes, [...eds, result.edge]);
+        setNodes(refreshed.nodes);
+        return refreshed.edges;
+      });
       if (options.selectCreatedEdge) {
         setSelectedEdgeId(result.edge.id);
         setSelectedNodeId(null);
         setInspectorCollapsed(false);
       }
     },
-    [edges, nodes, setEdges, addToast, t],
+    [edges, nodes, setEdges, setNodes, addToast, t],
+  );
+
+  const onWorkflowEdgesChange = useCallback(
+    (changes: EdgeChange<FlowEdge>[]) => {
+      setEdges((eds) => {
+        const changedEdges = applyEdgeChanges(changes, eds) as FlowEdge[];
+        const refreshed = refreshOptionalGroupVisualBoundaries(nodes, changedEdges);
+        setNodes(refreshed.nodes);
+        return refreshed.edges;
+      });
+    },
+    [nodes, setEdges, setNodes],
   );
 
   const onConnect = useCallback(
@@ -1399,6 +1423,7 @@ function InnerEditor({
         // so authors can wire the body immediately. The group node must precede
         // its child for React Flow's parent extent to apply.
         // FNXC:WorkflowOptionalGroup 2026-06-21-11:30: An optional-group is authored exactly like a foreach/loop region — drop nodes inside; the subgraph runs once when the task enables the group.
+        // FNXC:WorkflowOptionalGroup 2026-06-29-23:56: Palette and mobile add paths must compute optional-group boundary metadata immediately. A newly seeded optional child is both the visual entry and exit until authors add real internal template edges, so refresh the generated boundary guides before committing nodes to state rather than waiting for save/reload.
         const childId = foreachChildFlowId(id, newNodeId());
         const childLabel =
           kind === "foreach"
@@ -1407,30 +1432,36 @@ function InnerEditor({
               ? t("workflowNodes.optionalGroupStepLabel", "Optional step")
               : t("workflowNodes.loopStepLabel", "Loop step");
         const childConfig = kind === "foreach" ? { seam: "step-execute" } : { prompt: "" };
-        setNodes((ns) => [
-          ...ns,
-          {
-            id,
-            type: kind,
-            position: { x: 200 + ns.length * 40, y: 240 + (ns.length % 3) * 70 },
-            data: { kind, label, config, templateEmpty: false },
-            style: { width: FOREACH_GROUP_WIDTH, height: FOREACH_GROUP_HEIGHT },
-            deletable: true,
-          },
-          {
-            id: childId,
-            type: "prompt",
-            position: { x: FOREACH_CHILD_X, y: FOREACH_CHILD_Y },
-            parentId: id,
-            extent: "parent",
-            data: {
-              kind: "prompt",
-              label: childLabel,
-              config: childConfig,
+        setNodes((ns) => {
+          const nextNodes = [
+            ...ns,
+            {
+              id,
+              type: kind,
+              position: { x: 200 + ns.length * 40, y: 240 + (ns.length % 3) * 70 },
+              data: { kind, label, config, templateEmpty: false },
+              style: { width: FOREACH_GROUP_WIDTH, height: FOREACH_GROUP_HEIGHT },
+              deletable: true,
             },
-            deletable: true,
-          },
-        ]);
+            {
+              id: childId,
+              type: "prompt",
+              position: { x: FOREACH_CHILD_X, y: FOREACH_CHILD_Y },
+              parentId: id,
+              extent: "parent",
+              data: {
+                kind: "prompt",
+                label: childLabel,
+                config: childConfig,
+              },
+              deletable: true,
+            },
+          ] satisfies FlowNode<WorkflowFlowNodeData>[];
+          if (kind !== "optional-group") return nextNodes;
+          const refreshed = refreshOptionalGroupVisualBoundaries(nextNodes, edges);
+          setEdges(refreshed.edges);
+          return refreshed.nodes;
+        });
         setSelectedNodeId(id);
         return;
       }
@@ -1447,7 +1478,7 @@ function InnerEditor({
       ]);
       setSelectedNodeId(id);
     },
-    [setNodes, t],
+    [edges, setEdges, setNodes, t],
   );
 
   // U9/R8: insert a step template (built-in or plugin) as ONE pre-configured
@@ -1733,8 +1764,8 @@ function InnerEditor({
   const updateSelectedEdge = useCallback(
     (patch: { condition?: string; rework?: boolean }) => {
       if (!selectedEdgeId) return;
-      setEdges((eds) =>
-        eds.map((e) => {
+      setEdges((eds) => {
+        const updated = eds.map((e) => {
           if (e.id !== selectedEdgeId) return e;
           const condition = patch.condition ?? (e.data?.condition as string | undefined) ?? "success";
           const rework = patch.rework ?? (e.data?.kind as string | undefined) === "rework";
@@ -1746,10 +1777,13 @@ function InnerEditor({
             animated: rework,
             className: edgeClassName(condition, rework),
           };
-        }),
-      );
+        });
+        const refreshed = refreshOptionalGroupVisualBoundaries(nodes, updated);
+        setNodes(refreshed.nodes);
+        return refreshed.edges;
+      });
     },
-    [selectedEdgeId, setEdges],
+    [nodes, selectedEdgeId, setEdges, setNodes],
   );
 
   // ── Deletion (U3, R6) ──────────────────────────────────────────────────────
@@ -1761,7 +1795,8 @@ function InnerEditor({
       const idSet = new Set(ids);
       let next: { nodes: FlowNode<WorkflowFlowNodeData>[]; edges: FlowEdge[] } | null = null;
       setNodes((ns) => {
-        next = cascadeDelete(ns, edges, idSet);
+        const deleted = cascadeDelete(ns, edges, idSet);
+        next = refreshOptionalGroupVisualBoundaries(deleted.nodes, deleted.edges);
         return next.nodes;
       });
       if (next) setEdges((next as { edges: FlowEdge[] }).edges);
@@ -3488,7 +3523,7 @@ function InnerEditor({
                     edges={edges}
                     nodeTypes={workflowNodeTypes}
                     onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
+                    onEdgesChange={onWorkflowEdgesChange}
                     onConnect={onConnect}
                     onNodeDragStop={onNodeDragStop}
                     deleteKeyCode={isBuiltin ? null : ["Backspace", "Delete"]}

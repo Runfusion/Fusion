@@ -30,9 +30,11 @@ import {
   shortConditionLabel,
   edgeClassName,
   edgeConditionEditability,
+  isVisualOnlyWorkflowEdge,
   wouldCreateCycle,
   buildConnectionEdge,
   cascadeDelete,
+  refreshOptionalGroupVisualBoundaries,
   COLUMN_BAND_HEIGHT,
   WF_CARD_WIDTH,
   WF_FALLBACK_NODE_GAP,
@@ -65,7 +67,11 @@ function nodeWidth(node: FlowNode<WorkflowFlowNodeData>): number {
   return typeof width === "number" ? width : WF_CARD_WIDTH;
 }
 
-function assertContainerHandles(kind: "optional-group" | "foreach" | "loop", data: WorkflowFlowNodeData): void {
+function assertRenderedHandles(
+  kind: WorkflowEditorNodeKind,
+  data: WorkflowFlowNodeData,
+  expected: { target: number; source: number },
+): void {
   const Component = workflowNodeTypes[kind];
   const { container, unmount } = render(
     createElement(ReactFlowProvider, null, createElement(Component, { data, id: `${kind}-handle-check` })),
@@ -73,11 +79,15 @@ function assertContainerHandles(kind: "optional-group" | "foreach" | "loop", dat
   try {
     const root = container.querySelector(`[data-testid="wf-node-${kind}"]`);
     expect(root).not.toBeNull();
-    expect(root?.querySelectorAll(".react-flow__handle.target")).toHaveLength(1);
-    expect(root?.querySelectorAll(".react-flow__handle.source")).toHaveLength(1);
+    expect(root?.querySelectorAll(".react-flow__handle.target")).toHaveLength(expected.target);
+    expect(root?.querySelectorAll(".react-flow__handle.source")).toHaveLength(expected.source);
   } finally {
     unmount();
   }
+}
+
+function assertContainerHandles(kind: "optional-group" | "foreach" | "loop", data: WorkflowFlowNodeData): void {
+  assertRenderedHandles(kind, data, kind === "optional-group" ? { target: 2, source: 2 } : { target: 1, source: 1 });
 }
 
 function assertRunDoesNotOverlap(
@@ -881,9 +891,248 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
     expect(out.edges.map((e) => `${e.from}->${e.to}`)).toEqual(["start->opt", "opt->end"]);
   });
 
+  it("marks optional-group template boundaries as visual-only child metadata", () => {
+    const optionalIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "optional-boundaries",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            defaultOn: true,
+            template: {
+              nodes: [
+                { id: "prepare", kind: "prompt", config: { prompt: "prepare" } },
+                { id: "approve", kind: "gate", config: { prompt: "approve?" } },
+              ],
+              edges: [{ from: "prepare", to: "approve", condition: "success" }],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+
+    const { nodes, edges } = irToFlow(makeDef(optionalIr));
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    expect(byId.get("opt::prepare")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: false });
+    expect(byId.get("opt::approve")?.data.optionalGroupBoundary).toEqual({ entry: false, exit: true });
+    expect(edges.filter((edge) => edge.source === "opt::prepare" && edge.target === "opt::approve")).toHaveLength(1);
+
+    const { ir: out } = flowToIr("optional-boundaries", nodes, edges, columnsOf(makeDef(optionalIr)));
+    if (out.version !== "v2") throw new Error("expected v2");
+    const opt = out.nodes.find((node) => node.id === "opt");
+    const cfg = opt?.config as
+      | { template?: { nodes: Array<{ config?: Record<string, unknown> }>; edges: unknown[] } }
+      | undefined;
+    expect(cfg?.template?.edges).toEqual([{ from: "prepare", to: "approve", condition: "success" }]);
+    expect(cfg?.template?.nodes.map((node) => node.config?.optionalGroupBoundary)).toEqual([undefined, undefined]);
+  });
+
+  it("connects each independent optional-group boundary child with visual-only container edges", () => {
+    const optionalIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "optional-independent-boundaries",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            template: {
+              nodes: [
+                { id: "alpha", kind: "prompt", config: { prompt: "alpha" } },
+                { id: "beta", kind: "prompt", config: { prompt: "beta" } },
+              ],
+              edges: [],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+
+    const { nodes, edges } = irToFlow(makeDef(optionalIr));
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    expect(byId.get("opt::alpha")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: true });
+    expect(byId.get("opt::beta")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: true });
+
+    const visualBoundaryEdges = edges.filter((edge) => isVisualOnlyWorkflowEdge(edge));
+    expect(visualBoundaryEdges.map((edge) => `${edge.source}->${edge.target}`).sort()).toEqual([
+      "opt->opt::alpha",
+      "opt->opt::beta",
+      "opt::alpha->opt",
+      "opt::beta->opt",
+    ]);
+    expect(visualBoundaryEdges.every((edge) => edge.selectable === false && edge.deletable === false)).toBe(true);
+
+    const { ir: out } = flowToIr("optional-independent-boundaries", nodes, edges, columnsOf(makeDef(optionalIr)));
+    const opt = out.nodes.find((node) => node.id === "opt");
+    const cfg = opt?.config as { template?: { nodes?: Array<{ config?: Record<string, unknown> }>; edges?: unknown[] } } | undefined;
+    expect(cfg?.template?.edges).toEqual([]);
+    expect(cfg?.template?.nodes?.map((node) => node.config?.optionalGroupBoundary)).toEqual([undefined, undefined]);
+    expect(out.edges.map((edge) => `${edge.from}->${edge.to}`)).toEqual(["start->opt", "opt->end"]);
+  });
+
+  it("recomputes optional-group visual boundaries after live template edge mutations", () => {
+    const optionalIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "optional-live-boundaries",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            template: {
+              nodes: [
+                { id: "alpha", kind: "prompt", config: { prompt: "alpha" } },
+                { id: "beta", kind: "prompt", config: { prompt: "beta" } },
+              ],
+              edges: [],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+
+    const initial = irToFlow(makeDef(optionalIr));
+    const realInternalEdge: FlowEdge = {
+      id: "e-live-alpha-beta",
+      source: "opt::alpha",
+      target: "opt::beta",
+      data: { condition: "success" },
+      label: "success",
+    };
+
+    const connected = refreshOptionalGroupVisualBoundaries(initial.nodes, [...initial.edges, realInternalEdge]);
+    const connectedById = new Map(connected.nodes.map((node) => [node.id, node] as const));
+    expect(connectedById.get("opt::alpha")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: false });
+    expect(connectedById.get("opt::beta")?.data.optionalGroupBoundary).toEqual({ entry: false, exit: true });
+    expect(connected.edges.filter((edge) => isVisualOnlyWorkflowEdge(edge)).map((edge) => `${edge.source}->${edge.target}`).sort()).toEqual([
+      "opt->opt::alpha",
+      "opt::beta->opt",
+    ]);
+
+    const disconnected = refreshOptionalGroupVisualBoundaries(
+      connected.nodes,
+      connected.edges.filter((edge) => edge.id !== realInternalEdge.id),
+    );
+    const disconnectedById = new Map(disconnected.nodes.map((node) => [node.id, node] as const));
+    expect(disconnectedById.get("opt::alpha")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: true });
+    expect(disconnectedById.get("opt::beta")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: true });
+    expect(disconnected.edges.filter((edge) => isVisualOnlyWorkflowEdge(edge)).map((edge) => `${edge.source}->${edge.target}`).sort()).toEqual([
+      "opt->opt::alpha",
+      "opt->opt::beta",
+      "opt::alpha->opt",
+      "opt::beta->opt",
+    ]);
+
+    const { ir: out } = flowToIr("optional-live-boundaries", disconnected.nodes, disconnected.edges, columnsOf(makeDef(optionalIr)));
+    const opt = out.nodes.find((node) => node.id === "opt");
+    const cfg = opt?.config as { template?: { edges?: unknown[]; nodes?: Array<{ config?: Record<string, unknown> }> } } | undefined;
+    expect(cfg?.template?.edges).toEqual([]);
+    expect(cfg?.template?.nodes?.map((node) => node.config?.optionalGroupBoundary)).toEqual([undefined, undefined]);
+  });
+
+  it("derives optional-group boundaries from forward edges without letting rework cycles hide exits", () => {
+    const optionalIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "optional-rework-boundaries",
+      columns: ir.columns,
+      nodes: [
+        { id: "start", kind: "start", column: "plan" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          column: "in-progress",
+          config: {
+            template: {
+              nodes: [
+                { id: "exec", kind: "prompt", config: { prompt: "execute" } },
+                { id: "review", kind: "step-review", config: { type: "code" } },
+              ],
+              edges: [
+                { from: "exec", to: "review", condition: "success" },
+                { from: "review", to: "exec", condition: "outcome:revise", kind: "rework" },
+              ],
+            },
+          },
+        },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+
+    const { nodes, edges } = irToFlow(makeDef(optionalIr));
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    expect(byId.get("opt::exec")?.data.optionalGroupBoundary).toEqual({ entry: true, exit: false });
+    expect(byId.get("opt::review")?.data.optionalGroupBoundary).toEqual({ entry: false, exit: true });
+    expect(edges.filter((edge) => edge.source === "opt::exec" && edge.target === "opt::review")).toHaveLength(1);
+    expect(
+      edges.filter((edge) => edge.source === "opt::review" && edge.target === "opt::exec" && edge.data?.kind === "rework"),
+    ).toHaveLength(1);
+    expect(
+      edges.filter((edge) => isVisualOnlyWorkflowEdge(edge) && edge.source === "opt" && edge.target === "opt::exec"),
+    ).toHaveLength(1);
+    expect(
+      edges.filter((edge) => isVisualOnlyWorkflowEdge(edge) && edge.source === "opt::review" && edge.target === "opt"),
+    ).toHaveLength(1);
+  });
+
+  it("marks built-in Plan Review and Code Review single children as optional-group entry and exit boundaries", () => {
+    for (const [workflowName, builtinIr] of [
+      ["coding", BUILTIN_CODING_WORKFLOW_IR],
+      ["stepwise coding", BUILTIN_STEPWISE_CODING_WORKFLOW_IR],
+    ] as const) {
+      const { nodes } = irToFlow(makeDef(builtinIr));
+      const byId = new Map(nodes.map((node) => [node.id, node] as const));
+      for (const [groupId, childId] of [
+        ["plan-review", "plan-review-step"],
+        ["code-review", "code-review-step"],
+      ] as const) {
+        expect(byId.get(groupId), `${workflowName} ${groupId} group`).toBeTruthy();
+        expect(
+          byId.get(`${groupId}::${childId}`)?.data.optionalGroupBoundary,
+          `${workflowName} ${groupId} child`,
+        ).toEqual({
+          entry: true,
+          exit: true,
+        });
+      }
+    }
+  });
+
   /*
    * FNXC:WorkflowContainerEdges 2026-06-26-07:30:
    * Browser Verification is an optional-group container on the built-in workflow path. The mapping invariant is broader than that repro: optional-group/foreach/loop containers must keep top-level edges attached to the container id, layer routed edges above the group background, render exactly one target/source handle pair, and use width-aware fallback positions so adjacent nodes do not occlude those handles.
+   *
+   * FNXC:WorkflowOptionalGroup 2026-06-29-20:41:
+   * Plan Review and Code Review are single-node optional-group templates. The child node must be visibly connected to the optional block boundary through visual-only entry/exit connector edges, while save serialization keeps those fake boundary connectors out of the persisted IR.
    */
   it("keeps container edges and handles connected across built-in workflow containers", () => {
     const loopNode = {
@@ -934,8 +1183,10 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
       id: string;
       kind: "optional-group" | "foreach" | "loop";
     }> = [
+      { name: "coding plan review", ir: BUILTIN_CODING_WORKFLOW_IR, id: "plan-review", kind: "optional-group" },
       { name: "coding browser verification", ir: BUILTIN_CODING_WORKFLOW_IR, id: "browser-verification", kind: "optional-group" },
       { name: "coding code review", ir: BUILTIN_CODING_WORKFLOW_IR, id: "code-review", kind: "optional-group" },
+      { name: "stepwise plan review", ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR, id: "plan-review", kind: "optional-group" },
       { name: "stepwise browser verification", ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR, id: "browser-verification", kind: "optional-group" },
       { name: "stepwise code review", ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR, id: "code-review", kind: "optional-group" },
       { name: "stepwise foreach", ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR, id: "steps", kind: "foreach" },
@@ -953,7 +1204,9 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
       expect(group?.style?.width, testCase.name).toBe(FOREACH_GROUP_WIDTH);
       assertContainerHandles(testCase.kind, group!.data);
 
-      const connectedTopLevelEdges = edges.filter((edge) => edge.source === testCase.id || edge.target === testCase.id);
+      const connectedTopLevelEdges = edges.filter(
+        (edge) => !isVisualOnlyWorkflowEdge(edge) && (edge.source === testCase.id || edge.target === testCase.id),
+      );
       expect(connectedTopLevelEdges.length, testCase.name).toBeGreaterThan(0);
       for (const edge of connectedTopLevelEdges) {
         expect(edge.source.includes("::"), `${testCase.name} source should be top-level`).toBe(false);
@@ -974,9 +1227,42 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
         }
       }
 
-      const templateEdges = edges.filter((edge) => edge.source.includes("::") || edge.target.includes("::"));
+      const templateEdges = edges.filter((edge) => !isVisualOnlyWorkflowEdge(edge) && (edge.source.includes("::") || edge.target.includes("::")));
       expect(templateEdges.some((edge) => edge.source === testCase.id || edge.target === testCase.id), testCase.name).toBe(false);
-      expect(nodes.filter((node) => node.parentId === testCase.id).every((node) => node.zIndex! > group!.zIndex!), testCase.name).toBe(true);
+      const children = nodes.filter((node) => node.parentId === testCase.id);
+      expect(children.every((node) => node.zIndex! > group!.zIndex!), testCase.name).toBe(true);
+      if (testCase.kind === "optional-group") {
+        const visualBoundaryEdges = edges.filter((edge) => isVisualOnlyWorkflowEdge(edge) && (edge.source === testCase.id || edge.target === testCase.id));
+        expect(visualBoundaryEdges, testCase.name).toHaveLength(children.length > 0 ? 2 : 0);
+        expect(visualBoundaryEdges.every((edge) => edge.selectable === false && edge.deletable === false), testCase.name).toBe(true);
+        for (const edge of visualBoundaryEdges) {
+          const source = byId.get(edge.source);
+          const target = byId.get(edge.target);
+          expect(source, `${testCase.name} visual source ${edge.source}`).toBeTruthy();
+          expect(target, `${testCase.name} visual target ${edge.target}`).toBeTruthy();
+          if (source!.data.kind === "optional-group") {
+            assertContainerHandles("optional-group", source!.data);
+          } else {
+            assertRenderedHandles(source!.data.kind, source!.data, {
+              target: source!.data.kind === "start" ? 0 : 1,
+              source: source!.data.kind === "end" ? 0 : 1,
+            });
+          }
+          if (target!.data.kind === "optional-group") {
+            assertContainerHandles("optional-group", target!.data);
+          } else {
+            assertRenderedHandles(target!.data.kind, target!.data, {
+              target: target!.data.kind === "start" ? 0 : 1,
+              source: target!.data.kind === "end" ? 0 : 1,
+            });
+          }
+        }
+        const { ir: roundTripped } = flowToIr(testCase.ir.name, nodes, edges, columnsOf(makeDef(testCase.ir)));
+        const persistedGroup = roundTripped.nodes.find((irNode) => irNode.id === testCase.id);
+        const persistedTemplate = persistedGroup?.config?.template as { edges?: { from: string; to: string }[] } | undefined;
+        expect(roundTripped.edges.some((edge) => edge.from.includes("::") || edge.to.includes("::")), testCase.name).toBe(false);
+        expect(persistedTemplate?.edges?.some((edge) => edge.from === testCase.id || edge.to === testCase.id), testCase.name).toBe(false);
+      }
     }
 
     assertRunDoesNotOverlap("coding consecutive fallback", irToFlow(makeDef(BUILTIN_CODING_WORKFLOW_IR)).nodes, [
@@ -989,7 +1275,8 @@ describe("workflow-flow-mapping foreach + rework round-trip", () => {
       "steps",
       "browser-verification",
       "code-review",
-      "review",
+      // FNXC:WorkflowReviewGates 2026-06-29-23:46: The stepwise built-in no longer has a separate final `review` seam; keep the optional-group overlap guard aligned with the post-code-review completion summary suffix while still proving adjacent optional containers do not visually collide.
+      "completion-summary",
     ]);
 
     const consecutiveMixedContainers: WorkflowDefinition["ir"] = {
@@ -1337,6 +1624,14 @@ describe("edge-condition authoring (U2)", () => {
     // missing endpoint.
     expect(buildConnectionEdge({ source: "a", target: null }, edges, nodes)).toEqual({
       error: "missing-endpoint",
+    });
+
+    // visual-only optional-group boundary handles are reserved for generated guide edges.
+    expect(buildConnectionEdge({ source: "a", sourceHandle: "optional-boundary-entry", target: "b" }, edges, nodes)).toEqual({
+      error: "reserved-handle",
+    });
+    expect(buildConnectionEdge({ source: "a", target: "b", targetHandle: "optional-boundary-exit" }, edges, nodes)).toEqual({
+      error: "reserved-handle",
     });
 
     // second connect of an existing success pair (prompt source supports
@@ -1714,11 +2009,24 @@ describe("insertFragment", () => {
     const first = insertFragment(existing.nodes, existing.edges, fragmentIr, { x: 400, y: 200 });
     const second = insertFragment(first.nodes, first.edges, fragmentIr, { x: 700, y: 200 });
 
-    // Two optional-group containers, each with its template child expanded.
+    // Two optional-group containers, each with its template child expanded and its
+    // visual-only boundary wiring present immediately on insertion (before save/reload).
     const groups = second.nodes.filter((n) => n.data.kind === "optional-group");
     expect(groups).toHaveLength(2);
     for (const g of groups) {
-      expect(second.nodes.some((n) => n.parentId === g.id)).toBe(true);
+      const child = second.nodes.find((n) => n.parentId === g.id);
+      expect(child).toBeTruthy();
+      expect(child?.data.optionalGroupBoundary).toEqual({ entry: true, exit: true });
+      expect(
+        second.edges.some(
+          (edge) => isVisualOnlyWorkflowEdge(edge) && edge.source === g.id && edge.target === child?.id,
+        ),
+      ).toBe(true);
+      expect(
+        second.edges.some(
+          (edge) => isVisualOnlyWorkflowEdge(edge) && edge.source === child?.id && edge.target === g.id,
+        ),
+      ).toBe(true);
     }
     // All ids disjoint across both inserts.
     const allIds = second.nodes.map((n) => n.id);
@@ -1735,10 +2043,61 @@ describe("insertFragment", () => {
     expect(ogs).toHaveLength(2);
     for (const og of ogs) {
       expect(og.config?.defaultOn).toBe(true);
-      const template = (og.config as { template?: { nodes: { config?: Record<string, unknown> }[] } }).template;
+      const template = (og.config as { template?: { nodes: { config?: Record<string, unknown> }[]; edges?: unknown[] } }).template;
       expect(template?.nodes).toHaveLength(1);
       expect(template?.nodes[0].config?.name).toBe("Security Audit");
+      expect(template?.nodes[0].config?.optionalGroupBoundary).toBeUndefined();
+      expect(template?.edges).toEqual([]);
     }
+  });
+
+  it("expands inserted multi-node optional groups with boundary metadata without dropping internal edges", () => {
+    const fragment: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "insert optional chain",
+      columns: [],
+      nodes: [
+        { id: "start", kind: "start" },
+        {
+          id: "opt",
+          kind: "optional-group",
+          config: {
+            template: {
+              nodes: [
+                { id: "prepare", kind: "prompt", config: { prompt: "prepare" } },
+                { id: "approve", kind: "gate", config: { prompt: "approve" } },
+              ],
+              edges: [{ from: "prepare", to: "approve", condition: "success" }],
+            },
+          },
+        },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "opt", condition: "success" },
+        { from: "opt", to: "end", condition: "success" },
+      ],
+    };
+
+    const inserted = insertFragment([], [], fragment, { x: 100, y: 200 });
+    const group = inserted.nodes.find((node) => node.data.kind === "optional-group")!;
+    const prepare = inserted.nodes.find((node) => node.parentId === group.id && node.id.endsWith("::prepare"))!;
+    const approve = inserted.nodes.find((node) => node.parentId === group.id && node.id.endsWith("::approve"))!;
+
+    expect(prepare.data.optionalGroupBoundary).toEqual({ entry: true, exit: false });
+    expect(approve.data.optionalGroupBoundary).toEqual({ entry: false, exit: true });
+    expect(inserted.edges.some((edge) => edge.source === prepare.id && edge.target === approve.id)).toBe(true);
+    expect(inserted.edges.filter((edge) => isVisualOnlyWorkflowEdge(edge)).map((edge) => `${edge.source}->${edge.target}`).sort()).toEqual([
+      `${group.id}->${prepare.id}`,
+      `${approve.id}->${group.id}`,
+    ]);
+
+    const { ir: out } = flowToIr("insert optional chain", inserted.nodes, inserted.edges);
+    const opt = out.nodes.find((node) => node.kind === "optional-group")!;
+    const template = (opt.config as { template?: { nodes?: Array<{ config?: Record<string, unknown> }>; edges?: unknown[] } }).template;
+    expect(template?.nodes?.map((node) => node.config?.optionalGroupBoundary)).toEqual([undefined, undefined]);
+    expect(template?.edges).toEqual([{ from: "prepare", to: "approve", condition: "success" }]);
+    expect(out.edges).toEqual([]);
   });
 });
 

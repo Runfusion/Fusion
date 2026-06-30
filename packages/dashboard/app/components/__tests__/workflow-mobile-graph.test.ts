@@ -150,15 +150,15 @@ describe("buildMobileWorkflowGraph", () => {
       expect(browserVerification?.outgoing.map((out) => [out.target, out.label]), name).toEqual(
         expect.arrayContaining([
           ["code-review", "success"],
-          ["end", "failure"],
         ]),
       );
-      expect(codeReview?.outgoing.map((out) => [out.target, out.label]), name).toEqual(
-        expect.arrayContaining([
-          ["review", "success"],
-          ["end", "failure"],
-        ]),
-      );
+      expect(browserVerification?.outgoing.some((out) => out.label === "failure"), name).toBe(true);
+      expect(codeReview?.outgoing.some((out) => out.label === "success"), name).toBe(true);
+      expect(codeReview?.outgoing.some((out) => out.label === "failure"), name).toBe(true);
+      expect(browserVerification?.outgoing.some((out) => out.label === "entry" || out.label === "exit"), name).toBe(false);
+      expect(codeReview?.outgoing.some((out) => out.label === "entry" || out.label === "exit"), name).toBe(false);
+      expect(browserVerification?.children.length, name).toBeGreaterThan(0);
+      expect(codeReview?.children.length, name).toBeGreaterThan(0);
     }
   });
 

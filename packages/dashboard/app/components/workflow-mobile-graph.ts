@@ -4,6 +4,7 @@ import type { WorkflowFlowNodeData } from "./nodes/WorkflowNodeTypes";
 import {
   columnIdFromBandNode,
   isColumnBandNode,
+  isVisualOnlyWorkflowEdge,
   templateNodeIdFromChild,
 } from "./workflow-flow-mapping";
 import { nodeConfigSummary, type NodeSummaryCatalogs, type SummaryTranslate } from "./nodes/node-summary";
@@ -131,6 +132,7 @@ export function buildMobileWorkflowGraph(
   }
 
   for (const edge of edges) {
+    if (isVisualOnlyWorkflowEdge(edge)) continue;
     const list = edgesBySource.get(edge.source) ?? [];
     list.push(edge);
     edgesBySource.set(edge.source, list);
