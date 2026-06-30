@@ -1646,23 +1646,60 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     xtermRef.current.options.cursorStyle = terminalPreferences.cursorStyle;
     xtermRef.current.options.cursorBlink = terminalPreferences.cursorBlink;
 
+    let cancelled = false;
+
     // Defer fit until the next frame so layout reflects the new font metrics
     // before FitAddon measures rows/cols. Reuse pendingFitRef so font changes and
     // visualViewport-triggered fits are coalesced into a single scheduled fit.
-    if (pendingFitRef.current !== null) {
-      cancelAnimationFrame(pendingFitRef.current);
-      pendingFitRef.current = null;
-    }
+    const scheduleRefit = () => {
+      if (pendingFitRef.current !== null) {
+        cancelAnimationFrame(pendingFitRef.current);
+        pendingFitRef.current = null;
+      }
 
-    const frame = requestAnimationFrame(() => {
-      pendingFitRef.current = null;
-      refitTerminal();
-    });
-    pendingFitRef.current = frame;
+      const frame = requestAnimationFrame(() => {
+        pendingFitRef.current = null;
+        if (cancelled) {
+          return;
+        }
+        refitTerminal();
+        xtermRef.current?.refresh?.(0, Math.max(0, xtermRef.current.rows - 1));
+      });
+      pendingFitRef.current = frame;
+      return frame;
+    };
+
+    const immediateFrame = scheduleRefit();
+
+    /*
+    FNXC:Terminal 2026-06-30-13:18:
+    The mobile screenshot recurrence happens at the visible 10px setting with the soft keyboard already open. A live font-size preference change must wait for the symbols-free measured stack to settle, then reapply xterm font options, refit, resize, and refresh; otherwise canvas/DOM metrics can keep the old wider cells until an unfold/orientation event forces a later measurement.
+    */
+    void waitForTerminalFontMetrics(terminalPreferences.fontSize, resolvedFontFamily).then(
+      (fontMetricsSettled) => {
+        if (
+          cancelled ||
+          !fontMetricsSettled ||
+          !xtermRef.current ||
+          xtermRef.current.options.fontSize !== terminalPreferences.fontSize ||
+          xtermRef.current.options.fontFamily !== resolvedFontFamily
+        ) {
+          return;
+        }
+        xtermRef.current.options.fontFamily = resolvedFontFamily;
+        xtermRef.current.options.fontSize = terminalPreferences.fontSize;
+        scheduleRefit();
+      },
+      () => {
+        // FontFaceSet failures are non-fatal; the immediate frame above still
+        // applies the current preference and keeps terminal input usable.
+      },
+    );
 
     return () => {
-      if (pendingFitRef.current === frame) {
-        cancelAnimationFrame(frame);
+      cancelled = true;
+      if (immediateFrame !== undefined && pendingFitRef.current === immediateFrame) {
+        cancelAnimationFrame(immediateFrame);
         pendingFitRef.current = null;
       }
     };

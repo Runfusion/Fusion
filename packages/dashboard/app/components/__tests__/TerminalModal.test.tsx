@@ -4665,6 +4665,8 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       value: savedDocumentElementClientHeight,
       configurable: true,
     });
+    window.localStorage.removeItem(TERMINAL_FONT_SIZE_KEY);
+    window.localStorage.removeItem(TERMINAL_PREFERENCES_KEY);
     vi.restoreAllMocks();
   });
 
@@ -4761,6 +4763,69 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
 
     return { listeners, mockVV, initialHeight };
   }
+
+  it("remeasures the mobile keyboard-open terminal when reducing the persisted font size to 10px", async () => {
+    const { listeners } = simulateIOSSafari(true, 300);
+    const fontLoad = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: fontLoad,
+        ready: Promise.resolve(),
+      },
+      configurable: true,
+    });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 667,
+      configurable: true,
+    });
+    const onDataListeners: Array<(data: string) => void> = [];
+    const resizeForSmallFont = vi.fn();
+    mockUseTerminal.mockReturnValue(createMockTerminalState({
+      connectionStatus: "connected",
+      resize: resizeForSmallFont,
+      onData: vi.fn((cb: (data: string) => void) => {
+        onDataListeners.push(cb);
+        return vi.fn();
+      }),
+    }));
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("terminal-font-size-value")).toHaveTextContent("14px"));
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("367px");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("300px");
+    });
+    expectMeasurementSafeFontStack(mockTerminalInstance.options.fontFamily as string);
+
+    fontLoad.mockClear();
+    resizeForSmallFont.mockClear();
+    const decrease = screen.getByTestId("terminal-font-size-decrease");
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(decrease);
+    }
+
+    await waitFor(() => expect(screen.getByTestId("terminal-font-size-value")).toHaveTextContent("10px"));
+    await waitFor(() => {
+      expect(fontLoad).toHaveBeenCalledWith(expect.stringContaining("10px"));
+    });
+    await waitFor(() => expect(mockTerminalInstance.options.fontSize).toBe(10));
+    await waitFor(() => expect(mockTerminalInstance.refresh).toHaveBeenCalledWith(0, 23));
+    await waitFor(() => expect(resizeForSmallFont).toHaveBeenCalledWith(80, 24));
+
+    act(() => {
+      for (const cb of onDataListeners) {
+        cb("❯ pnpm build\r\n@fusion/dashboard build complete  main\r\n");
+      }
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => expect(mockTerminalInstance.write).toHaveBeenCalledWith(expect.stringContaining("pnpm build")));
+    expectMeasurementSafeFontStack(mockTerminalInstance.options.fontFamily as string);
+    window.localStorage.removeItem(TERMINAL_PREFERENCES_KEY);
+  });
 
   it("keeps initial folded keyboard-open terminal metrics before any unfold repair", async () => {
     const { listeners } = simulateIOSSafari(true, 300);

@@ -270,6 +270,13 @@ export function SessionTerminal({
     if (showConfirmAdvance) setAdvanceDismissed(false);
   }, [showConfirmAdvance, sessionId]);
 
+  const sendResizeMessage = useCallback((cols: number, rows: number) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+  }, []);
+
   const applyLiveTerminalPreferences = useCallback(() => {
     const terminal = xtermRef.current;
     if (!terminal) {
@@ -277,7 +284,8 @@ export function SessionTerminal({
     }
 
     const terminalPreferences = readTerminalPreferences();
-    terminal.options.fontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+    const resolvedFontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+    terminal.options.fontFamily = resolvedFontFamily;
     containerRef.current?.style.setProperty(
       "--terminal-glyph-font-family",
       resolveTerminalGlyphFontFamily(terminalPreferences.fontFamily),
@@ -288,10 +296,43 @@ export function SessionTerminal({
 
     try {
       (fitAddonRef.current as { fit?: () => void } | null)?.fit?.();
+      sendResizeMessage(terminal.cols, terminal.rows);
     } catch {
       /* ignore transient measure failures */
     }
-  }, [canAcceptInput]);
+
+    /*
+    FNXC:Terminal 2026-06-30-13:22:
+    SessionTerminal shares TerminalModal's mobile 10px font-size invariant through the same preference storage. Storage-driven font changes must wait for the symbols-free measured stack, then refit, send one resize frame, and refresh so embedded CLI attach surfaces do not keep stale wide ASCII cells after the soft keyboard has constrained the viewport.
+
+    FNXC:Terminal 2026-06-30-22:47:
+    Async font-metric waits can resolve out of order when a second terminal preference change lands first. Reapply only if the currently mounted xterm options still match the preference snapshot that scheduled this wait, preserving the latest small-font cell metrics instead of resurrecting stale spacing.
+    */
+    void waitForTerminalFontMetrics(terminalPreferences.fontSize, resolvedFontFamily).then(
+      (fontMetricsSettled) => {
+        if (
+          !fontMetricsSettled ||
+          xtermRef.current !== terminal ||
+          terminal.options.fontSize !== terminalPreferences.fontSize ||
+          terminal.options.fontFamily !== resolvedFontFamily
+        ) {
+          return;
+        }
+        terminal.options.fontFamily = resolvedFontFamily;
+        terminal.options.fontSize = terminalPreferences.fontSize;
+        try {
+          (fitAddonRef.current as { fit?: () => void } | null)?.fit?.();
+          sendResizeMessage(terminal.cols, terminal.rows);
+          terminal.refresh(0, Math.max(0, terminal.rows - 1));
+        } catch {
+          /* ignore teardown or transient measure failures */
+        }
+      },
+      () => {
+        /* FontFaceSet failures are non-fatal; the immediate fit above remains. */
+      },
+    );
+  }, [canAcceptInput, sendResizeMessage]);
 
   /*
   FNXC:Terminal 2026-06-17-01:05:
@@ -322,12 +363,7 @@ export function SessionTerminal({
     let unackedBytes = 0;
     setTicketReadOnly(null);
 
-    const sendResize = (cols: number, rows: number) => {
-      const ws = wsRef.current;
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols, rows }));
-      }
-    };
+    const sendResize = sendResizeMessage;
 
     const ackBytes = (n: number) => {
       unackedBytes += n;
@@ -440,7 +476,9 @@ export function SessionTerminal({
           !fontMetricsSettled ||
           disposed ||
           xtermRef.current !== term ||
-          fitAddonRef.current !== fitAddon
+          fitAddonRef.current !== fitAddon ||
+          term.options.fontSize !== terminalPreferences.fontSize ||
+          term.options.fontFamily !== resolvedFontFamily
         ) {
           return;
         }
@@ -579,7 +617,7 @@ export function SessionTerminal({
       }
       fitAddonRef.current = null;
     };
-  }, [sessionId, readOnly, mode, projectId]);
+  }, [sessionId, readOnly, mode, projectId, sendResizeMessage]);
 
   const replayLabel = useMemo(() => {
     if (mode === "idle") return t("cliTerminal.replayIdle", "Session idle");

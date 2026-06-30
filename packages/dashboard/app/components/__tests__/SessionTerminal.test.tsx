@@ -378,15 +378,25 @@ describe("SessionTerminal", () => {
   });
 
   it("live-applies font and cursor preference changes from storage events", async () => {
+    const fontLoad = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: fontLoad,
+        ready: Promise.resolve(),
+      },
+      configurable: true,
+    });
     render(<SessionTerminal sessionId="s1" />);
     await waitFor(() => expect(FakeWS.instances.length).toBe(1));
     mockFitAddon.fit.mockClear();
+    mockTerm.refresh.mockClear();
+    fontLoad.mockClear();
 
     window.localStorage.setItem(
       TERMINAL_PREFERENCES_KEY,
       JSON.stringify({
         fontFamily: "jetbrains-mono",
-        fontSize: 20,
+        fontSize: 10,
         cursorStyle: "bar",
         cursorBlink: false,
         renderer: "canvas",
@@ -397,11 +407,13 @@ describe("SessionTerminal", () => {
     await waitFor(() => {
       expect(mockTerm.options).toMatchObject({
         fontFamily: resolveTerminalFontFamily("jetbrains-mono"),
-        fontSize: 20,
+        fontSize: 10,
         cursorStyle: "bar",
         cursorBlink: false,
       });
     });
+    await waitFor(() => expect(fontLoad).toHaveBeenCalledWith(expect.stringContaining("10px")));
+    await waitFor(() => expect(mockTerm.refresh).toHaveBeenCalledWith(0, mockTerm.rows - 1));
     expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
     expect(mockFitAddon.fit).toHaveBeenCalled();
   });

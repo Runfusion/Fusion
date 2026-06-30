@@ -29,6 +29,16 @@ vi.mock("@xterm/addon-webgl", () => ({
 const apiMock = vi.fn();
 vi.mock("../../api", () => ({ api: (...args: unknown[]) => apiMock(...args) }));
 vi.mock("../../auth", () => ({ appendTokenQuery: (u: string) => u }));
+const terminalPreferenceMocks = vi.hoisted(() => ({
+  waitForTerminalFontMetrics: vi.fn(() => Promise.resolve(true)),
+}));
+vi.mock("../../utils/terminalPreferences", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/terminalPreferences")>();
+  return {
+    ...actual,
+    waitForTerminalFontMetrics: terminalPreferenceMocks.waitForTerminalFontMetrics,
+  };
+});
 
 // ── Minimal WebSocket stub ──────────────────────────────────────────────────
 class FakeWS {
@@ -145,6 +155,8 @@ beforeEach(() => {
   mockTerm.dispose.mockClear();
   mockTerm.options = {};
   mockFitAddon.fit.mockClear();
+  terminalPreferenceMocks.waitForTerminalFontMetrics.mockReset();
+  terminalPreferenceMocks.waitForTerminalFontMetrics.mockResolvedValue(true);
   apiMock.mockReset();
   apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: false });
   installMatchMedia(true); // mobile by default
@@ -379,6 +391,44 @@ describe("SessionTerminal (mobile)", () => {
     expect(screen.getByTestId("cli-key-arrow-down")).toBeTruthy();
     expect(screen.getByTestId("cli-key-arrow-left")).toBeTruthy();
     expect(screen.getByTestId("cli-key-arrow-right")).toBeTruthy();
+  });
+
+  it("does not let an older mobile font-metric wait overwrite newer terminal preferences", async () => {
+    await renderMobile();
+    await waitFor(() => expect(terminalPreferenceMocks.waitForTerminalFontMetrics).toHaveBeenCalled());
+
+    const pendingFontWaits: Array<(value: boolean) => void> = [];
+    terminalPreferenceMocks.waitForTerminalFontMetrics.mockReset();
+    terminalPreferenceMocks.waitForTerminalFontMetrics.mockImplementation(
+      () => new Promise<boolean>((resolve) => pendingFontWaits.push(resolve)),
+    );
+
+    const setPreferenceFontSize = (fontSize: number) => {
+      window.localStorage.setItem(
+        TERMINAL_PREFERENCES_KEY,
+        JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, fontSize }),
+      );
+      window.dispatchEvent(new StorageEvent("storage", { key: TERMINAL_PREFERENCES_KEY }));
+    };
+
+    setPreferenceFontSize(10);
+    expect(mockTerm.options.fontSize).toBe(10);
+    setPreferenceFontSize(14);
+    expect(mockTerm.options.fontSize).toBe(14);
+    expect(terminalPreferenceMocks.waitForTerminalFontMetrics).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      pendingFontWaits[0]?.(true);
+      await Promise.resolve();
+    });
+    expect(mockTerm.options.fontSize).toBe(14);
+
+    await act(async () => {
+      pendingFontWaits[1]?.(true);
+      await Promise.resolve();
+    });
+    expect(mockTerm.options.fontSize).toBe(14);
+    expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
   });
 });
 
