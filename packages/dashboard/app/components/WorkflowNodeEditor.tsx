@@ -3566,9 +3566,9 @@ function InnerEditor({
             )}
           </section>
 
+          {/* FNXC:WorkflowSimpleEditor 2026-06-29-23:21: Simple editor row and pencil affordances must open the same node details in desktop compact and mobile presentations. Do not suppress this inspector only because the canvas is hidden; mobile collapse still closes the detail stage and end nodes remain non-inspectable. */}
           {selectedNodeHasInspector &&
-            !(isMobileMode && inspectorCollapsed) &&
-            !(compactLayoutEnabled && !isMobileMode) && (
+            !(isMobileMode && inspectorCollapsed) && (
             <aside className="wf-editor-inspector" data-testid="wf-node-inspector">
               <div className="wf-inspector-heading">
                 {/* FNXC:WorkflowEditor 2026-06-21-10:00: Heading shows the node-kind title (from the help registry) so the pane names what is selected, falling back to the generic "Node" label. */}

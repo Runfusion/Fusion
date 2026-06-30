@@ -439,11 +439,10 @@ describe("workflow-flow-mapping", () => {
     const failuresToEnd = edges.filter((edge) => edge.target === "end" && edge.data?.condition === "failure");
     // FNXC:WorkflowOptionalGroup 2026-06-21-15:30: the coding built-in's pre-merge `workflow-step` seam was migrated to a `browser-verification` optional-group (U6), which now carries the failure->end edge in its place.
     // FNXC:CodeReviewStep 2026-06-25-00:00: the default-on `code-review` optional-group is also on the pre-merge success path with its own failure->end edge (see builtin-code-review-group.test.ts), so it is an expected failure->end source too. This corrected a stale assertion that predated the code-review group's addition.
-    // FNXC:WorkflowPlanReview 2026-06-29-00:00: the built-in coding workflow now includes a `plan-review` gate on the normal path; its failure edge must remain renderable and independently clickable like the existing parallel failure-to-end edges.
+    // FNXC:WorkflowPlanReview 2026-06-29-23:18: FN-7265 removed the coding workflow's duplicate plan-review gate, so this renderability guard tracks the remaining failure-to-end sources without expecting a stale `plan-review` edge.
     expect(failuresToEnd.map((edge) => edge.source).sort()).toEqual([
       "execute",
       "merge-attempt",
-      "plan-review",
       "planning",
       "review",
     ]);
@@ -900,6 +899,53 @@ describe("WorkflowNodeEditor", () => {
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
   });
 
+  it("opens node details from the desktop compact simple editor row click", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    const lintRow = await screen.findByTestId("mobile-wf-node-lint");
+    fireEvent.click(within(lintRow).getAllByRole("button")[0]);
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).getByLabelText("Prompt")).toBeInTheDocument();
+    expect(inspector.closest(".wf-editor-body")).not.toHaveClass("wf-editor-body--mobile-node-detail");
+  });
+
+  it("opens custom and built-in simple editor inspectors while leaving end nodes closed", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def(), builtinDef()]);
+    vi.mocked(fetchWorkflowPromptOverrides).mockResolvedValue({
+      stored: {},
+      effective: { execute: "Default execute prompt" },
+      defaults: { execute: "Default execute prompt" },
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-start")).getAllByRole("button")[0]);
+
+    const startInspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(startInspector).getByTestId("wf-start-inspector")).toBeInTheDocument();
+    expect(within(startInspector).queryByLabelText("Name")).not.toBeInTheDocument();
+
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-end")).getAllByRole("button")[0]);
+    await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Default coding workflow" }));
+    await screen.findByTestId("wf-readonly-banner");
+    fireEvent.click(within((await screen.findAllByTestId("mobile-wf-node-execute"))[0]).getAllByRole("button")[0]);
+
+    const builtinInspector = await screen.findByTestId("wf-node-inspector");
+    const prompt = within(builtinInspector).getByLabelText("Prompt") as HTMLTextAreaElement;
+    expect(prompt).not.toHaveAttribute("readonly");
+    expect(prompt).toHaveValue("Default execute prompt");
+    expect(within(builtinInspector).getByText(/structure is read-only/i)).toBeInTheDocument();
+  });
+
   it("collapses and expands the selected node inspector on mobile", async () => {
     mockWorkflowEditorViewport("mobile");
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
@@ -922,8 +968,17 @@ describe("WorkflowNodeEditor", () => {
 
     fireEvent.click(within(await screen.findByTestId("mobile-wf-node-lint")).getAllByRole("button")[0]);
 
-    expect(await screen.findByTestId("wf-node-inspector")).toBeInTheDocument();
+    const reopenedInspector = await screen.findByTestId("wf-node-inspector");
+    expect(reopenedInspector.closest(".wf-editor-body")).toHaveClass("wf-editor-body--mobile-node-detail");
     expect(screen.getByTestId("wf-inspector-toggle")).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByTestId("wf-inspector-toggle"));
+    await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-merge")).getAllByRole("button")[0]);
+
+    const nextInspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(nextInspector).getByLabelText("Name")).toBeInTheDocument();
+    expect(nextInspector.closest(".wf-editor-body")).toHaveClass("wf-editor-body--mobile-node-detail");
   });
 
   it("edits the start node entry column from the desktop inspector and saves it", async () => {
