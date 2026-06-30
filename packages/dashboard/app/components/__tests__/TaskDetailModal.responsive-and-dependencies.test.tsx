@@ -129,6 +129,7 @@ describe("TaskDetailModal", () => {
 
       expect(workflowBadgeBlock).toContain("display: inline-flex;");
       expect(workflowBadgeBlock).toContain("align-items: center;");
+      expect(workflowBadgeBlock).toContain("column-gap: calc(var(--space-xs) / 2);");
       expect(workflowBadgeBlock).toContain("flex: 0 1 auto;");
       expect(workflowBadgeBlock).toContain("text-overflow: ellipsis;");
       expect(mobileTimestampsBlock).toContain("display: flex;");

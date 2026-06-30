@@ -48,7 +48,12 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   text-transform: uppercase;
 }
 
+/*
+FNXC:WorkflowBadges 2026-06-30-00:00:
+Task detail workflow badges share the board badge's slight token-based icon-to-label gap so the canonical metadata badge stays readable while preserving inline truncation and timestamp ownership.
+*/
 .detail-workflow-badge {
+  column-gap: calc(var(--space-xs) / 2);
   font-size: 0.6875rem;
   padding: calc(var(--space-xs) / 2) var(--space-sm);
   border-radius: var(--radius-pill);

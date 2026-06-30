@@ -4998,13 +4998,19 @@ describe("TaskCard workflow badges", () => {
         task={makeTask()}
         onOpenDetail={noop}
         addToast={noop}
-        workflowBadge={{ workflowId: "wf-custom", workflowName: "Custom Flow" }}
+        workflowBadge={{ workflowId: "wf-custom", workflowName: "Custom Flow", workflowIcon: "⚙️" }}
       />,
     );
 
     const badge = screen.getByTestId("card-workflow-badge");
     const row = screen.getByTestId("card-workflow-badge-row");
+    const workflowBadgeBlock = [...loadAllAppCssBaseOnly().matchAll(/^\.card-workflow-badge\s*\{([^}]*)\}/gm)]
+      .map((match) => match[1])
+      .join("\n");
     expect(badge).toHaveTextContent("Custom Flow");
+    expect(badge.querySelector(".workflow-icon")).not.toBeNull();
+    expect(badge.querySelector(".workflow-icon")?.nextElementSibling).toHaveTextContent("Custom Flow");
+    expect(workflowBadgeBlock).toContain("column-gap: calc(var(--space-xs) / 2);");
     expect(badge).toHaveAttribute("data-workflow-id", "wf-custom");
     expect(badge).toHaveAccessibleName("Workflow Custom Flow");
     expect(row).toContainElement(badge);
@@ -5042,7 +5048,7 @@ describe("TaskCard workflow badges", () => {
         })}
         onOpenDetail={noop}
         addToast={noop}
-        workflowBadge={{ workflowId: "wf-long", workflowName: "Very long custom workflow name for aggregate cards" }}
+        workflowBadge={{ workflowId: "wf-long", workflowName: "Very long custom workflow name for aggregate cards", workflowIcon: "🧭" }}
       />,
     );
 

@@ -218,6 +218,9 @@ Aggregate Board cards need a compact workflow-name badge so operators can identi
 
 FNXC:WorkflowBoard 2026-06-30-00:00:
 All workflows cards need workflow identity at the bottom-left below every other card icon/action/meta row, so the wrapper is rendered after those rows and left-aligns the neutral badge without adding click targets.
+
+FNXC:WorkflowBadges 2026-06-30-00:00:
+Workflow badges need a slight token-based gap between icon and label so compact workflow identity remains readable without changing placement, clickability, or truncation behavior.
 */
 .card-workflow-badge-row {
   display: flex;
@@ -228,6 +231,7 @@ All workflows cards need workflow identity at the bottom-left below every other 
 }
 
 .card-workflow-badge {
+  column-gap: calc(var(--space-xs) / 2);
   max-width: min(100%, 18ch);
   background: var(--surface-2);
   border-color: var(--border);
