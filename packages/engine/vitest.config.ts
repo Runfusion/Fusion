@@ -94,7 +94,13 @@ export default defineConfig({
             its line from the engine-core allow-list. The hold/release sweep logic is covered
             by PG-backed engine tests.
             */
-            "src/__tests__/workflow-graph-task-runner.test.ts",
+            /*
+            FNXC:EngineTests 2026-06-30-00:00:
+            workflow-graph-task-runner.test.ts evicted from the gate: it constructs TaskStore
+            with inMemoryDb:true which is removed in the PG cutover. Uses SQLite-only path.
+            The workflow graph validation coverage is maintained by workflow-ir.test.ts
+            and PG-backed integration tests.
+            */
             "src/__tests__/workflow-graph-executor-parity.test.ts",
             /*
             FNXC:EngineTests 2026-06-29-00:00:
