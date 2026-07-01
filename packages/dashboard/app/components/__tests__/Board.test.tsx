@@ -199,6 +199,49 @@ function renderBoard(props = {}) {
   return render(<Board {...createBoardProps(props)} />);
 }
 
+function installMobileBoardStabilizationHarness() {
+  const originalMatchMedia = window.matchMedia;
+  const originalRequestAnimationFrame = window.requestAnimationFrame;
+  const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  const visualViewportDescriptor = Object.getOwnPropertyDescriptor(window, "visualViewport");
+  const visualViewportTarget = new EventTarget() as EventTarget & { scale: number };
+  visualViewportTarget.scale = 1;
+
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: query.includes("768px"),
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+  window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+    callback(performance.now());
+    return 1;
+  });
+  window.cancelAnimationFrame = vi.fn();
+  Object.defineProperty(window, "visualViewport", {
+    configurable: true,
+    value: visualViewportTarget,
+  });
+
+  return {
+    visualViewport: visualViewportTarget,
+    restore() {
+      window.matchMedia = originalMatchMedia;
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+      window.cancelAnimationFrame = originalCancelAnimationFrame;
+      if (visualViewportDescriptor) {
+        Object.defineProperty(window, "visualViewport", visualViewportDescriptor);
+      } else {
+        delete (window as typeof window & { visualViewport?: VisualViewport }).visualViewport;
+      }
+    },
+  };
+}
+
 async function openWorkflowSwitcher() {
   const trigger = await screen.findByTestId("workflow-switcher");
   fireEvent.click(trigger);
@@ -222,6 +265,46 @@ describe("Board", () => {
     renderBoard();
     const main = screen.getByRole("main");
     expect(main.id).toBe("board");
+  });
+
+  it("preserves intentional board column scroll during mobile resize stabilization", () => {
+    const harness = installMobileBoardStabilizationHarness();
+    try {
+      const { rerender } = renderBoard({
+        tasks: [
+          { id: "FN-SCROLL-1", description: "Later lane", column: "in-review", dependencies: [], steps: [], currentStep: 0, log: [], createdAt: "2024-01-01T00:00:00.000Z", updatedAt: "2024-01-01T00:00:00.000Z" } as Task,
+        ],
+      });
+      const board = screen.getByRole("main") as HTMLElement;
+      board.scrollLeft = 360;
+
+      rerender(<Board {...createBoardProps({ tasks: [] })} />);
+      act(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+
+      expect(board.scrollLeft).toBe(360);
+      expect(document.documentElement.scrollLeft).toBe(0);
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("preserves intentional board column scroll during mobile visualViewport stabilization", () => {
+    const harness = installMobileBoardStabilizationHarness();
+    try {
+      renderBoard();
+      const board = screen.getByRole("main") as HTMLElement;
+      board.scrollLeft = 480;
+
+      act(() => {
+        harness.visualViewport.dispatchEvent(new Event("resize"));
+      });
+
+      expect(board.scrollLeft).toBe(480);
+    } finally {
+      harness.restore();
+    }
   });
 
   it("FN-4380: does not eagerly fetch GitHub badge status on board mount", () => {
@@ -1664,6 +1747,32 @@ describe("Board", () => {
         "column-done",
         "column-archived",
       ]);
+    });
+
+    it("preserves all-workflows board scroll during mobile visualViewport refresh stabilization", async () => {
+      const harness = installMobileBoardStabilizationHarness();
+      try {
+        enableFlag(
+          { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
+          [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+        );
+        renderBoard({ tasks: [mkTask({ id: "FN-1", column: "todo" }), mkTask({ id: "FN-2", column: "intake" })] });
+
+        await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
+        const board = screen.getByRole("main") as HTMLElement;
+        expect(board.className).toContain("board-workflow-columns");
+        board.scrollLeft = 520;
+
+        act(() => {
+          harness.visualViewport.dispatchEvent(new Event("resize"));
+          window.dispatchEvent(new Event("resize"));
+        });
+
+        expect(board.scrollLeft).toBe(520);
+        expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
+      } finally {
+        harness.restore();
+      }
     });
 
     it("archived column is collapsible in workflow mode", async () => {
