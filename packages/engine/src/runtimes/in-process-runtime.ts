@@ -58,6 +58,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
 
 export const CLI_AGENT_AWAITING_INPUT_EVENT = "cli-agent-awaiting-input" as const;
+const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
 
 export interface CliAgentAwaitingInputNotificationInfo {
   sessionId: string;
@@ -1594,6 +1595,13 @@ export class InProcessRuntime
     // Forward task:moved events
     this.taskStore.on("task:moved", (data: { task: Task; from: string; to: string }) => {
       this.recordActivity();
+      if (data.to === "archived") {
+        /*
+        FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
+        In-process task archival is the retention cutoff for task-local planner chats. Keep interacted planner chats when tasks reach done, but delete exact task-planner sessions on archive through ChatStore so normal conversations and other tasks remain untouched.
+        */
+        this.chatStore?.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`, { projectId: this.config.projectId });
+      }
       this.emit("task:moved", data);
     });
 

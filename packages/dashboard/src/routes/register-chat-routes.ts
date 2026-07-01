@@ -137,6 +137,9 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   /*
   FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
   Task planner Chat uses a synthetic task-scoped chat target (`task-planner:<taskId>`) so the dashboard can persist/resume a conversation without binding it to an executor/reviewer agent or the Activity steering-comment pipeline. The route validates the task in the scoped project store and stores the effective planning model override on the session.
+
+  FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
+  Planner chats that already have user interaction remain available when a task reaches done, but new planner chats are not started for done or archived tasks. Archived-task cleanup removes existing task-planner sessions through ChatStore deletion so archived tasks stop retaining task-local planner context.
   */
   router.post("/chat/task-planner/:taskId/session", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
     try {
@@ -166,6 +169,10 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           : existing;
         res.json({ session });
         return;
+      }
+
+      if (task.column === "done" || task.column === "archived") {
+        throw badRequest(`Task ${task.id} is ${task.column}; planner chat can only be started while a task is live`);
       }
 
       const session = chatStore.createSession({
@@ -216,7 +223,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw badRequest("agentId is required when lookup=resume");
       }
 
-      const sessions = isResumeLookup
+      let sessions = isResumeLookup
         ? (() => {
             const matched = chatStore.findLatestActiveSessionForTarget({
               agentId: agentId!.trim(),
@@ -241,6 +248,14 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       if (sessions.length > 0) {
         const sessionIds = sessions.map((s) => s.id);
         const lastMessages = chatStore.getLastMessageForSessions(sessionIds);
+
+        if (!isResumeLookup) {
+          /*
+          FNXC:TaskDetailPlannerChat 2026-06-30-18:35:
+          Planner-chat sessions may appear in global Chat only after a user has sent at least one message. Lazy creation prevents most empty rows; this server-side guard keeps stale/legacy task-planner rows with no messages out of every global Chat surface while preserving normal direct and room sessions.
+          */
+          sessions = sessions.filter((session) => !session.agentId.startsWith(TASK_PLANNER_CHAT_AGENT_ID_PREFIX) || lastMessages.has(session.id));
+        }
 
         // Batch-gather generating session IDs to avoid N+1 calls
         const resolvedChatManager = projectId

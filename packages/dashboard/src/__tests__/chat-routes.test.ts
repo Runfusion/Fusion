@@ -145,6 +145,7 @@ const mockGetMessage = vi.fn();
 const mockGetLastMessageForSessions = vi.fn().mockReturnValue(new Map());
 const mockFindLatestActiveSessionForTarget = vi.fn();
 const mockDeleteMessage = vi.fn();
+const mockDeleteSessionsForAgentId = vi.fn();
 
 // Mock AgentStore
 const mockAgentStoreInit = vi.fn().mockResolvedValue(undefined);
@@ -167,6 +168,7 @@ vi.mock("@fusion/core", async (importOriginal) => createCoreMock(
       getLastMessageForSessions = mockGetLastMessageForSessions;
       findLatestActiveSessionForTarget = mockFindLatestActiveSessionForTarget;
       deleteMessage = mockDeleteMessage;
+      deleteSessionsForAgentId = mockDeleteSessionsForAgentId;
     },
     AgentStore: class MockAgentStore {
       init = mockAgentStoreInit;
@@ -297,6 +299,7 @@ const mockChatStoreInstance = {
   getLastMessageForSessions: mockGetLastMessageForSessions,
   findLatestActiveSessionForTarget: mockFindLatestActiveSessionForTarget,
   deleteMessage: mockDeleteMessage,
+  deleteSessionsForAgentId: mockDeleteSessionsForAgentId,
   emit: vi.fn(),
   on: vi.fn(),
   off: vi.fn(),
@@ -540,6 +543,63 @@ describe("Chat API Routes", () => {
       expect(response.status).toBe(404);
       expect((response.body as any).error).toContain("Task FN-MISSING not found");
     });
+
+    it("resumes an existing planner chat for a done task without creating a new one", async () => {
+      vi.spyOn(store, "getTask").mockResolvedValueOnce({
+        id: "FN-DONE",
+        title: "Done planner task",
+        description: "Task description",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-06-30T00:00:00.000Z",
+        updatedAt: "2026-06-30T00:00:00.000Z",
+      } as any);
+      const existing = { ...sampleSession, id: "chat-done-planner", agentId: "task-planner:FN-DONE" };
+      mockFindLatestActiveSessionForTarget.mockReturnValue(existing);
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/chat/task-planner/FN-DONE/session",
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(200);
+      expect((response.body as any).session).toEqual(existing);
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
+
+    it("rejects starting a new planner chat for done or archived tasks", async () => {
+      vi.spyOn(store, "getTask").mockResolvedValueOnce({
+        id: "FN-DONE-EMPTY",
+        title: "Done planner task",
+        description: "Task description",
+        column: "done",
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [],
+        createdAt: "2026-06-30T00:00:00.000Z",
+        updatedAt: "2026-06-30T00:00:00.000Z",
+      } as any);
+      mockFindLatestActiveSessionForTarget.mockReturnValue(null);
+
+      const doneResponse = await request(
+        app,
+        "POST",
+        "/api/chat/task-planner/FN-DONE-EMPTY/session",
+        JSON.stringify({}),
+        { "content-type": "application/json" },
+      );
+
+      expect(doneResponse.status).toBe(400);
+      expect((doneResponse.body as any).error).toContain("planner chat can only be started while a task is live");
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
   });
 
   describe("GET /api/chat/sessions", () => {
@@ -665,6 +725,51 @@ describe("Chat API Routes", () => {
       const enrichedSession = (response.body as any).sessions[0];
       expect(enrichedSession.lastMessagePreview).toBeUndefined();
       expect(enrichedSession.lastMessageAt).toBeUndefined();
+    });
+
+    it("hides empty planner-chat sessions but keeps normal direct sessions in the global list", async () => {
+      const normalSession = { ...sampleSession, id: "chat-normal", agentId: "agent-001" };
+      const emptyPlanner = { ...sampleSession, id: "chat-empty-planner", agentId: "task-planner:FN-7337" };
+      mockListSessions.mockReturnValue([normalSession, emptyPlanner]);
+      mockGetLastMessageForSessions.mockReturnValue(new Map());
+
+      const response = await request(app, "GET", "/api/chat/sessions");
+
+      expect(response.status).toBe(200);
+      expect((response.body as any).sessions.map((session: any) => session.id)).toEqual(["chat-normal"]);
+    });
+
+    it("shows planner-chat sessions in the global list after a user message exists", async () => {
+      const normalSession = { ...sampleSession, id: "chat-normal", agentId: "agent-001" };
+      const populatedPlanner = { ...sampleSession, id: "chat-planner", agentId: "task-planner:FN-7337" };
+      const plannerMessage = {
+        id: "msg-planner",
+        sessionId: "chat-planner",
+        role: "user",
+        content: "What should happen next?",
+        thinkingOutput: null,
+        metadata: null,
+        createdAt: "2026-06-30T18:35:00.000Z",
+      };
+      mockListSessions.mockReturnValue([normalSession, populatedPlanner]);
+      mockGetLastMessageForSessions.mockReturnValue(new Map([["chat-planner", plannerMessage]]));
+
+      const response = await request(app, "GET", "/api/chat/sessions");
+
+      expect(response.status).toBe(200);
+      expect((response.body as any).sessions.map((session: any) => session.id)).toEqual(["chat-normal", "chat-planner"]);
+      expect((response.body as any).sessions[1].lastMessagePreview).toBe("What should happen next?");
+    });
+
+    it("preserves explicit planner resume lookup even when the session has no messages", async () => {
+      const emptyPlanner = { ...sampleSession, id: "chat-empty-planner", agentId: "task-planner:FN-7337" };
+      mockFindLatestActiveSessionForTarget.mockReturnValue(emptyPlanner);
+      mockGetLastMessageForSessions.mockReturnValue(new Map());
+
+      const response = await request(app, "GET", "/api/chat/sessions?lookup=resume&agentId=task-planner%3AFN-7337");
+
+      expect(response.status).toBe(200);
+      expect((response.body as any).sessions.map((session: any) => session.id)).toEqual(["chat-empty-planner"]);
     });
 
     it("uses engine chatStore when engineManager is configured for requested projectId", async () => {

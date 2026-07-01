@@ -4,10 +4,11 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 
-const { mockEnsureTaskPlannerChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockStreamChatResponse, mockTranslations, mockT } = vi.hoisted(() => {
+const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockStreamChatResponse, mockTranslations, mockT } = vi.hoisted(() => {
   const translations = new Map<string, string>();
   return {
     mockEnsureTaskPlannerChatSession: vi.fn(),
+    mockFetchTaskPlannerChatSession: vi.fn(),
     mockFetchChatMessages: vi.fn(),
     mockFetchTaskDetail: vi.fn(),
     mockStreamChatResponse: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("../../api", async (importOriginal) => {
   return {
     ...actual,
     ensureTaskPlannerChatSession: mockEnsureTaskPlannerChatSession,
+    fetchTaskPlannerChatSession: mockFetchTaskPlannerChatSession,
     fetchChatMessages: mockFetchChatMessages,
     fetchTaskDetail: mockFetchTaskDetail,
     streamChatResponse: mockStreamChatResponse,
@@ -82,38 +84,39 @@ describe("TaskPlannerChatTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTranslations.clear();
-    mockEnsureTaskPlannerChatSession.mockResolvedValue({
-      session: {
-        id: "chat-planner",
-        agentId: "task-planner:FN-7310",
-        title: "FN-7310 planner chat",
-        status: "active",
-        projectId: null,
-        modelProvider: "anthropic",
-        modelId: "claude-plan",
-        createdAt: "2026-06-30T00:00:00.000Z",
-        updatedAt: "2026-06-30T00:00:00.000Z",
-        cliSessionFile: null,
-        cliExecutorAdapterId: null,
-        inFlightGeneration: null,
-      },
-    });
+    const plannerSession = {
+      id: "chat-planner",
+      agentId: "task-planner:FN-7310",
+      title: "FN-7310 planner chat",
+      status: "active",
+      projectId: null,
+      modelProvider: "anthropic",
+      modelId: "claude-plan",
+      createdAt: "2026-06-30T00:00:00.000Z",
+      updatedAt: "2026-06-30T00:00:00.000Z",
+      cliSessionFile: null,
+      cliExecutorAdapterId: null,
+      inFlightGeneration: null,
+    };
+    mockFetchTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
+    mockEnsureTaskPlannerChatSession.mockResolvedValue({ session: plannerSession });
     mockFetchChatMessages.mockResolvedValue({ messages: [] });
     mockFetchTaskDetail.mockResolvedValue(makeTask("FN-7310"));
     mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
   });
 
-  it("loads a task-scoped planner session and renders the starter-prompt empty state", async () => {
+  it("looks up an existing task-scoped planner session and renders the starter-prompt empty state", async () => {
     renderPlannerChat();
 
     const emptyState = await screen.findByTestId("task-planner-chat-empty");
     expect(emptyState).toHaveTextContent("Start a task-aware chat");
     expect(emptyState).toHaveTextContent("Starter prompts send as normal chat messages.");
-    expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
+    expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledWith(
       "FN-7310",
       { modelProvider: "anthropic", modelId: "claude-plan" },
       undefined,
     );
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
     expect(mockFetchChatMessages).toHaveBeenCalledWith("chat-planner", { order: "asc" }, undefined);
     expect(screen.getByTestId("task-planner-chat-model")).toHaveTextContent("anthropic/claude-plan");
     expect(screen.getByRole("button", { name: /Summarize recent activity/ })).toBeInTheDocument();
@@ -121,6 +124,47 @@ describe("TaskPlannerChatTab", () => {
     expect(screen.getByRole("button", { name: /Identify the next best action/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Review the plan or definition/ })).toBeInTheDocument();
     expect(screen.getAllByTestId(/task-planner-chat-starter-/)).toHaveLength(4);
+  });
+
+  it("does not create a planner session when no existing history is found on tab activation", async () => {
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
+
+    renderPlannerChat();
+
+    const emptyState = await screen.findByTestId("task-planner-chat-empty");
+    expect(emptyState).toHaveTextContent("Start a task-aware chat");
+    expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledWith(
+      "FN-7310",
+      { modelProvider: "anthropic", modelId: "claude-plan" },
+      undefined,
+    );
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
+    expect(mockFetchChatMessages).not.toHaveBeenCalled();
+  });
+
+  it("creates a planner session only when a starter prompt is clicked without existing history", async () => {
+    const user = userEvent.setup();
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
+
+    renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /Identify the next best action/ }));
+
+    expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith(
+      "FN-7310",
+      { modelProvider: "anthropic", modelId: "claude-plan" },
+      undefined,
+    );
+    expect(mockStreamChatResponse).toHaveBeenCalledWith(
+      "chat-planner",
+      "What is the next best action for this task, and why?",
+      expect.any(Object),
+      undefined,
+      undefined,
+      { taskId: "FN-7310" },
+    );
   });
 
   it("renders accessible expand controls without moving the composer out of the panel", async () => {
@@ -145,7 +189,8 @@ describe("TaskPlannerChatTab", () => {
     renderPlannerChat({ planningModel: {} });
 
     await screen.findByTestId("task-planner-chat-empty");
-    expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledWith("FN-7310", {}, undefined);
+    expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledWith("FN-7310", {}, undefined);
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
     expect(screen.queryByTestId("task-planner-chat-model")).not.toBeInTheDocument();
   });
 
@@ -163,14 +208,15 @@ describe("TaskPlannerChatTab", () => {
     );
     await Promise.resolve();
 
-    expect(mockEnsureTaskPlannerChatSession).toHaveBeenCalledTimes(1);
+    expect(mockFetchTaskPlannerChatSession).toHaveBeenCalledTimes(1);
+    expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
     expect(mockFetchChatMessages).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("task-planner-chat-empty")).toBeInTheDocument();
   });
 
   it("ignores stale planner-chat load responses after the task scope changes", async () => {
     const firstLoad = createDeferred<any>();
-    mockEnsureTaskPlannerChatSession.mockImplementation((taskId: string) => {
+    mockFetchTaskPlannerChatSession.mockImplementation((taskId: string) => {
       if (taskId === "FN-7310") return firstLoad.promise;
       return Promise.resolve({
         session: {
@@ -457,6 +503,7 @@ describe("TaskPlannerChatTab", () => {
 
   it("keeps missing task context sendable while preserving explicit planning model overrides", async () => {
     const user = userEvent.setup();
+    mockFetchTaskPlannerChatSession.mockResolvedValueOnce({ session: null });
     renderPlannerChat({
       task: { ...makeTask("FN-MISSING-CONTEXT"), dependencies: [], prompt: undefined, log: undefined } as any,
       planningModel: { provider: "openai", modelId: "gpt-planner" },

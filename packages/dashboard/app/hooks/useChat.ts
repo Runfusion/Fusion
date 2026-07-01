@@ -18,6 +18,11 @@ import { recordResumeEvent } from "../utils/resumeInstrumentation";
 import type { Agent, ChatInFlightGenerationState, ChatMessage } from "@fusion/core";
 
 const ACTIVE_SESSION_STORAGE_KEY = "kb-chat-active-session";
+const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
+
+function isEmptyTaskPlannerSession(session: ChatSessionInfo): boolean {
+  return session.agentId.startsWith(TASK_PLANNER_CHAT_AGENT_ID_PREFIX) && !session.lastMessageAt && !session.lastMessagePreview;
+}
 
 export interface ChatSessionInfo {
   id: string;
@@ -1290,6 +1295,11 @@ export function useChat(
     const handleChatSessionCreated = (e: MessageEvent) => {
       if (isStale()) return;
       const session: ChatSessionInfo = JSON.parse(e.data);
+      /*
+      FNXC:TaskDetailPlannerChat 2026-06-30-18:35:
+      Global Chat may list task-planner sessions after user interaction, but SSE creation can arrive before the first message preview. Ignore empty planner-session creates and let the message event refresh the server-filtered list after the user message exists.
+      */
+      if (isEmptyTaskPlannerSession(session)) return;
       // Avoid duplicates
       setSessions((prev) => {
         if (prev.some((s) => s.id === session.id)) return prev;
@@ -1333,6 +1343,9 @@ export function useChat(
       if (isStale()) return;
       const rawMessage = JSON.parse(e.data) as ChatMessage;
       const message = mapChatMessageToInfo(rawMessage);
+      if (!sessionsRef.current.some((session) => session.id === message.sessionId)) {
+        void refreshSessions();
+      }
 
       // Skip if this message was already added via streaming completion
       // (SSE event may arrive before streaming state clears)
@@ -1407,7 +1420,7 @@ export function useChat(
     });
 
     return unsubscribe;
-  }, [attachIfGenerating, getChatMessagesCacheKey, projectId, flushPendingMessage]);
+  }, [attachIfGenerating, getChatMessagesCacheKey, projectId, flushPendingMessage, refreshSessions]);
 
   // Cleanup on unmount
   useEffect(() => {

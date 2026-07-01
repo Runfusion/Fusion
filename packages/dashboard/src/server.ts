@@ -62,7 +62,7 @@ import {
   setAiSessionStore as setMilestoneSliceAiSessionStore,
   rehydrateFromStore as rehydrateMilestoneSliceSessions,
 } from "./milestone-slice-interview.js";
-import { ChatManager } from "./chat.js";
+import { ChatManager, TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "./chat.js";
 import { CliChatSessionRunner } from "./cli-chat.js";
 import { stopAllDevServers } from "./dev-server-routes.js";
 import type { SkillsAdapter } from "./skills-adapter.js";
@@ -1002,6 +1002,14 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   // Create ChatStore for chat session management (available for SSE event forwarding)
   const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
+  store.on("task:moved", (data: { task: Task; from: string; to: string }) => {
+    if (data.to !== "archived") return;
+    /*
+    FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
+    Task-detail planner chats are retained after done when a user interacted, but task archival is the retention cutoff. Delete exact task-planner sessions on archive so normal chats and other tasks' planner chats remain intact while chat:session:deleted events clear dashboard caches.
+    */
+    chatStore.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`);
+  });
   options?.engine?.attachChatStore?.(chatStore);
   if (typeof options?.engineManager?.getAllEngines === "function") {
     for (const engine of options.engineManager.getAllEngines().values()) {

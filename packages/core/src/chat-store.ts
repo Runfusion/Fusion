@@ -522,6 +522,23 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
     return true;
   }
 
+  deleteSessionsForAgentId(agentId: string, options?: { projectId?: string | null }): number {
+    const normalizedAgentId = agentId.trim();
+    if (!normalizedAgentId) return 0;
+    const projectId = options?.projectId ?? undefined;
+    const sessions = this.listSessions({
+      agentId: normalizedAgentId,
+      ...(projectId ? { projectId } : {}),
+    });
+    let deletedCount = 0;
+    for (const session of sessions) {
+      if (this.deleteSession(session.id)) {
+        deletedCount += 1;
+      }
+    }
+    return deletedCount;
+  }
+
   // ── Message CRUD Operations ───────────────────────────────────────
 
   /**
@@ -677,6 +694,11 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
       result.set(message.sessionId, message);
     }
     return result;
+  }
+
+  hasMessages(sessionId: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM chat_messages WHERE sessionId = ? LIMIT 1").get(sessionId) as { 1: number } | undefined;
+    return Boolean(row);
   }
 
   /**

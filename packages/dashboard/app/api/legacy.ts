@@ -9905,11 +9905,7 @@ export function fetchChatSession(id: string, projectId?: string): Promise<ChatSe
   return api<ChatSessionResponse>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId));
 }
 
-export function ensureTaskPlannerChatSession(
-  taskId: string,
-  input: TaskPlannerChatSessionInput = {},
-  projectId?: string,
-): Promise<ChatSessionResponse> {
+function normalizeTaskPlannerChatInput(taskId: string, input: TaskPlannerChatSessionInput = {}) {
   const normalizedTaskId = taskId.trim();
   if (!normalizedTaskId) {
     throw new Error("taskId is required");
@@ -9919,10 +9915,39 @@ export function ensureTaskPlannerChatSession(
   if ((normalizedProvider && !normalizedModelId) || (!normalizedProvider && normalizedModelId)) {
     throw new Error("Both modelProvider and modelId must be provided together, or neither should be provided");
   }
+  return { normalizedTaskId, normalizedProvider, normalizedModelId };
+}
+
+export function fetchTaskPlannerChatSession(
+  taskId: string,
+  input: TaskPlannerChatSessionInput = {},
+  projectId?: string,
+): Promise<{ session: EnrichedChatSession | null }> {
+  const { normalizedTaskId, normalizedProvider, normalizedModelId } = normalizeTaskPlannerChatInput(taskId, input);
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-06-30-18:20:
+  Task-detail planner chats are task-local but no longer pre-created by opening the Chat tab. Use lookup-only resume here so global Chat history only receives planner sessions after an explicit user message creates one.
+  */
+  return fetchResumeChatSession({
+    agentId: `task-planner:${normalizedTaskId}`,
+    ...(normalizedProvider && normalizedModelId ? { modelProvider: normalizedProvider, modelId: normalizedModelId } : {}),
+  }, projectId);
+}
+
+export function ensureTaskPlannerChatSession(
+  taskId: string,
+  input: TaskPlannerChatSessionInput = {},
+  projectId?: string,
+): Promise<ChatSessionResponse> {
+  const { normalizedTaskId, normalizedProvider, normalizedModelId } = normalizeTaskPlannerChatInput(taskId, input);
 
   /*
   FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
   Task planner chat uses a task-scoped session seam instead of the generic agent-chat creator so it can bind the conversation to the task and planning model without requiring a real executor/reviewer agent or turning the message into steering.
+
+  FNXC:TaskDetailPlannerChat 2026-06-30-18:20:
+  This mutating helper is reserved for explicit user sends (composer, starter prompts, and planner-question answers). Tab activation must call fetchTaskPlannerChatSession instead so empty task-detail visits do not create chat history.
   */
   return api<ChatSessionResponse>(
     withProjectId(`/chat/task-planner/${encodeURIComponent(normalizedTaskId)}/session`, projectId),

@@ -214,6 +214,50 @@ describe("ChatStore", () => {
       });
     });
 
+    describe("deleteSessionsForAgentId", () => {
+      it("deletes all matching agent sessions and cascades messages without touching other chats", () => {
+        const plannerOne = createTestSession(store, { agentId: "task-planner:FN-7337", projectId: "proj-1" });
+        const plannerTwo = createTestSession(store, { agentId: "task-planner:FN-7337", projectId: "proj-1" });
+        const otherTaskPlanner = createTestSession(store, { agentId: "task-planner:FN-7338", projectId: "proj-1" });
+        const normal = createTestSession(store, { agentId: "agent-001", projectId: "proj-1" });
+        const deletedEvents: string[] = [];
+        store.on("chat:session:deleted", (sessionId) => deletedEvents.push(sessionId));
+        const message = store.addMessage(plannerOne.id, { role: "user", content: "Keep until archive" });
+        store.addMessage(otherTaskPlanner.id, { role: "user", content: "Other task" });
+        store.addMessage(normal.id, { role: "user", content: "Normal chat" });
+
+        const deletedCount = store.deleteSessionsForAgentId("task-planner:FN-7337", { projectId: "proj-1" });
+
+        expect(deletedCount).toBe(2);
+        expect(store.getSession(plannerOne.id)).toBeUndefined();
+        expect(store.getSession(plannerTwo.id)).toBeUndefined();
+        expect(store.getMessage(message.id)).toBeUndefined();
+        expect(store.getSession(otherTaskPlanner.id)).toBeDefined();
+        expect(store.getSession(normal.id)).toBeDefined();
+        expect(new Set(deletedEvents)).toEqual(new Set([plannerOne.id, plannerTwo.id]));
+      });
+
+      it("is idempotent when no matching sessions exist", () => {
+        createTestSession(store, { agentId: "agent-001" });
+
+        expect(store.deleteSessionsForAgentId("task-planner:FN-missing")).toBe(0);
+        expect(store.listSessions()).toHaveLength(1);
+      });
+    });
+
+    describe("hasMessages", () => {
+      it("reports whether a session has any persisted messages", () => {
+        const session = createTestSession(store, { agentId: "task-planner:FN-7337" });
+
+        expect(store.hasMessages(session.id)).toBe(false);
+
+        store.addMessage(session.id, { role: "user", content: "Start planner chat" });
+
+        expect(store.hasMessages(session.id)).toBe(true);
+        expect(store.hasMessages("chat-missing")).toBe(false);
+      });
+    });
+
     describe("findLatestActiveSessionForTarget", () => {
       it("returns newest exact model match for model-specific targets", () => {
         startFakeClock();

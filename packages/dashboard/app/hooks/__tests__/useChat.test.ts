@@ -3084,6 +3084,47 @@ describe("useChat", () => {
       });
     });
 
+    it("ignores empty task-planner session create events until a message exists", async () => {
+      mockFetchChatSessions.mockResolvedValueOnce({ sessions: [] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(0);
+      });
+
+      act(() => {
+        subscribeHandler["chat:session:created"]?.({
+          data: JSON.stringify(makeSession({ id: "chat-empty-planner", agentId: "task-planner:FN-7337" })),
+        } as MessageEvent);
+      });
+
+      expect(result.current.sessions).toHaveLength(0);
+    });
+
+    it("refreshes server-filtered sessions when a message arrives for an unseen planner session", async () => {
+      mockFetchChatSessions
+        .mockResolvedValueOnce({ sessions: [] })
+        .mockResolvedValueOnce({ sessions: [{ ...makeSession({ id: "chat-planner", agentId: "task-planner:FN-7337" }), lastMessagePreview: "Hello", lastMessageAt: "2026-04-08T00:01:00.000Z" } as any] });
+
+      const { result } = renderHook(() => useChat("proj-123"));
+
+      await waitFor(() => {
+        expect(result.current.sessions).toHaveLength(0);
+      });
+
+      act(() => {
+        subscribeHandler["chat:message:added"]?.({
+          data: JSON.stringify(makeMessage({ id: "msg-planner", sessionId: "chat-planner", role: "user", content: "Hello" })),
+        } as MessageEvent);
+      });
+
+      await waitFor(() => {
+        expect(result.current.sessions.map((session) => session.id)).toEqual(["chat-planner"]);
+      });
+      expect(mockFetchChatSessions).toHaveBeenCalledTimes(2);
+    });
+
     it("avoids duplicate sessions on chat:session:created", async () => {
       mockFetchChatSessions.mockResolvedValueOnce({
         sessions: [makeSession({ id: "session-001", agentId: "agent-001" })],

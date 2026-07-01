@@ -7,7 +7,7 @@ import { Loader2, Maximize2, Minimize2, Send } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
 import type { ToolCallInfo } from "../hooks/chatTypes";
-import { ensureTaskPlannerChatSession, fetchChatMessages, fetchTaskDetail, streamChatResponse } from "../api";
+import { ensureTaskPlannerChatSession, fetchChatMessages, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { markdownComponents } from "./AgentLogViewer";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
@@ -260,8 +260,14 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
     setHistoryLoaded(false);
     setError(null);
     try {
-      const { session } = await ensureTaskPlannerChatSession(task.id, modelPayload, projectId);
+      const { session } = await fetchTaskPlannerChatSession(task.id, modelPayload, projectId);
       if (loadRequestRef.current !== requestId) return;
+      if (!session) {
+        setSessionId(null);
+        setMessages([]);
+        setHistoryLoaded(true);
+        return;
+      }
       setSessionId(session.id);
       const { messages: loadedMessages } = await fetchChatMessages(session.id, { order: "asc" }, projectId);
       if (loadRequestRef.current !== requestId) return;
@@ -477,6 +483,9 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
 
   FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
   Session loads are scoped to the current task/project/model and stale responses are ignored so a delayed previous task load cannot attach starter-prompt sends to the wrong planner-chat session.
+
+  FNXC:TaskDetailPlannerChat 2026-06-30-18:20:
+  Opening or switching to the task-detail Chat tab performs lookup-only history loading. Planner-chat rows are lazily created only by explicit user messages (composer sends, starter prompts, or planner-question answers), so unvisited conversations do not clutter global Chat history.
 
   FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
   Stream callbacks are guarded by a per-send token because closing an EventSource/stream is not enough to prevent queued text, tool, done, error, or fallback refresh callbacks from mutating the newly selected task's Chat tab.
