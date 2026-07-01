@@ -796,6 +796,11 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
       if (isDoneTask) {
         const newTask = await refineTask(task.id, text, projectId);
         addToast(`Refinement task created: ${newTask.id}`, "success");
+        /*
+        FNXC:TaskDetailChat 2026-06-29-21:30:
+        Done-task refinement uses the source task's durable workflow inheritance on the backend, so the chat composer must not send board workflow filters or keep a submitted optimistic bubble that looks like steering on the completed task. Success clears only the draft and temporary bubble; failure keeps the draft and rolls back through the shared catch path.
+        */
+        setOptimisticMessages((current) => current.filter((message) => message.id !== optimisticMessage.id));
       } else {
         const updatedTask = await addSteeringComment(task.id, text, projectId);
         const persistedComment = updatedTask.steeringComments

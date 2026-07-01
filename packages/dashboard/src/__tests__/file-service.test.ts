@@ -13,6 +13,7 @@ import {
   searchWorkspaceFiles,
   listProjectMarkdownFiles,
   scanMarkdownFiles,
+  createWorkspaceDirectory,
   copyWorkspaceFile,
   moveWorkspaceFile,
   deleteWorkspaceFile,
@@ -104,16 +105,27 @@ describe("MAX_FILE_SIZE", () => {
 describe("path traversal protection", () => {
   const mockGetTask = vi.fn();
   const mockGetRootDir = vi.fn();
+  const mockGetSettings = vi.fn();
   const mockStore = {
     getTask: mockGetTask,
     getRootDir: mockGetRootDir,
+    getSettings: mockGetSettings,
   } as unknown as TaskStore;
 
   beforeEach(() => {
     mockGetTask.mockReset();
     mockGetRootDir.mockReset();
+    mockGetSettings.mockReset();
+    mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: false });
     mockStat.mockReset();
     mockReaddir.mockReset();
+    mockReadFile.mockReset();
+    mockWriteFile.mockReset();
+    mockCopyFile.mockReset();
+    mockRename.mockReset();
+    mockRm.mockReset();
+    mockMkdir.mockReset();
+    mockAccess.mockReset();
     mockExistsSync.mockReset();
   });
 
@@ -139,11 +151,16 @@ describe("path traversal protection", () => {
       await expect(listProjectFiles(mockStore, "file\0.txt")).rejects.toThrow("Invalid characters");
     });
 
-    it("rejects URL-encoded path traversal", async () => {
+    it("treats percent-encoded traversal text as a literal already-decoded path", async () => {
       mockGetRootDir.mockReturnValue("/test/project");
+      mockStat.mockResolvedValue({ isDirectory: () => true, isFile: () => false });
+      mockReaddir.mockResolvedValue([]);
 
-      await expect(listProjectFiles(mockStore, "%2e%2e%2fsecret.txt")).rejects.toThrow(FileServiceError);
-      await expect(listProjectFiles(mockStore, "%2e%2e%2fsecret.txt")).rejects.toThrow("Path traversal detected");
+      await expect(listProjectFiles(mockStore, "%2e%2e%2fsecret.txt")).resolves.toMatchObject({
+        path: "%2e%2e%2fsecret.txt",
+        entries: [],
+      });
+      expect(mockStat).toHaveBeenCalledWith("/test/project/%2e%2e%2fsecret.txt");
     });
   });
 
@@ -245,6 +262,177 @@ describe("path traversal protection", () => {
       mockGetRootDir.mockReturnValue("/project");
 
       await expect(readWorkspaceFile(mockStore, "project", "/etc/passwd")).rejects.toThrow(FileServiceError);
+    });
+
+    it("allows slash-prefixed workspace file reads when the project setting is enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockStat.mockResolvedValue({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: 12,
+        mtime: new Date("2026-06-29T00:00:00.000Z"),
+      });
+      mockReadFile.mockResolvedValue("absolute data");
+
+      const result = await readWorkspaceFile(mockStore, "project", "/tmp/file.txt");
+
+      expect(result.content).toBe("absolute data");
+      expect(mockStat).toHaveBeenCalledWith("/tmp/file.txt");
+    });
+
+    it("allows slash-prefixed workspace directory listing when the project setting is enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockStat
+        .mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false })
+        .mockResolvedValueOnce({
+          isDirectory: () => false,
+          isFile: () => true,
+          size: 42,
+          mtime: new Date("2026-06-29T00:00:00.000Z"),
+        });
+      mockReaddir.mockResolvedValue([{ name: "file.txt", isDirectory: () => false, isFile: () => true }]);
+
+      const result = await listWorkspaceFiles(mockStore, "project", "/tmp");
+
+      expect(result.path).toBe("/tmp");
+      expect(result.entries).toEqual(expect.arrayContaining([expect.objectContaining({ name: "file.txt" })]));
+    });
+
+    it("allows slash-prefixed workspace reads for task worktree browsers when the project setting is enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: "/project/.worktrees/FN-123" });
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockAccess.mockResolvedValue(undefined);
+      mockStat.mockResolvedValue({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: 12,
+        mtime: new Date("2026-06-29T00:00:00.000Z"),
+      });
+      mockReadFile.mockResolvedValue("absolute task browser data");
+
+      const result = await readWorkspaceFile(mockStore, "FN-123", "/tmp/file.txt");
+
+      expect(result.content).toBe("absolute task browser data");
+      expect(mockAccess).toHaveBeenCalledWith("/project/.worktrees/FN-123");
+      expect(mockStat).toHaveBeenCalledWith("/tmp/file.txt");
+    });
+
+    it("keeps project and task file APIs confined even when absolute file-browser paths are enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetTask.mockResolvedValue({ id: "FN-123", worktree: undefined });
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+
+      await expect(readProjectFile(mockStore, "/tmp/file.txt")).rejects.toThrow("Absolute paths not allowed");
+      await expect(readFile(mockStore, "FN-123", "/tmp/file.txt")).rejects.toThrow("Absolute paths not allowed");
+    });
+
+    it("keeps Windows drive-letter paths blocked even when absolute file-browser paths are enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+
+      await expect(readWorkspaceFile(mockStore, "project", "C:/Users/name/file.txt")).rejects.toThrow("Absolute paths not allowed");
+    });
+
+    it("keeps percent-escaped text literal instead of decoding it into an absolute path", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockStat.mockResolvedValue({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: 12,
+        mtime: new Date("2026-06-29T00:00:00.000Z"),
+      });
+      mockReadFile.mockResolvedValue("literal percent data");
+
+      const result = await readWorkspaceFile(mockStore, "project", "%2Ftmp%2Fx");
+
+      expect(result.content).toBe("literal percent data");
+      expect(mockStat).toHaveBeenCalledWith("/project/%2Ftmp%2Fx");
+      expect(mockReadFile).toHaveBeenCalledWith("/project/%2Ftmp%2Fx", "utf-8");
+    });
+
+    it("keeps malformed percent-encoded text literal in file-service paths", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockStat.mockResolvedValue({
+        isFile: () => true,
+        isDirectory: () => false,
+        size: 12,
+        mtime: new Date("2026-06-29T00:00:00.000Z"),
+      });
+      mockReadFile.mockResolvedValue("malformed literal data");
+
+      await expect(readWorkspaceFile(mockStore, "project", "%E0%A4%A")).resolves.toMatchObject({
+        content: "malformed literal data",
+      });
+      expect(mockStat).toHaveBeenCalledWith("/project/%E0%A4%A");
+    });
+
+    it("allows slash-prefixed workspace writes and directory creation when the project setting is enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockStat
+        .mockRejectedValueOnce({ code: "ENOENT" })
+        .mockResolvedValueOnce({ isDirectory: () => true })
+        .mockResolvedValueOnce({ size: 7, mtime: new Date("2026-06-29T00:00:00.000Z") })
+        .mockRejectedValueOnce({ code: "ENOENT" })
+        .mockResolvedValueOnce({ isDirectory: () => true });
+      mockWriteFile.mockResolvedValue(undefined);
+      mockMkdir.mockResolvedValue(undefined);
+
+      await expect(writeWorkspaceFile(mockStore, "project", "/tmp/file.txt", "content")).resolves.toMatchObject({ success: true, size: 7 });
+      await expect(createWorkspaceDirectory(mockStore, "project", "/tmp/new-dir")).resolves.toMatchObject({ success: true, path: "/tmp/new-dir" });
+      expect(mockWriteFile).toHaveBeenCalledWith("/tmp/file.txt", "content", "utf-8");
+      expect(mockMkdir).toHaveBeenCalledWith("/tmp/new-dir");
+    });
+
+    it("allows slash-prefixed workspace copy, move, delete, and rename operations when the project setting is enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      mockStat
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false })
+        .mockRejectedValueOnce({ code: "ENOENT" })
+        .mockResolvedValueOnce({ isDirectory: () => true })
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false })
+        .mockRejectedValueOnce({ code: "ENOENT" })
+        .mockResolvedValueOnce({ isDirectory: () => true })
+        .mockResolvedValueOnce({ isDirectory: () => false })
+        .mockResolvedValueOnce({ isDirectory: () => false })
+        .mockRejectedValueOnce({ code: "ENOENT" });
+      mockCopyFile.mockResolvedValue(undefined);
+      mockRename.mockResolvedValue(undefined);
+      mockRm.mockResolvedValue(undefined);
+
+      await expect(copyWorkspaceFile(mockStore, "project", "/tmp/source.txt", "/tmp/copy.txt")).resolves.toMatchObject({ success: true });
+      await expect(moveWorkspaceFile(mockStore, "project", "/tmp/source.txt", "/tmp/moved.txt")).resolves.toMatchObject({ success: true });
+      await expect(deleteWorkspaceFile(mockStore, "project", "/tmp/old.txt")).resolves.toMatchObject({ success: true });
+      await expect(renameWorkspaceFile(mockStore, "project", "/tmp/name.txt", "renamed.txt")).resolves.toMatchObject({ success: true });
+      expect(mockCopyFile).toHaveBeenCalledWith("/tmp/source.txt", "/tmp/copy.txt");
+      expect(mockRename).toHaveBeenCalledWith("/tmp/source.txt", "/tmp/moved.txt");
+      expect(mockRm).toHaveBeenCalledWith("/tmp/old.txt");
+      expect(mockRename).toHaveBeenCalledWith("/tmp/name.txt", "/tmp/renamed.txt");
+    });
+
+    it("allows slash-prefixed workspace file and folder downloads when the project setting is enabled", async () => {
+      mockGetRootDir.mockReturnValue("/project");
+      mockGetSettings.mockResolvedValue({ allowAbsoluteFileBrowserPaths: true });
+      const fileMtime = new Date("2026-06-29T00:00:00.000Z");
+      mockStat
+        .mockResolvedValueOnce({ isFile: () => true, isDirectory: () => false, size: 11, mtime: fileMtime })
+        .mockResolvedValueOnce({ isFile: () => false, isDirectory: () => true });
+
+      await expect(getWorkspaceFileForDownload(mockStore, "project", "/tmp/file.txt")).resolves.toMatchObject({
+        absolutePath: "/tmp/file.txt",
+        fileName: "file.txt",
+        stats: { size: 11, mtime: fileMtime, isFile: true },
+      });
+      await expect(getWorkspaceFolderForZip(mockStore, "project", "/tmp/folder")).resolves.toMatchObject({
+        absolutePath: "/tmp/folder",
+        dirName: "folder",
+      });
     });
   });
 
@@ -833,7 +1021,7 @@ describe("URL-encoded characters handling", () => {
     mockStat.mockReset();
   });
 
-  it("decodes URL-encoded characters safely in file paths", async () => {
+  it("keeps percent-encoded characters literal in file-service paths", async () => {
     mockGetRootDir.mockReturnValue("/test/project");
     mockStat.mockResolvedValue({
       isFile: () => true,
@@ -844,9 +1032,8 @@ describe("URL-encoded characters handling", () => {
 
     await readProjectFile(mockStore, "file%20name.txt");
 
-    // Should decode %20 to space and look for the file
     expect(mockReadFile).toHaveBeenCalledWith(
-      "/test/project/file name.txt",
+      "/test/project/file%20name.txt",
       "utf-8",
     );
   });

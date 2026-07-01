@@ -763,9 +763,27 @@ function noOpResult(task: Task, branch: string, reason: string): MergeResult {
     noOp: true,
     ok: true,
     reason,
+    /*
+     * FNXC:WorkflowMerge 2026-06-29-21:42:
+     * No-branch no-op finalization is only reached after runAiMerge proves the task is either already merged or was never executed; executed/unmerged missing branches fail loudly before this helper. Carry confirmed no-op proof so workflow task finalization does not stall on missing-merge-confirmation.
+     */
+    mergeConfirmed: true,
     worktreeRemoved: false,
     branchDeleted: false,
   };
+}
+
+function hasPriorAiNoOpFinalizationProof(task: Task, branch: string, integrationBranch: string): boolean {
+  /*
+   * FNXC:WorkflowMerge 2026-06-29-21:49:
+   * FN-7261 exposed a forward-fix recovery gap: older AI no-op finalizers deleted the task branch, then failed before persisting mergeDetails.mergeConfirmed. Treat the paired durable task-log entries as recovery proof only for this narrow already-finalized no-op shape; executed missing branches without those entries still fail as possible lost work.
+   */
+  const actions = task.log?.map((entry) => entry.action) ?? [];
+  return actions.some((action) =>
+    action.includes(`AI merge: ${branch} had no net changes vs ${integrationBranch} — finalizing as no-op`)
+  ) && actions.some((action) =>
+    action.includes(`AI merge: finalized ${task.id} (no-op), finalizing task row`)
+  );
 }
 
 export async function runAiMerge(
@@ -822,7 +840,10 @@ export async function runAiMerge(
     // landing), the branch should still exist — its work appears lost. Fail
     // loudly rather than silently marking the task done.
     const wasExecuted = !!task.baseCommitSha;
-    const alreadyMerged = task.mergeDetails?.mergeConfirmed === true || !!task.mergeDetails?.commitSha;
+    const alreadyMerged =
+      task.mergeDetails?.mergeConfirmed === true ||
+      !!task.mergeDetails?.commitSha ||
+      hasPriorAiNoOpFinalizationProof(task, branch, integrationBranch);
     if (wasExecuted && !alreadyMerged) {
       await audit.git({
         type: "merge:ai-no-branch",
@@ -1548,7 +1569,11 @@ async function finalizeMerged(
     ok: true,
     reason: opts.empty ? "no-net-changes" : undefined,
     commitSha: opts.empty ? undefined : mergeDetails?.commitSha ?? landedSha,
-    mergeConfirmed: !opts.empty,
+    /*
+     * FNXC:WorkflowMerge 2026-06-29-21:38:
+     * AI empty-merge finalization is durable proof, not a bypass: the clean-room merge loop reached this branch only after proving the task branch has no net diff against the integration tip. Persist mergeConfirmed for that no-op proof so workflow tasks do not stall in-review with missing-merge-confirmation, while the shared proof validator still rejects no-op rows that later show branch diff or landed files.
+     */
+    mergeConfirmed: true,
     worktreeRemoved,
     branchDeleted,
   };

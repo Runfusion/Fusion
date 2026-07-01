@@ -15,6 +15,8 @@ const WORKFLOW_NODE_KIND_GATE: WorkflowNodeKindGate = `${"ga"}te`;
 const WORKFLOW_NODE_KIND_STEP_REVIEW: WorkflowNodeKindStepReview = `${"st"}ep-review`;
 const WORKFLOW_NODE_KIND_PARSE_STEPS: WorkflowNodeKindParseSteps = `parse-${"st"}eps`;
 const WORKFLOW_NODE_SEAM_STEP_EXECUTE = `${"st"}ep-execute`;
+const OPTIONAL_GROUP_BOUNDARY_ENTRY_HANDLE = "optional-boundary-entry";
+const OPTIONAL_GROUP_BOUNDARY_EXIT_HANDLE = "optional-boundary-exit";
 
 export type WorkflowEditorNodeKind =
   | "start"
@@ -51,6 +53,11 @@ export interface WorkflowFlowNodeData {
   templateEmpty?: boolean;
   /** template group only: the localized empty-state hint string. */
   emptyHint?: string;
+  /**
+   * FNXC:WorkflowOptionalGroup 2026-06-29-21:37:
+   * Optional-group template children expose boundary ownership for editor visuals only. Entry/exit flags let mapping and renderer tests prove Plan Review/Code Review single-child blocks are connected to their container without persisting fake topology into the workflow IR.
+   */
+  optionalGroupBoundary?: { entry: boolean; exit: boolean };
   [key: string]: unknown;
 }
 
@@ -202,6 +209,12 @@ function LoopGroupNode({ data }: { data: WorkflowFlowNodeData }) {
 /*
 FNXC:WorkflowOptionalGroup 2026-06-21-11:30:
 An `optional-group` renders as a React Flow group container (mirroring `ForeachGroupNode`/`LoopGroupNode`): template nodes are children (parentId = group id). The header shows the group name plus a `defaultOn` badge ("default on" / "default off") so an author can see, at a glance, whether new tasks enable this group. An unregistered kind falls back to `react-flow__node-default` with missing children — registration in `workflowNodeTypes` (below) is what keeps the container rendering with its body.
+
+FNXC:WorkflowOptionalGroup 2026-06-29-22:47:
+Optional-group containers own the real workflow entry and exit boundaries. Keep the standard left target/right source handles for top-level graph edges, and add dedicated left source/right target handles for visual-only template boundary connectors so entry and exit guides attach to the side that matches execution flow.
+
+FNXC:WorkflowOptionalGroup 2026-06-29-23:20:
+The visual-only boundary connectors must never become authorable topology. Mark their dedicated handles non-connectable so users cannot drag persisted edges from the entry/exit guides into the optional group's template children.
 */
 function OptionalGroupNode({ data }: { data: WorkflowFlowNodeData }) {
   const { t } = useTranslation("app");
@@ -213,6 +226,7 @@ function OptionalGroupNode({ data }: { data: WorkflowFlowNodeData }) {
       data-testid="wf-node-optional-group"
     >
       <Handle type="target" position={Position.Left} />
+      <Handle id={OPTIONAL_GROUP_BOUNDARY_ENTRY_HANDLE} type="source" position={Position.Left} isConnectable={false} />
       <div className="wf-foreach-header">
         <span className="wf-node-icon">
           <ToggleRight size={14} aria-hidden />
@@ -230,6 +244,7 @@ function OptionalGroupNode({ data }: { data: WorkflowFlowNodeData }) {
         </div>
       )}
       {data.errorBadge && <WorkflowNodeErrorBadge message={data.errorBadge} />}
+      <Handle id={OPTIONAL_GROUP_BOUNDARY_EXIT_HANDLE} type="target" position={Position.Right} isConnectable={false} />
       <Handle type="source" position={Position.Right} />
     </div>
   );

@@ -179,7 +179,8 @@ The global mobile touch-action reset applies to descendants, and browsers inters
 .card-status-badge,
 .card-priority-badge,
 .card-size-badge,
-.card-no-commits-expected-badge {
+.card-no-commits-expected-badge,
+.card-workflow-badge {
   display: inline-flex;
   align-items: center;
   max-width: 100%;
@@ -197,6 +198,19 @@ The global mobile touch-action reset applies to descendants, and browsers inters
 
 .card-status-badge {
   letter-spacing: 0.5px;
+}
+
+/*
+FNXC:WorkflowBoard 2026-06-29-00:00:
+Aggregate Board cards need a compact workflow-name badge so operators can identify each card's source workflow while shared columns combine multiple workflows. The badge is opt-in metadata from Board and uses neutral card tokens so non-board TaskCard callers do not render empty workflow shells.
+*/
+.card-workflow-badge {
+  max-width: 18ch;
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .card-no-commits-expected-badge {

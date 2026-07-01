@@ -414,6 +414,8 @@ interface TaskCardProps {
   /** Card-placed custom field definitions for this task's workflow (U13/KTD-14).
    *  Empty/undefined → no field badges render (card byte-identical to today). */
   cardFieldDefs?: WorkflowFieldDefinition[];
+  /** Board aggregate-view workflow metadata. Absent outside trusted board callers so empty workflow badges never render. */
+  workflowBadge?: { workflowId: string; workflowName: string };
   /** Unified PR entity node-state for this task's work, surfaced on the card (R12).
    *  When present, the card shows a node-state badge linking to the PR view. The
    *  `failed` state renders a DISTINCT error badge (not the open-PR badge). */
@@ -576,6 +578,8 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.prNode?.prNumber === next.prNode?.prNumber &&
     previous.cliSessionState?.agentState === next.cliSessionState?.agentState &&
     previous.nearDuplicateCanonicalInactive === next.nearDuplicateCanonicalInactive &&
+    previous.workflowBadge?.workflowId === next.workflowBadge?.workflowId &&
+    previous.workflowBadge?.workflowName === next.workflowBadge?.workflowName &&
     previous.cardFieldDefs === next.cardFieldDefs &&
     (previous.cardFieldDefs == null && next.cardFieldDefs == null
       ? true
@@ -711,6 +715,7 @@ function TaskCardComponent({
   prAuthAvailable,
   autoMergeEnabled = false,
   cardFieldDefs,
+  workflowBadge,
   prNode,
   onOpenPullRequest,
   cliSessionState,
@@ -1838,9 +1843,14 @@ function TaskCardComponent({
     && filesChangedButton == null
     && showTrackingIndicator
     && Boolean(githubTrackedIssue);
+  const hasWorkflowBadge = typeof workflowBadge?.workflowId === "string"
+    && workflowBadge.workflowId.trim().length > 0
+    && typeof workflowBadge.workflowName === "string"
+    && workflowBadge.workflowName.trim().length > 0;
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
-    || isAgentCreated;
+    || isAgentCreated
+    || hasWorkflowBadge;
 
   if (isEditing) {
     return (
@@ -2036,6 +2046,17 @@ function TaskCardComponent({
         )}
         {hasCardMetaBadges && (
           <div className="card-meta-badges" data-testid="card-meta-badges">
+            {hasWorkflowBadge && (
+              <span
+                className="card-workflow-badge"
+                title={t("tasks.workflowBadgeTitle", "Workflow: {{name}}", { name: workflowBadge.workflowName })}
+                aria-label={t("tasks.workflowBadgeAriaLabel", "Workflow {{name}}", { name: workflowBadge.workflowName })}
+                data-testid="card-workflow-badge"
+                data-workflow-id={workflowBadge.workflowId}
+              >
+                {workflowBadge.workflowName}
+              </span>
+            )}
             {showPriorityBadge && (
               <span className={`card-priority-badge card-priority-badge--${normalizedPriority}`}>
                 {normalizedPriority}

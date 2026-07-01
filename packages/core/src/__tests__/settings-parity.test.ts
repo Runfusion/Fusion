@@ -98,6 +98,14 @@ describe("settings key parity", () => {
     expect(PROJECT_SETTINGS_KEYS).toContain("ignoreHiddenOverlapPaths");
   });
 
+  it("defaults absolute file-browser paths off and keeps it project-scoped", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.allowAbsoluteFileBrowserPaths).toBe(false);
+    expect(isProjectSettingsKey("allowAbsoluteFileBrowserPaths")).toBe(true);
+    expect(isGlobalSettingsKey("allowAbsoluteFileBrowserPaths")).toBe(false);
+    expect(PROJECT_SETTINGS_KEYS).toContain("allowAbsoluteFileBrowserPaths");
+    expect(GLOBAL_SETTINGS_KEYS).not.toContain("allowAbsoluteFileBrowserPaths");
+  });
+
   it("defaults autoClaimCandidatesInPrompt to 5 and keeps it project-scoped", () => {
     expect(DEFAULT_PROJECT_SETTINGS.autoClaimCandidatesInPrompt).toBe(5);
     expect(isProjectSettingsKey("autoClaimCandidatesInPrompt")).toBe(true);

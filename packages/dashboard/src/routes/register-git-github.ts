@@ -2515,6 +2515,33 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     return projectRoot;
   }
 
+  async function resolveReadOnlyCommitGitDir(req: Request, projectRoot: string): Promise<string> {
+    const baseGitDir = resolveGitDir(req, projectRoot);
+    const worktreePath = req.query.worktreePath;
+    if (worktreePath === undefined || worktreePath === null || worktreePath === "") {
+      return baseGitDir;
+    }
+    if (typeof worktreePath !== "string" || !isAbsolute(worktreePath)) {
+      throw badRequest("worktreePath must be an absolute path");
+    }
+    const resolved = resolve(worktreePath);
+    if (resolved !== worktreePath) {
+      throw badRequest("worktreePath must be normalized");
+    }
+
+    /*
+    FNXC:GitManager 2026-06-29-00:00:
+    The Commits panel may inspect commit history and diffs for a Git-reported worktree of the currently selected repository checkout, but mutation routes must continue to target only resolveGitDir(repoPath). Validate this read-only override against `git worktree list` for the current repo instead of treating `repoPath` or `worktreePath` as arbitrary absolute filesystem access.
+    */
+    const registeredWorktrees = await listRegisteredWorktreePaths(baseGitDir);
+    const canonicalResolved = canonicalForCompare(resolved);
+    const registered = registeredWorktrees.find((candidate) => canonicalForCompare(candidate) === canonicalResolved);
+    if (!registered) {
+      throw badRequest("worktreePath is not a registered git worktree for this repository");
+    }
+    return registered;
+  }
+
   /**
    * GET /api/git/workspace-repos
    * Returns the list of sub-repos for a workspace-mode project.
@@ -2942,7 +2969,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/commits", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
+      const rootDir = await resolveReadOnlyCommitGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }
@@ -2965,7 +2992,7 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
   router.get("/git/commits/:hash/diff", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
-      const rootDir = resolveGitDir(req, scopedStore.getRootDir());
+      const rootDir = await resolveReadOnlyCommitGitDir(req, scopedStore.getRootDir());
       if (!(await isGitRepo(rootDir))) {
         throw badRequest("Not a git repository");
       }

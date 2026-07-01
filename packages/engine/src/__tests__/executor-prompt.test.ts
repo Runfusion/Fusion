@@ -145,6 +145,38 @@ describe("buildExecutionPrompt", () => {
     expect(result).not.toContain("## Attachments");
   });
 
+  it("does not instruct graph-owned execution sessions to request per-step reviews", () => {
+    const task = createMockTaskDetail({
+      prompt: [
+        "# test",
+        "**Review Level:** 2",
+        "## Steps",
+        "### Step 0: Preflight",
+        "- [ ] check",
+        "### Step 1: Implement",
+        "- [ ] change code",
+        "### Step 2: Delivery",
+        "- [ ] summarize",
+      ].join("\n"),
+    });
+
+    const result = buildExecutionPrompt(
+      task,
+      "/home/user/project",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { workflowReviewGatesOwnedByGraph: true },
+    );
+
+    expect(result).toContain("Workflow review gates are handled by the workflow graph");
+    expect(result).not.toContain("Before implementing each step");
+    expect(result).not.toContain("After implementing + committing each step");
+    expect(result).not.toContain("fn_review_step");
+  });
+
   it("includes Custom fields section listing id/name/type, enum options, required, and current value", () => {
     const task = createMockTaskDetail({ customFields: { severity: "high" } });
     const result = buildExecutionPrompt(task, "/home/user/project", undefined, undefined, undefined, [

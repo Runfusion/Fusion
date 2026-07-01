@@ -48,6 +48,7 @@ async function flushPromises(): Promise<void> {
 
 const mockFetchTasks = vi.mocked(api.fetchTasks);
 const mockCreateTask = vi.mocked(api.createTask);
+const mockDeleteTask = vi.mocked(api.deleteTask);
 const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
 const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
@@ -96,6 +97,7 @@ beforeEach(() => {
   MockEventSource.instances = [];
   (globalThis as any).EventSource = MockEventSource;
   mockFetchTasks.mockReset().mockResolvedValue([]);
+  mockDeleteTask.mockReset();
   mockReadCache.mockReset();
   mockWriteCache.mockReset();
   mockClearCache.mockReset();
@@ -364,7 +366,82 @@ describe("useTasks", () => {
   });
 
   describe("view-transition refresh behavior", () => {
-    it("refetches exactly once when sseEnabled flips from false to true and updates state", async () => {
+    it("skips the false-to-true catch-up when the in-memory snapshot is fresh", async () => {
+      const initialTask = createMockTask({ id: "FN-001", title: "Before return" });
+      mockFetchTasks.mockResolvedValueOnce([initialTask]);
+
+      const { result, rerender } = renderHook(
+        ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
+        { initialProps: { sseEnabled: false } },
+      );
+
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-001");
+      });
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      mockFetchTasks.mockClear();
+
+      await act(async () => {
+        rerender({ sseEnabled: true });
+        await flushPromises();
+      });
+
+      expect(mockFetchTasks).not.toHaveBeenCalled();
+      expect(result.current.tasks[0]?.id).toBe("FN-001");
+      expect(MockEventSource.instances).toHaveLength(1);
+    });
+
+    it("skips only same-project fresh returns and restores the project-scoped SSE subscription", async () => {
+      const projectTask = createMockTask({ id: "FN-PROJ-1", title: "Project one" });
+      mockFetchTasks.mockResolvedValueOnce([projectTask]);
+      mockReadCache.mockImplementation((key) => {
+        if (key === `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-2`) {
+          return [createMockTask({ id: "FN-PROJ-2", title: "Project two cache" })];
+        }
+        return null;
+      });
+
+      const { result, rerender } = renderHook(
+        ({ projectId, sseEnabled }: { projectId: string; sseEnabled: boolean }) =>
+          useTasks({ projectId, sseEnabled }),
+        { initialProps: { projectId: "proj-1", sseEnabled: false } },
+      );
+
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-PROJ-1");
+      });
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, "proj-1", undefined, false);
+      mockFetchTasks.mockClear();
+
+      await act(async () => {
+        rerender({ projectId: "proj-1", sseEnabled: true });
+        await flushPromises();
+      });
+
+      expect(mockFetchTasks).not.toHaveBeenCalled();
+      expect(result.current.tasks[0]?.id).toBe("FN-PROJ-1");
+      expect(MockEventSource.instances.at(-1)?.url).toContain("/api/events?projectId=proj-1");
+
+      mockFetchTasks.mockResolvedValueOnce([createMockTask({ id: "FN-PROJ-2-LIVE" })]);
+      await act(async () => {
+        rerender({ projectId: "proj-2", sseEnabled: false });
+      });
+
+      expect(mockReadCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-2`,
+        { maxAgeMs: swrCache.SWR_TASKS_MAX_AGE_MS },
+      );
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledWith(undefined, undefined, "proj-2", undefined, false);
+      });
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-PROJ-2-LIVE");
+      });
+    });
+
+    it("performs one false-to-true catch-up when the confirmed snapshot is stale", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(new Date("2026-06-29T22:00:00.000Z"));
       const initialTask = createMockTask({ id: "FN-001", title: "Before return" });
       const refreshedTask = createMockTask({ id: "FN-002", title: "After return" });
       mockFetchTasks
@@ -381,6 +458,7 @@ describe("useTasks", () => {
       });
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
 
+      vi.setSystemTime(Date.now() + swrCache.SWR_TASKS_MAX_AGE_MS + 1);
       await act(async () => {
         rerender({ sseEnabled: true });
       });
@@ -390,6 +468,101 @@ describe("useTasks", () => {
       });
       await waitFor(() => {
         expect(result.current.tasks[0]?.id).toBe("FN-002");
+      });
+      vi.useRealTimers();
+    });
+
+    it("treats a fresh empty server snapshot as confirmed data on task-view return", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+
+      const { result, rerender } = renderHook(
+        ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
+        { initialProps: { sseEnabled: false } },
+      );
+
+      await waitFor(() => {
+        expect(result.current.lastFetchTimeMs).toEqual(expect.any(Number));
+      });
+      expect(result.current.tasks).toEqual([]);
+      mockFetchTasks.mockClear();
+
+      await act(async () => {
+        rerender({ sseEnabled: true });
+        await flushPromises();
+      });
+
+      expect(mockFetchTasks).not.toHaveBeenCalled();
+      expect(result.current.tasks).toEqual([]);
+    });
+
+    it("performs one false-to-true catch-up when no server snapshot has completed yet", async () => {
+      let resolveInitial: ((tasks: Task[]) => void) | undefined;
+      const recoveredTask = createMockTask({ id: "FN-NO-SNAPSHOT" });
+      mockFetchTasks
+        .mockImplementationOnce(
+          () =>
+            new Promise<Task[]>((resolve) => {
+              resolveInitial = resolve;
+            }),
+        )
+        .mockResolvedValueOnce([recoveredTask]);
+
+      const { result, rerender } = renderHook(
+        ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
+        { initialProps: { sseEnabled: false } },
+      );
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+      expect(result.current.lastFetchTimeMs).toBeUndefined();
+      expect(result.current.tasks).toEqual([]);
+
+      await act(async () => {
+        rerender({ sseEnabled: true });
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-NO-SNAPSHOT");
+      });
+
+      await act(async () => {
+        resolveInitial?.([createMockTask({ id: "FN-STALE-INITIAL" })]);
+        await flushPromises();
+      });
+
+      expect(result.current.tasks[0]?.id).toBe("FN-NO-SNAPSHOT");
+    });
+
+    it("performs one false-to-true catch-up after the last refresh errored", async () => {
+      const recoveredTask = createMockTask({ id: "FN-RECOVERED" });
+      mockFetchTasks
+        .mockRejectedValueOnce(new Error("offline"))
+        .mockResolvedValueOnce([recoveredTask]);
+
+      const { result, rerender } = renderHook(
+        ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
+        { initialProps: { sseEnabled: false } },
+      );
+
+      await waitFor(() => {
+        expect(result.current.lastRefreshErrorAt).toEqual(expect.any(Number));
+      });
+      expect(result.current.tasks).toEqual([]);
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        rerender({ sseEnabled: true });
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(2);
+      });
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-RECOVERED");
       });
     });
 
@@ -478,7 +651,50 @@ describe("useTasks", () => {
       expect(mockFetchTasks).toHaveBeenCalledTimes(1);
     });
 
-    it("runs one catch-up per false-to-true toggle without stacked EventSource instances", async () => {
+    it("keeps SSE reconnect resync active after a fresh return skips catch-up", async () => {
+      const initialTask = createMockTask({ id: "FN-INITIAL" });
+      const reconnectedTask = createMockTask({ id: "FN-RECONNECTED" });
+      mockFetchTasks
+        .mockResolvedValueOnce([initialTask])
+        .mockResolvedValueOnce([reconnectedTask]);
+
+      const { result, rerender, unmount } = renderHook(
+        ({ sseEnabled }: { sseEnabled: boolean }) => useTasks({ sseEnabled }),
+        { initialProps: { sseEnabled: false } },
+      );
+
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-INITIAL");
+      });
+      mockFetchTasks.mockClear();
+
+      await act(async () => {
+        rerender({ sseEnabled: true });
+        await flushPromises();
+      });
+
+      expect(mockFetchTasks).not.toHaveBeenCalled();
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      act(() => {
+        MockEventSource.instances[0]._emit("open");
+        MockEventSource.instances[0]._emit("error");
+      });
+
+      await waitFor(() => {
+        expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+      });
+      expect(mockFetchTasks).toHaveBeenLastCalledWith(undefined, undefined, undefined, undefined, false);
+      await waitFor(() => {
+        expect(result.current.tasks[0]?.id).toBe("FN-RECONNECTED");
+      });
+
+      unmount();
+    });
+
+    it("runs one catch-up per stale false-to-true toggle without stacked EventSource instances", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      vi.setSystemTime(new Date("2026-06-29T22:10:00.000Z"));
       const initialTask = createMockTask({ id: "FN-RAPID-0" });
       const firstReturnTask = createMockTask({ id: "FN-RAPID-1" });
       const secondReturnTask = createMockTask({ id: "FN-RAPID-2" });
@@ -496,6 +712,7 @@ describe("useTasks", () => {
         expect(result.current.tasks[0]?.id).toBe("FN-RAPID-0");
       });
 
+      vi.setSystemTime(Date.now() + swrCache.SWR_TASKS_MAX_AGE_MS + 1);
       await act(async () => {
         rerender({ sseEnabled: true });
       });
@@ -512,6 +729,7 @@ describe("useTasks", () => {
       expect(MockEventSource.instances).toHaveLength(1);
       expect(MockEventSource.instances[0]?.readyState).toBe(MockEventSource.CLOSED);
 
+      vi.setSystemTime(Date.now() + swrCache.SWR_TASKS_MAX_AGE_MS + 1);
       await act(async () => {
         rerender({ sseEnabled: true });
       });
@@ -522,6 +740,7 @@ describe("useTasks", () => {
       expect(mockFetchTasks).toHaveBeenCalledTimes(3);
       expect(MockEventSource.instances).toHaveLength(2);
       expect(MockEventSource.instances[1]?.readyState).toBe(1);
+      vi.useRealTimers();
     });
   });
 
@@ -1188,6 +1407,194 @@ describe("useTasks", () => {
       });
 
       expect(result.current.tasks[0].column).toBe("todo");
+    });
+  });
+
+  describe("deleteTask", () => {
+    it("FN-7250 removes the deleted id from fetched local state without SSE or refresh", async () => {
+      const tasks = [
+        createMockTask({ id: "FN-KEEP", title: "Keep", column: "in-progress" as Column }),
+        createMockTask({ id: "FN-DELETE", title: "Delete", column: "todo" as Column }),
+      ];
+      mockFetchTasks.mockResolvedValueOnce(tasks);
+      mockDeleteTask.mockResolvedValueOnce(createMockTask({
+        id: "FN-DELETE",
+        column: "todo" as Column,
+        deletedAt: "2026-06-29T18:52:00.000Z",
+      }));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-KEEP", "FN-DELETE"]));
+
+      let deleted: Task | undefined;
+      await act(async () => {
+        deleted = await result.current.deleteTask("FN-DELETE");
+      });
+
+      expect(mockDeleteTask).toHaveBeenCalledWith("FN-DELETE", "proj-1", undefined);
+      expect(deleted?.id).toBe("FN-DELETE");
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-KEEP"]);
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("removes every matching task id from populated local state after a successful delete", async () => {
+      const tasks = [
+        createMockTask({ id: "FN-DELETE", title: "Duplicate one", column: "todo" as Column }),
+        createMockTask({ id: "FN-KEEP", title: "Keep", column: "in-progress" as Column }),
+        createMockTask({ id: "FN-DELETE", title: "Duplicate two", column: "done" as Column }),
+      ];
+      mockFetchTasks.mockResolvedValueOnce(tasks);
+      mockDeleteTask.mockResolvedValueOnce(createMockTask({ id: "FN-DELETE", column: "todo" as Column }));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(3));
+
+      await act(async () => {
+        await result.current.deleteTask("FN-DELETE");
+      });
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-KEEP"]);
+    });
+
+    it("removes the deleted id from the project SWR task cache after a successful delete", async () => {
+      const tasks = [
+        createMockTask({ id: "FN-DELETE", column: "todo" as Column }),
+        createMockTask({ id: "FN-KEEP", column: "in-progress" as Column }),
+      ];
+      mockFetchTasks.mockResolvedValueOnce(tasks);
+      mockDeleteTask.mockResolvedValueOnce(createMockTask({ id: "FN-DELETE", column: "todo" as Column }));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+      mockReadCache.mockReturnValueOnce(tasks);
+
+      await act(async () => {
+        await result.current.deleteTask("FN-DELETE");
+      });
+
+      expect(mockReadCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        { maxAgeMs: swrCache.SWR_TASKS_MAX_AGE_MS },
+      );
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        [tasks[1]],
+        { maxBytes: 500_000 },
+      );
+      expect(mockClearCache).not.toHaveBeenCalled();
+    });
+
+    it("does not resurrect a deleted task when an older refresh resolves after delete success", async () => {
+      const deletedTask = createMockTask({ id: "FN-DELETE", column: "todo" as Column });
+      const keptTask = createMockTask({ id: "FN-KEEP", column: "in-progress" as Column });
+      let resolveRefresh!: (tasks: Task[]) => void;
+      mockReadCache.mockReturnValue([deletedTask, keptTask]);
+      mockFetchTasks.mockImplementationOnce(() => new Promise<Task[]>((resolve) => {
+        resolveRefresh = resolve;
+      }));
+      mockDeleteTask.mockResolvedValueOnce(createMockTask({
+        id: "FN-DELETE",
+        column: "todo" as Column,
+        deletedAt: "2026-06-29T21:04:00.000Z",
+      }));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-DELETE", "FN-KEEP"]);
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await result.current.deleteTask("FN-DELETE");
+      });
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-KEEP"]);
+
+      await act(async () => {
+        resolveRefresh([deletedTask, keptTask]);
+        await flushPromises();
+      });
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-KEEP"]);
+    });
+
+    it("keeps local state and cache untouched when delete rejects", async () => {
+      const tasks = [
+        createMockTask({ id: "FN-DELETE", column: "todo" as Column }),
+        createMockTask({ id: "FN-KEEP", column: "in-progress" as Column }),
+      ];
+      mockFetchTasks.mockResolvedValueOnce(tasks);
+      mockDeleteTask.mockRejectedValueOnce(new Error("dependency conflict"));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+
+      await expect(
+        act(async () => {
+          await result.current.deleteTask("FN-DELETE", { removeDependencyReferences: true });
+        }),
+      ).rejects.toThrow("dependency conflict");
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-DELETE", "FN-KEEP"]);
+      expect(mockReadCache).not.toHaveBeenCalled();
+      expect(mockWriteCache).not.toHaveBeenCalled();
+      expect(mockClearCache).not.toHaveBeenCalled();
+    });
+
+    it("handles successful deletes against an empty task array and remains idempotent with later SSE deletes", async () => {
+      mockFetchTasks.mockResolvedValueOnce([]);
+      mockDeleteTask.mockResolvedValueOnce(createMockTask({ id: "FN-MISSING", column: "todo" as Column }));
+
+      const { result } = renderHook(() => useTasks());
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(0));
+
+      await act(async () => {
+        await result.current.deleteTask("FN-MISSING");
+      });
+
+      expect(result.current.tasks).toEqual([]);
+
+      act(() => {
+        MockEventSource.instances[0]._emit("task:deleted", { id: "FN-MISSING" });
+      });
+
+      expect(result.current.tasks).toEqual([]);
+    });
+
+    it("removes archived-loaded tasks without disturbing active rows", async () => {
+      const active = createMockTask({ id: "FN-ACTIVE", column: "todo" as Column });
+      const archived = createMockTask({ id: "FN-ARCHIVED", column: "archived" as Column });
+      mockFetchTasks
+        .mockResolvedValueOnce([active])
+        .mockResolvedValueOnce([active, archived]);
+      mockDeleteTask.mockResolvedValueOnce(archived);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]));
+
+      await act(async () => {
+        await result.current.loadArchivedTasks();
+      });
+
+      expect(result.current.includeArchived).toBe(true);
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE", "FN-ARCHIVED"]);
+
+      await act(async () => {
+        await result.current.deleteTask("FN-ARCHIVED");
+      });
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]);
     });
   });
 

@@ -3562,6 +3562,11 @@ export interface ProjectSettings {
    *  When set, matching paths are excluded from overlap checks for both
    *  active in-progress tasks and in-review tasks with unmerged worktrees. */
   overlapIgnorePaths?: string[];
+  /**
+   * FNXC:FileBrowser 2026-06-29-00:00:
+   * Project owners can opt the workspace file browser into slash-prefixed absolute paths for local admin workflows. Default false keeps browsing confined to the selected project/task workspace; this does not apply to task-local file APIs, memory, plugin bundles, worktree-copy validation, or Windows drive-letter paths.
+   */
+  allowAbsoluteFileBrowserPaths?: boolean;
   autoMerge: boolean;
   /** When true, force every AI lane onto the deterministic mock provider regardless
    *  of per-task or per-lane overrides. No network calls, zero token cost. */
@@ -3717,6 +3722,13 @@ export interface ProjectSettings {
    * This project-scoped setting is default-off so current board navigation is unchanged. When enabled, only Board card clicks may route to the tablet/desktop right dock; all non-board task-open paths and dock-inactive/mobile states must preserve the full-panel or existing modal behavior.
    */
   openTasksInRightSidebar?: boolean;
+  /**
+   * When true, mobile board task-card clicks open task detail in the existing popped-out FloatingWindow task surface instead of the full main-panel task detail. Default: false.
+   *
+   * FNXC:MobileTaskPopups 2026-06-29-00:00:
+   * This project-scoped setting is default-off so mobile board navigation is unchanged until operators opt in. When enabled, it applies only to mobile viewport board-card clicks with no deep initial tab and reuses the existing task pop-out/FloatingWindow path; desktop/tablet right-dock routing and all non-board task-open paths remain governed by their existing settings and handlers.
+   */
+  openMobileTasksInPopup?: boolean;
   /** When true, restores the legacy behavior of silently creating sibling
    *  branches like `fusion/FN-123-2` when the canonical task branch is already
    *  checked out elsewhere. Default: false. */

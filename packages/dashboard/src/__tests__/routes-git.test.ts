@@ -438,6 +438,23 @@ describe("Git Management endpoints", () => {
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body.length).toBeLessThanOrEqual(100);
     });
+
+    it("allows read-only commit history for a registered worktree outside repoPath and rejects unregistered absolute paths", async () => {
+      const worktreePath = join(getSharedGitTestRepo().root, "registered-worktree");
+      execFileSync("git", ["-C", gitRepoDir, "worktree", "add", "-B", "fn-7254-worktree", worktreePath, "HEAD"], { stdio: "pipe" });
+      try {
+        const res = await GET(buildApp(), `/api/git/commits?worktreePath=${encodeURIComponent(worktreePath)}&limit=1`);
+        expect(res.status).toBe(200);
+        expect(Array.isArray(res.body)).toBe(true);
+        expect(res.body.length).toBeLessThanOrEqual(1);
+
+        const rejected = await GET(buildApp(), `/api/git/commits?worktreePath=${encodeURIComponent(join(getSharedGitTestRepo().root, "not-registered"))}`);
+        expect(rejected.status).toBe(400);
+        expect(rejected.body.error).toContain("registered git worktree");
+      } finally {
+        execFileSync("git", ["-C", gitRepoDir, "worktree", "remove", "--force", worktreePath], { stdio: "pipe" });
+      }
+    });
   });
 
   describe("GET /git/commits/:hash/diff", () => {
@@ -466,6 +483,23 @@ describe("Git Management endpoints", () => {
         expect(res.status).toBe(200);
         expect(res.body).toHaveProperty("stat");
         expect(res.body).toHaveProperty("patch");
+      }
+    });
+
+    it("allows read-only commit diffs for a registered worktree and rejects unregistered paths", async () => {
+      const worktreePath = join(getSharedGitTestRepo().root, "registered-diff-worktree");
+      execFileSync("git", ["-C", gitRepoDir, "worktree", "add", "-B", "fn-7254-diff-worktree", worktreePath, "HEAD"], { stdio: "pipe" });
+      try {
+        const headHash = git(worktreePath, "rev-parse", "HEAD");
+        const res = await GET(buildApp(), `/api/git/commits/${headHash}/diff?worktreePath=${encodeURIComponent(worktreePath)}`);
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty("patch");
+
+        const rejected = await GET(buildApp(), `/api/git/commits/${headHash}/diff?worktreePath=${encodeURIComponent(join(getSharedGitTestRepo().root, "not-registered-diff"))}`);
+        expect(rejected.status).toBe(400);
+        expect(rejected.body.error).toContain("registered git worktree");
+      } finally {
+        execFileSync("git", ["-C", gitRepoDir, "worktree", "remove", "--force", worktreePath], { stdio: "pipe" });
       }
     });
   });

@@ -50,6 +50,11 @@ import {
  * Coding (per-step review) also needs the default-on optional Plan Review gate before
  * execution. The group sits between `plan` and `parse` so operators can toggle plan
  * review independently while preserving the per-step code review/rework loop.
+ *
+ * FNXC:WorkflowReviewGates 2026-06-29-23:27:
+ * Per-step review should inherit the regular Coding workflow's graph-native suffix:
+ * completion summary flows directly to the merge gate, with the final optional Code
+ * Review group providing the only end-of-task automated review gate.
  */
 const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
@@ -161,7 +166,6 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     codeReviewOptionalGroupNode("in-progress"),
     codeReviewRemediationNode("in-progress"),
     completionSummaryNode("in-review"),
-    { id: "review", kind: "prompt", column: "in-review", config: builtinPromptConfig("review", "Review") },
     { id: "merge-gate", kind: "merge-gate", column: "in-review", config: { gate: "auto-merge" } },
     { id: "merge-retry", kind: "retry-backoff", column: "in-review", config: { policy: "merge", maxAttempts: 3 } },
     { id: "merge-manual-hold", kind: "manual-merge-hold", column: "in-review", config: { release: "manual" } },
@@ -203,18 +207,17 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     // KTD-5: bounded rework exhaustion → manual hold; release re-enters the group.
     { from: "steps", to: "rework-hold", condition: "outcome:rework-exhausted" },
     { from: "rework-hold", to: "browser-verification", condition: "success" },
-    // browser-verification → code-review → review; each optional-group passes through
-    // (outcome=success) when disabled, so a task with both off routes straight to review.
+    // browser-verification → code-review → completion-summary → merge-gate; each
+    // optional-group passes through (outcome=success) when disabled, so a task with
+    // both off routes straight to completion summary and merge policy.
     { from: "browser-verification", to: "code-review", condition: "success" },
     { from: "code-review", to: "completion-summary", condition: "success" },
-    { from: "completion-summary", to: "review", condition: "success" },
+    { from: "completion-summary", to: "merge-gate", condition: "success" },
     { from: "browser-verification", to: "browser-verification-remediation", condition: "failure" },
     { from: "browser-verification-remediation", to: "browser-verification", condition: "success", kind: "rework" },
     { from: "code-review", to: "code-review-remediation", condition: "failure" },
     { from: "code-review-remediation", to: "code-review", condition: "success", kind: "rework" },
     { from: "steps", to: "end", condition: "failure" },
-    { from: "review", to: "merge-gate", condition: "success" },
-    { from: "review", to: "end", condition: "failure" },
     { from: "merge-gate", to: "branch-group-member-integration", condition: "outcome:auto-on" },
     { from: "merge-gate", to: "merge-manual-hold", condition: "outcome:auto-off" },
     { from: "merge-retry", to: "merge-attempt", condition: "success", kind: "rework" },

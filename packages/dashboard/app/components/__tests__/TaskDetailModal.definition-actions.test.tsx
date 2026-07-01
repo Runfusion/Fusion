@@ -15,6 +15,7 @@ import {
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
+import { readBoardWorkflowSelection, removeBoardWorkflowSelection, writeBoardWorkflowSelection } from "../../utils/boardWorkflowSelection";
 
 setupTaskDetailModalHooks();
 
@@ -1325,6 +1326,57 @@ describe("TaskDetailModal", () => {
         expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-002", "success");
         expect(onClose).toHaveBeenCalled();
       });
+    });
+
+    it("preserves non-default workflow context when closing after refinement success", async () => {
+      const { fetchBoardWorkflows, refineTask } = await import("../../api");
+      vi.mocked(refineTask).mockResolvedValue({ id: "FN-003", column: "todo" } as Task);
+      vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
+        flagEnabled: true,
+        defaultWorkflowId: "builtin:coding",
+        workflows: [
+          { id: "builtin:coding", name: "Coding", columns: [] },
+          { id: "WF-active", name: "Custom refinement lane", columns: [] },
+        ],
+        taskWorkflowIds: { "FN-001": "WF-active" },
+      });
+      writeBoardWorkflowSelection("project-1", "WF-active");
+
+      const onClose = vi.fn();
+      const onTaskUpdated = vi.fn();
+      const addToast = vi.fn();
+      render(
+        <TaskDetailModal
+          task={makeTask({ id: "FN-001", column: "done" })}
+          projectId="project-1"
+          initialTab="definition"
+          onClose={onClose}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          onTaskUpdated={onTaskUpdated}
+          addToast={addToast}
+        />,
+      );
+
+      await screen.findByTestId("task-detail-workflow-badge");
+      expect(screen.getByTestId("task-detail-workflow-badge")).toHaveTextContent("Custom refinement lane");
+
+      fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Refine" }));
+      fireEvent.change(screen.getByPlaceholderText("Enter your feedback here..."), { target: { value: "Keep the same workflow lane" } });
+      fireEvent.click(screen.getByText("Create Refinement Task"));
+
+      await waitFor(() => {
+        expect(refineTask).toHaveBeenCalledWith("FN-001", "Keep the same workflow lane", "project-1");
+        expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-003", "success");
+        expect(onClose).toHaveBeenCalled();
+      });
+      expect(onTaskUpdated).not.toHaveBeenCalled();
+      expect(readBoardWorkflowSelection("project-1")).toBe("WF-active");
+      expect(readBoardWorkflowSelection("project-1")).not.toBe("builtin:coding");
+      removeBoardWorkflowSelection("project-1");
     });
 
     it("shows error toast when refineTask fails", async () => {

@@ -255,7 +255,7 @@ export interface SelfHealingOptions {
    * if the executor refused because a live session surface is still registered
    * (the leaked-slot reaper relies on this refusal signal).
    */
-  clearPhantomExecutorBinding?: (taskId: string) => boolean | void;
+  clearPhantomExecutorBinding?: (taskId: string, options?: { preserveWorktrees?: boolean }) => boolean | void;
   /** Optional AgentStore for agent-level self-healing checks. */
   agentStore?: AgentStore;
   /** Canonical stale-lease recovery manager. */
@@ -3046,7 +3046,10 @@ export class SelfHealingManager {
             FN-6736 makes the executor-active veto conditional for in-progress tasks whose worktree still exists: if age is far beyond grace and checkout, heartbeat, and run-audit liveness are all absent, clear only the stale in-memory binding and requeue with worktree/progress intact instead of emitting the permanent no-action wedge. Live FN-4811 owners still reach the normal no-action veto, missing worktrees remain FN-5219, and resume-limbo escalation remains FN-5704-owned.
             */
             if (phantomBinding.phantom) {
-              this.options.clearPhantomExecutorBinding?.(task.id);
+              // FNXC:SelfHealingReclaim 2026-06-30-00:00: preserveWorktrees keeps the held worktree's
+              // session-registry entry so the moveTask(preserveWorktree:true) re-dispatch reattaches to
+              // the same worktree instead of orphaning it and acquiring a new one (FN-7249 regression).
+              this.options.clearPhantomExecutorBinding?.(task.id, { preserveWorktrees: true });
               await createRunAuditor(this.store, {
                 runId: generateSyntheticRunId("self-healing-phantom-executor-binding", task.id),
                 agentId: "self-healing",

@@ -5,6 +5,7 @@ import { DEFAULT_PROJECT_SETTINGS } from "@fusion/core";
 import { Pause, Play, SlidersHorizontal, Square, X } from "lucide-react";
 import { fetchConfig, fetchSettings, updateSettings } from "../api/legacy";
 import { useAppSettings } from "../hooks/useAppSettings";
+import { useConfirm } from "../hooks/useConfirm";
 // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Footer menu adopts the shared global-concurrency hook so it and the Command Center card read/write ONE source of truth (no more duplicated fetch/debounce/clobber logic).
 import { useGlobalConcurrency } from "../hooks/useGlobalConcurrency";
 
@@ -42,6 +43,12 @@ const CONCURRENCY_SLIDER_LIMITS: Record<keyof ConcurrencyValues, { min: number; 
   maxWorktrees: { min: 1, max: 50 },
 };
 
+const CONCURRENCY_SETTING_LABEL_KEYS: Record<keyof ConcurrencyValues, { key: string; defaultValue: string }> = {
+  maxConcurrent: { key: "commandCenter.controls.concurrency.maxConcurrent", defaultValue: "Max concurrent tasks" },
+  maxTriageConcurrent: { key: "commandCenter.controls.concurrency.maxTriageConcurrent", defaultValue: "Max triage concurrent" },
+  maxWorktrees: { key: "commandCenter.controls.concurrency.maxWorktrees", defaultValue: "Max worktrees" },
+};
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -52,6 +59,22 @@ function getConcurrencySliderMax(key: keyof ConcurrencyValues, value: number) {
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
+}
+
+function getChangedConcurrencyKeys(values: ConcurrencyValues, persisted: ConcurrencyValues) {
+  return (Object.keys(values) as Array<keyof ConcurrencyValues>).filter((key) => values[key] !== persisted[key]);
+}
+
+/*
+FNXC:EngineControls 2026-06-29-16:15:
+Footer confirmation copy must stay aligned with the Command Center concurrency card. Build single-setting messages from the shared summary item key so project and global-cap dialogs use the same title, message template, save label, and cancel label.
+*/
+function getConcurrencyChangeSummary(t: ReturnType<typeof useTranslation>["t"], setting: string, oldValue: number, newValue: number) {
+  return t(
+    "commandCenter.controls.concurrency.confirmChangeSummaryItem",
+    "{{setting}} from {{oldValue}} to {{newValue}}",
+    { setting, oldValue, newValue },
+  );
 }
 
 /*
@@ -82,30 +105,26 @@ FN-6863 raises the footer concurrency sliders' base drag ceiling to 50 for max t
 */
 export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineControlMenuProps>(function EngineControlMenu({ projectId }, ref) {
   const { t } = useTranslation("app");
+  const { confirm } = useConfirm();
   const menuRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const { globalPaused, enginePaused, toggleGlobalPause, toggleEnginePause, refresh } = useAppSettings(projectId);
   const [concurrencyState, setConcurrencyState] = useState<AsyncState<ConcurrencyValues>>({ status: "idle", data: null, error: null });
   const [concurrencyDirty, setConcurrencyDirty] = useState(false);
   const [concurrencySaveState, setConcurrencySaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const persistedProjectConcurrencyRef = useRef<ConcurrencyValues>(DEFAULT_CONCURRENCY_VALUES);
   const projectConcurrencySaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingProjectConcurrencySaveRef = useRef<ConcurrencyValues | null>(null);
-  // FNXC:EngineControls 2026-06-27-11:15: Closing the footer popover must not discard a just-dragged per-project concurrency value; flush the pending debounce before any explicit, outside-click, Escape, or trigger-close path hides the menu.
+  const projectConcurrencyConfirmOpenRef = useRef(false);
+  const projectConcurrencyConfirmTokenRef = useRef(0);
+  const [pendingGlobalConcurrencyValue, setPendingGlobalConcurrencyValue] = useState<number | null>(null);
+  const [globalConcurrencyDirty, setGlobalConcurrencyDirty] = useState(false);
+  const [globalConcurrencyConfirmOpen, setGlobalConcurrencyConfirmOpen] = useState(false);
+  const globalConcurrencyConfirmOpenRef = useRef(false);
+  const globalConcurrencyConfirmTokenRef = useRef(0);
+  // FNXC:EngineControls 2026-06-29-00:00: Footer per-project concurrency sliders affect live scheduler capacity, so settled edits must be confirmed before persisting; close, Escape, outside-click, backdrop, and cancel revert to the last loaded values instead of silently saving.
   // FNXC:GlobalConcurrencyControls 2026-06-25-22:45: Fetch is gated on the menu being open; the hook flushes any pending debounced write when `open` flips false.
   const gc = useGlobalConcurrency({ activeWhen: open });
-
-  const saveProjectConcurrencyValues = useCallback((values: ConcurrencyValues) => {
-    setConcurrencySaveState("saving");
-    void updateSettings(values, projectId)
-      .then(async () => {
-        await refresh();
-        setConcurrencyDirty(false);
-        setConcurrencySaveState("saved");
-      })
-      .catch(() => {
-        setConcurrencySaveState("error");
-      });
-  }, [projectId, refresh]);
 
   const clearProjectConcurrencySaveTimeout = useCallback(() => {
     if (projectConcurrencySaveTimeoutRef.current) {
@@ -114,23 +133,47 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     }
   }, []);
 
-  const flushProjectConcurrencySave = useCallback(() => {
-    const pendingValues = pendingProjectConcurrencySaveRef.current;
-    if (!pendingValues) return;
+  const revertPendingProjectConcurrencyEdit = useCallback(() => {
     clearProjectConcurrencySaveTimeout();
     pendingProjectConcurrencySaveRef.current = null;
-    saveProjectConcurrencyValues(pendingValues);
-  }, [clearProjectConcurrencySaveTimeout, saveProjectConcurrencyValues]);
+    projectConcurrencyConfirmOpenRef.current = false;
+    projectConcurrencyConfirmTokenRef.current += 1;
+    setConcurrencyState((current) => (
+      current.data
+        ? { status: "loaded", data: persistedProjectConcurrencyRef.current, error: null }
+        : current
+    ));
+    setConcurrencyDirty(false);
+    setConcurrencySaveState("idle");
+  }, [clearProjectConcurrencySaveTimeout]);
+
+  const revertPendingGlobalConcurrencyEdit = useCallback(() => {
+    globalConcurrencyConfirmOpenRef.current = false;
+    globalConcurrencyConfirmTokenRef.current += 1;
+    setGlobalConcurrencyConfirmOpen(false);
+    setPendingGlobalConcurrencyValue(null);
+    setGlobalConcurrencyDirty(false);
+  }, []);
 
   const closeMenu = useCallback(() => {
-    flushProjectConcurrencySave();
+    if (concurrencyDirty || pendingProjectConcurrencySaveRef.current || projectConcurrencyConfirmOpenRef.current) {
+      revertPendingProjectConcurrencyEdit();
+    }
+    if (globalConcurrencyDirty || pendingGlobalConcurrencyValue !== null || globalConcurrencyConfirmOpenRef.current) {
+      revertPendingGlobalConcurrencyEdit();
+    }
     setOpen(false);
-  }, [flushProjectConcurrencySave]);
+  }, [concurrencyDirty, globalConcurrencyDirty, pendingGlobalConcurrencyValue, revertPendingGlobalConcurrencyEdit, revertPendingProjectConcurrencyEdit]);
   const openMenu = useCallback(() => setOpen(true), []);
   const toggleMenu = useCallback(() => {
-    if (open) flushProjectConcurrencySave();
+    if (open && (concurrencyDirty || pendingProjectConcurrencySaveRef.current || projectConcurrencyConfirmOpenRef.current)) {
+      revertPendingProjectConcurrencyEdit();
+    }
+    if (open && (globalConcurrencyDirty || pendingGlobalConcurrencyValue !== null || globalConcurrencyConfirmOpenRef.current)) {
+      revertPendingGlobalConcurrencyEdit();
+    }
     setOpen((current) => !current);
-  }, [flushProjectConcurrencySave, open]);
+  }, [concurrencyDirty, globalConcurrencyDirty, open, pendingGlobalConcurrencyValue, revertPendingGlobalConcurrencyEdit, revertPendingProjectConcurrencyEdit]);
 
   useImperativeHandle(ref, () => ({
     open: openMenu,
@@ -142,7 +185,11 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
     if (!open) return;
 
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+      const target = event.target;
+      if ((projectConcurrencyConfirmOpenRef.current || globalConcurrencyConfirmOpenRef.current) && target instanceof Element && target.closest(".confirm-dialog-overlay, .confirm-dialog")) {
+        return;
+      }
+      if (menuRef.current && target instanceof Node && !menuRef.current.contains(target)) {
         closeMenu();
       }
     };
@@ -169,13 +216,17 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
       try {
         const [config, settings] = await Promise.all([fetchConfig(projectId), fetchSettings(projectId)]);
         if (!cancelled) {
+          const persistedValues = {
+            maxConcurrent: settings.maxConcurrent ?? config.maxConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxConcurrent,
+            maxTriageConcurrent: settings.maxTriageConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxTriageConcurrent,
+            maxWorktrees: settings.maxWorktrees ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
+          };
+          persistedProjectConcurrencyRef.current = persistedValues;
+          pendingProjectConcurrencySaveRef.current = null;
+          projectConcurrencyConfirmOpenRef.current = false;
           setConcurrencyState({
             status: "loaded",
-            data: {
-              maxConcurrent: settings.maxConcurrent ?? config.maxConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxConcurrent,
-              maxTriageConcurrent: settings.maxTriageConcurrent ?? DEFAULT_CONCURRENCY_VALUES.maxTriageConcurrent,
-              maxWorktrees: settings.maxWorktrees ?? DEFAULT_CONCURRENCY_VALUES.maxWorktrees,
-            },
+            data: persistedValues,
             error: null,
           });
         }
@@ -195,13 +246,65 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
   }, [open, projectId, t]);
 
   useEffect(() => {
-    if (!open || !concurrencyDirty || !concurrencyState.data) return;
+    if (!open || !concurrencyDirty || !concurrencyState.data || projectConcurrencyConfirmOpenRef.current) return;
     const values = concurrencyState.data;
+    const confirmToken = projectConcurrencyConfirmTokenRef.current;
     pendingProjectConcurrencySaveRef.current = values;
     projectConcurrencySaveTimeoutRef.current = setTimeout(() => {
       pendingProjectConcurrencySaveRef.current = null;
       projectConcurrencySaveTimeoutRef.current = null;
-      saveProjectConcurrencyValues(values);
+      const persisted = persistedProjectConcurrencyRef.current;
+      const changedKeys = getChangedConcurrencyKeys(values, persisted);
+      if (changedKeys.length === 0) {
+        setConcurrencyDirty(false);
+        setConcurrencySaveState("idle");
+        return;
+      }
+
+      projectConcurrencyConfirmOpenRef.current = true;
+      const changeSummary = changedKeys.map((key) => {
+        const labelMeta = CONCURRENCY_SETTING_LABEL_KEYS[key];
+        return getConcurrencyChangeSummary(t, t(labelMeta.key, labelMeta.defaultValue), persisted[key], values[key]);
+      });
+      const message = changedKeys.length === 1
+        ? t(
+          "commandCenter.controls.concurrency.confirmMessage",
+          "Change {{setting}}?",
+          { setting: changeSummary[0] },
+        )
+        : t(
+          "commandCenter.controls.concurrency.confirmMultipleMessage",
+          "Change these concurrency settings: {{settings}}?",
+          { settings: changeSummary.join("; ") },
+        );
+
+      void confirm({
+        title: t("commandCenter.controls.concurrency.confirmTitle", "Confirm concurrency change"),
+        message,
+        confirmLabel: t("commandCenter.controls.concurrency.confirmSave", "Save change"),
+        cancelLabel: t("commandCenter.controls.concurrency.confirmCancel", "Cancel"),
+      }).then((confirmed) => {
+        projectConcurrencyConfirmOpenRef.current = false;
+        if (projectConcurrencyConfirmTokenRef.current !== confirmToken || !open) return;
+        if (!confirmed) {
+          setConcurrencyState({ status: "loaded", data: persistedProjectConcurrencyRef.current, error: null });
+          setConcurrencyDirty(false);
+          setConcurrencySaveState("idle");
+          return;
+        }
+
+        setConcurrencySaveState("saving");
+        void updateSettings(values, projectId)
+          .then(async () => {
+            await refresh();
+            persistedProjectConcurrencyRef.current = values;
+            setConcurrencyDirty(false);
+            setConcurrencySaveState("saved");
+          })
+          .catch(() => {
+            setConcurrencySaveState("error");
+          });
+      });
     }, CONCURRENCY_SAVE_DEBOUNCE_MS);
     return () => {
       clearProjectConcurrencySaveTimeout();
@@ -209,7 +312,61 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
         pendingProjectConcurrencySaveRef.current = null;
       }
     };
-  }, [clearProjectConcurrencySaveTimeout, concurrencyDirty, concurrencyState.data, open, saveProjectConcurrencyValues]);
+  }, [clearProjectConcurrencySaveTimeout, concurrencyDirty, concurrencyState.data, confirm, open, projectId, refresh, t]);
+
+  /*
+  FNXC:GlobalConcurrencyControls 2026-06-29-00:00:
+  The footer keeps global-cap edits in local pending state until the operator confirms. Calling useGlobalConcurrency.setValue() immediately would enter the shared hook's debounce and close/unmount flush path, which can persist a footer drag from close, Escape, outside-click, backdrop, or cancel before consent.
+  */
+  useEffect(() => {
+    if (!globalConcurrencyDirty || pendingGlobalConcurrencyValue === null || !gc.interactive || globalConcurrencyConfirmOpenRef.current) return;
+    const nextValue = pendingGlobalConcurrencyValue;
+    const persistedValue = gc.value;
+    const confirmToken = globalConcurrencyConfirmTokenRef.current;
+    const timeoutId = setTimeout(() => {
+      if (nextValue === persistedValue) {
+        setPendingGlobalConcurrencyValue(null);
+        setGlobalConcurrencyDirty(false);
+        return;
+      }
+
+      globalConcurrencyConfirmOpenRef.current = true;
+      setGlobalConcurrencyConfirmOpen(true);
+      const changeSummary = getConcurrencyChangeSummary(
+        t,
+        t("settings.scheduling.globalMaxConcurrent", "Global Max Concurrent"),
+        persistedValue,
+        nextValue,
+      );
+      void confirm({
+        title: t("commandCenter.controls.concurrency.confirmTitle", "Confirm concurrency change"),
+        message: t(
+          "commandCenter.controls.concurrency.confirmMessage",
+          "Change {{setting}}?",
+          { setting: changeSummary },
+        ),
+        confirmLabel: t("commandCenter.controls.concurrency.confirmSave", "Save change"),
+        cancelLabel: t("commandCenter.controls.concurrency.confirmCancel", "Cancel"),
+      }).then((confirmed) => {
+        globalConcurrencyConfirmOpenRef.current = false;
+        setGlobalConcurrencyConfirmOpen(false);
+        if (globalConcurrencyConfirmTokenRef.current !== confirmToken || !open) return;
+        if (confirmed) {
+          gc.setValue(String(nextValue));
+        }
+        setPendingGlobalConcurrencyValue(null);
+        setGlobalConcurrencyDirty(false);
+      });
+    }, CONCURRENCY_SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(timeoutId);
+  }, [confirm, gc.interactive, gc.setValue, gc.value, globalConcurrencyDirty, open, pendingGlobalConcurrencyValue, t]);
+
+  const updateGlobalConcurrencyValue = (rawValue: string) => {
+    if (!gc.interactive || globalConcurrencyConfirmOpenRef.current) return;
+    const nextValue = clamp(Number(rawValue), gc.min, Math.max(gc.sliderMax, gc.value));
+    setPendingGlobalConcurrencyValue(nextValue);
+    setGlobalConcurrencyDirty(true);
+  };
 
   const updateConcurrencyValue = (key: keyof ConcurrencyValues, rawValue: string, min: number, max: number) => {
     const nextValue = clamp(Number(rawValue), min, max);
@@ -247,8 +404,10 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
           : t("commandCenter.controls.status.ready", "Ready");
   const globalCountsLoaded = gc.status === "loaded";
   const projectActive = gc.projectActiveCount(projectId);
+  const globalSliderValue = pendingGlobalConcurrencyValue ?? gc.value;
+  const globalSliderMax = Math.max(gc.sliderMax, globalSliderValue);
   const maxConcurrentSliderMax = getConcurrencySliderMax("maxConcurrent", concurrencyValues.maxConcurrent);
-  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, gc.sliderMax);
+  const globalUseMarkerRatio = getUseMarkerRatio(gc.currentlyActive, globalSliderMax);
   const projectUseMarkerRatio = getUseMarkerRatio(projectActive, maxConcurrentSliderMax);
 
   return (
@@ -321,7 +480,7 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
             <label className="engine-control-menu__slider" htmlFor="engine-control-global-max-concurrent">
               <span className="engine-control-menu__slider-label">
                 {t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects")}
-                <strong>{gc.value}</strong>
+                <strong>{globalSliderValue}</strong>
               </span>
               {globalCountsLoaded ? (
                 <span className="engine-control-menu__slider-meta" data-testid="engine-control-global-running">
@@ -334,10 +493,10 @@ export const EngineControlMenu = forwardRef<EngineControlMenuHandle, EngineContr
                   className="engine-control-menu__range input"
                   type="range"
                   min={gc.min}
-                  max={gc.sliderMax}
-                  value={gc.value}
-                  disabled={!gc.interactive}
-                  onChange={(event) => gc.setValue(event.target.value)}
+                  max={globalSliderMax}
+                  value={globalSliderValue}
+                  disabled={!gc.interactive || globalConcurrencyConfirmOpen}
+                  onChange={(event) => updateGlobalConcurrencyValue(event.target.value)}
                 />
                 {globalCountsLoaded ? (
                   <span

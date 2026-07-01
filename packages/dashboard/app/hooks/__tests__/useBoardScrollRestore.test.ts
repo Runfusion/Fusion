@@ -34,7 +34,15 @@ describe("useBoardScrollRestore", () => {
   });
 
   it("restores the captured snapshot after returning to the board view", () => {
-    const sentinel = { boardLeft: 42, boardTop: 7, columnTops: { c1: 3 } };
+    const sentinel = {
+      boardLeft: 42,
+      boardTop: 7,
+      columnTops: { c1: 3 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    };
     mockedCapture.mockReturnValue(sentinel);
 
     // Make the double requestAnimationFrame fire synchronously so the restore
@@ -66,5 +74,38 @@ describe("useBoardScrollRestore", () => {
 
     expect(mockedRestore).toHaveBeenCalledTimes(1);
     expect(mockedRestore).toHaveBeenCalledWith(sentinel);
+  });
+
+  it("retries while the board is not yet ready after returning to the board view", () => {
+    const sentinel = {
+      boardLeft: 240,
+      boardTop: 0,
+      columnTops: { todo: 380 },
+      projectContentLeft: 0,
+      projectContentTop: 0,
+      documentLeft: 0,
+      documentTop: 0,
+    };
+    mockedCapture.mockReturnValue(sentinel);
+    mockedRestore.mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+
+    const { result, rerender } = renderHook(
+      ({ taskView }: { taskView: TaskView }) => useBoardScrollRestore(taskView),
+      { initialProps: { taskView: "task-detail" } },
+    );
+
+    act(() => {
+      result.current.capture();
+      result.current.requestRestore();
+      rerender({ taskView: "board" });
+    });
+
+    expect(mockedRestore).toHaveBeenCalledTimes(2);
+    expect(mockedRestore).toHaveBeenLastCalledWith(sentinel);
   });
 });

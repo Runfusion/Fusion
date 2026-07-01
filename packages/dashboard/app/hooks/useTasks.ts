@@ -8,6 +8,7 @@ import { pushTrace } from "../utils/dashboardTraceBuffer";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
 
 const loggedTaskCacheHitProjects = new Set<string>();
+const TASK_VIEW_REENTRY_FRESHNESS_MS = SWR_TASKS_MAX_AGE_MS;
 
 function normalizeTask(task: Task): Task {
   return {
@@ -137,6 +138,9 @@ export function useTasks(options?: UseTasksOptions) {
   // Tracks when task data was last confirmed fresh by the server.
   // Used to prevent false positives in stuck detection when tab has been in background.
   const lastFetchTimeMs = useRef<number | undefined>(undefined);
+  const lastConfirmedProjectIdRef = useRef<string | undefined>(undefined);
+  const lastConfirmedSearchQueryRef = useRef<string | undefined>(undefined);
+  const lastConfirmedIncludeArchivedRef = useRef(false);
   // Track previous projectId to detect changes
   const previousProjectIdRef = useRef<string | undefined>(projectId);
   tasksRef.current = tasks;
@@ -177,6 +181,9 @@ export function useTasks(options?: UseTasksOptions) {
       setLastRefreshErrorAt(null);
       // Record when we received fresh server data for stuck detection
       lastFetchTimeMs.current = Date.now();
+      lastConfirmedProjectIdRef.current = requestProjectId;
+      lastConfirmedSearchQueryRef.current = query;
+      lastConfirmedIncludeArchivedRef.current = wantArchived;
     } catch {
       // Reject if project changed or version is stale
       if (fetchVersionRef.current !== requestVersion || projectId !== requestProjectId) {
@@ -194,16 +201,35 @@ export function useTasks(options?: UseTasksOptions) {
   }, [projectId]);
   refreshTasksRef.current = refreshTasks;
 
-  // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
-  // Task SSE is disabled outside Board/List, so task:created/moved/updated/deleted/merged events emitted off-view are never delivered. On the sseEnabled false→true re-entry, perform exactly one hook-owned catch-up refetch while excluding initial mount and the disabled state; visibilitychange and onReconnect keep their separate refetch ownership.
+  const shouldRefreshOnTaskViewReentry = useCallback(() => {
+    if (lastRefreshErrorAt !== null) return true;
+    if (searchQueryRef.current) return true;
+    if (includeArchivedRef.current) return true;
+    if (lastConfirmedProjectIdRef.current !== projectId) return true;
+    if (lastConfirmedSearchQueryRef.current !== searchQueryRef.current) return true;
+    if (lastConfirmedIncludeArchivedRef.current !== includeArchivedRef.current) return true;
+
+    const lastFetchAt = lastFetchTimeMs.current;
+    if (lastFetchAt === undefined) return true;
+
+    return Date.now() - lastFetchAt > TASK_VIEW_REENTRY_FRESHNESS_MS;
+  }, [lastRefreshErrorAt, projectId]);
+
+  /*
+  FNXC:DashboardTaskCache 2026-06-29-22:35:
+  Brief Board/List returns should reuse fresh in-memory task state instead of issuing another all-task fetch, so the existing task array renders immediately without an empty/loading shell. Stale, missing, failed, project/search, or archived snapshots still perform one catch-up because task SSE is disabled off task-list views and missed events need server confirmation.
+
+  FNXC:DashboardTaskCache 2026-06-29-23:12:
+  The freshness shortcut is scoped only to in-app task-view re-entry. Initial mount, tab visibility recovery, SSE reconnect resync, search refreshes, and delete fetch-version invalidation remain independent safety paths because each represents either a new browser/server gap or a changed query context.
+  */
   useEffect(() => {
     const previous = prevSseEnabledRef.current;
     prevSseEnabledRef.current = sseEnabled;
 
-    if (previous === false && sseEnabled === true) {
+    if (previous === false && sseEnabled === true && shouldRefreshOnTaskViewReentry()) {
       void refreshTasksRef.current();
     }
-  }, [sseEnabled]);
+  }, [shouldRefreshOnTaskViewReentry, sseEnabled]);
 
   /** Lazy-load archived tasks. Called by the Board when the archived column is first expanded. */
   const loadArchivedTasks = useCallback(async () => {
@@ -535,7 +561,38 @@ export function useTasks(options?: UseTasksOptions) {
       allowResurrection?: boolean;
     },
   ): Promise<Task> => {
-    return normalizeTask(await api.deleteTask(id, projectId, options));
+    const deletedTask = normalizeTask(await api.deleteTask(id, projectId, options));
+    /*
+    FNXC:TaskDeletion 2026-06-29-18:52:
+    Local deletes must update the shared useTasks array immediately because the Board and right-dock Tasks list both render from this state and should not wait for SSE or a refetch after the API confirms deletion.
+
+    FNXC:TaskDeletionCache 2026-06-29-20:11:
+    Project-scoped SWR hydration must remove the deleted task after the API confirms deletion, otherwise an immediate remount can hydrate a stale row before the next fetch. Only the active project's task cache key is touched; if the cached envelope has an unexpected shape, clear that key instead of writing possibly stale data.
+
+    FNXC:TaskDeletionCache 2026-06-29-21:04:
+    Delete success must also invalidate refreshes that began before the API call completed; otherwise a late pre-delete snapshot can rehydrate the removed card in Board and the right-dock Tasks list until the next live update.
+    */
+    // Invalidate refreshes that started before the delete succeeded so an older
+    // server snapshot cannot overwrite the locally removed row after this point.
+    fetchVersionRef.current++;
+
+    if (projectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const nextCachedTasks = cachedTasks.filter((task): task is Task => {
+          return Boolean(task && typeof task === "object" && (task as Task).id !== id);
+        });
+        writeCache(cacheKey, nextCachedTasks, { maxBytes: 500_000 });
+      } else if (cachedTasks === null) {
+        const nextCurrentTasks = tasksRef.current.filter((task) => task.id !== id);
+        writeCache(cacheKey, nextCurrentTasks.length > 500 ? nextCurrentTasks.slice(0, 500) : nextCurrentTasks, { maxBytes: 500_000 });
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+    setTasks((prev) => prev.filter((task) => task.id !== id));
+    return deletedTask;
   }, [projectId]);
 
   const mergeTask = useCallback(async (id: string): Promise<MergeResult> => {

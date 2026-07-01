@@ -41,6 +41,7 @@ export interface UseNavigationHistoryResult {
 }
 
 const SELF_POP_FALLBACK_CLEAR_MS = 1_000;
+const FUSION_NATIVE_BACK_EVENT = "fusion:native-back";
 
 export const NavigationHistoryContext = createContext<UseNavigationHistoryResult | null>(null);
 
@@ -173,6 +174,18 @@ export function useNavigationHistory(
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    /*
+    FNXC:TaskDetailAndroidBack 2026-06-29-20:40:
+    The mobile shell dispatches a cancelable native Back event before applying its fallback. Prevent it only when Fusion owns at least one nav entry, then route through history.back() so modal, nested, snapshot-only, hydrated, and main-panel task-detail dismissals reuse the same popstate stack semantics as browser Back and swipe-back.
+    */
+    const handleNativeBack = (event: Event) => {
+      if (!enabledRef.current) return;
+      if (stackRef.current.length === 0) return;
+
+      event.preventDefault();
+      window.history.back();
+    };
+
     const handlePopState = (event: PopStateEvent) => {
       if (!enabledRef.current) return;
 
@@ -214,8 +227,10 @@ export function useNavigationHistory(
       }
     };
 
+    window.addEventListener(FUSION_NATIVE_BACK_EVENT, handleNativeBack);
     window.addEventListener("popstate", handlePopState);
     return () => {
+      window.removeEventListener(FUSION_NATIVE_BACK_EVENT, handleNativeBack);
       window.removeEventListener("popstate", handlePopState);
       if (selfPopClearTimerRef.current !== null) {
         window.clearTimeout(selfPopClearTimerRef.current);

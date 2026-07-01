@@ -124,6 +124,22 @@ describe("TaskStore phantom committed-reservation reconciliation", () => {
     expect(store.getRunAuditEvents({ taskId: phantom.id, mutationType: "task:reconcile-phantom-committed-reservation" })).toHaveLength(1);
   });
 
+  it("does not re-emit the reconcile audit row on a second tick once orphaned rows are pruned (idempotency)", async () => {
+    const phantom = await createCommittedReservationPhantom("Phantom committed reservation (idempotency)");
+    seedOrphanedChildRows(phantom.id);
+
+    const first = await store.reconcilePhantomCommittedReservations();
+    expect(first.reconciled).toContain(phantom.id);
+
+    // Second maintenance tick: the phantom still re-matches (committed reservation, no row/dir),
+    // but the orphaned child rows are already gone, so no new audit row is written.
+    const second = await store.reconcilePhantomCommittedReservations();
+    expect(second.reconciled).toContain(phantom.id);
+
+    expect(store.getRunAuditEvents({ taskId: phantom.id, mutationType: "task:reconcile-phantom-committed-reservation" })).toHaveLength(1);
+    expect(reservationStatus(phantom.id)).toBe("committed");
+  });
+
   it("is a safe no-op for in-memory stores", async () => {
     store.close();
     store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });

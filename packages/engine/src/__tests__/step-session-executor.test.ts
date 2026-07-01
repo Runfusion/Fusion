@@ -1192,6 +1192,89 @@ describe("StepSessionExecutor", () => {
       );
     });
 
+    it("reuses the primary step session when runStepsInNewSessions is false", async () => {
+      const prompt = makeStepPrompt("FN-001", 2);
+      const task = makeTaskDetail({
+        prompt,
+        steps: [
+          { name: "Step 0", status: "pending" },
+          { name: "Step 1", status: "pending" },
+        ],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1, runStepsInNewSessions: false });
+      let statsCall = 0;
+      const session = {
+        ...makeMockSession(),
+        getSessionStats: vi.fn(() => {
+          statsCall++;
+          return {
+            tokens: {
+              input: statsCall * 10,
+              output: statsCall * 20,
+              cacheRead: statsCall * 3,
+              cacheWrite: statsCall,
+              total: statsCall * 34,
+            },
+          };
+        }),
+      };
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+        pluginRunner: undefined,
+      } as any);
+
+      const result = await executor.executeAll();
+      await executor.cleanup();
+
+      expect(result).toHaveLength(2);
+      expect(result.every((step) => step.success)).toBe(true);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+      expect(session.prompt).toHaveBeenCalledTimes(2);
+      expect(session.dispose).toHaveBeenCalledTimes(1);
+      expect(result[0]?.tokenUsage?.inputTokens).toBe(10);
+      expect(result[1]?.tokenUsage?.inputTokens).toBe(10);
+      expect(result[1]?.tokenUsage?.totalTokens).toBe(34);
+    });
+
+    it("creates a fresh primary step session for each step when runStepsInNewSessions is true", async () => {
+      const prompt = makeStepPrompt("FN-001", 2);
+      const task = makeTaskDetail({
+        prompt,
+        steps: [
+          { name: "Step 0", status: "pending" },
+          { name: "Step 1", status: "pending" },
+        ],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1, runStepsInNewSessions: true });
+      const sessions = [makeMockSession(), makeMockSession()];
+      mockedCreateFnAgent
+        .mockResolvedValueOnce({ session: sessions[0] } as any)
+        .mockResolvedValueOnce({ session: sessions[1] } as any);
+
+      const executor = new StepSessionExecutor({
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+        pluginRunner: undefined,
+      } as any);
+
+      const result = await executor.executeAll();
+
+      expect(result).toHaveLength(2);
+      expect(result.every((step) => step.success)).toBe(true);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(2);
+      expect(sessions[0]?.prompt).toHaveBeenCalledTimes(1);
+      expect(sessions[1]?.prompt).toHaveBeenCalledTimes(1);
+      expect(sessions[0]?.dispose).toHaveBeenCalledTimes(1);
+      expect(sessions[1]?.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it("delivers pending steering comments in exactly one subsequent step prompt", async () => {
       const prompt = makeStepPrompt("FN-001", 2);
       const task = makeTaskDetail({
@@ -1272,6 +1355,52 @@ describe("StepSessionExecutor", () => {
       expect(onStepStart).toHaveBeenNthCalledWith(1, 0);
       expect(onStepStart).toHaveBeenNthCalledWith(2, 1);
       expect(onStepStart).toHaveBeenNthCalledWith(3, 2);
+    });
+
+    it("skips live-terminal steps before starting resumed sessions", async () => {
+      const prompt = makeStepPrompt("FN-7248", 2);
+      const task = makeTaskDetail({
+        id: "FN-7248",
+        prompt,
+        steps: [
+          { name: "Preflight", status: "pending" },
+          { name: "Implement", status: "pending" },
+        ],
+      });
+      const settings = makeSettings({ maxParallelSteps: 1 });
+      const session = makeMockSession();
+      mockedCreateFnAgent.mockResolvedValue({ session } as any);
+      const onStepStart = vi.fn();
+      const store = {
+        getTask: vi.fn().mockResolvedValue({
+          ...task,
+          steps: [
+            { name: "Preflight", status: "done" },
+            { name: "Implement", status: "in-progress" },
+          ],
+        }),
+        appendAgentLog: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const executor = new StepSessionExecutor({
+        store: store as any,
+        taskDetail: task,
+        worktreePath: "/project/.worktrees/main",
+        rootDir: "/project",
+        settings,
+        onStepStart,
+      });
+
+      const results = await executor.executeAll();
+
+      /*
+       * FNXC:WorkflowResume 2026-06-29-18:26:
+       * Resume must use TaskStore as the authoritative projection before scheduling per-step sessions. A stale snapshot may still list Step 0 as pending, but if the live task says Step 0 is done then no Step 0 session or onStepStart callback may run.
+       */
+      expect(results.map((result) => result.stepIndex)).toEqual([1]);
+      expect(onStepStart).toHaveBeenCalledTimes(1);
+      expect(onStepStart).toHaveBeenCalledWith(1);
+      expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
     });
 
     it("includes token usage from session stats on successful step completion", async () => {

@@ -35,6 +35,163 @@ import { FileBrowserProvider } from "../../context/FileBrowserContext";
 setupTaskDetailModalHooks();
 
 describe("TaskDetailModal", () => {
+  describe("workflow header badge", () => {
+    const workflowPayload = {
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", columns: [], fields: [{ id: "risk", name: "Risk", type: "text" }] },
+        { id: "wf-docs", name: "Docs", columns: [] },
+      ],
+      taskWorkflowIds: { "FN-101": "wf-docs" },
+    };
+
+    beforeEach(() => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockReset();
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValue({
+        flagEnabled: false,
+        defaultWorkflowId: "",
+        workflows: [],
+        taskWorkflowIds: {},
+      });
+    });
+
+    function renderDetail(task = makeTask({ id: "FN-101", column: "todo", title: "Docs task" })) {
+      return render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={task}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+    }
+
+    it("renders the resolved workflow name beside the task id and column badge", async () => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce(workflowPayload);
+
+      renderDetail();
+
+      const badge = await screen.findByTestId("task-detail-workflow-badge");
+      expect(badge).toHaveTextContent("Docs");
+      expect(badge.parentElement).toHaveClass("detail-title-row");
+      expect(screen.getByText("FN-101")).toBeInTheDocument();
+      expect(screen.getByText("Todo")).toBeInTheDocument();
+      expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the default workflow for tasks without explicit workflow assignment", async () => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce(workflowPayload);
+
+      renderDetail(makeTask({ id: "FN-default", column: "todo", title: "Default workflow task" }));
+
+      expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Coding");
+    });
+
+    it("hides the badge when an explicit workflow assignment cannot be resolved", async () => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce({
+        ...workflowPayload,
+        taskWorkflowIds: { "FN-stale": "wf-deleted" },
+      });
+
+      renderDetail(makeTask({ id: "FN-stale", column: "todo", title: "Stale workflow task" }));
+
+      await waitFor(() => expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId("task-detail-workflow-badge")).toBeNull();
+    });
+
+    it("updates the badge when a mounted task detail switches tasks", async () => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows)
+        .mockResolvedValueOnce(workflowPayload)
+        .mockResolvedValueOnce(workflowPayload);
+      const props = {
+        initialTab: "definition" as const,
+        task: makeTask({ id: "FN-101", column: "todo", title: "Docs task" }),
+        onMoveTask: noopMove,
+        onDeleteTask: noopDelete,
+        onMergeTask: noopMerge,
+        onOpenDetail: noopOpenDetail,
+        addToast: noop,
+      };
+
+      const { rerender } = render(<TaskDetailContent {...props} embedded onRequestClose={noop} />);
+      expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Docs");
+
+      rerender(<TaskDetailContent {...props} task={makeTask({ id: "FN-default", column: "in-review", title: "Coding task" })} embedded onRequestClose={noop} />);
+      await waitFor(() => expect(screen.getByTestId("task-detail-workflow-badge")).toHaveTextContent("Coding"));
+    });
+
+    it("clears the previous workflow badge while a mounted task switch reloads metadata", async () => {
+      let resolveNextPayload: (payload: typeof workflowPayload) => void = () => undefined;
+      vi.mocked(dashboardApi.fetchBoardWorkflows)
+        .mockResolvedValueOnce(workflowPayload)
+        .mockImplementationOnce(() => new Promise((resolve) => {
+          resolveNextPayload = resolve;
+        }));
+      const props = {
+        initialTab: "definition" as const,
+        task: makeTask({ id: "FN-101", column: "todo", title: "Docs task" }),
+        onMoveTask: noopMove,
+        onDeleteTask: noopDelete,
+        onMergeTask: noopMerge,
+        onOpenDetail: noopOpenDetail,
+        addToast: noop,
+      };
+
+      const { rerender } = render(<TaskDetailContent {...props} embedded onRequestClose={noop} />);
+      expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Docs");
+
+      rerender(<TaskDetailContent {...props} task={makeTask({ id: "FN-default", column: "in-review", title: "Coding task" })} embedded onRequestClose={noop} />);
+      await waitFor(() => expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(2));
+      expect(screen.queryByTestId("task-detail-workflow-badge")).toBeNull();
+
+      await act(async () => {
+        resolveNextPayload(workflowPayload);
+      });
+      expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Coding");
+    });
+
+    it("hides the badge without workflow metadata and leaves no empty shell", async () => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce({
+        flagEnabled: false,
+        defaultWorkflowId: "",
+        workflows: [],
+        taskWorkflowIds: {},
+      });
+
+      const { container } = renderDetail();
+
+      await waitFor(() => expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1));
+      expect(screen.queryByTestId("task-detail-workflow-badge")).toBeNull();
+      expect(container.querySelector(".detail-workflow-badge")).toBeNull();
+    });
+
+    it("renders in the mobile back-header variant", async () => {
+      vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce(workflowPayload);
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          mobileHeaderMode="back"
+          task={makeTask({ id: "FN-101", column: "todo", title: "Docs task" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Docs");
+      expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
+    });
+  });
+
   it("renders clickable file links in markdown inline code while preserving code wrappers", async () => {
     const openFile = vi.fn();
     render(
@@ -1002,7 +1159,7 @@ describe("TaskDetailModal", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
     fireEvent.click(await screen.findByRole("button", { name: "Refresh" }));
-    expect(await screen.findByText("APPROVED")).toBeTruthy();
+    expect((await screen.findAllByText("APPROVED")).length).toBeGreaterThan(0);
 
     const commentsTab = screen.getByRole("button", { name: "Comments" });
     expect(commentsTab).toBeInTheDocument();
@@ -1040,7 +1197,7 @@ describe("TaskDetailModal", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Review" }));
-    expect(await screen.findByText("CHANGES_REQUESTED")).toBeTruthy();
+    expect((await screen.findAllByText("CHANGES_REQUESTED")).length).toBeGreaterThan(0);
     expect(screen.getByText(/No review items yet\./i)).toBeTruthy();
   });
 

@@ -336,6 +336,18 @@ export function resolveSessionSkills(context: SkillSelectionContext): SkillSelec
 
 // ── Skills Override Factory ─────────────────────────────────────────────────
 
+/*
+FNXC:SkillResolution 2026-06-29-12:30:
+Configured allow-list misses such as ce-optimize/SKILL.md are common when optional skills are absent from a checkout.
+Keep the ResourceDiagnostic for programmatic visibility, but classify it separately so override application never mirrors this non-actionable info into piLog or console output.
+*/
+function isMissingConfiguredPatternDiagnostic(diag: ResourceDiagnostic): boolean {
+  const diagnosticType = diag.type as string;
+  return diagnosticType === "info"
+    && diag.message.startsWith("Configured skill pattern '")
+    && diag.message.includes("' not found in discovered skills");
+}
+
 /**
  * Options for skills override filtering.
  * We track requested names here so we can validate against base.skills.
@@ -489,6 +501,7 @@ export function createSkillsOverrideFromSelection(
     if (newDiagnostics.length > 0) {
       const _purpose = sessionPurpose ? `[${sessionPurpose}]` : "skills";
       for (const diag of newDiagnostics) {
+        if (isMissingConfiguredPatternDiagnostic(diag)) continue;
         const msg = `[skills] ${diag.type}: ${diag.message}`;
         if (diag.type === "error") piLog.error(msg);
         else if (diag.type === "warning") piLog.warn(msg);

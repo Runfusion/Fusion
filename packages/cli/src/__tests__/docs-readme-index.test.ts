@@ -7,6 +7,7 @@ const docsReadmePath = resolve(workspaceRoot, "docs", "README.md");
 
 const requiredDocs = [
   "docs/dev-server-modules.md",
+  "docs/workflow-steps.md",
   "docs/workflow-editor.md",
   "docs/plugins/external-proof-point-runbook.md",
   "docs/research/pi-autoresearch-analysis.md",
@@ -18,6 +19,9 @@ const requiredDocs = [
 FNXC:DocsIndex 2026-06-15-01:35:
 FN-6479 keeps CLI Printing Press design and research entries indexed only as Audit Reports, not duplicated in Plugins.
 This test guards the documentation-index dedup invariant while requiredDocs guards committed upstream artifacts that must remain discoverable.
+
+FNXC:WorkflowDocs 2026-06-30-09:45:
+Workflow authors need both the runtime Workflow Steps guide and the visual Workflow Editor guide discoverable from the docs index, so the drift guard treats both as required index entries.
 */
 
 describe("docs README index", () => {

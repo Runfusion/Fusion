@@ -119,6 +119,34 @@ On mobile/narrow app viewports, opening Quick Chat should present the full Chat 
   .floating-window--chat .chat-view {
     border-radius: 0;
   }
+
+  /*
+  FNXC:MobileTaskPopups 2026-06-29-00:00:
+  Mobile board-card popup opens reuse the existing task-detail FloatingWindow, but the shell must behave like a full-screen mobile sheet. Scope the override to task-detail pop-outs, hide resize handles, and remove drag/resize cursors so no invisible desktop affordances remain on touch layouts.
+  */
+  .floating-window--task-detail {
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: 100vw !important;
+    max-height: 100dvh !important;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .floating-window--task-detail .floating-window__resize-handle {
+    display: none;
+  }
+
+  .floating-window--task-detail .task-detail-content--embedded,
+  .floating-window--task-detail .task-detail-content--embedded > .modal-header {
+    border-radius: 0;
+    cursor: default;
+    touch-action: auto;
+  }
 }
 
 .floating-window__title {

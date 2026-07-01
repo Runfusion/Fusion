@@ -45,6 +45,8 @@ const TASKS = [
   { id: "FN-deleted", title: "Deleted workflow task" },
 ];
 
+type HarnessTask = (typeof TASKS)[number];
+
 function workflowPayload(overrides: Partial<BoardWorkflowsPayload> = {}): BoardWorkflowsPayload {
   return {
     flagEnabled: true,
@@ -58,10 +60,10 @@ function workflowPayload(overrides: Partial<BoardWorkflowsPayload> = {}): BoardW
   };
 }
 
-function CrossSurfaceHarness({ projectId = "project-cross" }: { projectId?: string }) {
+function CrossSurfaceHarness({ projectId = "project-cross", tasks = TASKS }: { projectId?: string; tasks?: HarnessTask[] }) {
   const [graphSelection, setGraphSelection] = useState<GraphWorkflowSelection | null>(null);
   const [headerSelection, setHeaderSelection] = useState<HeaderWorkflowSelection | null>(null);
-  const graphTasks = filterTasksByGraphWorkflowSelection(TASKS, projectId, graphSelection);
+  const graphTasks = filterTasksByGraphWorkflowSelection(tasks, projectId, graphSelection);
 
   return (
     <>
@@ -159,6 +161,41 @@ describe("workflow selection across dashboard surfaces", () => {
     });
   });
 
+  it("keeps non-default board/list workflow selection after refinement return refetch includes the new task", async () => {
+    const refinedTasks = [...TASKS, { id: "FN-refinement", title: "Refinement task" }];
+    render(<CrossSurfaceHarness tasks={refinedTasks} />);
+
+    const switchers = await screen.findAllByTestId("workflow-switcher");
+    await waitFor(() => {
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+    });
+
+    fireEvent.click(switchers[1]);
+    fireEvent.click(screen.getByTestId(`workflow-switcher-option-${GRAPH_WORKFLOW.id}`));
+    await waitFor(() => expect(screen.getByTestId("graph-selection")).toHaveTextContent(GRAPH_WORKFLOW.id));
+
+    /*
+    FNXC:BoardWorkflowSelection 2026-06-29-22:05:
+    Refinement return refetches can add a freshly created child task to the board-workflows payload. The selected workflow is operator context, so the refetch must not repair a valid non-default workflow back to the project default `builtin:coding`.
+    */
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({
+      taskWorkflowIds: {
+        "FN-graph": GRAPH_WORKFLOW.id,
+        "FN-refinement": GRAPH_WORKFLOW.id,
+      },
+    }));
+    fireEvent.focus(window);
+
+    await waitFor(() => {
+      expect(fetchBoardWorkflowsMock).toHaveBeenCalledTimes(5);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(GRAPH_WORKFLOW.id);
+      expect(within(screen.getByTestId("graph-tasks")).getByTestId("graph-task-FN-refinement")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("graph-selection")).not.toHaveTextContent(DEFAULT_WORKFLOW.id);
+    expect(localStorage.getItem("kb:project-cross:kb-dashboard-board-workflow-selection")).toBe(GRAPH_WORKFLOW.id);
+  });
+
   it("rehydrates selection per project instead of carrying it across projects", async () => {
     const { rerender } = render(<CrossSurfaceHarness projectId="project-alpha" />);
 
@@ -202,7 +239,7 @@ describe("workflow selection across dashboard surfaces", () => {
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-disabled"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
-    expect(localStorage.getItem("kb:project-disabled:kb-dashboard-board-workflow-selection")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:project-disabled:kb-dashboard-board-workflow-selection")).toBeNull());
     for (const task of TASKS) {
       expect(screen.getByTestId(`graph-task-${task.id}`)).toBeInTheDocument();
     }
@@ -215,7 +252,7 @@ describe("workflow selection across dashboard surfaces", () => {
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-empty"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
-    expect(localStorage.getItem("kb:project-empty:kb-dashboard-board-workflow-selection")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:project-empty:kb-dashboard-board-workflow-selection")).toBeNull());
     empty.unmount();
 
     sessionStorage.clear();
@@ -225,6 +262,6 @@ describe("workflow selection across dashboard surfaces", () => {
     await waitFor(() => expect(fetchBoardWorkflowsMock).toHaveBeenCalledWith("project-single"));
     expect(screen.queryByTestId("workflow-switcher")).toBeNull();
     expect(screen.getByTestId("header-workflow-slot")).toBeEmptyDOMElement();
-    expect(localStorage.getItem("kb:project-single:kb-dashboard-board-workflow-selection")).toBeNull();
+    await waitFor(() => expect(localStorage.getItem("kb:project-single:kb-dashboard-board-workflow-selection")).toBeNull());
   });
 });

@@ -5,6 +5,9 @@
 <!--
 FNXC:WorkflowEditorDocs 2026-06-16-12:00:
 Fusion needs one canonical user-facing guide for the dashboard WorkflowNodeEditor so operators can discover every shipped entry point, understand the visual Workflow IR authoring model, and distinguish read-only built-ins from editable custom workflows without piecing the behavior together from settings and workflow-step references.
+
+FNXC:WorkflowEditorDocs 2026-06-29-16:18:
+The editor guide must describe the current authored surface as one contract shared by dashboard and agent tools: graph nodes, columns/traits, fields, settings definitions/values, AI design, import/export, mobile destinations, and built-in prompt overrides without implying built-in topology edits are allowed.
 -->
 
 The workflow editor is Fusion's visual workflow authoring surface in the dashboard. It uses the `@xyflow/react` canvas to view built-in lifecycle workflows and create or edit custom workflow definitions backed by Fusion's [Workflow IR](./workflow-steps.md#workflow-ir-v1). The graph you see is the same policy model the runtime uses for task lifecycle routing: nodes describe work or control-flow boundaries, edges describe how execution moves between them, and side panels declare workflow-specific columns, task fields, and typed workflow settings.
@@ -25,7 +28,7 @@ These entry points do not create different workflow formats. Desktop and mobile 
 
 ## Canvas anatomy
 
-The editor is a modal with a workflow picker, toolbar actions, a React Flow graph, and inspectors:
+The editor is a modal with a workflow picker, toolbar actions, a React Flow graph, and inspectors. Built-in workflows use the same viewer and Values surfaces as custom workflows, but their topology stays read-only except for project-scoped prompt overrides on prompt/gate nodes:
 
 - **Workflow list / picker:** choose a built-in or custom workflow. Built-ins are labeled and remain read-only; custom workflows are editable.
 - **Graph canvas:** the central React Flow surface where nodes and edges are displayed. Drag nodes to rearrange them, connect handles to create edges, and select a node or edge to inspect it.
@@ -35,6 +38,7 @@ The editor is a modal with a workflow picker, toolbar actions, a React Flow grap
 - **Templates section:** insert reusable graph fragments, built-in workflow-step templates, and plugin-contributed workflow-step templates when available.
 - **Inspectors and side panels:** selecting a node opens its configuration inspector; selecting an edge opens the edge inspector. Separate panels manage Columns, Fields, and Settings.
 - **Validation and status banners:** save-time validation errors, import warnings, branch/interpreter notices, and read-only built-in hints appear inline instead of relying only on toasts.
+- **Prompt override controls:** when a built-in prompt or gate node is selected, the inspector allows only prompt text overrides and reset-to-default; node kind, edges, columns, traits, field declarations, and setting declarations remain locked.
 
 ## Node palette
 
@@ -167,7 +171,7 @@ Fusion ships built-in workflows as read-only references:
 
 - `builtin:coding` — the default Stepwise-based coding lifecycle: plan steps, execute them one at a time, then run the optional final Code Review gate and merge.
 - `builtin:legacy-coding` — the original monolithic coding lifecycle for tasks that should not use graph-owned step execution.
-- `builtin:quick-fix` — a short path for trivial or no-commit/decision work.
+- `builtin:quick-fix` — a short explicitly selected path for trivial or decision work; no-commit markers do not select it automatically.
 - `builtin:review-heavy` — a standard execute/review/merge path with an additional gated security review.
 - `builtin:marketing` — a marketing content pipeline with brief, draft, editorial review, and publish stages.
 - `builtin:compound-engineering` — a plugin-gated Compound Engineering pipeline: `/ce-plan` writes the CE plan doc, optional `ce-doc-review` can pressure-test plans (markdown gets autofix/Open Questions write-back; HTML uses DOM-safe helper mutations, including canonical checklist repair, only when safety is proven and otherwise report-only with no write), `/ce-work` implements, `/ce-code-review` gates merge, and autoMerge-off projects route through the CE PR/feedback skills before Fusion's manual merge seam.
@@ -177,7 +181,12 @@ Fusion ships built-in workflows as read-only references:
 
 Built-ins can be viewed, exported, and used as templates, but their graph, columns, field declarations, and setting declarations are not editable. Their per-project setting **values** are editable from the Settings panel's Values tab. Selectable built-ins all use a capacity-released queue column (`todo` or a workflow-specific backlog) that dispatches to the active WIP column through the standard hold/release sweep.
 
-To customize behavior, create a workflow from **Blank** or copy a built-in/custom workflow with **Duplicate to customize**. Tasks select a workflow by workflow id. Agents and automation can discover workflows with `fn_workflow_list`, assign one to an existing task with `fn_workflow_select`, or pass `workflow_id` when creating tasks through `fn_task_create` / delegation tools.
+<!--
+FNXC:WorkflowEditorDocs 2026-06-30-09:05:
+The editor guide should summarize agent workflow tooling without implying the tool surface is limited to list/select; workflow authoring and settings values are also first-class governed agent tools.
+-->
+
+To customize behavior, create a workflow from **Blank** or copy a built-in/custom workflow with **Duplicate to customize**. Tasks select a workflow by workflow id. Agents and automation have parity with the editor's governed save paths: they can inspect definitions with `fn_workflow_list` / `fn_workflow_get`, inspect column traits with `fn_trait_list`, author custom definitions with `fn_workflow_create` / `fn_workflow_update` / `fn_workflow_delete`, tune per-project values with `fn_workflow_settings`, assign one to an existing task with `fn_workflow_select`, or pass `workflow_id` when creating tasks through `fn_task_create` / delegation tools. Tool writes run the same validation as dashboard saves/imports, including malformed-IR rejection and policy-escalation confirmation for broader column-agent bindings. The routing boundary still applies: agents select workflows only for explicit user requests or tasks they created.
 
 ## Mobile editor
 

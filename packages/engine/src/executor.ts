@@ -2204,8 +2204,11 @@ export class TaskExecutor {
   /**
    * FNXC:ExecutorBinding 2026-06-19-00:00:
    * FN-6736 gives self-healing a narrow escape hatch for phantom in-memory executor bindings after the liveness gate proves the owner is dead. Never use this as a general task stopper: it refuses to detach observable live session surfaces, then clears only stale bookkeeping (`executing`, resume/recovery sets, process-wide graph routing, activeWorktrees, activeSessionRegistry paths, and executingTaskLock) so the scheduler can re-dispatch the preserved worktree.
+   *
+   * FNXC:ExecutorBinding 2026-06-30-00:00:
+   * `preserveWorktrees: true` is the FN-6736 self-healing path. When the caller has already committed to `moveTask(..., { preserveWorktree: true })`, unregistering the held worktree path from `activeSessionRegistry` defeats the preserve: re-dispatch then sees the path as free and re-acquires a brand-new worktree (observed on FN-7249: gentle-peach orphaned, rosy-thorn rebuilt ~20s after reclaim). The preserve variant clears only the in-memory executor/lock bookkeeping and leaves the session-registry path entry intact so the re-dispatch reattaches to the same worktree. Non-self-healing callers (leaked-slot reaper, pause-abort recovery) keep the default full-clear behavior.
    */
-  clearPhantomExecutorBinding(taskId: string): boolean {
+  clearPhantomExecutorBinding(taskId: string, options: { preserveWorktrees?: boolean } = {}): boolean {
     const hasLiveSessionSurface = this.activeSessions.has(taskId)
       || this.activeStepExecutors.has(taskId)
       || this.activeWorkflowStepSessions.has(taskId)
@@ -2224,6 +2227,11 @@ export class TaskExecutor {
     TaskExecutor.processWideGraphRouting.delete(taskId);
     executingTaskLock.release(taskId);
     this.effectiveColumnAgentByTask.delete(taskId);
+
+    if (options.preserveWorktrees) {
+      executorLog.warn(`${taskId}: cleared phantom executor binding for self-healing re-dispatch (worktree session-registry entries preserved)`);
+      return true;
+    }
 
     const registeredPaths = new Set(activeSessionRegistry.pathsForTask(taskId));
     for (const path of heldWorktreePaths) {
@@ -3162,6 +3170,8 @@ export class TaskExecutor {
     await this.store.updateTask(task.id, {
       mergeDetails: null,
       mergeRetries: 0,
+      status: null,
+      error: null,
       verificationFailureCount: options?.preserveVerificationFailureCount ? task.verificationFailureCount ?? 0 : 0,
       workflowStepResults: preservedWorkflowStepResults,
     });
@@ -4378,11 +4388,12 @@ export class TaskExecutor {
    *  Doubles as the re-entrancy guard for graph routing. */
   private graphCompletionInterceptors = new Map<string, (info: { modifiedFiles: string[] }) => void>();
 
-  /** Step-inversion (KTD-2/KTD-8, U6/U8): tasks whose graph-owned step-execute
-   *  driver has pinned step-session physics for the run. Forces the step-session
-   *  path in execute() regardless of the `runStepsInNewSessions` setting, so the
-   *  graph/step-sessions flag matrix cannot select an unsupported physics combo.
-   *  Cleared when the graph run ends (maybeExecuteWorkflowGraph finally). */
+  /** Step-inversion (KTD-2/KTD-8, U6/U8): graph-owned step-execute can pin
+   *  step-session physics for workflows that need a hard per-step boundary
+   *  before step-review. Default final-review coding does not pin here and
+   *  therefore respects `runStepsInNewSessions` (reuse one session when false,
+   *  fresh per-step sessions when true). Cleared when the graph run ends
+   *  (maybeExecuteWorkflowGraph finally). */
   private graphStepSessionPinned = new Set<string>();
 
   /** Step-inversion (U6/U8): caches the per-run implementation-phase result for a
@@ -5416,17 +5427,13 @@ export class TaskExecutor {
    * The U3 stand-in ran `runImplementationPhase` once per foreach instance, which
    * re-ran the whole implementation for every step. The real driver:
    *
-   *   1. PINS step-session physics for the run (graph-owned runs force
-   *      StepSessionExecutor regardless of `runStepsInNewSessions`, KTD-2/KTD-8) —
-   *      the only path with a discrete per-step boundary (`onStepStart`/
-   *      `onStepComplete`); the monolithic single-session path has no "run one
-   *      step and return control" seam.
-   *   2. Drives the (step-session) implementation phase exactly ONCE per run,
-   *      memoized by task id. StepSessionExecutor itself walks every step in step
-   *      order inside that single pass and writes the projection per step via its
-   *      `onStepStart`/`onStepComplete` callbacks (executor.ts step-session path).
-   *      Each foreach instance's `runTaskStep` therefore observes the projection
-   *      truth for its step rather than re-running the agent per step.
+   *   1. Pins step-session physics only when the workflow needs a discrete
+   *      per-step boundary before a step-review node. Final-review coding lets
+   *      `runStepsInNewSessions` choose between one reused executor session and
+   *      fresh per-step sessions.
+   *   2. Drives the implementation phase exactly ONCE per run, memoized by task
+   *      id. Each foreach instance's `runTaskStep` observes projection truth for
+   *      its step rather than re-running the agent per step.
    *
    * Worktree/taskEnv/agent/semaphore state is threaded exactly the way
    * `runImplementationPhase` gets it — by re-entering `execute()` under a
@@ -5442,8 +5449,14 @@ export class TaskExecutor {
     instanceId?: string,
     governingNodeId?: string,
   ): Promise<{ success: boolean; error?: string }> {
-    // Pin step-session physics for the run before the implementation pass.
-    this.graphStepSessionPinned.add(task.id);
+    const active = this.foreachActiveForTask(task.id, instanceId);
+    /*
+    FNXC:WorkflowStepSessions 2026-06-30-00:00:
+    Default Coding is graph-owned stepwise execution without per-step review. It should reuse the existing executor session when the workflow setting `runStepsInNewSessions` is false, and create fresh step sessions only when that setting is true. Workflows with a step-review node still pin StepSessionExecutor because review must run between step execution and done-marking.
+    */
+    if (active?.deferDoneToReview === true) {
+      this.graphStepSessionPinned.add(task.id);
+    }
 
     // Single-flight per attempt (KTD-2/KTD-8): the implementation phase runs once
     // per run, memoized by task id, so each foreach instance's `runStep` observes
@@ -5516,7 +5529,6 @@ export class TaskExecutor {
           error: `step ${stepIndex} live task unavailable after implementation pass`,
         };
       }
-      const active = this.foreachActiveForTask(task.id, instanceId);
       const status = live.steps[stepIndex]?.status;
       if (status === "done" || status === "skipped") return { success: true };
       // Step not terminal after the pass: when a review will author done-ness
@@ -5797,6 +5809,23 @@ export class TaskExecutor {
           workflowId: ctx.run.workflowId,
           runId: ctx.run.runId,
         });
+        /*
+        FNXC:WorkflowMerge 2026-06-29-23:18:
+        FN-7261 reached the merge node in fast mode with every legacy implementation step still pending, producing a no-op merge proof for work that never ran. A graph-native workflow may project its checklist at the merge boundary only when node workflow results prove implementation completed; otherwise incomplete legacy steps are authoritative and merge must fail before the merger can create stale no-op proof.
+        */
+        if (hasNonTerminalWorkflowSteps(mergeTask)) {
+          await this.store.logEntry(
+            mergeTask.id,
+            "Workflow merge blocked before requester: implementation steps are incomplete",
+            undefined,
+            this.getRunContextFor(mergeTask.id),
+          );
+          return {
+            outcome: "failure",
+            value: "implementation-incomplete",
+            data: { status: "failed", reason: "implementation-incomplete" },
+          };
+        }
         const GRAPH_MERGE_TIMEOUT_MS = 30 * 60 * 1000;
         const controller = new AbortController();
         let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -6083,11 +6112,11 @@ export class TaskExecutor {
           {
             store: this.store,
             worktreePath,
-            // U6/U8: per-step session physics — graph-owned runs force
-            // step-session mode for the run (KTD-2/KTD-8) regardless of the
-            // runStepsInNewSessions setting. The agent authors the step's commit;
-            // this driver only observes (KTD-2). Thread the instanceId so the
-            // active-context read is per-instance (parallel-foreach safe).
+            // U6/U8: graph-owned per-step physics. Per-step-review workflows
+            // pin StepSessionExecutor inside runGraphTaskStep; final-review coding
+            // honors runStepsInNewSessions and may reuse one executor session.
+            // Thread the instanceId so the active-context read is per-instance
+            // (parallel-foreach safe).
             runStep: (stepIndex) =>
               this.runGraphTaskStep(
                 seamTask,
@@ -6774,6 +6803,13 @@ export class TaskExecutor {
         undefined,
         this.getRunContextFor(taskId),
       );
+      if (finalization.reason === "task has incomplete steps" && live.mergeDetails?.noOpMerge === true && !live.mergeDetails?.commitSha) {
+        /*
+        FNXC:WorkflowMerge 2026-06-29-23:12:
+        FN-7261 exposed stale no-op proof as a re-execution blocker: a reopened task with incomplete implementation steps and only no-op merge proof must fall through to merge-state cleanup/reverification, not consume execute() by repeatedly trying blocked finalization.
+        */
+        return false;
+      }
       return true;
     }
     executorLog.log(`${taskId}: workflow graph merge-confirmed task finalized (${finalization.outcome})`);
@@ -8060,6 +8096,9 @@ export class TaskExecutor {
         await this.persistTokenUsage(task.id);
         return;
       }
+      if (mergeGraphFailure && failureValue === "implementation-incomplete" && await this.routeGraphFailureToExecutionResume(live, failedNode ?? "unknown", failureValue)) {
+        return;
+      }
       if (mergeGraphFailure && !this.isTerminalMergeGraphFailureValue(failureValue) && await this.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
         return;
       }
@@ -8158,7 +8197,8 @@ export class TaskExecutor {
     if (live.paused || live.userPaused === true) return false;
     if (live.column === "done" || live.column === "archived") return false;
     const incompleteSteps = hasNonTerminalWorkflowSteps(live);
-    if (live.column !== "in-review" && !(incompleteSteps && live.column === "todo")) return false;
+    const prematureMergeWithIncompleteSteps = failedNode === "merge" && failureValue === "implementation-incomplete" && incompleteSteps;
+    if (live.column !== "in-review" && !(incompleteSteps && live.column === "todo") && !(prematureMergeWithIncompleteSteps && live.column === "in-progress")) return false;
 
     const message = incompleteSteps
       ? `Workflow graph failed at node '${failedNode}'${failureValue ? ` (${failureValue})` : ""} with incomplete steps — moved back to todo for execution resume`
@@ -9551,8 +9591,11 @@ export class TaskExecutor {
             error: (s) => executorLog.warn(s),
           },
         }),
-        // Skip fn_review_step tool in fast mode — fast mode bypasses automated review gates
-        ...(executionMode !== "fast" ? [
+        /*
+        FNXC:WorkflowReviewGates 2026-06-29-20:41:
+        Workflow-graph execution owns plan/code/browser review gates as nodes. Do not expose legacy in-session `fn_review_step` during graph-owned execute seams; otherwise default coding can duplicate Plan Review inside implementation steps after the workflow-level Plan Review has already passed.
+        */
+        ...(executionMode !== "fast" && !this.graphCompletionInterceptors.has(task.id) ? [
           this.createReviewStepTool(task.id, worktreePath, detail.prompt, codeReviewVerdicts, sessionRef, stepCheckpoints, detail, stuckDetector),
         ] : []),
         this.createSpawnAgentTool(task.id, worktreePath, settings, taskEnv),
@@ -9894,6 +9937,7 @@ export class TaskExecutor {
               this.options.pluginRunner,
               customFieldDefs,
               this.workspaceConfig,
+              { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
             );
             await promptWithFallback(session, agentPrompt);
           }
@@ -10264,7 +10308,16 @@ export class TaskExecutor {
                     "Do NOT ask for permission. Do NOT write a summary. Just call a tool and keep working.",
                     "",
                     "Original task:",
-                    buildExecutionPrompt(detail, this.rootDir, settings, worktreePath, this.options.pluginRunner, retryCustomFieldDefs, this.workspaceConfig),
+                    buildExecutionPrompt(
+                      detail,
+                      this.rootDir,
+                      settings,
+                      worktreePath,
+                      this.options.pluginRunner,
+                      retryCustomFieldDefs,
+                      this.workspaceConfig,
+                      { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+                    ),
                   ].join("\n");
                 } else {
                   retryPrompt = [
@@ -10274,7 +10327,16 @@ export class TaskExecutor {
                     "2. If there is remaining work, finish it and then call fn_task_done.",
                     "",
                     "Original task:",
-                    buildExecutionPrompt(detail, this.rootDir, settings, worktreePath, this.options.pluginRunner, retryCustomFieldDefs, this.workspaceConfig),
+                    buildExecutionPrompt(
+                      detail,
+                      this.rootDir,
+                      settings,
+                      worktreePath,
+                      this.options.pluginRunner,
+                      retryCustomFieldDefs,
+                      this.workspaceConfig,
+                      { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+                    ),
                   ].join("\n");
                 }
 
@@ -16971,9 +17033,15 @@ export function buildExecutionPrompt(
   pluginRunner?: PluginRunner,
   customFieldDefs?: WorkflowFieldDefinition[],
   workspaceConfig?: WorkspaceConfig | null,
+  options?: { workflowReviewGatesOwnedByGraph?: boolean },
 ): string {
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath, workspaceConfig);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
+  /*
+   * FNXC:WorkflowReviewGates 2026-06-29-20:41:
+   * Default Coding and other workflow-graph tasks run review gates as graph nodes, so the executor prompt must not ask implementation agents to call legacy per-step review tools. This keeps Plan Review once-before-execution and Code Review once-before-merge unless a workflow explicitly adds a step-review node.
+   */
+  const workflowReviewGatesOwnedByGraph = options?.workflowReviewGatesOwnedByGraph === true;
 
   // Build co-author trailer arg for git commits based on settings. The user's
   // configured git identity remains the primary author; Fusion is appended as
@@ -17117,12 +17185,12 @@ ${prompt}
 ${attachmentsSection}${commandsSection}${memorySection}${progressSection}${steeringSection}${customFieldsSection}
 ## Review level: ${reviewLevel}
 
-${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}
+${workflowReviewGatesOwnedByGraph ? `Workflow review gates are handled by the workflow graph outside this implementation session. Do not request per-step plan review or per-step code review from inside execution; complete the implementation steps and let the graph run enabled Plan Review, Browser Verification, and Code Review nodes at their configured positions.` : `${reviewLevel === 0 ? "No reviews required. Implement directly." : ""}
 ${reviewLevel >= 1 ? `Before implementing each step (except Step 0 and the final step), call:
 \`fn_review_step(step=N, type="plan", step_name="...")\`` : ""}
 ${reviewLevel >= 2 ? `After implementing + committing each step, call:
 \`fn_review_step(step=N, type="code", step_name="...", baseline="<SHA from before step>")\`` : ""}
-${reviewLevel >= 3 ? `After tests, also call fn_review_step with type="code" for test review.` : ""}
+${reviewLevel >= 3 ? `After tests, also call fn_review_step with type="code" for test review.` : ""}`}
 ${pluginTaskContributions ? `
 
 ${pluginTaskContributions}

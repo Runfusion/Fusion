@@ -3100,15 +3100,22 @@ export function fetchGitStatus(projectId?: string, opts?: { extended?: boolean }
   return api<GitStatus>(`${base}${sep}extended=1`);
 }
 
+/** Append the read-only commit worktree target query param used only by commit list/diff endpoints. */
+function withCommitWorktreePath(path: string, worktreePath?: string): string {
+  if (!worktreePath) return path;
+  const separator = path.includes("?") ? "&" : "?";
+  return `${path}${separator}worktreePath=${encodeURIComponent(worktreePath)}`;
+}
+
 /** Fetch recent commits */
-export function fetchGitCommits(limit?: number, projectId?: string, repoPath?: string): Promise<GitCommit[]> {
+export function fetchGitCommits(limit?: number, projectId?: string, repoPath?: string, worktreePath?: string): Promise<GitCommit[]> {
   const query = limit ? `?limit=${limit}` : "";
-  return api<GitCommit[]>(withRepoPath(withProjectId(`/git/commits${query}`, projectId), repoPath));
+  return api<GitCommit[]>(withCommitWorktreePath(withRepoPath(withProjectId(`/git/commits${query}`, projectId), repoPath), worktreePath));
 }
 
 /** Fetch diff for a specific commit */
-export function fetchCommitDiff(hash: string, projectId?: string, repoPath?: string): Promise<{ stat: string; patch: string }> {
-  return api<{ stat: string; patch: string }>(withRepoPath(withProjectId(`/git/commits/${hash}/diff`, projectId), repoPath));
+export function fetchCommitDiff(hash: string, projectId?: string, repoPath?: string, worktreePath?: string): Promise<{ stat: string; patch: string }> {
+  return api<{ stat: string; patch: string }>(withCommitWorktreePath(withRepoPath(withProjectId(`/git/commits/${hash}/diff`, projectId), repoPath), worktreePath));
 }
 
 /** Fetch local commits ahead of the upstream tracking branch (commits to push) */

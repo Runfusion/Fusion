@@ -61,6 +61,7 @@ describe("FloatingWindow", () => {
         onClose={() => {}}
         hideHeader
         dragHandleSelector=".task-detail-content--embedded > .modal-header"
+        className="floating-window--task-detail"
       >
         <div className="task-detail-content--embedded">
           <div className="modal-header">KB-001</div>
@@ -71,10 +72,31 @@ describe("FloatingWindow", () => {
 
     expect(screen.queryByTestId("floating-window-drag-handle-task")).toBeNull();
     expect(screen.getByTestId("floating-window-task")).toHaveClass("floating-window--headerless");
+    expect(screen.getByTestId("floating-window-task")).toHaveClass("floating-window--task-detail");
     expect(screen.getByText("KB-001")).toBeInTheDocument();
     for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
       expect(screen.getByTestId(`floating-window-resize-${dir}`)).toBeTruthy();
     }
+  });
+
+  it("scopes mobile sheet sizing and hidden resize handles to task-detail pop-outs", () => {
+    expect(floatingWindowCss).toContain("FNXC:MobileTaskPopups 2026-06-29-00:00");
+    expect(floatingWindowCss).toContain(".floating-window--task-detail {");
+    expect(floatingWindowCss).toContain("width: 100vw !important;");
+    expect(floatingWindowCss).toContain("height: 100dvh !important;");
+    expect(floatingWindowCss).toContain(".floating-window--task-detail .floating-window__resize-handle");
+    expect(floatingWindowCss).toContain("display: none;");
+    expect(floatingWindowCss).toContain("cursor: default;");
+    expect(floatingWindowCss).toContain("touch-action: auto;");
+  });
+
+  it("does not apply task-detail mobile sizing to chat floating windows", () => {
+    const taskRuleIndex = floatingWindowCss.indexOf(".floating-window--task-detail {");
+    const chatRuleIndex = floatingWindowCss.indexOf(".floating-window--chat {");
+
+    expect(taskRuleIndex).toBeGreaterThan(-1);
+    expect(chatRuleIndex).toBeGreaterThan(-1);
+    expect(taskRuleIndex).not.toBe(chatRuleIndex);
   });
 
   it("focus-to-front: interacting with an older window raises its z-index above the newest", () => {

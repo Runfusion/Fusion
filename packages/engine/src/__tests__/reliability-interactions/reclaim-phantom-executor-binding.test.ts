@@ -142,7 +142,7 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     const recovered = await h.manager.reclaimSelfOwnedBranchConflicts();
 
     expect(recovered).toBe(1);
-    expect(h.clearPhantomExecutorBinding).toHaveBeenCalledWith(h.task.id);
+    expect(h.clearPhantomExecutorBinding).toHaveBeenCalledWith(h.task.id, { preserveWorktrees: true });
     expect(h.store.moveTask).toHaveBeenCalledWith(h.task.id, "todo", expect.objectContaining({
       moveSource: "engine",
       recoveryRehome: true,

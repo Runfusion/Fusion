@@ -40,6 +40,36 @@ describe("DockTaskList", () => {
     expect(onOpenTask).toHaveBeenCalledWith(second);
   });
 
+  it("FN-7250 removes rows when the shared task array drops a deleted id", () => {
+    const deleted = makeTask("FN-DELETE", "Deleted task", "todo");
+    const kept = makeTask("FN-KEEP", "Kept task", "in-progress");
+
+    const { rerender } = render(<DockTaskList tasks={[deleted, kept]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("dock-task-list-row-FN-DELETE")).toBeInTheDocument();
+    expect(screen.getByTestId("dock-task-list-row-FN-KEEP")).toBeInTheDocument();
+
+    rerender(<DockTaskList tasks={[kept]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.queryByTestId("dock-task-list-row-FN-DELETE")).toBeNull();
+    expect(screen.getByTestId("dock-task-list-row-FN-KEEP")).toBeInTheDocument();
+    expect(screen.queryByTestId("dock-task-list-empty")).toBeNull();
+  });
+
+  it("FN-7250 renders the empty state when the only task is deleted", () => {
+    const deleted = makeTask("FN-DELETE", "Deleted task", "todo");
+
+    const { rerender } = render(<DockTaskList tasks={[deleted]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.getByTestId("dock-task-list-row-FN-DELETE")).toBeInTheDocument();
+
+    rerender(<DockTaskList tasks={[]} onOpenTask={vi.fn()} addToast={vi.fn()} />);
+
+    expect(screen.queryByTestId("dock-task-list-row-FN-DELETE")).toBeNull();
+    expect(screen.getByTestId("dock-task-list-empty")).toBeInTheDocument();
+    expect(screen.getByText("No tasks yet")).toBeInTheDocument();
+  });
+
   /*
   FNXC:RightDockTasks 2026-06-28-18:38:
   The right-dock Tasks list is active-by-default: done tasks are opt-in via Show Done, archived tasks never appear, and the incoming active/done order is preserved when completed work is shown.

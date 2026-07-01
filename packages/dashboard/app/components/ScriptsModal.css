@@ -2292,8 +2292,35 @@ The previous bespoke rules here hid the tab labels (icon-only) and used a crampe
     padding: var(--space-md);
   }
 
+  .gm-modal--embedded .gm-commits-header,
+  .gm-modal--embedded .gm-commit-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gm-modal--embedded .gm-commit-target,
+  .gm-modal--embedded .gm-commit-target select,
+  .gm-modal--embedded .gm-commit-controls .gm-search-box {
+    width: 100%;
+  }
+
+  .gm-modal--embedded .gm-commit-target select {
+    max-width: none;
+    font-size: 16px;
+  }
+
   .gm-modal--embedded .gm-search-box input {
     font-size: 16px;
+  }
+
+  .gm-modal--embedded .gm-worktree-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gm-modal--embedded .gm-worktree-actions,
+  .gm-modal--embedded .gm-worktree-actions .btn {
+    width: 100%;
   }
 
   .gm-modal--embedded .gm-status-grid {
@@ -3311,6 +3338,42 @@ Refresh button pinned at the end of the section nav strip (replaces the removed 
 
 /* ── Commits Panel ── */
 
+.gm-commits-header {
+  align-items: flex-start;
+}
+
+.gm-commit-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.gm-commit-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.gm-commit-target select {
+  min-width: 160px;
+  max-width: 260px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  padding: calc(var(--space-xs) / 2) var(--space-xs);
+}
+
 .gm-commits-list {
   display: flex;
   flex-direction: column;
@@ -3635,6 +3698,11 @@ Refresh button pinned at the end of the section nav strip (replaces the removed 
 }
 
 .gm-worktree-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  min-width: 0;
   padding: var(--space-sm) var(--space-md);
   background: var(--card);
   border: 1px solid var(--border);
@@ -3652,6 +3720,8 @@ Refresh button pinned at the end of the section nav strip (replaces the removed 
 
 .gm-worktree-info {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   flex-direction: column;
   gap: var(--space-xs);
 }
@@ -3689,6 +3759,22 @@ Refresh button pinned at the end of the section nav strip (replaces the removed 
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--todo) 12%, transparent);
   color: var(--todo);
+}
+
+/*
+FNXC:GitManager 2026-06-29-20:05:
+Worktree commit-history jumps are read-only navigation affordances. Keep the actions responsive and content-sized so empty worktree states do not leave orphaned button shells and narrow right-dock/mobile layouts do not overflow horizontally.
+*/
+.gm-worktree-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.gm-worktree-actions .btn {
+  white-space: nowrap;
 }
 
 .gm-badge {
@@ -4528,6 +4614,33 @@ Refresh button pinned at the end of the section nav strip (replaces the removed 
   .gm-content {
     min-height: 200px;
     padding: var(--space-md);
+  }
+
+  .gm-commits-header,
+  .gm-commit-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gm-commit-target,
+  .gm-commit-target select,
+  .gm-commit-controls .gm-search-box {
+    width: 100%;
+  }
+
+  .gm-commit-target select {
+    max-width: none;
+    font-size: 16px;
+  }
+
+  .gm-worktree-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .gm-worktree-actions,
+  .gm-worktree-actions .btn {
+    width: 100%;
   }
 
   .gm-search-box input {

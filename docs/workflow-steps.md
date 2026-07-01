@@ -26,7 +26,7 @@ FNXC:WorkflowRuntime 2026-06-28-08:10:
 Selectable built-in workflows must share the canonical dispatch traits: their held work enters through a capacity-released `todo`/backlog column and moves to the first WIP execution column via the hold/release sweep, so non-default built-ins do not need a separate dispatcher.
 -->
 
-Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → Workflow steps → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. A task with no explicit workflow resolves to `builtin:coding`; an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
+Fusion workflows define the task lifecycle policy that moves work from an idea to delivery. The default coding path is **Plan/Triage → Execute → graph-native optional gates → Review → Merge**, but that path is now represented as a workflow selection rather than only as fixed engine behavior. A task with no explicit workflow resolves to `builtin:coding`; an explicit missing/corrupt custom workflow fails closed instead of silently falling back.
 
 ### Selecting workflows
 
@@ -49,7 +49,7 @@ Decision-only or investigation tasks can also declare `noCommitsExpected` / `**N
 |---|---|---|
 | Coding | `builtin:coding` | Default Stepwise-based coding lifecycle: plan steps, execute them one at a time, then run the optional final Code Review gate and merge. |
 | Legacy coding | `builtin:legacy-coding` | Original monolithic coding lifecycle for tasks that should not use graph-owned step execution. |
-| Quick fix | `builtin:quick-fix` | Short path for trivial or no-commit/decision work; omits the standard review stage. |
+| Quick fix | `builtin:quick-fix` | Short explicitly selected path for trivial or decision work; omits the standard review stage. No-commit markers do not route tasks here automatically. |
 | Review-heavy | `builtin:review-heavy` | Standard execute/review/merge path with an additional gated security review. |
 | Marketing | `builtin:marketing` | Content pipeline with custom Ideation, Backlog, Drafting, Editorial review, Published, and Archived columns plus structured marketing brief/draft/editorial prompts; drafts are persisted as task documents for review while the workflow reuses standard lifecycle traits and merge primitives. |
 | Compound engineering | `builtin:compound-engineering` | Plugin-gated CE workflow that invokes `/ce-plan`, optional advisory `ce-doc-review` (markdown autofix; HTML DOM-safe mutation with report-only fallback), `/ce-work`, merge-blocking `/ce-code-review`, CE PR/feedback skills, Fusion merge, and learnings capture. |
@@ -59,6 +59,29 @@ Decision-only or investigation tasks can also declare `noCommitsExpected` / `**N
 | Lead generation | `builtin:lead-generation` | Selectable business workflow for sourcing, qualifying, enriching, and contacting leads with custom lead fields, stage columns, and reviewable enrichment/outreach task documents; requires the workflow graph executor for custom board columns. |
 
 Every selectable built-in workflow uses a capacity-released hold column (`todo` or a workflow-specific backlog) for queued work and a WIP execution column for active work, so the hold/release sweep performs the normal `todo`/backlog → in-progress dispatch across the catalog.
+
+### Current workflow behavior inventory
+
+<!--
+FNXC:WorkflowDocs 2026-06-30-09:00:
+Workflow documentation needs a compact current-behavior inventory so future edits keep the canonical homes aligned instead of duplicating or reviving deleted workflow-step CRUD concepts.
+-->
+
+Use this inventory as the documentation map for current workflow behavior:
+
+| Topic | Current behavior | Canonical home |
+|---|---|---|
+| Built-in catalog and ids | The selectable built-ins are `builtin:coding`, `builtin:legacy-coding`, `builtin:quick-fix`, `builtin:review-heavy`, `builtin:marketing`, `builtin:compound-engineering`, `builtin:stepwise-coding`, `builtin:design`, and `builtin:lead-generation`; `builtin:pr-workflow` is a reusable fragment, not a task-selectable workflow. | This page, [Built-in workflow catalog](#built-in-workflow-catalog); authoring summary in [Workflow Editor](./workflow-editor.md#built-in-vs-custom-workflows). |
+| Runtime and fail-closed behavior | The graph runtime owns lifecycle routing. Unselected/default tasks resolve to `builtin:coding`; missing explicit custom selections fail closed as workflow-resolution failures, and corrupt or invalid resolved IR fails closed as `invalid-ir` instead of returning a legacy fallback. | This page, [Workflow graph integrity validation](#workflow-graph-integrity-validation) and [Workflow Graph Executor](#workflow-graph-executor). |
+| Workflow IR validation | Save/import/AI design/tool writes and runtime materialization all use the central IR validator for node/edge integrity, column/field/setting uniqueness, optional-group references, and plugin extension keys. | This page, [Workflow graph integrity validation](#workflow-graph-integrity-validation); visual authoring in [Workflow Editor](./workflow-editor.md). |
+| Optional groups and default-on gates | Quality gates are graph `optional-group` nodes keyed by node id in `enabledWorkflowSteps`; the runtime/display effective set is persisted ids plus `defaultOn` groups, so default-on gates still run and appear for in-progress tasks when a persisted selection array is empty. Edit-mode controls continue to show the persisted selection so operators can see exactly what the task stored. There is no workflow-step table, Settings manager, or CRUD form. | This page, [Workflow-declared optional steps](#workflow-declared-optional-steps-optional-group-nodes), [Default-On Behavior for New Tasks](#default-on-behavior-for-new-tasks), and [Authoring a Custom Quality Gate](#authoring-a-custom-quality-gate). |
+| Explicit empty step dependencies | A heading annotation `(depends:)` or JSON step `"depends": []` means the step has no prerequisites; an absent dependency annotation/key still inherits the legacy previous-step dependency. | This page, [Parallel mode & the `(depends:)` annotation](#parallel-mode--the-depends-annotation). |
+| Workflow settings values | Setting declarations live in workflow IR; values persist per `(workflowId, projectId)` and resolve as `stored value ?? declaration default`, with invalid/orphaned values dropped from effective settings. | [Settings Reference → Workflow Settings](./settings-reference.md#workflow-settings); editor UX in [Workflow Editor](./workflow-editor.md#settings-panel-definitions-and-values). |
+| Built-in prompt overrides | Built-in topology stays read-only, but prompt/gate node text can be overridden per `(workflowId, nodeId, projectId)` and reset to shipped defaults. | This page, [Overriding built-in workflow prompts](#overriding-built-in-workflow-prompts); dashboard UX in [Dashboard Guide](./dashboard-guide.md#workflow-selection-and-editor). |
+| Agent workflow tools | Agents can list/get/create/update/delete workflows, inspect traits, read/write workflow settings, select workflows for explicit task contexts, and pass `workflow_id` when creating/delegating tasks. Prompt-injectable lanes strip approval-bypass flags on workflow writes. | [Agents](./agents.md#interactive-cli-chat) and [CLI Reference](./cli-reference.md#published-agent-extension-workflow-tools). |
+| Routing boundary | Agents may select/change a workflow only for explicit user requests or tasks they created; no-commit markers do not imply Quick fix or any other workflow. | This page, [Selecting workflows](#selecting-workflows); [Agents](./agents.md#interactive-cli-chat). |
+| Dashboard board/list/graph selection | Board/List/Header/Graph share durable per-project workflow selection; stale saved ids fall back to a valid workflow. Board adds a dashboard-only **All workflows** aggregate and task workflow-name badges; Graph uses **All workflows** for the full active graph. | [Dashboard Guide → Board View](./dashboard-guide.md#board-view), [Graph View](./dashboard-guide.md#graph-view), and [Workflow Selection and Editor](./dashboard-guide.md#workflow-selection-and-editor). |
+| Create/planning forwarding | Inline quick-create, Planning Mode, Subtask Breakdown, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
 
 ### Skill-backed workflow steps
 
@@ -181,7 +204,7 @@ The workflow runtime is the authoritative execution path for task lifecycle work
 
 The engine remains the substrate for scheduler dispatch, routing claims, persistence, concurrency limits, process supervision, storage, and audit plumbing. Lifecycle policy belongs in built-in or custom workflows.
 
-The default built-in catalog entry `builtin:coding` is backed by a Stepwise-derived graph with two default-on, toggleable review gates: `plan-review` before execution and `code-review` at the end of implementation. It is the resolver/runtime fallback for tasks with no workflow selection or an explicit default selection. Missing/corrupt explicit custom selections fail closed as workflow-resolution failures instead of silently running the default. The built-in IR parses planned steps, executes them sequentially without per-step review, then routes optional quality gates into the merge region:
+The default built-in catalog entry `builtin:coding` is backed by a Stepwise-derived graph with two default-on, toggleable review gates: `plan-review` before execution and `code-review` at the end of implementation. It is the resolver/runtime fallback for tasks with no workflow selection or an explicit default selection. Missing explicit custom selections fail closed as workflow-resolution failures, and corrupt or invalid resolved IR fails with `invalid-ir` instead of silently running the default or a legacy workflow. The built-in IR parses planned steps, executes them sequentially without per-step review, then routes optional quality gates into the merge region:
 
 - `triage` → `plan` → `plan-review` (default-on optional plan review) → `parse-steps` → `foreach(step-execute)` → `browser-verification` (optional) → `code-review` (default-on optional final review) → `merge-gate` / branch-group integration / `merge-attempt` / retry or manual hold → `end`
 
@@ -335,23 +358,26 @@ Workflows declare typed task fields via IR `fields: [{ id, name, type, required?
 
 <!--
 FNXC:WorkflowOptionalGroup 2026-06-26-15:00:
-FN-7039 retired the declaration-based optional-steps model (`WorkflowOptionalStep` / the `optionalSteps` IR field). Optional quality gates are now first-class graph `optional-group` NODES; per-task enablement reuses `enabledWorkflowSteps` keyed by the group NODE ID (not a template id). Docs must describe the node model, not the deleted declaration facet.
+FN-7039 retired the declaration-based optional-steps model (`WorkflowOptionalStep` / the `optionalSteps` IR field). Optional quality gates are now first-class graph `optional-group` NODES; per-task persisted selections reuse `enabledWorkflowSteps` keyed by the group NODE ID (not a template id). Docs must describe the node model, not the deleted declaration facet.
+
+FNXC:WorkflowOptionalGroup 2026-06-29-16:10:
+Default-on optional groups are effective for execution and in-progress display even when a task has an empty persisted selection array. Keep edit-mode language separate because editors show the stored ids, not the default-augmented runtime set.
 -->
 
 Optional quality gates are authored directly in the workflow graph as `optional-group` **nodes**. An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs **once** when the group is enabled for the task, and passes through (skips) when disabled. There is no iteration and no rework budget — a single pass — and rework edges inside the template are rejected by `validateOptionalGroup`.
 
 Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
 
-- `defaultOn` seeds the per-task enable set at task creation; operators can still toggle it.
+- `defaultOn` contributes to the runtime/display effective enable set for the task; operators can still toggle persisted selections when creating or editing tasks.
 - `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, the step keeps the global `maxPostReviewFixes` behavior.
 - `phase` defaults to `"pre-merge"` (the prior, only behavior). `"post-merge"` marks a group the executor runs after a successful merge (see [Execution Phases](#execution-phases)).
-- Enable state lives on the per-task `enabledWorkflowSteps` array, keyed by the **group node id** (for example `browser-verification`, `code-review`). The graph executor runs an optional-group node only when its id is present in `enabledWorkflowSteps`.
+- Persisted enable state lives on the per-task `enabledWorkflowSteps` array, keyed by the **group node id** (for example `browser-verification`, `code-review`). For execution and in-progress display, Fusion treats a group as enabled when its id is present in `enabledWorkflowSteps` **or** the workflow node has `defaultOn: true`; this preserves default-on gates even for tasks whose persisted array is empty. Edit-mode controls remain based on the persisted array so an operator can distinguish stored selections from workflow defaults.
 
 Built-in optional gates ship as inlined IR builders, not as a template catalog:
 
 - `builtin:coding` carries the `browser-verification` optional-group node (`builtin-browser-verification-group.ts`), default-off, so browser verification runs only for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
-- `builtin:coding` and `builtin:stepwise-coding` carry the `plan-review` optional-group node (`builtin-plan-review-group.ts`), default-on, before `parse-steps` so the plan can be reviewed before execution begins.
-- The `code-review` optional-group node (`builtin-code-review-group.ts`) is the inlined code-review gate. On default `builtin:coding`, this is the only final review surface before merge; disabling it lets the graph continue from implementation/verification to the merge gate. On `builtin:stepwise-coding`, it remains a post-foreach optional final review gate before the workflow's final review seam.
+- `builtin:coding` and `builtin:stepwise-coding` carry the `plan-review` optional-group node (`builtin-plan-review-group.ts`), default-on, before `parse-steps` so the plan can be reviewed before execution begins even when a task has not persisted explicit optional-step ids.
+- The `code-review` optional-group node (`builtin-code-review-group.ts`) is the inlined default-on code-review gate. On default `builtin:coding`, this is the only final review surface before merge; it is effective by default even when no explicit optional-step ids are stored. On `builtin:stepwise-coding`, it remains a post-foreach optional final review gate before the workflow's final review seam.
 - A workflow (for example compound-engineering) can add a **post-merge** optional-group node via the generic `postMergeOptionalGroupNode(...)` builder (`builtin-post-merge-group.ts`) — e.g. a `document` step that runs after merge.
 
 Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. They resolve the workflow's optional-group nodes (plus plugin-contributed palette templates, see [Plugin-Contributed Steps](#plugin-contributed-steps)) into toggleable rows. Workflows with no optional groups render no trigger, and the selected node ids are submitted through `enabledWorkflowSteps` when the task is created. Unknown or removed ids are skipped during resolution so stale selections never render blank controls or break workflow loading.
@@ -462,7 +488,7 @@ There is no longer a Settings → Workflow Steps manager or step CRUD form. To a
 
 - Set the node's `name`, `defaultOn`, and `phase` (`pre-merge` / `post-merge`).
 - Author the gate inside the node's `template` subgraph as `prompt`/`script`/`gate` nodes (single pass, no rework edges).
-- Tasks enable the gate by its node id via `enabledWorkflowSteps` (seeded from `defaultOn` and toggled at task creation).
+- Tasks persist operator-selected gate ids via `enabledWorkflowSteps`; runtime/display also includes gates whose nodes declare `defaultOn: true`, while edit controls show only the persisted selection.
 
 Plugin palette templates (above) can be dropped in as a starting point instead of authoring a node from scratch.
 
@@ -479,7 +505,7 @@ If both are set, node execution uses that model; otherwise it falls back to defa
 
 `optional-group` nodes support `defaultOn`.
 
-When `defaultOn: true`, the gate is preselected automatically for newly created tasks (users can still deselect it).
+When `defaultOn: true`, the gate is effectively enabled for execution and in-progress display even if the task's persisted `enabledWorkflowSteps` array is empty. Creation and edit controls still use the persisted selection as their source of truth, so operators can distinguish an explicit stored toggle from a workflow-authored default.
 
 ## Workflow Step Revision Loop
 
@@ -727,7 +753,7 @@ Workflow graph execution is the task lifecycle runtime. `TaskExecutor` pins `wor
 
 Default node dispatch:
 - `prompt` / `script` nodes with `config.seam` dispatch through workflow runtime primitives (`planning`, `execute`, `review`, `merge`, `schedule`, `step-execute`). The legacy `workflow-step` seam/primitive was removed in FN-7039 — quality gates are graph nodes now, and an IR node still declaring `config.seam: "workflow-step"` fails loudly rather than silently skipping.
-- `optional-group` nodes run their template subgraph once when enabled for the task (per `enabledWorkflowSteps`) and pass through when disabled; the executor records the outcome onto `task.workflowStepResults`
+- `optional-group` nodes run their template subgraph once when enabled for the task (per `enabledWorkflowSteps` plus workflow-authored `defaultOn`) and pass through when disabled; the executor records the outcome onto `task.workflowStepResults`
 - `step-review`, `parse-steps`, `code`, `notify`, and PR nodes use their dedicated primitive/dependency adapters
 - `gate` nodes evaluate context-key expectations or run configured executable checks
 

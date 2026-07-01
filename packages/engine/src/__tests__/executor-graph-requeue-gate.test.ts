@@ -121,6 +121,50 @@ describe("executor graph execute self-requeue gate", () => {
     expect(store.handoffToReview).not.toHaveBeenCalled();
   });
 
+  it("moves premature merge failures with incomplete in-progress steps back to todo", async () => {
+    resetExecutorMocks();
+    const store = createMockStore();
+    const live = task({
+      id: "FN-7261",
+      column: "in-progress",
+      status: null,
+      error: null,
+      steps: [
+        { name: "Preflight", status: "in-progress" },
+        { name: "Implement", status: "pending" },
+      ],
+    });
+    store.getTask.mockResolvedValue(live);
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    /*
+     * FNXC:WorkflowMerge 2026-06-29-23:18:
+     * Fast-mode graph traversal must not turn an unfinished legacy checklist into a no-op merge. If the merge node is reached before implementation proof exists, recover by requeueing executable work instead of parking the task failed in-progress.
+     */
+    await (executor as any).handleGraphFailure(live, {
+      disposition: "failed",
+      outcome: "failure",
+      visitedNodeIds: ["merge"],
+      context: { "node:merge:value": "implementation-incomplete" },
+    });
+
+    expect(store.updateTask).toHaveBeenCalledWith(
+      live.id,
+      expect.objectContaining({ status: null, error: null }),
+      undefined,
+    );
+    expect(store.moveTask).toHaveBeenCalledWith(
+      live.id,
+      "todo",
+      expect.objectContaining({ preserveProgress: true, moveSource: "engine", recoveryRehome: true }),
+    );
+    expect(store.updateTask).not.toHaveBeenCalledWith(
+      live.id,
+      expect.objectContaining({ status: "failed" }),
+      expect.anything(),
+    );
+  });
+
   it("does not hand generic graph failures to review", async () => {
     resetExecutorMocks();
     const store = createMockStore();

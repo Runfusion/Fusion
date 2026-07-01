@@ -14,6 +14,7 @@ import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 
 import { AppearanceSection } from "../components/settings/sections/AppearanceSection";
+import { GeneralSection } from "../components/settings/sections/GeneralSection";
 import { NotificationsSection } from "../components/settings/sections/NotificationsSection";
 import { ExperimentalSection } from "../components/settings/sections/ExperimentalSection";
 import { MovedSettingsStub } from "../components/settings/sections/MovedSettingsStub";
@@ -29,6 +30,17 @@ vi.mock("../components/AgentPromptsManager", () => ({
 vi.mock("../components/SecretsView", () => ({
   SecretsView: () => <div data-testid="secrets-view" />,
 }));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    fetchWorkflows: vi.fn(async () => []),
+    fetchWorkflow: vi.fn(async () => ({ id: "builtin:coding", name: "Coding" })),
+    fetchProjectDefaultWorkflow: vi.fn(async () => ({ workflowId: null })),
+    setProjectDefaultWorkflow: vi.fn(async () => ({ workflowId: null })),
+    fetchGlobalSettings: vi.fn(async () => ({})),
+  };
+});
 
 expect.extend(jestDomMatchers);
 afterEach(() => cleanup());
@@ -62,6 +74,35 @@ describe("AppearanceSection", () => {
     expect(toggle.checked).toBe(true);
     fireEvent.click(toggle);
     expect(toggle.checked).toBe(false);
+  });
+});
+
+describe("GeneralSection", () => {
+  it("emits the absolute file-browser path toggle via setForm", () => {
+    function GeneralHost() {
+      const [form, setForm] = useState({ allowAbsoluteFileBrowserPaths: false } as SettingsFormState);
+      return (
+        <GeneralSection
+          scopeBanner={null}
+          form={form}
+          setForm={setForm}
+          addToast={vi.fn()}
+          prefixError={null}
+          setPrefixError={vi.fn()}
+          projectTrackingRepoOptions={[]}
+          projectTrackingRepoLoading={false}
+          projectTrackingRepoError={null}
+        />
+      );
+    }
+
+    render(<GeneralHost />);
+
+    const checkbox = screen.getByLabelText(/Allow absolute file-browser paths/i) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+
+    expect(checkbox.checked).toBe(true);
   });
 });
 

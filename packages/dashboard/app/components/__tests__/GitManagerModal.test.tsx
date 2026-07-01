@@ -956,6 +956,153 @@ describe("GitManagerModal", () => {
     });
   });
 
+  it("targets current checkout commits by default and registered worktree commits when selected", async () => {
+    const user = userEvent.setup();
+    (fetchGitCommits as any).mockImplementation(async (_limit: number, _projectId?: string, _repoPath?: string, worktreePath?: string) => [
+      {
+        hash: worktreePath ? "def5678" : "abc1234",
+        shortHash: worktreePath ? "def5678" : "abc1234",
+        message: worktreePath ? "Worktree commit" : "Current checkout commit",
+        author: "User",
+        date: "2026-01-01T00:00:00Z",
+        parents: [],
+      },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+
+    await waitFor(() => expect(screen.getByText("Current checkout commit")).toBeInTheDocument());
+    expectLatestCallStartsWith(fetchGitCommits as any, 20, undefined, undefined);
+    expect((fetchGitCommits as any).mock.calls.at(-1)?.[3]).toBeUndefined();
+
+    await user.selectOptions(screen.getByLabelText("Select commit history target"), "/worktrees/kb-001");
+
+    await waitFor(() => expect(screen.getByText("Worktree commit")).toBeInTheDocument());
+    expectLatestCallStartsWith(fetchGitCommits as any, 20, undefined, undefined, "/worktrees/kb-001");
+
+    fireEvent.click(screen.getByText("Worktree commit"));
+    await waitFor(() => expect(fetchCommitDiff).toHaveBeenCalledWith("def5678", undefined, undefined, "/worktrees/kb-001"));
+  });
+
+  it("labels duplicate basename worktree commit targets with branch task and full path", async () => {
+    (fetchGitWorktrees as any).mockResolvedValue([
+      { path: "/tmp/a/kb", branch: "fusion/fn-111", isMain: false, isBare: false, taskId: "FN-111" },
+      { path: "/tmp/b/kb", branch: "fusion/fn-222", isMain: false, isBare: false, taskId: "FN-222" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+
+    const select = await screen.findByLabelText("Select commit history target");
+    const optionLabels = within(select).getAllByRole("option").map((option) => option.textContent);
+    expect(optionLabels).toContain("fusion/fn-111 — FN-111 — /tmp/a/kb");
+    expect(optionLabels).toContain("fusion/fn-222 — FN-222 — /tmp/b/kb");
+  });
+
+  it("switches from populated worktrees to their commit history without empty action shells", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /worktrees/i }));
+
+    const worktreesPanel = await screen.findByTestId("worktrees-panel");
+    expect(within(worktreesPanel).getAllByRole("button", { name: /view commits/i })).toHaveLength(2);
+    await user.click(within(worktreesPanel).getByRole("button", { name: /View commits for fusion\/fn-001 FN-001 \/worktrees\/kb-001/i }));
+
+    await screen.findByTestId("commits-panel");
+    expectLatestCallStartsWith(fetchGitCommits as any, 20, undefined, undefined, "/worktrees/kb-001");
+  });
+
+  it("renders empty worktrees without orphaned View commits buttons", async () => {
+    (fetchGitWorktrees as any).mockResolvedValue([]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /worktrees/i }));
+
+    const worktreesPanel = await screen.findByTestId("worktrees-panel");
+    expect(within(worktreesPanel).getByText("No worktrees found")).toBeInTheDocument();
+    expect(within(worktreesPanel).queryByRole("button", { name: /view commits/i })).not.toBeInTheDocument();
+  });
+
+  it("clears expanded commit diff state before fetching a new worktree target", async () => {
+    const user = userEvent.setup();
+    (fetchGitCommits as any).mockResolvedValue([
+      { hash: "abc1234", shortHash: "abc1234", message: "Current checkout commit", author: "User", date: "2026-01-01T00:00:00Z", parents: [], body: "Current body" },
+    ]);
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+    await waitFor(() => expect(screen.getByText("Current checkout commit")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText("Current checkout commit"));
+    await waitFor(() => expect(screen.getByText(/diff --git/)).toBeInTheDocument());
+
+    await user.selectOptions(screen.getByLabelText("Select commit history target"), "/worktrees/kb-001");
+    expect(screen.queryByText(/diff --git/)).not.toBeInTheDocument();
+  });
+
+  it("omits empty worktree selector shells but dedupes populated commit targets in embedded mobile layout", async () => {
+    const user = userEvent.setup();
+    (fetchGitWorktrees as any).mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { path: "/worktrees/kb-001", branch: "fusion/fn-001", isMain: false, isBare: false, taskId: "FN-001" },
+      { path: "/worktrees/kb-001", branch: "fusion/fn-001", isMain: false, isBare: false, taskId: "FN-001" },
+      { path: "/repo", branch: "main", isMain: true, isBare: false },
+    ]);
+
+    const { rerender } = render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+    await waitFor(() => expect(fetchGitCommits).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Select commit history target")).not.toBeInTheDocument();
+
+    mockUseViewportMode.mockReturnValue("mobile");
+    rerender(<GitManagerModal isOpen={false} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} presentation="embedded" />);
+    rerender(<GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} presentation="embedded" />);
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+
+    const select = await screen.findByLabelText("Select commit history target");
+    expect(screen.getByTestId("commits-panel").closest(".gm-modal--embedded")).toBeTruthy();
+    expect(within(select).getAllByRole("option")).toHaveLength(3);
+    expect(within(select).getByRole("option", { name: "fusion/fn-001 — FN-001 — /worktrees/kb-001" })).toBeInTheDocument();
+    expect(within(select).getByRole("option", { name: "Main — /repo" })).toBeInTheDocument();
+    await user.selectOptions(select, "/repo");
+    expectLatestCallStartsWith(fetchGitCommits as any, 20, undefined, undefined, "/repo");
+  });
+
+  it("keeps mutation routes scoped to the selected repository after changing the commits worktree target", async () => {
+    const user = userEvent.setup();
+    (fetchWorkspaceRepos as any).mockResolvedValue({ repos: ["packages/app"] });
+
+    render(
+      <GitManagerModal isOpen={true} onClose={vi.fn()} tasks={mockTasks} addToast={mockAddToast} projectId="proj-1" />
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /commits/i }));
+    await screen.findByLabelText("Select commit history target");
+    await waitFor(() => expectLatestCallStartsWith(fetchGitCommits as any, 20, "proj-1", "packages/app"));
+    await user.selectOptions(screen.getByLabelText("Select commit history target"), "/worktrees/kb-001");
+
+    fireEvent.click(screen.getByRole("tab", { name: /changes/i }));
+    await waitFor(() => expect(screen.getByText("src/app.ts")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Stage file" }));
+
+    await waitFor(() => expect(stageFiles).toHaveBeenCalled());
+    expectLatestCallStartsWith(stageFiles as any, ["src/app.ts"], "proj-1");
+    expect((stageFiles as any).mock.calls.at(-1)).toHaveLength(3);
+    expect((stageFiles as any).mock.calls.at(-1)?.[2]).not.toBe("/worktrees/kb-001");
+  });
+
   it("does not render full message block for commits without body", async () => {
     (fetchGitCommits as any).mockResolvedValue([
       {
@@ -3494,6 +3641,26 @@ describe("GitManagerModal", () => {
       expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-section-actions\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?flex:\s*1 1 100%;/);
       expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-item\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?flex-wrap:\s*wrap;/);
       expect(css).toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.gm-file-section\s*\{[\s\S]*?max-width:\s*100%;/);
+    });
+
+    it("includes commit target and worktree actions in modal mobile and embedded narrow layouts", () => {
+      const css = loadAllAppCss();
+      const mobile768 = getMediaBlocks(css, /@media[^{]*\(max-width:\s*768px\)[^{]*\{/g).join("\n");
+      const embeddedNarrow = getMediaBlocks(css, /@container\s+gm-embedded\s+\(max-width:\s*560px\)\s*\{/g).join("\n");
+
+      expect(css).toContain(".gm-commit-target");
+      expect(css).toContain(".gm-worktree-actions");
+      expect(mobile768).toContain(".gm-commit-target select");
+      expect(mobile768).toContain(".gm-worktree-actions .btn");
+      expect(embeddedNarrow).toContain(".gm-modal--embedded .gm-commit-target select");
+      expect(embeddedNarrow).toContain(".gm-modal--embedded .gm-worktree-actions .btn");
+
+      const mobileTargetRules = getRuleBlocks(mobile768, ".gm-commit-target,\n  .gm-commit-target select,\n  .gm-commit-controls .gm-search-box");
+      expect(mobileTargetRules).toHaveLength(1);
+      expect(mobileTargetRules[0]).toContain("width: 100%;");
+      const embeddedTargetRules = getRuleBlocks(embeddedNarrow, ".gm-modal--embedded .gm-commit-target,\n  .gm-modal--embedded .gm-commit-target select,\n  .gm-modal--embedded .gm-commit-controls .gm-search-box");
+      expect(embeddedTargetRules).toHaveLength(1);
+      expect(embeddedTargetRules[0]).toContain("width: 100%;");
     });
 
     it("keeps the mobile Git Manager tab strip non-shrinking at 768px and 720px breakpoints", () => {

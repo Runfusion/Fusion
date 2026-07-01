@@ -314,6 +314,14 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [commitsLimit, setCommitsLimit] = useState(20);
   const [commitSearch, setCommitSearch] = useState("");
+  /*
+  FNXC:GitManager 2026-06-29-00:00:
+  The workspace repository selector remains the mutation/status target for Git Manager. The Commits panel has a separate read-only target: null means the currently selected repo checkout, and a path means one Git-reported worktree from fetchGitWorktrees; switching it must clear expanded commit/diff state before the new history loads.
+
+  FNXC:GitManager 2026-06-29-20:05:
+  The Worktrees panel can jump to read-only commit history for a listed worktree. Keep that affordance wired to the same commit target state so it never broadens staging/checkout/stash/push/pull mutations beyond the selected repository.
+  */
+  const [commitWorktreePath, setCommitWorktreePath] = useState<string | null>(null);
 
   // ── Branches state
   const [branches, setBranches] = useState<GitBranch[]>([]);
@@ -346,6 +354,12 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
   // ── Data Fetching ───────────────────────────────────────────────
 
+  const resetCommitInspectionState = useCallback(() => {
+    setSelectedCommit(null);
+    setCommitDiff(null);
+    setLoadingDiff(false);
+  }, []);
+
   const fetchSectionData = useCallback(async () => {
     if (!isOpen) return;
     setLoading(true);
@@ -369,8 +383,16 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
           break;
         }
         case "commits": {
-          const commitsData = await fetchGitCommits(commitsLimit, projectId, gitRepoPath);
+          const [commitsData, worktreesData] = await Promise.all([
+            fetchGitCommits(commitsLimit, projectId, gitRepoPath, commitWorktreePath ?? undefined),
+            fetchGitWorktrees(projectId, gitRepoPath),
+          ]);
           setCommits(commitsData);
+          setWorktrees(worktreesData);
+          if (commitWorktreePath && !worktreesData.some((worktree) => worktree.path === commitWorktreePath)) {
+            setCommitWorktreePath(null);
+            resetCommitInspectionState();
+          }
           break;
         }
         case "branches": {
@@ -431,7 +453,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setLoading(false);
     }
-  }, [activeSection, isOpen, commitsLimit, addToast, projectId, gitRepoPath]);
+  }, [activeSection, isOpen, commitsLimit, addToast, projectId, gitRepoPath, commitWorktreePath, resetCommitInspectionState]);
 
   useEffect(() => {
     if (isOpen) {
@@ -613,9 +635,10 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
       return;
     }
     setSelectedCommit(hash);
+    setCommitDiff(null);
     setLoadingDiff(true);
     try {
-      const diff = await fetchCommitDiff(hash, projectId, gitRepoPath);
+      const diff = await fetchCommitDiff(hash, projectId, gitRepoPath, commitWorktreePath ?? undefined);
       setCommitDiff(diff);
     } catch (err) {
       addToast(getErrorMessage(err) || t("git.failedToLoadDiff", "Failed to load diff"), "error");
@@ -623,7 +646,13 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
     } finally {
       setLoadingDiff(false);
     }
-  }, [selectedCommit, addToast, projectId]);
+  }, [selectedCommit, addToast, t, projectId, gitRepoPath, commitWorktreePath]);
+
+  const handleCommitTargetChange = useCallback((nextPath: string | null) => {
+    resetCommitInspectionState();
+    setCommits([]);
+    setCommitWorktreePath(nextPath);
+  }, [resetCommitInspectionState]);
 
   const handleLoadMoreCommits = useCallback(() => {
     setCommitsLimit((prev) => Math.min(prev + 20, 100));
@@ -1060,6 +1089,7 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                       value={selectedRepo ?? ""}
                       onChange={(e) => {
                         setSelectedRepo(e.target.value || null);
+                        handleCommitTargetChange(null);
                       }}
                       title={t("git.selectRepo", "Select repository")}
                       aria-label={t("git.selectRepo", "Select repository")}
@@ -1178,6 +1208,9 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
                     selectedCommit={selectedCommit}
                     commitDiff={commitDiff}
                     loadingDiff={loadingDiff}
+                    worktrees={worktrees}
+                    commitWorktreePath={commitWorktreePath}
+                    onCommitTargetChange={handleCommitTargetChange}
                     onCommitClick={handleCommitClick}
                     onLoadMore={handleLoadMoreCommits}
                     canLoadMore={commits.length >= commitsLimit && commitsLimit < 100}
@@ -1214,7 +1247,13 @@ export function GitManagerModal({ isOpen, onClose, tasks: _tasks, addToast, proj
 
                 {/* ── Worktrees Panel ── */}
                 {activeSection === "worktrees" && !loading && (
-                  <WorktreesPanel worktrees={worktrees} />
+                  <WorktreesPanel
+                    worktrees={worktrees}
+                    onViewCommits={(path) => {
+                      handleCommitTargetChange(path);
+                      setActiveSection("commits");
+                    }}
+                  />
                 )}
 
                 {/* ── Stashes Panel ── */}
@@ -1998,6 +2037,9 @@ function CommitsPanel({
   selectedCommit,
   commitDiff,
   loadingDiff,
+  worktrees,
+  commitWorktreePath,
+  onCommitTargetChange,
   onCommitClick,
   onLoadMore,
   canLoadMore,
@@ -2009,24 +2051,65 @@ function CommitsPanel({
   selectedCommit: string | null;
   commitDiff: { stat: string; patch: string } | null;
   loadingDiff: boolean;
+  worktrees: GitWorktree[];
+  commitWorktreePath: string | null;
+  onCommitTargetChange: (path: string | null) => void;
   onCommitClick: (hash: string) => void;
   onLoadMore: () => void;
   canLoadMore: boolean;
   copyToClipboard: (text: string, label?: string) => void;
 }) {
   const { t } = useTranslation("app");
+  const commitTargetWorktrees = useMemo(() => {
+    const seen = new Set<string>();
+    return worktrees.filter((worktree) => {
+      if (!worktree.path || seen.has(worktree.path)) return false;
+      seen.add(worktree.path);
+      return true;
+    });
+  }, [worktrees]);
+  const formatWorktreeTargetLabel = (worktree: GitWorktree) => {
+    const branchLabel = worktree.isMain ? t("git.worktreeTargetMain", "Main") : (worktree.branch ?? t("git.detached", "Detached"));
+    const taskLabel = worktree.taskId ? ` — ${worktree.taskId}` : "";
+    return `${branchLabel}${taskLabel} — ${worktree.path}`;
+  };
+  const selectedTargetTitle = commitWorktreePath
+    ? commitTargetWorktrees.find((worktree) => worktree.path === commitWorktreePath)?.path ?? commitWorktreePath
+    : t("git.currentCheckout", "Current checkout");
   return (
     <div className="gm-panel" data-testid="commits-panel">
-      <div className="gm-panel-header">
+      <div className="gm-panel-header gm-commits-header">
         <h4>{t("git.sectionCommits", "Commits")}</h4>
-        <div className="gm-search-box">
-          <Search size={14} />
-          <input
-            type="text"
-            placeholder={t("git.searchCommits", "Search commits...")}
-            value={commitSearch}
-            onChange={(e) => setCommitSearch(e.target.value)}
-          />
+        <div className="gm-commit-controls">
+          {commitTargetWorktrees.length > 0 && (
+            <label className="gm-commit-target" htmlFor="gm-commit-target-select">
+              <FolderGit2 size={14} />
+              <span>{t("git.commitTarget", "History target")}</span>
+              <select
+                id="gm-commit-target-select"
+                value={commitWorktreePath ?? ""}
+                onChange={(event) => onCommitTargetChange(event.target.value || null)}
+                aria-label={t("git.selectCommitHistoryTarget", "Select commit history target")}
+                title={selectedTargetTitle}
+              >
+                <option value="">{t("git.currentCheckout", "Current checkout")}</option>
+                {commitTargetWorktrees.map((worktree) => (
+                  <option key={worktree.path} value={worktree.path} title={worktree.path}>
+                    {formatWorktreeTargetLabel(worktree)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="gm-search-box">
+            <Search size={14} />
+            <input
+              type="text"
+              placeholder={t("git.searchCommits", "Search commits...")}
+              value={commitSearch}
+              onChange={(e) => setCommitSearch(e.target.value)}
+            />
+          </div>
         </div>
       </div>
       <div className="gm-commits-list">
@@ -2327,7 +2410,7 @@ function BranchesPanel({
 }
 
 /** Worktrees panel */
-function WorktreesPanel({ worktrees }: { worktrees: GitWorktree[] }) {
+function WorktreesPanel({ worktrees, onViewCommits }: { worktrees: GitWorktree[]; onViewCommits: (path: string) => void }) {
   const { t } = useTranslation("app");
   return (
     <div className="gm-panel" data-testid="worktrees-panel">
@@ -2340,7 +2423,9 @@ function WorktreesPanel({ worktrees }: { worktrees: GitWorktree[] }) {
         </div>
       </div>
       <div className="gm-worktrees-list">
-        {worktrees.map((worktree) => (
+        {worktrees.length === 0 ? (
+          <div className="gm-empty">{t("git.noWorktreesFound", "No worktrees found")}</div>
+        ) : worktrees.map((worktree) => (
           <div
             key={worktree.path}
             className={`gm-worktree-item${worktree.isMain ? " main" : ""}`}
@@ -2364,6 +2449,22 @@ function WorktreesPanel({ worktrees }: { worktrees: GitWorktree[] }) {
                   <span className="gm-worktree-task">{worktree.taskId}</span>
                 )}
               </div>
+            </div>
+            <div className="gm-worktree-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-secondary"
+                onClick={() => onViewCommits(worktree.path)}
+                title={t("git.viewWorktreeCommitsTitle", "View commits for {{path}}", { path: worktree.path })}
+                aria-label={t("git.viewWorktreeCommitsLabel", "View commits for {{branch}} {{task}} {{path}}", {
+                  branch: worktree.branch ?? (worktree.isMain ? t("git.worktreeTargetMain", "Main") : t("git.detached", "Detached")),
+                  task: worktree.taskId ?? "",
+                  path: worktree.path,
+                })}
+              >
+                <GitCommitIcon size={14} />
+                {t("git.viewCommits", "View commits")}
+              </button>
             </div>
           </div>
         ))}

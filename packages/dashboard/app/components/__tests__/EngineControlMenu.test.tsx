@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import { EngineControlMenu } from "../EngineControlMenu";
+import { ConfirmDialogProvider } from "../../hooks/useConfirm";
 
 const defaultSettings = {
   maxConcurrent: 2,
@@ -34,7 +35,11 @@ vi.mock("../../versionCheck", () => ({
 }));
 
 async function openMenu(projectId: string | undefined = "proj_123") {
-  render(<EngineControlMenu projectId={projectId} />);
+  render(
+    <ConfirmDialogProvider>
+      <EngineControlMenu projectId={projectId} />
+    </ConfirmDialogProvider>,
+  );
   fireEvent.click(screen.getByTestId("engine-control-menu-trigger"));
   await screen.findByTestId("engine-control-menu");
 }
@@ -99,7 +104,7 @@ describe("EngineControlMenu", () => {
     await waitFor(() => expect(screen.queryByTestId("engine-control-menu")).not.toBeInTheDocument());
   });
 
-  it("flushes pending project concurrency changes when the explicit close button is clicked", async () => {
+  it("reverts pending project concurrency changes when the explicit close button is clicked", async () => {
     await openMenu();
 
     const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
@@ -108,14 +113,11 @@ describe("EngineControlMenu", () => {
     fireEvent.change(maxConcurrent, { target: { value: "7" } });
     fireEvent.click(screen.getByTestId("engine-control-menu-close"));
 
-    expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
-      { maxConcurrent: 7, maxTriageConcurrent: 1, maxWorktrees: 4 },
-      "proj_123",
-    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(legacyMocks.updateSettings).toHaveBeenCalledTimes(1);
+    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("engine-control-menu")).not.toBeInTheDocument();
   });
 
   it("keeps the close button available when concurrency settings fail to load", async () => {
@@ -164,7 +166,11 @@ describe("EngineControlMenu", () => {
     apiMocks.fetchSettings.mockResolvedValue({ ...defaultSettings, globalPause: true, enginePaused: true });
     legacyMocks.fetchConfig.mockResolvedValue({ maxConcurrent: 2, rootDir: "/workspace/project" });
     legacyMocks.fetchSettings.mockResolvedValue({ ...defaultSettings });
-    render(<EngineControlMenu projectId="proj_123" />);
+    render(
+      <ConfirmDialogProvider>
+        <EngineControlMenu projectId="proj_123" />
+      </ConfirmDialogProvider>,
+    );
     fireEvent.click(screen.getAllByTestId("engine-control-menu-trigger")[1]);
 
     await waitFor(() => expect(screen.getAllByTestId("engine-control-pause-triage-btn")).toHaveLength(2));
@@ -173,7 +179,58 @@ describe("EngineControlMenu", () => {
     expect(pauseButton).toHaveTextContent(/resume scheduling/i);
   });
 
-  it("persists debounced concurrency and worktree slider changes and refreshes settings", async () => {
+  it("cancels a confirmed project concurrency edit by reverting to persisted values without saving", async () => {
+    await openMenu();
+
+    const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(maxConcurrent, { target: { value: "7" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max concurrent tasks from 2 to 7");
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument());
+    await waitFor(() => expect(maxConcurrent).toHaveValue("2"));
+    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not silently save project concurrency edits on Escape or outside dismissal", async () => {
+    await openMenu();
+    const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(maxConcurrent, { target: { value: "7" } });
+    fireEvent.keyDown(document, { key: "Escape" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("engine-control-menu")).not.toBeInTheDocument();
+
+    vi.useRealTimers();
+    cleanup();
+    legacyMocks.updateSettings.mockClear();
+    await openMenu();
+    const reopenedMaxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(reopenedMaxConcurrent, { target: { value: "8" } });
+    fireEvent.mouseDown(document.body);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("engine-control-menu")).not.toBeInTheDocument();
+  });
+
+  it("confirms debounced concurrency and worktree slider changes before persisting and refreshing settings", async () => {
     legacyMocks.fetchSettings.mockResolvedValue({
       ...defaultSettings,
       maxConcurrent: 60,
@@ -203,10 +260,20 @@ describe("EngineControlMenu", () => {
       await vi.advanceTimersByTimeAsync(500);
     });
 
-    expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
+    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max concurrent tasks from 60 to 9");
+    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max triage concurrent from 70 to 4");
+    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Max worktrees from 80 to 8");
+    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+    const saveButton = screen.getByRole("button", { name: /save change/i });
+    fireEvent.mouseDown(saveButton);
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
       { maxConcurrent: 9, maxTriageConcurrent: 4, maxWorktrees: 8 },
       "proj_123",
-    );
+    ));
     expect(apiMocks.fetchSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -222,6 +289,194 @@ describe("EngineControlMenu", () => {
     expect(await screen.findByLabelText(/max concurrent tasks/i)).toHaveAttribute("max", "50");
     expect(screen.getByLabelText(/max triage concurrent/i)).toHaveAttribute("max", "50");
     expect(screen.getByLabelText(/max worktrees/i)).toHaveAttribute("max", "50");
+  });
+
+  it("confirms footer global cap edits before writing through the shared hook", async () => {
+    await openMenu();
+
+    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(globalMaxConcurrent, { target: { value: "9" } });
+
+    expect(globalMaxConcurrent).toHaveValue("9");
+    expect(globalMaxConcurrent.closest("label")).toHaveTextContent("9");
+    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    const dialog = screen.getByRole("dialog", { name: /confirm concurrency change/i });
+    expect(dialog).toHaveTextContent("Change Global Max Concurrent from 6 to 9?");
+    expect(screen.getByRole("button", { name: /save change/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+    expect(globalMaxConcurrent).toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save change/i }));
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
+
+    expect(legacyMocks.updateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 9 });
+  });
+
+  it("prevents duplicate footer confirmation dialogs while a concurrency confirmation is open", async () => {
+    await openMenu();
+
+    const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
+    const globalMaxConcurrent = screen.getByLabelText(/maximum concurrent agents across all projects/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(maxConcurrent, { target: { value: "7" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
+
+    fireEvent.change(maxConcurrent, { target: { value: "8" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument());
+
+    vi.useFakeTimers();
+    fireEvent.change(globalMaxConcurrent, { target: { value: "9" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
+    fireEvent.change(globalMaxConcurrent, { target: { value: "10" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.getAllByRole("dialog", { name: /confirm concurrency change/i })).toHaveLength(1);
+    expect(legacyMocks.updateSettings).not.toHaveBeenCalled();
+    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
+  });
+
+  it("flushes already-confirmed global cap saves when the footer closes", async () => {
+    await openMenu();
+
+    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(globalMaxConcurrent, { target: { value: "9" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /save change/i }));
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByTestId("engine-control-menu-close"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByTestId("engine-control-menu")).not.toBeInTheDocument();
+    expect(legacyMocks.updateGlobalConcurrency).toHaveBeenCalledWith({ globalMaxConcurrent: 9 });
+  });
+
+  it("cancels footer global cap edits without triggering a global write", async () => {
+    await openMenu();
+
+    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(globalMaxConcurrent, { target: { value: "8" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(screen.getByRole("dialog", { name: /confirm concurrency change/i })).toHaveTextContent("Global Max Concurrent from 6 to 8");
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument());
+    await waitFor(() => expect(globalMaxConcurrent).toHaveValue("6"));
+    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
+  });
+
+  it("does not prompt or write when a footer global cap edit matches the persisted value", async () => {
+    await openMenu();
+
+    const globalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    vi.useFakeTimers();
+
+    fireEvent.change(globalMaxConcurrent, { target: { value: "6" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
+    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
+  });
+
+  it("keeps loading and error global cap states disabled so they cannot prompt", async () => {
+    let resolveGlobalConcurrency!: (value: {
+      globalMaxConcurrent: number;
+      currentlyActive: number;
+      queuedCount: number;
+      projectsActive: Record<string, number>;
+    }) => void;
+    legacyMocks.fetchGlobalConcurrency.mockReturnValue(new Promise((resolve) => {
+      resolveGlobalConcurrency = resolve;
+    }));
+
+    await openMenu();
+
+    const loadingGlobalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    expect(loadingGlobalMaxConcurrent).toBeDisabled();
+
+    vi.useFakeTimers();
+    fireEvent.change(loadingGlobalMaxConcurrent, { target: { value: "7" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
+    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveGlobalConcurrency({
+        globalMaxConcurrent: 6,
+        currentlyActive: 3,
+        queuedCount: 0,
+        projectsActive: { proj_123: 2 },
+      });
+    });
+
+    vi.useRealTimers();
+    cleanup();
+    legacyMocks.updateGlobalConcurrency.mockClear();
+    legacyMocks.fetchGlobalConcurrency.mockRejectedValue(new Error("global concurrency unavailable"));
+
+    await openMenu();
+
+    const errorGlobalMaxConcurrent = await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    await screen.findByRole("alert");
+    expect(errorGlobalMaxConcurrent).toBeDisabled();
+
+    vi.useFakeTimers();
+    fireEvent.change(errorGlobalMaxConcurrent, { target: { value: "7" } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(screen.queryByRole("dialog", { name: /confirm concurrency change/i })).not.toBeInTheDocument();
+    expect(legacyMocks.updateGlobalConcurrency).not.toHaveBeenCalled();
   });
 
   it("renders running counts and current-use markers with clamped absolute utilization", async () => {
@@ -357,7 +612,7 @@ describe("EngineControlMenu", () => {
     expect(screen.queryByTestId("engine-control-project-use-marker")).not.toBeInTheDocument();
   });
 
-  it("persists a slider value of 50 through the debounced settings save", async () => {
+  it("persists a slider value of 50 after confirmation", async () => {
     await openMenu();
 
     const maxConcurrent = await screen.findByLabelText(/max concurrent tasks/i);
@@ -370,11 +625,13 @@ describe("EngineControlMenu", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
+    vi.useRealTimers();
+    fireEvent.click(screen.getByRole("button", { name: /save change/i }));
 
-    expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
+    await waitFor(() => expect(legacyMocks.updateSettings).toHaveBeenCalledWith(
       { maxConcurrent: 50, maxTriageConcurrent: 1, maxWorktrees: 4 },
       "proj_123",
-    );
+    ));
   });
 
   it("renders a load error state without crashing", async () => {

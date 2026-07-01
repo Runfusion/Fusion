@@ -20,6 +20,7 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}) {
     groupOverlappingFiles: true,
     autoMerge: true,
     openTasksInRightSidebar: false,
+    openMobileTasksInPopup: false,
     ...formOverrides,
   } as SettingsFormState;
   const setForm = vi.fn((updater: SettingsFormState | ((previous: SettingsFormState) => SettingsFormState)) => {
@@ -59,5 +60,23 @@ describe("AppearanceSection", () => {
     renderAppearanceSection({ openTasksInRightSidebar: true });
 
     expect(screen.getByLabelText("Open tasks in the right sidebar")).toBeChecked();
+  });
+
+  it("renders and updates the mobile task popup checkbox", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Open mobile tasks as popups");
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().openMobileTasksInPopup).toBe(true);
+  });
+
+  it("reflects a persisted enabled mobile task popup value", () => {
+    renderAppearanceSection({ openMobileTasksInPopup: true });
+
+    expect(screen.getByLabelText("Open mobile tasks as popups")).toBeChecked();
   });
 });

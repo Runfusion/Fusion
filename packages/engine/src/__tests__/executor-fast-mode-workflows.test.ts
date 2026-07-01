@@ -272,4 +272,31 @@ describe("fast mode workflow/runtime invariants", () => {
     const tools = mockedCreateFnAgent.mock.calls[0][0].customTools.map((tool: any) => tool.name);
     expect(tools).toContain("fn_review_step");
   });
+
+  it("omits legacy fn_review_step in graph-owned standard execution sessions", async () => {
+    mockedCreateFnAgent.mockImplementation(async (opts: any) => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: {
+          getLeafId: vi.fn().mockReturnValue("leaf"),
+          branchWithSummary: vi.fn(),
+          navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+        },
+        navigateTree: vi.fn().mockResolvedValue({ cancelled: false }),
+      },
+      capturedTools: opts.customTools,
+    }));
+    const store = createMockStore();
+    const liveTask = task({ id: "FN-TOOLS", executionMode: "standard" });
+    store.getTask.mockResolvedValue(liveTask);
+    const executor = new TaskExecutor(store, "/tmp/test") as any;
+    executor.graphCompletionInterceptors.set("FN-TOOLS", vi.fn());
+
+    await executor.execute(liveTask);
+
+    const tools = mockedCreateFnAgent.mock.calls[0][0].customTools.map((tool: any) => tool.name);
+    expect(tools).toContain("fn_task_done");
+    expect(tools).not.toContain("fn_review_step");
+  });
 });

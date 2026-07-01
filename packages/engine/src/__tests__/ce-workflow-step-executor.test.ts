@@ -388,6 +388,88 @@ describe("CE workflow-step executor integration", () => {
       expect(live.mergeDetails?.mergeConfirmed).toBe(true);
     });
 
+    it("lets stale no-op merge proof fall through when implementation steps are incomplete", async () => {
+      const store = createMockStore();
+      const live = baseStepTask({
+        column: "in-progress",
+        status: "failed",
+        error: "Merge confirmed but finalization blocked: task has incomplete steps",
+        mergeDetails: { mergeConfirmed: true, noOpMerge: true, noOpReason: "already-merged" },
+        steps: [
+          { name: "Preflight", status: "in-progress" },
+          { name: "Implement", status: "pending" },
+        ],
+      });
+      store.getTask.mockResolvedValue(live as any);
+      const { executor } = makeExecutor(store);
+
+      /*
+       * FNXC:WorkflowMerge 2026-06-29-23:12:
+       * A no-op merge confirmation without a landed commit is not implementation proof. When reopened work still has incomplete legacy steps, execute() must continue to stale-merge cleanup/reverification instead of consuming the run in merge-confirmed finalization.
+       */
+      const handled = await (executor as any).finalizeMergeConfirmedWorkflowGraphTask("FN-CE-1", "test");
+
+      expect(handled).toBe(false);
+      expect(store.moveTask).not.toHaveBeenCalledWith("FN-CE-1", "done", expect.anything());
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-CE-1",
+        expect.stringContaining("merge-confirmed finalization blocked"),
+        undefined,
+        undefined,
+      );
+    });
+
+    it("blocks the merge requester when graph traversal reaches merge before implementation steps finish", async () => {
+      const store = createMockStore();
+      let live = baseStepTask({
+        column: "in-progress",
+        status: null,
+        error: null,
+        steps: [
+          { name: "Preflight", status: "in-progress" },
+          { name: "Implement", status: "pending" },
+        ],
+      });
+      store.getTask.mockImplementation(async () => live as any);
+      store.updateTask.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+        live = { ...live, ...patch };
+        return live as any;
+      });
+      store.moveTask.mockImplementation(async (_id: string, column: string) => {
+        live = { ...live, column };
+        return live as any;
+      });
+      const { executor } = makeExecutor(store);
+      const mergeRequester = vi.fn(async () => ({ ok: true, merged: false, noOp: true, mergeConfirmed: true }));
+      executor.setMergeRequester(mergeRequester as any);
+      const settings = await store.getSettings();
+      const primitives = (executor as any).createAuthoritativeWorkflowPrimitives(settings);
+
+      /*
+       * FNXC:WorkflowMerge 2026-06-29-23:18:
+       * Reaching the merge node is not itself proof that implementation ran. The requester must not create a no-op merge for an unfinished legacy checklist; the graph failure path will route the task back to executable work.
+       */
+      const result = await primitives.requestMerge(
+        {
+          run: { runId: "run-1", taskId: "FN-CE-1", workflowId: "builtin:coding" },
+          node: { node: { id: "merge", kind: "prompt", column: "in-review", config: { seam: "merge" } }, context: {} },
+        },
+        live,
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        outcome: "failure",
+        value: "implementation-incomplete",
+      }));
+      expect(mergeRequester).not.toHaveBeenCalled();
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-CE-1",
+        "Workflow merge blocked before requester: implementation steps are incomplete",
+        undefined,
+        undefined,
+      );
+    });
+
     it("uses moveTask for workflow graph column transitions so lifecycle notifications fire", async () => {
       const store = createMockStore();
       store.getTask.mockResolvedValue(baseStepTask({ column: "todo" }) as any);

@@ -647,7 +647,7 @@ describe("wrapToolsWithPermanentAgentGating", () => {
     expect(tool.execute).not.toHaveBeenCalled();
   });
 
-  it("allows exempt internal coordination fn_* tools without approval", async () => {
+  it("requires approval for governed internal task-mutation fn_* tools", async () => {
     const tool = { name: "fn_task_create", label: "Task Create", description: "", parameters: {}, execute: vi.fn().mockResolvedValue({ ok: true }) };
     const createApprovalRequest = vi.fn().mockResolvedValue({ id: "apr-fn-1" });
     const { wrapToolsWithPermanentAgentGating } = await import("../pi.js");
@@ -669,9 +669,19 @@ describe("wrapToolsWithPermanentAgentGating", () => {
     });
 
     const result = await (wrapped[0] as any).execute("t1", { description: "create" });
-    expect(result).toEqual({ ok: true });
-    expect(createApprovalRequest).not.toHaveBeenCalled();
-    expect(tool.execute).toHaveBeenCalledTimes(1);
+    expect((result as any).isError).toBe(true);
+    expect((result as any).details).toEqual(expect.objectContaining({
+      approvalRequestId: "apr-fn-1",
+      category: "task_agent_mutation",
+      disposition: "require-approval",
+      requiresApproval: true,
+      toolName: "fn_task_create",
+    }));
+    expect(createApprovalRequest).toHaveBeenCalledWith(expect.objectContaining({
+      category: "task_agent_mutation",
+      toolName: "fn_task_create",
+    }));
+    expect(tool.execute).not.toHaveBeenCalled();
   });
 
   it("keeps read-only tools allowed without approval-request creation", async () => {
@@ -2404,13 +2414,14 @@ describe("createFnAgent", () => {
       const { createSkillsOverrideFromSelection } = await import("../skill-resolver.js");
 
       const selection = {
-        allowedSkillPaths: new Set(["/path/nonexistent"]),
+        allowedSkillPaths: new Set<string>(),
         excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
 
       const override = createSkillsOverrideFromSelection(selection, {
+        requestedSkillNames: ["nonexistent"],
         sessionPurpose: "executor",
       });
 

@@ -730,15 +730,16 @@ describe("createSkillsOverrideFromSelection", () => {
       expect(result.diagnostics[0].message).toBe("base warning");
     });
 
-    it("logs diagnostics via structured logger", () => {
+    it("logs requested-skill diagnostics via structured logger", () => {
       const selection: SkillSelectionResult = {
-        allowedSkillPaths: new Set(["/path/nonexistent"]),
+        allowedSkillPaths: new Set<string>(),
         excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
 
       const override = createSkillsOverrideFromSelection(selection, {
+        requestedSkillNames: ["nonexistent"],
         sessionPurpose: "executor",
       });
 
@@ -975,9 +976,12 @@ describe("createSkillsOverrideFromSelection", () => {
       ).toBe(false);
     });
 
-    it("uses structured piLog.log for configured skill pattern diagnostics", () => {
+    it("keeps optional missing configured patterns diagnostic-only without the user-reported info log", () => {
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const selection: SkillSelectionResult = {
-        allowedSkillPaths: new Set(["/path/ghost"]),
+        allowedSkillPaths: new Set(["ce-optimize/SKILL.md", "lint/SKILL.md"]),
         excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
@@ -987,11 +991,38 @@ describe("createSkillsOverrideFromSelection", () => {
         sessionPurpose: "executor",
       });
 
-      override({ skills: [], diagnostics: [] });
+      const result = override({
+        skills: [
+          { name: "lint", filePath: "/platform-neutral/skills/lint/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+          { name: "paperclip", filePath: "/platform-neutral/skills/paperclip/SKILL.md", description: "", baseDir: "", sourceInfo: {} as any, disableModelInvocation: false },
+        ],
+        diagnostics: [],
+      });
+      const userReportedLine = "Configured skill pattern 'ce-optimize/SKILL.md' not found in discovered skills [executor]";
 
-      expect(mockPiLog.log).toHaveBeenCalledWith(
-        expect.stringContaining("[skills] info: Configured skill pattern '/path/ghost' not found in discovered skills [executor]"),
-      );
+      expect(result.skills.map((skill) => skill.name)).toEqual(["lint"]);
+      expect(result.diagnostics).toContainEqual(expect.objectContaining({
+        type: "info",
+        message: userReportedLine,
+        path: "ce-optimize/SKILL.md",
+      }));
+      expect(result.diagnostics.some((diagnostic) => diagnostic.message.includes("lint/SKILL.md") && diagnostic.message.includes("not found"))).toBe(false);
+
+      const loggedMessages = [
+        ...mockPiLog.log.mock.calls,
+        ...mockPiLog.warn.mock.calls,
+        ...mockPiLog.error.mock.calls,
+      ].map((call) => String(call[0]));
+      expect(loggedMessages.some((message) => message.includes(userReportedLine))).toBe(false);
+      expect(mockPiLog.warn).not.toHaveBeenCalled();
+      expect(mockPiLog.error).not.toHaveBeenCalled();
+      expect(consoleErrorSpy).not.toHaveBeenCalled();
+      expect(consoleWarnSpy).not.toHaveBeenCalled();
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+
+      consoleErrorSpy.mockRestore();
+      consoleWarnSpy.mockRestore();
+      consoleLogSpy.mockRestore();
     });
 
     it("does not call console.error, console.warn, or console.log for diagnostics", () => {
@@ -1000,13 +1031,14 @@ describe("createSkillsOverrideFromSelection", () => {
       const consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
       const selection: SkillSelectionResult = {
-        allowedSkillPaths: new Set(["/path/missing"]),
+        allowedSkillPaths: new Set<string>(),
         excludedSkillPaths: new Set<string>(),
         diagnostics: [],
         filterActive: true,
       };
 
       const override = createSkillsOverrideFromSelection(selection, {
+        requestedSkillNames: ["missing"],
         sessionPurpose: "executor",
       });
 

@@ -1,5 +1,45 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildMobileShellHandoff } from "../plugins/shell-handoff.js";
+
+type BackButtonListener = (event: { canGoBack: boolean }) => void;
+
+const capacitorState = vi.hoisted(() => {
+  const state: {
+    isNativePlatform: ReturnType<typeof vi.fn>;
+    addListener: ReturnType<typeof vi.fn>;
+    backButtonRemove: ReturnType<typeof vi.fn>;
+    exitApp: ReturnType<typeof vi.fn>;
+    backButtonListener?: BackButtonListener;
+  } = {
+    isNativePlatform: vi.fn(() => false),
+    addListener: vi.fn(),
+    backButtonRemove: vi.fn(async () => {}),
+    exitApp: vi.fn(async () => {}),
+    backButtonListener: undefined,
+  };
+
+  state.addListener.mockImplementation(async (eventName: string, callback: BackButtonListener) => {
+    if (eventName === "backButton") {
+      state.backButtonListener = callback;
+    }
+    return { remove: state.backButtonRemove };
+  });
+
+  return state;
+});
+
+vi.mock("@capacitor/core", () => ({
+  Capacitor: {
+    isNativePlatform: capacitorState.isNativePlatform,
+  },
+}));
+
+vi.mock("@capacitor/app", () => ({
+  App: {
+    addListener: capacitorState.addListener,
+    exitApp: capacitorState.exitApp,
+  },
+}));
 
 const state = {
   activeProfileId: null as string | null,
@@ -39,7 +79,14 @@ describe("MobileNativeShellBridge", () => {
     state.activeProfileId = null;
     state.profiles = [];
     scanner.scanConnection.mockClear();
+    capacitorState.isNativePlatform.mockReturnValue(false);
+    capacitorState.backButtonListener = undefined;
+    vi.clearAllMocks();
     vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("emits state updates to subscribers", async () => {
@@ -109,5 +156,107 @@ describe("MobileNativeShellBridge", () => {
     const bridge = new MobileNativeShellBridge(scanner as never);
 
     await expect(bridge.setDesktopMode("local")).rejects.toThrow("Desktop mode is not supported");
+  });
+
+  it("Android Back: skips Capacitor backButton registration on non-native platforms", async () => {
+    const { AndroidBackButtonManager } = await import("../plugins/native-shell.js");
+    const manager = new AndroidBackButtonManager();
+
+    await manager.initialize();
+
+    expect(capacitorState.isNativePlatform).toHaveBeenCalledTimes(1);
+    expect(capacitorState.addListener).not.toHaveBeenCalled();
+    expect(capacitorState.backButtonListener).toBeUndefined();
+
+    await manager.destroy();
+
+    expect(capacitorState.backButtonRemove).not.toHaveBeenCalled();
+  });
+
+  it("Android Back: registers and removes the native backButton listener on native platforms", async () => {
+    capacitorState.isNativePlatform.mockReturnValue(true);
+    const { AndroidBackButtonManager } = await import("../plugins/native-shell.js");
+    const manager = new AndroidBackButtonManager();
+
+    await manager.initialize();
+
+    expect(capacitorState.addListener).toHaveBeenCalledWith("backButton", expect.any(Function));
+
+    await manager.destroy();
+
+    expect(capacitorState.backButtonRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("Android Back: does not duplicate native listener registration across repeated initialization", async () => {
+    capacitorState.isNativePlatform.mockReturnValue(true);
+    const { AndroidBackButtonManager } = await import("../plugins/native-shell.js");
+    const manager = new AndroidBackButtonManager();
+
+    await manager.initialize();
+    await manager.initialize();
+
+    expect(capacitorState.addListener).toHaveBeenCalledTimes(1);
+
+    await manager.destroy();
+
+    expect(capacitorState.backButtonRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("Android Back: dispatches a cancelable browser event before native fallback", async () => {
+    capacitorState.isNativePlatform.mockReturnValue(true);
+    const mockWindow = new EventTarget() as Window & typeof globalThis;
+    const back = vi.fn();
+    Object.defineProperty(mockWindow, "history", {
+      value: { back },
+      configurable: true,
+    });
+    vi.stubGlobal("window", mockWindow);
+    const nativeBackListener = vi.fn((event: Event) => event.preventDefault());
+    mockWindow.addEventListener("fusion:native-back", nativeBackListener as EventListener);
+    const { AndroidBackButtonManager } = await import("../plugins/native-shell.js");
+    const manager = new AndroidBackButtonManager();
+
+    await manager.initialize();
+    capacitorState.backButtonListener?.({ canGoBack: false });
+
+    expect(nativeBackListener).toHaveBeenCalledTimes(1);
+    expect(back).not.toHaveBeenCalled();
+    expect(capacitorState.exitApp).not.toHaveBeenCalled();
+  });
+
+  it("Android Back: preserves browser-history fallback when Fusion does not handle it", async () => {
+    capacitorState.isNativePlatform.mockReturnValue(true);
+    const mockWindow = new EventTarget() as Window & typeof globalThis;
+    const back = vi.fn();
+    Object.defineProperty(mockWindow, "history", {
+      value: { back },
+      configurable: true,
+    });
+    vi.stubGlobal("window", mockWindow);
+    const { AndroidBackButtonManager } = await import("../plugins/native-shell.js");
+    const manager = new AndroidBackButtonManager();
+
+    await manager.initialize();
+    capacitorState.backButtonListener?.({ canGoBack: true });
+
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(capacitorState.exitApp).not.toHaveBeenCalled();
+  });
+
+  it("Android Back: preserves native exit fallback when no history can go back", async () => {
+    capacitorState.isNativePlatform.mockReturnValue(true);
+    const mockWindow = new EventTarget() as Window & typeof globalThis;
+    Object.defineProperty(mockWindow, "history", {
+      value: { back: vi.fn() },
+      configurable: true,
+    });
+    vi.stubGlobal("window", mockWindow);
+    const { AndroidBackButtonManager } = await import("../plugins/native-shell.js");
+    const manager = new AndroidBackButtonManager();
+
+    await manager.initialize();
+    capacitorState.backButtonListener?.({ canGoBack: false });
+
+    expect(capacitorState.exitApp).toHaveBeenCalledTimes(1);
   });
 });

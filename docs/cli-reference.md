@@ -7,6 +7,9 @@ Fusion’s command-line interface is exposed through the `fn` command.
 <!--
 FNXC:AgentTools 2026-06-29-22:31:
 The published CLI/pi extension must document its agent-facing workflow authoring surface so operators know agents can inspect, create, update, configure, and delete custom workflows without using the dashboard editor.
+
+FNXC:AgentTools 2026-06-30-09:25:
+The extension docs must list workflow selection and task-creation forwarding alongside CRUD/settings tools so operators do not assume only discovery and selection exist or that agents may reroute arbitrary tasks.
 -->
 
 ## Published agent extension workflow tools
@@ -14,12 +17,14 @@ The published CLI/pi extension must document its agent-facing workflow authoring
 The published `@runfusion/fusion` CLI bundle also exposes the pi extension tool surface used by external agents. Alongside task and coordination helpers, agents can now author and manage workflow definitions:
 
 - `fn_workflow_list` / `fn_workflow_get` — discover built-in and custom workflows and inspect a workflow's IR before editing.
-- `fn_workflow_create` / `fn_workflow_update` — create or revise custom workflow definitions through Fusion's central workflow validator.
-- `fn_workflow_settings` — read and write typed per-project values for a workflow's declared settings.
+- `fn_workflow_create` / `fn_workflow_update` — create or revise custom workflow definitions through Fusion's central workflow validator. Built-in definitions are read-only, and broader-than-default column permission bindings require explicit policy-escalation confirmation.
+- `fn_workflow_settings` — read and write typed per-project values for a workflow's declared settings. `get` returns stored and engine-effective values; `set` validates atomically and treats `null` as deleting a stored override.
 - `fn_workflow_delete` — delete custom workflows; built-in workflows remain protected.
 - `fn_trait_list` — list the column trait vocabulary used when authoring workflow columns.
+- `fn_workflow_select` — assign a workflow to the current task in task-bound lanes or to an explicit `task_id` when the lane has no ambient task. Published/pi extension calls, dashboard chat/planning, and no-task heartbeat lanes must pass `task_id`; executor paths may omit it only for the task currently under execution.
+- `workflow_id` on task creation/delegation tools — create or delegate a task onto a real workflow id from the start.
 
-Agents should still use `fn_workflow_select` only when assigning a workflow to an explicit task context or to a task they created.
+Agents should still use `fn_workflow_select` only when the user explicitly requested that workflow or when assigning a workflow to a task they created; they must not reroute arbitrary existing tasks just because another workflow appears more suitable. Prompt-injectable lanes strip workflow approval-bypass flags during `fn_workflow_create` / `fn_workflow_update`; executor-owner paths are the only authoring path that may preserve those flags.
 
 ## Global Usage
 

@@ -80,6 +80,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
         })}
         onOpenDetail={noop}
         addToast={noop}
+        workflowBadge={{ workflowId: "wf-badge-wrap", workflowName: "Long workflow badge label" }}
       />,
     ).container;
   });
@@ -104,6 +105,7 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     ".card-agent-created-badge",
     ".card-no-commits-expected-badge",
     ".card-github-badge",
+    ".card-workflow-badge",
   ])("applies truncation constraints to %s when rendered", (selector) => {
     const badge = container.querySelector(selector);
     expect(badge, `${selector} should render for the fixture`).toBeTruthy();

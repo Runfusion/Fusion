@@ -22,7 +22,7 @@ import {
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, api } from "../api";
-import type { WorkflowFieldDefinition, CustomFieldRejection } from "../api";
+import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
 import { ApiRequestError } from "../api";
 import { TaskFieldsSection } from "./TaskFieldsSection";
 import type { ToastType } from "../hooks/useToast";
@@ -356,6 +356,15 @@ function normalizeTaskPriorityValue(priority: Task["priority"]): TaskPriority {
   return isStringValue(priority) && (TASK_PRIORITIES as readonly string[]).includes(priority)
     ? (priority as TaskPriority)
     : DEFAULT_TASK_PRIORITY;
+}
+
+function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, taskId: string): { name: string; fields: WorkflowFieldDefinition[] | null } | null {
+  if (payload.flagEnabled !== true) return null;
+  const workflowId = payload.taskWorkflowIds[taskId] ?? payload.defaultWorkflowId;
+  const workflow = payload.workflows.find((candidate) => candidate.id === workflowId);
+  const name = workflow?.name?.trim();
+  if (!workflow || !name) return null;
+  return { name, fields: workflow.fields ?? null };
 }
 
 function normalizeExecutionModeValue(executionMode: Task["executionMode"]): "standard" | "fast" {
@@ -714,6 +723,11 @@ export function TaskDetailContent({
     };
   }, [descriptionExpanded, displayTitleText, task.id]);
 
+  /*
+  FNXC:WorkflowBadges 2026-06-29-00:00:
+  Task details need a stable workflow-name badge because aggregate Board cards can mix tasks from multiple workflows. Resolve the badge name and custom field definitions from the same board-workflows payload so detail headers do not issue duplicate workflow-metadata fetches.
+  */
+  const [taskWorkflowName, setTaskWorkflowName] = useState<string | null>(null);
   // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
   // from the board-workflows payload; absent when the workflow declares none,
   // in which case the fields section renders nothing (today's UI byte-identical).
@@ -730,25 +744,35 @@ export function TaskDetailContent({
     setCustomFieldValues(task.customFields ?? {});
   }, [task.id, task.customFields]);
 
-  // Resolve this task's workflow field definitions once per task. Skipped when
+  // Resolve this task's workflow field definitions and display name once per task. Skipped when
   // the caller supplies `workflowFieldDefs` directly (Board context). Best-effort:
-  // a failed fetch (or flag-OFF empty payload) leaves defs null → no section.
+  // a failed fetch (or flag-OFF empty payload) leaves defs/name null → no section/badge.
   useEffect(() => {
     if (workflowFieldDefsProp !== undefined) {
       // Prop-driven path: keep in sync if the prop changes (task switch etc.).
       setCustomFieldDefs(workflowFieldDefsProp ?? null);
+      setTaskWorkflowName(null);
       return;
     }
+    /*
+    FNXC:WorkflowBadges 2026-06-29-16:48:
+    Mounted task-detail hosts can swap from one task to another (List split-pane, right dock, floating windows). Clear the previous workflow badge before the shared board-workflows lookup resolves so aggregate-board context never shows a stale cross-workflow label.
+    */
+    setCustomFieldDefs(null);
+    setTaskWorkflowName(null);
     let cancelled = false;
     void fetchBoardWorkflows(projectId)
       .then((payload) => {
         if (cancelled) return;
-        const workflowId = payload.taskWorkflowIds[task.id] ?? payload.defaultWorkflowId;
-        const workflow = payload.workflows.find((w) => w.id === workflowId);
-        setCustomFieldDefs(workflow?.fields ?? null);
+        const metadata = resolveTaskWorkflowMetadata(payload, task.id);
+        setCustomFieldDefs(metadata?.fields ?? null);
+        setTaskWorkflowName(metadata?.name ?? null);
       })
       .catch(() => {
-        if (!cancelled) setCustomFieldDefs(null);
+        if (!cancelled) {
+          setCustomFieldDefs(null);
+          setTaskWorkflowName(null);
+        }
       });
     return () => {
       cancelled = true;
@@ -2669,6 +2693,11 @@ export function TaskDetailContent({
             <span className={`detail-column-badge badge-${task.column}`}>
               {columnLabel(task.column)}
             </span>
+            {taskWorkflowName && (
+              <span className="detail-workflow-badge" data-testid="task-detail-workflow-badge">
+                {taskWorkflowName}
+              </span>
+            )}
           </div>
           <div className="modal-header-actions">
             {!isEditing && canEdit && (

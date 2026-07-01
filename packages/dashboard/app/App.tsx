@@ -185,6 +185,24 @@ export function shouldOpenBoardTaskInDock(openTasksInRightSidebar: boolean, righ
   return !initialTab && openTasksInRightSidebar && rightDockActive;
 }
 
+export type BoardTaskOpenRoute = "popup" | "dock" | "main-panel";
+
+export function getBoardTaskOpenRoute(options: {
+  isMobile: boolean;
+  openMobileTasksInPopup: boolean;
+  openTasksInRightSidebar: boolean;
+  rightDockActive: boolean;
+  initialTab?: DetailTaskTab;
+}): BoardTaskOpenRoute {
+  if (!options.initialTab && options.isMobile && options.openMobileTasksInPopup) {
+    return "popup";
+  }
+  if (shouldOpenBoardTaskInDock(options.openTasksInRightSidebar, options.rightDockActive, options.initialTab)) {
+    return "dock";
+  }
+  return "main-panel";
+}
+
 function AppInner() {
   const { t } = useTranslation("app");
   const { toasts, addToast, removeToast } = useToast();
@@ -539,6 +557,7 @@ function AppInner() {
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
+    openMobileTasksInPopup,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
     maxTotalRetriesBeforeFail,
@@ -1118,14 +1137,31 @@ function AppInner() {
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
   Board card clicks are the only task-open path governed by openTasksInRightSidebar. When the project setting is enabled and the tablet/desktop right dock is active, the board keeps its current view and asks the dock controller to render task detail; otherwise the existing full main-panel replacement remains the fallback, including mobile and hidden-footer states.
+
+  FNXC:MobileTaskPopups 2026-06-29-00:00:
+  Mobile board-card clicks may opt into the existing task pop-out path, but only for ordinary task opens with no deep initial tab. The route is intentionally ordered as mobile popup, then desktop/tablet right dock, then main-panel fallback so the new setting cannot override deep-tab opens, non-board handlers, or desktop right-dock behavior.
   */
   const openBoardTaskDetail = useCallback((task: Task | TaskDetail, initialTab?: DetailTaskTab) => {
-    if (!shouldOpenBoardTaskInDock(openTasksInRightSidebar, rightDockActive, initialTab)) {
-      openTaskDetailInMainPanel(task, initialTab);
+    const route = getBoardTaskOpenRoute({
+      isMobile,
+      openMobileTasksInPopup,
+      openTasksInRightSidebar,
+      rightDockActive,
+      initialTab,
+    });
+
+    if (route === "popup") {
+      popOutTaskDetail(task);
       return;
     }
-    rightDock.openTaskInDock(task);
-  }, [openTaskDetailInMainPanel, openTasksInRightSidebar, rightDock, rightDockActive]);
+
+    if (route === "dock") {
+      rightDock.openTaskInDock(task);
+      return;
+    }
+
+    openTaskDetailInMainPanel(task, initialTab);
+  }, [isMobile, openMobileTasksInPopup, openTaskDetailInMainPanel, openTasksInRightSidebar, popOutTaskDetail, rightDock, rightDockActive]);
 
   useEffect(() => {
     if (!openTasksInRightSidebar) {
@@ -1598,6 +1634,7 @@ function AppInner() {
             onClose={close}
             hideHeader
             dragHandleSelector=".task-detail-content--embedded > .modal-header"
+            className="floating-window--task-detail"
           >
             <TaskDetailContent
               task={liveTask}

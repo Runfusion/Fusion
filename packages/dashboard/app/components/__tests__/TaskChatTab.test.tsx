@@ -8,6 +8,7 @@ import { TaskChatTab } from "../TaskChatTab";
 import { isCliSessionLive, type CliSessionSummaryRecord } from "../TaskDetailModal";
 import { useAgentLogs } from "../../hooks/useAgentLogs";
 import { addSteeringComment, refineTask } from "../../api";
+import { readBoardWorkflowSelection, removeBoardWorkflowSelection, writeBoardWorkflowSelection } from "../../utils/boardWorkflowSelection";
 
 vi.mock("../../hooks/useAgentLogs", () => ({
   useAgentLogs: vi.fn(),
@@ -332,6 +333,7 @@ describe("TaskChatTab", () => {
   });
 
   afterEach(() => {
+    removeBoardWorkflowSelection("project-1");
     vi.useRealTimers();
     restoreMetricDescriptor("scrollTop", originalScrollTopDescriptor);
     restoreMetricDescriptor("scrollHeight", originalScrollHeightDescriptor);
@@ -1471,12 +1473,33 @@ describe("TaskChatTab", () => {
       expect(mockedRefineTask).toHaveBeenCalledWith("FN-001", "Please add a follow-up report", "project-1");
     });
     expect(mockedAddSteeringComment).not.toHaveBeenCalled();
-    expect(within(screen.getByTestId("task-chat-transcript")).getByText("You")).toBeVisible();
-    expect(within(screen.getByTestId("task-chat-transcript")).getByText("Please add a follow-up report")).toBeVisible();
+    expect(within(screen.getByTestId("task-chat-transcript")).queryByText("You")).not.toBeInTheDocument();
+    expect(within(screen.getByTestId("task-chat-transcript")).queryByText("Please add a follow-up report")).not.toBeInTheDocument();
     expect(input).toHaveValue("");
     expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-222", "success");
     expect(onTaskUpdated).not.toHaveBeenCalledWith(refinementTask);
     expect(onTaskUpdated).not.toHaveBeenCalled();
+  });
+
+  it("preserves durable non-default workflow context after done-task refinement success", async () => {
+    const user = userEvent.setup();
+    const addToast = vi.fn();
+    writeBoardWorkflowSelection("project-1", "WF-custom");
+    mockedRefineTask.mockResolvedValue(makeTask({ id: "FN-225", column: "todo" }));
+
+    render(<TaskChatTab task={makeTask({ column: "done" })} projectId="project-1" active addToast={addToast} />);
+
+    const input = screen.getByLabelText("Message active agent session");
+    await user.type(input, "Create a focused follow-up");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(mockedRefineTask).toHaveBeenCalledWith("FN-001", "Create a focused follow-up", "project-1");
+    });
+    expect(input).toHaveValue("");
+    expect(addToast).toHaveBeenCalledWith("Refinement task created: FN-225", "success");
+    expect(readBoardWorkflowSelection("project-1")).toBe("WF-custom");
+    expect(readBoardWorkflowSelection("project-1")).not.toBe("builtin:coding");
   });
 
   it("sends an in-progress task steering message on plain Enter", async () => {

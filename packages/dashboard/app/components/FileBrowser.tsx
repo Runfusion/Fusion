@@ -39,7 +39,27 @@ function formatTime(mtime?: string): string {
 
 /** Build the full relative path for a file/directory entry */
 function entryPath(currentPath: string, name: string): string {
+  if (currentPath.startsWith("/")) {
+    const base = currentPath === "/" ? "" : currentPath.replace(/\/+$/g, "");
+    return `${base}/${name}`;
+  }
   return joinDisplayPath(currentPath, name);
+}
+
+/*
+FNXC:FileBrowser 2026-06-29-00:00:
+When the project opts into absolute slash-prefixed browsing, Up navigation must preserve filesystem-root semantics instead of collapsing `/etc` to the workspace-relative root marker.
+*/
+function parentPath(currentPath: string): string {
+  if (currentPath === "/") {
+    return "/";
+  }
+  if (currentPath.startsWith("/")) {
+    const trimmed = currentPath.replace(/\/+$/g, "");
+    const index = trimmed.lastIndexOf("/");
+    return index <= 0 ? "/" : trimmed.slice(0, index);
+  }
+  return getParentDisplayPath(currentPath);
 }
 
 // ── Context Menu State ──────────────────────────────────────────────────
@@ -537,13 +557,13 @@ export function FileBrowser({
           await deleteFile(workspace, dialog.entryFullPath, projectId);
           break;
         case "create-file": {
-          const newFilePath = joinDisplayPath(dialog.entryFullPath, value);
+          const newFilePath = entryPath(dialog.entryFullPath, value);
           await createWorkspaceFile(workspace, newFilePath, projectId);
           onSelectFile(newFilePath);
           break;
         }
         case "create-folder":
-          await createWorkspaceDirectory(workspace, joinDisplayPath(dialog.entryFullPath, value), projectId);
+          await createWorkspaceDirectory(workspace, entryPath(dialog.entryFullPath, value), projectId);
           break;
       }
 
@@ -605,7 +625,7 @@ export function FileBrowser({
           <button
             className="file-browser-up"
             onClick={() => {
-              onNavigate(getParentDisplayPath(currentPath));
+              onNavigate(parentPath(currentPath));
             }}
           >
             <ChevronRight size={16} style={{ transform: "rotate(-90deg)" }} />

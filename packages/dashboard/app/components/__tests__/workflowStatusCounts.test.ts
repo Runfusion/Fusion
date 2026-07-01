@@ -217,29 +217,38 @@ describe("computeWorkflowStatusCounts", () => {
     expect(counts.get("design")).toEqual({ todo: 0, inProgress: 2, done: 0, merging: 1 });
   });
 
-  it("excludes archived-column tasks and ignores unknown workflows or columns", () => {
+  it("excludes archived and board-hidden column tasks while stale workflows fall back to default", () => {
     const counts = computeWorkflowStatusCounts(
       [
         task("FN-archived", "archived"),
+        task("FN-hidden", "quiet"),
         task("FN-unknown-column", "missing"),
         task("FN-unknown-workflow", "todo"),
       ],
       {
         ...boardWorkflows,
+        workflows: [
+          {
+            ...boardWorkflows.workflows[0],
+            columns: [
+              ...boardWorkflows.workflows[0].columns,
+              { id: "quiet", name: "Quiet", flags: { hiddenFromBoard: true } },
+            ],
+          },
+          boardWorkflows.workflows[1],
+          boardWorkflows.workflows[2],
+        ],
         taskWorkflowIds: {
           "FN-unknown-workflow": "missing-workflow",
         },
       }
     );
 
-    expect(counts.get("default")).toEqual({ todo: 0, inProgress: 0, done: 0, merging: 0 });
+    expect(counts.get("default")).toEqual({ todo: 1, inProgress: 0, done: 0, merging: 0 });
   });
 
-  it("uses real quick-fix empty-trait columns to count the reported two done and zero in-progress state", () => {
+  it("uses real quick-fix columns to count the reported two done and zero in-progress state", () => {
     const columns = builtinWorkflowColumns("builtin:quick-fix");
-    expect(
-      columns.every((column) => Object.keys(column.flags).length === 0)
-    ).toBe(true);
 
     const counts = computeWorkflowStatusCounts(
       [task("FN-done-1", "done"), task("FN-done-2", "done")],
@@ -254,16 +263,13 @@ describe("computeWorkflowStatusCounts", () => {
     });
   });
 
-  it("falls back to canonical lifecycle ids for every linear built-in with synthesized empty traits", () => {
+  it("classifies every linear built-in's canonical lifecycle columns", () => {
     for (const workflowId of [
       "builtin:quick-fix",
       "builtin:review-heavy",
       "builtin:compound-engineering",
     ]) {
       const columns = builtinWorkflowColumns(workflowId);
-      expect(
-        columns.every((column) => Object.keys(column.flags).length === 0)
-      ).toBe(true);
 
       const counts = computeWorkflowStatusCounts(
         [

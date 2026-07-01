@@ -72,6 +72,24 @@ describe("useWorkspaceFileBrowser", () => {
     expect(result.current.entries).toEqual([]);
   });
 
+  it("keeps settings pickers project-relative when absolute browsing is disabled", async () => {
+    mockFetchWorkspaceFileList.mockResolvedValue({ path: ".", entries: [] });
+
+    const { result } = renderHook(() => (
+      useWorkspaceFileBrowser("project", true, undefined, { allowAbsolutePaths: false })
+    ));
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    act(() => {
+      result.current.setPath("/outside/project");
+    });
+
+    expect(result.current.currentPath).toBe(".");
+    expect(result.current.error).toBe("This picker only accepts project-relative paths");
+    expect(mockFetchWorkspaceFileList).toHaveBeenCalledTimes(1);
+  });
+
   it("returns hidden files and directories from the API response", async () => {
     const mockResponse: FileListResponse = {
       path: ".",

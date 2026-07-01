@@ -106,6 +106,15 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
           <input id="workspaceMode" type="checkbox" checked={form.workspaceMode === true} onChange={(e) => setForm((f) => ({ ...f, workspaceMode: e.target.checked }))}/>{t("settings.general.workspaceMode", " Workspace mode (multi-repo) ")}</label>
         <small>{t("settings.general.workspaceModeHint", "When enabled, the project root is treated as a workspace containing multiple git sub-repos. Tasks run per-sub-repo and no git repo is created at the root. Disable for single-repo projects.")}</small>
       </div>
+      {/*
+        FNXC:FileBrowser 2026-06-29-00:00:
+        This project-scoped General toggle is intentionally default-off because slash-prefixed file-browser paths can browse outside the workspace. It only affects workspace file-browser routes and keeps task-local file APIs and other path validators confined.
+      */}
+      <div className="form-group">
+        <label htmlFor="allowAbsoluteFileBrowserPaths" className="checkbox-label">
+          <input id="allowAbsoluteFileBrowserPaths" type="checkbox" checked={form.allowAbsoluteFileBrowserPaths === true} onChange={(e) => setForm((f) => ({ ...f, allowAbsoluteFileBrowserPaths: e.target.checked }))}/>{t("settings.general.allowAbsoluteFileBrowserPaths", " Allow absolute file-browser paths ")}</label>
+        <small>{t("settings.general.allowAbsoluteFileBrowserPathsHint", "When enabled, slash-prefixed paths such as /tmp can be opened in the workspace file browser. Windows drive-letter paths remain blocked, and other path validators are unchanged.")}</small>
+      </div>
       <div className="form-group">
         <label htmlFor="completionDocumentationMode">{t("settings.general.completionDocumentationAutomation", "Completion Documentation Automation")}</label>
         <select id="completionDocumentationMode" value={form.completionDocumentationMode || "off"} onChange={(e) => setForm((f) => ({

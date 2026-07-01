@@ -21,7 +21,11 @@ export type {
   PushNotificationManagerOptions,
 } from "./plugins/push-notifications.js";
 export { ShareManager } from "./plugins/share.js";
-export { MobileNativeShellBridge } from "./plugins/native-shell.js";
+export {
+  AndroidBackButtonManager,
+  FUSION_NATIVE_BACK_EVENT,
+  MobileNativeShellBridge,
+} from "./plugins/native-shell.js";
 export { buildMobileShellHandoff } from "./plugins/shell-handoff.js";
 export { QrScanner, parseQrConnectionPayload } from "./plugins/qr-scanner.js";
 export {
@@ -83,6 +87,7 @@ export function installMobileShellBridge(
 ): MobileNativeShellBridge {
   const bridge = new MobileNativeShellBridge();
   (target as Window & { fusionShell?: MobileNativeShellBridge }).fusionShell = bridge;
+  void bridge.initializeNativeBackButton();
   return bridge;
 }
 

@@ -186,12 +186,19 @@ vi.mock("../../components/TaskDetailModal", () => ({
   TaskDetailContent: ({
     task,
     onBackToBoard,
+    onOpenDetail,
   }: {
     task: { id: string; title?: string };
     onBackToBoard?: () => void;
+    onOpenDetail?: (task: { id: string; title: string }) => void;
   }) => (
     <div data-testid="task-detail-main-panel-content">
       {onBackToBoard ? <button type="button" data-testid="task-detail-back-to-board" onClick={onBackToBoard}>Back to board</button> : null}
+      {task.id === "FN-1" && onOpenDetail ? (
+        <button type="button" data-testid="task-detail-open-nested" onClick={() => onOpenDetail({ id: "FN-2", title: "Nested Main Panel Task" })}>
+          Open nested
+        </button>
+      ) : null}
       <h2>{task.title ?? task.id}</h2>
     </div>
   ),
@@ -307,6 +314,16 @@ function dispatchPopState(state: Record<string, unknown> | null) {
   });
 }
 
+function dispatchNativeAndroidBack(): boolean {
+  let handled = false;
+  act(() => {
+    const event = new CustomEvent("fusion:native-back", { cancelable: true, detail: { source: "android-back" } });
+    window.dispatchEvent(event);
+    handled = event.defaultPrevented;
+  });
+  return handled;
+}
+
 async function renderAppAndWait(expectedTestId: string = "board-view") {
   const result = render(<App />);
   await waitFor(() => {
@@ -318,6 +335,7 @@ async function renderAppAndWait(expectedTestId: string = "board-view") {
 describe("Task detail mobile swipe-back", () => {
   const originalPushState = window.history.pushState;
   const originalReplaceState = window.history.replaceState;
+  const originalBack = window.history.back;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -345,11 +363,87 @@ describe("Task detail mobile swipe-back", () => {
     localStorage.clear();
     window.history.pushState = vi.fn();
     window.history.replaceState = vi.fn();
+    window.history.back = vi.fn();
   });
 
   afterEach(() => {
     window.history.pushState = originalPushState;
     window.history.replaceState = originalReplaceState;
+    window.history.back = originalBack;
+  });
+
+  it("dismisses the board main-panel task detail on native Android Back", async () => {
+    const task = makeTask("FN-1", "Board Detail");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    await renderAppAndWait("board-view");
+    fireEvent.click(screen.getByTestId("open-task-FN-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-detail-main-panel-content")).toBeInTheDocument();
+    });
+
+    expect(dispatchNativeAndroidBack()).toBe(true);
+    expect(window.history.back).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("task-detail-main-panel-content")).toBeInTheDocument();
+    dispatchPopState({ navIndex: 0 });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
+      expect(screen.getByTestId("board-view")).toBeInTheDocument();
+    });
+  });
+
+  it("restores the previous board main-panel detail on native Android Back", async () => {
+    const task = makeTask("FN-1", "Parent Main Panel Task");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task, makeTask("FN-2", "Nested Main Panel Task")],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    await renderAppAndWait("board-view");
+    fireEvent.click(screen.getByTestId("open-task-FN-1"));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Parent Main Panel Task" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("task-detail-open-nested"));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Nested Main Panel Task" })).toBeInTheDocument();
+    });
+    expect(window.history.pushState).toHaveBeenCalledTimes(2);
+
+    expect(dispatchNativeAndroidBack()).toBe(true);
+    expect(screen.getByRole("heading", { name: "Nested Main Panel Task" })).toBeInTheDocument();
+    dispatchPopState({ navIndex: 1 });
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Parent Main Panel Task" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "Nested Main Panel Task" })).toBeNull();
   });
 
   it("dismisses the board main-panel task detail on mobile popstate", async () => {
@@ -382,6 +476,80 @@ describe("Task detail mobile swipe-back", () => {
       expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
       expect(screen.getByTestId("board-view")).toBeInTheDocument();
     });
+  });
+
+  it("dismisses the list-mobile task detail on native Android Back", async () => {
+    const task = makeTask("FN-1", "Mobile List Detail");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
+
+    await renderAppAndWait("list-view");
+    fireEvent.click(screen.getByTestId("list-open-FN-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
+      expect(screen.getByTestId("task-detail-mobile-header-mode")).toHaveTextContent("back");
+    });
+
+    expect(dispatchNativeAndroidBack()).toBe(true);
+    expect(window.history.back).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
+    dispatchPopState({ navIndex: 0 });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-detail-modal")).toBeNull();
+      expect(screen.getByTestId("list-view")).toBeInTheDocument();
+    });
+  });
+
+  it("does not swallow native Android Back when no Fusion nav entry exists", async () => {
+    await renderAppAndWait("board-view");
+
+    expect(dispatchNativeAndroidBack()).toBe(false);
+    expect(window.history.back).not.toHaveBeenCalled();
+  });
+
+  it("leaves desktop browser behavior unchanged for native Back events without task-detail history", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    const task = makeTask("FN-1", "Desktop List Detail");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
+
+    await renderAppAndWait("list-view");
+    fireEvent.click(screen.getByTestId("list-open-FN-1"));
+
+    expect(dispatchNativeAndroidBack()).toBe(false);
+    expect(window.history.pushState).not.toHaveBeenCalled();
+    expect(window.history.back).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("task-detail-modal")).toBeNull();
   });
 
   it("dismisses the list-mobile task detail on mobile popstate", async () => {
@@ -503,6 +671,52 @@ describe("Task detail mobile swipe-back", () => {
       expect(screen.getByRole("dialog", { name: "Parent Task" })).toBeInTheDocument();
     });
     expect(screen.queryByRole("dialog", { name: "Nested Task" })).toBeNull();
+  });
+
+  it("consumes repeated native Android Back events while nested mobile detail entries exist", async () => {
+    const task = makeTask("FN-1", "Parent Task");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task, makeTask("FN-2", "Nested Task")],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+    localStorage.setItem("kb-dashboard-view-mode", "project");
+    localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
+
+    await renderAppAndWait("list-view");
+    fireEvent.click(screen.getByTestId("list-open-FN-1"));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Parent Task" })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("task-detail-open-nested"));
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Nested Task" })).toBeInTheDocument();
+    });
+
+    expect(dispatchNativeAndroidBack()).toBe(true);
+    expect(screen.getByRole("dialog", { name: "Nested Task" })).toBeInTheDocument();
+    dispatchPopState({ navIndex: 1 });
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: "Parent Task" })).toBeInTheDocument();
+    });
+
+    expect(dispatchNativeAndroidBack()).toBe(true);
+    dispatchPopState({ navIndex: 0 });
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-detail-modal")).toBeNull();
+      expect(screen.getByTestId("list-view")).toBeInTheDocument();
+    });
+    expect(window.history.back).toHaveBeenCalledTimes(2);
   });
 
   it("pops multiple mobile detail entries back to the list target on a rapid Android-style pop", async () => {

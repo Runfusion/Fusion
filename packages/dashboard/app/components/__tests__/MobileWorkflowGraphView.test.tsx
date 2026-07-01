@@ -66,7 +66,7 @@ const rows: MobileWorkflowNodeSummary[] = [
 ];
 
 describe("MobileWorkflowGraphView", () => {
-  it("renders graph rows and selects nodes and edges", () => {
+  it("renders graph rows and selects nodes, editable pencil rows, and edges", () => {
     const onSelectNode = vi.fn();
     const onSelectEdge = vi.fn();
     render(
@@ -81,6 +81,11 @@ describe("MobileWorkflowGraphView", () => {
 
     fireEvent.click(within(screen.getByTestId("mobile-wf-node-start")).getByRole("button", { name: /start/i }));
     expect(onSelectNode).toHaveBeenCalledWith("start");
+
+    const promptMain = within(screen.getByTestId("mobile-wf-node-prompt")).getByRole("button", { name: /prompt/i });
+    expect(promptMain.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(promptMain);
+    expect(onSelectNode).toHaveBeenCalledWith("prompt");
 
     fireEvent.click(screen.getByTestId("mobile-wf-edge-e1"));
     expect(onSelectEdge).toHaveBeenCalledWith("e1");

@@ -155,20 +155,24 @@ vi.mock("../../components/Board", () => ({
     onOpenDetail: (task: Task) => void;
     onOpenDetailWithTab?: (task: Task, initialTab: "changes" | "retries" | "workflow") => void;
   }) => (
-    <div data-testid="board-view">
-      {tasks.map((task) => (
-        <div key={task.id}>
-          <button type="button" data-testid={`open-task-${task.id}`} onClick={() => onOpenDetail(task)}>
-            {task.title}
-          </button>
-          {task.modifiedFiles && task.modifiedFiles.length > 0 ? (
-            <button type="button" data-testid={`open-task-changes-${task.id}`} onClick={() => onOpenDetailWithTab?.(task, "changes")}>
-              Files changed
-            </button>
-          ) : null}
+    <main id="board" className="board" data-testid="board-view">
+      <section className="column" data-column="todo">
+        <div className="column-body" data-testid="todo-column-body">
+          {tasks.map((task) => (
+            <div key={task.id}>
+              <button type="button" data-testid={`open-task-${task.id}`} onClick={() => onOpenDetail(task)}>
+                {task.title}
+              </button>
+              {task.modifiedFiles && task.modifiedFiles.length > 0 ? (
+                <button type="button" data-testid={`open-task-changes-${task.id}`} onClick={() => onOpenDetailWithTab?.(task, "changes")}>
+                  Files changed
+                </button>
+              ) : null}
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
+      </section>
+    </main>
   ),
 }));
 
@@ -671,6 +675,87 @@ describe("Navigation history integration", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
       expect(screen.getByTestId("board-view")).toBeTruthy();
+    });
+  });
+
+  it("returns desktop board-detail Back to board to the board without breaking history", async () => {
+    mockUseViewportMode.mockReturnValue("desktop");
+    const task = makeTask("FN-1", "Desktop Detail Card");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    await renderAppAndWait();
+    const pushCallsBefore = (window.history.pushState as any).mock.calls.length;
+
+    fireEvent.click(screen.getByTestId("open-task-FN-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-detail-main-panel-content")).toBeTruthy();
+      expect(screen.queryByTestId("board-view")).toBeNull();
+    });
+    expect((window.history.pushState as any).mock.calls.length).toBeGreaterThan(pushCallsBefore);
+
+    // FNXC:BoardNavigation 2026-06-29-20:45: Desktop board-card detail keeps the same full-panel Back-to-board history contract while mobile adds scroll restoration coverage.
+    fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
+    dispatchPopState({ navIndex: 0 });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
+      expect(screen.getByTestId("board-view")).toBeTruthy();
+    });
+  });
+
+  it("restores mobile board scroll after Back to board", async () => {
+    mockUseViewportMode.mockReturnValue("mobile");
+    const task = makeTask("FN-1", "Scrolled Mobile Card");
+    mockUseTasks.mockImplementation(() => ({
+      tasks: [task],
+      createTask: mockCreateTask,
+      moveTask: vi.fn(),
+      deleteTask: vi.fn(),
+      mergeTask: vi.fn(),
+      retryTask: vi.fn(),
+      updateTask: vi.fn(),
+      duplicateTask: vi.fn(),
+      archiveTask: vi.fn(),
+      unarchiveTask: vi.fn(),
+      archiveAllDone: vi.fn(),
+      refreshTasks: vi.fn(),
+    }));
+
+    await renderMobileAppAndWait();
+
+    const board = screen.getByTestId("board-view");
+    const todoBody = screen.getByTestId("todo-column-body");
+    board.scrollLeft = 240;
+    todoBody.scrollTop = 380;
+
+    // FNXC:BoardNavigation 2026-06-29-20:45: Mobile Back-to-board must return to the clicked card's horizontal board offset and vertical lane offset after the full-panel detail replaces the board.
+    fireEvent.click(screen.getByTestId("open-task-FN-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-detail-main-panel-content")).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
+    dispatchPopState({ navIndex: 0 });
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
+      expect(screen.getByTestId("board-view").scrollLeft).toBe(240);
+      expect(screen.getByTestId("todo-column-body").scrollTop).toBe(380);
     });
   });
 

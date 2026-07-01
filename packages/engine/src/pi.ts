@@ -2149,6 +2149,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     if (selectionResult.diagnostics.length > 0) {
       const purpose = effectiveSkillSelection.sessionPurpose ?? "skills";
       for (const diag of selectionResult.diagnostics) {
+        if (diag.type === "info" && diag.message.startsWith("Configured skill pattern:")) continue;
         const msg = `[skills] [${purpose}] ${diag.type}: ${diag.message}`;
         if (diag.type === "error") piLog.error(msg);
         else if (diag.type === "warning") piLog.warn(msg);

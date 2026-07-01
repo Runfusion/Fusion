@@ -234,6 +234,23 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("heading", { name: "Authentication" })).toBeInTheDocument();
   });
 
+  it("keeps settings file pickers workspace-confined even when absolute browsing exists", async () => {
+    renderModal({ initialSection: "worktrees" });
+    await waitForSettingsModalReady();
+
+    expect(mockUseWorkspaceFileBrowser).toHaveBeenCalledWith(
+      "project",
+      expect.any(Boolean),
+      undefined,
+      { allowAbsolutePaths: false },
+    );
+    expect(mockUseWorkspaceFileBrowser.mock.calls.filter((call) => call[0] === "project")).toEqual(
+      expect.arrayContaining([
+        ["project", false, undefined, { allowAbsolutePaths: false }],
+      ]),
+    );
+  });
+
   // FNXC:EmbeddedPresentation 2026-06-22-12:00:
   // presentation="embedded" (SettingsView) was a zero-coverage branch. Assert the embedded contract via
   // useEmbeddedPresentation: embedded root class present, region role (not dialog), no fixed .modal-overlay

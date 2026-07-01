@@ -7,11 +7,18 @@ import { useTranslation } from "react-i18next";
 import type { BoardWorkflowDefinition } from "../api";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
 
+export interface WorkflowSwitcherAggregateOption {
+  id: string;
+  name: string;
+}
+
 export interface WorkflowSwitcherProps {
   workflows: BoardWorkflowDefinition[];
   value: string;
   onChange: (id: string) => void;
   counts: Map<string, WorkflowStatusCounts>;
+  /** Optional dashboard-only aggregate view. It is rendered before real workflows and is never editable. */
+  aggregateOption?: WorkflowSwitcherAggregateOption;
   /** Fired each time the dropdown transitions from closed to open so consumers can refresh count data. */
   onOpen?: () => void;
   label?: string;
@@ -79,7 +86,7 @@ function getCounts(counts: Map<string, WorkflowStatusCounts>, workflowId: string
  * Opening the dropdown must refresh workflow count data because task-to-workflow assignments do not emit board-workflows invalidation events.
  * Fire onOpen only on closed-to-open transitions so consumers can refetch without close-time calls or render loops.
  */
-export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, label: labelProp, onEditWorkflow, onCreateWorkflow }: WorkflowSwitcherProps) {
+export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregateOption, onOpen, label: labelProp, onEditWorkflow, onCreateWorkflow }: WorkflowSwitcherProps) {
   const { t } = useTranslation("app");
   const label = labelProp ?? t("workflowSwitcher.label", "Workflow");
   const todoLabel = t("workflowSwitcher.todo", "Todo");
@@ -102,8 +109,16 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
   const measurementCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const onOpenRef = useRef(onOpen);
 
-  const selectedIndex = useMemo(() => Math.max(0, workflows.findIndex((workflow) => workflow.id === value)), [value, workflows]);
-  const selectedWorkflow = workflows[selectedIndex] ?? workflows[0] ?? null;
+  const switcherOptions = useMemo(() => {
+    /*
+    FNXC:WorkflowSwitcher 2026-06-29-16:00:
+    The Board can expose a dashboard-only "All workflows" filter before real workflows, but that sentinel is not a backend workflow id and must never receive workflow edit affordances.
+    Keep the aggregate option in this presentation layer so real workflow sorting, counts, create/edit actions, and durable selection semantics remain owned by the existing Board/useBoardWorkflows path.
+    */
+    return aggregateOption ? [aggregateOption, ...workflows] : workflows;
+  }, [aggregateOption, workflows]);
+  const selectedIndex = useMemo(() => Math.max(0, switcherOptions.findIndex((workflow) => workflow.id === value)), [value, switcherOptions]);
+  const selectedWorkflow = switcherOptions[selectedIndex] ?? switcherOptions[0] ?? null;
   const selectedCounts = selectedWorkflow ? getCounts(counts, selectedWorkflow.id) : ZERO_COUNTS;
 
   const measureLongestOptionNameWidth = useCallback((names: string[]) => {
@@ -137,7 +152,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
     const openUpward = spaceBelow < preferredHeight && spaceAbove > spaceBelow;
     const availableHeight = Math.max((openUpward ? spaceAbove : spaceBelow) - verticalPadding - gap, 160);
     const maxHeight = Math.max(Math.min(availableHeight, preferredHeight), 160);
-    const longestNameWidth = measureLongestOptionNameWidth(workflows.map((workflow) => workflow.name));
+    const longestNameWidth = measureLongestOptionNameWidth(switcherOptions.map((workflow) => workflow.name));
     const width = computeMenuWidth({ longestNameWidth, triggerWidth: rect.width, viewportWidth, horizontalPadding });
     const left = Math.min(Math.max(triggerLeft, horizontalPadding), viewportWidth - horizontalPadding - width) + offsetLeft;
     const top = openUpward
@@ -145,7 +160,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
       : Math.min(triggerBottom + gap + offsetTop, viewportHeight + offsetTop - verticalPadding - maxHeight);
 
     setDropdownPosition({ top, left, width, maxHeight });
-  }, [measureLongestOptionNameWidth, workflows]);
+  }, [measureLongestOptionNameWidth, switcherOptions]);
 
   useEffect(() => {
     onOpenRef.current = onOpen;
@@ -236,7 +251,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
         if (!isOpen) {
           openDropdown();
         } else {
-          setHighlightedIndex((current) => (workflows.length ? (current + 1) % workflows.length : 0));
+          setHighlightedIndex((current) => (switcherOptions.length ? (current + 1) % switcherOptions.length : 0));
         }
         break;
       case "ArrowUp":
@@ -244,14 +259,14 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
         if (!isOpen) {
           openDropdown();
         } else {
-          setHighlightedIndex((current) => (workflows.length ? (current - 1 + workflows.length) % workflows.length : 0));
+          setHighlightedIndex((current) => (switcherOptions.length ? (current - 1 + switcherOptions.length) % switcherOptions.length : 0));
         }
         break;
       case "Enter":
       case " ":
         event.preventDefault();
         if (isOpen) {
-          const workflow = workflows[highlightedIndex];
+          const workflow = switcherOptions[highlightedIndex];
           if (workflow) selectWorkflow(workflow.id);
         } else {
           openDropdown();
@@ -265,7 +280,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
         setIsOpen(false);
         break;
     }
-  }, [highlightedIndex, isOpen, openDropdown, selectWorkflow, workflows]);
+  }, [highlightedIndex, isOpen, openDropdown, selectWorkflow, switcherOptions]);
 
   if (!selectedWorkflow) return null;
 
@@ -315,10 +330,11 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
         }}
       >
         <div ref={listRef} className="workflow-switcher-options">
-          {workflows.map((workflow, index) => {
+          {switcherOptions.map((workflow, index) => {
             const workflowCounts = getCounts(counts, workflow.id);
             const isSelected = workflow.id === selectedWorkflow.id;
             const isHighlighted = index === highlightedIndex;
+            const isAggregateOption = aggregateOption?.id === workflow.id;
             return (
               <div
                 key={workflow.id}
@@ -338,7 +354,7 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, onOpen, l
                   {renderCountBadges(workflowCounts, "option")}
                   {renderAccessibleCounts(workflowCounts)}
                 </button>
-                {onEditWorkflow ? (
+                {onEditWorkflow && !isAggregateOption ? (
                   <button
                     type="button"
                     className="btn btn-icon btn-sm workflow-switcher-edit"

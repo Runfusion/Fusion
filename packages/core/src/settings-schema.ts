@@ -283,6 +283,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   groupOverlappingFiles: true,
   ignoreHiddenOverlapPaths: true,
   overlapIgnorePaths: [],
+  /*
+  FNXC:FileBrowser 2026-06-29-00:00:
+  Absolute file-browser paths are disabled unless a project explicitly opts in, preserving the workspace boundary for normal installs while allowing local admin browsing through the same file-size, binary, type, and permission checks.
+  */
+  allowAbsoluteFileBrowserPaths: false,
   autoMerge: true,
   planApprovalMode: "workflow",
   // U18 (R15): the Review-response loop is default-on. Independent of `autoMerge` —
@@ -317,6 +322,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   recycleWorktrees: false,
   showWorktreeGrouping: false,
   openTasksInRightSidebar: false,
+  /*
+  FNXC:MobileTaskPopups 2026-06-29-00:00:
+  Default off preserves current mobile board-card task detail behavior. The dashboard only consults this project setting for mobile board-card clicks without a deep tab, and reuses the existing task pop-out surface without changing desktop/right-dock routing.
+  */
+  openMobileTasksInPopup: false,
   executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   worktrunk: {

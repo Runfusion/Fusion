@@ -44,6 +44,13 @@ function isBinaryFile(filename: string): boolean {
 function getParentDirectory(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
   const lastSlash = normalized.lastIndexOf("/");
+  /*
+  FNXC:FileBrowser 2026-06-29-21:30:
+  Initial absolute files in the filesystem root, such as `/README.md`, must reopen the browser at `/` instead of workspace root. The absolute-path setting is slash-prefixed only, so preserve POSIX root semantics here without adding Windows drive-letter behavior.
+  */
+  if (normalized.startsWith("/") && lastSlash === 0) {
+    return "/";
+  }
   return lastSlash > 0 ? normalized.slice(0, lastSlash) : ".";
 }
 
@@ -228,12 +235,27 @@ export function FileBrowserModal({
     setContent(originalContent);
   }, [originalContent, setContent]);
 
+  /*
+  FNXC:FileBrowser 2026-06-29-00:00:
+  Worktree switches must keep the last selected file path so users can recover from a load error caused by viewing the right path in the wrong workspace. The raw browser hook still resets each new workspace to root, so the modal re-points the sidebar to the selected file's parent directory after that reset while mobile keeps the editor pane active.
+  */
+  const previousWorkspaceRef = useRef(currentWorkspace);
+  useEffect(() => {
+    const workspaceChanged = previousWorkspaceRef.current !== currentWorkspace;
+    if (workspaceChanged && selectedFile) {
+      setPath(getParentDirectory(selectedFile));
+      if (isMobile) {
+        setMobileView("editor");
+      }
+    }
+    previousWorkspaceRef.current = currentWorkspace;
+  }, [currentWorkspace, isMobile, selectedFile, setPath]);
+
   const handleWorkspaceSelect = useCallback((workspace: string) => {
     setCurrentWorkspace(workspace);
-    setSelectedFile(null);
-    setMobileView("list");
+    setMobileView(selectedFile ? "editor" : "list");
     onWorkspaceChange?.(workspace);
-  }, [onWorkspaceChange]);
+  }, [onWorkspaceChange, selectedFile]);
 
   const persistSidebarWidth = useCallback((width: number) => {
     try {

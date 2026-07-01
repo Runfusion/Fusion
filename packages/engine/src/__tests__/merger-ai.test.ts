@@ -403,6 +403,18 @@ describe("runAiMerge", () => {
     expect(result.noOp).toBe(true);
     expect(result.merged).toBe(false);
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-1",
+      expect.objectContaining({
+        status: null,
+        mergeDetails: expect.objectContaining({
+          mergeConfirmed: true,
+          noOpMerge: true,
+          noOpReason: "no-net-changes",
+        }),
+      }),
+    );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
   it("demotes a no-commits task with skipped-out work instead of AI empty-merge finalizing done", async () => {
@@ -473,6 +485,41 @@ describe("runAiMerge", () => {
       mergeAgent: vi.fn(), reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
     })).rejects.toThrow(/work appears lost/);
     expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  it("recovers an executed missing-branch task with prior AI no-op finalization proof", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { store } = makeStore(dir, {
+      branch: "fusion/ghost",
+      baseCommitSha: "0123456789abcdef",
+      log: [
+        {
+          timestamp: new Date().toISOString(),
+          action: "AI merge: fusion/ghost had no net changes vs main — finalizing as no-op",
+        },
+        {
+          timestamp: new Date().toISOString(),
+          action: "AI merge: finalized FN-1 (no-op), finalizing task row",
+        },
+      ],
+    });
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: vi.fn(), reviewAgent: vi.fn(),
+    });
+
+    expect(result.noOp).toBe(true);
+    expect(store.updateTask).toHaveBeenCalledWith(
+      "FN-1",
+      expect.objectContaining({
+        status: null,
+        mergeDetails: expect.objectContaining({
+          mergeConfirmed: true,
+          noOpMerge: true,
+        }),
+      }),
+    );
+    expect(store.moveTask).toHaveBeenCalledWith("FN-1", "done", expect.objectContaining({ moveSource: "engine", preserveProgress: true }));
   });
 
   it("finalizes as a no-op when an already-merged task's branch is gone (re-process)", async () => {

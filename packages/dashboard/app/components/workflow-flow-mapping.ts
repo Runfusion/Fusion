@@ -47,6 +47,9 @@ interface WorkflowOptionalGroupConfig {
   template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] };
 }
 
+const OPTIONAL_GROUP_BOUNDARY_ENTRY_HANDLE = "optional-boundary-entry";
+const OPTIONAL_GROUP_BOUNDARY_EXIT_HANDLE = "optional-boundary-exit";
+
 // WorkflowFieldDefinition is imported from @fusion/core above (KTD-13/14).
 // Re-exported so existing importers that reference WorkflowFieldDefinitionShape
 // can migrate; callers should prefer WorkflowFieldDefinition directly.
@@ -282,6 +285,34 @@ function optionalGroupConfigOf(node: WorkflowIrNode): WorkflowOptionalGroupConfi
   return cfg as WorkflowOptionalGroupConfig;
 }
 
+/*
+FNXC:WorkflowOptionalGroup 2026-06-29-20:10:
+Optional-group template entry/exit connectivity is visually owned by the container's outer handles. Child boundary handles must not imply disconnected IR edges, so derive child boundary metadata from forward internal template edges only; rework loops route backward and cannot erase the review-step exit or execute-step entry.
+*/
+function optionalGroupTemplateBoundaryById(
+  template: WorkflowOptionalGroupConfig["template"],
+): Map<string, { entry: boolean; exit: boolean }> {
+  const templateNodeIds = new Set(template.nodes.map((node) => node.id));
+  const incomingForward = new Set<string>();
+  const outgoingForward = new Set<string>();
+
+  for (const edge of template.edges) {
+    if (edge.kind === "rework") continue;
+    if (!templateNodeIds.has(edge.from) || !templateNodeIds.has(edge.to)) continue;
+    incomingForward.add(edge.to);
+    outgoingForward.add(edge.from);
+  }
+
+  const boundaries = new Map<string, { entry: boolean; exit: boolean }>();
+  for (const node of template.nodes) {
+    boundaries.set(node.id, {
+      entry: !incomingForward.has(node.id),
+      exit: !outgoingForward.has(node.id),
+    });
+  }
+  return boundaries;
+}
+
 function groupTemplateConfigOf(
   node: WorkflowIrNode,
 ): WorkflowForeachConfig | WorkflowLoopConfig | WorkflowOptionalGroupConfig | undefined {
@@ -384,11 +415,174 @@ function irEdgeToFlow(edge: WorkflowIrEdge, index: number, idScope = ""): FlowEd
  *  visually thin. Applied per-edge (defaultEdgeOptions only seeds new edges). */
 export const WF_EDGE_INTERACTION_WIDTH = 24;
 
+export const WF_TEMPLATE_BOUNDARY_EDGE_KIND = "template-boundary";
+
+export function isVisualOnlyWorkflowEdge(edge: FlowEdge): boolean {
+  return edge.data?.visualOnly === WF_TEMPLATE_BOUNDARY_EDGE_KIND;
+}
+
 /** Short display label for an edge condition. `outcome:<verdict>` conditions
  *  render as the verdict alone (KTD-4); everything else verbatim. */
 export function shortConditionLabel(condition: string): string {
   if (condition.startsWith("outcome:")) return condition.slice("outcome:".length);
   return condition;
+}
+
+function templateBoundaryNodeIds(template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] }): { entryIds: string[]; exitIds: string[] } {
+  const incoming = new Map<string, number>();
+  const outgoing = new Map<string, number>();
+  for (const node of template.nodes) {
+    incoming.set(node.id, 0);
+    outgoing.set(node.id, 0);
+  }
+  for (const edge of template.edges) {
+    if (edge.kind === "rework") continue;
+    if (!incoming.has(edge.to) || !outgoing.has(edge.from)) continue;
+    incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
+    outgoing.set(edge.from, (outgoing.get(edge.from) ?? 0) + 1);
+  }
+  return {
+    entryIds: template.nodes.filter((node) => (incoming.get(node.id) ?? 0) === 0).map((node) => node.id),
+    exitIds: template.nodes.filter((node) => (outgoing.get(node.id) ?? 0) === 0).map((node) => node.id),
+  };
+}
+
+/*
+ * FNXC:WorkflowOptionalGroup 2026-06-29-20:41:
+ * Single-node optional groups such as Plan Review and Code Review looked disconnected because their executable template child had no internal template edge. Add read-only boundary connector edges in React Flow so the child visibly participates in the block, but mark them visual-only and filter them out of save/mobile serialization so the workflow IR keeps the real optional-group entry/exit contract. Boundary connectors use the same forward-edge-only rule as child handle metadata because rework loops are review routing, not alternate optional-group entry/exit ownership.
+ *
+ * FNXC:WorkflowOptionalGroup 2026-06-29-20:56:
+ * Surface enumeration for FN-7249 keeps the fix constrained to editor visualization surfaces: desktop React Flow handles/edges, mobile outline filtering, parentId template children, and built-in Plan Review/Code Review single-child optional groups. Preserve saved/manual layouts and the core optional-group execution contract while repairing only visual child-boundary connectivity.
+ *
+ * FNXC:WorkflowOptionalGroup 2026-06-29-21:25:
+ * Optional groups may have multiple independent template entries or exits. Emit one visual-only connector per boundary child so boundary-handle suppression never creates a disconnected child with no corresponding container-owned visual path.
+ *
+ * FNXC:WorkflowOptionalGroup 2026-06-29-22:16:
+ * Boundary connector edges are explanatory editor chrome, not workflow topology. Keep them non-selectable and non-deletable so authors cannot mistake the visual entry/exit guides for persisted optional-group template edges.
+ *
+ * FNXC:WorkflowOptionalGroup 2026-06-29-22:47:
+ * Boundary connector edges must attach entry guides to a left-side container source handle and exit guides to a right-side container target handle. The normal optional-group target/source handles remain reserved for top-level workflow edges, so visual-only child connectors do not reverse the perceived execution boundary.
+ */
+function optionalGroupBoundaryEdgesForFlowIds(groupId: string, entryFlowIds: readonly string[], exitFlowIds: readonly string[]): FlowEdge[] {
+  const visualEdges: FlowEdge[] = [];
+  for (const entryFlowId of entryFlowIds) {
+    const entryId = templateNodeIdFromChild(groupId, entryFlowId);
+    visualEdges.push({
+      id: `e-${groupId}-boundary-entry-${entryId}`,
+      source: groupId,
+      sourceHandle: OPTIONAL_GROUP_BOUNDARY_ENTRY_HANDLE,
+      target: entryFlowId,
+      label: "entry",
+      data: { condition: "entry", visualOnly: WF_TEMPLATE_BOUNDARY_EDGE_KIND, boundary: "entry" },
+      className: "wf-edge-template-boundary",
+      interactionWidth: WF_EDGE_INTERACTION_WIDTH,
+      selectable: false,
+      deletable: false,
+      markerEnd: undefined,
+      zIndex: WF_EDGE_Z_INDEX,
+    });
+  }
+  for (const exitFlowId of exitFlowIds) {
+    const exitId = templateNodeIdFromChild(groupId, exitFlowId);
+    visualEdges.push({
+      id: `e-${groupId}-boundary-exit-${exitId}`,
+      source: exitFlowId,
+      target: groupId,
+      targetHandle: OPTIONAL_GROUP_BOUNDARY_EXIT_HANDLE,
+      label: "exit",
+      data: { condition: "exit", visualOnly: WF_TEMPLATE_BOUNDARY_EDGE_KIND, boundary: "exit" },
+      className: "wf-edge-template-boundary",
+      interactionWidth: WF_EDGE_INTERACTION_WIDTH,
+      selectable: false,
+      deletable: false,
+      markerEnd: undefined,
+      zIndex: WF_EDGE_Z_INDEX,
+    });
+  }
+  return visualEdges;
+}
+
+function optionalGroupBoundaryEdges(node: WorkflowIrNode, template: { nodes: WorkflowIrNode[]; edges: WorkflowIrEdge[] }): FlowEdge[] {
+  if (node.kind !== "optional-group" || template.nodes.length === 0) return [];
+  const { entryIds, exitIds } = templateBoundaryNodeIds(template);
+  return optionalGroupBoundaryEdgesForFlowIds(
+    node.id,
+    entryIds.map((entryId) => foreachChildFlowId(node.id, entryId)),
+    exitIds.map((exitId) => foreachChildFlowId(node.id, exitId)),
+  );
+}
+
+/*
+ * FNXC:WorkflowOptionalGroup 2026-06-29-23:31:
+ * Optional-group boundary connector edges are derived editor chrome. Recompute them after live canvas node/edge mutations so adding, deleting, or retagging internal template edges immediately moves entry/exit guides without waiting for a save/reload round-trip.
+ */
+export function refreshOptionalGroupVisualBoundaries(
+  nodes: FlowNode<WorkflowFlowNodeData>[],
+  edges: FlowEdge[],
+): { nodes: FlowNode<WorkflowFlowNodeData>[]; edges: FlowEdge[] } {
+  const childrenByGroup = new Map<string, FlowNode<WorkflowFlowNodeData>[]>();
+  for (const node of nodes) {
+    if (!node.parentId) continue;
+    const arr = childrenByGroup.get(node.parentId) ?? [];
+    arr.push(node);
+    childrenByGroup.set(node.parentId, arr);
+  }
+
+  const groupIds = new Set(
+    nodes
+      .filter((node) => node.data.kind === "optional-group")
+      .map((node) => node.id),
+  );
+  const childToOptionalGroup = new Map<string, string>();
+  for (const groupId of groupIds) {
+    for (const child of childrenByGroup.get(groupId) ?? []) childToOptionalGroup.set(child.id, groupId);
+  }
+
+  const nonVisualEdges = edges.filter((edge) => !isVisualOnlyWorkflowEdge(edge));
+  const boundaryByChild = new Map<string, { entry: boolean; exit: boolean }>();
+  const nextVisualEdges: FlowEdge[] = [];
+
+  for (const groupId of groupIds) {
+    const children = childrenByGroup.get(groupId) ?? [];
+    if (children.length === 0) continue;
+    const childIds = new Set(children.map((child) => child.id));
+    const incomingForward = new Set<string>();
+    const outgoingForward = new Set<string>();
+    for (const edge of nonVisualEdges) {
+      if ((edge.data?.kind as string | undefined) === "rework") continue;
+      if (!childIds.has(edge.source) || !childIds.has(edge.target)) continue;
+      outgoingForward.add(edge.source);
+      incomingForward.add(edge.target);
+    }
+
+    const entryFlowIds: string[] = [];
+    const exitFlowIds: string[] = [];
+    for (const child of children) {
+      const boundary = {
+        entry: !incomingForward.has(child.id),
+        exit: !outgoingForward.has(child.id),
+      };
+      boundaryByChild.set(child.id, boundary);
+      if (boundary.entry) entryFlowIds.push(child.id);
+      if (boundary.exit) exitFlowIds.push(child.id);
+    }
+    nextVisualEdges.push(...optionalGroupBoundaryEdgesForFlowIds(groupId, entryFlowIds, exitFlowIds));
+  }
+
+  const nextNodes = nodes.map((node) => {
+    const optionalGroupId = childToOptionalGroup.get(node.id);
+    if (!optionalGroupId) {
+      if (!node.data.optionalGroupBoundary) return node;
+      const { optionalGroupBoundary: _boundary, ...data } = node.data;
+      return { ...node, data };
+    }
+    const boundary = boundaryByChild.get(node.id);
+    if (!boundary) return node;
+    if (node.data.optionalGroupBoundary?.entry === boundary.entry && node.data.optionalGroupBoundary?.exit === boundary.exit) return node;
+    return { ...node, data: { ...node.data, optionalGroupBoundary: boundary } };
+  });
+
+  return { nodes: nextNodes, edges: [...nonVisualEdges, ...nextVisualEdges] };
 }
 
 /** Build React Flow nodes/edges from a stored workflow definition. v2 columns
@@ -426,6 +620,9 @@ export function irToFlow(def: WorkflowDefinition): {
     const groupCfg = groupTemplateConfigOf(node);
     if (groupCfg) {
       const template = groupCfg.template;
+      const optionalGroupBoundaries = node.kind === "optional-group"
+        ? optionalGroupTemplateBoundaryById(template)
+        : undefined;
       // Render template nodes as children of this group (parentId = group id).
       template.nodes.forEach((inner, innerIdx) => {
         const childFlowId = foreachChildFlowId(node.id, inner.id);
@@ -436,13 +633,20 @@ export function irToFlow(def: WorkflowDefinition): {
             y: FOREACH_CHILD_Y,
           };
         const innerKind = editorKind(inner);
+        const optionalGroupBoundary = optionalGroupBoundaries?.get(inner.id);
         childNodes.push({
           id: childFlowId,
           type: innerKind,
           position: childPos,
           parentId: node.id,
           extent: "parent",
-          data: { kind: innerKind, ...dataIrKind(inner, innerKind), label: nodeLabel(inner), config: { ...(inner.config ?? {}) } },
+          data: {
+            kind: innerKind,
+            ...dataIrKind(inner, innerKind),
+            label: nodeLabel(inner),
+            config: { ...(inner.config ?? {}) },
+            ...(optionalGroupBoundary ? { optionalGroupBoundary } : {}),
+          },
           deletable: true,
           zIndex: WF_STEP_NODE_Z_INDEX,
         });
@@ -450,6 +654,7 @@ export function irToFlow(def: WorkflowDefinition): {
       template.edges.forEach((edge, eIdx) => {
         childEdges.push(irEdgeToFlow(edge, eIdx, `${node.id}${FOREACH_CHILD_SEP}`));
       });
+      childEdges.push(...optionalGroupBoundaryEdges(node, template));
       // Strip the template off the group node's own config (children carry it).
       const { template: _t, ...restCfg } = (node.config ?? {}) as Record<string, unknown>;
       return {
@@ -596,7 +801,7 @@ export function flowToIr(
       });
       const childIdSet = new Set(children.map((c) => c.id));
       const templateEdges: WorkflowIrEdge[] = edges
-        .filter((e) => childIdSet.has(e.source) && childIdSet.has(e.target))
+        .filter((e) => !isVisualOnlyWorkflowEdge(e) && childIdSet.has(e.source) && childIdSet.has(e.target))
         .map((e) => flowEdgeToIr(e, node.id));
       const baseCfg = (config ?? {}) as Record<string, unknown>;
       return {
@@ -627,6 +832,7 @@ export function flowToIr(
   for (const [gid, kids] of childrenByGroup) for (const k of kids) childIdToGroup.set(k.id, gid);
   const irEdges: WorkflowIr["edges"] = edges
     .filter((e) => {
+      if (isVisualOnlyWorkflowEdge(e)) return false;
       const sg = childIdToGroup.get(e.source);
       const tg = childIdToGroup.get(e.target);
       return !(sg && tg && sg === tg);
@@ -786,6 +992,7 @@ export function wouldCreateCycle(edges: FlowEdge[], source: string, target: stri
   // Build adjacency over non-rework edges only.
   const adj = new Map<string, string[]>();
   for (const e of edges) {
+    if (isVisualOnlyWorkflowEdge(e)) continue;
     if ((e.data?.kind as string | undefined) === "rework") continue;
     const arr = adj.get(e.source) ?? [];
     arr.push(e.target);
@@ -825,7 +1032,11 @@ export function newNodeId(): string {
 /** Result of attempting to build an edge from a React Flow connection. */
 export type BuildConnectionResult =
   | { edge: FlowEdge }
-  | { error: "missing-endpoint" | "duplicate" | "cycle" };
+  | { error: "missing-endpoint" | "duplicate" | "cycle" | "reserved-handle" };
+
+function isOptionalGroupBoundaryConnectionHandle(handleId: string | null | undefined): boolean {
+  return handleId === OPTIONAL_GROUP_BOUNDARY_ENTRY_HANDLE || handleId === OPTIONAL_GROUP_BOUNDARY_EXIT_HANDLE;
+}
 
 /** Construct a new success edge for a React Flow connection, reimplementing the
  *  sanity guards React Flow's addEdge provided (KTD-3) plus the author-time cycle
@@ -839,7 +1050,7 @@ export type BuildConnectionResult =
  *      cycles are authored separately and exempt).
  */
 export function buildConnectionEdge(
-  connection: { source?: string | null; target?: string | null },
+  connection: { source?: string | null; target?: string | null; sourceHandle?: string | null; targetHandle?: string | null },
   edges: FlowEdge[],
   nodes: FlowNode<WorkflowFlowNodeData>[],
 ): BuildConnectionResult {
@@ -847,13 +1058,24 @@ export function buildConnectionEdge(
   const target = connection.target ?? undefined;
   if (!source || !target) return { error: "missing-endpoint" };
 
+  /*
+   * FNXC:WorkflowOptionalGroup 2026-06-29-23:20:
+   * Optional-group boundary handles are visual guide anchors owned by refreshOptionalGroupVisualBoundaries, not editable workflow topology. Reject connection gestures that mention them so stale DOM, test mocks, or browser quirks cannot persist a fake group↔child edge if React Flow ever reports a boundary handle as connectable.
+   */
+  if (
+    isOptionalGroupBoundaryConnectionHandle(connection.sourceHandle) ||
+    isOptionalGroupBoundaryConnectionHandle(connection.targetHandle)
+  ) {
+    return { error: "reserved-handle" };
+  }
+
   const srcNode = nodes.find((n) => n.id === source);
   const tgtNode = nodes.find((n) => n.id === target);
 
   // Existing conditions already authored between this exact pair.
   const existingConditions = new Set(
     edges
-      .filter((e) => e.source === source && e.target === target)
+      .filter((e) => !isVisualOnlyWorkflowEdge(e) && e.source === source && e.target === target)
       .map((e) => (e.data?.condition as string | undefined) ?? "success"),
   );
 
@@ -1251,6 +1473,9 @@ export function insertFragment(
     if (groupCfg) {
       const template = groupCfg.template;
       const groupKind = editorKind(node);
+      const optionalGroupBoundaries = node.kind === "optional-group"
+        ? optionalGroupTemplateBoundaryById(template)
+        : undefined;
       template.nodes.forEach((inner, innerIdx) => {
         const innerKind = editorKind(inner);
         const childPos =
@@ -1258,13 +1483,20 @@ export function insertFragment(
             x: FOREACH_CHILD_X + innerIdx * FOREACH_CHILD_STEP_X,
             y: FOREACH_CHILD_Y,
           };
+        const optionalGroupBoundary = optionalGroupBoundaries?.get(inner.id);
         childNodes.push({
           id: foreachChildFlowId(id, inner.id),
           type: innerKind,
           position: childPos,
           parentId: id,
           extent: "parent",
-          data: { kind: innerKind, ...dataIrKind(inner, innerKind), label: nodeLabel(inner), config: { ...(inner.config ?? {}) } },
+          data: {
+            kind: innerKind,
+            ...dataIrKind(inner, innerKind),
+            label: nodeLabel(inner),
+            config: { ...(inner.config ?? {}) },
+            ...(optionalGroupBoundary ? { optionalGroupBoundary } : {}),
+          },
           deletable: true,
           zIndex: WF_STEP_NODE_Z_INDEX,
         });
@@ -1272,6 +1504,7 @@ export function insertFragment(
       template.edges.forEach((edge, eIdx) => {
         childEdges.push(irEdgeToFlow(edge, eIdx, `${id}${FOREACH_CHILD_SEP}`));
       });
+      childEdges.push(...optionalGroupBoundaryEdges({ ...node, id }, template));
       // The group node keeps everything except the template (children carry it).
       const { template: _t, ...restCfg } = (node.config ?? {}) as Record<string, unknown>;
       return {

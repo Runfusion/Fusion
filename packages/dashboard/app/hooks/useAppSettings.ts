@@ -21,6 +21,7 @@ export interface UseAppSettingsResult {
   capacityRiskBannerEnabled: boolean;
   capacityRiskTodoThreshold: number;
   openTasksInRightSidebar: boolean;
+  openMobileTasksInPopup: boolean;
   quickChatButtonMode: QuickChatButtonMode;
   quickChatCloseOnOutsideClick: boolean;
   showQuickChatFAB: boolean;
@@ -61,6 +62,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [capacityRiskBannerEnabled, setCapacityRiskBannerEnabled] = useState(false);
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
   const [openTasksInRightSidebar, setOpenTasksInRightSidebar] = useState(false);
+  const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
   const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
@@ -119,6 +121,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
       setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
+      setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
       const features = settings.experimentalFeatures ?? {};
       /*
@@ -146,6 +149,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setMemoryEnabled(true);
     setDevServerEnabled(false);
     setOpenTasksInRightSidebar(false);
+    setOpenMobileTasksInPopup(false);
     setQuickChatCloseOnOutsideClick(true);
     setTodosEnabled(true);
     setGoalsEnabled(true);
@@ -247,6 +251,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     capacityRiskBannerEnabled,
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
+    openMobileTasksInPopup,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
     showQuickChatFAB,

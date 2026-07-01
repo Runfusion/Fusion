@@ -27,6 +27,7 @@ import {
   emptyWorkflowLayout,
   foreachChildFlowId,
   WF_EDGE_INTERACTION_WIDTH,
+  isVisualOnlyWorkflowEdge,
 } from "../workflow-flow-mapping";
 import {
   BUILTIN_CODING_WORKFLOW_IR,
@@ -269,8 +270,16 @@ function edgeRenderableAssertion(definition: WorkflowDefinition) {
       WF_EDGE_INTERACTION_WIDTH,
     );
     expect(edge.zIndex, `${definition.id} edge ${edge.id} z-index`).toBeGreaterThan(0);
-    expect(edge.sourceHandle, `${definition.id} edge ${edge.id} source handle`).toBeUndefined();
-    expect(edge.targetHandle, `${definition.id} edge ${edge.id} target handle`).toBeUndefined();
+    if (isVisualOnlyWorkflowEdge(edge) && edge.data?.boundary === "entry") {
+      expect(edge.sourceHandle, `${definition.id} edge ${edge.id} source handle`).toBe("optional-boundary-entry");
+      expect(edge.targetHandle, `${definition.id} edge ${edge.id} target handle`).toBeUndefined();
+    } else if (isVisualOnlyWorkflowEdge(edge) && edge.data?.boundary === "exit") {
+      expect(edge.sourceHandle, `${definition.id} edge ${edge.id} source handle`).toBeUndefined();
+      expect(edge.targetHandle, `${definition.id} edge ${edge.id} target handle`).toBe("optional-boundary-exit");
+    } else {
+      expect(edge.sourceHandle, `${definition.id} edge ${edge.id} source handle`).toBeUndefined();
+      expect(edge.targetHandle, `${definition.id} edge ${edge.id} target handle`).toBeUndefined();
+    }
   }
   return flow;
 }
@@ -439,11 +448,10 @@ describe("workflow-flow-mapping", () => {
     const failuresToEnd = edges.filter((edge) => edge.target === "end" && edge.data?.condition === "failure");
     // FNXC:WorkflowOptionalGroup 2026-06-21-15:30: the coding built-in's pre-merge `workflow-step` seam was migrated to a `browser-verification` optional-group (U6), which now carries the failure->end edge in its place.
     // FNXC:CodeReviewStep 2026-06-25-00:00: the default-on `code-review` optional-group is also on the pre-merge success path with its own failure->end edge (see builtin-code-review-group.test.ts), so it is an expected failure->end source too. This corrected a stale assertion that predated the code-review group's addition.
-    // FNXC:WorkflowPlanReview 2026-06-29-00:00: the built-in coding workflow now includes a `plan-review` gate on the normal path; its failure edge must remain renderable and independently clickable like the existing parallel failure-to-end edges.
+    // FNXC:WorkflowPlanReview 2026-06-29-23:18: FN-7265 removed the coding workflow's duplicate plan-review gate; Plan Review failures route through the plan-replan optional remediation loop instead of directly to end, so this renderability guard tracks the remaining failure-to-end sources without expecting a stale `plan-review` edge.
     expect(failuresToEnd.map((edge) => edge.source).sort()).toEqual([
       "execute",
       "merge-attempt",
-      "plan-review",
       "planning",
       "review",
     ]);
@@ -900,6 +908,53 @@ describe("WorkflowNodeEditor", () => {
     expect(await screen.findByTestId("wf-workflow-name")).toHaveTextContent("QA");
   });
 
+  it("opens node details from the desktop compact simple editor row click", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    const lintRow = await screen.findByTestId("mobile-wf-node-lint");
+    fireEvent.click(within(lintRow).getAllByRole("button")[0]);
+
+    const inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).getByLabelText("Prompt")).toBeInTheDocument();
+    expect(inspector.closest(".wf-editor-body")).not.toHaveClass("wf-editor-body--mobile-node-detail");
+  });
+
+  it("opens custom and built-in simple editor inspectors while leaving end nodes closed", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([v2Def(), builtinDef()]);
+    vi.mocked(fetchWorkflowPromptOverrides).mockResolvedValue({
+      stored: {},
+      effective: { execute: "Default execute prompt" },
+      defaults: { execute: "Default execute prompt" },
+    });
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-start")).getAllByRole("button")[0]);
+
+    const startInspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(startInspector).getByTestId("wf-start-inspector")).toBeInTheDocument();
+    expect(within(startInspector).queryByLabelText("Name")).not.toBeInTheDocument();
+
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-end")).getAllByRole("button")[0]);
+    await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Default coding workflow" }));
+    await screen.findByTestId("wf-readonly-banner");
+    fireEvent.click(within((await screen.findAllByTestId("mobile-wf-node-execute"))[0]).getAllByRole("button")[0]);
+
+    const builtinInspector = await screen.findByTestId("wf-node-inspector");
+    const prompt = within(builtinInspector).getByLabelText("Prompt") as HTMLTextAreaElement;
+    expect(prompt).not.toHaveAttribute("readonly");
+    expect(prompt).toHaveValue("Default execute prompt");
+    expect(within(builtinInspector).getByText(/structure is read-only/i)).toBeInTheDocument();
+  });
+
   it("collapses and expands the selected node inspector on mobile", async () => {
     mockWorkflowEditorViewport("mobile");
     vi.mocked(fetchWorkflows).mockResolvedValue([def()]);
@@ -922,8 +977,17 @@ describe("WorkflowNodeEditor", () => {
 
     fireEvent.click(within(await screen.findByTestId("mobile-wf-node-lint")).getAllByRole("button")[0]);
 
-    expect(await screen.findByTestId("wf-node-inspector")).toBeInTheDocument();
+    const reopenedInspector = await screen.findByTestId("wf-node-inspector");
+    expect(reopenedInspector.closest(".wf-editor-body")).toHaveClass("wf-editor-body--mobile-node-detail");
     expect(screen.getByTestId("wf-inspector-toggle")).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(screen.getByTestId("wf-inspector-toggle"));
+    await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-merge")).getAllByRole("button")[0]);
+
+    const nextInspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(nextInspector).getByLabelText("Name")).toBeInTheDocument();
+    expect(nextInspector.closest(".wf-editor-body")).toHaveClass("wf-editor-body--mobile-node-detail");
   });
 
   it("edits the start node entry column from the desktop inspector and saves it", async () => {
@@ -1974,6 +2038,29 @@ describe("WorkflowNodeEditor — U8 step-inversion authoring", () => {
     // No empty hint — the palette seeded an optional step inside.
     expect(screen.queryByTestId("wf-optional-group-empty")).not.toBeInTheDocument();
 
+    const seededChildId = await waitFor(() => {
+      const childIds = [...document.querySelectorAll<HTMLElement>(".react-flow__node")]
+        .map((node) => node.dataset.id)
+        .filter((nodeId): nodeId is string => Boolean(nodeId?.includes("::")));
+      expect(childIds).toHaveLength(1);
+      return childIds[0];
+    });
+    const seededGroupId = seededChildId.split("::")[0];
+    /*
+     * FNXC:WorkflowOptionalGroup 2026-06-29-23:56:
+     * Newly authored optional groups must render the same generated entry/exit guide anchors as loaded IR. This catches the palette/mobile add path that previously inserted a parent and child with no immediate boundary refresh, leaving the seeded child visually disconnected until a later save/reload recomputed editor-only boundary state.
+     */
+    await waitFor(() => {
+      expect(
+        document.body.querySelector(`.react-flow__handle.source[data-nodeid="${seededGroupId}"][data-handleid="optional-boundary-entry"]`),
+      ).toBeInTheDocument();
+      expect(
+        document.body.querySelector(`.react-flow__handle.target[data-nodeid="${seededGroupId}"][data-handleid="optional-boundary-exit"]`),
+      ).toBeInTheDocument();
+      expect(document.body.querySelector(`.react-flow__handle.target[data-nodeid="${seededChildId}"][data-handlepos="left"]`)).toBeInTheDocument();
+      expect(document.body.querySelector(`.react-flow__handle.source[data-nodeid="${seededChildId}"][data-handlepos="right"]`)).toBeInTheDocument();
+    });
+
     await waitFor(() => expect(screen.getAllByLabelText(/Column name/i).length).toBeGreaterThan(0));
     fireEvent.click(screen.getByText("Save").closest("button")!);
     await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
@@ -2413,6 +2500,58 @@ describe("WorkflowNodeEditor — built-in stepwise selection render path", () =>
       expect(document.body.querySelector(`.react-flow__handle[data-nodeid="${edge.target}"][data-handlepos="left"]`)).toBeInTheDocument();
     }
     expect(customFlow.edges.every((edge) => edge.label === "success")).toBe(true);
+  });
+
+  it("renders optional-group boundary connector handles for built-in single-child templates", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByTestId("wf-readonly-banner");
+    await waitFor(() => expect(screen.getAllByTestId("wf-node-optional-group").length).toBeGreaterThanOrEqual(2));
+
+    const flow = irToFlow(builtinDef());
+    const byId = new Map(flow.nodes.map((node) => [node.id, node] as const));
+    for (const [groupId, childId] of [
+      ["plan-review", "plan-review-step"],
+      ["code-review", "code-review-step"],
+    ] as const) {
+      const childFlowId = `${groupId}::${childId}`;
+      expect(byId.get(childFlowId)?.data.optionalGroupBoundary, `${groupId} child boundary`).toEqual({ entry: true, exit: true });
+
+      const boundaryEdges = flow.edges.filter((edge) => isVisualOnlyWorkflowEdge(edge) && (edge.source === groupId || edge.target === groupId));
+      expect(boundaryEdges, `${groupId} visual boundary edges`).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: groupId, sourceHandle: "optional-boundary-entry", target: childFlowId }),
+        expect.objectContaining({ source: childFlowId, target: groupId, targetHandle: "optional-boundary-exit" }),
+      ]));
+      /*
+       * FNXC:WorkflowOptionalGroup 2026-06-29-22:47:
+       * Built-in Plan Review and Code Review optional blocks each contain one template child. The desktop editor must render both the normal container handles and the side-correct boundary handles used by visual-only connector edges so entry attaches from the left boundary and exit attaches to the right boundary, while persistence still filters those visual-only edges in mapping tests.
+       *
+       * FNXC:WorkflowOptionalGroup 2026-06-29-23:20:
+       * Boundary guide handles remain in the DOM solely as generated edge anchors. They must not carry React Flow's connectable affordance because user-authored edges from optional-boundary-* handles would persist fake group↔child topology.
+       */
+      for (const [nodeId, position] of [
+        [groupId, "left"],
+        [groupId, "right"],
+        [childFlowId, "left"],
+        [childFlowId, "right"],
+      ] as const) {
+        expect(
+          document.body.querySelector(`.react-flow__handle[data-nodeid="${nodeId}"][data-handlepos="${position}"]`),
+          `${nodeId} ${position} handle`,
+        ).toBeInTheDocument();
+      }
+      const entryBoundaryHandle = document.body.querySelector(
+        `.react-flow__handle.source[data-nodeid="${groupId}"][data-handlepos="left"][data-handleid="optional-boundary-entry"]`,
+      );
+      const exitBoundaryHandle = document.body.querySelector(
+        `.react-flow__handle.target[data-nodeid="${groupId}"][data-handlepos="right"][data-handleid="optional-boundary-exit"]`,
+      );
+      expect(entryBoundaryHandle, `${groupId} left boundary source handle`).toBeInTheDocument();
+      expect(exitBoundaryHandle, `${groupId} right boundary target handle`).toBeInTheDocument();
+      expect(entryBoundaryHandle, `${groupId} left boundary source handle connectability`).not.toHaveClass("connectable");
+      expect(exitBoundaryHandle, `${groupId} right boundary target handle connectability`).not.toHaveClass("connectable");
+    }
   });
 
   it("irToFlow on the built-in stepwise IR yields a foreach group + rework-styled template edge (editor load path)", () => {

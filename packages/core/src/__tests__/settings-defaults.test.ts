@@ -150,6 +150,19 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("openMobileTasksInPopup default", () => {
+    it("keeps openMobileTasksInPopup explicitly false in project defaults", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.openMobileTasksInPopup).toBe(false);
+      expect("openMobileTasksInPopup" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("openMobileTasksInPopup");
+    });
+
+    it("keeps openMobileTasksInPopup project-scoped only", () => {
+      expect("openMobileTasksInPopup" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("openMobileTasksInPopup");
+    });
+  });
+
   describe("quickChatCloseOnOutsideClick default", () => {
     it("keeps Quick Chat outside-click dismissal explicitly true in project defaults", () => {
       expect(DEFAULT_PROJECT_SETTINGS.quickChatCloseOnOutsideClick).toBe(true);

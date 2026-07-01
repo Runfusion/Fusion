@@ -46,6 +46,13 @@ export function AppearanceSection({ scopeBanner, form, setForm, themeMode, color
       </div>
       <div className="form-group">
         <label className="checkbox-label">
+          <input type="checkbox" checked={form.openMobileTasksInPopup === true} onChange={(e) => setForm((f) => ({ ...f, openMobileTasksInPopup: e.target.checked }))}/>
+          <span>{t("settings.appearance.openMobileTasksInPopup", "Open mobile tasks as popups")}</span>
+        </label>
+        <small className="form-text text-muted">{t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, mobile board task-card clicks use the existing task popup instead of the full-screen task panel. Desktop, right-sidebar, and non-board task opens keep their current behavior.")}</small>
+      </div>
+      <div className="form-group">
+        <label className="checkbox-label">
           <input type="checkbox" checked={sessionBannersHidden} onChange={(e) => setSessionBannersHidden(e.target.checked)}/>
           <span>{t("settings.appearance.hideAISessionNotificationBanners", "Hide AI session notification banners")}</span>
         </label>

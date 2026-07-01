@@ -147,6 +147,8 @@ interface ColumnProps {
   lastFetchTimeMs?: number;
   /** Per-task card-placed custom field definitions (U13/KTD-14). */
   taskCardFieldDefs?: ReadonlyMap<string, import("../api").WorkflowFieldDefinition[]>;
+  /** Trusted aggregate-board workflow badges keyed by task id; omitted in per-workflow and non-board surfaces. */
+  taskWorkflowBadges?: ReadonlyMap<string, { workflowId: string; workflowName: string }>;
   /** Precomputed blocker fanout keyed by blocker task ID. */
   blockerFanoutMap?: ReadonlyMap<string, BlockerFanoutEntry>;
   /** Whether GitHub CLI auth is available for creating PRs from task cards. */
@@ -177,7 +179,7 @@ interface ColumnProps {
   getDraggingTaskId?: () => string | null;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, columnDisplayName, columnFlags, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, columnDisplayName, columnFlags, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -760,6 +762,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   onOpenMission={onOpenMission}
                   lastFetchTimeMs={lastFetchTimeMs}
                   taskCardFieldDefs={taskCardFieldDefs}
+                  taskWorkflowBadges={taskWorkflowBadges}
                   blockerFanoutMap={blockerFanoutMap}
                   prAuthAvailable={prAuthAvailable}
                   autoMergeEnabled={Boolean(autoMerge)}
@@ -793,6 +796,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   isPromoting={isHoldColumn && onPromote ? promotingIds.has(task.id) : undefined}
                   lastFetchTimeMs={lastFetchTimeMs}
                   cardFieldDefs={taskCardFieldDefs?.get(task.id)}
+                  workflowBadge={taskWorkflowBadges?.get(task.id)}
                   fanout={blockerFanoutMap?.get(task.id)}
                   prAuthAvailable={prAuthAvailable}
                   autoMergeEnabled={Boolean(autoMerge)}

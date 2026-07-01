@@ -1,9 +1,10 @@
 /**
- * StepSessionExecutor — runs each task step in its own fresh agent session.
+ * StepSessionExecutor — runs task steps with graph-controlled step boundaries.
  *
  * This module enables per-step error recovery with retry semantics, optional
  * parallel execution for non-conflicting steps (via git worktree isolation),
- * and clean lifecycle management (pause, cleanup).
+ * optional primary-worktree session reuse, and clean lifecycle management
+ * (pause, cleanup).
  *
  * The class is a standalone engine subsystem with minimal integration surface.
  * It receives TaskDetail (read-only), a TaskStore for agent logs, and emits
@@ -669,10 +670,12 @@ const NOOP_TASK_STORE: Pick<TaskStore, "appendAgentLog"> = {
 };
 
 /**
- * StepSessionExecutor — runs each task step in its own fresh agent session.
+ * StepSessionExecutor — runs each task step behind a deterministic boundary.
  *
  * This class orchestrates per-step agent sessions with:
  * - **Sequential execution** (default): steps run one at a time
+ * - **Session policy**: `runStepsInNewSessions=false` reuses one primary-worktree
+ *   session across sequential steps; `true` creates a fresh session per step
  * - **Parallel execution**: non-conflicting steps run simultaneously in
  *   separate git worktrees (when `maxParallelSteps > 1`)
  * - **Per-step retry**: failed steps retry up to 3 times with exponential backoff
@@ -712,6 +715,10 @@ export class StepSessionExecutor {
   private aborted = false;
   private maxParallel: number;
   private deliveredSteeringCommentIds = new Set<string>();
+  private reusablePrimarySession: AgentSession | null = null;
+  private reusablePrimaryHandle: SessionHandle | null = null;
+  private reusableStepTelemetry: { agentLogger: AgentLogger; trackingKey: string } | null = null;
+  private reusablePrimaryLastTokenUsage: StepResult["tokenUsage"] | undefined;
 
   private registerActiveStepSession(stepIndex: number, handle: SessionHandle, worktreePath: string): void {
     this.activeSessions.set(stepIndex, handle);
@@ -742,6 +749,37 @@ export class StepSessionExecutor {
       activeSessionRegistry.unregisterPath(path);
     }
     this.parallelWorktrees.delete(stepIndex);
+  }
+
+  /*
+   * FNXC:WorkflowStepSessions 2026-06-29-22:58:
+   * Coding (per-step review) still needs the StepSessionExecutor boundary so the graph can run `step-review` between steps, but the operator's "Each step in a new session" switch must control session freshness. Reuse only the primary sequential worktree when `runStepsInNewSessions` is false; parallel/isolated worktrees always need their own sessions because their cwd differs and they may run concurrently.
+   */
+  private shouldReusePrimarySession(worktreePath: string): boolean {
+    return this.options.settings.runStepsInNewSessions === false && worktreePath === this.options.worktreePath;
+  }
+
+  private selectReusableTelemetry(fallback: { agentLogger: AgentLogger; trackingKey: string }): { agentLogger: AgentLogger; trackingKey: string } {
+    return this.reusableStepTelemetry ?? fallback;
+  }
+
+  private async disposeReusablePrimarySession(): Promise<void> {
+    if (!this.reusablePrimarySession) return;
+    try {
+      this.reusablePrimaryHandle?.abortBash();
+    } catch (err) {
+      stepExecLog.warn(`Failed to abort reusable primary step session: ${err}`);
+    }
+    try {
+      this.reusablePrimarySession.dispose();
+    } catch (err) {
+      stepExecLog.warn(`Failed to dispose reusable primary step session: ${err}`);
+    } finally {
+      this.reusablePrimarySession = null;
+      this.reusablePrimaryHandle = null;
+      this.reusableStepTelemetry = null;
+      this.reusablePrimaryLastTokenUsage = undefined;
+    }
   }
 
   constructor(options: StepSessionExecutorOptions) {
@@ -791,20 +829,59 @@ export class StepSessionExecutor {
     for (const wave of waves) {
       if (this.aborted) break;
 
-      if (wave.indices.length === 1) {
+      /*
+       * FNXC:WorkflowResume 2026-06-29-18:26:
+       * Engine restart/resume may construct StepSessionExecutor with a stale taskDetail snapshot while TaskStore already shows earlier steps as done/skipped. Re-read live step status before scheduling each wave so resumed graph-owned execution does not fire onStepStart for completed steps and produce noisy done→in-progress regressions like FN-7248.
+       */
+      const runnableIndices = await this.filterLiveRunnableStepIndices(wave.indices);
+      if (runnableIndices.length === 0) {
+        continue;
+      }
+
+      if (runnableIndices.length === 1) {
         // Single step — use primary worktree
-        const stepIdx = wave.indices[0]!;
+        const stepIdx = runnableIndices[0]!;
         const result = await this.executeStep(stepIdx, this.options.worktreePath);
         this.stepResults.push(result);
       } else {
         // Multiple steps — parallel wave
-        const waveResults = await this.executeParallelWave(wave);
+        const waveResults = await this.executeParallelWave({ ...wave, indices: runnableIndices });
         this.stepResults.push(...waveResults);
       }
     }
 
     // Sort results by step index for deterministic output
     return this.stepResults.sort((a, b) => a.stepIndex - b.stepIndex);
+  }
+
+  private async filterLiveRunnableStepIndices(stepIndices: number[]): Promise<number[]> {
+    if (!this.options.store || stepIndices.length === 0) {
+      return stepIndices;
+    }
+
+    try {
+      const liveTask = await this.options.store.getTask(this.options.taskDetail.id);
+      if (!liveTask || liveTask.id !== this.options.taskDetail.id) {
+        return stepIndices;
+      }
+      return stepIndices.filter((stepIndex) => {
+        const liveStatus = liveTask.steps?.[stepIndex]?.status;
+        if (liveStatus === "done" || liveStatus === "skipped") {
+          stepExecLog.log(
+            `Skipping step ${stepIndex} for task ${this.options.taskDetail.id}: live status is ${liveStatus}`,
+          );
+          return false;
+        }
+        return true;
+      });
+    } catch (err) {
+      stepExecLog.warn(
+        `Failed to inspect live step status for task ${this.options.taskDetail.id}; continuing from snapshot: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return stepIndices;
+    }
   }
 
   /**
@@ -899,6 +976,7 @@ export class StepSessionExecutor {
       activeSessionRegistry.unregisterPath(worktreePath);
     }
     this.activeSessions.clear();
+    await this.disposeReusablePrimarySession();
   }
 
   /**
@@ -912,6 +990,7 @@ export class StepSessionExecutor {
     if (this.activeSessions.size > 0) {
       await this.terminateAllSessions();
     }
+    await this.disposeReusablePrimarySession();
 
     // Remove parallel worktrees
     for (const [stepIdx, worktreePath] of this.parallelWorktrees) {
@@ -1004,6 +1083,29 @@ export class StepSessionExecutor {
     }
   }
 
+  private async extractStepTokenUsage(session: AgentSession | null | undefined, reusePrimarySession: boolean): Promise<StepResult["tokenUsage"] | undefined> {
+    const current = await this.extractTokenUsageFromSession(session);
+    if (!reusePrimarySession || !current) {
+      return current;
+    }
+
+    const previous = this.reusablePrimaryLastTokenUsage;
+    this.reusablePrimaryLastTokenUsage = current;
+    if (!previous) {
+      return current;
+    }
+
+    return {
+      inputTokens: Math.max(0, current.inputTokens - previous.inputTokens),
+      outputTokens: Math.max(0, current.outputTokens - previous.outputTokens),
+      cachedTokens: Math.max(0, current.cachedTokens - previous.cachedTokens),
+      cacheWriteTokens: Math.max(0, current.cacheWriteTokens - previous.cacheWriteTokens),
+      totalTokens: Math.max(0, current.totalTokens - previous.totalTokens),
+      modelProvider: current.modelProvider,
+      modelId: current.modelId,
+    };
+  }
+
   // ── Internal: Step Execution ────────────────────────────────────────
 
   /**
@@ -1034,6 +1136,7 @@ export class StepSessionExecutor {
 
     // Build reduced step prompt for context-limit recovery (simpler, shorter)
     const reducedStepPrompt = buildReducedStepPrompt(promptTaskDetail, stepIndex, this.options.rootDir);
+    const reusePrimarySession = this.shouldReusePrimarySession(worktreePath);
 
     // Acquire semaphore if provided
     if (semaphore) {
@@ -1071,6 +1174,7 @@ export class StepSessionExecutor {
           persistAgentThinkingLog: resolvePersistAgentThinkingLog(settings, { ephemeral: true }),
         });
         let session: AgentSession | null = null;
+        const localTelemetry = { agentLogger, trackingKey };
 
         try {
           // Get plugin tools from plugin runner if available
@@ -1111,7 +1215,7 @@ export class StepSessionExecutor {
                 ]
               : [];
 
-          // Create fresh agent session for this attempt
+          // Create or reuse the agent session for this attempt
           // Resolve executor model using canonical lane hierarchy:
           // 1. Task override pair (taskDetail.modelProvider + taskDetail.modelId)
           // 2. Project execution lane pair (settings.executionProvider + settings.executionModelId)
@@ -1125,94 +1229,113 @@ export class StepSessionExecutor {
             this.options.assignedAgentRuntimeConfig,
           );
 
-          const createResult = await createResolvedAgentSession({
-            sessionPurpose: "executor",
-            runtimeHint: this.options.runtimeHint,
-            pluginRunner: this.options.pluginRunner,
-            cwd: worktreePath,
-            systemPrompt: `You are an AI agent executing step ${stepIndex} of task ${taskDetail.id}.
+          if (reusePrimarySession && this.reusablePrimarySession) {
+            session = this.reusablePrimarySession;
+          } else {
+            const createResult = await createResolvedAgentSession({
+              sessionPurpose: "executor",
+              runtimeHint: this.options.runtimeHint,
+              pluginRunner: this.options.pluginRunner,
+              cwd: worktreePath,
+              systemPrompt: `You are an AI agent executing steps for task ${taskDetail.id}.
 
 Your role:
-- Complete only this step's scoped outcomes.
+- Complete only the current step's scoped outcomes.
 - Read step context before editing.
 - Reuse existing patterns in nearby code.
 - Run relevant tests for changes made in this step.
 - Report blockers clearly instead of guessing.
 
 Follow instructions precisely and avoid unrelated changes.`,
-            defaultProvider: executorProvider,
-            defaultModelId: executorModelId,
-            fallbackProvider: settings.fallbackProvider,
-            fallbackModelId: settings.fallbackModelId,
-            defaultThinkingLevel: taskDetail.thinkingLevel ?? settings.defaultThinkingLevel,
-            runAuditor: createRunAuditor(this.store, {
-              runId: generateSyntheticRunId("workflow-step", taskDetail.id),
-              // Column-agent attribution (U4): the effective column agent is the
-              // principal that actually ran when the seam node's column governs;
-              // fall back to the task's assigned agent (legacy, byte-identical).
-              agentId: this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor",
-              taskId: taskDetail.id,
-              taskLineageId: taskDetail.lineageId,
-              phase: "execute",
-              source: "step-session-executor",
-            }),
-            settings,
-            // FNXC:McpConfig 2026-06-25-23:02: Workflow model-node step sessions receive the same resolved, secret-materialized MCP server set as the parent executor; runtime support is still enforced inside the pi session seam without logging server contents.
-            mcpServers: this.options.mcpServers,
-            customTools: [
-              ...pluginTools,
-              ...documentTools,
-              webFetchTool,
-              ...memoryTools,
-              ...taskLogTool,
-              ...taskCreateTool,
-              ...delegationTools,
-              ...messagingTools,
-            ],
-            onText: (delta) => {
-              agentLogger.onText(delta);
-              stuckTaskDetector?.recordActivity(trackingKey);
-            },
-            onThinking: (delta) => {
-              agentLogger.onThinking(delta);
-            },
-            onToolStart: (name, args) => {
-              agentLogger.onToolStart(name, args);
-              stuckTaskDetector?.recordActivity(trackingKey);
-            },
-            onToolEnd: (name, isError, result) => {
-              agentLogger.onToolEnd(name, isError, result);
-              stuckTaskDetector?.recordActivity(trackingKey);
-            },
-            // Skill selection from step-session executor options
-            ...(this.options.skillSelection ? { skillSelection: this.options.skillSelection } : {}),
-            actionGateContext: this.options.actionGateContext,
-            permanentAgentGating: this.options.permanentAgentGating,
-            taskId: taskDetail.id,
-            taskTitle: taskDetail.title,
-            onFallbackModelUsed: createFallbackModelObserver({
-              agent: "executor",
-              label: "workflow step agent",
-              store: this.store,
+              defaultProvider: executorProvider,
+              defaultModelId: executorModelId,
+              fallbackProvider: settings.fallbackProvider,
+              fallbackModelId: settings.fallbackModelId,
+              defaultThinkingLevel: taskDetail.thinkingLevel ?? settings.defaultThinkingLevel,
+              runAuditor: createRunAuditor(this.store, {
+                runId: generateSyntheticRunId("workflow-step", taskDetail.id),
+                // Column-agent attribution (U4): the effective column agent is the
+                // principal that actually ran when the seam node's column governs;
+                // fall back to the task's assigned agent (legacy, byte-identical).
+                agentId: this.options.effectiveAgentId ?? taskDetail.assignedAgentId ?? "executor",
+                taskId: taskDetail.id,
+                taskLineageId: taskDetail.lineageId,
+                phase: "execute",
+                source: "step-session-executor",
+              }),
+              settings,
+              // FNXC:McpConfig 2026-06-25-23:02: Workflow model-node step sessions receive the same resolved, secret-materialized MCP server set as the parent executor; runtime support is still enforced inside the pi session seam without logging server contents.
+              mcpServers: this.options.mcpServers,
+              customTools: [
+                ...pluginTools,
+                ...documentTools,
+                webFetchTool,
+                ...memoryTools,
+                ...taskLogTool,
+                ...taskCreateTool,
+                ...delegationTools,
+                ...messagingTools,
+              ],
+              onText: (delta) => {
+                const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
+                telemetry.agentLogger.onText(delta);
+                stuckTaskDetector?.recordActivity(telemetry.trackingKey);
+              },
+              onThinking: (delta) => {
+                const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
+                telemetry.agentLogger.onThinking(delta);
+              },
+              onToolStart: (name, args) => {
+                const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
+                telemetry.agentLogger.onToolStart(name, args);
+                stuckTaskDetector?.recordActivity(telemetry.trackingKey);
+              },
+              onToolEnd: (name, isError, result) => {
+                const telemetry = reusePrimarySession ? this.selectReusableTelemetry(localTelemetry) : localTelemetry;
+                telemetry.agentLogger.onToolEnd(name, isError, result);
+                stuckTaskDetector?.recordActivity(telemetry.trackingKey);
+              },
+              // Skill selection from step-session executor options
+              ...(this.options.skillSelection ? { skillSelection: this.options.skillSelection } : {}),
+              actionGateContext: this.options.actionGateContext,
+              permanentAgentGating: this.options.permanentAgentGating,
               taskId: taskDetail.id,
               taskTitle: taskDetail.title,
-            }),
-            taskEnv: this.options.taskEnv,
-          });
-          session = createResult.session;
+              onFallbackModelUsed: createFallbackModelObserver({
+                agent: "executor",
+                label: "workflow step agent",
+                store: this.store,
+                taskId: taskDetail.id,
+                taskTitle: taskDetail.title,
+              }),
+              taskEnv: this.options.taskEnv,
+            });
+            session = createResult.session;
+            if (reusePrimarySession) {
+              this.reusablePrimarySession = session;
+            }
+          }
 
           // Track session for termination and stuck-task detection.
           // Pass the canonical task ID (e.g. "FN-1452") as the third argument so
           // that stuck-kill callbacks (beforeRequeue, onStuck) operate on the real
           // task rather than the compound step key ("FN-1452-step-1").
-          const handle: SessionHandle = {
-            dispose: () => session?.dispose(),
-            abortBash: () => session?.abortBash(),
-            steer: async (message) => {
-              if (!session) return;
-              await session.steer(message);
-            },
-          };
+          const handle: SessionHandle = reusePrimarySession && this.reusablePrimaryHandle
+            ? this.reusablePrimaryHandle
+            : {
+                dispose: () => session?.dispose(),
+                abortBash: () => session?.abortBash(),
+                steer: async (message) => {
+                  if (!session) return;
+                  await session.steer(message);
+                },
+              };
+          if (reusePrimarySession && !this.reusablePrimaryHandle) {
+            this.reusablePrimaryHandle = handle;
+          }
+          if (reusePrimarySession) {
+            this.reusableStepTelemetry = localTelemetry;
+          }
           this.registerActiveStepSession(stepIndex, handle, worktreePath);
           stuckTaskDetector?.trackTask(trackingKey, { dispose: () => session?.dispose() }, taskDetail.id);
 
@@ -1234,7 +1357,7 @@ Follow instructions precisely and avoid unrelated changes.`,
             stepIndex,
             success: true,
             retries,
-            tokenUsage: await this.extractTokenUsageFromSession(session),
+            tokenUsage: await this.extractStepTokenUsage(session, reusePrimarySession),
           };
           this.options.onStepComplete?.(stepIndex, result);
           return result;
@@ -1274,7 +1397,7 @@ Follow instructions precisely and avoid unrelated changes.`,
                 stepIndex,
                 success: true,
                 retries,
-                tokenUsage: await this.extractTokenUsageFromSession(session),
+                tokenUsage: await this.extractStepTokenUsage(session, reusePrimarySession),
               };
               this.options.onStepComplete?.(stepIndex, result);
               return result;
@@ -1301,10 +1424,14 @@ Follow instructions precisely and avoid unrelated changes.`,
               success: false,
               error: errorMessage,
               retries,
-              tokenUsage: await this.extractTokenUsageFromSession(session),
+              tokenUsage: await this.extractStepTokenUsage(session, reusePrimarySession),
             };
             this.options.onStepComplete?.(stepIndex, result);
             return result;
+          }
+          if (reusePrimarySession) {
+            await this.disposeReusablePrimarySession();
+            session = null;
           }
         } finally {
           try {
@@ -1316,11 +1443,15 @@ Follow instructions precisely and avoid unrelated changes.`,
 
           this.unregisterActiveStepSession(stepIndex, worktreePath);
           stuckTaskDetector?.untrackTask(trackingKey);
-          try {
-            session?.dispose();
-          } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : String(err);
-            stepExecLog.warn(`Failed to dispose session for step ${stepIndex}: ${msg}`);
+          if (reusePrimarySession) {
+            this.reusableStepTelemetry = null;
+          } else {
+            try {
+              session?.dispose();
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              stepExecLog.warn(`Failed to dispose session for step ${stepIndex}: ${msg}`);
+            }
           }
         }
       }

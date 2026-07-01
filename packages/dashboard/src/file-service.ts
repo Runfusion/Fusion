@@ -1,7 +1,7 @@
 import { join, resolve, relative, dirname, basename } from "node:path";
 import { readdir, readFile as fsReadFile, writeFile as fsWriteFile, stat, copyFile as fsCopyFile, rename as fsRename, rm as fsRm, mkdir, access } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import type { TaskStore } from "@fusion/core";
+import type { ProjectSettings, TaskStore } from "@fusion/core";
 
 /**
  * File node type representing a file or directory entry.
@@ -122,23 +122,39 @@ async function getWorkspaceBasePath(store: TaskStore, workspace: WorkspaceId): P
  * Validate and resolve a file path to ensure it stays within the allowed directory.
  * Prevents directory traversal attacks.
  */
-function validatePath(basePath: string, filePath: string): string {
+interface PathValidationOptions {
+  allowAbsolutePaths?: boolean;
+}
+
+/*
+FNXC:FileBrowserAbsolutePaths 2026-06-29-18:42:
+Absolute slash-prefixed paths are a project-scoped file-browser escape hatch only. The default remains workspace-confined, Windows drive-letter paths stay rejected, and all callers keep traversal/null-byte/type/permission checks after resolution.
+
+FNXC:FileBrowserAbsolutePaths 2026-06-29-21:04:
+File-service callers pass already-decoded filesystem path strings. Do not decode percent escapes here: literal `%2F` and `100%` are valid filename text, and HTTP-layer decoding must not be repeated into a new absolute path.
+*/
+function validatePath(basePath: string, filePath: string, options: PathValidationOptions = {}): string {
   // Reject paths with null bytes
   if (filePath.includes("\0")) {
     throw new FileServiceError(`Access denied: Invalid characters in path`, "EINVAL");
   }
 
-  // Decode URL-encoded characters for security check
-  const decodedPath = decodeURIComponent(filePath);
+  if (filePath.match(/^[a-zA-Z]:/)) {
+    throw new FileServiceError(`Access denied: Absolute paths not allowed`, "EINVAL");
+  }
+
+  if (filePath.startsWith("/") && options.allowAbsolutePaths === true) {
+    return resolve(filePath);
+  }
 
   // Reject absolute paths
-  if (decodedPath.startsWith("/") || decodedPath.match(/^[a-zA-Z]:/)) {
+  if (filePath.startsWith("/")) {
     throw new FileServiceError(`Access denied: Absolute paths not allowed`, "EINVAL");
   }
 
   // Resolve the path against base path
   const resolvedBase = resolve(basePath);
-  const resolvedPath = resolve(join(resolvedBase, decodedPath));
+  const resolvedPath = resolve(join(resolvedBase, filePath));
 
   // Ensure the resolved path is within the base path
   const relativePath = relative(resolvedBase, resolvedPath);
@@ -156,8 +172,23 @@ function validatePath(basePath: string, filePath: string): string {
   return resolvedPath;
 }
 
-async function listFilesForBasePath(basePath: string, subPath?: string): Promise<FileListResponse> {
-  const targetPath = subPath ? validatePath(basePath, subPath) : basePath;
+function isOutsideBase(basePath: string, resolvedPath: string): boolean {
+  const resolvedBase = resolve(basePath);
+  const relativePath = relative(resolvedBase, resolvedPath);
+  return relativePath.startsWith("..") || relativePath === "..";
+}
+
+function isFilesystemRoot(resolvedPath: string): boolean {
+  return dirname(resolvedPath) === resolvedPath;
+}
+
+async function getWorkspacePathValidationOptions(store: TaskStore): Promise<PathValidationOptions> {
+  const settings = await store.getSettings?.() as Pick<ProjectSettings, "allowAbsoluteFileBrowserPaths"> | undefined;
+  return { allowAbsolutePaths: settings?.allowAbsoluteFileBrowserPaths === true };
+}
+
+async function listFilesForBasePath(basePath: string, subPath?: string, options: PathValidationOptions = {}): Promise<FileListResponse> {
+  const targetPath = subPath ? validatePath(basePath, subPath, options) : basePath;
 
   let stats;
   try {
@@ -201,7 +232,7 @@ async function listFilesForBasePath(basePath: string, subPath?: string): Promise
     const relativeBase = relative(basePath, targetPath);
 
     return {
-      path: relativeBase || ".",
+      path: options.allowAbsolutePaths === true && isOutsideBase(basePath, targetPath) ? targetPath : (relativeBase || "."),
       entries: fileNodes,
     };
   } catch (err: unknown) {
@@ -216,12 +247,12 @@ async function listFilesForBasePath(basePath: string, subPath?: string): Promise
   }
 }
 
-async function readFileForBasePath(basePath: string, filePath: string): Promise<FileContentResponse> {
+async function readFileForBasePath(basePath: string, filePath: string, options: PathValidationOptions = {}): Promise<FileContentResponse> {
   if (!filePath) {
     throw new FileServiceError("File path is required", "EINVAL");
   }
 
-  const resolvedPath = validatePath(basePath, filePath);
+  const resolvedPath = validatePath(basePath, filePath, options);
 
   let stats;
   try {
@@ -262,7 +293,7 @@ async function readFileForBasePath(basePath: string, filePath: string): Promise<
   }
 }
 
-async function writeFileForBasePath(basePath: string, filePath: string, content: string): Promise<SaveFileResponse> {
+async function writeFileForBasePath(basePath: string, filePath: string, content: string, options: PathValidationOptions = {}): Promise<SaveFileResponse> {
   if (!filePath) {
     throw new FileServiceError("File path is required", "EINVAL");
   }
@@ -272,7 +303,7 @@ async function writeFileForBasePath(basePath: string, filePath: string, content:
     throw new FileServiceError(`Content too large: ${contentBytes} bytes (max ${MAX_FILE_SIZE})`, "ETOOLARGE");
   }
 
-  const resolvedPath = validatePath(basePath, filePath);
+  const resolvedPath = validatePath(basePath, filePath, options);
 
   try {
     const stats = await stat(resolvedPath);
@@ -438,7 +469,8 @@ export async function listWorkspaceFiles(
   subPath?: string,
 ): Promise<FileListResponse> {
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  return listFilesForBasePath(workspaceBase, subPath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  return listFilesForBasePath(workspaceBase, subPath, pathOptions);
 }
 
 /**
@@ -450,7 +482,8 @@ export async function readWorkspaceFile(
   filePath: string,
 ): Promise<FileContentResponse> {
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  return readFileForBasePath(workspaceBase, filePath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  return readFileForBasePath(workspaceBase, filePath, pathOptions);
 }
 
 /**
@@ -463,7 +496,8 @@ export async function writeWorkspaceFile(
   content: string,
 ): Promise<SaveFileResponse> {
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  return writeFileForBasePath(workspaceBase, filePath, content);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  return writeFileForBasePath(workspaceBase, filePath, content, pathOptions);
 }
 
 // ── Workspace File Operations (Create, Copy, Move, Delete, Rename) ─────────
@@ -487,7 +521,8 @@ export async function createWorkspaceDirectory(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const resolvedPath = validatePath(workspaceBase, dirPath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const resolvedPath = validatePath(workspaceBase, dirPath, pathOptions);
 
   try {
     await stat(resolvedPath);
@@ -536,13 +571,13 @@ export async function createWorkspaceDirectory(
  * Validate that both source and destination paths are within the allowed workspace.
  * Prevents copying/moving files outside the workspace boundary.
  */
-function validateSourceAndDestination(basePath: string, sourcePath: string, destinationPath: string): { resolvedSource: string; resolvedDest: string } {
-  const resolvedSource = validatePath(basePath, sourcePath);
-  const resolvedDest = validatePath(basePath, destinationPath);
+function validateSourceAndDestination(basePath: string, sourcePath: string, destinationPath: string, options: PathValidationOptions = {}): { resolvedSource: string; resolvedDest: string } {
+  const resolvedSource = validatePath(basePath, sourcePath, options);
+  const resolvedDest = validatePath(basePath, destinationPath, options);
 
-  // Prevent operating on the workspace root itself
+  // Prevent operating on the workspace root itself, or filesystem root when the absolute-path escape hatch is enabled.
   const sourceRelative = relative(resolve(basePath), resolvedSource);
-  if (!sourceRelative || sourceRelative === "." || sourceRelative === "") {
+  if (!sourceRelative || sourceRelative === "." || sourceRelative === "" || isFilesystemRoot(resolvedSource)) {
     throw new FileServiceError("Cannot operate on workspace root directory", "EINVAL");
   }
 
@@ -573,7 +608,8 @@ export async function copyWorkspaceFile(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const { resolvedSource, resolvedDest } = validateSourceAndDestination(workspaceBase, sourcePath, destinationPath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const { resolvedSource, resolvedDest } = validateSourceAndDestination(workspaceBase, sourcePath, destinationPath, pathOptions);
 
   // Verify source exists
   let sourceStats;
@@ -654,7 +690,8 @@ export async function moveWorkspaceFile(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const { resolvedSource, resolvedDest } = validateSourceAndDestination(workspaceBase, sourcePath, destinationPath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const { resolvedSource, resolvedDest } = validateSourceAndDestination(workspaceBase, sourcePath, destinationPath, pathOptions);
 
   // Verify source exists
   try {
@@ -731,11 +768,12 @@ export async function deleteWorkspaceFile(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const resolvedPath = validatePath(workspaceBase, filePath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const resolvedPath = validatePath(workspaceBase, filePath, pathOptions);
 
-  // Prevent operating on the workspace root itself
+  // Prevent operating on the workspace root itself, or filesystem root when the absolute-path escape hatch is enabled.
   const relativePath = relative(resolve(workspaceBase), resolvedPath);
-  if (!relativePath || relativePath === "." || relativePath === "") {
+  if (!relativePath || relativePath === "." || relativePath === "" || isFilesystemRoot(resolvedPath)) {
     throw new FileServiceError("Cannot delete workspace root directory", "EINVAL");
   }
 
@@ -797,11 +835,12 @@ export async function renameWorkspaceFile(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const resolvedPath = validatePath(workspaceBase, filePath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const resolvedPath = validatePath(workspaceBase, filePath, pathOptions);
 
-  // Prevent operating on the workspace root itself
+  // Prevent operating on the workspace root itself, or filesystem root when the absolute-path escape hatch is enabled.
   const relativePath = relative(resolve(workspaceBase), resolvedPath);
-  if (!relativePath || relativePath === "." || relativePath === "") {
+  if (!relativePath || relativePath === "." || relativePath === "" || isFilesystemRoot(resolvedPath)) {
     throw new FileServiceError("Cannot rename workspace root directory", "EINVAL");
   }
 
@@ -819,14 +858,16 @@ export async function renameWorkspaceFile(
   // Build destination path by replacing the basename
   const destPath = join(dirname(resolvedPath), newName);
 
-  // Validate destination stays within workspace
-  const destRelative = relative(resolve(workspaceBase), destPath);
-  if (destRelative.startsWith("..") || destRelative.startsWith("../") || destRelative === "..") {
-    throw new FileServiceError("Destination would be outside workspace", "EINVAL");
-  }
+  // Validate destination stays within workspace unless the source path was explicitly allowed as an absolute file-browser path.
+  if (pathOptions.allowAbsolutePaths !== true || !filePath.startsWith("/")) {
+    const destRelative = relative(resolve(workspaceBase), destPath);
+    if (destRelative.startsWith("..") || destRelative.startsWith("../") || destRelative === "..") {
+      throw new FileServiceError("Destination would be outside workspace", "EINVAL");
+    }
 
-  if (!destPath.startsWith(resolve(workspaceBase))) {
-    throw new FileServiceError("Destination would be outside workspace", "EINVAL");
+    if (!destPath.startsWith(resolve(workspaceBase))) {
+      throw new FileServiceError("Destination would be outside workspace", "EINVAL");
+    }
   }
 
   // Check destination doesn't already exist
@@ -872,11 +913,12 @@ export async function getWorkspaceFileForDownload(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const resolvedPath = validatePath(workspaceBase, filePath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const resolvedPath = validatePath(workspaceBase, filePath, pathOptions);
 
-  // Prevent downloading the workspace root itself (it's not a file)
+  // Prevent downloading the workspace root itself, or filesystem root when the absolute-path escape hatch is enabled.
   const relativePath = relative(resolve(workspaceBase), resolvedPath);
-  if (!relativePath || relativePath === "." || relativePath === "") {
+  if (!relativePath || relativePath === "." || relativePath === "" || isFilesystemRoot(resolvedPath)) {
     throw new FileServiceError("Cannot download workspace root", "EINVAL");
   }
 
@@ -925,11 +967,12 @@ export async function getWorkspaceFolderForZip(
   }
 
   const workspaceBase = await getWorkspaceBasePath(store, workspace);
-  const resolvedPath = validatePath(workspaceBase, dirPath);
+  const pathOptions = await getWorkspacePathValidationOptions(store);
+  const resolvedPath = validatePath(workspaceBase, dirPath, pathOptions);
 
-  // Prevent downloading the workspace root as ZIP (too broad)
+  // Prevent downloading the workspace root as ZIP, or filesystem root when the absolute-path escape hatch is enabled.
   const relativePath = relative(resolve(workspaceBase), resolvedPath);
-  if (!relativePath || relativePath === "." || relativePath === "") {
+  if (!relativePath || relativePath === "." || relativePath === "" || isFilesystemRoot(resolvedPath)) {
     throw new FileServiceError("Cannot download workspace root as ZIP", "EINVAL");
   }
 

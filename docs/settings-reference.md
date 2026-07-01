@@ -227,6 +227,11 @@ When the dashboard footer reports that a newer `@runfusion/fusion` version is av
 
 ## Workflow Settings
 
+<!--
+FNXC:WorkflowSettings 2026-06-30-09:15:
+Settings docs should keep workflow value resolution and prompt ownership separate: settings values are typed per-workflow/project data, while built-in prompt overrides are node text overlays edited through the workflow editor.
+-->
+
 Some knobs that used to live in this Settings reference as project settings are now
 **workflow settings**: they are declared by a workflow and their values are stored
 **per `(workflow, project)`**, not as ambient project settings. A workflow models
@@ -346,6 +351,8 @@ show a short redirect stub linking to the workflow editor (for one release).
 
 Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`.
 
+Security-sensitive file-browser escape hatches are project-only. `allowAbsoluteFileBrowserPaths` is intentionally absent from global settings so one project's local-admin browsing policy cannot silently widen another project's workspace boundary.
+
 > **Moved keys retained for reference.** Some rows below — the step-execution,
 > review/approval, and per-phase model-lane keys listed under
 > [Where did my setting go?](#where-did-my-setting-go) — are no longer project
@@ -381,6 +388,7 @@ Defaults from `DEFAULT_PROJECT_SETTINGS`; key scope from `PROJECT_SETTINGS_KEYS`
 | `pluginTrustPolicy` | `"off" | "warn" | "enforce"` | `"warn"` | Plugin provenance enforcement mode: `off` records verification metadata only, `warn` blocks only `invalid` signatures, `enforce` allows only `verified-trusted` or `trusted-local`. |
 | `ignoreHiddenOverlapPaths` | `boolean` | `true` | Exclude hidden dot paths from overlap serialization by default. A hidden path is any normalized project-relative path with a segment beginning with `.`, such as `.fusion/tasks/FN-1/PROMPT.md`, `.changeset/fix.md`, `.github/workflows/ci.yml`, `.env`, or `packages/.cache/out.js`. Set to `false` to restore legacy strict counting of dot paths. Explicit `overlapIgnorePaths` entries still apply in addition to this default filter, and still apply when hidden-path filtering is disabled. |
 | `overlapIgnorePaths` | `string[]` | `[]` | Optional project-relative file or directory paths to exclude from overlap blocking (for example `docs` or `generated/openapi.json`). Entries are trimmed, deduplicated, and must not be absolute or contain `..` traversal. |
+| `allowAbsoluteFileBrowserPaths` | `boolean` | `false` | Project-scoped Settings → General toggle for the workspace file browser. When enabled, slash-prefixed paths such as `/tmp` can be listed/read/written/downloaded through workspace file-browser routes while keeping existing file-size, binary, type, null-byte, traversal, and permission checks. Windows drive-letter paths remain blocked, and task-local file routes, memory APIs, worktree-copy validation, plugin bundle paths, and other validators are unchanged. |
 | `autoMerge` | `boolean` | `true` | Auto-finalize tasks from `in-review`. Tasks can override this per-task (including at create time in New Task modal via **Auto-merge** = Default/Enabled/Disabled); explicit overrides are tagged with `autoMergeProvenance: "user"`, while tasks left at **Default** keep following the live global setting and do not snapshot it when entering review. Legacy pre-FN-6245 in-review rows that were stamped `autoMerge: true` are marked `autoMergeProvenance: "legacy-stamp"` on startup and can be inspected/cleared with Settings → Merge → **Legacy auto-merge stamp cleanup**, `fn pr automerge-cleanup [--apply] [--json]`, or `reconcileLegacyAutoMergeStamps({ apply: true })` after operator review. For grouped branch flows, per-task `autoMerge` governs member→group-integration landing while group `autoMerge` governs group→default-branch promotion eligibility. |
 | `planApprovalMode` | `"workflow" \| "auto-approve-all" \| "require-all"` | `"workflow"` | Project-scoped override for the planning approval gate. `"workflow"` preserves the workflow-resolved `requirePlanApproval`; `"auto-approve-all"` moves every specified task to todo without manual approval; `"require-all"` parks every specified task at `status: "awaiting-approval"` regardless of workflow settings. |
 | `maxAutoMergeRetries` | `number` | `3` | Project-scoped positive-integer cap for auto-merge conflict-resolution retries before Fusion parks or bounces a task for human/recovery handling. Unset, non-finite, zero, or negative values fall back to `3` to preserve historical behavior. |
@@ -456,6 +464,7 @@ Sandbox backend precedence is:
 | `recycleWorktrees` | `boolean` | `false` | Default: off (opt-in). Reuse worktrees from a pool for faster startup. |
 | `showWorktreeGrouping` | `boolean` | `false` | Default: off. When off, WIP/processing columns render plain task cards without worktree group shells or worktree-name labels in both legacy and workflow-mode boards. When on, every WIP/processing column groups tasks by worktree and shows worktree names, including workflow-mode columns flagged as counting toward WIP. |
 | `openTasksInRightSidebar` | `boolean` | `false` | Default: off. When off, board task-card clicks keep the existing full-panel task detail that replaces the board. When on and the right dock is active on desktop/tablet, board task-card clicks open the task detail in the right sidebar so the board stays visible; mobile or hidden/inactive right-dock states automatically fall back to the full-panel behavior. Non-board task-open paths, including list split detail, right-dock task cards, floating pop-outs, graph/plugin opens, and deep `changes`/`retries`/`workflow` opens, keep their existing behavior. |
+| `openMobileTasksInPopup` | `boolean` | `false` | Default: off. When off, mobile board task-card clicks keep the existing full-panel task detail. When on and the dashboard is in mobile viewport mode, ordinary board task-card clicks open the task in the existing task popup/FloatingWindow surface instead. This is mobile-only and board-only: desktop/tablet routing, `openTasksInRightSidebar`, right-dock task cards, list/detail opens, graph/plugin opens, nested task-detail opens, explicit pop-out actions, and deep `changes`/`retries`/`workflow` opens keep their existing behavior. |
 | `executorAllowSiblingBranchRename` | `boolean` | `false` | Opt back into the legacy executor behavior that silently allocates sibling branches (`fusion/<task-id>-2`, `-2-2`, …) when the canonical task branch is already checked out elsewhere. When disabled (default), branch conflicts fail loudly and leave the task in `todo` with `status: "failed"` so operators can resolve conflicting branches/worktrees with git tooling before retrying. See [Task Management → Branch conflict handling](./task-management.md#branch-conflict-handling). The dashboard Settings modal exposes the same toggle with warning copy because this legacy mode is discouraged. |
 | `worktreeNaming` | `"random" \| "task-id" \| "task-title"` | `"random"` | Naming mode for new worktree directories. |
 

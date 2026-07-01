@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import { loadWorkspaceConfig, type Task, type TaskStore, type WorkspaceConfig } from "@fusion/core";
 import { TaskExecutor, buildExecutionPrompt } from "../executor.js";
+import { activeSessionRegistry } from "../active-session-registry.js";
 import { createWorkspaceFixture, hasGit, type WorkspaceFixture } from "./_workspace-fixture.js";
 
 const describeIfGit = hasGit ? describe : describe.skip;
@@ -152,10 +153,37 @@ describeIfGit("U1 KTD2 — activeWorktrees Set + every enumerated consumer", () 
     const pB = repoBPath(fx);
     (executor as any).addActiveWorktree("FN-WS-1", pA);
     (executor as any).addActiveWorktree("FN-WS-1", pB);
+    activeSessionRegistry.registerPath(pA, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:a" });
+    activeSessionRegistry.registerPath(pB, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:b" });
 
     const ok = (executor as any).clearPhantomExecutorBinding("FN-WS-1");
     expect(ok).toBe(true);
     expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(false);
+    // Default path must sweep the session-registry entries (inverse of the preserveWorktrees branch).
+    expect(activeSessionRegistry.pathsForTask("FN-WS-1")).toEqual([]);
+  });
+
+  it("clearPhantomExecutorBinding (FN-7249) preserveWorktrees keeps session-registry paths for re-dispatch", async () => {
+    fx = await createWorkspaceFixture();
+    const executor = workspaceExecutor();
+    const pA = repoAPath(fx);
+    const pB = repoBPath(fx);
+    (executor as any).addActiveWorktree("FN-WS-1", pA);
+    (executor as any).addActiveWorktree("FN-WS-1", pB);
+    activeSessionRegistry.registerPath(pA, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:a" });
+    activeSessionRegistry.registerPath(pB, { taskId: "FN-WS-1", kind: "executor", ownerKey: "exec:FN-WS-1:b" });
+
+    const ok = (executor as any).clearPhantomExecutorBinding("FN-WS-1", { preserveWorktrees: true });
+    expect(ok).toBe(true);
+    // In-memory executor/lock bookkeeping is cleared so the scheduler can re-dispatch.
+    expect((executor as any).activeWorktrees.has("FN-WS-1")).toBe(false);
+    expect((executor as any).executing.has("FN-WS-1")).toBe(false);
+    // The held worktree session-registry entries are preserved so re-dispatch
+    // reattaches to the same worktree instead of acquiring a new one.
+    expect(activeSessionRegistry.pathsForTask("FN-WS-1")).toEqual(expect.arrayContaining([pA, pB]));
+
+    activeSessionRegistry.unregisterPath(pA);
+    activeSessionRegistry.unregisterPath(pB);
   });
 });
 

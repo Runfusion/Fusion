@@ -22,7 +22,7 @@ const MERGING_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
 /**
  * FNXC:WorkflowSwitcher 2026-06-20-00:09:
  * The board/list workflow dropdown must show compact Todo, In Progress, and Done task counts for every selectable workflow without duplicating logic across render surfaces.
- * Use workflow column flags as the source of truth: archived columns are excluded, complete columns count as Done, active non-intake WIP columns count as In Progress, and all remaining visible work counts as Todo/not-yet-started.
+ * Use workflow column flags as the source of truth: archived or board-hidden columns are excluded, complete columns count as Done, active non-intake WIP columns count as In Progress, and all remaining visible work counts as Todo/not-yet-started.
  *
  * FNXC:WorkflowSwitcher 2026-06-21-00:00:
  * Built-in linear workflows synthesize canonical lifecycle columns with empty traits, so their resolved flags cannot identify Done, In Progress, or Archived buckets.
@@ -31,7 +31,7 @@ const MERGING_STATUSES = new Set(["merging", "merging-pr", "merging-fix"]);
 function classifyWorkflowStatusColumn(
   column: BoardWorkflowColumn
 ): WorkflowStatusBucket {
-  if (column.flags.archived) return "excluded";
+  if (column.flags.archived || column.flags.hiddenFromBoard) return "excluded";
   if (column.flags.complete) return "done";
   if (column.flags.countsTowardWip && !column.flags.intake) return "inProgress";
 
@@ -57,6 +57,7 @@ export function computeWorkflowStatusCounts(
   const workflowsById = new Map(
     boardWorkflows.workflows.map((workflow) => [workflow.id, workflow])
   );
+  const knownWorkflowIds = new Set(workflowsById.keys());
   const columnsByWorkflowId = new Map<
     string,
     Map<string, BoardWorkflowColumn>
@@ -73,9 +74,14 @@ export function computeWorkflowStatusCounts(
   if (!tasks?.length) return countsByWorkflow;
 
   for (const task of tasks) {
-    const workflowId =
-      boardWorkflows.taskWorkflowIds[task.id] ??
-      boardWorkflows.defaultWorkflowId;
+    const assignedWorkflowId = boardWorkflows.taskWorkflowIds[task.id];
+    /*
+    FNXC:WorkflowSwitcher 2026-06-29-18:37:
+    Workflow counts must follow the same stale-assignment repair semantics as Board rendering: missing or unknown task-workflow ids fall back to the default workflow so cards and selector counts do not diverge while taskWorkflowIds is stale.
+    */
+    const workflowId = assignedWorkflowId && knownWorkflowIds.has(assignedWorkflowId)
+      ? assignedWorkflowId
+      : boardWorkflows.defaultWorkflowId;
     const workflow = workflowsById.get(workflowId);
     if (!workflow) continue;
 

@@ -213,6 +213,24 @@ describe("FileBrowserModal", () => {
     expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "packages/dashboard/app/App.tsx", true, undefined);
   });
 
+  it("opens root-level absolute initial files at filesystem root", async () => {
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile="/README.md"
+        isOpen={true}
+        onClose={mockOnClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("/README.md").length).toBeGreaterThan(0);
+    });
+
+    expect(mockSetPath).toHaveBeenCalledWith("/");
+    expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("project", "/README.md", true, undefined);
+  });
+
   it("switches workspace and notifies parent", async () => {
     const user = userEvent.setup();
     render(
@@ -227,6 +245,159 @@ describe("FileBrowserModal", () => {
     await user.click(screen.getByRole("button", { name: /kb/i }));
     await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
 
+    expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
+  });
+
+  it("keeps an errored nested selected file open on desktop after switching workspaces", async () => {
+    const user = userEvent.setup();
+    const nestedFile = "packages/dashboard/app/App.tsx";
+    mockUseWorkspaceFileEditor.mockReturnValue({
+      ...defaultEditorState,
+      error: "Could not load App.tsx",
+    });
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile={nestedFile}
+        isOpen={true}
+        onClose={mockOnClose}
+        onWorkspaceChange={mockOnWorkspaceChange}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument());
+    expect(screen.getByText("Could not load App.tsx")).toBeInTheDocument();
+    mockSetPath.mockClear();
+
+    await user.click(screen.getByRole("button", { name: /kb/i }));
+    await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
+
+    await waitFor(() => {
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined);
+    });
+    expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
+    expect(screen.getByText("Could not load App.tsx")).toBeInTheDocument();
+    expect(document.querySelector(".file-browser-content.mobile")).toBeNull();
+    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
+  });
+
+  it("replaces an errored selected file with newly loaded content after switching workspaces", async () => {
+    const user = userEvent.setup();
+    const nestedFile = "packages/dashboard/app/App.tsx";
+    mockUseWorkspaceFileEditor.mockImplementation((workspace, filePath) => {
+      if (workspace === "FN-002" && filePath === nestedFile) {
+        return {
+          ...defaultEditorState,
+          content: "console.log('loaded from task worktree');",
+          originalContent: "console.log('loaded from task worktree');",
+          error: null,
+        };
+      }
+
+      if (filePath === nestedFile) {
+        return {
+          ...defaultEditorState,
+          content: "",
+          originalContent: "",
+          error: "Could not load App.tsx",
+        };
+      }
+
+      return defaultEditorState;
+    });
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile={nestedFile}
+        isOpen={true}
+        onClose={mockOnClose}
+        onWorkspaceChange={mockOnWorkspaceChange}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("Could not load App.tsx")).toBeInTheDocument());
+    mockSetPath.mockClear();
+
+    await user.click(screen.getByRole("button", { name: /kb/i }));
+    await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
+
+    await waitFor(() => {
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined);
+    });
+    expect(screen.queryByText("Could not load App.tsx")).not.toBeInTheDocument();
+    expect(document.querySelector(".cm-content")?.textContent).toContain("console.log('loaded from task worktree');");
+    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+  });
+
+  it("keeps mobile on the errored nested selected file after switching workspaces", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      writable: true,
+      configurable: true,
+      value: 375,
+    });
+    const user = userEvent.setup();
+    const nestedFile = "packages/dashboard/app/App.tsx";
+    mockUseWorkspaceFileEditor.mockReturnValue({
+      ...defaultEditorState,
+      error: "Could not load App.tsx",
+    });
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        initialFile={nestedFile}
+        isOpen={true}
+        onClose={mockOnClose}
+        onWorkspaceChange={mockOnWorkspaceChange}
+      />,
+    );
+
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => expect(screen.getByLabelText("Back to file list")).toBeInTheDocument());
+    expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
+    mockSetPath.mockClear();
+
+    await user.click(screen.getByRole("button", { name: /kb/i }));
+    await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
+
+    await waitFor(() => {
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", nestedFile, true, undefined);
+    });
+    expect(screen.getByLabelText("Back to file list")).toBeInTheDocument();
+    expect(screen.getByLabelText(`Editor for ${nestedFile}`)).toBeInTheDocument();
+    expect(document.querySelector(".file-browser-content.mobile.active")).not.toBeNull();
+    expect(document.querySelector(".file-browser-sidebar.mobile.active")).toBeNull();
+    expect(mockSetPath).toHaveBeenCalledWith("packages/dashboard/app");
+    expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
+  });
+
+  it("keeps the placeholder after switching workspaces with no selected file", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <FileBrowserModal
+        initialWorkspace="project"
+        isOpen={true}
+        onClose={mockOnClose}
+        onWorkspaceChange={mockOnWorkspaceChange}
+      />,
+    );
+
+    expect(screen.getByText("Select a file to edit")).toBeInTheDocument();
+    mockUseWorkspaceFileEditor.mockClear();
+
+    await user.click(screen.getByRole("button", { name: /kb/i }));
+    await user.click(screen.getByRole("button", { name: /FN-002 Task Two/i }));
+
+    await waitFor(() => {
+      expect(mockUseWorkspaceFileEditor).toHaveBeenLastCalledWith("FN-002", null, true, undefined);
+    });
+    expect(screen.getByText("Select a file to edit")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Editor for /)).not.toBeInTheDocument();
+    expect(mockSetPath).not.toHaveBeenCalledWith(expect.stringContaining("packages/dashboard/app"));
     expect(mockOnWorkspaceChange).toHaveBeenCalledWith("FN-002");
   });
 

@@ -72,6 +72,10 @@ const GITHUB_STAR_CACHE_KEY = "fusion_github_star_count";
 const GITHUB_STAR_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const GITHUB_STAR_CLICKED_KEY = "fusion:github-star-clicked";
 
+function isSlashPrefixedAbsolutePath(path: string): boolean {
+  return path.startsWith("/");
+}
+
 function DiscordIcon({ size = 13 }: { size?: number }) {
   return (
     <svg
@@ -724,6 +728,7 @@ export function SettingsModal({
     groupOverlappingFiles: true,
     ignoreHiddenOverlapPaths: true,
     overlapIgnorePaths: [],
+    allowAbsoluteFileBrowserPaths: false,
     autoMerge: true,
     planApprovalMode: "workflow",
     mergeStrategy: "direct",
@@ -734,6 +739,7 @@ export function SettingsModal({
     recycleWorktrees: false,
     showWorktreeGrouping: false,
     openTasksInRightSidebar: false,
+    openMobileTasksInPopup: false,
     executorAllowSiblingBranchRename: false,
     worktreeNaming: "random",
     worktreeCopyFiles: [],
@@ -806,7 +812,7 @@ export function SettingsModal({
     loading: overlapPathPickerLoading,
     error: overlapPathPickerError,
     refresh: refreshOverlapPathPicker,
-  } = useWorkspaceFileBrowser("project", overlapPathPickerIndex !== null, projectId);
+  } = useWorkspaceFileBrowser("project", overlapPathPickerIndex !== null, projectId, { allowAbsolutePaths: false });
 
   const {
     entries: worktreesDirPickerEntries,
@@ -815,7 +821,7 @@ export function SettingsModal({
     loading: worktreesDirPickerLoading,
     error: worktreesDirPickerError,
     refresh: refreshWorktreesDirPicker,
-  } = useWorkspaceFileBrowser("project", worktreesDirPickerOpen, projectId);
+  } = useWorkspaceFileBrowser("project", worktreesDirPickerOpen, projectId, { allowAbsolutePaths: false });
 
   const {
     entries: worktreeCopyFilePickerEntries,
@@ -824,7 +830,7 @@ export function SettingsModal({
     loading: worktreeCopyFilePickerLoading,
     error: worktreeCopyFilePickerError,
     refresh: refreshWorktreeCopyFilePicker,
-  } = useWorkspaceFileBrowser("project", worktreeCopyFilePickerIndex !== null, projectId);
+  } = useWorkspaceFileBrowser("project", worktreeCopyFilePickerIndex !== null, projectId, { allowAbsolutePaths: false });
 
   const { nodes } = useNodes();
   const experimentalFeatures = form.experimentalFeatures ?? {};
@@ -994,6 +1000,7 @@ export function SettingsModal({
         const normalizedSettings = {
           ...s,
           ignoreHiddenOverlapPaths: s.ignoreHiddenOverlapPaths ?? true,
+          allowAbsoluteFileBrowserPaths: s.allowAbsoluteFileBrowserPaths === true,
           mergeIntegrationWorktree: normalizeMergeIntegrationWorktreeMode(s.mergeIntegrationWorktree),
           mergeAdvanceAutoSync: normalizeMergeAdvanceAutoSyncMode(s.mergeAdvanceAutoSync),
           maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(s),
@@ -2033,7 +2040,11 @@ export function SettingsModal({
         setImportFile(null);
         // Refresh settings to show imported values
         const refreshed = await fetchSettings(projectId);
-        setForm({ ...refreshed, ignoreHiddenOverlapPaths: refreshed.ignoreHiddenOverlapPaths ?? true });
+        setForm({
+          ...refreshed,
+          ignoreHiddenOverlapPaths: refreshed.ignoreHiddenOverlapPaths ?? true,
+          allowAbsoluteFileBrowserPaths: refreshed.allowAbsoluteFileBrowserPaths === true,
+        });
       } else {
         addToast(result.error || t("settings.importExport.importFailed", "Import failed"), "error");
       }
@@ -2245,6 +2256,12 @@ export function SettingsModal({
   const selectOverlapIgnorePath = useCallback((path: string) => {
     if (overlapPathPickerIndex === null) return;
 
+    /*
+    FNXC:FileBrowserAbsolutePaths 2026-06-29-00:00:
+    The project-level absolute file-browser setting must not widen settings fields whose saved values are consumed as project-relative patterns. Reject slash-prefixed picker selections at the form boundary so overlapIgnorePaths cannot persist filesystem-absolute paths.
+    */
+    if (isSlashPrefixedAbsolutePath(path)) return;
+
     setForm((f) => {
       const currentPaths = f.overlapIgnorePaths && f.overlapIgnorePaths.length > 0
         ? [...f.overlapIgnorePaths]
@@ -2284,12 +2301,16 @@ export function SettingsModal({
   }, []);
 
   const selectWorktreesDirFromPicker = useCallback((path: string) => {
+    if (isSlashPrefixedAbsolutePath(path)) return;
+
     const normalizedPath = path.endsWith("/") ? path : `${path}/`;
     setForm((f) => ({ ...f, worktreesDir: normalizedPath }));
     closeWorktreesDirPicker();
   }, [closeWorktreesDirPicker]);
 
   const selectCurrentWorktreesDir = useCallback(() => {
+    if (isSlashPrefixedAbsolutePath(worktreesDirPickerCurrentPath)) return;
+
     const normalizedPath = worktreesDirPickerCurrentPath === "."
       ? "./"
       : (worktreesDirPickerCurrentPath.endsWith("/") ? worktreesDirPickerCurrentPath : `${worktreesDirPickerCurrentPath}/`);
@@ -2314,6 +2335,12 @@ export function SettingsModal({
 
   const selectWorktreeCopyFile = useCallback((path: string) => {
     if (worktreeCopyFilePickerIndex === null) return;
+
+    /*
+    FNXC:FileBrowserAbsolutePaths 2026-06-29-00:00:
+    worktreeCopyFiles are copied from the project workspace into task worktrees. Keep this picker project-relative even when the standalone Files browser can browse slash-prefixed absolute paths.
+    */
+    if (isSlashPrefixedAbsolutePath(path)) return;
 
     setForm((f) => {
       const currentPaths = f.worktreeCopyFiles && f.worktreeCopyFiles.length > 0
