@@ -451,10 +451,11 @@ describe("TaskDetailModal", () => {
   });
 
   describe("tab toggle", () => {
-    it("defaults non-done omitted tabs to planner Chat", () => {
+    it("restores planner Chat as the omitted non-done default when Chat-first is enabled", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -808,15 +809,15 @@ describe("TaskDetailModal", () => {
       );
 
       // For an in-progress task (no workflow steps, no merge commit), the
-      // top-level tabs are: Chat, Activity, Plan, Changes, Review, Comments,
+      // top-level tabs are: Activity, Chat, Plan, Changes, Review, Comments,
       // Artifacts, Model, Workflow, Stats, Routing.
-      const tabTexts = ["Chat", "Activity", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
+      const tabTexts = ["Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
       expect(tabs.map((tab) => tab.textContent)).toEqual(tabTexts);
-      expect(tabs[0].textContent).toBe("Chat");
-      expect(tabs[1].textContent).toBe("Activity");
+      expect(tabs[0].textContent).toBe("Activity");
+      expect(tabs[1].textContent).toBe("Chat");
       expect(tabs[2].textContent).toBe("Plan");
       expect(tabs[3].textContent).toBe("Changes");
       expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
@@ -925,6 +926,7 @@ describe("TaskDetailModal", () => {
             prompt: "# Hello\n\nContent",
             log: [{ timestamp: "2026-01-01T00:00:00Z", action: "Expanded feed entry", outcome: "visible" }],
           })}
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -996,6 +998,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext })}
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1027,6 +1030,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent", branchContext: undefined })}
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1129,10 +1133,11 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByTestId("task-chat-expand-toggle")).toBeNull();
     });
 
-    it("FN-6532 defaults to planner Chat first while preserving explicit Activity requests", () => {
+    it("FN-6532 restores planner Chat first when Chat-first is enabled while preserving explicit Activity requests", () => {
       const { container, rerender } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1161,6 +1166,7 @@ describe("TaskDetailModal", () => {
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
           initialTab="logs"
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}
@@ -1210,6 +1216,7 @@ describe("TaskDetailModal", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
+          taskDetailChatFirst
           onClose={noop}
           onMoveTask={noopMove}
           onDeleteTask={noopDelete}

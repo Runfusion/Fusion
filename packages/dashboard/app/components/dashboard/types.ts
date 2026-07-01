@@ -113,6 +113,7 @@ export interface MainContentProps {
   autoMerge: boolean;
   mergeStrategy: string;
   settingsLoaded: boolean;
+  taskDetailChatFirst: boolean;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;
   setQuickChatOpen: Dispatch<SetStateAction<boolean>>;

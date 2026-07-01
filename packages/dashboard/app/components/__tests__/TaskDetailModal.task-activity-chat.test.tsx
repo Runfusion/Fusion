@@ -66,7 +66,7 @@ function mockRawLogs(entries: AgentLogEntry[]) {
 }
 
 describe("TaskDetailModal Activity and planner Chat tab integration", () => {
-  it("keeps Chat first while Activity segments Live, Feed, and Raw Logs without duplicate panels on desktop", async () => {
+  it("defaults to Activity first while segmenting Live, Feed, and Raw Logs without duplicate panels on desktop", async () => {
     const user = userEvent.setup();
     mockRawLogs([
       { timestamp: "2026-06-30T20:03:00.000Z", taskId: "FN-7315", type: "text", agent: "executor", text: "raw executor line" },
@@ -74,15 +74,10 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
 
     renderModal();
 
-    expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
+    expect(topLevelTabLabels().slice(0, 2)).toEqual(["Activity", "Chat"]);
     expect(screen.getAllByRole("button", { name: "Chat" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
-    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Live" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Activity" }));
-
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.queryByTestId("task-planner-chat-panel")).not.toBeInTheDocument();
     expect(activitySegmentButtons().map((button) => button.textContent?.trim())).toEqual(["Live", "Feed", "Raw Logs"]);
     expect(activitySegmentButtons().every((button) => (button.textContent ?? "").trim().length > 0)).toBe(true);
     expect(screen.getByRole("tab", { name: "Live" })).toHaveAttribute("aria-selected", "true");
@@ -109,6 +104,65 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getByText("raw executor line")).toBeInTheDocument();
   });
 
+  it("restores Chat-first ordering and omitted non-done default when the project setting is enabled", () => {
+    mockRawLogs([]);
+
+    renderModal({ taskDetailChatFirst: true });
+
+    expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist", { name: "Activity views" })).not.toBeInTheDocument();
+  });
+
+  it("keeps explicit Activity, planner Chat, and Logs deep links stable across the ordering setting", () => {
+    mockRawLogs([]);
+
+    const { rerender } = renderModal({ initialTab: "chat", taskDetailChatFirst: true });
+
+    expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("tab", { name: "Live" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByTestId("task-planner-chat-panel")).not.toBeInTheDocument();
+
+    rerender(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-7315", column: "in-progress" as any, log: [], steeringComments: [] })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+        initialTab="planner-chat"
+        taskDetailChatFirst={false}
+      />,
+    );
+
+    expect(topLevelTabLabels().slice(0, 2)).toEqual(["Activity", "Chat"]);
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+
+    rerender(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-7315", column: "in-progress" as any, log: [{ timestamp: "2026-06-30T20:01:00.000Z", action: "Posted update" }], steeringComments: [] })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+        initialTab="logs"
+        taskDetailChatFirst={true}
+      />,
+    );
+
+    expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("tab", { name: "Feed" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
+  });
+
   it("preserves Summary as the done-task mobile default while Activity and Chat remain first", async () => {
     const user = userEvent.setup();
     const originalInnerWidth = window.innerWidth;
@@ -130,7 +184,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
         />,
       );
 
-      expect(topLevelTabLabels().slice(0, 3)).toEqual(["Chat", "Activity", "Summary"]);
+      expect(topLevelTabLabels().slice(0, 3)).toEqual(["Activity", "Chat", "Summary"]);
       expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
       expect(screen.queryByRole("tab", { name: "Live" })).not.toBeInTheDocument();
 

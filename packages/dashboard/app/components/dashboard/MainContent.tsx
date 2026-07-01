@@ -73,6 +73,7 @@ export function MainContent({
   autoMerge,
   mergeStrategy,
   settingsLoaded,
+  taskDetailChatFirst,
   skillsEnabled,
   experimentalFeatures,
   setQuickChatOpen,
@@ -768,6 +769,7 @@ export function MainContent({
               addToast={addToast}
               prAuthAvailable={prAuthAvailable}
               autoMergeEnabled={autoMerge}
+              taskDetailChatFirst={taskDetailChatFirst}
             />
           </div>
         </div>
@@ -865,6 +867,7 @@ export function MainContent({
         lastFetchTimeMs={lastFetchTimeMs}
         prAuthAvailable={prAuthAvailable}
         autoMerge={autoMerge}
+        taskDetailChatFirst={taskDetailChatFirst}
         mergeStrategy={mergeStrategy}
         onOpenWorkflowEditor={openWorkflowEditorWithNav}
         onCreateWorkflow={openCreateWorkflowWithNav}

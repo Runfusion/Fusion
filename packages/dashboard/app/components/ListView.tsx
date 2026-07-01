@@ -262,6 +262,7 @@ interface ListViewProps {
   lastFetchTimeMs?: number;
   prAuthAvailable?: boolean;
   autoMerge?: boolean;
+  taskDetailChatFirst?: boolean;
   /** Project merge strategy so list context menus match Task Detail before a PR exists. */
   mergeStrategy?: string;
   onOpenWorkflowEditor?: (workflowId?: string) => void;
@@ -334,6 +335,7 @@ export function ListView({
   lastFetchTimeMs,
   prAuthAvailable,
   autoMerge,
+  taskDetailChatFirst = false,
   mergeStrategy = "direct",
   onOpenWorkflowEditor,
   onCreateWorkflow,
@@ -2830,6 +2832,7 @@ export function ListView({
                       addToast={addToast}
                       prAuthAvailable={prAuthAvailable}
                       autoMergeEnabled={autoMerge}
+                      taskDetailChatFirst={taskDetailChatFirst}
                     />
                   </div>
                 )}

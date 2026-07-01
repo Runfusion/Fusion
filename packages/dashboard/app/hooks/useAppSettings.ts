@@ -23,6 +23,7 @@ export interface UseAppSettingsResult {
   capacityRiskTodoThreshold: number;
   openTasksInRightSidebar: boolean;
   openMobileTasksInPopup: boolean;
+  taskDetailChatFirst: boolean;
   quickChatButtonMode: QuickChatButtonMode;
   quickChatCloseOnOutsideClick: boolean;
   dismissModalsOnOutsideClick: boolean;
@@ -66,6 +67,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [capacityRiskTodoThreshold, setCapacityRiskTodoThreshold] = useState(20);
   const [openTasksInRightSidebar, setOpenTasksInRightSidebar] = useState(false);
   const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
+  const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
   const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
@@ -132,6 +134,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       setCapacityRiskTodoThreshold(settings.capacityRiskTodoThreshold ?? 20);
       setOpenTasksInRightSidebar(settings.openTasksInRightSidebar === true);
       setOpenMobileTasksInPopup(settings.openMobileTasksInPopup === true);
+      /*
+      FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+      App-level task-detail hosts need the project setting so Activity-first is the missing/false default and Chat-first is restored only by explicit opt-in.
+      */
+      setTaskDetailChatFirst(settings.taskDetailChatFirst === true);
       setExperimentalFeatures(settings.experimentalFeatures ?? {});
       const features = settings.experimentalFeatures ?? {};
       /*
@@ -160,6 +167,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setDevServerEnabled(false);
     setOpenTasksInRightSidebar(false);
     setOpenMobileTasksInPopup(false);
+    setTaskDetailChatFirst(false);
     setQuickChatCloseOnOutsideClick(true);
     setDismissModalsOnOutsideClick(false);
     setTodosEnabled(true);
@@ -264,6 +272,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     capacityRiskTodoThreshold,
     openTasksInRightSidebar,
     openMobileTasksInPopup,
+    taskDetailChatFirst,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
     dismissModalsOnOutsideClick,

@@ -202,8 +202,8 @@ The existing task activity/steering surface keeps the stable internal `chat` tab
 FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
 Task detail separates Activity from planner-model Chat. `chat` remains the legacy Activity id for old links and Activity → Live (internal `current`)/Feed/Raw Logs/steering, while `planner-chat` is the top-level Chat tab for task-aware planning conversation.
 
-FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
-Task details should prioritize task-aware Chat: render Chat before Activity, default omitted non-done task opens to `planner-chat`, and reserve expanded/focused layout behavior for the planner Chat surface rather than the legacy Activity `chat` id.
+FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+Task details are Activity-first by default: render Activity before planner Chat and make omitted non-done opens land on Activity → Live. The project `taskDetailChatFirst` setting restores Chat-first ordering/default when true; explicit `initialTab` deep links always win.
 
 FNXC:TaskDetailActivity 2026-06-30-15:50:
 Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so existing links continue to open Activity → Live (internal `current`). Legacy `initialTab="logs"` now routes to Activity → Feed, and Raw Logs remains an Activity segment.
@@ -214,7 +214,7 @@ The first Activity segment keeps the stable internal `current` id for legacy seg
 FNXC:TaskDetailActivity 2026-06-30-23:55:
 The first Activity segment is user-facing Live while legacy internals remain `current` and explicit `initialTab="chat"` continues landing there for compatibility.
 */
-function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId): TabId {
+function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, taskDetailChatFirst = false): TabId {
   if (initialTab === "retries") {
     return "definition";
   }
@@ -224,7 +224,10 @@ function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId): Tab
   if (initialTab) {
     return initialTab;
   }
-  return column === "done" ? "summary" : "planner-chat";
+  if (column === "done") {
+    return "summary";
+  }
+  return taskDetailChatFirst ? "planner-chat" : "chat";
 }
 
 function resolveDefaultActivitySegment(initialTab: TabId | undefined): ActivitySegment {
@@ -322,6 +325,8 @@ export interface TaskDetailModalProps {
   initialTab?: TabId;
   /** Mobile-only header affordance mode. */
   mobileHeaderMode?: "close" | "back";
+  /** Project setting: true restores Chat-first tab order/default; false or missing uses Activity-first. */
+  taskDetailChatFirst?: boolean;
   /** Pre-resolved workflow field defs for this task's workflow (U13/KTD-14).
    *  When provided (e.g. threaded from a Board that already holds the payload)
    *  the modal skips its own board-workflows fetch entirely. Falls back to the
@@ -522,10 +527,11 @@ export function TaskDetailContent({
   autoMergeEnabled: autoMergeEnabledProp,
   onOpenWorkflowEditor,
   /**
-   * FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
-   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` for planner-model conversation.
+   * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` and only becomes the omitted non-done default when taskDetailChatFirst is true.
    */
   initialTab,
+  taskDetailChatFirst = false,
   mobileHeaderMode = "close",
   embedded = false,
   onRequestClose,
@@ -536,7 +542,7 @@ export function TaskDetailContent({
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
   const fileBrowser = useFileBrowser();
-  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column));
+  const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [activityExpanded, setActivityExpanded] = useState(false);
   const [plannerChatExpanded, setPlannerChatExpanded] = useState(true);
@@ -668,12 +674,12 @@ export function TaskDetailContent({
 
   // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
   useEffect(() => {
-    setActiveTab(resolveDefaultTab(initialTab, task.column));
+    setActiveTab(resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
     setActivitySegment(resolveDefaultActivitySegment(initialTab));
     if (initialTab === "retries") {
       setRetriesExpanded(true);
     }
-  }, [initialTab, task.column]);
+  }, [initialTab, task.column, taskDetailChatFirst]);
 
   useEffect(() => {
     if (activeTab === "pr" && task.column !== "in-review") {
@@ -3171,21 +3177,40 @@ export function TaskDetailContent({
             <>
           <div className="detail-tabs">
             {/*
-              FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
-              Chat is the first visible task-detail tab and maps to `planner-chat` so omitted non-done task opens prioritize task-aware planning conversation. Activity stays immediately after Chat with the legacy `chat` id for explicit `initialTab="chat"` callers and operational steering/feed/raw-log history.
+              FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+              Activity is first/default for omitted non-done task opens unless the project setting taskDetailChatFirst is true. Keep both stable ids (`chat` for Activity, `planner-chat` for Chat) so explicit deep links and plugin callers retain their destinations.
             */}
-            <button
-              className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("planner-chat")}
-            >
-              {t("taskDetail.tabs.chat", "Chat")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("chat")}
-            >
-              {t("taskDetail.tabs.activity", "Activity")}
-            </button>
+            {taskDetailChatFirst ? (
+              <>
+                <button
+                  className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
+                  onClick={() => setActiveTab("planner-chat")}
+                >
+                  {t("taskDetail.tabs.chat", "Chat")}
+                </button>
+                <button
+                  className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
+                  onClick={() => setActiveTab("chat")}
+                >
+                  {t("taskDetail.tabs.activity", "Activity")}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
+                  onClick={() => setActiveTab("chat")}
+                >
+                  {t("taskDetail.tabs.activity", "Activity")}
+                </button>
+                <button
+                  className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
+                  onClick={() => setActiveTab("planner-chat")}
+                >
+                  {t("taskDetail.tabs.chat", "Chat")}
+                </button>
+              </>
+            )}
             {task.column === "done" && (
               <button
                 className={`detail-tab${activeTab === "summary" ? " detail-tab-active" : ""}`}

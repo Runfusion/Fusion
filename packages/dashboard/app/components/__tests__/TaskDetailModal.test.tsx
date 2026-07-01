@@ -80,6 +80,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     return render(
       <TaskDetailModal
         initialTab={initialTab}
+        taskDetailChatFirst
         task={makeTask({ column })}
         onClose={noop}
         onMoveTask={noopMove}
@@ -155,6 +156,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     const { container, rerender } = render(
       <TaskDetailModal
         task={makeTask({ id: "FN-7324-A", column: "todo" as any })}
+        taskDetailChatFirst
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
@@ -171,6 +173,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     rerender(
       <TaskDetailModal
         task={makeTask({ id: "FN-7324-B", column: "todo" as any })}
+        taskDetailChatFirst
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}

@@ -163,6 +163,19 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("taskDetailChatFirst default", () => {
+    it("keeps taskDetailChatFirst explicitly false in project defaults", () => {
+      expect(DEFAULT_PROJECT_SETTINGS.taskDetailChatFirst).toBe(false);
+      expect("taskDetailChatFirst" in DEFAULT_PROJECT_SETTINGS).toBe(true);
+      expect(PROJECT_SETTINGS_KEYS).toContain("taskDetailChatFirst");
+    });
+
+    it("keeps taskDetailChatFirst project-scoped only", () => {
+      expect("taskDetailChatFirst" in DEFAULT_GLOBAL_SETTINGS).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).not.toContain("taskDetailChatFirst");
+    });
+  });
+
   describe("quickChatCloseOnOutsideClick default", () => {
     it("keeps Quick Chat outside-click dismissal explicitly true in project defaults", () => {
       expect(DEFAULT_PROJECT_SETTINGS.quickChatCloseOnOutsideClick).toBe(true);

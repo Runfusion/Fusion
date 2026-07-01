@@ -44,6 +44,7 @@ export interface RightDockControllerInput {
   onTaskCreated: (task: Task) => void;
   prAuthAvailable: boolean;
   autoMerge: boolean;
+  taskDetailChatFirst: boolean;
   visibilityOptions: OverflowViewVisibilityOptions;
   footerVisible: boolean;
 }
@@ -225,6 +226,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       addToast={input.addToast}
       prAuthAvailable={input.prAuthAvailable}
       autoMergeEnabled={input.autoMerge}
+      taskDetailChatFirst={input.taskDetailChatFirst}
     />
   ) : null;
 

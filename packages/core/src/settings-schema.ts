@@ -332,6 +332,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   Default off preserves current mobile board-card task detail behavior. The dashboard only consults this project setting for mobile board-card clicks without a deep tab, and reuses the existing task pop-out surface without changing desktop/right-dock routing.
   */
   openMobileTasksInPopup: false,
+  /*
+  FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+  Project task-detail defaults are Activity-first unless this opt-in is true. Keeping the default false preserves explicit deep-link ids while making omitted non-done task opens land on Activity → Live.
+  */
+  taskDetailChatFirst: false,
   executorAllowSiblingBranchRename: false,
   worktreeNaming: "random",
   worktrunk: {

@@ -3736,6 +3736,11 @@ export interface ProjectSettings {
    * This project-scoped setting is default-off so mobile board navigation is unchanged until operators opt in. When enabled, it applies only to mobile viewport board-card clicks with no deep initial tab and reuses the existing task pop-out/FloatingWindow path; desktop/tablet right-dock routing and all non-board task-open paths remain governed by their existing settings and handlers.
    */
   openMobileTasksInPopup?: boolean;
+  /**
+   * FNXC:TaskDetailActivityFirst 2026-06-30-23:59:
+   * Default-off keeps task details Activity-first so omitted non-done opens land on the legacy `chat` Activity → Live surface. Operators can set true to restore Chat-first ordering/default while explicit Activity/Chat/Logs deep links remain stable.
+   */
+  taskDetailChatFirst?: boolean;
   /** When true, restores the legacy behavior of silently creating sibling
    *  branches like `fusion/FN-123-2` when the canonical task branch is already
    *  checked out elsewhere. Default: false. */

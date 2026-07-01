@@ -73,6 +73,7 @@ interface AppModalsProps {
   settings: {
     prAuthAvailable: boolean;
     autoMerge: boolean;
+    taskDetailChatFirst: boolean;
     themeMode: ThemeMode;
     colorTheme: ColorTheme;
     dashboardFontScalePct: number;
@@ -328,6 +329,7 @@ export function AppModals({
             addToast={addToast}
             prAuthAvailable={settings.prAuthAvailable}
             autoMergeEnabled={settings.autoMerge}
+            taskDetailChatFirst={settings.taskDetailChatFirst}
             onOpenWorkflowEditor={() => modalManager.openWorkflowEditor()}
             initialTab={modalManager.detailTaskInitialTab}
           />

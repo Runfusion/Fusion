@@ -358,8 +358,8 @@ describe("TaskDetailModal", () => {
       expect(container.querySelectorAll(".detail-timestamp-item").length).toBe(2);
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map((tab) => tab.textContent?.trim())).toEqual([
-        "Chat",
         "Activity",
+        "Chat",
         "Plan",
         "Changes",
         "Review",

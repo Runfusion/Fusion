@@ -21,6 +21,7 @@ function renderAppearanceSection(formOverrides: Partial<Settings> = {}) {
     autoMerge: true,
     openTasksInRightSidebar: false,
     openMobileTasksInPopup: false,
+    taskDetailChatFirst: false,
     ...formOverrides,
   } as SettingsFormState;
   const setForm = vi.fn((updater: SettingsFormState | ((previous: SettingsFormState) => SettingsFormState)) => {
@@ -78,5 +79,24 @@ describe("AppearanceSection", () => {
     renderAppearanceSection({ openMobileTasksInPopup: true });
 
     expect(screen.getByLabelText("Open mobile tasks as popups")).toBeChecked();
+  });
+
+  it("renders task detail Chat-first as unchecked by default and updates it", () => {
+    const { setForm, getForm } = renderAppearanceSection();
+
+    const checkbox = screen.getByLabelText("Open task details with Chat first");
+    expect(checkbox).not.toBeChecked();
+    expect(screen.getByText(/Off by default: task details list Activity first/)).toBeInTheDocument();
+
+    fireEvent.click(checkbox);
+
+    expect(setForm).toHaveBeenCalledTimes(1);
+    expect(getForm().taskDetailChatFirst).toBe(true);
+  });
+
+  it("reflects a persisted enabled task detail Chat-first value", () => {
+    renderAppearanceSection({ taskDetailChatFirst: true });
+
+    expect(screen.getByLabelText("Open task details with Chat first")).toBeChecked();
   });
 });
