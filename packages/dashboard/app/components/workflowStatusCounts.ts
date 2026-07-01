@@ -1,5 +1,6 @@
 import type { Task } from "@fusion/core";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload } from "../api";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 
 export interface WorkflowStatusCounts {
   todo: number;
@@ -71,6 +72,8 @@ export function computeWorkflowStatusCounts(
     );
   }
 
+  const aggregateCounts = EMPTY_COUNTS();
+  countsByWorkflow.set(ALL_WORKFLOWS_BOARD_VIEW_ID, aggregateCounts);
   if (!tasks?.length) return countsByWorkflow;
 
   for (const task of tasks) {
@@ -93,12 +96,14 @@ export function computeWorkflowStatusCounts(
 
     const counts = countsByWorkflow.get(workflow.id) ?? EMPTY_COUNTS();
     counts[bucket] += 1;
+    aggregateCounts[bucket] += 1;
     if (MERGING_STATUSES.has(task.status ?? "")) {
       /*
       FNXC:WorkflowSwitcher 2026-06-22-20:30:
       Workflow boards need a visible flashing indicator in the workflow dropdown when any task assigned to that workflow is actively merging, independent of whether the workflow's review/merge column buckets as Todo or In Progress.
       */
       counts.merging += 1;
+      aggregateCounts.merging += 1;
     }
     countsByWorkflow.set(workflow.id, counts);
   }

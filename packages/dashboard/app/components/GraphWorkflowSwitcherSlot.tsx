@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../api";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
@@ -9,6 +10,7 @@ import type { WorkflowStatusCounts } from "./workflowStatusCounts";
 export interface GraphWorkflowSelection {
   boardWorkflows: BoardWorkflowsPayload;
   selectedWorkflow: BoardWorkflowDefinition;
+  isAllWorkflowsSelected: boolean;
 }
 
 interface GraphWorkflowSwitcherSlotProps {
@@ -29,7 +31,7 @@ export function filterTasksByGraphWorkflowSelection<T extends { id: string }>(
   projectId: string | undefined,
   selection: GraphWorkflowSelection | null,
 ): T[] {
-  if (!projectId || !selection) return tasks;
+  if (!projectId || !selection || selection.isAllWorkflowsSelected) return tasks;
   const workflowIds = new Set(selection.boardWorkflows.workflows.map((workflow) => workflow.id));
   return tasks.filter((task) => {
     const rawAssignedWorkflowId = selection.boardWorkflows.taskWorkflowIds[task.id];
@@ -55,6 +57,7 @@ export function GraphWorkflowSwitcherSlot({
     workflowMode,
     workflowOptions,
     selectedWorkflow,
+    isAllWorkflowsSelected,
     setSelectedWorkflowId,
     refreshBoardWorkflows,
   } = useBoardWorkflows({ projectId });
@@ -87,8 +90,8 @@ export function GraphWorkflowSwitcherSlot({
 
   const selection = useMemo<GraphWorkflowSelection | null>(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return null;
-    return { boardWorkflows, selectedWorkflow };
-  }, [boardWorkflows, selectedWorkflow, workflowMode]);
+    return { boardWorkflows, selectedWorkflow, isAllWorkflowsSelected };
+  }, [boardWorkflows, isAllWorkflowsSelected, selectedWorkflow, workflowMode]);
 
   useEffect(() => {
     onWorkflowSelectionChange?.(selection);
@@ -107,9 +110,10 @@ export function GraphWorkflowSwitcherSlot({
       <div className="board-workflow-selector">
         <WorkflowSwitcher
           workflows={workflowOptions}
-          value={selectedWorkflow.id}
+          value={isAllWorkflowsSelected ? ALL_WORKFLOWS_BOARD_VIEW_ID : selectedWorkflow.id}
           onChange={setSelectedWorkflowId}
           counts={EMPTY_COUNTS}
+          aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
           onOpen={refreshBoardWorkflows}
           onEditWorkflow={onOpenWorkflowEditor}
           onCreateWorkflow={onCreateWorkflow}

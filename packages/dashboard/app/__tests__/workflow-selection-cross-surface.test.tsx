@@ -71,8 +71,8 @@ function CrossSurfaceHarness({ projectId = "project-cross", tasks = TASKS }: { p
       <div id="header-workflow-slot" data-testid="header-workflow-slot" />
       <HeaderWorkflowSwitcherSlot projectId={projectId} onWorkflowSelectionChange={setHeaderSelection} />
       <GraphWorkflowSwitcherSlot projectId={projectId} onWorkflowSelectionChange={setGraphSelection} />
-      <output data-testid="header-selection">{headerSelection?.selectedWorkflow.id ?? "none"}</output>
-      <output data-testid="graph-selection">{graphSelection?.selectedWorkflow.id ?? "none"}</output>
+      <output data-testid="header-selection">{headerSelection?.isAllWorkflowsSelected ? ALL_WORKFLOWS_BOARD_VIEW_ID : headerSelection?.selectedWorkflow.id ?? "none"}</output>
+      <output data-testid="graph-selection">{graphSelection?.isAllWorkflowsSelected ? ALL_WORKFLOWS_BOARD_VIEW_ID : graphSelection?.selectedWorkflow.id ?? "none"}</output>
       <ul data-testid="graph-tasks">
         {graphTasks.map((task) => (
           <li key={task.id} data-testid={`graph-task-${task.id}`}>{task.title}</li>
@@ -213,17 +213,23 @@ describe("workflow selection across dashboard surfaces", () => {
     });
   });
 
-  it("filters the Board-only all-workflows sentinel out of Header and Graph real-workflow surfaces", async () => {
+  it("shares the all-workflows aggregate sentinel without filtering Graph tasks or editing aggregate rows", async () => {
     localStorage.setItem("kb:project-cross:kb-dashboard-board-workflow-selection", ALL_WORKFLOWS_BOARD_VIEW_ID);
 
     render(<CrossSurfaceHarness />);
 
-    expect(await screen.findAllByTestId("workflow-switcher")).toHaveLength(2);
+    const switchers = await screen.findAllByTestId("workflow-switcher");
+    expect(switchers).toHaveLength(2);
     await waitFor(() => {
-      expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
-      expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(ALL_WORKFLOWS_BOARD_VIEW_ID);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(ALL_WORKFLOWS_BOARD_VIEW_ID);
     });
-    expect(screen.queryByText("All workflows")).toBeNull();
+    for (const task of TASKS) {
+      expect(screen.getByTestId(`graph-task-${task.id}`)).toBeInTheDocument();
+    }
+    fireEvent.click(switchers[0]);
+    expect(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toHaveTextContent("All workflows");
+    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
     expect(localStorage.getItem("kb:project-cross:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 

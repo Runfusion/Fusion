@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../../api";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../../utils/boardWorkflowSelection";
 import { filterTasksByGraphWorkflowSelection, GraphWorkflowSwitcherSlot, type GraphWorkflowSelection } from "../GraphWorkflowSwitcherSlot";
 
 const fetchBoardWorkflowsMock = vi.fn();
@@ -74,6 +75,7 @@ describe("filterTasksByGraphWorkflowSelection", () => {
         },
       }),
       selectedWorkflow: DEFAULT_WORKFLOW,
+      isAllWorkflowsSelected: false,
     };
 
     expect(filterTasksByGraphWorkflowSelection(tasks, "project-graph", selection).map((task) => task.id)).toEqual([
@@ -86,11 +88,23 @@ describe("filterTasksByGraphWorkflowSelection", () => {
     ]);
   });
 
+  it("preserves all graph tasks for the aggregate workflow selection", () => {
+    const tasks = [{ id: "FN-a" }, { id: "FN-b" }];
+    const selection: GraphWorkflowSelection = {
+      boardWorkflows: workflowPayload({ taskWorkflowIds: { "FN-b": CUSTOM_WORKFLOW.id } }),
+      selectedWorkflow: DEFAULT_WORKFLOW,
+      isAllWorkflowsSelected: true,
+    };
+
+    expect(filterTasksByGraphWorkflowSelection(tasks, "project-graph", selection)).toBe(tasks);
+  });
+
   it("preserves unfiltered graph tasks without a project or workflow payload", () => {
     const tasks = [{ id: "FN-a" }, { id: "FN-b" }];
     const selection: GraphWorkflowSelection = {
       boardWorkflows: workflowPayload({ taskWorkflowIds: { "FN-b": CUSTOM_WORKFLOW.id } }),
       selectedWorkflow: CUSTOM_WORKFLOW,
+      isAllWorkflowsSelected: false,
     };
 
     expect(filterTasksByGraphWorkflowSelection(tasks, undefined, selection)).toBe(tasks);
@@ -112,6 +126,7 @@ describe("GraphWorkflowSwitcherSlot", () => {
       expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith({
         boardWorkflows: workflowPayload(),
         selectedWorkflow: DEFAULT_WORKFLOW,
+        isAllWorkflowsSelected: false,
       });
     });
   });
@@ -196,6 +211,25 @@ describe("GraphWorkflowSwitcherSlot", () => {
       const lastSelection = onWorkflowSelectionChange.mock.calls.at(-1)?.[0] as GraphWorkflowSelection | null;
       expect(lastSelection?.selectedWorkflow.id).toBe(CUSTOM_WORKFLOW.id);
     });
+  });
+
+  it("exposes all workflows as an aggregate non-editable graph selection", async () => {
+    appendHeaderWorkflowSlot();
+    const onWorkflowSelectionChange = vi.fn();
+    const onOpenWorkflowEditor = vi.fn();
+    render(<GraphWorkflowSwitcherSlot projectId="project-graph-all" onWorkflowSelectionChange={onWorkflowSelectionChange} onOpenWorkflowEditor={onOpenWorkflowEditor} />);
+
+    fireEvent.click(await screen.findByTestId("workflow-switcher"));
+    expect(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toHaveTextContent("All workflows");
+    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
+    fireEvent.click(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
+
+    await waitFor(() => {
+      const lastSelection = onWorkflowSelectionChange.mock.calls.at(-1)?.[0] as GraphWorkflowSelection | null;
+      expect(lastSelection?.isAllWorkflowsSelected).toBe(true);
+      expect(lastSelection?.selectedWorkflow.id).toBe(DEFAULT_WORKFLOW.id);
+    });
+    expect(onOpenWorkflowEditor).not.toHaveBeenCalledWith(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
   it("forwards dropdown edit workflow ids to the graph editor launcher", async () => {

@@ -8,6 +8,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../../api";
 import { HeaderWorkflowSwitcherSlot, type HeaderWorkflowSelection } from "../HeaderWorkflowSwitcherSlot";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../../utils/boardWorkflowSelection";
 import { PlanningWorkflowSwitcherSlot } from "../PlanningWorkflowSwitcherSlot";
 
 const fetchBoardWorkflowsMock = vi.fn();
@@ -129,6 +130,32 @@ describe("HeaderWorkflowSwitcherSlot", () => {
       }));
     });
     expect(localStorage.getItem("kb:project-header-stale:kb-dashboard-board-workflow-selection")).toBe(DEFAULT_WORKFLOW.id);
+  });
+
+  it("exposes all workflows as an aggregate non-editable header selection", async () => {
+    const onWorkflowSelectionChange = vi.fn<(selection: HeaderWorkflowSelection | null) => void>();
+    const onOpenWorkflowEditor = vi.fn();
+    renderWithHeader(
+      <HeaderWorkflowSwitcherSlot
+        projectId="project-header-all"
+        onWorkflowSelectionChange={onWorkflowSelectionChange}
+        onOpenWorkflowEditor={onOpenWorkflowEditor}
+      />,
+    );
+
+    fireEvent.click(await screen.findByTestId("workflow-switcher"));
+    expect(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toHaveTextContent("All workflows");
+    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
+    fireEvent.click(screen.getByTestId(`workflow-switcher-option-${ALL_WORKFLOWS_BOARD_VIEW_ID}`));
+
+    await waitFor(() => {
+      expect(onWorkflowSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+        isAllWorkflowsSelected: true,
+        selectedWorkflow: expect.objectContaining({ id: DEFAULT_WORKFLOW.id }),
+      }));
+    });
+    expect(onOpenWorkflowEditor).not.toHaveBeenCalledWith(ALL_WORKFLOWS_BOARD_VIEW_ID);
+    expect(localStorage.getItem("kb:project-header-all:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
   it("forwards dropdown edit workflow ids from the shared header slot", async () => {

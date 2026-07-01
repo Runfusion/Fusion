@@ -10,7 +10,8 @@ import {
   writeBoardWorkflowsCache as defaultWriteBoardWorkflowsCache,
 } from "../utils/boardWorkflowsCache";
 import {
-  readBoardWorkflowSelection,
+  ALL_WORKFLOWS_BOARD_VIEW_ID,
+  readBoardWorkflowViewSelection,
   removeBoardWorkflowSelection,
   writeBoardWorkflowSelection,
 } from "../utils/boardWorkflowSelection";
@@ -45,9 +46,11 @@ export interface UseBoardWorkflowsResult {
   workflowMode: boolean;
   /** Workflows sorted with the default first, then alphabetical. Empty unless in workflow mode. */
   workflowOptions: BoardWorkflowDefinition[];
-  /** Currently selected workflow (resolved from selection / default / first), or null. */
+  /** Currently selected real workflow (resolved from selection / default / first), or null. */
   selectedWorkflow: BoardWorkflowDefinition | null;
   selectedWorkflowId: string | null;
+  /** True when the dashboard-only aggregate workflow view is selected. */
+  isAllWorkflowsSelected: boolean;
   setSelectedWorkflowId: Dispatch<SetStateAction<string | null>>;
   /** Force a fresh fetch (used on switcher open, since task assignment changes emit no workflow SSE). */
   refreshBoardWorkflows: () => void;
@@ -73,7 +76,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     return cached ? { projectId, payload: cached } : null;
   });
   const boardWorkflows = boardWorkflowsState?.projectId === projectId && boardWorkflowsState ? boardWorkflowsState.payload : null;
-  const [selectedWorkflowId, setSelectedWorkflowIdState] = useState<string | null>(() => readBoardWorkflowSelection(projectId));
+  const [selectedWorkflowId, setSelectedWorkflowIdState] = useState<string | null>(() => readBoardWorkflowViewSelection(projectId));
   const storedSelectionRef = useRef<string | null>(selectedWorkflowId);
 
   const setSelectedWorkflowId = useCallback<Dispatch<SetStateAction<string | null>>>((nextSelection) => {
@@ -97,7 +100,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
   // Re-hydrate from the per-project cache on project change (and gate change).
   useEffect(() => {
     const cached = shouldHydrateCache ? readBoardWorkflowsCache(projectId) : null;
-    const storedSelection = readBoardWorkflowSelection(projectId);
+    const storedSelection = readBoardWorkflowViewSelection(projectId);
     storedSelectionRef.current = storedSelection;
     setSelectedWorkflowIdState(storedSelection);
     setBoardWorkflowsState(cached ? { projectId, payload: cached } : null);
@@ -153,6 +156,8 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     });
   }, [boardWorkflows, workflowMode]);
 
+  const isAllWorkflowsSelected = selectedWorkflowId === ALL_WORKFLOWS_BOARD_VIEW_ID;
+
   const selectedWorkflow = useMemo<BoardWorkflowDefinition | null>(() => {
     if (!workflowMode) return null;
     return workflowOptions.find((workflow) => workflow.id === selectedWorkflowId)
@@ -184,6 +189,10 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
       return;
     }
 
+    if (isAllWorkflowsSelected) {
+      return;
+    }
+
     if (selectedWorkflow && selectedWorkflow.id !== selectedWorkflowId) {
       const shouldRepairStoredSelection = storedSelectionRef.current !== null;
       setSelectedWorkflowIdState(selectedWorkflow.id);
@@ -192,7 +201,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
         storedSelectionRef.current = selectedWorkflow.id;
       }
     }
-  }, [boardWorkflows, projectId, selectedWorkflow, selectedWorkflowId, workflowMode, workflowOptions.length]);
+  }, [boardWorkflows, isAllWorkflowsSelected, projectId, selectedWorkflow, selectedWorkflowId, workflowMode, workflowOptions.length]);
 
   return {
     boardWorkflows,
@@ -200,6 +209,7 @@ export function useBoardWorkflows(params: UseBoardWorkflowsParams): UseBoardWork
     workflowOptions,
     selectedWorkflow,
     selectedWorkflowId,
+    isAllWorkflowsSelected,
     setSelectedWorkflowId,
     refreshBoardWorkflows,
     setBoardWorkflowsState,

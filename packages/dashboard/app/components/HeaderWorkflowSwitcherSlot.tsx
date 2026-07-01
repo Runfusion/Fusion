@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../api";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import { useViewportMode } from "../hooks/useViewportMode";
 import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
@@ -9,6 +10,7 @@ import type { WorkflowStatusCounts } from "./workflowStatusCounts";
 export interface HeaderWorkflowSelection {
   boardWorkflows: BoardWorkflowsPayload;
   selectedWorkflow: BoardWorkflowDefinition;
+  isAllWorkflowsSelected: boolean;
 }
 
 interface HeaderWorkflowSwitcherSlotProps {
@@ -37,6 +39,7 @@ export function HeaderWorkflowSwitcherSlot({
     workflowMode,
     workflowOptions,
     selectedWorkflow,
+    isAllWorkflowsSelected,
     setSelectedWorkflowId,
     refreshBoardWorkflows,
   } = useBoardWorkflows({ projectId });
@@ -69,8 +72,8 @@ export function HeaderWorkflowSwitcherSlot({
 
   const selection = useMemo<HeaderWorkflowSelection | null>(() => {
     if (!workflowMode || !boardWorkflows || !selectedWorkflow) return null;
-    return { boardWorkflows, selectedWorkflow };
-  }, [boardWorkflows, selectedWorkflow, workflowMode]);
+    return { boardWorkflows, selectedWorkflow, isAllWorkflowsSelected };
+  }, [boardWorkflows, isAllWorkflowsSelected, selectedWorkflow, workflowMode]);
 
   useEffect(() => {
     onWorkflowSelectionChange?.(selection);
@@ -89,9 +92,10 @@ export function HeaderWorkflowSwitcherSlot({
       <div className="board-workflow-selector">
         <WorkflowSwitcher
           workflows={workflowOptions}
-          value={selectedWorkflow.id}
+          value={isAllWorkflowsSelected ? ALL_WORKFLOWS_BOARD_VIEW_ID : selectedWorkflow.id}
           onChange={setSelectedWorkflowId}
           counts={EMPTY_COUNTS}
+          aggregateOption={{ id: ALL_WORKFLOWS_BOARD_VIEW_ID, name: "All workflows" }}
           onOpen={refreshBoardWorkflows}
           onEditWorkflow={onOpenWorkflowEditor}
           onCreateWorkflow={onCreateWorkflow}

@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { ListView } from "../ListView";
 import type { Task, TaskDetail } from "@fusion/core";
 import { scopedKey } from "../../utils/projectStorage";
-import { BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { loadAllAppCss } from "../../test/cssFixture";
 
 // Mock the API
@@ -1141,6 +1141,45 @@ describe("ListView", () => {
     await openWorkflowSwitcher();
     expect(mobileTrigger).toHaveTextContent("1");
     mobileSpy.mockRestore();
+  });
+
+  it("shows all workflows in ListView without submitting the aggregate sentinel", async () => {
+    const mockOnQuickCreate = vi.fn().mockResolvedValue({ id: "FN-new" });
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [
+        { id: "builtin:coding", name: "Coding", columns: [{ id: "triage", name: "Triage", flags: { intake: true } }, { id: "done", name: "Done", flags: { complete: true } }] },
+        { id: "wf-custom", name: "Custom", columns: [{ id: "backlog", name: "Backlog", flags: { intake: true } }, { id: "review", name: "Review", flags: { countsTowardWip: true } }] },
+      ],
+      taskWorkflowIds: { "FN-002": "wf-custom", "FN-003": "wf-deleted" },
+    });
+
+    renderListView({
+      tasks: [
+        createMockTask({ id: "FN-001", column: "triage", title: "Coding task" }),
+        createMockTask({ id: "FN-002", column: "backlog", title: "Custom task" }),
+        createMockTask({ id: "FN-003", column: "triage", title: "Stale workflow task" }),
+      ],
+      onQuickCreate: mockOnQuickCreate,
+    });
+
+    await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
+
+    expect(screen.getByText("Coding task")).toBeInTheDocument();
+    expect(screen.getByText("Custom task")).toBeInTheDocument();
+    expect(screen.getByText("Stale workflow task")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows");
+    expect(screen.queryByTestId(`workflow-switcher-edit-${ALL_WORKFLOWS_BOARD_VIEW_ID}`)).toBeNull();
+
+    fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Aggregate quick add" } });
+    fireEvent.keyDown(screen.getByTestId("quick-entry-input"), { key: "Enter" });
+
+    await waitFor(() => expect(mockOnQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Aggregate quick add",
+      workflowId: "builtin:coding",
+    })));
+    expect(mockOnQuickCreate).not.toHaveBeenCalledWith(expect.objectContaining({ workflowId: ALL_WORKFLOWS_BOARD_VIEW_ID }));
   });
 
   it("shows workflow edit and New actions inside the dropdown", async () => {

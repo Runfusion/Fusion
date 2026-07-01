@@ -1,4 +1,4 @@
-import { HeaderWorkflowSwitcherSlot } from "./HeaderWorkflowSwitcherSlot";
+import { HeaderWorkflowSwitcherSlot, type HeaderWorkflowSelection } from "./HeaderWorkflowSwitcherSlot";
 
 /*
 FNXC:PlanningWorkflowSwitcher 2026-06-25-00:00:
@@ -7,8 +7,9 @@ Planning keeps this compatibility wrapper while the neutral HeaderWorkflowSwitch
 
 interface PlanningWorkflowSwitcherSlotProps {
   projectId?: string;
-  onOpenWorkflowEditor?: () => void;
+  onOpenWorkflowEditor?: (workflowId?: string) => void;
   onCreateWorkflow?: () => void;
+  onWorkflowSelectionChange?: (selection: HeaderWorkflowSelection | null) => void;
 }
 
 export function PlanningWorkflowSwitcherSlot(props: PlanningWorkflowSwitcherSlotProps) {

@@ -175,6 +175,7 @@ export function MainContent({
   _WorkflowEditorView,
 }: MainContentProps) {
   const [missionWorkflowId, setMissionWorkflowId] = useState<string | null>(null);
+  const [planningHeaderWorkflowId, setPlanningHeaderWorkflowId] = useState<string | null>(null);
 
   if (showBackendConnectionErrorPage) {
     return (
@@ -364,11 +365,14 @@ export function MainContent({
         {/*
         FNXC:MissionWorkflows 2026-06-25-00:00:
         Missions intentionally shares Planning's header workflow-selection surface because feature and slice triage create tasks. Keep the selected workflow local to this project view and thread only the resolved id into mission task creation.
+
+        FNXC:WorkflowAggregation 2026-07-01-00:00:
+        The All workflows row is view-only context for Missions; mission task creation receives `null` default behavior instead of the aggregate sentinel.
         */}
         <HeaderWorkflowSwitcherSlot
           projectId={currentProject?.id}
           onOpenWorkflowEditor={openWorkflowEditorWithNav}
-          onWorkflowSelectionChange={(selection) => setMissionWorkflowId(selection?.selectedWorkflow.id ?? null)}
+          onWorkflowSelectionChange={(selection) => setMissionWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
         />
         <MissionManager
           isInline={true}
@@ -584,8 +588,15 @@ export function MainContent({
         {/*
         FNXC:Navigation 2026-06-22-00:00:
         Planning shows the same board WorkflowSwitcher in the same Header workflow slot as Board/List (portaled by PlanningWorkflowSwitcherSlot), so workflow selection is reachable from the left-sidebar Planning destination.
+
+        FNXC:WorkflowAggregation 2026-07-01-00:00:
+        The Planning header selector may choose All workflows for aggregate browsing, but embedded PlanningModeModal receives a real workflow id from the header or `null` default behavior; explicit modalManager workflow entry points still win.
         */}
-        <PlanningWorkflowSwitcherSlot projectId={currentProject?.id} onOpenWorkflowEditor={openWorkflowEditorWithNav} />
+        <PlanningWorkflowSwitcherSlot
+          projectId={currentProject?.id}
+          onOpenWorkflowEditor={openWorkflowEditorWithNav}
+          onWorkflowSelectionChange={(selection) => setPlanningHeaderWorkflowId(selection && !selection.isAllWorkflowsSelected ? selection.selectedWorkflow.id : null)}
+        />
         <PlanningModeModal
           isOpen={true}
           onClose={closePlanningView}
@@ -594,7 +605,7 @@ export function MainContent({
           tasks={tasks}
           initialPlan={modalManager.planningInitialPlan ?? undefined}
           projectId={currentProject?.id}
-          workflowId={modalManager.planningWorkflowId}
+          workflowId={modalManager.planningWorkflowId ?? planningHeaderWorkflowId}
           resumeSessionId={modalManager.planningResumeSessionId}
           presentation="embedded"
         />
