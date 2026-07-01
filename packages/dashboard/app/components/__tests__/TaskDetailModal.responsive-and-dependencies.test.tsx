@@ -90,6 +90,17 @@ function expectTabTouchAction(ruleBlock: string, surface: string): void {
 
 describe("TaskDetailModal", () => {
   describe("mobile responsive structure", () => {
+    it("keeps planner chat composer usable on narrow task-detail layouts", () => {
+      const css = readDashboardStylesSource();
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".task-planner-chat-composer");
+
+      expectBaseRule(css, ".task-planner-chat", "display: flex;");
+      expectBaseRule(css, ".task-planner-chat-transcript", "overflow: auto;");
+      expect(mobileBlock).toContain(".task-planner-chat-composer");
+      expect(mobileBlock).toContain("flex-direction: column;");
+      expect(mobileBlock).toContain("align-items: stretch;");
+    });
+
     it("keeps detail metadata as a single wrapping flex row without mobile column fallbacks", () => {
       const css = readDashboardStylesSource();
 
@@ -226,8 +237,8 @@ describe("TaskDetailModal", () => {
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map((tab) => tab.textContent?.trim())).toEqual([
         "Activity",
+        "Chat",
         "Plan",
-        "Logs",
         "Changes",
         "Review",
         "Comments",

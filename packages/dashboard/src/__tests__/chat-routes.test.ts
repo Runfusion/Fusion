@@ -143,6 +143,7 @@ const mockAddMessage = vi.fn();
 const mockGetMessages = vi.fn();
 const mockGetMessage = vi.fn();
 const mockGetLastMessageForSessions = vi.fn().mockReturnValue(new Map());
+const mockFindLatestActiveSessionForTarget = vi.fn();
 const mockDeleteMessage = vi.fn();
 
 // Mock AgentStore
@@ -164,6 +165,7 @@ vi.mock("@fusion/core", async (importOriginal) => createCoreMock(
       getMessages = mockGetMessages;
       getMessage = mockGetMessage;
       getLastMessageForSessions = mockGetLastMessageForSessions;
+      findLatestActiveSessionForTarget = mockFindLatestActiveSessionForTarget;
       deleteMessage = mockDeleteMessage;
     },
     AgentStore: class MockAgentStore {
@@ -184,6 +186,7 @@ vi.mock("../chat.js", () => {
       getActiveGenerationId = mockGetActiveGenerationId;
     },
     chatStreamManager: mockChatStreamManager,
+    TASK_PLANNER_CHAT_AGENT_ID_PREFIX: "task-planner:",
     checkRateLimit: vi.fn().mockReturnValue(true),
     getRateLimitResetTime: vi.fn().mockReturnValue(null),
     __setCreateFnAgent: vi.fn(),
@@ -247,6 +250,25 @@ class MockStore extends EventEmitter {
     return "/tmp/fn-chat-test/.fusion";
   }
 
+  async getTask(id: string) {
+    if (id === "FN-MISSING") {
+      throw new Error("Task FN-MISSING not found");
+    }
+    return {
+      id,
+      title: "Planner task",
+      description: "Task description",
+      column: "todo",
+      status: "planning",
+      dependencies: [],
+      steps: [],
+      currentStep: 0,
+      log: [],
+      createdAt: "2026-06-30T00:00:00.000Z",
+      updatedAt: "2026-06-30T00:00:00.000Z",
+    };
+  }
+
   getDatabase() {
     return {
       exec: vi.fn(),
@@ -273,6 +295,7 @@ const mockChatStoreInstance = {
   getMessages: mockGetMessages,
   getMessage: mockGetMessage,
   getLastMessageForSessions: mockGetLastMessageForSessions,
+  findLatestActiveSessionForTarget: mockFindLatestActiveSessionForTarget,
   deleteMessage: mockDeleteMessage,
   emit: vi.fn(),
   on: vi.fn(),
@@ -352,6 +375,7 @@ describe("Chat API Routes", () => {
     mockGetMessages.mockReset();
     mockGetMessage.mockReset();
     mockGetLastMessageForSessions.mockReset();
+    mockFindLatestActiveSessionForTarget.mockReset();
     mockDeleteMessage.mockReset();
     mockSendMessage.mockReset();
     mockCancelGeneration.mockReset();
@@ -363,6 +387,7 @@ describe("Chat API Routes", () => {
 
     // Setup default mocks
     mockListSessions.mockReturnValue([]);
+    mockFindLatestActiveSessionForTarget.mockReturnValue(null);
     mockGetMessages.mockReturnValue([]);
     mockGetLastMessageForSessions.mockReturnValue(new Map());
     mockCancelGeneration.mockReturnValue(false);
@@ -403,6 +428,87 @@ describe("Chat API Routes", () => {
   });
 
   // ── Session CRUD Tests ──────────────────────────────────────────────────────
+
+  describe("POST /api/chat/task-planner/:taskId/session", () => {
+    it("creates a task-scoped planner chat session with the planning model override", async () => {
+      const created = {
+        ...sampleSession,
+        id: "chat-planner-001",
+        agentId: "task-planner:FN-7310",
+        title: "FN-7310 planner chat",
+        modelProvider: "anthropic",
+        modelId: "claude-plan",
+      };
+      mockCreateSession.mockReturnValue(created);
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/chat/task-planner/FN-7310/session",
+        JSON.stringify({ modelProvider: "anthropic", modelId: "claude-plan" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(201);
+      expect((response.body as any).session).toEqual(created);
+      expect(mockFindLatestActiveSessionForTarget).toHaveBeenCalledWith({ agentId: "task-planner:FN-7310" });
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        agentId: "task-planner:FN-7310",
+        title: "FN-7310 planner chat",
+        projectId: null,
+        modelProvider: "anthropic",
+        modelId: "claude-plan",
+      });
+    });
+
+    it("resumes and updates an existing planner chat session", async () => {
+      const existing = { ...sampleSession, id: "chat-existing", agentId: "task-planner:FN-7310", modelProvider: null, modelId: null };
+      const updated = { ...existing, modelProvider: "openai", modelId: "gpt-plan" };
+      mockFindLatestActiveSessionForTarget.mockReturnValue(existing);
+      mockUpdateSession.mockReturnValue(updated);
+
+      const response = await request(
+        app,
+        "POST",
+        "/api/chat/task-planner/FN-7310/session?projectId=proj-001",
+        JSON.stringify({ modelProvider: "openai", modelId: "gpt-plan" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(200);
+      expect((response.body as any).session).toEqual(updated);
+      expect(mockFindLatestActiveSessionForTarget).toHaveBeenCalledWith({ agentId: "task-planner:FN-7310", projectId: "proj-001" });
+      expect(mockUpdateSession).toHaveBeenCalledWith("chat-existing", { modelProvider: "openai", modelId: "gpt-plan" });
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
+
+    it("rejects incomplete model override pairs", async () => {
+      const response = await request(
+        app,
+        "POST",
+        "/api/chat/task-planner/FN-7310/session",
+        JSON.stringify({ modelProvider: "anthropic" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(400);
+      expect((response.body as any).error).toContain("Both modelProvider and modelId");
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
+
+    it("returns not found for missing tasks in the scoped project store", async () => {
+      const response = await request(
+        app,
+        "POST",
+        "/api/chat/task-planner/FN-MISSING/session",
+        JSON.stringify({ modelProvider: "anthropic", modelId: "claude-plan" }),
+        { "content-type": "application/json" },
+      );
+
+      expect(response.status).toBe(404);
+      expect((response.body as any).error).toContain("Task FN-MISSING not found");
+    });
+  });
 
   describe("GET /api/chat/sessions", () => {
     it("returns all sessions", async () => {

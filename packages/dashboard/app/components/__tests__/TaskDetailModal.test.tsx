@@ -75,6 +75,64 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+describe("TaskDetailModal planner Chat tab", () => {
+  function renderTask(column: any = "in-progress", initialTab?: ComponentProps<typeof TaskDetailModal>["initialTab"]) {
+    return render(
+      <TaskDetailModal
+        initialTab={initialTab}
+        task={makeTask({ column })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+  }
+
+  function tabLabels(): string[] {
+    return Array.from(document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab"))
+      .map((button) => button.textContent?.trim() ?? "");
+  }
+
+  it("renders Activity then Chat as the first task-detail conversation tabs for active tasks", async () => {
+    const user = userEvent.setup();
+    renderTask("in-progress");
+
+    expect(tabLabels().slice(0, 2)).toEqual(["Activity", "Chat"]);
+    expect(screen.getAllByRole("button", { name: "Chat" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+
+    await user.click(screen.getByRole("button", { name: "Chat" }));
+
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("button", { name: "Activity" })).not.toHaveClass("detail-tab-active");
+  });
+
+  it("preserves Summary as the default for done tasks while keeping Activity then Chat order", () => {
+    renderTask("done");
+
+    expect(tabLabels().slice(0, 3)).toEqual(["Activity", "Chat", "Summary"]);
+    expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
+  });
+
+  it("keeps explicit legacy chat deep links routed to Activity", () => {
+    renderTask("in-progress", "chat");
+
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("tab", { name: "Current" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("routes explicit planner-chat requests to the new Chat tab", () => {
+    renderTask("todo", "planner-chat");
+
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+  });
+});
+
 describe("TaskDetailModal summarize title action", () => {
   it("orders board detail header actions as edit, expand, then Back to board", () => {
     const onBackToBoard = vi.fn();

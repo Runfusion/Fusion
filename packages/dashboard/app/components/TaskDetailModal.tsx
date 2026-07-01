@@ -33,6 +33,7 @@ import { PrPanel } from "./PrPanel";
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
+import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -191,18 +192,21 @@ function formatDurationCompact(ageMs: number): string {
   return `${minutes}m`;
 }
 
-type TabId = "summary" | "definition" | "chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | `plugin-${string}`;
+type TabId = "summary" | "definition" | "chat" | "planner-chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | `plugin-${string}`;
 type ActivitySegment = "current" | "feed" | "raw-logs";
 
 /*
 FNXC:TaskDetailActivityTab 2026-06-30-00:00:
 The existing task activity/steering surface keeps the stable internal `chat` tab id for deep-link/plugin compatibility, but its top-level user-facing label is Activity. Activity is the implicit default for active task columns; done tasks keep Summary as their omitted-initial-tab landing surface so completed work still opens on the completion report while Activity remains first in tab order.
 
+FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+Task detail now separates Activity from planner-model Chat. `chat` remains the legacy Activity id for old links and Activity → Current/Feed/Raw Logs/steering, while `planner-chat` is the new top-level Chat tab for task-aware planning conversation and must render immediately after Activity.
+
 FNXC:TaskDetailActivity 2026-06-30-15:50:
-Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so existing links continue to open Activity → Current. Legacy `initialTab="logs"` now routes to Activity → Feed, and Raw Logs remains an Activity segment, because the legacy top-level Logs tab must not return while the later planner-model Chat tab remains out of scope.
+Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so existing links continue to open Activity → Current. Legacy `initialTab="logs"` now routes to Activity → Feed, and Raw Logs remains an Activity segment.
 
 FNXC:TaskDetailActivity 2026-06-30-21:55:
-The first Activity segment keeps the stable Current label for legacy segment tests and links, but its embedded composer labels the operational steering-comment affordance explicitly. Do not reuse this segment as the future planner-model Chat conversation; that belongs to a later top-level tab.
+The first Activity segment keeps the stable Current label for legacy segment tests and links, but its embedded composer labels the operational steering-comment affordance explicitly. Do not reuse this segment as planner-model Chat conversation; that belongs to the `planner-chat` top-level tab.
 */
 function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId): TabId {
   if (initialTab === "retries") {
@@ -512,8 +516,8 @@ export function TaskDetailContent({
   autoMergeEnabled: autoMergeEnabledProp,
   onOpenWorkflowEditor,
   /**
-   * FNXC:TaskDetailActivityTab 2026-06-30-00:00:
-   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break while the label/order changes ahead of the future planner Chat tab.
+   * FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` for planner-model conversation.
    */
   initialTab,
   mobileHeaderMode = "close",
@@ -3149,14 +3153,20 @@ export function TaskDetailContent({
             <>
           <div className="detail-tabs">
             {/*
-              FNXC:TaskDetailActivityTab 2026-06-30-00:00:
-              The existing task activity/steering surface is now labelled Activity and always renders first. Keep the `chat` tab id because a later subtask will add the separate planner-model Chat surface; this rename must not break existing `initialTab="chat"` callers.
+              FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+              The existing task activity/steering surface is labelled Activity and always renders first with the legacy `chat` tab id. The adjacent `planner-chat` tab is the separate planner-model Chat destination, so `initialTab="chat"` remains Activity while visible Chat opens task-aware planning conversation.
             */}
             <button
               className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("chat")}
             >
               {t("taskDetail.tabs.activity", "Activity")}
+            </button>
+            <button
+              className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("planner-chat")}
+            >
+              {t("taskDetail.tabs.chat", "Chat")}
             </button>
             {task.column === "done" && (
               <button
@@ -3288,14 +3298,24 @@ export function TaskDetailContent({
             <div className="detail-section detail-section--summary">
               <TaskSummaryTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
+          ) : activeTab === "planner-chat" ? (
+            <div className="detail-section detail-section--planner-chat">
+              <TaskPlannerChatTab
+                task={workingTask}
+                projectId={projectId}
+                active={activeTab === "planner-chat"}
+                planningModel={resolveEffectivePlanning(workingTask, agentLogEntries, settings)}
+                addToast={addToast}
+              />
+            </div>
           ) : activeTab === "chat" ? (
             <div className={`detail-section detail-section--activity${activitySegment === "current" ? " detail-section--chat" : ""}${activitySegment === "raw-logs" ? " detail-section--agent-log" : ""}`}>
               {/*
-                FNXC:TaskDetailActivity 2026-06-30-15:50:
-                Activity owns the existing steering/current view, Feed, and Raw Logs inside one segmented control. The later planner-model Chat tab is intentionally out of scope, so the stable top-level tab id remains `chat`, legacy `logs` callers land on Feed, and Raw Logs is the only segment that enables raw agent-log fetching.
+                FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+                Activity owns the existing steering/current view, Feed, and Raw Logs inside one segmented control. The stable Activity tab id remains `chat`, legacy `logs` callers land on Feed, and Raw Logs is the only segment that enables raw agent-log fetching. Planner-model conversation belongs to the separate `planner-chat` tab and must not route into steering comments.
 
                 FNXC:TaskDetailActivity 2026-06-30-21:55:
-                The first Activity segment keeps the stable Current label for legacy segment tests and links, but its embedded composer labels the operational steering-comment affordance explicitly. Do not reuse this segment as the future planner-model Chat conversation; that belongs to a later top-level tab.
+                The first Activity segment keeps the stable Current label for legacy segment tests and links, but its embedded composer labels the operational steering-comment affordance explicitly. Do not reuse this segment as planner-model Chat conversation.
               */}
               <div className="activity-segmented-control" role="tablist" aria-label={t("taskDetail.activity.segmentsLabel", "Activity views")}>
                 <button

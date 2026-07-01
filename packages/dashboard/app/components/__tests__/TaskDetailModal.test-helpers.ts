@@ -64,6 +64,9 @@ vi.mock("../../api", async (importOriginal) => {
     fetchTaskReview: vi.fn().mockResolvedValue({ reviewState: { source: "reviewer-agent", items: [], addressing: [] }, automationStatus: null, emptyMessage: "No reviewer feedback yet — this task has not produced reviewer-agent feedback in direct mode." }),
     refreshTaskReview: vi.fn().mockResolvedValue({ reviewState: undefined, automationStatus: null }),
     reviseTaskReviewItems: vi.fn().mockResolvedValue({ task: makeTask(), reviewState: undefined }),
+    ensureTaskPlannerChatSession: vi.fn().mockResolvedValue({ session: { id: "chat-task-planner", agentId: "task-planner:FN-099", title: "FN-099 planner chat", status: "active", projectId: null, modelProvider: null, modelId: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", cliSessionFile: null, cliExecutorAdapterId: null, inFlightGeneration: null } }),
+    fetchChatMessages: vi.fn().mockResolvedValue({ messages: [] }),
+    streamChatResponse: vi.fn(),
   });
 });
 

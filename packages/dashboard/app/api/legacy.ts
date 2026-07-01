@@ -9815,6 +9815,11 @@ export interface ChatMessageListResponse {
   messages: ChatMessage[];
 }
 
+export interface TaskPlannerChatSessionInput {
+  modelProvider?: string;
+  modelId?: string;
+}
+
 export interface ChatRoomListResponse {
   rooms: ChatRoom[];
 }
@@ -9898,6 +9903,36 @@ export function createChatSession(
 /** Fetch a single chat session */
 export function fetchChatSession(id: string, projectId?: string): Promise<ChatSessionResponse> {
   return api<ChatSessionResponse>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId));
+}
+
+export function ensureTaskPlannerChatSession(
+  taskId: string,
+  input: TaskPlannerChatSessionInput = {},
+  projectId?: string,
+): Promise<ChatSessionResponse> {
+  const normalizedTaskId = taskId.trim();
+  if (!normalizedTaskId) {
+    throw new Error("taskId is required");
+  }
+  const normalizedProvider = input.modelProvider?.trim();
+  const normalizedModelId = input.modelId?.trim();
+  if ((normalizedProvider && !normalizedModelId) || (!normalizedProvider && normalizedModelId)) {
+    throw new Error("Both modelProvider and modelId must be provided together, or neither should be provided");
+  }
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+  Task planner chat uses a task-scoped session seam instead of the generic agent-chat creator so it can bind the conversation to the task and planning model without requiring a real executor/reviewer agent or turning the message into steering.
+  */
+  return api<ChatSessionResponse>(
+    withProjectId(`/chat/task-planner/${encodeURIComponent(normalizedTaskId)}/session`, projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...(normalizedProvider && normalizedModelId ? { modelProvider: normalizedProvider, modelId: normalizedModelId } : {}),
+      }),
+    },
+  );
 }
 
 /** Update a chat session (title, status) */
