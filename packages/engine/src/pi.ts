@@ -1173,7 +1173,7 @@ function readJsonObject(path: string): Record<string, any> {
 
 /*
 FNXC:ProviderAuth 2026-07-01-14:55:
-Anthropic has three independent surfaces and NO runtime rerouting between them: (1) direct OAuth — a subscription/OAuth `anthropic/<model>` selection executes on pi-ai's built-in `anthropic` provider, which detects the `sk-ant-oat` token and POSTs to `api.anthropic.com/v1/messages` with full Claude Code impersonation (the v0.51.0 working path; `authStorage.getApiKey("anthropic")` supplies the OAuth token); (2) raw API key — a configured `ANTHROPIC_API_KEY` takes precedence in `getApiKey("anthropic")` and uses x-api-key on the same built-in provider; (3) Claude CLI — an explicit `pi-claude-cli/<model>` selection runs through the vendored CLI extension. FN-7291/FN-7391/FN-7396 added an `/v1`-based `anthropic-subscription` reroute on the incorrect premise that Anthropic blocks subscription OAuth on `/v1`; that reroute is intentionally absent so direct OAuth is not re-broken (issue #1857).
+Anthropic has three independent execution surfaces with NO runtime rerouting: direct OAuth and raw API key both run on pi-ai's built-in `anthropic` provider (OAuth → `/v1` with Claude Code impersonation; raw key → x-api-key), and explicit `pi-claude-cli/<model>` runs the vendored CLI. Do NOT register or route through an `/v1`-based `anthropic-subscription` provider — that reroute reintroduced the #1857 regression (FN-7391/FN-7396).
 */
 
 function normalizeSessionHistoryEntries(sessionManager: SessionManagerLike): void {

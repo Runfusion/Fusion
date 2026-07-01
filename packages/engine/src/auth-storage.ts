@@ -517,7 +517,7 @@ export function createFusionAuthStorage(): AuthStorage {
 
     /*
     FNXC:ProviderAuth 2026-07-01-14:55:
-    Restore the v0.51.0 direct-OAuth execution path (regressed by FN-7291 → FN-7391 → FN-7396, all built on issue #1857's incorrect "Anthropic blocks subscription OAuth on /v1, must use the CLI" conclusion). PROVEN in code: at v0.51.0 `getApiKey("anthropic")` returned the subscription OAuth access token, and pi-ai's built-in `anthropic` provider POSTs it to `api.anthropic.com/v1/messages` with full Claude Code impersonation (`Authorization: Bearer` + `anthropic-beta: claude-code-20250219,oauth-2025-04-20`), which Anthropic accepts. So `anthropic` runtime auth resolves, in precedence order: (1) raw API key, (2) legacy `anthropic` OAuth, (3) separated `anthropic-subscription` OAuth, (4) models.json / ModelRegistry fallback raw key. Raw key still wins so an explicit `ANTHROPIC_API_KEY` keeps using x-api-key. Direct OAuth, raw API key, and explicit `pi-claude-cli` remain three independent surfaces.
+    Anthropic runtime auth (`getApiKey("anthropic")`) resolves in precedence order: (1) raw API key, (2) legacy `anthropic` OAuth, (3) separated `anthropic-subscription` OAuth, (4) models.json / ModelRegistry fallback raw key. Raw key wins so an explicit `ANTHROPIC_API_KEY` keeps using x-api-key; subscription/OAuth tokens must resolve here so the built-in provider runs them on `/v1` with Claude Code impersonation. Do NOT gate OAuth behind the CLI or reroute it to an `/v1` `anthropic-subscription` provider — that reintroduced the #1857 regression (FN-7391/FN-7396).
     */
     if (!rawProviderLoggedOut) {
       const anthropicApiKeyCredential = selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "api_key");

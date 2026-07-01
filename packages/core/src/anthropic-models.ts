@@ -28,15 +28,33 @@ export interface AnthropicProviderRegistration {
 }
 
 /*
- * FNXC:ModelCatalog 2026-07-01-18:05:
- * Anthropic's official model overview lists `claude-sonnet-5` as a Claude API ID, but FN-7374 observed sparse provider `404 not_found_error` responses for direct Anthropic accounts after Fusion force-added that ID from static supplemental metadata. Fusion cannot encode per-account/model-surface availability from static docs, so direct Anthropic pickers must rely on the live/upstream registry for Sonnet 5 and only dedupe rows the registry already provides. Existing saved selections keep runtime fallback/actionable failure handling instead of being newly advertised here.
+ * FNXC:ModelCatalog 2026-07-01-22:40:
+ * Re-advertise `claude-sonnet-5`: the pinned pi-ai builtin registry ships opus-4-8/sonnet-4-6/fable-5 but NOT sonnet-5, and FN-7374 removed the static row expecting the live registry to carry it — so Sonnet 5 was left visible on no surface at all. FN-7374's "404 for direct accounts" premise is disproven by a live probe: `claude-sonnet-5` returns 200 on `api.anthropic.com/v1` with a raw `ANTHROPIC_API_KEY`, and runs via the Claude CLI/`pi-claude-cli` (claude.ai backend). It DOES 403 (scope) on subscription-OAuth `/v1`, so OAuth-only users fall back to the runtime actionable-failure path; keep it advertised so API-key and CLI users can select it.
  */
 export const SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION: AnthropicProviderRegistration = {
   name: "Anthropic",
   baseUrl: "https://api.anthropic.com/v1",
   apiKey: "$ANTHROPIC_API_KEY",
   api: "anthropic-messages",
-  models: [],
+  models: [
+    {
+      id: CLAUDE_SONNET_5_MODEL_ID,
+      name: "Claude Sonnet 5",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: {
+        input: 2,
+        output: 10,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      compat: {
+        supportsDeveloperRole: false,
+      },
+    },
+  ],
 };
 
 type AnthropicModelLike = Partial<Omit<AnthropicModelRegistration, "name" | "compat">> & {

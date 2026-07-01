@@ -398,7 +398,7 @@ describe("GET /models", () => {
     expect(res.body.models).toEqual([]);
   });
 
-  it("does not force-add Claude Sonnet 5 for configured direct Anthropic users", async () => {
+  it("advertises Claude Sonnet 5 for configured direct Anthropic users", async () => {
     const modelRegistry = createMutableModelRegistry([
       { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: true, contextWindow: 200000 },
       { id: "gpt-4o", name: "GPT-4o", provider: "openai", reasoning: false, contextWindow: 128000 },
@@ -407,13 +407,12 @@ describe("GET /models", () => {
     const res = await GET(buildApp(modelRegistry), "/api/models");
 
     expect(res.status).toBe(200);
+    // Sonnet 5 is re-advertised via SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION (works on API key + CLI).
     expect(res.body.models).toEqual(expect.arrayContaining([
       expect.objectContaining({ provider: "anthropic", id: "claude-sonnet-4-5" }),
-    ]));
-    expect(res.body.models).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ provider: "anthropic", id: "claude-sonnet-5" }),
     ]));
-    expect(modelRegistry.registerProvider).not.toHaveBeenCalledWith("anthropic", expect.objectContaining({
+    expect(modelRegistry.registerProvider).toHaveBeenCalledWith("anthropic", expect.objectContaining({
       models: expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-5" })]),
     }));
   });
@@ -434,7 +433,10 @@ describe("GET /models", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.models).toEqual([]);
-      expect(modelRegistry.models.some((model) => model.id === "claude-sonnet-5")).toBe(false);
+      // Sonnet 5 is merged into the registry from supplemental metadata, but stays hidden
+      // from the response because no Anthropic auth is configured (provider-visibility filter).
+      expect(modelRegistry.models.some((model) => model.id === "claude-sonnet-5")).toBe(true);
+      expect(res.body.models.some((model: { id: string }) => model.id === "claude-sonnet-5")).toBe(false);
     } finally {
       readFileSpy.mockRestore();
     }

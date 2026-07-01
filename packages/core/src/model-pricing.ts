@@ -105,9 +105,16 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
   // ── Anthropic Claude ────────────────────────────────────────────────
   // input / output / cacheRead(0.1×) / cacheWrite(1.25×, 5-min TTL)
   /*
-   * FNXC:ModelCatalog 2026-07-01-18:10:
-   * Do not maintain static pricing for `anthropic:claude-sonnet-5` while Fusion cannot prove that a direct Anthropic account can call the model. Saved selections that hit Anthropic's sparse `not_found_error` should be treated as unavailable/fallback candidates rather than receiving a confident cost from a model row Fusion no longer force-advertises.
+   * FNXC:ModelCatalog 2026-07-01-22:40:
+   * `anthropic:claude-sonnet-5` is advertised again (works on raw API key + Claude CLI; live-verified), so restore its static pricing. Matches the cost in SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION.
    */
+  "anthropic:claude-sonnet-5": {
+    inputPer1M: 2,
+    outputPer1M: 10,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 2.5,
+    source: "platform.claude.com/docs/en/pricing",
+  },
   "anthropic:claude-opus-4-8": {
     inputPer1M: 5,
     outputPer1M: 25,
