@@ -128,6 +128,7 @@ describe("TaskDetailModal", () => {
       expect(modelBlock).toContain("left: 0;");
       expect(modelBlock).toContain("inline-size: calc(var(--space-2xl) - var(--space-xs));");
       expect(modelBlock).not.toContain("text-overflow: ellipsis;");
+      expect(css).toMatch(/\.task-planner-chat-empty\s*\{[^}]*margin:\s*0 auto auto;/);
       expect(composerBlock).toContain("display: flex;");
       expect(composerBlock).toContain("flex-wrap: wrap;");
       expect(composerBlock).toContain("align-items: stretch;");

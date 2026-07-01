@@ -319,6 +319,10 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
 
   useEffect(() => {
     if (!transcriptRef.current) return;
+    if (messages.length === 0) {
+      transcriptRef.current.scrollTop = 0;
+      return;
+    }
     transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
   }, [messages, composerState]);
 

@@ -72,7 +72,6 @@ Planner Chat expansion should use the same in-view floating affordance as Activi
 
 .task-planner-chat-state,
 .task-planner-chat-empty {
-  margin: auto;
   display: flex;
   align-items: center;
   gap: var(--space-sm);
@@ -80,14 +79,24 @@ Planner Chat expansion should use the same in-view floating affordance as Activi
   text-align: center;
 }
 
+.task-planner-chat-state {
+  margin: auto;
+}
+
 .task-planner-chat-empty {
   position: relative;
   flex-direction: column;
   width: 100%;
   max-width: 42rem;
+  margin: 0 auto auto;
   gap: var(--space-lg);
   padding-top: var(--space-md);
 }
+
+/*
+FNXC:TaskDetailPlannerChat 2026-07-02-00:41:
+An empty Planner Chat transcript should enter at the top of the chat surface instead of auto-centering or inheriting the message auto-scroll-to-bottom behavior. Once real messages exist, message streaming still scrolls to the latest entry.
+*/
 
 .task-planner-chat-empty-copy {
   display: flex;
