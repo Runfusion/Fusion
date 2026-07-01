@@ -2611,6 +2611,11 @@ export function TaskDetailContent({
   const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMergeEnabled });
   const isManualPrFlow = mergeStrategy === "pull-request" && !effectiveAutoMerge;
   const isChatExpanded = chatExpanded && activeTab === "chat" && !isEditing;
+  /*
+  FNXC:TaskDetailChat 2026-06-30-23:30:
+  Maximized Activity chat should reserve the detail surface for the header context and chat only. Do not mount branch-group chrome in this mode so its expand/promote controls are not hidden-but-focusable, while normal and embedded task details keep the BranchGroupCard behavior.
+  */
+  const shouldShowBranchGroupCard = Boolean(task.branchContext?.groupId && !isChatExpanded);
 
   const taskActionMenuModel = useMemo(() => buildTaskActionMenuModel({
     task,
@@ -3118,7 +3123,7 @@ export function TaskDetailContent({
                   )}
                 </div>
               </div>
-              {task.branchContext?.groupId && (
+              {shouldShowBranchGroupCard && task.branchContext?.groupId && (
                 /* FNXC:BranchGroupDetails 2026-06-30-00:00: Task-detail branch groups must return to their compact collapsed default when users switch tasks, including between members of the same shared branch group. Key by task and group so a manual expansion never leaks into the next task detail view. */
                 <BranchGroupCard key={`${task.id}:${task.branchContext.groupId}`} groupId={task.branchContext.groupId} projectId={projectId} />
               )}

@@ -17,6 +17,14 @@ import {
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 
+vi.mock("../BranchGroupCard", () => ({
+  BranchGroupCard: ({ groupId }: { groupId: string }) => (
+    <section className="card branch-group-card" data-testid="mock-branch-group-card" aria-label={`Mock branch group ${groupId}`}>
+      <button type="button">Mock branch group toggle {groupId}</button>
+    </section>
+  ),
+}));
+
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
 FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Definition-tab regression coverage must prove both the no-`initialTab` Activity landing state and the explicit `initialTab="definition"` Definition surface for prompt, GitHub tracking, and dependency sections.
@@ -790,19 +798,20 @@ describe("TaskDetailModal", () => {
       );
 
       // For an in-progress task (no workflow steps, no merge commit), the
-      // top-level tabs are: Activity, Plan, Changes, Review, Comments,
+      // top-level tabs are: Activity, Chat, Plan, Changes, Review, Comments,
       // Artifacts, Model, Workflow, Stats, Routing.
-      const tabTexts = ["Activity", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
+      const tabTexts = ["Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
       expect(tabs.map((tab) => tab.textContent)).toEqual(tabTexts);
       expect(tabs[0].textContent).toBe("Activity");
-      expect(tabs[1].textContent).toBe("Plan");
-      expect(tabs[2].textContent).toBe("Changes");
+      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[2].textContent).toBe("Plan");
+      expect(tabs[3].textContent).toBe("Changes");
       expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
 
-      expect(container.querySelectorAll(".detail-tab").length).toBe(10);
+      expect(container.querySelectorAll(".detail-tab").length).toBe(11);
       // Workflow tab should always appear even when no workflow steps are configured
       expect(screen.getByText("Workflow")).toBeInTheDocument();
       // Commits tab should NOT appear for non-done tasks
@@ -897,6 +906,56 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".modal-actions")).toBeTruthy();
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Expand chat to full modal");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("FN-7320 removes branch group chrome only while Activity chat is expanded", () => {
+      const branchContext = { groupId: "BG-7320", source: "planning", assignmentMode: "shared" } as const;
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent", branchContext })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const content = container.querySelector(".task-detail-content");
+      expect(content).not.toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.getByTestId("mock-branch-group-card")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mock branch group toggle BG-7320" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
+      expect(content).toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.queryByTestId("mock-branch-group-card")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Mock branch group toggle BG-7320" })).toBeNull();
+
+      fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
+      expect(content).not.toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.getByTestId("mock-branch-group-card")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mock branch group toggle BG-7320" })).toBeInTheDocument();
+    });
+
+    it("FN-7320 expands Activity chat for tasks without branch groups without rendering branch shells", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent", branchContext: undefined })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByTestId("mock-branch-group-card")).toBeNull();
+      fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
+      expect(container.querySelector(".task-detail-content")).toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.queryByTestId("mock-branch-group-card")).toBeNull();
+      expect(screen.queryByRole("button", { name: /Mock branch group toggle/ })).toBeNull();
     });
 
     it("FN-6517 keeps the title row visible when embedded chat expands", () => {
