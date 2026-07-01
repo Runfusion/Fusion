@@ -97,7 +97,6 @@ describe("fast mode workflow/runtime invariants", () => {
     });
 
     const result = await runner.run(task({ id: "FN-6226", executionMode: "fast" }), { experimentalFeatures: { workflowGraphExecutor: true } });
-
     expect(result.disposition).toBe("completed");
     expect(result.visitedNodeIds).toEqual(["start", "custom-review", "custom-gate"]);
     expect(executeStep).not.toHaveBeenCalled();
@@ -195,6 +194,10 @@ describe("fast mode workflow/runtime invariants", () => {
     expect(calls).toContain("parse");
     expect(calls).toContain("step-execute:0");
     expect(calls).not.toContain("legacy-execute");
+    /*
+    FNXC:WorkflowFastMode 2026-07-01-00:00:
+    The default built-in now resolves to the stepwise final-review workflow. In raw fast-mode compatibility runs, default-on review groups are skipped as custom nodes and the legacy review seam is not invoked; the merge seam remains the lifecycle suffix assertion.
+    */
     expect(seams.review).not.toHaveBeenCalled();
     expect(seams.merge).toHaveBeenCalledTimes(1);
   });

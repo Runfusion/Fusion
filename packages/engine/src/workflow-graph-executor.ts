@@ -40,6 +40,7 @@ import {
   type WorkflowStepInstancePersistence,
 } from "./workflow-graph-foreach.js";
 import { runLoop, runOptionalGroup } from "./workflow-graph-loop.js";
+import type { WorkflowNodeRunnerRegistry } from "./workflow-node-runner.js";
 
 export type WorkflowNodeOutcome = "success" | "failure";
 
@@ -94,6 +95,11 @@ export interface WorkflowNodePreparationRequirement {
 
 export interface WorkflowGraphExecutorDeps {
   handlers?: Partial<Record<WorkflowIrNode["kind"], WorkflowNodeHandler>>;
+  /*
+   * FNXC:WorkflowNodeRunners 2026-07-01-00:00:
+   * Node runners are the new ownership boundary for workflow node behavior. During migration the graph accepts a registry and adapts it into handlers, while explicit handlers remain the highest-precedence test/plugin override so existing graph semantics do not drift.
+   */
+  runnerRegistry?: WorkflowNodeRunnerRegistry;
   /** Workflow-native runtime primitives. When present, default nodes call these
    *  directly instead of legacy executor/reviewer/merge seams. */
   primitives?: WorkflowRuntimePrimitives;
@@ -326,6 +332,7 @@ export class WorkflowGraphExecutor {
         notifyDispatch: deps.notifyDispatch,
         prNodes: deps.prNodes,
       }),
+      ...(deps.runnerRegistry?.toHandlers() ?? {}),
       ...(deps.handlers ?? {}),
     };
   }

@@ -48,6 +48,10 @@ import type {
   WorkflowPrimitiveContext,
   WorkflowRuntimePrimitives,
 } from "./runtime-primitives.js";
+import { createWorkflowRuntimePrimitiveProvider } from "./workflow-runtime-primitive-provider.js";
+import { WorkflowCustomNodeExecutionService } from "./workflow-custom-node-execution.js";
+import { WorkflowReviewService } from "./workflow-review-service.js";
+import { WorkflowPlanningService } from "./workflow-planning-service.js";
 import {
   ApprovalRequestStore,
   buildExecutionMemoryInstructions,
@@ -4702,6 +4706,11 @@ export class TaskExecutor {
 
       graphAbortController = new AbortController();
       this.activeWorkflowGraphAbortControllers.set(task.id, graphAbortController);
+      const customNodeExecution = new WorkflowCustomNodeExecutionService({
+        execute: (node, nodeTask, nodeSettings, columnBinding, context) =>
+          this.runGraphCustomNode(node, nodeTask, nodeSettings, columnBinding, context),
+        resolveColumnBinding: resolveBindingForNode,
+      });
       const runner = new WorkflowGraphTaskRunner({
         store: {
           ...this.store,
@@ -4717,8 +4726,7 @@ export class TaskExecutor {
         seams: this.createAuthoritativeWorkflowSeams(settings),
         prepareNodeExecution: (node, nodeTask, requirement) =>
           this.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
-        runCustomNode: (node, nodeTask, context) =>
-          this.runGraphCustomNode(node, nodeTask, settings, resolveBindingForNode(node.id), context),
+        runCustomNode: customNodeExecution.runner(settings),
         publishTaskProjection: async (taskId, patch) => {
           await this.store.updateTaskAtomic(taskId, (liveTask) => {
             const update: Parameters<TaskStore["updateTask"]>[1] = {};
@@ -5683,6 +5691,12 @@ export class TaskExecutor {
   /** Public authoritative-driver seam factory: exposes the same real lifecycle
    * seams the internal graph runner uses, without changing legacy behavior. */
   public createAuthoritativeWorkflowPrimitives(settings: Settings): WorkflowRuntimePrimitives {
+    return createWorkflowRuntimePrimitiveProvider((providerSettings) =>
+      this.createAuthoritativeWorkflowPrimitivesFromExecutor(providerSettings),
+    ).create(settings);
+  }
+
+  private createAuthoritativeWorkflowPrimitivesFromExecutor(settings: Settings): WorkflowRuntimePrimitives {
     const logAudit = async (taskId: string | undefined, input: AuditPrimitiveInput): Promise<void> => {
       if (!taskId) return;
       try {
@@ -5691,6 +5705,7 @@ export class TaskExecutor {
         // Audit is diagnostic-only and must not affect workflow execution.
       }
     };
+    const planningService = new WorkflowPlanningService();
 
     return {
       prepareWorktree: async (_ctx, task) => {
@@ -5727,10 +5742,7 @@ export class TaskExecutor {
         await writer.call(this.store, task.id, key, content);
         return { outcome: "success", value: "artifact-written", data: { key } };
       },
-      runPlanningSession: async () => ({ outcome: "success", value: "pre-specified", data: {
-        approved: true,
-        artifactKeys: [],
-      } }),
+      runPlanningSession: (ctx, task) => planningService.runPlanningSession(ctx, task),
       runCodingSession: async (ctx, task, prepared) => {
         const governingNodeId = ctx.node.context?.[SEAM_GOVERNING_NODE_CONTEXT_KEY];
         if (typeof governingNodeId === "string") {
@@ -6371,18 +6383,19 @@ export class TaskExecutor {
         // `worktreePath`; in workspace mode that is the browse-only non-git root, so we instead spawn
         // one reviewer per acquired sub-repo (cwd = repo.worktreePath) via reviewWorkspacePerRepo and
         // aggregate as a conjunction. `invokeReviewerForCwd` is the per-cwd reviewStep call both modes share.
+        const reviewService = new WorkflowReviewService();
         const invokeReviewerForCwd = (cwd: string) =>
-          reviewStep(
+          reviewService.reviewStep({
             cwd,
-            seamTask.id,
+            taskId: seamTask.id,
             stepIndex,
             stepName,
-            config.type,
+            type: config.type,
             promptContent,
             // Code reviews diff against the per-step baseline captured at
             // step-execute; plan reviews pass no baseline (advisory).
-            config.type === "code" ? active.baselineSha : undefined,
-            {
+            baselineSha: config.type === "code" ? active.baselineSha : undefined,
+            options: {
               defaultProvider: settings.defaultProvider,
               defaultModelId: settings.defaultModelId,
               fallbackProvider: settings.fallbackProvider,
@@ -6409,7 +6422,7 @@ export class TaskExecutor {
               onSessionCreated: (s) => this.registerSubagentSession(seamTask.id, s),
               onSessionEnded: (s) => this.unregisterSubagentSession(seamTask.id, s),
             },
-          );
+          });
         const runForCwd = (cwd: string) => {
           const invoke = () => invokeReviewerForCwd(cwd);
           return sem ? sem.runNested(invoke) : invoke();

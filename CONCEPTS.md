@@ -108,6 +108,12 @@ The pinned `claude-code-cli-acp` subprocess bundled with the ACP runtime plugin.
 ### Runtime Primitive
 A named, injected operation a workflow node can call to perform side effects without depending on `executor.ts` lifecycle branches. Examples include planning session, coding session, step execution/reset, review, verification, workflow step, transition, merge request, abort, and audit. Primitives are the boundary between workflow policy and engine substrate.
 
+### Workflow Node Runner
+An engine-owned implementation of one workflow node kind. Workflow IR stays declarative; runners execute known node behavior with typed dependencies and return graph-native outcomes. The graph executor owns traversal and routing, while runners own node behavior such as gate, notify, parse-steps, code, merge, custom-node dispatch, review, and planning service calls.
+
+### Workflow Runtime Service
+A narrow substrate-facing service used by workflow node runners or primitives for behavior that used to live directly inside monolithic executor, reviewer, or triage paths. Current examples include runtime primitive providers, custom-node execution, single-cwd review invocation, and graph planning. Services keep hard safety invariants in the engine substrate while making node behavior testable without constructing the full executor when a smaller fake is enough.
+
 ### Built-in Lifecycle Node
 A node in a built-in workflow that expresses default Fusion behavior, such as planning, execute, review, merge, parse-steps, step-review, or PR lifecycle actions. Built-in lifecycle nodes are the compatibility layer for existing behavior: changing default execution means changing the built-in workflow and its primitive wiring, not adding hidden imperative branches.
 

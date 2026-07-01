@@ -85,6 +85,29 @@ export {
   type DefaultNodeHandlerDeps,
 } from "./workflow-node-handlers.js";
 export {
+  WorkflowNodeRunnerRegistry,
+  handlerBackedRunner,
+  type WorkflowNodeRunner,
+  type WorkflowNodeRunnerContext,
+  type WorkflowNodeRunnerKind,
+} from "./workflow-node-runner.js";
+export {
+  createWorkflowRuntimePrimitiveProvider,
+  CallbackWorkflowRuntimePrimitiveProvider,
+  type WorkflowRuntimePrimitiveProvider,
+  type WorkflowRuntimePrimitiveFactory,
+} from "./workflow-runtime-primitive-provider.js";
+export {
+  WorkflowCustomNodeExecutionService,
+  type WorkflowCustomNodeExecutionServiceDeps,
+} from "./workflow-custom-node-execution.js";
+export {
+  WorkflowReviewService,
+  type WorkflowReviewStepInput,
+  type WorkflowReviewStepInvoker,
+} from "./workflow-review-service.js";
+export { WorkflowPlanningService } from "./workflow-planning-service.js";
+export {
   markSideEffectsStarted,
   primitiveNodeContext,
   type RuntimePrimitiveName,

@@ -200,9 +200,9 @@ Out of scope for v1:
 
 ### Workflow Runtime
 
-The workflow runtime is the authoritative execution path for task lifecycle work. `WorkflowGraphExecutor` owns graph traversal and routing; node handlers call runtime primitives supplied by `TaskExecutor` for side-effecting operations such as planning, coding sessions, review, step execution/reset, merge requests, transitions, and audit.
+The workflow runtime is the authoritative execution path for task lifecycle work. `WorkflowGraphExecutor` owns graph traversal and routing; workflow node runners own node-kind behavior; runtime primitives and runtime services perform side-effecting operations such as planning, coding sessions, custom-node execution, review, step execution/reset, merge requests, transitions, and audit.
 
-The engine remains the substrate for scheduler dispatch, routing claims, persistence, concurrency limits, process supervision, storage, and audit plumbing. Lifecycle policy belongs in built-in or custom workflows.
+The engine remains the substrate for scheduler dispatch, routing claims, persistence, concurrency limits, process supervision, storage, and audit plumbing. Lifecycle policy belongs in built-in or custom workflows, not in hidden executor/reviewer/triage branches.
 
 The default built-in catalog entry `builtin:coding` is backed by a Stepwise-derived graph with two default-on, toggleable review gates: `plan-review` before execution and `code-review` at the end of implementation. It is the resolver/runtime fallback for tasks with no workflow selection or an explicit default selection. Missing explicit custom selections fail closed as workflow-resolution failures, and corrupt or invalid resolved IR fails with `invalid-ir` instead of silently running the default or a legacy workflow. The built-in IR parses planned steps, executes them sequentially without per-step review, then routes optional quality gates into the merge region:
 
