@@ -88,6 +88,12 @@ vi.mock("../../api", async (importOriginal) => {
       taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
     })),
     fetchPluginDashboardViews: vi.fn(() => Promise.resolve([])),
+    fetchBoardWorkflows: vi.fn(() => Promise.resolve({
+      flagEnabled: false,
+      defaultWorkflowId: "builtin:coding",
+      workflows: [],
+      taskWorkflowIds: {},
+    })),
     fetchExecutorStats: vi.fn(() => Promise.resolve({
       globalPause: false,
       enginePaused: false,
@@ -528,6 +534,7 @@ const mockProjectsState = {
 };
 
 const DEFAULT_PROJECT_ID = "proj_123";
+const DEFAULT_PROJECT: ProjectInfo = { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active", isolationMode: "in-process", createdAt: "", updatedAt: "" };
 const taskViewStorageKey = (projectId = DEFAULT_PROJECT_ID) =>
   scopedKey("kb-dashboard-task-view", projectId);
 
@@ -537,7 +544,7 @@ const mockCurrentProjectState: {
   clearCurrentProject: ReturnType<typeof vi.fn>;
   loading: boolean;
 } = {
-  currentProject: { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" },
+  currentProject: { ...DEFAULT_PROJECT },
   setCurrentProject: vi.fn(),
   clearCurrentProject: vi.fn(),
   loading: false,
@@ -621,7 +628,7 @@ vi.mock("../../hooks/useMobileScrollLock", () => ({
 
 import { App, didEnterAwaitingApproval, didEnterDone } from "../../App";
 import { AUTH_TOKEN_RECOVERY_REQUIRED_EVENT } from "../../auth";
-import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews, fetchDashboardHealth } from "../../api";
+import { fetchAuthStatus, fetchSettings, fetchGlobalSettings, fetchTaskDetail, fetchUnreadCount, updateSettings, runScript, fetchScripts, fetchModels, fetchPluginDashboardViews, fetchDashboardHealth, fetchBoardWorkflows } from "../../api";
 import { __resetShellHostContextForTests } from "../../shell-host";
 import * as apiNodeModule from "../../hooks/useRemoteNodeData";
 
@@ -641,6 +648,35 @@ beforeEach(() => {
   vi.mocked(fetchSettings).mockResolvedValue({ ...defaultSettings });
   vi.mocked(updateSettings).mockResolvedValue({ ...defaultSettings });
   vi.mocked(fetchGlobalSettings).mockResolvedValue({ modelOnboardingComplete: true });
+  vi.mocked(fetchDashboardHealth).mockResolvedValue({
+    status: "ok",
+    version: "1.0.0",
+    uptime: 1,
+    engine: { available: true },
+    database: {
+      healthy: true,
+      corruptionDetected: false,
+      corruptionErrors: [],
+      lastCheckedAt: null,
+      isRunning: false,
+    },
+    taskIdIntegrity: { status: "ok", checkedAt: "2026-05-12T00:00:00.000Z", anomalies: [], recommendedAction: null },
+  });
+  vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+    flagEnabled: false,
+    defaultWorkflowId: "builtin:coding",
+    workflows: [],
+    taskWorkflowIds: {},
+  });
+  vi.mocked(apiNodeModule.useRemoteNodeData).mockReset();
+  vi.mocked(apiNodeModule.useRemoteNodeData).mockReturnValue({
+    projects: [],
+    tasks: [],
+    health: null,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  });
   vi.mocked(fetchAuthStatus).mockResolvedValue({
     providers: [
       { id: "anthropic", name: "Anthropic", authenticated: true },
@@ -652,6 +688,11 @@ beforeEach(() => {
   vi.mocked(runScript).mockResolvedValue({ sessionId: "sess-script-1", command: "echo hello" });
   __resetShellHostContextForTests();
   localStorage.clear();
+  /*
+   * FNXC:DashboardTests 2026-07-01-12:45:
+   * App-level project surface tests require a coherent local project shell at reset time. Keep the default mock project list, current project, workflow metadata response, and persisted view mode aligned so broad App.test.tsx runs do not depend on project/view state leaked from earlier tests before asserting Board/List/mobile controls.
+   */
+  localStorage.setItem("kb-dashboard-view-mode", "project");
   mockSubscribeSse.mockReset();
   mockSubscribeSse.mockReturnValue(vi.fn());
   mockCreateTask.mockReset();
@@ -678,12 +719,12 @@ beforeEach(() => {
     lastFetchTimeMs: Date.now(),
   }));
   // Reset mock states
-  mockProjectsState.projects = [];
+  mockProjectsState.projects = [{ ...DEFAULT_PROJECT }];
   mockProjectsState.loading = false;
   mockProjectsState.error = null;
   mockRefreshProjects.mockReset();
   mockRefreshProjects.mockImplementation(async () => {});
-  mockCurrentProjectState.currentProject = { id: DEFAULT_PROJECT_ID, name: "Test Project", path: "/test", status: "active" as const, isolationMode: "in-process" as const, createdAt: "", updatedAt: "" };
+  mockCurrentProjectState.currentProject = { ...DEFAULT_PROJECT };
   mockCurrentProjectState.loading = false;
   mockCurrentProjectState.setCurrentProject.mockClear();
   mockCurrentProjectState.clearCurrentProject.mockClear();
@@ -950,7 +991,9 @@ describe("FN-4250 FileBrowserProvider coverage", () => {
   });
 
   it("FN-4250: loader branch is inside FileBrowserProvider", async () => {
+    mockProjectsState.projects = [];
     mockProjectsState.loading = true;
+    mockCurrentProjectState.currentProject = null;
     mockCurrentProjectState.loading = true;
 
     render(<App />);
@@ -965,7 +1008,7 @@ describe("Capacity risk banner gating", () => {
   it("does not render banner when capacityRiskBannerEnabled is false", async () => {
     mockAgentStats.todoTaskCount = 21;
     mockAgentStats.idleNonEphemeralCount = 0;
-    vi.mocked(fetchSettings).mockResolvedValueOnce({
+    vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       capacityRiskBannerEnabled: false,
       capacityRiskTodoThreshold: 20,
@@ -980,7 +1023,7 @@ describe("Capacity risk banner gating", () => {
   it("renders and dismisses banner when enabled", async () => {
     mockAgentStats.todoTaskCount = 21;
     mockAgentStats.idleNonEphemeralCount = 0;
-    vi.mocked(fetchSettings).mockResolvedValueOnce({
+    vi.mocked(fetchSettings).mockResolvedValue({
       ...defaultSettings,
       capacityRiskBannerEnabled: true,
       capacityRiskTodoThreshold: 20,
@@ -1023,6 +1066,7 @@ describe("App backend-unreachable first-run flow", () => {
       mockProjectsState.projects = [];
       mockProjectsState.error = "Backend unavailable";
       mockCurrentProjectState.currentProject = null;
+      localStorage.setItem("kb-dashboard-view-mode", "overview");
 
       mockRefreshProjects.mockImplementation(async () => {
         mockProjectsState.error = null;
@@ -1805,7 +1849,6 @@ describe("App deep link handling", () => {
 
     render(<App />);
     await waitForAppShell();
-
     fireEvent.click(screen.getByText("Back nav task"));
     expect(await screen.findByTestId("main-panel-task-detail")).toBeTruthy();
 
@@ -1986,13 +2029,14 @@ describe("App auto-open Settings on unauthenticated", () => {
   });
 
   it("does NOT auto-open anything when at least one provider is authenticated and default model is set", async () => {
-    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       providers: [
         { id: "anthropic", name: "Anthropic", authenticated: true },
         { id: "github", name: "GitHub", authenticated: false },
       ],
     });
     (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      modelOnboardingComplete: true,
       defaultProvider: "anthropic",
       defaultModelId: "claude-sonnet-4-5",
     });
@@ -2010,13 +2054,14 @@ describe("App auto-open Settings on unauthenticated", () => {
   });
 
   it("treats authenticated API-key providers as valid auth for onboarding checks", async () => {
-    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       providers: [
         { id: "openrouter", name: "OpenRouter", authenticated: true, type: "api_key" },
         { id: "anthropic", name: "Anthropic", authenticated: false, type: "oauth" },
       ],
     });
     (fetchGlobalSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      modelOnboardingComplete: true,
       defaultProvider: "openrouter",
       defaultModelId: "gpt-4o",
     });
@@ -2053,7 +2098,7 @@ describe("App auto-open Settings on unauthenticated", () => {
   });
 
   it("does NOT auto-open Settings when fetchAuthStatus fails", async () => {
-    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
+    (fetchAuthStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Network error"));
 
     render(<App />);
 
