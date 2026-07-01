@@ -387,6 +387,23 @@ describe("TaskDetailModal", () => {
       expect(css).not.toContain(".activity-segment");
     });
 
+    it("keeps Activity Live/Feed expand controls overlaid without a mobile toolbar row", () => {
+      const css = readDashboardStylesSource();
+      const overlayBlock = getExactCssRuleBlock(css, ".activity-expand-toggle--overlay");
+      const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".activity-expand-toggle--overlay");
+      const mobileOverlayBlock = getExactCssRuleBlock(mobileBlock, ".activity-expand-toggle--overlay");
+
+      expect(css).not.toContain(".activity-toolbar");
+      expect(css).not.toContain("activity-toolbar--expand-only");
+      expect(css).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
+      expect(overlayBlock).toContain("position: absolute;");
+      expect(overlayBlock).toContain("top: var(--space-md);");
+      expect(overlayBlock).toContain("right: var(--space-md);");
+      expect(mobileBlock).toContain("  .detail-activity {\n    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));\n  }");
+      expect(mobileOverlayBlock).toContain("top: var(--space-sm);");
+      expect(mobileOverlayBlock).toContain("right: var(--space-sm);");
+    });
+
     it("renders responsive structural classes (modal-lg, overlay, spacer, tabs, detail-body)", () => {
       const { container } = render(
         <TaskDetailModal

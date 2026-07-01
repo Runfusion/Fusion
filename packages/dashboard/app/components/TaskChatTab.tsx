@@ -874,7 +874,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
           aria-pressed={expanded}
           data-testid="task-chat-expand-toggle"
         >
-          {/* FNXC:TaskDetailActivity 2026-06-30-23:55: The legacy TaskChatTab expand affordance now uses Activity-wide copy when a caller still renders it; TaskDetailModal owns the visible Activity-level toggle across Live, Feed, and Raw Logs. */}
+          {/* FNXC:TaskDetailActivity 2026-07-01-00:00: TaskDetailModal passes Activity-expanded state into Live so this existing chat overlay remains the single Live expand affordance without adding a separate toolbar row. */}
           {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
         </button>
       ) : null}

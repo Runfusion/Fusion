@@ -3666,20 +3666,11 @@ export function TaskDetailContent({
                 The first Activity segment is user-facing Live but keeps the legacy `current` segment id. Activity expansion is segment-wide, so the same reachable toggle must remain present on Live, Feed, and Raw without fetching Raw outside the Raw segment.
 
                 FNXC:TaskDetailActivity 2026-06-30-23:59:
-                The Activity tab in the top-level tab strip is now the view dropdown for Live, Feed, and Raw. The in-panel Activity view select was removed so Activity expansion remains the only toolbar affordance inside the panel while legacy routing and Raw-only fetching keep their stable ids (`chat`, `current`, `feed`, `raw-logs`).
+                The Activity tab in the top-level tab strip is now the view dropdown for Live, Feed, and Raw. The in-panel Activity view select was removed so Activity expansion remains the only Activity-level affordance inside the panel while legacy routing and Raw-only fetching keep their stable ids (`chat`, `current`, `feed`, `raw-logs`).
+
+                FNXC:TaskDetailActivity 2026-07-01-00:00:
+                Activity expansion must not reserve a standalone toolbar row. Live uses TaskChatTab's anchored overlay button, Feed renders the same Activity toggle over its feed panel, and Raw keeps AgentLogViewer's fullscreen control so only one Raw expand affordance is reachable.
               */}
-              <div className="activity-toolbar activity-toolbar--expand-only">
-                <button
-                  type="button"
-                  className="btn btn-icon btn-sm activity-expand-toggle"
-                  onClick={() => setActivityExpanded((value) => !value)}
-                  aria-label={isActivityExpanded ? t("taskDetail.activity.collapse", "Collapse activity") : t("taskDetail.activity.expand", "Expand activity to full modal")}
-                  aria-pressed={isActivityExpanded}
-                  data-testid="task-chat-expand-toggle"
-                >
-                  {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
-                </button>
-              </div>
               {activitySegment === "current" ? (
                 <TaskChatTab
                   task={workingTask}
@@ -3688,6 +3679,8 @@ export function TaskDetailContent({
                   addToast={addToast}
                   sessionLive={isCliSessionLive(cliSession)}
                   onTaskUpdated={handleChatTaskUpdated}
+                  expanded={isActivityExpanded}
+                  onToggleExpanded={() => setActivityExpanded((value) => !value)}
                   effectiveModels={{
                     triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
                     executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings)),
@@ -3709,6 +3702,16 @@ export function TaskDetailContent({
                 />
               ) : (
                 <div className="detail-activity" role="tabpanel">
+                  <button
+                    type="button"
+                    className="btn btn-icon btn-sm activity-expand-toggle activity-expand-toggle--overlay"
+                    onClick={() => setActivityExpanded((value) => !value)}
+                    aria-label={isActivityExpanded ? t("taskDetail.activity.collapse", "Collapse activity") : t("taskDetail.activity.expand", "Expand activity to full modal")}
+                    aria-pressed={isActivityExpanded}
+                    data-testid="task-chat-expand-toggle"
+                  >
+                    {isActivityExpanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+                  </button>
                   <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
                     <div className="detail-log-truncated">

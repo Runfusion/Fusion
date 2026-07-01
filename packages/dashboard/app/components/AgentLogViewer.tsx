@@ -451,6 +451,18 @@ export function AgentLogViewer({
   const hasValidatorOverride = validatorModel?.provider && validatorModel?.modelId;
   const hasPlanningOverride = planningModel?.provider && planningModel?.modelId;
 
+  const fullscreenToggle = (
+    <button
+      className="agent-log-mode-toggle"
+      onClick={() => setIsFullscreen((prev) => !prev)}
+      aria-label={isFullscreen ? t("agentLog.exitFullscreen", "Exit full screen") : t("agentLog.expandFullscreen", "Expand agent log to full screen")}
+      data-testid="agent-log-fullscreen-toggle"
+      title={isFullscreen ? t("agentLog.exitFullscreen", "Exit full screen") : t("agentLog.expandFullscreen", "Expand agent log to full screen")}
+    >
+      {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+    </button>
+  );
+
   const modelProviders = useMemo(() => {
     const providers: Array<{ role: string; provider: string; modelId?: string }> = [];
     if (hasExecutorOverride) {
@@ -486,7 +498,11 @@ export function AgentLogViewer({
 
   if (loading && entries.length === 0) {
     return (
-      <div className="agent-log-viewer" data-testid="agent-log-viewer">
+      <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
+        {/* FNXC:TaskDetailActivity 2026-07-01-00:00: Activity → Raw owns one fullscreen affordance through AgentLogViewer even while logs are loading, because TaskDetailModal intentionally omits its Activity-level expand button on Raw to avoid duplicate controls. */}
+        <div className="agent-log-empty-header">
+          <div className="agent-log-model-header-toggle">{fullscreenToggle}</div>
+        </div>
         <div className="agent-log-loading" role="status" aria-live="polite">{t("agentLog.loading", "Loading agent logs…")}</div>
       </div>
     );
@@ -494,7 +510,11 @@ export function AgentLogViewer({
 
   if (entries.length === 0) {
     return (
-      <div className="agent-log-viewer" data-testid="agent-log-viewer">
+      <div className={`agent-log-viewer${isFullscreen ? " agent-log-viewer--fullscreen" : ""}`} data-testid="agent-log-viewer">
+        {/* FNXC:TaskDetailActivity 2026-07-01-00:00: Empty Raw logs still expose the single AgentLogViewer fullscreen button so Raw never needs the duplicate Activity expand toggle. */}
+        <div className="agent-log-empty-header">
+          <div className="agent-log-model-header-toggle">{fullscreenToggle}</div>
+        </div>
         <div className="agent-log-empty">{t("agentLog.empty", "No agent output yet.")}</div>
       </div>
     );
@@ -549,15 +569,7 @@ export function AgentLogViewer({
           >
             {showToolOutput ? t("agentLog.toolsOn", "Tools: On") : t("agentLog.toolsOff", "Tools: Off")}
           </button>
-          <button
-            className="agent-log-mode-toggle"
-            onClick={() => setIsFullscreen((prev) => !prev)}
-            aria-label={isFullscreen ? t("agentLog.exitFullscreen", "Exit full screen") : t("agentLog.expandFullscreen", "Expand agent log to full screen")}
-            data-testid="agent-log-fullscreen-toggle"
-            title={isFullscreen ? t("agentLog.exitFullscreen", "Exit full screen") : t("agentLog.expandFullscreen", "Expand agent log to full screen")}
-          >
-            {isFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
+          {fullscreenToggle}
         </div>
 
         {modelHeaderExpanded && (

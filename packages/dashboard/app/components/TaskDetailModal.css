@@ -2564,19 +2564,30 @@ The Activity view menu is portaled to the document body and fixed-positioned bec
   font-weight: 600;
 }
 
-.activity-toolbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
+.detail-activity {
+  position: relative;
+  padding-inline-end: calc(var(--space-2xl) + var(--space-md));
 }
 
+/*
+FNXC:TaskDetailActivity 2026-07-01-00:00:
+Live and Feed Activity expansion overlays the content instead of reserving a toolbar row. Feed keeps enough tokenized inline padding that the fixed affordance does not cover log text; Raw uses AgentLogViewer's fullscreen button and does not render this Activity toggle.
+*/
 .activity-expand-toggle {
   flex: 0 0 auto;
   min-inline-size: var(--space-2xl);
   min-block-size: var(--space-2xl);
   padding: 0;
+}
+
+.activity-expand-toggle--overlay {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  z-index: 3;
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .detail-log-loading {
@@ -2592,17 +2603,22 @@ The Activity view menu is portaled to the document body and fixed-positioned bec
 }
 
 @media (max-width: 768px) {
-  .activity-toolbar {
-    align-items: stretch;
-  }
-
   .activity-view-menu {
     max-inline-size: calc(100vw - (var(--space-md) * 2));
+  }
+
+  .detail-activity {
+    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));
   }
 
   .activity-expand-toggle {
     min-inline-size: calc(var(--space-2xl) + var(--space-sm));
     min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  }
+
+  .activity-expand-toggle--overlay {
+    top: var(--space-sm);
+    right: var(--space-sm);
   }
 
   .detail-log-loading {

@@ -30,7 +30,7 @@ FNXC:TaskDetailTabs 2026-06-17-08:20:
 FN-7306 labels the stable internal `chat` tab as Activity, while later Chat-first detail work keeps that legacy `chat` id only for explicit Activity requests. Definition-tab regression coverage must prove omitted non-done task details now land on planner Chat, Activity remains selectable, and explicit `initialTab="definition"` still opens the Definition surface for prompt, GitHub tracking, and dependency sections.
 
 FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
-Omitted non-done TaskDetailModal renders open the top-level planner Chat first/default. Activity controls (`Live`, `Feed`, `Raw`, and the activity expand toggle) are intentionally mounted only after selecting Activity or using an explicit legacy Activity tab request.
+Omitted non-done TaskDetailModal renders open the top-level planner Chat first/default. Activity controls (`Live`, `Feed`, `Raw`, Live/Feed Activity expand, and Raw fullscreen) are intentionally mounted only after selecting Activity or using an explicit legacy Activity tab request.
 */
 setupTaskDetailModalHooks();
 
@@ -758,8 +758,12 @@ describe("TaskDetailModal", () => {
     selectActivityView("feed");
       selectActivityView("raw-logs");
 
-      // Agent log viewer should appear
+      // Agent log viewer should appear with one Raw fullscreen affordance and no duplicate Activity expand toggle.
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeTruthy();
+      expect(screen.queryByTestId("task-chat-expand-toggle")).toBeNull();
+      expect(screen.getAllByTestId("agent-log-fullscreen-toggle")).toHaveLength(1);
+      expect(screen.getByTestId("agent-log-fullscreen-toggle")).toHaveAttribute("aria-label", "Expand agent log to full screen");
+      expect(container.querySelector(".activity-toolbar")).toBeNull();
       // Definition content should be hidden
       expect(container.querySelector(".markdown-body")).toBeNull();
 
@@ -886,8 +890,11 @@ describe("TaskDetailModal", () => {
       expect(mobileSectionRule).toContain("min-height: 0");
     });
 
-    it("FN-6370/FN-7351 defines expanded Activity chrome CSS for desktop and mobile", () => {
+    it("FN-6370/FN-7351/FN-7386 defines expanded Activity chrome and overlay CSS for desktop and mobile", () => {
       const css = readDashboardStylesSource();
+      const activityOverlayRule = getCssRuleBlock(css, ".activity-expand-toggle--overlay");
+      const mobileCss = css.slice(css.indexOf("@media (max-width: 768px)"));
+
       const expandedTitleRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-title-row");
       const expandedMetaRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-meta");
       const expandedTabsRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-tabs");
@@ -895,11 +902,19 @@ describe("TaskDetailModal", () => {
       const expandedHeaderRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .modal-header");
       const expandedBodyRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-body--chat");
       const expandedSectionRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-section--chat");
-      const mobileCss = css.slice(css.indexOf("@media (max-width: 768px)"));
       const mobileTitleRule = getCssRuleBlock(mobileCss, ".task-detail-content--chat-expanded .detail-title-row");
       const mobileTabsRule = getCssRuleBlock(mobileCss, ".task-detail-content--chat-expanded .detail-tabs");
       const mobileActionsRule = getCssRuleBlock(mobileCss, ".task-detail-content--chat-expanded .modal-actions");
 
+      expect(css).not.toContain(".activity-toolbar");
+      expect(css).not.toContain("activity-toolbar--expand-only");
+      expect(css).toContain(".detail-activity {\n  position: relative;\n  padding-inline-end: calc(var(--space-2xl) + var(--space-md));\n}");
+      expect(activityOverlayRule).toContain("position: absolute");
+      expect(activityOverlayRule).toContain("top: var(--space-md)");
+      expect(activityOverlayRule).toContain("right: var(--space-md)");
+      expect(activityOverlayRule).toContain("z-index: 3");
+      expect(mobileCss).toContain("  .detail-activity {\n    padding-inline-end: calc(var(--space-2xl) + var(--space-lg));\n  }");
+      expect(mobileCss).toContain("  .activity-expand-toggle--overlay {\n    top: var(--space-sm);\n    right: var(--space-sm);\n  }");
       expect(expandedTitleRule).not.toContain("display: none");
       expect(expandedMetaRule).toContain("display: none");
       expect(expandedTabsRule).toContain("display: flex");
@@ -929,6 +944,10 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       const content = container.querySelector(".task-detail-content");
       const titleRow = container.querySelector(".detail-title-row");
+      const liveToggle = screen.getByTestId("task-chat-expand-toggle");
+      expect(liveToggle).toHaveClass("task-chat-expand-toggle--overlay");
+      expect(liveToggle.closest(".activity-toolbar")).toBeNull();
+      expect(container.querySelector(".activity-toolbar")).toBeNull();
       expect(content).not.toHaveClass("task-detail-content--chat-expanded");
       expect(titleRow).toHaveTextContent("FN-099");
       expect(container.querySelector(".detail-tabs")).toBeTruthy();
@@ -976,20 +995,27 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       expectActivityView("current");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Expand activity to full modal");
+      expect(screen.getByTestId("task-chat-expand-toggle")).toHaveClass("task-chat-expand-toggle--overlay");
+      expect(screen.getByTestId("task-chat-expand-toggle").closest(".activity-toolbar")).toBeNull();
+      expect(container.querySelector(".activity-toolbar")).toBeNull();
 
       fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
       expect(content).toHaveClass("task-detail-content--chat-expanded");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Collapse activity");
 
-    selectActivityView("feed");
+      selectActivityView("feed");
       expect(content).toHaveClass("task-detail-content--chat-expanded");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByTestId("task-chat-expand-toggle")).toHaveClass("activity-expand-toggle--overlay");
+      expect(screen.getByTestId("task-chat-expand-toggle").closest(".activity-toolbar")).toBeNull();
       expect(screen.getByText("Expanded feed entry")).toBeInTheDocument();
       expect(container.querySelector(".detail-activity-list")).toBeTruthy();
 
       selectActivityView("raw-logs");
       expect(content).toHaveClass("task-detail-content--chat-expanded");
-      expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-pressed", "true");
+      expect(screen.queryByTestId("task-chat-expand-toggle")).toBeNull();
+      expect(screen.getByTestId("agent-log-fullscreen-toggle")).toHaveAttribute("aria-label", "Expand agent log to full screen");
+      expect(screen.getAllByTestId("agent-log-fullscreen-toggle")).toHaveLength(1);
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeTruthy();
     });
 

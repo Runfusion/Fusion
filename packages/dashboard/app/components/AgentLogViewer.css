@@ -42,6 +42,12 @@
   background: var(--text-muted);
 }
 
+.agent-log-empty-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-sm) var(--space-md) 0;
+}
+
 .agent-log-loading,
 .agent-log-empty {
   display: flex;
