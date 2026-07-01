@@ -16,6 +16,7 @@ import {
 } from "../../utils/terminalPreferences";
 import * as useTerminalModule from "../../hooks/useTerminal";
 import * as useTerminalSessionsModule from "../../hooks/useTerminalSessions";
+import * as useWorkspacesModule from "../../hooks/useWorkspaces";
 import * as apiModule from "../../api";
 
 const terminalModalCss = readFileSync("app/components/TerminalModal.css", "utf8");
@@ -40,6 +41,10 @@ vi.mock("../../hooks/useTerminal", () => ({
 
 vi.mock("../../hooks/useTerminalSessions", () => ({
   useTerminalSessions: vi.fn(),
+}));
+
+vi.mock("../../hooks/useWorkspaces", () => ({
+  useWorkspaces: vi.fn(),
 }));
 
 vi.mock("../../api", () => ({
@@ -109,6 +114,7 @@ vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
 
 const mockUseTerminal = vi.mocked(useTerminalModule.useTerminal);
 const mockUseTerminalSessions = vi.mocked(useTerminalSessionsModule.useTerminalSessions);
+const mockUseWorkspaces = vi.mocked(useWorkspacesModule.useWorkspaces);
 const mockCreateTerminalSession = vi.mocked(apiModule.createTerminalSession);
 const mockKillPtyTerminalSession = vi.mocked(apiModule.killPtyTerminalSession);
 const TERMINAL_FONT_SIZE_KEY = LEGACY_TERMINAL_FONT_SIZE_KEY;
@@ -232,6 +238,12 @@ describe("TerminalModal", () => {
     mockKillPtyTerminalSession.mockResolvedValue({ killed: true });
     mockUseTerminal.mockReturnValue(createMockTerminalState());
     mockUseTerminalSessions.mockReturnValue(defaultSessionState);
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [],
+      loading: false,
+      error: null,
+    });
   });
 
   afterEach(() => {
@@ -250,6 +262,227 @@ describe("TerminalModal", () => {
   it("does not render when closed", () => {
     const { container } = render(<TerminalModal isOpen={false} onClose={mockOnClose} />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it("keeps the fast new-terminal button and hides the workspace picker when no task worktrees exist", async () => {
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal")).toBeTruthy();
+    });
+
+    expect(screen.queryByTestId("terminal-workspace-picker")).toBeNull();
+    fireEvent.click(screen.getByLabelText("New terminal"));
+    expect(defaultSessionState.createTab).toHaveBeenCalledWith();
+  });
+
+  it("opens a new terminal in the selected task worktree", async () => {
+    const createTab = vi.fn().mockResolvedValue(defaultTab);
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      createTab,
+    });
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-7253", label: "FN-7253", title: "Add worktree picker", worktree: "/repo/.worktrees/fn-7253", kind: "task" },
+        { id: "FN-0000", label: "FN-0000", title: "Missing worktree", kind: "task" },
+      ],
+      loading: false,
+      error: null,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    fireEvent.click(screen.getByTitle("Select terminal workspace"));
+    expect(screen.getByText("No worktree").closest("button")).toBeDisabled();
+    fireEvent.click(screen.getByText("FN-7253"));
+    fireEvent.click(screen.getByLabelText("Open terminal in selected workspace"));
+
+    expect(createTab).toHaveBeenCalledWith({
+      cwd: "/repo/.worktrees/fn-7253",
+      title: "FN-7253",
+    });
+  });
+
+  it("keeps the docked worktree picker accessible with duplicate, missing, and long workspace data", async () => {
+    const createTab = vi.fn().mockResolvedValue(defaultTab);
+    const longTitle = "FN-9999 — Implement a very long terminal worktree picker title that must truncate before actions";
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [
+        { ...defaultTab, title: "very-long-active-terminal-tab-title-that-should-not-push-actions" },
+        { ...defaultTab, id: "tab-2", title: "another-long-tab", isActive: false },
+        { ...defaultTab, id: "tab-3", title: "third-long-tab", isActive: false },
+      ],
+      createTab,
+    });
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-9999", label: "FN-9999", title: longTitle, worktree: "/repo/.worktrees/duplicate", kind: "task" },
+        { id: "FN-9998", label: "FN-9998", title: "Duplicate path", worktree: "/repo/.worktrees/duplicate", kind: "task" },
+        { id: "FN-0000", label: "FN-0000", title: "Missing worktree", kind: "task" },
+        { id: "FN-0001", label: "FN-0001", title: "Undefined worktree", worktree: undefined, kind: "task" },
+      ],
+      loading: false,
+      error: null,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    const modal = await screen.findByTestId("terminal-modal");
+    expect(modal).toHaveClass("terminal-modal--docked");
+    const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
+    expect(trigger).toHaveAttribute("aria-haspopup", "listbox");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Open terminal in selected workspace")).toBeEnabled();
+
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-controls", "terminal-workspace-picker-menu");
+    expect(screen.getByRole("listbox", { name: "Select terminal workspace" })).toBeInTheDocument();
+    expect(screen.getByText("FN-9999")).toBeInTheDocument();
+    expect(screen.getByText("FN-9998")).toBeInTheDocument();
+    expect(screen.getAllByText("No worktree")).toHaveLength(2);
+    for (const missingOption of screen.getAllByText("No worktree")) {
+      const option = missingOption.closest("button");
+      expect(option).toBeDisabled();
+      expect(option).toHaveAttribute("aria-disabled", "true");
+    }
+
+    fireEvent.click(screen.getByText("FN-9998"));
+    fireEvent.click(screen.getByLabelText("Open terminal in selected workspace"));
+    expect(createTab).toHaveBeenCalledWith({ cwd: "/repo/.worktrees/duplicate", title: "FN-9998" });
+  });
+
+  it("keeps floating and mobile worktree menus reachable and dismissible without orphaned controls", async () => {
+    const createTab = vi.fn().mockResolvedValue(defaultTab);
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      createTab,
+    });
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-7253", label: "FN-7253", title: "Add worktree picker", worktree: "/repo/.worktrees/fn-7253", kind: "task" },
+      ],
+      loading: false,
+      error: null,
+    });
+    window.localStorage.setItem("fusion:terminal-display-mode-floating-picker", "floating");
+
+    const { unmount } = render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="floating-picker" />);
+    expect(await screen.findByTestId("terminal-modal")).toHaveClass("terminal-modal--floating");
+    fireEvent.click(screen.getByLabelText("Select terminal workspace: Project Root"));
+    expect(screen.getByRole("listbox", { name: "Select terminal workspace" })).toBeInTheDocument();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("listbox", { name: "Select terminal workspace" })).toBeNull();
+    unmount();
+
+    const previousInnerWidth = window.innerWidth;
+    const previousInnerHeight = window.innerHeight;
+    const previousOntouchstart = window.ontouchstart;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 720, configurable: true });
+    Object.defineProperty(window, "ontouchstart", { value: null, configurable: true });
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="mobile-picker" />);
+      const mobileModal = await screen.findByTestId("terminal-modal");
+      expect(mobileModal).not.toHaveClass("terminal-modal--docked");
+      expect(mobileModal).not.toHaveClass("terminal-modal--floating");
+      const trigger = screen.getByLabelText("Select terminal workspace: Project Root");
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+        x: 220,
+        y: 18,
+        top: 18,
+        left: 220,
+        right: 352,
+        bottom: 54,
+        width: 132,
+        height: 36,
+        toJSON: () => ({}),
+      } as DOMRect);
+      fireEvent.click(trigger);
+      const listbox = screen.getByRole("listbox", { name: "Select terminal workspace" });
+      expect(listbox).toBeInTheDocument();
+      expect(listbox.parentElement).toBe(document.body);
+      expect(listbox).toHaveTextContent("Project Root");
+      expect(listbox).toHaveTextContent("FN-7253");
+      await waitFor(() => {
+        expect(listbox).toHaveStyle({ position: "fixed" });
+        expect(Number.parseFloat(listbox.style.left)).toBeGreaterThanOrEqual(0);
+        expect(Number.parseFloat(listbox.style.top)).toBeGreaterThanOrEqual(0);
+        expect(Number.parseFloat(listbox.style.width)).toBeLessThanOrEqual(390);
+        expect(Number.parseFloat(listbox.style.maxHeight)).toBeLessThanOrEqual(720);
+      });
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("listbox", { name: "Select terminal workspace" })).toBeNull();
+      expect(trigger).not.toHaveAttribute("aria-controls");
+      expect(mockOnClose).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: previousInnerHeight, configurable: true });
+      if (previousOntouchstart === undefined) {
+        delete (window as any).ontouchstart;
+      } else {
+        Object.defineProperty(window, "ontouchstart", { value: previousOntouchstart, configurable: true });
+      }
+    }
+  });
+
+  it("avoids inert workspace picker shells while loading or after workspace fetch errors", async () => {
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-7253", label: "FN-7253", title: "Loading stays usable", worktree: "/repo/.worktrees/fn-7253", kind: "task" },
+      ],
+      loading: true,
+      error: null,
+    });
+
+    const { rerender } = render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="loading-picker" />);
+    fireEvent.click(await screen.findByLabelText("Select terminal workspace: Project Root"));
+    expect(screen.getByText("Task worktrees (refreshing…)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Open terminal in selected workspace")).toBeEnabled();
+
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [
+        { id: "FN-7253", label: "FN-7253", title: "Stale entry hidden on error", worktree: "/repo/.worktrees/fn-7253", kind: "task" },
+      ],
+      loading: false,
+      error: "failed",
+    });
+    rerender(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="loading-picker" />);
+
+    expect(screen.queryByTestId("terminal-workspace-picker")).toBeNull();
+    fireEvent.click(screen.getByLabelText("New terminal"));
+    expect(defaultSessionState.createTab).toHaveBeenCalledWith();
+  });
+
+  it("bounds terminal worktree picker and tab labels so header actions stay reachable", () => {
+    const tabRule = terminalModalCss.match(/\.terminal-tab\s*\{([^}]*)\}/)?.[1] ?? "";
+    const tabLabelRule = terminalModalCss.match(/\.terminal-tab-label\s*\{([^}]*)\}/)?.[1] ?? "";
+    const triggerRule = terminalModalCss.match(/\.terminal-workspace-picker-trigger\s*\{([^}]*)\}/)?.[1] ?? "";
+    const menuRule = terminalModalCss.match(/\.terminal-workspace-picker-menu\s*\{([^}]*)\}/)?.[1] ?? "";
+    const actionsRule = terminalModalCss.match(/\.terminal-actions\s*\{([^}]*)\}/)?.[1] ?? "";
+    const mobileHeaderRule = terminalModalCss.match(/@media \(max-width: 768px\) \{[\s\S]*?\.terminal-header\s*\{([^}]*)\}/)?.[1] ?? "";
+    const mobileRule = terminalModalCss.match(/@media \(max-width: 768px\) \{[\s\S]*?\.terminal-workspace-picker-menu\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(tabRule).toContain("max-width: min(260px, 42vw);");
+    expect(tabLabelRule).toContain("text-overflow: ellipsis;");
+    expect(triggerRule).toContain("width: clamp(112px, 16vw, 220px);");
+    expect(menuRule).toContain("position: fixed;");
+    expect(menuRule).toContain("width: min(var(--terminal-workspace-menu-width), calc(100vw - (var(--space-md) * 2)));");
+    expect(menuRule).toContain("max-height: min(var(--terminal-workspace-menu-height), calc(100dvh - (var(--space-md) * 2)));");
+    expect(menuRule).toContain("overflow-y: auto;");
+    expect(menuRule).toContain("overscroll-behavior: contain;");
+    expect(actionsRule).toContain("flex: 0 0 auto;");
+    expect(mobileHeaderRule).toContain("overflow: hidden;");
+    expect(mobileRule).not.toContain("right:");
+    expect(mobileRule).toContain("width: min(var(--terminal-workspace-menu-width), calc(100vw - (var(--space-sm) * 2)));");
+    expect(mobileRule).toContain("-webkit-overflow-scrolling: touch;");
   });
 
   it("renders desktop terminal as a docked bottom panel and refits after top-handle resize", async () => {
@@ -1045,6 +1278,39 @@ describe("TerminalModal", () => {
           writable: true,
           configurable: true,
         });
+      }
+    });
+
+    it("sends sticky Ctrl shortcut bytes and clears the modifier after each delivery", async () => {
+      const terminalDiv = document.createElement("div");
+      terminalDiv.setAttribute("data-testid", "terminal");
+      const helperTextarea = document.createElement("textarea");
+      helperTextarea.className = "xterm-helper-textarea";
+      terminalDiv.appendChild(helperTextarea);
+      document.body.appendChild(terminalDiv);
+
+      try {
+        render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+        helperTextarea.focus();
+
+        fireEvent.click(screen.getByTestId("terminal-shortcut-toggle"));
+        const ctrlButton = screen.getByTestId("terminal-modifier-ctrl");
+
+        for (const [label, expected] of [
+          ["C", "\x03"],
+          ["D", "\x04"],
+          ["L", "\x0c"],
+        ] as const) {
+          fireEvent.click(ctrlButton);
+          fireEvent.click(screen.getByRole("button", { name: label }));
+          expect(mockSendInput).toHaveBeenLastCalledWith(expected);
+          expect(ctrlButton.getAttribute("aria-pressed")).toBe("false");
+        }
+
+        expect(mockSendInput.mock.calls.map(([value]) => value)).toEqual(["\x03", "\x04", "\x0c"]);
+        expect(document.activeElement).toBe(helperTextarea);
+      } finally {
+        document.body.removeChild(terminalDiv);
       }
     });
 
@@ -4351,18 +4617,26 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
   let savedInnerWidth: typeof window.innerWidth;
   let savedInnerHeight: typeof window.innerHeight;
   let savedOntouchstart: typeof window.ontouchstart;
+  let savedDocumentElementClientHeight: number;
 
   beforeEach(() => {
     vi.clearAllMocks();
     _resetInitialViewportHeight();
     mockUseTerminal.mockReturnValue(createMockTerminalState());
     mockUseTerminalSessions.mockReturnValue(defaultSessionState);
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [],
+      loading: false,
+      error: null,
+    });
 
     // Stash originals
     savedVisualViewport = window.visualViewport;
     savedInnerWidth = window.innerWidth;
     savedInnerHeight = window.innerHeight;
     savedOntouchstart = window.ontouchstart;
+    savedDocumentElementClientHeight = document.documentElement.clientHeight;
   });
 
   afterEach(() => {
@@ -4387,6 +4661,12 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       writable: true,
       configurable: true,
     });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: savedDocumentElementClientHeight,
+      configurable: true,
+    });
+    window.localStorage.removeItem(TERMINAL_FONT_SIZE_KEY);
+    window.localStorage.removeItem(TERMINAL_PREFERENCES_KEY);
     vi.restoreAllMocks();
   });
 
@@ -4484,6 +4764,134 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
     return { listeners, mockVV, initialHeight };
   }
 
+  it("remeasures the mobile keyboard-open terminal when reducing the persisted font size to 10px", async () => {
+    const { listeners } = simulateIOSSafari(true, 300);
+    const fontLoad = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: fontLoad,
+        ready: Promise.resolve(),
+      },
+      configurable: true,
+    });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 667,
+      configurable: true,
+    });
+    const onDataListeners: Array<(data: string) => void> = [];
+    const resizeForSmallFont = vi.fn();
+    mockUseTerminal.mockReturnValue(createMockTerminalState({
+      connectionStatus: "connected",
+      resize: resizeForSmallFont,
+      onData: vi.fn((cb: (data: string) => void) => {
+        onDataListeners.push(cb);
+        return vi.fn();
+      }),
+    }));
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId("terminal-font-size-value")).toHaveTextContent("14px"));
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("367px");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("300px");
+    });
+    expectMeasurementSafeFontStack(mockTerminalInstance.options.fontFamily as string);
+
+    fontLoad.mockClear();
+    resizeForSmallFont.mockClear();
+    const decrease = screen.getByTestId("terminal-font-size-decrease");
+    for (let i = 0; i < 4; i += 1) {
+      fireEvent.click(decrease);
+    }
+
+    await waitFor(() => expect(screen.getByTestId("terminal-font-size-value")).toHaveTextContent("10px"));
+    await waitFor(() => {
+      expect(fontLoad).toHaveBeenCalledWith(expect.stringContaining("10px"));
+    });
+    await waitFor(() => expect(mockTerminalInstance.options.fontSize).toBe(10));
+    await waitFor(() => expect(mockTerminalInstance.refresh).toHaveBeenCalledWith(0, 23));
+    await waitFor(() => expect(resizeForSmallFont).toHaveBeenCalledWith(80, 24));
+
+    act(() => {
+      for (const cb of onDataListeners) {
+        cb("❯ pnpm build\r\n@fusion/dashboard build complete  main\r\n");
+      }
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => expect(mockTerminalInstance.write).toHaveBeenCalledWith(expect.stringContaining("pnpm build")));
+    expectMeasurementSafeFontStack(mockTerminalInstance.options.fontFamily as string);
+    window.localStorage.removeItem(TERMINAL_PREFERENCES_KEY);
+  });
+
+  it("keeps initial folded keyboard-open terminal metrics before any unfold repair", async () => {
+    const { listeners } = simulateIOSSafari(true, 300);
+    const onDataListeners: Array<(data: string) => void> = [];
+    const resizeForFoldedKeyboard = vi.fn();
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 667,
+      configurable: true,
+    });
+    const helperTextarea = document.createElement("textarea");
+    document.body.appendChild(helperTextarea);
+    helperTextarea.focus();
+
+    mockUseTerminal.mockReturnValue(createMockTerminalState({
+      connectionStatus: "connected",
+      resize: resizeForFoldedKeyboard,
+      onData: vi.fn((cb: (data: string) => void) => {
+        onDataListeners.push(cb);
+        return vi.fn();
+      }),
+      onScrollback: vi.fn((cb: (data: string) => void) => {
+        onDataListeners.push(cb);
+        return vi.fn();
+      }),
+    }));
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        const modal = screen.getByTestId("terminal-modal");
+        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("367px");
+        expect(modal.style.getPropertyValue("--vv-height")).toBe("300px");
+      });
+      await waitFor(() => expect(onDataListeners.length).toBeGreaterThan(0));
+      act(() => {
+        for (const cb of onDataListeners) {
+          cb("❯ pnpm build\r\n✔ built packages/dashboard  main\r\n");
+        }
+      });
+      await waitFor(() => expect(mockTerminalInstance.write).toHaveBeenCalledWith(expect.stringContaining("pnpm build")));
+      await waitFor(() => expect(resizeForFoldedKeyboard).toHaveBeenCalledWith(80, 24));
+
+      resizeForFoldedKeyboard.mockClear();
+      act(() => {
+        for (const cb of listeners.resize) cb();
+        for (const cb of listeners.resize) cb();
+        window.dispatchEvent(new Event("orientationchange"));
+        window.dispatchEvent(new Event("orientationchange"));
+      });
+
+      await waitFor(() => {
+        const modal = screen.getByTestId("terminal-modal");
+        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("367px");
+        expect(modal.style.getPropertyValue("--vv-height")).toBe("300px");
+        expect(resizeForFoldedKeyboard).toHaveBeenCalledWith(80, 24);
+      });
+    } finally {
+      helperTextarea.remove();
+    }
+  });
+
   it("detects keyboard on iOS Safari where innerHeight shrinks with visualViewport", async () => {
     // On iOS Safari, both window.innerHeight and visualViewport.height shrink.
     // The primary formula (innerHeight - vv.offsetTop - vv.height) returns 0
@@ -4570,6 +4978,135 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       const modal = screen.getByTestId("terminal-modal");
       expect(modal.style.getPropertyValue("--vv-height")).toBe("567px");
     });
+  });
+
+  it("re-baselines iOS keyboard overlap after folded posture settles before input", async () => {
+    const { listeners, mockVV } = simulateIOSSafari(false, 844);
+    Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
+    Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+
+    // Device is folded/narrow while the keyboard is still closed; this settled
+    // viewport must replace the previous unfolded baseline before input opens.
+    Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 667, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+
+    Object.defineProperty(window, "innerHeight", { value: 300, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 300, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("367px");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("300px");
+    });
+  });
+
+  it("re-baselines keyboard-closed folded landscape samples below 480px", async () => {
+    const { listeners, mockVV } = simulateIOSSafari(false, 844);
+    Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
+    Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 844,
+      configurable: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+
+    Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 375,
+      configurable: true,
+    });
+    Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 375, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+
+    Object.defineProperty(window, "innerHeight", { value: 250, writable: true, configurable: true });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 250,
+      configurable: true,
+    });
+    Object.defineProperty(mockVV, "height", { value: 250, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      const modal = screen.getByTestId("terminal-modal");
+      expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("125px");
+      expect(modal.style.getPropertyValue("--vv-height")).toBe("250px");
+    });
+  });
+
+  it("does not re-baseline folded viewport width changes from focused keyboard-open samples", async () => {
+    const { listeners, mockVV } = simulateIOSSafari(false, 844);
+    Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
+    Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("terminal-modal").style.getPropertyValue("--keyboard-overlap")).toBe("");
+    });
+
+    const helperTextarea = document.createElement("textarea");
+    document.body.appendChild(helperTextarea);
+    helperTextarea.focus();
+
+    try {
+      // Fold/orientation can deliver the first narrow width sample while the
+      // soft keyboard is already open. With iOS-style innerHeight==vv.height,
+      // re-baselining from this focused sample would make gap=0 and clear the
+      // terminal keyboard CSS vars that drive the final xterm fit.
+      Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
+      Object.defineProperty(window, "innerHeight", { value: 520, writable: true, configurable: true });
+      Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
+      Object.defineProperty(mockVV, "height", { value: 520, writable: true, configurable: true });
+
+      act(() => {
+        for (const cb of listeners.resize) cb();
+      });
+
+      await waitFor(() => {
+        const modal = screen.getByTestId("terminal-modal");
+        expect(modal.style.getPropertyValue("--keyboard-overlap")).toBe("324px");
+        expect(modal.style.getPropertyValue("--vv-height")).toBe("520px");
+      });
+    } finally {
+      helperTextarea.remove();
+    }
   });
 
   it("does not set --vv-height when no keyboard overlap", async () => {

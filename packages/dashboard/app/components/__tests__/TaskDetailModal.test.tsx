@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Activity landing state.
 */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -21,7 +21,16 @@ import {
 import { TaskDetailContent, TaskDetailModal } from "../TaskDetailModal";
 
 vi.mock("../BranchGroupCard", () => ({
-  BranchGroupCard: ({ groupId }: { groupId: string }) => <div>Mock Branch Group {groupId}</div>,
+  BranchGroupCard: ({ groupId }: { groupId: string }) => {
+    const [expanded, setExpanded] = React.useState(false);
+    return (
+      <div>
+        Mock Branch Group {groupId}
+        <button type="button" onClick={() => setExpanded(true)}>Mock expand branch group</button>
+        {expanded && <span>Mock branch group expanded</span>}
+      </div>
+    );
+  },
 }));
 
 setupTaskDetailModalHooks();
@@ -65,6 +74,64 @@ function createDeferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+describe("TaskDetailModal planner Chat tab", () => {
+  function renderTask(column: any = "in-progress", initialTab?: ComponentProps<typeof TaskDetailModal>["initialTab"]) {
+    return render(
+      <TaskDetailModal
+        initialTab={initialTab}
+        task={makeTask({ column })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+  }
+
+  function tabLabels(): string[] {
+    return Array.from(document.querySelectorAll<HTMLButtonElement>(".detail-tabs .detail-tab"))
+      .map((button) => button.textContent?.trim() ?? "");
+  }
+
+  it("renders Activity then Chat as the first task-detail conversation tabs for active tasks", async () => {
+    const user = userEvent.setup();
+    renderTask("in-progress");
+
+    expect(tabLabels().slice(0, 2)).toEqual(["Activity", "Chat"]);
+    expect(screen.getAllByRole("button", { name: "Chat" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+
+    await user.click(screen.getByRole("button", { name: "Chat" }));
+
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("button", { name: "Activity" })).not.toHaveClass("detail-tab-active");
+  });
+
+  it("preserves Summary as the default for done tasks while keeping Activity then Chat order", () => {
+    renderTask("done");
+
+    expect(tabLabels().slice(0, 3)).toEqual(["Activity", "Chat", "Summary"]);
+    expect(screen.getByRole("button", { name: "Summary" })).toHaveClass("detail-tab-active");
+  });
+
+  it("keeps explicit legacy chat deep links routed to Activity", () => {
+    renderTask("in-progress", "chat");
+
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("tab", { name: "Current" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("routes explicit planner-chat requests to the new Chat tab", () => {
+    renderTask("todo", "planner-chat");
+
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass("detail-tab-active");
+    expect(screen.getByTestId("task-planner-chat-panel")).toBeInTheDocument();
+  });
+});
 
 describe("TaskDetailModal summarize title action", () => {
   it("orders board detail header actions as edit, expand, then Back to board", () => {
@@ -265,8 +332,8 @@ describe("TaskDetailModal GitHub tracking CTA", () => {
   });
 });
 
-describe("TaskDetailModal Logs activity loading", () => {
-  function renderLogsModal(task: ReturnType<typeof makeTask> | Record<string, unknown>) {
+describe("TaskDetailModal Activity feed loading", () => {
+  function renderActivityFeedModal(task: ReturnType<typeof makeTask> | Record<string, unknown>) {
     return render(
       <TaskDetailModal
         task={task as any}
@@ -295,13 +362,13 @@ describe("TaskDetailModal Logs activity loading", () => {
     vi.mocked(fetchTaskDetail).mockReset();
     vi.mocked(fetchTaskDetail).mockImplementationOnce(() => new Promise(() => {}));
 
-    renderLogsModal(makeSlimTask());
+    renderActivityFeedModal(makeSlimTask());
 
     expect(await screen.findByRole("status")).toHaveTextContent("Loading activity…");
     expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
   });
 
-  it("shows activity loading when switching to Logs before slim task detail resolves", async () => {
+  it("shows activity loading when switching to Activity Feed before slim task detail resolves", async () => {
     const user = userEvent.setup();
     const { fetchTaskDetail } = await import("../../api");
     vi.mocked(fetchTaskDetail).mockReset();
@@ -320,7 +387,8 @@ describe("TaskDetailModal Logs activity loading", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Logs" }));
+    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("tab", { name: "Feed" }));
     expect(await screen.findByRole("status")).toHaveTextContent("Loading activity…");
     expect(screen.queryByText("(no activity)")).not.toBeInTheDocument();
   });
@@ -330,7 +398,7 @@ describe("TaskDetailModal Logs activity loading", () => {
     vi.mocked(fetchTaskDetail).mockReset();
     vi.mocked(fetchTaskDetail).mockResolvedValueOnce(makeTask({ id: "FN-6040", prompt: "# Loaded", log: [] }));
 
-    renderLogsModal(makeSlimTask());
+    renderActivityFeedModal(makeSlimTask());
 
     expect(await screen.findByText("(no activity)")).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -348,7 +416,7 @@ describe("TaskDetailModal Logs activity loading", () => {
       ],
     }));
 
-    const { container } = renderLogsModal(makeSlimTask());
+    const { container } = renderActivityFeedModal(makeSlimTask());
 
     await screen.findByText("newer entry");
     const actions = Array.from(container.querySelectorAll(".detail-log-action")).map((node) => node.textContent);
@@ -366,7 +434,7 @@ describe("TaskDetailModal Logs activity loading", () => {
       activityLogTruncatedCount: 25,
     } as any));
 
-    renderLogsModal(makeSlimTask());
+    renderActivityFeedModal(makeSlimTask());
 
     expect(await screen.findByText("Showing the most recent 1 activity entries.")).toBeInTheDocument();
     expect(screen.getByText("kept entry")).toBeInTheDocument();
@@ -374,6 +442,83 @@ describe("TaskDetailModal Logs activity loading", () => {
 });
 
 describe("TaskDetailModal Chat task merge", () => {
+  it("exposes the steering composer only in Activity Current and posts through task updates", async () => {
+    const user = userEvent.setup();
+    const { addSteeringComment } = await import("../../api");
+    const onTaskUpdated = vi.fn();
+    const updatedTask = makeTask({
+      id: "FN-7309",
+      column: "in-progress" as any,
+      steeringComments: [{ id: "steer-7309", text: "Please keep the current approach", author: "user", createdAt: "2026-06-30T21:00:00.000Z" }],
+    });
+    vi.mocked(addSteeringComment).mockReset();
+    vi.mocked(addSteeringComment).mockResolvedValueOnce(updatedTask);
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-7309", column: "in-progress" as any, log: [{ timestamp: "2026-06-30T20:00:00.000Z", action: "Started work" }] })}
+        initialTab="chat"
+        projectId="project-7309"
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+        onTaskUpdated={onTaskUpdated}
+      />,
+    );
+
+    expect(screen.getByRole("tab", { name: "Current" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("form", { name: "Steering comment" })).toHaveLength(1);
+    expect(screen.getByText("Send operational guidance to the active task through steering comments.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Feed" }));
+    expect(screen.queryByRole("form", { name: "Steering comment" })).not.toBeInTheDocument();
+    expect(screen.getByText("Started work")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Raw Logs" }));
+    expect(screen.queryByRole("form", { name: "Steering comment" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Current" }));
+    const input = screen.getByLabelText("Message active agent session");
+    await user.type(input, "Please keep the current approach");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => {
+      expect(addSteeringComment).toHaveBeenCalledWith("FN-7309", "Please keep the current approach", "project-7309");
+      expect(onTaskUpdated).toHaveBeenCalledWith(updatedTask);
+    });
+  });
+
+  it("exposes the steering composer in embedded task detail without duplicating Feed or Raw Logs composers", async () => {
+    const user = userEvent.setup();
+    render(
+      <TaskDetailContent
+        task={makeTask({ id: "FN-7310", column: "todo" as any, steeringComments: undefined, log: [] })}
+        projectId="project-7309"
+        embedded
+        onRequestClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getAllByRole("form", { name: "Steering comment" })).toHaveLength(1);
+    expect(screen.getByText("No agent output yet. Live messages from Planner, Executor, Reviewer, and Merger agents will appear here.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Feed" }));
+    expect(screen.queryByRole("form", { name: "Steering comment" })).not.toBeInTheDocument();
+    expect(screen.getByText("(no activity)")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Raw Logs" }));
+    expect(screen.queryByRole("form", { name: "Steering comment" })).not.toBeInTheDocument();
+  });
+
   it("forwards full-detail agent fields to Chat when a sparse parent task has undefined live fields", async () => {
     const user = userEvent.setup();
     const { fetchTaskDetail, addSteeringComment } = await import("../../api");
@@ -430,8 +575,8 @@ describe("TaskDetailModal Chat task merge", () => {
   });
 });
 
-describe("TaskDetailModal Logs agent loading", () => {
-  it("shows the Agent Log loading indicator when entering the subview", async () => {
+describe("TaskDetailModal Raw Logs agent loading", () => {
+  it("shows the Raw Logs loading indicator when entering the segment", async () => {
     const user = userEvent.setup();
     const { useAgentLogs } = await import("../../hooks/useAgentLogs");
     const mockUseAgentLogs = vi.mocked(useAgentLogs);
@@ -458,22 +603,38 @@ describe("TaskDetailModal Logs agent loading", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Logs" }));
-    await user.click(screen.getByRole("button", { name: "Agent Log" }));
+    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("tab", { name: "Feed" }));
+    await user.click(screen.getByRole("tab", { name: "Raw Logs" }));
 
     expect(screen.getByText("Loading agent logs…")).toBeInTheDocument();
     expect(screen.queryByText("No agent output yet.")).not.toBeInTheDocument();
 
     mockUseAgentLogs.mockImplementation(() => ({ entries: [], loading: false, clear: vi.fn(), loadMore: vi.fn(async () => {}), hasMore: false, total: null, loadingMore: false }));
   });
-});
 
-describe("TaskDetailModal branch group surfacing", () => {
-  it("renders branch group card when task has group context", () => {
+  it("renders Raw Logs populated pagination state from the Activity segment", async () => {
+    const user = userEvent.setup();
+    const { useAgentLogs } = await import("../../hooks/useAgentLogs");
+    const loadMore = vi.fn(async () => {});
+    const mockUseAgentLogs = vi.mocked(useAgentLogs);
+    mockUseAgentLogs.mockImplementation(() => ({
+      entries: [
+        { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-6040", text: "raw executor output", type: "text" as const, agent: "executor" },
+        { timestamp: "2026-01-01T00:01:00Z", taskId: "FN-6040", text: "raw reviewer output", type: "text" as const, agent: "reviewer" },
+      ],
+      loading: false,
+      clear: vi.fn(),
+      loadMore,
+      hasMore: true,
+      total: 5,
+      loadingMore: false,
+    }));
+
     render(
       <TaskDetailModal
         initialTab="definition"
-        task={makeTask({ branchContext: { groupId: "BG-1", source: "planning", assignmentMode: "shared" } })}
+        task={makeTask({ id: "FN-6040", prompt: "# Loaded" })}
         onClose={noop}
         onMoveTask={noopMove}
         onDeleteTask={noopDelete}
@@ -483,6 +644,55 @@ describe("TaskDetailModal branch group surfacing", () => {
       />,
     );
 
+    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("tab", { name: "Raw Logs" }));
+
+    expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-log-summary")).toHaveTextContent("Showing 2 of 5 entries");
+    expect(screen.getByText("raw executor output")).toBeInTheDocument();
+    expect(screen.getByText("raw reviewer output")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("agent-log-load-more-button"));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+
+    mockUseAgentLogs.mockImplementation(() => ({ entries: [], loading: false, clear: vi.fn(), loadMore: vi.fn(async () => {}), hasMore: false, total: null, loadingMore: false }));
+  });
+});
+
+describe("TaskDetailModal branch group surfacing", () => {
+  const branchContext = { groupId: "BG-1", source: "planning", assignmentMode: "shared" } as const;
+
+  function renderTaskWithBranchContext(id: string) {
+    return (
+      <TaskDetailModal
+        initialTab="definition"
+        task={makeTask({ id, branchContext })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />
+    );
+  }
+
+  it("renders branch group card when task has group context", () => {
+    render(renderTaskWithBranchContext("FN-6041"));
+
+    expect(screen.getByText("Mock Branch Group BG-1")).toBeInTheDocument();
+  });
+
+  it("remounts the branch group card when switching tasks inside the same group", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(renderTaskWithBranchContext("FN-6041"));
+
+    await user.click(screen.getByRole("button", { name: "Mock expand branch group" }));
+    expect(screen.getByText("Mock branch group expanded")).toBeInTheDocument();
+
+    rerender(renderTaskWithBranchContext("FN-6042"));
+
+    expect(screen.queryByText("Mock branch group expanded")).not.toBeInTheDocument();
     expect(screen.getByText("Mock Branch Group BG-1")).toBeInTheDocument();
   });
 });
@@ -688,8 +898,8 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
     expect(screen.getByText("Open the Review tab to see which step is blocking, then fix the failure or override the step.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "View activity log" }));
-    expect(screen.getByRole("button", { name: "Logs" })).toHaveClass("detail-tab-active");
-    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("log-subview-btn-active");
+    expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+    expect(screen.getByRole("tab", { name: "Feed" })).toHaveAttribute("aria-selected", "true");
     const highlighted = document.querySelector(".detail-log-entry--stall-highlight .detail-log-action");
     expect(highlighted?.textContent).toContain("In-review stall surfaced [merge-blocker]");
   });

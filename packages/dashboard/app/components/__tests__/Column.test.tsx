@@ -651,28 +651,37 @@ describe("Column in-progress/in-review bulk actions", () => {
   });
 });
 
-describe("Column Done sort control", () => {
-  it("renders an accessible Done-only sort selector with clear labels", () => {
-    render(
+describe("Column Done action menu", () => {
+  it("renders one accessible Done actions dropdown with sort choices and archive", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
       <Column
         {...defaultProps}
         column="done"
         tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+        onArchiveAllDone={vi.fn().mockResolvedValue([])}
         doneSortMode="completion-date-desc"
         onDoneSortModeChange={vi.fn()}
       />,
     );
 
-    const select = screen.getByRole("combobox", { name: "Sort Done tasks" });
-    expect(select.closest(".done-sort-control")).toHaveAttribute("title", "Sort Done tasks");
-    expect(screen.getByText("Sort")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Completion date (newest first)" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Task ID (newest first)" })).toBeInTheDocument();
-    expect(select.closest(".done-sort-control")).not.toBeNull();
-    expect(select.closest(".column-header")).not.toBeNull();
+    const header = screen.getByRole("heading", { name: "Done" }).closest(".column-header") as HTMLElement;
+    const actionsButton = screen.getByRole("button", { name: "Done column actions" });
+    expect(actionsButton.closest(".column-header")).toBe(header);
+    expect(header.querySelectorAll(".column-menu")).toHaveLength(1);
+    expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
+    expect(container.querySelector(".done-sort-control")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Archive all done tasks" })).toBeNull();
+
+    await user.click(actionsButton);
+
+    expect(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("menuitem", { name: /Archive all done tasks/i })).toBeEnabled();
   });
 
-  it("renders the selector for workflow complete columns with custom ids", () => {
+  it("renders the same Done dropdown for workflow complete columns with custom ids", async () => {
+    const user = userEvent.setup();
     render(
       <Column
         {...defaultProps}
@@ -681,16 +690,21 @@ describe("Column Done sort control", () => {
         columnDisplayName="Shipped"
         columnFlags={{ complete: true }}
         tasks={[{ ...makeTask("FN-001"), column: "shipped" as ColumnType }]}
+        onArchiveAllDone={vi.fn().mockResolvedValue([])}
         doneSortMode="completion-date-desc"
         onDoneSortModeChange={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("heading", { name: "Shipped" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Sort Done tasks" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Shipped column actions" }));
+
+    expect(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Archive all done tasks/i })).toBeInTheDocument();
   });
 
-  it("selects task ID descending from the Done header", async () => {
+  it("selects task ID descending from the Done actions menu", async () => {
     const user = userEvent.setup();
     const onDoneSortModeChange = vi.fn();
     render(
@@ -703,12 +717,14 @@ describe("Column Done sort control", () => {
       />,
     );
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Sort Done tasks" }), "task-id-desc");
+    await user.click(screen.getByRole("button", { name: "Done column actions" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ }));
 
     expect(onDoneSortModeChange).toHaveBeenCalledWith("task-id-desc");
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("selects completion-date descending from the Done header", async () => {
+  it("selects completion-date descending from the Done actions menu", async () => {
     const user = userEvent.setup();
     const onDoneSortModeChange = vi.fn();
     render(
@@ -721,70 +737,69 @@ describe("Column Done sort control", () => {
       />,
     );
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Sort Done tasks" }), "completion-date-desc");
+    await user.click(screen.getByRole("button", { name: "Done column actions" }));
+    await user.click(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ }));
 
     expect(onDoneSortModeChange).toHaveBeenCalledWith("completion-date-desc");
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("keeps the Done sort selector available when Done is empty", () => {
+  it("archives Done tasks from the menu only after confirmation", async () => {
+    const user = userEvent.setup();
+    const onArchiveAllDone = vi.fn().mockResolvedValue([{ ...makeTask("FN-001"), column: "archived" }]);
+    render(
+      <Column
+        {...defaultProps}
+        column="done"
+        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
+        onArchiveAllDone={onArchiveAllDone}
+        doneSortMode="completion-date-desc"
+        onDoneSortModeChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Done column actions" }));
+    await user.click(screen.getByRole("menuitem", { name: /Archive all done tasks/i }));
+
+    await waitFor(() => expect(onArchiveAllDone).toHaveBeenCalledTimes(1));
+    expect(mockConfirm).toHaveBeenCalledWith({
+      title: "Archive All Done",
+      message: "Archive all 1 done tasks?",
+      danger: true,
+    });
+  });
+
+  it("keeps sort choices available while blocking archive for an empty Done column", async () => {
+    const user = userEvent.setup();
+    const onArchiveAllDone = vi.fn().mockResolvedValue([]);
     render(
       <Column
         {...defaultProps}
         column="done"
         tasks={[]}
+        onArchiveAllDone={onArchiveAllDone}
         doneSortMode="completion-date-desc"
         onDoneSortModeChange={vi.fn()}
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "Sort Done tasks" })).toBeInTheDocument();
-    expect(screen.getByText("0")).toHaveClass("column-count");
+    await user.click(screen.getByRole("button", { name: "Done column actions" }));
+
+    expect(screen.getByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /Archive all done tasks/i })).toBeDisabled();
+    expect(onArchiveAllDone).not.toHaveBeenCalled();
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 
-  it("coexists with Archive All Done without disabling sort selection", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
-        onArchiveAllDone={vi.fn().mockResolvedValue([])}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByRole("combobox", { name: "Sort Done tasks" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Archive all done tasks" })).toBeEnabled();
-    const header = screen.getByRole("heading", { name: "Done" }).closest(".column-header") as HTMLElement;
-    expect(header.querySelector(".done-sort-control")).not.toBeNull();
-    expect(header.querySelector(".btn-icon")).not.toBeNull();
-  });
-
-  it("keeps Done header actions in the wrapping-friendly header structure", () => {
-    render(
-      <Column
-        {...defaultProps}
-        column="done"
-        tasks={[{ ...makeTask("FN-001"), column: "done" }]}
-        onArchiveAllDone={vi.fn().mockResolvedValue([])}
-        doneSortMode="completion-date-desc"
-        onDoneSortModeChange={vi.fn()}
-      />,
-    );
-
-    const header = screen.getByRole("heading", { name: "Done" }).closest(".column-header") as HTMLElement;
-    expect(header).toBeInTheDocument();
-    expect(header.querySelector(".column-count")?.textContent).toBe("1");
-    expect(screen.getByRole("combobox", { name: "Sort Done tasks" }).closest(".done-sort-control")?.parentElement).toBe(header);
-    expect(screen.getByRole("button", { name: "Archive all done tasks" }).parentElement).toBe(header);
-  });
-
-  it("hides the sort control and leaves no wrapper on non-Done columns", () => {
+  it("hides Done menu items and leaves no standalone wrappers on non-Done columns", async () => {
+    const user = userEvent.setup();
     const { container } = render(
       <Column
         {...defaultProps}
         column="todo"
         tasks={[{ ...makeTask("FN-001"), column: "todo" }]}
+        onArchiveAllDone={vi.fn().mockResolvedValue([])}
         doneSortMode="completion-date-desc"
         onDoneSortModeChange={vi.fn()}
       />,
@@ -793,9 +808,15 @@ describe("Column Done sort control", () => {
     expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
     expect(container.querySelector(".done-sort-control")).toBeNull();
     expect(container.querySelector("[aria-label='Sort Done tasks']")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Todo column actions" }));
+
+    expect(screen.queryByRole("menuitemradio", { name: /Completion date \(newest first\)/ })).toBeNull();
+    expect(screen.queryByRole("menuitemradio", { name: /Task ID \(newest first\)/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /Archive all done tasks/i })).toBeNull();
   });
 
-  it("hides the sort control on Done when sort props are absent", () => {
+  it("does not render a Done actions menu when Done sort and archive props are absent", () => {
     const { container } = render(
       <Column
         {...defaultProps}
@@ -804,6 +825,7 @@ describe("Column Done sort control", () => {
       />,
     );
 
+    expect(screen.queryByRole("button", { name: "Done column actions" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Sort Done tasks" })).toBeNull();
     expect(container.querySelector(".done-sort-control")).toBeNull();
   });

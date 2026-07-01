@@ -95,6 +95,7 @@ const mocks = vi.hoisted(() => {
   const pluginLoaderInstances: any[] = [];
   const projectEngineInstances: any[] = [];
   const listenCalls: ListenCall[] = [];
+  const globalSettingsGetSettings = vi.fn().mockResolvedValue({});
 
   function createTaskStoreMock(projectId = "") {
     const emitter = new EventEmitter();
@@ -110,8 +111,9 @@ const mocks = vi.hoisted(() => {
       getRootDir: vi.fn().mockReturnValue(`/repo${projectId ? `/${projectId}` : ""}`),
       getFusionDir: vi.fn().mockReturnValue(`/repo${projectId ? `/${projectId}` : ""}/.fusion`),
       getGlobalSettingsStore: vi.fn(() => ({
-        getSettings: vi.fn().mockResolvedValue({}),
+        getSettings: globalSettingsGetSettings,
       })),
+      updateGlobalSettings: vi.fn().mockResolvedValue({}),
       getMissionStore: vi.fn().mockReturnValue(missionStore),
       getPluginStore: vi.fn().mockReturnValue(pluginStore),
       getSettings: vi.fn().mockResolvedValue({
@@ -378,6 +380,8 @@ const mocks = vi.hoisted(() => {
     refresh: vi.fn(),
   };
 
+  const refreshAllCustomProviderModels = vi.fn().mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
+
   const agentSemaphoreCtor = vi.fn().mockImplementation(function () {
     return {
       _active: 0,
@@ -555,6 +559,8 @@ const mocks = vi.hoisted(() => {
     processAndAuditInsightExtractionMock,
     authStorage,
     modelRegistry,
+    refreshAllCustomProviderModels,
+    globalSettingsGetSettings,
     reset() {
       taskStores.length = 0;
       automationStores.length = 0;
@@ -577,6 +583,10 @@ const mocks = vi.hoisted(() => {
       syncInsightExtractionAutomationMock.mockResolvedValue(undefined);
       processAndAuditInsightExtractionMock.mockClear();
       createAiPromptExecutorMock.mockClear();
+      refreshAllCustomProviderModels.mockReset();
+      refreshAllCustomProviderModels.mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
+      globalSettingsGetSettings.mockReset();
+      globalSettingsGetSettings.mockResolvedValue({});
       // Reset multi-project state
       engineUsageLog.length = 0;
       getProjectByPathResolver = null;
@@ -620,6 +630,7 @@ vi.mock("@fusion/dashboard", () => ({
   createSkillsAdapter: vi.fn().mockReturnValue(undefined),
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
+  refreshAllCustomProviderModels: mocks.refreshAllCustomProviderModels,
 }));
 
 vi.mock("@fusion/engine", async (importOriginal) => {
@@ -761,6 +772,52 @@ describe("runServe", () => {
       models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
     }));
     expect(mocks.modelRegistry.refresh).toHaveBeenCalled();
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("starts serving before background custom provider refresh settles", async () => {
+    mocks.refreshAllCustomProviderModels.mockImplementationOnce(() => new Promise(() => undefined));
+    mocks.globalSettingsGetSettings.mockResolvedValue({
+      customProviders: [{
+        id: "cp-1",
+        name: "Custom Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      }],
+    });
+
+    await runServe(0, {});
+
+    expect(mocks.refreshAllCustomProviderModels).toHaveBeenCalledTimes(1);
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith(
+      expect.stringContaining("custom-proxy"),
+      expect.objectContaining({ models: [expect.objectContaining({ id: "configured-model" })] }),
+    );
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("continues startup provider registration when custom provider refresh fails", async () => {
+    mocks.refreshAllCustomProviderModels.mockRejectedValueOnce(new Error("provider offline"));
+    mocks.globalSettingsGetSettings.mockResolvedValue({
+      customProviders: [{
+        id: "cp-1",
+        name: "Custom Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      }],
+    });
+
+    await runServe(0, {});
+
+    expect(mocks.refreshAllCustomProviderModels).toHaveBeenCalledTimes(1);
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith(
+      expect.stringContaining("custom-proxy"),
+      expect.objectContaining({ models: [expect.objectContaining({ id: "configured-model" })] }),
+    );
 
     await triggerSignal("SIGINT");
   });

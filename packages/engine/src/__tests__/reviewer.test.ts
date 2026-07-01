@@ -276,6 +276,47 @@ describe("reviewStep — spec review type", () => {
     expect(opts.systemPrompt).toContain("Mission clarity");
   });
 
+  it("allows same-session reviewer fixes when requested", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nFixed the plan."),
+    );
+    const store = {
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-050", 0, "Plan Review", "plan", "# Task: KB-050",
+      undefined,
+      { allowInlineFixes: true, store: store as any, taskId: "FN-050" },
+    );
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateFnAgent.mock.calls[0][0];
+    expect(opts.tools).toBe("readonly");
+    expect(opts.customTools?.map((tool: any) => tool.name)).toContain("fn_task_prompt_write");
+    expect(mockedPromptWithFallback.mock.calls[0][1]).toContain("Same-Session Fix Policy");
+    expect(mockedPromptWithFallback.mock.calls[0][1]).toContain("fn_task_prompt_write");
+  });
+
+  it("uses coding tools for same-session code review fixes", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nFixed the code."),
+    );
+
+    await reviewStep(
+      "/tmp/worktree", "FN-051", 1, "Code Review", "code", "# Task: KB-051",
+      undefined,
+      { allowInlineFixes: true },
+    );
+
+    expect(mockedCreateFnAgent).toHaveBeenCalledTimes(1);
+    const opts = mockedCreateFnAgent.mock.calls[0][0];
+    expect(opts.tools).toBe("coding");
+    expect(opts.customTools?.map((tool: any) => tool.name)).not.toContain("fn_task_prompt_write");
+  });
+
   it("appends reviewer plugin prompt contributions when provided", async () => {
     mockedCreateFnAgent.mockResolvedValue(
       createMockSession("### Verdict: APPROVE\n### Summary\nGood spec."),
@@ -522,6 +563,16 @@ describe("reviewStep — context-limit retry", () => {
     const verboseSection = Array.from({ length: 120 }, (_, i) => `- verbose requirement ${i}: ${"x".repeat(80)}`).join("\n");
     const promptContent = `# Task: FN-4082\n\n## Mission\nShip the reviewer retry.\n\n## Context to Read First\n${verboseSection}\n\n## Dependencies\n- None\n\n## File Scope\n- packages/engine/src/reviewer.ts\n- packages/engine/src/pi.ts\n\n## Steps\n### Step 0: Preflight\n- [ ] Confirm existing behavior\n### Step 1: Compact prompt\n- [ ] Trim the request\n### Step 2: Retry review\n- [ ] Retry once\n\n## Do NOT\n${verboseSection}`;
 
+    const userComments = [
+      {
+        id: "user-comment-1",
+        text: "User says compact retry must keep this requirement.",
+        author: "user" as const,
+        createdAt: "2026-06-30T16:00:00.000Z",
+        updatedAt: "2026-06-30T16:01:00.000Z",
+      },
+    ];
+
     const result = await reviewStep(
       "/tmp/worktree",
       "FN-4082",
@@ -530,7 +581,7 @@ describe("reviewStep — context-limit retry", () => {
       "code",
       promptContent,
       "abc123",
-      { store: store as any, taskId: "FN-4082" },
+      { store: store as any, taskId: "FN-4082", userComments, allowInlineFixes: true },
     );
 
     expect(result.verdict).toBe("APPROVE");
@@ -542,6 +593,11 @@ describe("reviewStep — context-limit retry", () => {
     expect(secondRequest).toContain("## Mission");
     expect(secondRequest).toContain("## File Scope");
     expect(secondRequest).toContain("### Step 1: Compact prompt");
+    expect(secondRequest).toContain("## User Comments");
+    expect(secondRequest).toContain("User says compact retry must keep this requirement.");
+    expect(firstRequest).toContain("Same-Session Fix Policy");
+    expect(secondRequest).toContain("Same-Session Fix Policy");
+    expect(secondRequest.match(/## User Comments/g)).toHaveLength(1);
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-4082",
       "code review hit context limit — retrying with compacted request",
@@ -1084,6 +1140,12 @@ describe("reviewStep — user comments in spec review", () => {
         author: "user",
         createdAt: "2026-01-02T10:00:00.000Z",
       },
+      {
+        id: "s1",
+        text: "Legacy steering: keep compatibility",
+        author: "user",
+        createdAt: "2026-01-02T10:05:00.000Z",
+      },
     ];
 
     await reviewStep(
@@ -1095,6 +1157,9 @@ describe("reviewStep — user comments in spec review", () => {
 
     expect(capturedPrompt).toContain("User Comment Coverage (MANDATORY)");
     expect(capturedPrompt).toContain("Make sure to handle the edge case");
+    expect(capturedPrompt).toContain("Legacy steering: keep compatibility");
+    expect(capturedPrompt.match(/User Comment Coverage \(MANDATORY\)/g)).toHaveLength(1);
+    expect(capturedPrompt).not.toContain("## User Comments");
     expect(capturedPrompt).toContain("issue a REVISE verdict");
   });
 
@@ -1121,6 +1186,7 @@ describe("reviewStep — user comments in spec review", () => {
     );
 
     expect(capturedPrompt).not.toContain("User Comment Coverage");
+    expect(capturedPrompt).not.toContain("## User Comments");
   });
 
   it.each(["plan", "code"] as const)("includes user comments for %s reviews without spec coverage gating", async (reviewType) => {
@@ -1158,6 +1224,7 @@ describe("reviewStep — user comments in spec review", () => {
 
     expect(capturedPrompt).toContain("## User Comments");
     expect(capturedPrompt).toContain("Some user feedback");
+    expect(capturedPrompt.match(/## User Comments/g)).toHaveLength(1);
     expect(capturedPrompt).not.toContain("User Comment Coverage (MANDATORY)");
   });
 

@@ -1,5 +1,5 @@
 import type { AgentLogEntry, AgentRole, SteeringComment, Task, TaskDetail } from "@fusion/core";
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChevronDown, Cpu, Loader2, Maximize2, Minimize2, Send } from "lucide-react";
@@ -582,6 +582,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const previousActiveRef = useRef(false);
   const anchorFrameRef = useRef<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerHintId = useId();
 
   const userMessages = useMemo(
     () => mergeUserMessages(task.steeringComments, optimisticMessages),
@@ -591,10 +592,16 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
   const transcriptItemCount = entries.length + userMessages.length;
   const firstEntryKey = entries[0] ? getEntryKey(entries[0], 0) : null;
   const isDoneTask = task.column === "done";
-  /**
-   * FNXC:TaskDetailChat 2026-06-24-00:00:
-   * The task-detail chat composer must not render guidance above the entry box in active, idle, or done states. Keep the action-specific copy in the textarea placeholder so the composer remains compact while send/refinement behavior stays unchanged.
+  /*
+   * FNXC:TaskDetailActivity 2026-06-30-21:51:
+   * Activity → Current is the operational steering surface for task execution. Show an explicit steering-comment affordance here while keeping the future top-level planner-model Chat tab out of scope; Feed and Raw Logs remain read-only Activity segments without this composer.
    */
+  const composerLabel = isDoneTask
+    ? t("taskChat.refinementComposerLabel", "Refinement request")
+    : t("taskChat.steeringComposerLabel", "Steering comment");
+  const composerHint = isDoneTask
+    ? t("taskChat.refinementComposerHint", "Create a follow-up refinement task from this completed task.")
+    : t("taskChat.steeringComposerHint", "Send operational guidance to the active task through steering comments.");
   const composerPlaceholder = isDoneTask
     ? t("taskChat.donePlaceholder", "Start a refinement task for this completed task")
     : t("taskChat.activePlaceholder", "Steer the currently executing agent");
@@ -931,7 +938,11 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
         ) : null}
       </div>
 
-      <form className="task-chat-composer card" onSubmit={handleSubmit}>
+      <form className="task-chat-composer card" onSubmit={handleSubmit} aria-label={composerLabel}>
+        <div className="task-chat-composer-affordance">
+          <span className="task-chat-composer-label">{composerLabel}</span>
+          <span className="task-chat-composer-hint" id={composerHintId}>{composerHint}</span>
+        </div>
         <div className="task-chat-composer-row">
           <textarea
             ref={textareaRef}
@@ -942,6 +953,7 @@ export function TaskChatTab({ task, projectId, active, addToast, onTaskUpdated, 
             onKeyDown={handleKeyDown}
             disabled={sending}
             aria-label={t("taskChat.messageActiveAgentSession", "Message active agent session")}
+            aria-describedby={composerHintId}
             rows={1}
           />
           <button

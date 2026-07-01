@@ -209,17 +209,25 @@ describe("MissionManager mobile swipe-back", () => {
     await expectMissionListVisible();
   });
 
-  it("does not push a nav entry on desktop mission selection or tab switching", async () => {
+  it("does not push a nav entry after desktop mission selection or tab switching", async () => {
     mockViewportMode.mockReturnValue("desktop");
 
     renderMissionManager();
 
+    await userSelectMission();
     await waitFor(() => {
       expect(screen.getByText("Database Schema")).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByTestId("mission-tab-activity"));
+    expect(window.history.pushState).not.toHaveBeenCalled();
+
+    await openActivityTab();
+    expect(screen.getByTestId("mission-activity-tab")).toBeInTheDocument();
+    expect(screen.getByText("Activity tab loaded")).toBeInTheDocument();
+    expect(window.history.pushState).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("mission-tab-structure"));
     await waitFor(() => {
-      expect(screen.getByTestId("mission-activity-tab")).toBeInTheDocument();
+      expect(screen.getByText("Database Schema")).toBeInTheDocument();
     });
     expect(window.history.pushState).not.toHaveBeenCalled();
   });

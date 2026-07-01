@@ -111,6 +111,7 @@ export interface MainContentProps {
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
   prAuthAvailable: boolean;
   autoMerge: boolean;
+  mergeStrategy: string;
   settingsLoaded: boolean;
   skillsEnabled: boolean;
   experimentalFeatures: Record<string, boolean>;

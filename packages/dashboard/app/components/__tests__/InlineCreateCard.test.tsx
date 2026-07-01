@@ -16,7 +16,6 @@ vi.mock("lucide-react", () => ({
   Search: () => null,
   Sparkles: () => null,
   Terminal: () => null,
-  Lightbulb: () => null,
   ListTree: () => null,
   Zap: () => null,
   ChevronDown: () => null,
@@ -184,6 +183,19 @@ function createMockTask(overrides: Partial<Task> = {}): Task {
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
   };
+}
+
+function mockInlineNodes(nodes: Array<{ id: string; name: string; status: "online" | "offline" | "connecting" | "error"; type: "local" | "remote" }>) {
+  vi.mocked(useNodes).mockReturnValue({
+    nodes: nodes.map((node) => ({ ...node, createdAt: "", updatedAt: "" })),
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    register: vi.fn(),
+    update: vi.fn(),
+    unregister: vi.fn(),
+    healthCheck: vi.fn(),
+  });
 }
 
 function renderCard(
@@ -812,38 +824,38 @@ describe("InlineCreateCard dependency dropdown search", () => {
   });
 });
 
-describe("InlineCreateCard Plan and Subtask buttons", () => {
-  it("renders Plan and Subtask buttons disabled when description is empty", () => {
+describe("InlineCreateCard Subtask controls without Plan", () => {
+  it("omits Plan and renders Subtask disabled when description is empty", () => {
     renderCard();
     expandCard();
-    const planButton = screen.getByTestId("plan-button") as HTMLButtonElement;
     const subtaskButton = screen.getByTestId("subtask-button") as HTMLButtonElement;
-    expect(planButton.disabled).toBe(true);
+    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Plan$/i })).not.toBeInTheDocument();
     expect(subtaskButton.disabled).toBe(true);
   });
 
-  it("enables Plan and Subtask buttons when description is entered", () => {
+  it("omits Plan and enables Subtask when description is entered", () => {
     renderCard();
     expandCard();
     const textarea = screen.getByPlaceholderText("What needs to be done?");
     fireEvent.change(textarea, { target: { value: "Test task" } });
 
-    const planButton = screen.getByTestId("plan-button") as HTMLButtonElement;
     const subtaskButton = screen.getByTestId("subtask-button") as HTMLButtonElement;
-    expect(planButton.disabled).toBe(false);
+    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
     expect(subtaskButton.disabled).toBe(false);
   });
 
-  it("calls onPlanningMode with description and preserves input draft when Plan clicked", () => {
+  it("omits the Plan handoff while preserving input draft", () => {
     const onPlanningMode = vi.fn();
     renderCard([], { onPlanningMode });
     expandCard();
     const textarea = screen.getByPlaceholderText("What needs to be done?") as HTMLTextAreaElement;
 
     fireEvent.change(textarea, { target: { value: "  Plan this task  " } });
-    fireEvent.click(screen.getByTestId("plan-button"));
 
-    expect(onPlanningMode).toHaveBeenCalledWith("Plan this task");
+    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Open planning mode with current description")).not.toBeInTheDocument();
+    expect(onPlanningMode).not.toHaveBeenCalled();
     expect(textarea.value).toBe("  Plan this task  ");
     expect(localStorage.getItem(INLINE_CREATE_STORAGE_KEY)).toBe("  Plan this task  ");
   });
@@ -869,22 +881,20 @@ describe("InlineCreateCard Plan and Subtask buttons", () => {
     expect(controlsRow).toBeTruthy();
     expect(screen.queryByTestId("subtask-button")).not.toBeInTheDocument();
     expect(screen.queryByTitle("Break down into AI-generated subtasks")).not.toBeInTheDocument();
-    expect(controlsRow.contains(screen.getByTestId("plan-button"))).toBe(true);
+    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
     expect(controlsRow.querySelector(".dep-trigger")).toBeTruthy();
   });
 
-  it("shows toast when Plan clicked with empty description (via direct handler call)", () => {
+  it("does not leave a disabled Plan button for empty descriptions", () => {
     const addToast = vi.fn();
     const onPlanningMode = vi.fn();
     renderCard([], { addToast, onPlanningMode });
     expandCard();
 
-    // When no description, button is disabled - verify that behavior
-    const planButton = screen.getByTestId("plan-button") as HTMLButtonElement;
-    expect(planButton.disabled).toBe(true);
-
-    // The handler validation exists but can't be triggered via click when disabled
-    // The disabled state is the primary UX protection
+    expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Open planning mode with current description")).not.toBeInTheDocument();
+    expect(addToast).not.toHaveBeenCalled();
+    expect(onPlanningMode).not.toHaveBeenCalled();
   });
 
   it("shows toast when Subtask clicked with empty description (via direct handler call)", () => {
@@ -1018,8 +1028,8 @@ describe("InlineCreateCard button visibility when collapsed", () => {
     // Click toggle to expand
     expandCard();
 
-    // Now buttons should be visible
-    expect(screen.getByTestId("plan-button")).toBeTruthy();
+    // Now non-Plan buttons should be visible
+    expect(screen.queryByTestId("plan-button")).toBeNull();
     expect(screen.getByTestId("subtask-button")).toBeTruthy();
     expect(screen.getByText(/Deps/)).toBeTruthy();
     expect(screen.getByTestId("save-button")).toBeTruthy();
@@ -1030,7 +1040,8 @@ describe("InlineCreateCard button visibility when collapsed", () => {
 
     // Expand
     expandCard();
-    expect(screen.getByTestId("plan-button")).toBeTruthy();
+    expect(screen.queryByTestId("plan-button")).toBeNull();
+    expect(screen.getByTestId("subtask-button")).toBeTruthy();
 
     // Collapse
     expandCard();
@@ -1173,7 +1184,7 @@ describe("InlineCreateCard button visibility when collapsed", () => {
   });
 
   describe("Consolidated controls layout (FN-781, FN-1292)", () => {
-    it("renders Plan, Subtask, Deps, Agent, and Models together in footer controls when expanded", () => {
+    it("renders Subtask, Deps, Agent, and Models together in footer controls without Plan", () => {
       renderCard();
       expandCard();
 
@@ -1181,8 +1192,8 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       const controlsRow = document.querySelector(".inline-create-controls");
       expect(controlsRow).toBeTruthy();
 
-      // Plan, Subtask, Deps, Agent, Browser Verify, Priority, Preset, Models all in one row
-      expect(controlsRow!.contains(screen.getByTestId("plan-button"))).toBe(true);
+      // Subtask, Deps, Agent, Browser Verify, Priority, Preset, Models all in one row; Plan is intentionally omitted.
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(controlsRow!.contains(screen.getByTestId("subtask-button"))).toBe(true);
       expect(controlsRow!.contains(screen.getByTestId("inline-create-agent-button"))).toBe(true);
       expect(controlsRow!.contains(screen.getByTestId("inline-create-priority-select"))).toBe(true);
@@ -1210,18 +1221,16 @@ describe("InlineCreateCard button visibility when collapsed", () => {
       expect(controlsRow!.contains(saveButton)).toBe(false);
     });
 
-    it("Plan and Subtask disabled state still works in consolidated controls", () => {
+    it("Subtask disabled state still works in consolidated controls without Plan", () => {
       renderCard();
       expandCard();
       const textarea = screen.getByPlaceholderText("What needs to be done?");
 
-      // Buttons should be disabled when description is empty
-      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(true);
 
-      // Type something — buttons should become enabled
       fireEvent.change(textarea, { target: { value: "Some task" } });
-      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(false);
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(false);
     });
   });
@@ -1639,6 +1648,67 @@ describe("InlineCreateCard button visibility when collapsed", () => {
 
 
 describe("InlineCreateCard node override", () => {
+  it("hides the node picker affordance for local-only inline quick-create without shells", () => {
+    mockInlineNodes([
+      { id: "local", name: "Local", status: "online", type: "local" },
+    ]);
+    renderCard();
+    expandCard();
+
+    expect(screen.queryByTestId("inline-create-node-button")).not.toBeInTheDocument();
+    expect(document.querySelector(".inline-create-card .node-trigger-wrap")).toBeNull();
+    expect(document.querySelector(".node-picker-dropdown")).toBeNull();
+    expect(screen.queryByText("Select execution node")).not.toBeInTheDocument();
+  });
+
+  it("hides the node picker when inline quick-create has no registered nodes", () => {
+    mockInlineNodes([]);
+    renderCard();
+    expandCard();
+
+    expect(screen.queryByTestId("inline-create-node-button")).not.toBeInTheDocument();
+    expect(document.querySelector(".inline-create-card .node-trigger-wrap")).toBeNull();
+  });
+
+  it("shows the node picker when inline quick-create has a remote node choice", () => {
+    mockInlineNodes([
+      { id: "remote", name: "Remote Only", status: "online", type: "remote" },
+    ]);
+    renderCard();
+    expandCard();
+
+    expect(screen.getByTestId("inline-create-node-button")).toBeInTheDocument();
+  });
+
+  it("clears stale inline node override when nodes shrink to local-only before submit", async () => {
+    const onSubmit = vi.fn().mockResolvedValue({ id: "FN-777" } as Task);
+    mockInlineNodes([
+      { id: "local", name: "Local", status: "online", type: "local" },
+      { id: "remote", name: "Remote", status: "online", type: "remote" },
+    ]);
+    const { rerender, props } = renderCard([], { onSubmit });
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Inline node shrink" } });
+    expandCard();
+    fireEvent.click(screen.getByTestId("inline-create-node-button"));
+    fireEvent.click(screen.getByRole("button", { name: /Remote/i }));
+    expect(screen.getByTestId("inline-create-node-button")).toHaveTextContent("Remote");
+
+    mockInlineNodes([
+      { id: "local", name: "Local", status: "online", type: "local" },
+    ]);
+    rerender(<InlineCreateCard {...props} />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("inline-create-node-button")).not.toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ nodeId: undefined }));
+    });
+  });
+
   it("opens node picker from button", () => {
     renderCard();
     expandCard();

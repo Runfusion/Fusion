@@ -50,6 +50,8 @@ export interface BoardWorkflowColumn {
 export interface BoardWorkflowDefinition {
   id: string;
   name: string;
+  /** Optional compact custom workflow icon; built-ins render the Fusion mark by id. */
+  icon?: string;
   columns: BoardWorkflowColumn[];
   /** Custom field definitions declared by the workflow (U13/KTD-14). Absent
    *  when the workflow declares no fields. */
@@ -122,17 +124,19 @@ async function describeWorkflow(
   // it (previously getWorkflowDefinition was called twice per workflow).
   let ir: WorkflowIr = BUILTIN_CODING_WORKFLOW_IR;
   let name = ir.name;
+  let icon: string | undefined;
   try {
     const def = await store.getWorkflowDefinition(workflowId);
     if (def) {
       ir = typeof def.ir === "string" ? parseWorkflowIr(def.ir) : def.ir;
       name = def.name || ir.name;
+      icon = def.icon;
     }
   } catch {
     // fall through to the default IR/name
   }
   const fields = describeFields(ir);
-  return { id: workflowId, name, columns: describeColumns(ir), ...(fields ? { fields } : {}) };
+  return { id: workflowId, name, ...(icon ? { icon } : {}), columns: describeColumns(ir), ...(fields ? { fields } : {}) };
 }
 
 /**

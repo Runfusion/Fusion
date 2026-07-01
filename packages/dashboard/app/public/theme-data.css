@@ -1429,6 +1429,134 @@ FN-6758 makes the default shadcn highlight/accent orange for focus rings, active
 }
 
 /*
+FNXC:DashboardTheming 2026-06-30-00:00:
+Shadcn Ember combines shadcn/ui zinc structure with Ember's warm orange/graphite CTA, status, accent, and info colors. It is the default for unset installs while explicit legacy theme ids stay valid.
+*/
+[data-color-theme="shadcn-ember"] {
+  --bg: #09090b;
+  --surface: #0c0c0e;
+  --card: #18181b;
+  --card-hover: #1f1f23;
+  --surface-hover: color-mix(in srgb, var(--surface) 90%, var(--text) 10%);
+  --border: #27272a;
+
+  --text: #fafafa;
+  --text-muted: #a1a1aa;
+  --text-dim: #52525b;
+
+  --todo: #a0a0a0;
+  --in-progress: #b8b8b8;
+  --in-progress-rgb: 184, 184, 184;
+  --in-review: #d0d0d0;
+  --triage: #808080;
+  --done: #686868;
+
+  --color-success: #d0d0d0;
+  --color-warning: #f59e0b;
+  --color-error: #ff6b6b;
+  --color-muted: #71717a;
+
+  --font-primary: "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 10px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-2xl: 28px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius: var(--radius-md);
+
+  --btn-padding: 6px 12px;
+  --btn-border-width: 1px;
+  --card-padding: 10px 12px;
+  --modal-padding: var(--space-md) var(--space-lg);
+  --header-padding: var(--space-sm) var(--space-lg);
+  --column-gap: var(--space-md);
+  --board-padding: var(--space-md) var(--space-lg);
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, #000000 18%, transparent);
+  --shadow-md: 0 1px 3px color-mix(in srgb, #000000 22%, transparent);
+  --shadow-lg: 0 4px 12px color-mix(in srgb, #000000 24%, transparent);
+  --shadow-glow: none;
+  --glow-success: none;
+  --glow-warning: none;
+  --glow-danger: none;
+  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 35%, transparent);
+  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 45%, transparent);
+  --shadow: var(--shadow-lg);
+
+  --transition-instant: 0.05s ease;
+  --transition-fast: 0.1s ease;
+  --transition-normal: 0.15s ease;
+  --transition-slow: 0.2s ease;
+
+  --cta-bg: #d4622a;
+  --cta-border: #e8773a;
+  --cta-text: #fff;
+  --cta-bg-hover: #e8773a;
+  --cta-border-hover: #f09050;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-border) 30%, transparent);
+  --logo-accent: #e8773a;
+  --color-info: #e8773a;
+  --accent: #e8773a;
+  --accent-text: #ffffff;
+}
+
+[data-color-theme="shadcn-ember"][data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --card: #ffffff;
+  --card-hover: #f4f4f5;
+  --surface-hover: color-mix(in srgb, var(--surface) 92%, var(--text) 8%);
+  --border: #e4e4e7;
+
+  --text: #09090b;
+  --text-muted: #71717a;
+  --text-dim: #a1a1aa;
+
+  --todo: #404040;
+  --in-progress: #606060;
+  --in-progress-rgb: 96, 96, 96;
+  --in-review: #606060;
+  --triage: #2a2a2a;
+  --done: #606060;
+
+  --color-success: #404040;
+  --color-warning: #d97706;
+  --color-error: #dc2626;
+  --color-muted: #71717a;
+
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent);
+  --shadow-md: 0 1px 3px color-mix(in srgb, var(--text) 10%, transparent);
+  --shadow-lg: 0 4px 12px color-mix(in srgb, var(--text) 12%, transparent);
+  --shadow-glow: none;
+  --glow-success: none;
+  --glow-warning: none;
+  --glow-danger: none;
+  --focus-ring: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 18%, transparent);
+  --focus-ring-strong: 0 0 0 calc(var(--btn-border-width) * 3) color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow: var(--shadow-lg);
+
+  --cta-bg: #c05820;
+  --cta-border: #d4622a;
+  --cta-text: #fff;
+  --cta-bg-hover: #d4622a;
+  --cta-border-hover: #e07030;
+  --cta-glow: 0 0 8px color-mix(in srgb, var(--cta-bg) 30%, transparent);
+  --logo-accent: #d4622a;
+  --color-info: #c05820;
+  --accent: #d4622a;
+  --accent-text: #ffffff;
+}
+
+
+/*
 FNXC:Theming 2026-06-20-18:30:
 FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sanitized user token overrides are applied inline by the dashboard theme hook.
 */
@@ -1556,6 +1684,7 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
 }
 
 [data-color-theme="shadcn"] .card.agent-active,
+[data-color-theme="shadcn-ember"] .card.agent-active,
 [data-color-theme="shadcn-custom"] .card.agent-active {
   border-color: var(--accent);
   box-shadow: none;
@@ -1563,6 +1692,7 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
 }
 
 [data-color-theme="shadcn"][data-theme="light"] .card.agent-active,
+[data-color-theme="shadcn-ember"][data-theme="light"] .card.agent-active,
 [data-color-theme="shadcn-custom"][data-theme="light"] .card.agent-active {
   border-color: var(--accent);
   box-shadow: none;
@@ -1570,6 +1700,7 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
 }
 
 [data-color-theme="shadcn"] .btn,
+[data-color-theme="shadcn-ember"] .btn,
 [data-color-theme="shadcn-custom"] .btn {
   text-transform: none;
   letter-spacing: normal;
@@ -1578,6 +1709,8 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
 
 [data-color-theme="shadcn"] .btn-primary,
 [data-color-theme="shadcn"] .btn-task-create,
+[data-color-theme="shadcn-ember"] .btn-primary,
+[data-color-theme="shadcn-ember"] .btn-task-create,
 [data-color-theme="shadcn-custom"] .btn-primary,
 [data-color-theme="shadcn-custom"] .btn-task-create {
   background: var(--cta-bg);
@@ -1588,6 +1721,8 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
 
 [data-color-theme="shadcn"] .btn-primary:hover,
 [data-color-theme="shadcn"] .btn-task-create:hover,
+[data-color-theme="shadcn-ember"] .btn-primary:hover,
+[data-color-theme="shadcn-ember"] .btn-task-create:hover,
 [data-color-theme="shadcn-custom"] .btn-primary:hover,
 [data-color-theme="shadcn-custom"] .btn-task-create:hover {
   background: var(--cta-bg-hover);
@@ -1598,6 +1733,8 @@ FN-6816 keeps shadcn-custom visually identical to the base shadcn theme until sa
 
 [data-color-theme="shadcn"] .card,
 [data-color-theme="shadcn"] .column,
+[data-color-theme="shadcn-ember"] .card,
+[data-color-theme="shadcn-ember"] .column,
 [data-color-theme="shadcn-custom"] .card,
 [data-color-theme="shadcn-custom"] .column {
   border-width: var(--btn-border-width);

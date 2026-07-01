@@ -5,8 +5,8 @@ import type { ColorTheme, ThemeMode } from "@fusion/core";
 FNXC:Theme 2026-06-19-12:00:
 The Settings theme grid and Command Center theme dropdown must share one source of truth for theme labels and swatch classes so color-chip affordances stay synchronized across both theme selectors.
 
-FNXC:DashboardTheming 2026-06-22-18:36:
-Ocean is the default theme label for new/unset users. The historical "default" id remains selectable as Fusion Legacy so users who already chose default are not silently moved to Ocean.
+FNXC:DashboardTheming 2026-06-30-00:00:
+Shadcn Ember is the default theme label for new/unset users. The historical "default" and "ocean" ids remain selectable so users who already chose them are not silently moved.
 */
 export const THEME_MODES: { value: ThemeMode; label: string; icon: LucideIcon }[] = [
   { value: "light", label: "Light", icon: Sun },
@@ -16,7 +16,7 @@ export const THEME_MODES: { value: ThemeMode; label: string; icon: LucideIcon }[
 
 export const COLOR_THEMES: { value: ColorTheme; label: string; className: string }[] = [
   { value: "default", label: "Fusion Legacy", className: "theme-swatch-default" },
-  { value: "ocean", label: "Ocean (Default)", className: "theme-swatch-ocean" },
+  { value: "ocean", label: "Ocean", className: "theme-swatch-ocean" },
   { value: "forest", label: "Forest", className: "theme-swatch-forest" },
   { value: "sunset", label: "Sunset", className: "theme-swatch-sunset" },
   { value: "zen", label: "Zen", className: "theme-swatch-zen" },
@@ -72,6 +72,7 @@ export const COLOR_THEMES: { value: ColorTheme; label: string; className: string
   { value: "neon-bloom", label: "Neon Bloom", className: "theme-swatch-neon-bloom" },
   { value: "sepia", label: "Sepia", className: "theme-swatch-sepia" },
   { value: "shadcn", label: "Shadcn", className: "theme-swatch-shadcn" },
+  { value: "shadcn-ember", label: "Shadcn Ember (Default)", className: "theme-swatch-shadcn-ember" },
   { value: "shadcn-custom", label: "Shadcn Custom", className: "theme-swatch-shadcn-custom" },
   { value: "shadcn-blue", label: "Shadcn Blue", className: "theme-swatch-shadcn-blue" },
   { value: "shadcn-green", label: "Shadcn Green", className: "theme-swatch-shadcn-green" },

@@ -275,7 +275,7 @@ function teamFixture(agents: unknown[] = [
 function workflowFixture(workflows: unknown[] = [
   {
     workflowId: "builtin:coding",
-    workflowName: "Coding (built-in)",
+    workflowName: "Coding",
     isBuiltin: true,
     tokens: { inputTokens: 900, outputTokens: 450, cachedTokens: 150, cacheWriteTokens: 0, totalTokens: 1500, nTasks: 2 },
     cost: { usd: 4.25, unavailable: false, stale: false },
@@ -526,11 +526,11 @@ describe("CommandCenter shell", () => {
     expect(onChangeView).toHaveBeenCalledWith("agents");
   });
 
-  it("renders the Overview agent-runs card when run data is the only activity", async () => {
+  it("renders run-only task-worker activity in Overview agent stats and charts", async () => {
     mockOverviewApi({
       tokens: tokenFixture(0),
       tools: toolsFixture(0),
-      activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 0, activeAgents: 0, agentRuns: 5, doneInRange: 0 }),
+      activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 0, activeAgents: 1, agentRuns: 5, doneInRange: 0 }),
       signals: signalsFixture(0),
       live: liveFixture([{ column: "in-progress", count: 0 }]),
     });
@@ -538,6 +538,11 @@ describe("CommandCenter shell", () => {
 
     await waitFor(() => expect(screen.queryByTestId("command-center-empty")).toBeNull());
     expect(statValue("command-center-stat-agentRuns")).toBe("5");
+    expect(screen.getByTestId("command-center-live-agents-working").textContent).toContain("1");
+    expect(screen.getByTestId("cc-overview-line")).toBeTruthy();
+    expect(screen.getByTestId("command-center-overview-chart-activity")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Daily activity line" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Daily activity trend" })).toBeTruthy();
   });
 
   /*
@@ -1027,6 +1032,29 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("command-center-panel-tokens")).toBeTruthy();
   });
 
+  it("renders run-only task-worker activity in the Activity tab graphs", async () => {
+    mockOverviewApi({
+      tokens: tokenFixture(0),
+      tools: toolsFixture(0),
+      activity: activityFixture({ sessions: 0, messages: 0, activeNodes: 0, activeAgents: 1, agentRuns: 1, doneInRange: 0 }),
+      signals: signalsFixture(0),
+      live: liveFixture([{ column: "in-progress", count: 0 }]),
+    });
+    render(<CommandCenter />);
+
+    fireEvent.click(screen.getByTestId("command-center-tab-activity"));
+
+    await screen.findByTestId("cc-area-activity");
+    expect(screen.getByTestId("cc-activity-agents").textContent).toContain("1");
+    expect(screen.getByTestId("cc-activity-agent-runs").textContent).toContain("1");
+    expect(screen.getByTestId("cc-activity-line")).toBeTruthy();
+    expect(screen.getByTestId("cc-activity-line-agents")).toBeTruthy();
+    expect(screen.getByTestId("cc-activity-line-throughput")).toBeTruthy();
+    expect(screen.getByTestId("cc-activity-agent-runs-sparkline")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Active agents / day" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Throughput / day" })).toBeTruthy();
+  });
+
   it("renders and routes the System tab exactly once", async () => {
     mockOverviewApi();
     render(<CommandCenter />);
@@ -1127,7 +1155,7 @@ describe("CommandCenter shell", () => {
     await screen.findByTestId("cc-area-workflows");
     expect(screen.getByTestId("command-center-tab-workflows").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("command-center-panel-workflows")).toBeTruthy();
-    expect(screen.getByTestId("cc-workflows-table").textContent).toContain("Coding (built-in)");
+    expect(screen.getByTestId("cc-workflows-table").textContent).toContain("Coding");
   });
 
   it("renders the Team empty state for zero agents without an empty chart shell", async () => {

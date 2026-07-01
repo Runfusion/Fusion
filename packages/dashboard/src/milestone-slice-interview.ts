@@ -763,6 +763,9 @@ export async function createTargetInterviewAgent(
   /*
   FNXC:McpConfig 2026-06-26-00:00:
   Milestone and slice interviews already receive a TaskStore for planning-board tools; forward configured MCP servers so this readonly agent-work surface matches mission/planning coverage without logging resolved secrets.
+
+  FNXC:McpConfig 2026-06-29-00:00:
+  Milestone and slice interviews opt into MCP tools explicitly because they are planning-context lanes; other read-only sessions still skip MCP unless they make the same reviewed policy choice.
   */
   const mcpServers = (await resolveMcpServersForStore(store)).servers;
 
@@ -771,6 +774,7 @@ export async function createTargetInterviewAgent(
     systemPrompt: getSystemPrompt(session.targetType),
     tools: "readonly",
     mcpServers,
+    allowMcpToolsInReadonly: true,
     customTools: [...createPlanningBoardTools(store)],
     /*
     FNXC:InterviewSkills 2026-06-17-21:42:

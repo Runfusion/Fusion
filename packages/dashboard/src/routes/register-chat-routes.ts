@@ -8,6 +8,7 @@ import { resolveProjectChatContext } from "../chat-project-services.js";
 import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
 import { rateLimit, RATE_LIMITS } from "../rate-limit.js";
 import { writeSSEEvent, type SessionBufferedEvent } from "../sse-buffer.js";
+import { TASK_PLANNER_CHAT_AGENT_ID_PREFIX } from "../chat.js";
 import type { ApiRoutesContext } from "./types.js";
 import { getOrCreateScopedChatManager, getOrCreateScopedChatStore } from "../chat-project-services.js";
 import { getOrCreateProjectStore } from "../project-store-resolver.js";
@@ -116,6 +117,73 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
     const chatStore = getOrCreateScopedChatStore(projectStore);
     return getOrCreateScopedChatManager(projectStore, chatStore, options?.pluginRunner);
   }
+  function validateModelPair(modelProvider: unknown, modelId: unknown): { modelProvider?: string; modelId?: string } {
+    let normalizedProvider: string | undefined;
+    let normalizedModelId: string | undefined;
+    try {
+      normalizedProvider = validateOptionalModelField(modelProvider, "modelProvider");
+      normalizedModelId = validateOptionalModelField(modelId, "modelId");
+    } catch (err) {
+      throw badRequest(err instanceof Error ? err.message : "Invalid model override");
+    }
+    if (Boolean(normalizedProvider) !== Boolean(normalizedModelId)) {
+      throw badRequest("Both modelProvider and modelId must be provided together, or neither should be provided");
+    }
+    return normalizedProvider && normalizedModelId
+      ? { modelProvider: normalizedProvider, modelId: normalizedModelId }
+      : {};
+  }
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+  Task planner Chat uses a synthetic task-scoped chat target (`task-planner:<taskId>`) so the dashboard can persist/resume a conversation without binding it to an executor/reviewer agent or the Activity steering-comment pipeline. The route validates the task in the scoped project store and stores the effective planning model override on the session.
+  */
+  router.post("/chat/task-planner/:taskId/session", rateLimit(RATE_LIMITS.mutation), async (req, res) => {
+    try {
+      const rawTaskId = req.params.taskId;
+      const taskId = typeof rawTaskId === "string" ? rawTaskId.trim() : "";
+      if (!taskId) {
+        throw badRequest("taskId is required");
+      }
+
+      const { modelProvider, modelId } = validateModelPair(req.body?.modelProvider, req.body?.modelId);
+      const { store: scopedStore, projectId } = await getProjectContext(req);
+      const { chatStore } = await resolveScopedChatStore(projectId);
+      const task = await scopedStore.getTask(taskId).catch(() => null);
+      if (!task) {
+        throw notFound(`Task ${taskId} not found`);
+      }
+
+      const agentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${task.id}`;
+      const existing = chatStore.findLatestActiveSessionForTarget({
+        agentId,
+        ...(projectId ? { projectId } : {}),
+      });
+
+      if (existing) {
+        const session = modelProvider && modelId
+          ? chatStore.updateSession(existing.id, { modelProvider, modelId })
+          : existing;
+        res.json({ session });
+        return;
+      }
+
+      const session = chatStore.createSession({
+        agentId,
+        title: `${task.id} planner chat`,
+        projectId: projectId ?? null,
+        modelProvider: modelProvider ?? null,
+        modelId: modelId ?? null,
+      });
+      res.status(201).json({ session });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err, "Failed to create task planner chat session");
+    }
+  });
+
   // ── Chat Routes ────────────────────────────────────────────────────────────
 
   /**

@@ -9,6 +9,7 @@ import { Bar, type BarDatum } from "../charts/Bar";
 import { AreaShell } from "./AreaShell";
 import { useAnalyticsArea } from "./useAnalyticsArea";
 import { formatCost, formatCount } from "./areaShared";
+import { WorkflowIcon } from "../../WorkflowIcon";
 
 type SortKey = "workflow" | "tokens" | "cost" | "filesChanged" | "tasksCompleted" | "tasksInProgress" | "tasksInReview";
 
@@ -147,6 +148,7 @@ export function WorkflowArea({ range }: { range: DateRange }) {
                 <tr key={workflow.workflowId} data-testid={`cc-workflows-row-${workflow.workflowId}`}>
                   <td>
                     <span className="cc-team-agent-cell">
+                      <WorkflowIcon workflowId={workflow.workflowId} icon={workflow.workflowIcon} decorative />
                       <span>
                         <span className="cc-team-agent-name">{workflowLabel(workflow, unknownWorkflow)}</span>
                         <span className="cc-team-agent-role">{workflow.workflowId}</span>

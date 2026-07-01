@@ -9,6 +9,9 @@ const mockTerm = {
   loadAddon: vi.fn(),
   open: vi.fn(),
   onData: vi.fn(),
+  attachCustomKeyEventHandler: vi.fn(),
+  hasSelection: vi.fn(() => false),
+  getSelection: vi.fn(() => ""),
   write: vi.fn((_data: string, cb?: () => void) => cb?.()),
   dispose: vi.fn(),
   unicode: { activeVersion: "6" },
@@ -26,6 +29,16 @@ vi.mock("@xterm/addon-webgl", () => ({
 const apiMock = vi.fn();
 vi.mock("../../api", () => ({ api: (...args: unknown[]) => apiMock(...args) }));
 vi.mock("../../auth", () => ({ appendTokenQuery: (u: string) => u }));
+const terminalPreferenceMocks = vi.hoisted(() => ({
+  waitForTerminalFontMetrics: vi.fn(() => Promise.resolve(true)),
+}));
+vi.mock("../../utils/terminalPreferences", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../utils/terminalPreferences")>();
+  return {
+    ...actual,
+    waitForTerminalFontMetrics: terminalPreferenceMocks.waitForTerminalFontMetrics,
+  };
+});
 
 // ── Minimal WebSocket stub ──────────────────────────────────────────────────
 class FakeWS {
@@ -135,10 +148,15 @@ beforeEach(() => {
   mockTerm.loadAddon.mockClear();
   mockTerm.open.mockClear();
   mockTerm.onData.mockReset();
+  mockTerm.attachCustomKeyEventHandler.mockClear();
+  mockTerm.hasSelection.mockReturnValue(false);
+  mockTerm.getSelection.mockReturnValue("");
   mockTerm.write.mockClear();
   mockTerm.dispose.mockClear();
   mockTerm.options = {};
   mockFitAddon.fit.mockClear();
+  terminalPreferenceMocks.waitForTerminalFontMetrics.mockReset();
+  terminalPreferenceMocks.waitForTerminalFontMetrics.mockResolvedValue(true);
   apiMock.mockReset();
   apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: false });
   installMatchMedia(true); // mobile by default
@@ -175,10 +193,26 @@ describe("SessionTerminal (mobile)", () => {
     expect(screen.queryByTestId("cli-terminal-mobile-bar")).toBeNull();
   });
 
-  it("does not render the mobile bar when read-only", async () => {
-    apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: true });
-    await renderMobile({ readOnly: true });
+  it.each([
+    ["read-only", { readOnly: true }],
+    ["idle", { mode: "idle" as const }],
+    ["ended", { mode: "ended" as const }],
+  ])("does not render the mobile bar when %s", async (_label, props) => {
+    if (props.readOnly) {
+      apiMock.mockResolvedValue({ ticket: "tkt-1", expiresAt: "", readOnly: true });
+    }
+    await renderMobile(props);
     expect(screen.queryByTestId("cli-terminal-mobile-bar")).toBeNull();
+  });
+
+  it("does not render mobile controls when the attach ticket is read-only", async () => {
+    apiMock.mockResolvedValue({ ticket: "tkt-ro", expiresAt: "", readOnly: true });
+
+    await renderMobile();
+
+    expect(screen.queryByTestId("cli-terminal-mobile-bar")).toBeNull();
+    expect(mockTerm.options.disableStdin).toBe(true);
+    expect(mockTerm.onData).not.toHaveBeenCalled();
   });
 
   // ── Accessory bar control sequences ───────────────────────────────────────
@@ -271,15 +305,13 @@ describe("SessionTerminal (mobile)", () => {
   });
 
   // ── Input field submit ────────────────────────────────────────────────────
-  it("submitting the input field sends the text then \\r", async () => {
+  it("submitting the input field sends the text then exactly one \\r", async () => {
     const { ws } = await renderMobile();
     const input = screen.getByTestId("cli-terminal-mobile-input") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "ls -la" } });
     fireEvent.click(screen.getByTestId("cli-terminal-mobile-send"));
     const frames = inputFrames(ws);
-    const idx = frames.indexOf("ls -la");
-    expect(idx).toBeGreaterThanOrEqual(0);
-    expect(frames[idx + 1]).toBe("\r");
+    expect(frames).toEqual(["ls -la", "\r"]);
     // Field is cleared after submit.
     expect(input.value).toBe("");
   });
@@ -360,11 +392,50 @@ describe("SessionTerminal (mobile)", () => {
     expect(screen.getByTestId("cli-key-arrow-left")).toBeTruthy();
     expect(screen.getByTestId("cli-key-arrow-right")).toBeTruthy();
   });
+
+  it("does not let an older mobile font-metric wait overwrite newer terminal preferences", async () => {
+    await renderMobile();
+    await waitFor(() => expect(terminalPreferenceMocks.waitForTerminalFontMetrics).toHaveBeenCalled());
+
+    const pendingFontWaits: Array<(value: boolean) => void> = [];
+    terminalPreferenceMocks.waitForTerminalFontMetrics.mockReset();
+    terminalPreferenceMocks.waitForTerminalFontMetrics.mockImplementation(
+      () => new Promise<boolean>((resolve) => pendingFontWaits.push(resolve)),
+    );
+
+    const setPreferenceFontSize = (fontSize: number) => {
+      window.localStorage.setItem(
+        TERMINAL_PREFERENCES_KEY,
+        JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, fontSize }),
+      );
+      window.dispatchEvent(new StorageEvent("storage", { key: TERMINAL_PREFERENCES_KEY }));
+    };
+
+    setPreferenceFontSize(10);
+    expect(mockTerm.options.fontSize).toBe(10);
+    setPreferenceFontSize(14);
+    expect(mockTerm.options.fontSize).toBe(14);
+    expect(terminalPreferenceMocks.waitForTerminalFontMetrics).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      pendingFontWaits[0]?.(true);
+      await Promise.resolve();
+    });
+    expect(mockTerm.options.fontSize).toBe(14);
+
+    await act(async () => {
+      pendingFontWaits[1]?.(true);
+      await Promise.resolve();
+    });
+    expect(mockTerm.options.fontSize).toBe(14);
+    expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
+  });
 });
 
 // ── Keyboard-open (fixed-footer) + pinch-zoom guard ──────────────────────────
 describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
   let savedVisualViewport: typeof window.visualViewport;
+  let savedDocumentElementClientHeight: number;
 
   function installVisualViewport({
     innerHeight,
@@ -418,12 +489,17 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
     installMatchMedia(true);
     _resetInitialViewportHeight();
     savedVisualViewport = window.visualViewport;
+    savedDocumentElementClientHeight = document.documentElement.clientHeight;
   });
 
   afterEach(() => {
     Object.defineProperty(window, "visualViewport", {
       value: savedVisualViewport,
       writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: savedDocumentElementClientHeight,
       configurable: true,
     });
     _resetInitialViewportHeight();
@@ -444,6 +520,69 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
       expect(bar.className).toContain("cli-session-terminal__mobile-bar--keyboard-open");
       // Bar lifted above the keyboard by keyboardOverlap (800 - 600 = 200).
       expect(bar.style.bottom).toBe("200px");
+    });
+
+    input.remove();
+  });
+
+  it("keeps initial folded keyboard-open metrics without waiting for unfold", async () => {
+    installVisualViewport({ innerHeight: 300, vvHeight: 300 });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 667,
+      configurable: true,
+    });
+    const input = document.createElement("textarea");
+    document.body.appendChild(input);
+    input.focus();
+
+    try {
+      await renderMobile();
+
+      await waitFor(() => {
+        const bar = screen.getByTestId("cli-terminal-mobile-bar");
+        expect(bar.className).toContain("cli-session-terminal__mobile-bar--keyboard-open");
+        expect(bar.style.bottom).toBe("367px");
+      });
+      expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
+    } finally {
+      input.remove();
+    }
+  });
+
+  it("re-baselines folded iOS viewport before lifting the mobile input bar", async () => {
+    const { listeners, mockVV } = installVisualViewport({ innerHeight: 844, vvHeight: 844 });
+    Object.defineProperty(window, "innerWidth", { value: 700, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "width", { value: 700, writable: true, configurable: true });
+
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+
+    // Fold/narrow the device while the keyboard is still closed; this must
+    // replace the prior unfolded baseline before a focused input opens.
+    Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 667, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    const input = document.createElement("textarea");
+    document.body.appendChild(input);
+    input.focus();
+
+    Object.defineProperty(window, "innerHeight", { value: 300, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 300, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      const bar = screen.getByTestId("cli-terminal-mobile-bar");
+      expect(bar.className).toContain("cli-session-terminal__mobile-bar--keyboard-open");
+      expect(bar.style.bottom).toBe("367px");
     });
 
     input.remove();

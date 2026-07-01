@@ -104,7 +104,7 @@ describe("useTheme", () => {
     const { result } = renderHook(() => useTheme());
 
     expect(result.current.themeMode).toBe("dark");
-    expect(result.current.colorTheme).toBe("ocean");
+    expect(result.current.colorTheme).toBe("shadcn-ember");
   });
 
   it("initializes from localStorage", () => {
@@ -125,6 +125,14 @@ describe("useTheme", () => {
     expect(result.current.colorTheme).toBe("default");
   });
 
+  it("preserves explicit ocean color theme from localStorage", () => {
+    localStorageMock[COLOR_THEME_STORAGE_KEY] = "ocean";
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.colorTheme).toBe("ocean");
+  });
+
   it("hydrates themeMode from backend on mount", async () => {
     mockFetchGlobalSettings.mockResolvedValue({ themeMode: "light" });
 
@@ -143,7 +151,7 @@ describe("useTheme", () => {
 
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.colorTheme).toBe("ocean");
+    expect(result.current.colorTheme).toBe("shadcn-ember");
 
     await waitFor(() => {
       expect(result.current.colorTheme).toBe("forest");
@@ -769,7 +777,7 @@ describe("useTheme", () => {
 
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.colorTheme).toBe("ocean");
+    expect(result.current.colorTheme).toBe("shadcn-ember");
   });
 
   it("clamps invalid dashboard font scale values from localStorage", () => {
@@ -797,7 +805,7 @@ describe("useTheme", () => {
     const { result } = renderHook(() => useTheme());
 
     expect(result.current.themeMode).toBe("dark");
-    expect(result.current.colorTheme).toBe("ocean");
+    expect(result.current.colorTheme).toBe("shadcn-ember");
   });
 
   describe("dynamic theme-data.css loading", () => {
@@ -881,7 +889,7 @@ describe("getThemeInitScript", () => {
     });
     expect(script).toContain("validThemes");
     expect(script).toContain("if (colorTheme === 'shadcn-mono') colorTheme = 'shadcn-mono-red';");
-    expect(script).toContain("colorTheme = 'ocean'");
+    expect(script).toContain("colorTheme = 'shadcn-ember'");
   });
 
   it("keeps index.html inline theme validation in sync with supported themes", () => {

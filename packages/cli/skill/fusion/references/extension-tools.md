@@ -18,7 +18,7 @@ Create a new task on the Fusion task board. The task enters the planning column 
 | `depends` | array | — | Task IDs this depends on (e.g. ['FN-001', 'FN-002']) |
 | `agentId` | string | — | Agent ID to assign this task to (e.g. 'agent-abc123') |
 | `priority` | string(enum) | — | Task priority (low, normal, high, urgent) |
-| `workflow_id` | string | — | Workflow ID to select for the new task (e.g. 'WF-003' or 'builtin:coding'). |
+| `workflow_id` | string | — | Workflow ID to select for the new task (e.g. 'WF-003' or 'builtin:coding'). Omit to inherit the project default workflow. Use fn_workflow_list to discover valid IDs. |
 
 ### fn_task_update
 
@@ -33,7 +33,7 @@ Update fields on an existing task. Supports modifying the title, description, de
 | `agentId` | union | — | Agent ID to assign this task to, or null to clear (e.g. 'agent-abc123') |
 | `nodeId` | union | — | Node ID override for this task, or null to clear |
 | `priority` | string(enum) | — | Task priority (low, normal, high, urgent) |
-| `workflow_id` | union | — | Workflow ID to select for this task (e.g. 'WF-003' or 'builtin:coding'), |
+| `workflow_id` | union | — | Workflow ID to select for this task (e.g. 'WF-003' or 'builtin:coding'), or null to clear the workflow selection and revert to the project default. Use fn_workflow_list to discover valid IDs. |
 
 ### fn_task_list
 
@@ -135,6 +135,83 @@ Create a task via AI-guided planning mode — interactive conversation to refine
 |-----------|------|----------|-------------|
 | `description` | string | — | Initial plan description (optional) — the AI will ask clarifying questions if not provided |
 | `baseBranch` | string | — | Optional base branch for the task created from this planning session |
+
+## Workflow Tools
+
+### fn_workflow_list
+
+List built-in and custom Fusion workflow definitions available in this project.
+
+No parameters.
+
+### fn_workflow_get
+
+Fetch a Fusion workflow definition by ID, including its resolved workflow IR.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow_id` | string | ✓ | The workflow definition ID to fetch (e.g. 'WF-003', or a 'builtin:*' id). Use fn_workflow_list to discover available IDs. |
+
+### fn_workflow_create
+
+Create a custom Fusion workflow definition from a validated workflow IR.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | ✓ | Workflow name (required, non-empty). |
+| `description` | string | — | Optional human-readable description. |
+| `icon` | string | — | Optional compact plain-text icon for this custom workflow. |
+| `ir` | unknown | ✓ | Workflow graph (intermediate representation). Validated server-side; a malformed graph is rejected. |
+| `layout` | record | — | Optional node layout map keyed by node id. |
+| `confirm_policy_escalation` | boolean | — | Set true to confirm binding a column to an agent whose permission policy is broader (more privileged) than the project default. Required when such a binding is present; the create is otherwise rejected naming the offending column. |
+
+### fn_workflow_update
+
+Update a custom Fusion workflow definition's metadata, IR, or layout.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow_id` | string | ✓ | The workflow definition ID to update (built-ins cannot be edited). |
+| `name` | string | — | New name. |
+| `description` | string | — | New description. |
+| `icon` | string | — | New compact plain-text icon; blank clears it. |
+| `ir` | unknown | — | Replacement workflow graph (validated server-side). |
+| `layout` | record | — | Replacement node layout map. |
+| `rehome_to` | string | — | When an IR update removes a column that still holds cards, supply the column id to re-home those occupants into. Required to resolve an OccupiedColumns conflict; the target must exist in the new IR. |
+| `confirm_policy_escalation` | boolean | — | Set true to confirm binding a column to an agent whose permission policy is broader (more privileged) than the project default. Required when such a binding is present; the update is otherwise rejected naming the offending column. |
+
+### fn_workflow_delete
+
+Delete a custom Fusion workflow definition; built-in workflows are protected.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow_id` | string | ✓ | The workflow definition ID to delete (built-ins cannot be deleted). |
+
+### fn_workflow_settings
+
+Read or write per-project values for a workflow's declared settings.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | union | ✓ | `get` reads the stored setting VALUES plus the engine-effective values for the workflow; `set` writes values (requires `values`). |
+| `workflow_id` | string | ✓ | The workflow whose setting VALUES to read/write (e.g. 'WF-003', or a 'builtin:*' id). Values are scoped per (workflow, project). Built-in workflow VALUES are writable even though built-in DECLARATIONS are not (declarations are edited via the workflow IR's `settings`). Values are validated against THIS workflow's declared settings (use fn_workflow_get to inspect them). |
+| `values` | record | — | For action='set': a map of settingId → value to write. A `null` value DELETES the override (null-as-delete). Each value is validated against the named workflow's declaration; on ANY rejection (unknown-setting/type-mismatch/enum-violation/no-settings-defined) nothing is persisted and the typed rejection list is returned. |
+
+### fn_trait_list
+
+List column traits available when authoring Fusion workflow IR columns.
+
+No parameters.
+
+### fn_workflow_select
+
+Assign a workflow definition to a task by workflow ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `workflow_id` | string | ✓ | The workflow definition ID to select (e.g. 'WF-003', or a 'builtin:*' id). Use fn_workflow_list to discover available IDs. |
+| `task_id` | string | — | Task to assign the workflow to. Defaults to the current task. |
 
 ## GitHub Tools
 
@@ -456,8 +533,8 @@ Create a new task and assign it to a specific agent for execution. The task goes
 |-----------|------|----------|-------------|
 | `agent_id` | string | ✓ | The agent ID to delegate work to |
 | `description` | string | ✓ | What needs to be done |
-| `dependencies` | array | — | Task IDs this new task depends on (e.g. [\"KB-001\"] |
-| `workflow_id` | string | — | Workflow ID to select for the new task (e.g. 'WF-003' or 'builtin:coding'). |
+| `dependencies` | array | — | Task IDs this new task depends on (e.g. ["KB-001"] |
+| `workflow_id` | string | — | Workflow ID to select for the new task (e.g. 'WF-003' or 'builtin:coding'). Omit to inherit the project default workflow. Use fn_workflow_list to discover valid IDs. |
 | `override` | boolean | — | Set true to bypass executor-role assignment policy |
 
 ### fn_agent_show

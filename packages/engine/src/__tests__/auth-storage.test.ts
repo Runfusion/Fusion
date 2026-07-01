@@ -17,6 +17,12 @@ function createJwt(payload: Record<string, unknown>): string {
   ].join(".");
 }
 
+function writeFusionAuth(homeDir: string, credentials: Record<string, unknown>): void {
+  const fusionAgentDir = join(homeDir, ".fusion", "agent");
+  mkdirSync(fusionAgentDir, { recursive: true });
+  writeFileSync(getFusionAuthPath(homeDir), JSON.stringify(credentials));
+}
+
 describe("createFusionAuthStorage", () => {
   // HOME override required — createFusionAuthStorage() has no dir parameter
   const originalHome = process.env.HOME;
@@ -165,6 +171,357 @@ describe("createFusionAuthStorage", () => {
       access: "claude-access-token",
       refresh: "claude-refresh-token",
       expires: expect.any(Number),
+    });
+  });
+
+  describe("Anthropic subscription runtime auth alias", () => {
+    it("returns undefined for Anthropic model runtime auth when no credential exists", async () => {
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+      expect(authStorage.hasAuth("anthropic")).toBe(false);
+    });
+
+    it("preserves Anthropic fallback resolver auth when no stored credential exists", async () => {
+      const authStorage = createFusionAuthStorage();
+      (authStorage as unknown as { setFallbackResolver(resolver: (provider: string) => string | undefined): void })
+        .setFallbackResolver((provider) => (provider === "anthropic" ? "fallback-anthropic-runtime-key" : undefined));
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("fallback-anthropic-runtime-key");
+      expect(authStorage.hasAuth("anthropic")).toBe(true);
+    });
+
+    it("suppresses Anthropic fallback resolver auth after raw provider logout", async () => {
+      const authStorage = createFusionAuthStorage();
+      (authStorage as unknown as { setFallbackResolver(resolver: (provider: string) => string | undefined): void })
+        .setFallbackResolver((provider) => (provider === "anthropic" ? "fallback-anthropic-runtime-key" : undefined));
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("fallback-anthropic-runtime-key");
+
+      authStorage.logout("anthropic");
+
+      expect(authStorage.hasAuth("anthropic")).toBe(false);
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    });
+
+    it("uses raw Anthropic API-key credentials for model runtime auth", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+      });
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("sk-ant-api03-runtime-key");
+      expect(authStorage.get("anthropic")).toEqual({ type: "api_key", key: "sk-ant-api03-runtime-key" });
+      expect(authStorage.hasAuth("anthropic")).toBe(true);
+    });
+
+    it("uses Anthropic subscription OAuth for model runtime auth when no raw API key exists", async () => {
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("subscription-access-token");
+      expect(authStorage.hasAuth("anthropic")).toBe(true);
+      expect(authStorage.list()).toEqual(expect.arrayContaining(["anthropic", "anthropic-subscription"]));
+    });
+
+    it("keeps raw Anthropic API-key precedence when subscription OAuth also exists", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("sk-ant-api03-runtime-key");
+      expect(await authStorage.getApiKey("anthropic-subscription")).toBe("subscription-access-token");
+    });
+
+    it("keeps raw Anthropic API-key precedence over legacy OAuth hydration", async () => {
+      const legacyAgentDir = join(homeDir, ".pi", "agent");
+      mkdirSync(legacyAgentDir, { recursive: true });
+      writeFileSync(
+        join(legacyAgentDir, "auth.json"),
+        JSON.stringify({
+          anthropic: {
+            type: "oauth",
+            access: "legacy-subscription-access-token",
+            refresh: "legacy-subscription-refresh-token",
+            expires: Date.now() + 3_600_000,
+          },
+        }),
+      );
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+      });
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("sk-ant-api03-runtime-key");
+    });
+
+    it("refreshes expired Anthropic subscription OAuth and persists it under the subscription storage id", async () => {
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "expired-subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() - 60_000,
+          scopes: ["user:profile", "org:create_api_key"],
+        },
+      });
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          access_token: "refreshed-subscription-access-token",
+          refresh_token: "rotated-subscription-refresh-token",
+          expires_in: 3600,
+          scope: "user:profile org:create_api_key",
+        }),
+      } as Response);
+      globalThis.fetch = fetchMock as typeof fetch;
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("refreshed-subscription-access-token");
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://platform.claude.com/v1/oauth/token",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("\"scope\":\"user:profile org:create_api_key\""),
+        }),
+      );
+      expect(authStorage.get("anthropic-subscription")).toEqual({
+        type: "oauth",
+        access: "refreshed-subscription-access-token",
+        refresh: "rotated-subscription-refresh-token",
+        expires: expect.any(Number),
+        scopes: ["user:profile", "org:create_api_key"],
+      });
+      expect(authStorage.get("anthropic")).toBeUndefined();
+
+      const persisted = JSON.parse(readFileSync(getFusionAuthPath(homeDir), "utf-8"));
+      expect(persisted["anthropic-subscription"]).toEqual({
+        type: "oauth",
+        access: "refreshed-subscription-access-token",
+        refresh: "rotated-subscription-refresh-token",
+        expires: expect.any(Number),
+        scopes: ["user:profile", "org:create_api_key"],
+      });
+      expect(persisted.anthropic).toBeUndefined();
+    });
+
+    it("does not resurrect stale Anthropic subscription OAuth after failed refresh", async () => {
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "expired-subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() - 60_000,
+        },
+      });
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: false } as Response) as typeof fetch;
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+      const persisted = JSON.parse(readFileSync(getFusionAuthPath(homeDir), "utf-8"));
+      expect(persisted["anthropic-subscription"]).toEqual({
+        type: "oauth",
+        access: "expired-subscription-access-token",
+        refresh: "subscription-refresh-token",
+        expires: expect.any(Number),
+      });
+    });
+
+    it("keeps subscription OAuth available for runtime auth after raw Anthropic logout", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      authStorage.logout("anthropic");
+
+      expect(authStorage.get("anthropic")).toBeUndefined();
+      expect(authStorage.has("anthropic")).toBe(true);
+      expect(authStorage.hasAuth("anthropic")).toBe(true);
+      expect(authStorage.list()).toEqual(expect.arrayContaining(["anthropic", "anthropic-subscription"]));
+      expect(await authStorage.getApiKey("anthropic")).toBe("subscription-access-token");
+    });
+
+    it("uses a newly set subscription credential for runtime auth after raw Anthropic logout", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      authStorage.logout("anthropic");
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+
+      authStorage.set("anthropic-subscription", {
+        type: "oauth",
+        access: "subscription-access-token",
+        refresh: "subscription-refresh-token",
+        expires: Date.now() + 3_600_000,
+      });
+
+      expect(authStorage.get("anthropic")).toBeUndefined();
+      expect(await authStorage.getApiKey("anthropic")).toBe("subscription-access-token");
+    });
+
+    it("keeps raw Anthropic API keys visible when subscription logout suppresses OAuth aliases", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: { type: "api_key", key: "sk-ant-api03-runtime-key" },
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      authStorage.logout("anthropic-subscription");
+
+      expect(authStorage.get("anthropic-subscription")).toBeUndefined();
+      expect(authStorage.get("anthropic")).toEqual({ type: "api_key", key: "sk-ant-api03-runtime-key" });
+      expect(await authStorage.getApiKey("anthropic")).toBe("sk-ant-api03-runtime-key");
+    });
+
+    it("suppresses legacy Anthropic OAuth after subscription logout", async () => {
+      writeFusionAuth(homeDir, {
+        anthropic: {
+          type: "oauth",
+          access: "legacy-subscription-access-token",
+          refresh: "legacy-subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      expect(await authStorage.getApiKey("anthropic")).toBe("legacy-subscription-access-token");
+
+      authStorage.logout("anthropic-subscription");
+
+      expect(authStorage.get("anthropic")).toBeUndefined();
+      expect(authStorage.has("anthropic")).toBe(false);
+      expect(authStorage.hasAuth("anthropic")).toBe(false);
+      expect(authStorage.list()).not.toContain("anthropic");
+      expect(authStorage.getAll()).not.toHaveProperty("anthropic");
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    });
+
+    it("suppresses supplemental legacy Anthropic OAuth status after subscription logout", async () => {
+      const legacyAgentDir = join(homeDir, ".pi", "agent");
+      mkdirSync(legacyAgentDir, { recursive: true });
+      writeFileSync(
+        join(legacyAgentDir, "auth.json"),
+        JSON.stringify({
+          anthropic: {
+            type: "oauth",
+            access: "legacy-subscription-access-token",
+            refresh: "legacy-subscription-refresh-token",
+            expires: Date.now() + 3_600_000,
+          },
+        }),
+      );
+
+      const authStorage = createFusionAuthStorage();
+      expect(authStorage.hasAuth("anthropic")).toBe(true);
+      expect(authStorage.list()).toContain("anthropic");
+
+      authStorage.logout("anthropic-subscription");
+
+      expect(authStorage.get("anthropic")).toBeUndefined();
+      expect(authStorage.has("anthropic")).toBe(false);
+      expect(authStorage.hasAuth("anthropic")).toBe(false);
+      expect(authStorage.list()).not.toContain("anthropic");
+      expect(authStorage.getAll()).not.toHaveProperty("anthropic");
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    });
+
+    it("keeps models.json Anthropic fallback visible after subscription logout", async () => {
+      const fusionAgentDir = join(homeDir, ".fusion", "agent");
+      mkdirSync(fusionAgentDir, { recursive: true });
+      writeFileSync(
+        join(fusionAgentDir, "models.json"),
+        JSON.stringify({ providers: { anthropic: { apiKey: "models-runtime-key" } } }),
+      );
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+
+      const authStorage = createFusionAuthStorage();
+      authStorage.logout("anthropic-subscription");
+
+      expect(authStorage.has("anthropic")).toBe(true);
+      expect(authStorage.hasAuth("anthropic")).toBe(true);
+      expect(authStorage.list()).toContain("anthropic");
+      expect(authStorage.get("anthropic")).toBeUndefined();
+      expect(await authStorage.getApiKey("anthropic")).toBe("models-runtime-key");
+    });
+
+    it("suppresses models.json Anthropic fallback after raw provider logout", async () => {
+      const fusionAgentDir = join(homeDir, ".fusion", "agent");
+      mkdirSync(fusionAgentDir, { recursive: true });
+      writeFileSync(
+        join(fusionAgentDir, "models.json"),
+        JSON.stringify({ providers: { anthropic: { apiKey: "models-runtime-key" } } }),
+      );
+
+      const authStorage = createFusionAuthStorage();
+      expect(authStorage.has("anthropic")).toBe(true);
+      expect(await authStorage.getApiKey("anthropic")).toBe("models-runtime-key");
+
+      authStorage.logout("anthropic");
+
+      expect(authStorage.has("anthropic")).toBe(false);
+      expect(authStorage.hasAuth("anthropic")).toBe(false);
+      expect(authStorage.list()).not.toContain("anthropic");
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+    });
+
+    it("reloads Anthropic subscription OAuth alias state for model runtime auth", async () => {
+      writeFusionAuth(homeDir, {});
+      const authStorage = createFusionAuthStorage();
+      expect(await authStorage.getApiKey("anthropic")).toBeUndefined();
+
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "subscription-access-token",
+          refresh: "subscription-refresh-token",
+          expires: Date.now() + 3_600_000,
+        },
+      });
+      authStorage.reload();
+
+      expect(await authStorage.getApiKey("anthropic")).toBe("subscription-access-token");
     });
   });
 

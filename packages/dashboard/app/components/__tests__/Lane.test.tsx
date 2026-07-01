@@ -34,7 +34,7 @@ vi.mock("../../hooks/useConfirm", () => ({ useConfirm: () => ({ confirm: mockCon
 
 const WORKFLOW: BoardWorkflowDefinition = {
   id: "builtin:coding",
-  name: "Coding (built-in)",
+  name: "Coding",
   columns: [
     { id: "triage", name: "Triage", flags: { intake: true } },
     { id: "todo", name: "Todo", flags: { hold: true } },
@@ -82,7 +82,7 @@ beforeEach(() => {
 describe("Lane", () => {
   it("renders the workflow name and total card count in the header", () => {
     render(<Lane {...baseProps()} tasks={[mkTask({ id: "FN-1" }), mkTask({ id: "FN-2", column: "triage" })]} />);
-    expect(screen.getByText("Coding (built-in)")).toBeDefined();
+    expect(screen.getByText("Coding")).toBeDefined();
     expect(screen.getByTestId("lane-count-builtin:coding").textContent).toBe("2");
   });
 
@@ -122,7 +122,7 @@ describe("Lane", () => {
 
   it("exposes the lane header as the accessible collapse toggle", () => {
     render(<Lane {...baseProps()} />);
-    const header = screen.getByRole("button", { name: "Collapse Coding (built-in) lane" });
+    const header = screen.getByRole("button", { name: "Collapse Coding lane" });
     expect(header.getAttribute("aria-expanded")).toBe("true");
     expect(header.getAttribute("tabindex")).toBe("0");
   });

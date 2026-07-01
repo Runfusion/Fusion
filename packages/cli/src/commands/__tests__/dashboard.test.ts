@@ -58,6 +58,7 @@ const {
   mockGlobalSettingsUpdateSettings,
   mockDaemonTokenGetOrCreate,
   mockGetCliPackageVersion,
+  mockRefreshAllCustomProviderModels,
 } = vi.hoisted(() => {
   delete process.env.FUSION_DASHBOARD_TOKEN;
   delete process.env.FUSION_DAEMON_TOKEN;
@@ -83,6 +84,7 @@ const {
     mockGlobalSettingsUpdateSettings: vi.fn().mockResolvedValue({}),
     mockDaemonTokenGetOrCreate: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
     mockGetCliPackageVersion: vi.fn(),
+    mockRefreshAllCustomProviderModels: vi.fn().mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 }),
   };
 });
 
@@ -369,6 +371,7 @@ vi.mock("@fusion/dashboard", () => ({
   getCliPackageVersion: mockGetCliPackageVersion,
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
+  refreshAllCustomProviderModels: mockRefreshAllCustomProviderModels,
   stopAllDevServers: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -866,6 +869,52 @@ describe("runDashboard — startup model sync", () => {
     }));
     expect(mockModelRegistry.refresh).toHaveBeenCalled();
   });
+
+  it("starts dashboard before background custom provider refresh settles", async () => {
+    mockRefreshAllCustomProviderModels.mockImplementationOnce(() => new Promise(() => undefined));
+    mockGlobalSettingsGetSettings.mockResolvedValue({
+      customProviders: [{
+        id: "cp-1",
+        name: "Custom Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      }],
+    });
+
+    await runDashboard(0, { open: false });
+
+    expect(mockRefreshAllCustomProviderModels).toHaveBeenCalledTimes(1);
+    expect(mockRefreshAllCustomProviderModels).toHaveBeenCalledWith(expect.any(Object), expect.any(Function));
+    expect(mockModelRegistry.registerProvider).toHaveBeenCalledWith(
+      expect.stringContaining("custom-proxy"),
+      expect.objectContaining({
+        baseUrl: "https://proxy.example.com/v1",
+        models: [expect.objectContaining({ id: "configured-model", name: "Configured model" })],
+      }),
+    );
+  });
+
+  it("continues registering custom providers when startup refresh fails", async () => {
+    mockRefreshAllCustomProviderModels.mockRejectedValueOnce(new Error("provider offline"));
+    mockGlobalSettingsGetSettings.mockResolvedValue({
+      customProviders: [{
+        id: "cp-1",
+        name: "Custom Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      }],
+    });
+
+    await runDashboard(0, { open: false });
+
+    expect(mockRefreshAllCustomProviderModels).toHaveBeenCalledTimes(1);
+    expect(mockModelRegistry.registerProvider).toHaveBeenCalledWith(
+      expect.stringContaining("custom-proxy"),
+      expect.objectContaining({ models: [expect.objectContaining({ id: "configured-model" })] }),
+    );
+  });
 });
 
 function resetGitHubMocks() {
@@ -960,6 +1009,8 @@ beforeEach(() => {
   mockDaemonTokenGetOrCreate.mockResolvedValue("fn_test_dashboard_token");
   mockGetCliPackageVersion.mockReset();
   mockGetCliPackageVersion.mockReturnValue(CLI_PACKAGE_VERSION);
+  mockRefreshAllCustomProviderModels.mockReset();
+  mockRefreshAllCustomProviderModels.mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
 });
 
 afterEach(() => {

@@ -8,13 +8,14 @@ import type { WorkflowStatusCounts } from "../workflowStatusCounts";
 
 const workflows: BoardWorkflowDefinition[] = [
   {
-    id: "coding",
+    id: "builtin:coding",
     name: "Coding",
     columns: [],
   },
   {
     id: "design",
     name: "Design",
+    icon: "🎨",
     columns: [],
   },
 ];
@@ -66,9 +67,9 @@ describe("WorkflowSwitcher", () => {
     render(
       <WorkflowSwitcher
         workflows={workflows}
-        value="coding"
+        value="builtin:coding"
         onChange={vi.fn()}
-        counts={countMap([["coding", { todo: 3, inProgress: 1, done: 5, merging: 0 }]])}
+        counts={countMap([["builtin:coding", { todo: 3, inProgress: 1, done: 5, merging: 0 }]])}
       />,
     );
 
@@ -81,12 +82,33 @@ describe("WorkflowSwitcher", () => {
     expect(trigger).toHaveAccessibleName("Select workflow. Current workflow: Coding");
   });
 
+  it("renders built-in and custom icons without empty aggregate shells", () => {
+    render(
+      <WorkflowSwitcher
+        workflows={[...workflows, { id: "plain", name: "Plain duplicate", columns: [] }]}
+        value="builtin:coding"
+        onChange={vi.fn()}
+        counts={countMap()}
+        aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
+      />,
+    );
+
+    const trigger = screen.getByTestId("workflow-switcher");
+    expect(trigger.querySelector(".workflow-icon--builtin")).toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("workflow-switcher-option-builtin:coding").querySelector(".workflow-icon--builtin")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-switcher-option-design").querySelector(".workflow-icon--custom")).toHaveTextContent("🎨");
+    expect(screen.getByTestId("workflow-switcher-option-plain").querySelector(".workflow-icon")).toBeNull();
+    expect(screen.getByTestId("workflow-switcher-option-__all_workflows__").querySelector(".workflow-icon")).toBeNull();
+  });
+
   it("opens and closes the portaled listbox", () => {
-    render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={vi.fn()} counts={countMap()} />);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={vi.fn()} counts={countMap()} />);
 
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     expect(screen.getByRole("listbox", { name: "Workflow" })).toBeInTheDocument();
-    expect(screen.getByTestId("workflow-switcher-option-coding")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("workflow-switcher-option-builtin:coding")).toHaveAttribute("aria-selected", "true");
 
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("listbox", { name: "Workflow" })).not.toBeInTheDocument();
@@ -101,7 +123,7 @@ describe("WorkflowSwitcher", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctxStub as CanvasRenderingContext2D);
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
 
-    const { unmount } = render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={vi.fn()} counts={countMap()} />);
+    const { unmount } = render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={vi.fn()} counts={countMap()} />);
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     const shortWidth = menuWidth();
     unmount();
@@ -112,7 +134,7 @@ describe("WorkflowSwitcher", () => {
           workflows[0],
           { id: "long", name: "Release Engineering Workflow With Very Long Name", columns: [] },
         ]}
-        value="coding"
+        value="builtin:coding"
         onChange={vi.fn()}
         counts={countMap()}
       />,
@@ -180,7 +202,7 @@ describe("WorkflowSwitcher", () => {
 
   it("fires onOpen only on click-driven closed-to-open transitions", () => {
     const onOpen = vi.fn();
-    render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={vi.fn()} counts={countMap()} onOpen={onOpen} />);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={vi.fn()} counts={countMap()} onOpen={onOpen} />);
 
     const trigger = screen.getByTestId("workflow-switcher");
     expect(onOpen).not.toHaveBeenCalled();
@@ -199,7 +221,7 @@ describe("WorkflowSwitcher", () => {
 
   it.each(["ArrowDown", "ArrowUp", "Enter", " "])("fires onOpen when %s opens the dropdown from the keyboard", (key) => {
     const onOpen = vi.fn();
-    render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={vi.fn()} counts={countMap()} onOpen={onOpen} />);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={vi.fn()} counts={countMap()} onOpen={onOpen} />);
 
     const trigger = screen.getByTestId("workflow-switcher");
     expect(onOpen).not.toHaveBeenCalled();
@@ -211,7 +233,7 @@ describe("WorkflowSwitcher", () => {
 
   it("does not fire onOpen when Escape or outside mousedown closes and fires again after reopening", () => {
     const onOpen = vi.fn();
-    render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={vi.fn()} counts={countMap()} onOpen={onOpen} />);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={vi.fn()} counts={countMap()} onOpen={onOpen} />);
 
     const trigger = screen.getByTestId("workflow-switcher");
     fireEvent.click(trigger);
@@ -233,7 +255,7 @@ describe("WorkflowSwitcher", () => {
 
   it("calls onChange when an option is selected", () => {
     const onChange = vi.fn();
-    render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={onChange} counts={countMap()} />);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} />);
 
     fireEvent.click(screen.getByTestId("workflow-switcher"));
     fireEvent.click(screen.getByTestId("workflow-switcher-option-design"));
@@ -264,7 +286,7 @@ describe("WorkflowSwitcher", () => {
     expect(options[0]).toHaveAttribute("data-testid", "workflow-switcher-option-__all_workflows__");
     expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByTestId("workflow-switcher-edit-__all_workflows__")).toBeNull();
-    expect(screen.getByTestId("workflow-switcher-edit-coding")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-switcher-edit-builtin:coding")).toBeInTheDocument();
     expect(screen.getByTestId("workflow-switcher-option-__all_workflows__")).toHaveTextContent("4");
 
     fireEvent.click(screen.getByTestId("workflow-switcher-option-design"));
@@ -277,7 +299,7 @@ describe("WorkflowSwitcher", () => {
     render(
       <WorkflowSwitcher
         workflows={workflows}
-        value="coding"
+        value="builtin:coding"
         onChange={onChange}
         counts={countMap()}
         aggregateOption={{ id: "__all_workflows__", name: "All workflows" }}
@@ -294,7 +316,7 @@ describe("WorkflowSwitcher", () => {
 
   it("supports keyboard navigation and escape dismissal", () => {
     const onChange = vi.fn();
-    render(<WorkflowSwitcher workflows={workflows} value="coding" onChange={onChange} counts={countMap()} />);
+    render(<WorkflowSwitcher workflows={workflows} value="builtin:coding" onChange={onChange} counts={countMap()} />);
 
     const trigger = screen.getByTestId("workflow-switcher");
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
@@ -315,7 +337,7 @@ describe("WorkflowSwitcher", () => {
     render(
       <WorkflowSwitcher
         workflows={workflows}
-        value="coding"
+        value="builtin:coding"
         onChange={onChange}
         counts={countMap()}
         onEditWorkflow={onEditWorkflow}
@@ -335,7 +357,7 @@ describe("WorkflowSwitcher", () => {
     const { rerender } = render(
       <WorkflowSwitcher
         workflows={[workflows[0]]}
-        value="coding"
+        value="builtin:coding"
         onChange={vi.fn()}
         counts={countMap()}
         onCreateWorkflow={onCreateWorkflow}
@@ -375,7 +397,7 @@ describe("WorkflowSwitcher", () => {
     render(
       <WorkflowSwitcher
         workflows={workflows}
-        value="coding"
+        value="builtin:coding"
         onChange={onChange}
         counts={countMap()}
         onEditWorkflow={onEditWorkflow}
@@ -397,9 +419,9 @@ describe("WorkflowSwitcher", () => {
     render(
       <WorkflowSwitcher
         workflows={workflows}
-        value="coding"
+        value="builtin:coding"
         onChange={vi.fn()}
-        counts={countMap([["coding", { todo: 3, inProgress: 1, done: 5, merging: 0 }]])}
+        counts={countMap([["builtin:coding", { todo: 3, inProgress: 1, done: 5, merging: 0 }]])}
       />,
     );
 
@@ -412,7 +434,7 @@ describe("WorkflowSwitcher", () => {
     expect(within(trigger).getByText("1", { selector: ".workflow-switcher-count--in-progress" })).toBeInTheDocument();
     expect(within(trigger).getByText("5", { selector: ".workflow-switcher-count--done" })).toBeInTheDocument();
 
-    const codingOption = screen.getByTestId("workflow-switcher-option-coding");
+    const codingOption = screen.getByTestId("workflow-switcher-option-builtin:coding");
     expect(within(codingOption).getByText("3", { selector: ".workflow-switcher-count--todo" })).toBeInTheDocument();
     expect(within(codingOption).getByText("1", { selector: ".workflow-switcher-count--in-progress" })).toBeInTheDocument();
     expect(within(codingOption).getByText("5", { selector: ".workflow-switcher-count--done" })).toBeInTheDocument();
@@ -427,10 +449,10 @@ describe("WorkflowSwitcher", () => {
     render(
       <WorkflowSwitcher
         workflows={workflows}
-        value="coding"
+        value="builtin:coding"
         onChange={vi.fn()}
         counts={countMap([
-          ["coding", { todo: 3, inProgress: 1, done: 5, merging: 1 }],
+          ["builtin:coding", { todo: 3, inProgress: 1, done: 5, merging: 1 }],
           ["design", { todo: 0, inProgress: 2, done: 0, merging: 0 }],
         ])}
       />,
@@ -442,7 +464,7 @@ describe("WorkflowSwitcher", () => {
     fireEvent.click(trigger);
 
     expect(trigger.querySelector(".workflow-switcher-merging-indicator")).toBeInTheDocument();
-    expect(screen.getByTestId("workflow-switcher-option-coding").querySelector(".workflow-switcher-merging-indicator")).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-switcher-option-builtin:coding").querySelector(".workflow-switcher-merging-indicator")).toBeInTheDocument();
     expect(screen.getByTestId("workflow-switcher-option-design").querySelector(".workflow-switcher-merging-indicator")).toBeNull();
   });
 

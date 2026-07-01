@@ -30,6 +30,7 @@ import {
 } from "@fusion/core";
 import {
   createServer,
+  refreshAllCustomProviderModels,
   AttachTicketStore,
   CliInputAttributionLog,
   CliConfirmAdvanceRegistry,
@@ -2522,6 +2523,15 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
 
   server.on("listening", async () => {
     const actualPort = (server.address() as AddressInfo).port;
+
+    /*
+    FNXC:CustomProviders 2026-06-30-00:00:
+    Custom provider startup refresh probes user-configured endpoints and can wait on unreachable networks. Kick it off only after the HTTP server is listening so dashboard availability is not gated by per-provider /models timeouts; settings updates re-register refreshed models when the background write lands.
+    */
+    void refreshAllCustomProviderModels(store, (message) => logSink.log(message, "custom-providers")).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logSink.warn(`Failed to refresh custom provider models from global settings: ${message}`, "custom-providers");
+    });
 
     if (actualPort !== selectedPort) {
       logSink.warn(`Port ${selectedPort} in use, using ${actualPort} instead`, "dashboard");

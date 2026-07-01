@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useBoardWorkflows } from "../useBoardWorkflows";
 import type { BoardWorkflowsPayload } from "../../api";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../../utils/boardWorkflowSelection";
 
 function makePayload(overrides: Partial<BoardWorkflowsPayload> = {}): BoardWorkflowsPayload {
   return {
@@ -139,6 +140,16 @@ describe("useBoardWorkflows", () => {
 
     await act(async () => { subscribeHandlers["workflow:updated"](); });
     expect(deps.fetchBoardWorkflows).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not expose the Board-only aggregate sentinel as a selected workflow id", async () => {
+    localStorage.setItem("kb:p1:kb-dashboard-board-workflow-selection", ALL_WORKFLOWS_BOARD_VIEW_ID);
+    const deps = makeDeps(() => Promise.resolve(makePayload()));
+    const { result } = renderHook(() => useBoardWorkflows({ projectId: "p1", ...deps }));
+
+    await waitFor(() => expect(result.current.selectedWorkflow?.id).toBe("wf-a"));
+    expect(result.current.selectedWorkflowId).toBe("wf-a");
+    expect(localStorage.getItem("kb:p1:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
   it("falls back to the default workflow when the selected workflow is deleted", async () => {

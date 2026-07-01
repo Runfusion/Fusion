@@ -31,11 +31,11 @@ function modifiedFilesValue(value: unknown): string | null {
   return JSON.stringify(value);
 }
 
-function insertWorkflow(db: Database, id: string, name: string): void {
+function insertWorkflow(db: Database, id: string, name: string, icon?: string): void {
   db.prepare(
-    `INSERT INTO workflows (id, name, description, ir, layout, kind, createdAt, updatedAt)
-     VALUES (?, ?, '', '{"version":"v1","name":"test","nodes":[],"edges":[]}', '{}', 'workflow', ?, ?)`,
-  ).run(id, name, "2026-03-01T00:00:00.000Z", "2026-03-01T00:00:00.000Z");
+    `INSERT INTO workflows (id, name, description, icon, ir, layout, kind, createdAt, updatedAt)
+     VALUES (?, ?, '', ?, '{"version":"v1","name":"test","nodes":[],"edges":[]}', '{}', 'workflow', ?, ?)`,
+  ).run(id, name, icon ?? null, "2026-03-01T00:00:00.000Z", "2026-03-01T00:00:00.000Z");
 }
 
 function insertTask(db: Database, task: TaskSeed): void {
@@ -87,7 +87,7 @@ describe("workflow-analytics", () => {
   });
 
   it("groups selected and unselected tasks under resolved workflow names", async () => {
-    insertWorkflow(db, "WF-custom", "Release workflow");
+    insertWorkflow(db, "WF-custom", "Release workflow", "🚀");
     insertTask(db, {
       id: "custom-tokens",
       workflowId: "WF-custom",
@@ -141,6 +141,7 @@ describe("workflow-analytics", () => {
     const byWorkflow = new Map(result.workflows.map((workflow) => [workflow.workflowId, workflow]));
     expect(byWorkflow.get("WF-custom")).toMatchObject({
       workflowName: "Release workflow",
+      workflowIcon: "🚀",
       isBuiltin: false,
       filesChanged: 2,
       tasksCompleted: 0,
@@ -150,13 +151,13 @@ describe("workflow-analytics", () => {
     expect(byWorkflow.get("WF-custom")?.tokens.totalTokens).toBe(2_000_000);
     expect(byWorkflow.get("WF-custom")?.cost).toEqual({ usd: 12.5, unavailable: false, stale: false });
     expect(byWorkflow.get("builtin:quick-fix")).toMatchObject({
-      workflowName: "Quick fix (built-in)",
+      workflowName: "Quick fix",
       isBuiltin: true,
       filesChanged: 1,
       tasksCompleted: 1,
     });
     expect(byWorkflow.get("builtin:coding")).toMatchObject({
-      workflowName: "Coding (built-in)",
+      workflowName: "Coding",
       isBuiltin: true,
       filesChanged: 1,
       tasksInProgress: 1,

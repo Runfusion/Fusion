@@ -142,8 +142,13 @@ function normalizePlanningSummary(summary: PlanningSummary): PlanningSummary {
   const title = typeof raw.title === "string" && raw.title.trim().length > 0
     ? raw.title.trim()
     : "Untitled planning task";
-  const description = typeof raw.description === "string" && raw.description.trim().length > 0
-    ? raw.description.trim()
+  /*
+  FNXC:PlanningMode 2026-06-30-12:54:
+  Final summary description is an editable draft. Preserve internal and trailing whitespace during render so mobile text entry can insert a space before the next word; only whitespace-only server payloads fall back to the normalized title.
+  */
+  const rawDescription = typeof raw.description === "string" ? raw.description : "";
+  const description = rawDescription.trim().length > 0
+    ? rawDescription
     : title;
   return {
     ...summary,
@@ -2819,33 +2824,47 @@ function SummaryView({
 
         <div className="planning-summary-form">
           <div className="form-group">
-            <label>
-              {t("planning.description", "Description")}
-              <button
-                type="button"
-                className="planning-expand-btn"
-                aria-pressed={renderMarkdown}
-                aria-label={renderMarkdown ? t("planning.showRawText", "Show raw text") : t("planning.showFormattedMarkdown", "Show formatted markdown")}
-                title={renderMarkdown ? t("planning.showRawText", "Show raw text") : t("planning.showFormattedMarkdown", "Show formatted markdown")}
-                data-testid="planning-description-markdown-toggle"
-                onClick={() => setRenderMarkdown(!renderMarkdown)}
-              >
-                {renderMarkdown ? t("planning.plain", "Plain") : t("planning.markdown", "Markdown")}
-              </button>
-              <button
-                type="button"
-                className="planning-expand-btn"
-                onClick={() => setIsExpanded(!isExpanded)}
-              >
-                {isExpanded ? t("planning.collapse", "Collapse") : t("planning.expand", "Expand")}
-              </button>
-            </label>
+            {/*
+            FNXC:PlanningSummaryMobile 2026-06-30-12:00:
+            Keep Description controls adjacent but outside the label. Mobile browsers can retarget taps from interactive descendants inside labels, which made the Expand/Collapse control appear inert while the textarea/preview state already supported expansion.
+            */}
+            <div className="planning-summary-description-header">
+              <label id="planning-summary-description-label" htmlFor="planning-summary-description">
+                {t("planning.description", "Description")}
+              </label>
+              <div className="planning-summary-description-actions">
+                <button
+                  type="button"
+                  className="planning-expand-btn"
+                  aria-pressed={renderMarkdown}
+                  aria-label={renderMarkdown ? t("planning.showRawText", "Show raw text") : t("planning.showFormattedMarkdown", "Show formatted markdown")}
+                  title={renderMarkdown ? t("planning.showRawText", "Show raw text") : t("planning.showFormattedMarkdown", "Show formatted markdown")}
+                  data-testid="planning-description-markdown-toggle"
+                  onClick={() => setRenderMarkdown(!renderMarkdown)}
+                >
+                  {renderMarkdown ? t("planning.plain", "Plain") : t("planning.markdown", "Markdown")}
+                </button>
+                <button
+                  type="button"
+                  className="planning-expand-btn"
+                  aria-pressed={isExpanded}
+                  aria-label={isExpanded ? t("planning.collapseDescription", "Collapse description") : t("planning.expandDescription", "Expand description")}
+                  onClick={() => setIsExpanded(!isExpanded)}
+                >
+                  {isExpanded ? t("planning.collapse", "Collapse") : t("planning.expand", "Expand")}
+                </button>
+              </div>
+            </div>
             {renderMarkdown ? (
-              <div className={`planning-description-preview markdown-body ${isExpanded ? "expanded" : ""}`}>
+              <div
+                className={`planning-description-preview markdown-body ${isExpanded ? "expanded" : ""}`}
+                aria-labelledby="planning-summary-description-label"
+              >
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary.description}</ReactMarkdown>
               </div>
             ) : (
               <textarea
+                id="planning-summary-description"
                 ref={descriptionAutosizeRef}
                 className={`planning-textarea ${isExpanded ? "expanded" : ""}`}
                 value={summary.description}

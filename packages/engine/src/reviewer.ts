@@ -33,7 +33,7 @@ import {
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
-import { createMemoryGetTool, createMemorySearchTool, createWebFetchTool } from "./agent-tools.js";
+import { createMemoryGetTool, createMemorySearchTool, createTaskPromptWriteTool, createWebFetchTool } from "./agent-tools.js";
 import { buildUserCommentsPromptSection } from "./agent-user-comments.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 
@@ -100,6 +100,8 @@ export interface ReviewOptions {
   settings?: Settings;
   /** Plugin runner for runtime selection. When provided, enables plugin runtime lookup. */
   pluginRunner?: import("./plugin-runner.js").PluginRunner;
+  /** Allow this reviewer to fix in-scope findings in the same session before returning its final verdict. */
+  allowInlineFixes?: boolean;
   /**
    * Fired immediately after the reviewer's `AgentSession` is created. The
    * caller can register the session in a per-task subagent map so that the
@@ -113,6 +115,25 @@ export interface ReviewOptions {
    * Pair with `onSessionCreated` to deregister from the subagent map.
    */
   onSessionEnded?: (session: import("@earendil-works/pi-coding-agent").AgentSession) => void;
+}
+
+function buildSameSessionFixPolicy(reviewType: ReviewType, canWritePrompt: boolean): string {
+  const planSpecInstruction = canWritePrompt
+    ? "- For plan/spec review, use fn_task_prompt_write with the complete revised PROMPT.md when the plan artifact needs repair. Do not implement product code from plan/spec review."
+    : "- For plan/spec review, limit fixes to task-planning context available in this session. Do not implement product code from plan/spec review.";
+  const codeInstruction = "- For code review, fix implementation issues inside the assigned task worktree and mention the fix in your review notes.";
+  return `
+
+## Same-Session Fix Policy
+
+This review may fix issues it finds before returning a final verdict.
+- If you find an in-scope issue you can fix safely, edit the relevant file(s) in this same reviewer session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
+- Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
+${reviewType === "code" ? codeInstruction : planSpecInstruction}`;
+}
+
+function appendSameSessionFixPolicy(request: string, reviewType: ReviewType, canWritePrompt: boolean): string {
+  return `${request}${buildSameSessionFixPolicy(reviewType, canWritePrompt)}`;
 }
 
 /**
@@ -164,9 +185,21 @@ export async function reviewStep(
     };
   }
 
-  const request = buildReviewRequest(
+  const canWritePromptInline =
+    options.allowInlineFixes === true
+    && reviewType !== "code"
+    && Boolean(options.store && options.taskId);
+
+  let request = buildReviewRequest(
     taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
   );
+  if (options.allowInlineFixes === true) {
+    /*
+     * FNXC:WorkflowReviewers 2026-07-01-12:39:
+     * Triage Plan Review uses this reviewer path instead of graph `executeWorkflowStep`. When workflow setting `reviewerInlineFixes` is enabled, the reviewer must be allowed to repair PROMPT.md/spec findings in this same session and return the final verdict after the fix.
+     */
+    request = appendSameSessionFixPolicy(request, reviewType, canWritePromptInline);
+  }
 
   const effectiveSettings = liveSettings ?? options.settings;
   const agentLogger = options.store && options.taskId
@@ -359,6 +392,12 @@ export async function reviewStep(
         source: "reviewer",
       })
       : undefined;
+    const reviewCustomTools = [
+      createWebFetchTool(),
+      ...(canWritePromptInline && options.store && options.taskId ? [createTaskPromptWriteTool(options.store, options.taskId)] : []),
+      ...(memoryTools ?? []),
+    ];
+
     const { session } = await createResolvedAgentSession({
       sessionPurpose: "reviewer",
       runtimeHint: extractRuntimeHint(memoryAgent?.runtimeConfig),
@@ -366,8 +405,8 @@ export async function reviewStep(
       cwd,
       systemPrompt: reviewerSystemPromptFinal,
       systemPromptLayers: layers,
-      tools: "readonly",
-      customTools: [createWebFetchTool(), ...(memoryTools ?? [])],
+      tools: options.allowInlineFixes === true && reviewType === "code" ? "coding" : "readonly",
+      customTools: reviewCustomTools,
       onText: handleReviewerText,
       onThinking: agentLogger?.onThinking,
       onToolStart: agentLogger?.onToolStart,
@@ -479,9 +518,12 @@ export async function reviewStep(
         }
 
         reviewText = "";
-        const reducedRequest = buildReducedReviewRequest(
-          taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline,
+        let reducedRequest = buildReducedReviewRequest(
+          taskId, stepNumber, stepName, reviewType, promptContent, cwd, baseline, options.userComments,
         );
+        if (options.allowInlineFixes === true) {
+          reducedRequest = appendSameSessionFixPolicy(reducedRequest, reviewType, canWritePromptInline);
+        }
 
         try {
           await runReviewPrompt(session, reducedRequest);
@@ -703,7 +745,13 @@ function buildReducedReviewRequest(
   promptContent: string,
   cwd: string,
   baseline?: string,
+  userComments?: TaskComment[],
 ): string {
+  /*
+  FNXC:AgentSteering 2026-06-30-17:09:
+  Context-limit retries may compact PROMPT.md, but reviewer gates still must evaluate every explicit user requirement.
+  Preserve the canonical user comments and legacy steering section on reduced prompts so mandatory and optional reviews do not approve work that ignored operator feedback.
+  */
   return buildReviewRequest(
     taskId,
     stepNumber,
@@ -712,7 +760,7 @@ function buildReducedReviewRequest(
     buildReducedTaskPromptSummary(promptContent),
     cwd,
     baseline,
-    undefined,
+    userComments,
   );
 }
 

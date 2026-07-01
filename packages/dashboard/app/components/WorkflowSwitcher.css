@@ -62,6 +62,15 @@ The board/list workflow dropdown sits beside the project selector in header and 
   flex: 1 1 auto;
 }
 
+.workflow-switcher-current-label,
+.workflow-switcher-option-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .workflow-switcher-current-name,
 .workflow-switcher-option-name {
   min-width: 0;

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BoardWorkflowDefinition, BoardWorkflowsPayload } from "../api";
 import { HeaderWorkflowSwitcherSlot, type HeaderWorkflowSelection } from "../components/HeaderWorkflowSwitcherSlot";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID } from "../utils/boardWorkflowSelection";
 import {
   filterTasksByGraphWorkflowSelection,
   GraphWorkflowSwitcherSlot,
@@ -210,6 +211,20 @@ describe("workflow selection across dashboard surfaces", () => {
       expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
       expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
     });
+  });
+
+  it("filters the Board-only all-workflows sentinel out of Header and Graph real-workflow surfaces", async () => {
+    localStorage.setItem("kb:project-cross:kb-dashboard-board-workflow-selection", ALL_WORKFLOWS_BOARD_VIEW_ID);
+
+    render(<CrossSurfaceHarness />);
+
+    expect(await screen.findAllByTestId("workflow-switcher")).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.getByTestId("header-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+      expect(screen.getByTestId("graph-selection")).toHaveTextContent(DEFAULT_WORKFLOW.id);
+    });
+    expect(screen.queryByText("All workflows")).toBeNull();
+    expect(localStorage.getItem("kb:project-cross:kb-dashboard-board-workflow-selection")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
   });
 
   it("repairs stale stored workflow ids to the default workflow without hiding graph tasks", async () => {

@@ -1,15 +1,17 @@
 import "./ListView.css";
-import { useState, useCallback, useMemo, Fragment, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, Fragment, useEffect, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ArrowUpDown, ArrowUp, ArrowDown, Link, Columns3, EyeOff, Eye, ChevronRight, Zap, Trash2, Pause, Play, Archive } from "lucide-react";
-import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, Column, ColumnId, TaskCreateInput, MergeResult, GithubIssueAction, PrInfo } from "@fusion/core";
 import { COLUMNS, DEFAULT_COLUMN, getErrorMessage, isColumn } from "@fusion/core";
+import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { useColumnLabel } from "../i18n/labels";
 import { sortTasksForDisplayColumn } from "./taskSorting";
-import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail } from "../api";
+import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
+import { PrCreateModal } from "./PrCreateModal";
 import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -25,6 +27,7 @@ import { WorkflowSwitcher } from "./WorkflowSwitcher";
 import { computeWorkflowStatusCounts } from "./workflowStatusCounts";
 import { writeBoardWorkflowsCache } from "../utils/boardWorkflowsCache";
 import { useBoardWorkflows } from "../hooks/useBoardWorkflows";
+import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnMetadata, type TaskMenuActionDescriptor } from "./TaskContextMenu";
 
 const COLUMN_COLOR_MAP: Record<Column, string> = {
   triage: "var(--triage)",
@@ -42,6 +45,18 @@ function columnColor(column: ColumnId): string {
 }
 
 const ACTIVE_STATUSES = new Set(["planning", "researching", "executing", "finalizing", "merging", "merging-fix"]);
+const LIST_TOUCH_CONTEXT_MENU_DELAY_MS = 550;
+const LIST_TOUCH_MOVE_THRESHOLD = 10;
+const LIST_CONTEXT_MENU_VIEWPORT_MARGIN = 8;
+const LIST_KEYBOARD_CONTEXT_MENU_OFFSET = 32;
+
+type ListContextMenuState = { task: Task; x: number; y: number } | null;
+type ListPrCreateState = { task: Task } | null;
+
+function isListContextInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  return Boolean(target.closest("button, a, input, textarea, select, label, [role='button']"));
+}
 
 type SortField = "title" | "status" | "column" | "retries";
 
@@ -247,6 +262,8 @@ interface ListViewProps {
   lastFetchTimeMs?: number;
   prAuthAvailable?: boolean;
   autoMerge?: boolean;
+  /** Project merge strategy so list context menus match Task Detail before a PR exists. */
+  mergeStrategy?: string;
   onOpenWorkflowEditor?: (workflowId?: string) => void;
   onCreateWorkflow?: () => void;
   workflowColumnsEnabled?: boolean;
@@ -317,6 +334,7 @@ export function ListView({
   lastFetchTimeMs,
   prAuthAvailable,
   autoMerge,
+  mergeStrategy = "direct",
   onOpenWorkflowEditor,
   onCreateWorkflow,
   workflowColumnsEnabled,
@@ -330,6 +348,12 @@ export function ListView({
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [dragOverColumn, setDragOverColumn] = useState<ColumnId | null>(null);
   const [selectedColumn, setSelectedColumn] = useState<ColumnId | null>(null);
+  const [contextMenuState, setContextMenuState] = useState<ListContextMenuState>(null);
+  const [prCreateState, setPrCreateState] = useState<ListPrCreateState>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const suppressNextRowClickRef = useRef(false);
   /*
   FNXC:BoardWorkflows 2026-06-20-09:07:
   ListView shares the board-workflows first-paint invariant with Board: hydrate per-project workflow metadata from sessionStorage and gate legacy list columns while workflowColumns settings or uncached lane metadata are still unknown.
@@ -603,6 +627,11 @@ export function ListView({
     return columnNameById.get(column) ?? columnLabel(column);
   }, [columnLabel, columnNameById]);
 
+  const listContextMenuColumns = useMemo<readonly TaskContextMenuColumnMetadata[] | undefined>(() => {
+    if (!workflowMode) return undefined;
+    return listColumns.map((column) => ({ id: column.id, label: column.name, flags: column.flags }));
+  }, [listColumns, workflowMode]);
+
   const isArchivedColumn = useCallback((column: ColumnId): boolean => {
     return workflowMode ? Boolean(columnFlagsById.get(column)?.archived) : column === "archived";
   }, [columnFlagsById, workflowMode]);
@@ -653,13 +682,25 @@ export function ListView({
     });
   }, [projectId]);
 
+  const resolveListQuickCreateTarget = useCallback((targetWorkflowId: string, preferredColumnId?: string | null): ColumnId | undefined => {
+    const workflow = boardWorkflows?.workflows.find((candidate) => candidate.id === targetWorkflowId);
+    if (!workflow) return undefined;
+    const visibleColumns = workflow.columns.filter((column) => !column.flags.archived && !column.flags.hiddenFromBoard);
+    const preferredColumn = preferredColumnId ? visibleColumns.find((column) => column.id === preferredColumnId) : undefined;
+    const column = preferredColumn
+      ?? visibleColumns.find((candidate) => candidate.flags.intake)
+      ?? visibleColumns[0];
+    return column?.id as ColumnId | undefined;
+  }, [boardWorkflows]);
+
   const handleListQuickCreate = useCallback(async (input: TaskCreateInput) => {
     const create = onQuickCreate ?? (async () => addToast(t("listView.taskCreationUnavailable", "Task creation not available"), "error"));
     if (workflowMode && selectedWorkflow && createTargetColumn) {
-      const workflowId = input.workflowId ?? selectedWorkflow.id;
+      const workflowId = typeof input.workflowId === "string" ? input.workflowId : selectedWorkflow.id;
+      const targetColumn = resolveListQuickCreateTarget(workflowId, input.column) ?? createTargetColumn;
       const created = await create({
         ...input,
-        column: input.column ?? createTargetColumn,
+        column: targetColumn,
         workflowId,
       });
       if (created?.id) {
@@ -670,7 +711,7 @@ export function ListView({
       return created;
     }
     return create(input);
-  }, [addToast, applyOptimisticTaskWorkflow, createTargetColumn, onQuickCreate, refreshBoardWorkflows, selectedWorkflow, t, workflowMode]);
+  }, [addToast, applyOptimisticTaskWorkflow, createTargetColumn, onQuickCreate, refreshBoardWorkflows, resolveListQuickCreateTarget, selectedWorkflow, t, workflowMode]);
 
   /*
   FNXC:ListWorkflowSelection 2026-06-29-00:00:
@@ -1374,8 +1415,371 @@ export function ListView({
     }
   }, [selectedTaskIds, tasks, executorModel, validatorModel, nodeOverride, projectId, addToast, clearSelection, isArchivedColumn, onTasksUpdated]);
 
+  const closeContextMenu = useCallback(() => {
+    setContextMenuState(null);
+  }, []);
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
+  const handleListTaskDelete = useCallback(async (task: Task) => {
+    const shouldDelete = await confirm({
+      title: t("tasks.deleteTitle", "Delete Task"),
+      message: t("tasks.deleteConfirm", "Delete {{taskId}}?", { taskId: task.id }),
+      danger: true,
+    });
+    if (!shouldDelete) return;
+
+    try {
+      await onDeleteTask(task.id);
+      addToast(t("tasks.deleted", "Deleted {{taskId}}{{suffix}}", { taskId: task.id, suffix: "" }), "success");
+    } catch (err) {
+      const dependencyConflict = extractDependencyDeleteConflict(err);
+      const lineageConflict = extractLineageDeleteConflict(err);
+      const shouldForce = dependencyConflict?.dependentIds.length || lineageConflict?.lineageChildIds.length;
+      if (!shouldForce) {
+        addToast(t("tasks.deleteFailed", "Failed to delete {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
+        return;
+      }
+      const confirmed = await confirm({
+        title: t("tasks.forceDeleteTitle", "Force Delete Task"),
+        message: dependencyConflict?.dependentIds.length
+          ? t("tasks.dependencyConflict", "{{taskId}} is a dependency of {{dependentList}}.\n\nDelete anyway by removing these dependency references first?", { taskId: task.id, dependentList: dependencyConflict.dependentIds.join(", ") })
+          : t("tasks.lineageConflict", "{{taskId}} has lineage children ({{children}}) that reference it as a source parent.\n\nDelete anyway by unlinking these references first?", { taskId: task.id, children: lineageConflict?.lineageChildIds.join(", ") ?? "" }),
+        danger: true,
+      });
+      if (!confirmed) return;
+      try {
+        await onDeleteTask(task.id, { removeDependencyReferences: true, removeLineageReferences: true });
+        addToast(t("tasks.deletedRemovedDeps", "Deleted {{taskId}} after removing dependency references", { taskId: task.id }), "success");
+      } catch (retryErr) {
+        addToast(t("tasks.deleteFailed", "Failed to delete {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(retryErr) }), "error");
+      }
+    }
+  }, [addToast, confirm, onDeleteTask, t]);
+
+  const handleListTaskArchive = useCallback(async (task: Task) => {
+    if (!onArchiveTask) return;
+    try {
+      await onArchiveTask(task.id);
+      addToast(t("tasks.archived", "Archived {{taskId}}", { taskId: task.id }), "success");
+    } catch (err) {
+      const lineageConflict = extractLineageDeleteConflict(err);
+      if (!lineageConflict?.lineageChildIds.length) {
+        addToast(t("tasks.archiveFailed", "Failed to archive {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
+        return;
+      }
+      const confirmed = await confirm({
+        title: t("tasks.forceDeleteTitle", "Force Delete Task"),
+        message: t("tasks.lineageArchiveMessage", "{{taskId}} has lineage children ({{children}}) that reference it as a source parent.\n\nArchive anyway by unlinking these references first?", { taskId: task.id, children: lineageConflict.lineageChildIds.join(", ") }),
+        confirmLabel: t("common.archive", "Archive"),
+        cancelLabel: t("common.skip", "Skip"),
+        danger: true,
+      });
+      if (!confirmed) return;
+      try {
+        await onArchiveTask(task.id, { removeLineageReferences: true });
+        addToast(t("tasks.archivedUnlinked", "Archived {{taskId}} after unlinking lineage references", { taskId: task.id }), "success");
+      } catch (retryErr) {
+        addToast(t("tasks.archiveFailed", "Failed to archive {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(retryErr) }), "error");
+      }
+    }
+  }, [addToast, confirm, onArchiveTask, t]);
+
+  const handleListContextMove = useCallback(async (task: Task, column: ColumnId) => {
+    try {
+      const hasStepProgress = task.steps.some((step) => step.status !== "pending");
+      const targetFlags = columnFlagsById.get(column);
+      const shouldPrompt = hasStepProgress && (
+        column === "todo" || column === "triage" || Boolean(targetFlags?.intake || targetFlags?.hold)
+      );
+      let moveOptions: { preserveProgress?: boolean } | undefined;
+
+      if (shouldPrompt) {
+        const keepProgress = await confirm({
+          title: t("taskDetail.move.preserveProgressTitle", "Preserve Progress?"),
+          message: t("taskDetail.move.preserveProgressMessage", "This task has completed steps. Keep progress before moving?"),
+          confirmLabel: t("taskDetail.move.keepProgress", "Keep Progress"),
+          cancelLabel: t("taskDetail.move.resetProgress", "Reset Progress"),
+        });
+
+        if (keepProgress) {
+          moveOptions = { preserveProgress: true };
+        } else {
+          const resetProgress = await confirm({
+            title: t("taskDetail.move.resetProgressTitle", "Reset Progress?"),
+            message: t("taskDetail.move.resetProgressMessage", "Reset all step progress before moving this task?"),
+            confirmLabel: t("taskDetail.move.resetProgress", "Reset Progress"),
+            cancelLabel: t("taskDetail.move.cancelMove", "Cancel Move"),
+            danger: true,
+          });
+          if (!resetProgress) return;
+        }
+      }
+
+      await onMoveTask(task.id, column, moveOptions);
+      addToast(t("taskDetail.move.movedTo", "Moved to {{column}}", { column: getListColumnLabel(column) }), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, columnFlagsById, getListColumnLabel, confirm, onMoveTask, t]);
+
+  const handleListContextCheckPrStatus = useCallback(async (task: Task) => {
+    try {
+      await refreshPrStatus(task.id, projectId);
+      addToast(t("taskDetail.pr.statusRefreshed", "PR status refreshed"), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, projectId, t]);
+
+  const handleListPrCreated = useCallback((task: Task, prInfo: PrInfo) => {
+    const nextPrInfos = [...(task.prInfos ?? (task.prInfo ? [task.prInfo] : [])), prInfo];
+    onTasksUpdated?.([{ ...task, prInfo: nextPrInfos[0] ?? prInfo, prInfos: nextPrInfos }]);
+    setPrCreateState(null);
+    addToast(t("tasks.createdPr", "Created PR #{{number}}", { number: prInfo.number }), "success");
+  }, [addToast, onTasksUpdated, t]);
+
+  const buildListContextMenuActions = useCallback((task: Task): TaskMenuActionDescriptor[] => {
+    const canRetryTask =
+      task.status === "failed" ||
+      task.status === "stuck-killed" ||
+      task.status === "planning" ||
+      task.status === "needs-replan" ||
+      (task.stuckKillCount ?? 0) > 0 ||
+      (task.recoveryRetryCount ?? 0) > 0 ||
+      Boolean(task.nextRecoveryAt);
+    const isTaskPaused = Boolean(task.paused || task.userPaused);
+    const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMerge ?? false });
+    const model = buildTaskActionMenuModel({
+      task,
+      t,
+      columnLabel: getListColumnLabel,
+      currentColumnFlags: columnFlagsById.get(task.column),
+      workflowMoveColumns: listContextMenuColumns,
+      canRetryTask,
+      hasDuplicateHandler: Boolean(onDuplicateTask),
+      hasRetryHandler: Boolean(onRetryTask),
+      hasResetHandler: Boolean(onResetTask),
+      hasAssignedAgent: Boolean(task.assignedAgentId),
+      autoMergeEnabled: effectiveAutoMerge,
+      mergeStrategy,
+      prAutomationLabel: getTaskPrAutomationLabel(t, task.status),
+      onDelete: () => void handleListTaskDelete(task),
+      onDuplicate: onDuplicateTask ? async () => {
+        const shouldDuplicate = await confirm({
+          title: t("taskDetail.duplicate.title", "Duplicate Task"),
+          message: t("taskDetail.duplicate.message", "Duplicate {{id}}? This will create a new task in Triage with the same description and prompt.", { id: task.id }),
+        });
+        if (!shouldDuplicate) return;
+        try {
+          const newTask = await onDuplicateTask(task.id);
+          addToast(t("taskDetail.duplicate.success", "Duplicated {{id}} → {{newId}}", { id: task.id, newId: newTask.id }), "success");
+        } catch (err) {
+          addToast(getErrorMessage(err), "error");
+        }
+      } : undefined,
+      onOpenRefine: undefined,
+      onRespecify: async () => {
+        const shouldRebuild = await confirm({
+          title: t("taskDetail.plan.rebuildTitle", "Rebuild Plan"),
+          message: t("taskDetail.plan.rebuildMessage", "Rebuild the plan for this task? The task will move to planning for replanning."),
+        });
+        if (!shouldRebuild) return;
+        try {
+          await rebuildTaskSpec(task.id, projectId);
+          addToast(t("taskDetail.plan.replanning", "Replanning {{id}}…", { id: task.id }), "info");
+        } catch (err) {
+          addToast(getErrorMessage(err), "error");
+        }
+      },
+      onRetry: onRetryTask ? async () => {
+        try {
+          await onRetryTask(task.id);
+        } catch (err) {
+          addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
+        }
+      } : undefined,
+      onReset: onResetTask ? () => {
+        if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
+        void onResetTask(task.id)
+          .then(() => addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success"))
+          .catch((err) => addToast(getErrorMessage(err), "error"));
+      } : undefined,
+      onTogglePause: (isTaskPaused ? onUnpauseTask : onPauseTask) ? async () => {
+        try {
+          if (isTaskPaused) {
+            if (!onUnpauseTask) return;
+            await onUnpauseTask(task.id);
+            addToast(t("taskDetail.pause.unpaused", "Unpaused {{id}}", { id: task.id }), "success");
+          } else {
+            if (!onPauseTask) return;
+            await onPauseTask(task.id);
+            addToast(t("taskDetail.pause.paused", "Paused {{id}}", { id: task.id }), "success");
+          }
+        } catch (err) {
+          addToast(getErrorMessage(err), "error");
+        }
+      } : undefined,
+      onMerge: onMergeTask ? async () => {
+        const shouldMerge = await confirm({
+          title: t("taskDetail.merge.title", "Merge Task"),
+          message: t("taskDetail.merge.message", "Merge {{id}} into the current branch?", { id: task.id }),
+        });
+        if (!shouldMerge) return;
+        addToast(t("taskDetail.merge.merging", "Merging {{id}}…", { id: task.id }), "info");
+        void onMergeTask(task.id)
+          .then((result) => addToast(result.merged
+            ? t("taskDetail.merge.merged", "Merged {{id}} (branch: {{branch}})", { id: task.id, branch: result.branch })
+            : t("taskDetail.merge.closed", "Closed {{id}} ({{reason}})", { id: task.id, reason: result.error || t("taskDetail.merge.noBranchToMerge", "no branch to merge") }), "success"))
+          .catch((err) => addToast(getErrorMessage(err), "error"));
+      } : undefined,
+      onStartPrReview: () => setPrCreateState({ task }),
+      onCheckPrStatus: task.prInfo ? () => void handleListContextCheckPrStatus(task) : undefined,
+    });
+
+    const actions = [...model.actions];
+    if (task.column === "done" && onArchiveTask) {
+      actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: () => void handleListTaskArchive(task) });
+    }
+    for (const transition of model.moveTransitions) {
+      actions.push({
+        id: `move-${transition.column}`,
+        label: transition.label,
+        onSelect: () => void handleListContextMove(task, transition.column),
+      });
+    }
+    if (model.reviewAction) {
+      actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
+    }
+    return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, handleListContextCheckPrStatus, handleListContextMove, handleListTaskArchive, handleListTaskDelete, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, projectId, t]);
+
+  const contextMenuActions = useMemo(
+    () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),
+    [buildListContextMenuActions, contextMenuState],
+  );
+  const hasContextMenuActions = contextMenuActions.length > 0;
+
+  const openContextMenuAt = useCallback((task: Task, clientX: number, clientY: number) => {
+    const actions = buildListContextMenuActions(task);
+    if (actions.length === 0) return;
+    setContextMenuState({
+      task,
+      x: Math.max(LIST_CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(clientX, window.innerWidth - LIST_CONTEXT_MENU_VIEWPORT_MARGIN)),
+      y: Math.max(LIST_CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(clientY, window.innerHeight - LIST_CONTEXT_MENU_VIEWPORT_MARGIN)),
+    });
+  }, [buildListContextMenuActions]);
+
+  const handleListContextMenu = useCallback((event: React.MouseEvent, task: Task) => {
+    if (isListContextInteractiveTarget(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openContextMenuAt(task, event.clientX, event.clientY);
+  }, [openContextMenuAt]);
+
+  const handleListPointerDown = useCallback((event: React.PointerEvent, task: Task) => {
+    if (!isMobile || event.pointerType === "mouse" || isListContextInteractiveTarget(event.target)) return;
+    clearLongPressTimer();
+    longPressStartRef.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId };
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      suppressNextRowClickRef.current = true;
+      openContextMenuAt(task, event.clientX, event.clientY);
+    }, LIST_TOUCH_CONTEXT_MENU_DELAY_MS);
+  }, [clearLongPressTimer, isMobile, openContextMenuAt]);
+
+  const handleListKeyDown = useCallback((event: React.KeyboardEvent, task: Task) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    if (isListContextInteractiveTarget(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    suppressNextRowClickRef.current = true;
+    openContextMenuAt(
+      task,
+      rect.left + Math.min(rect.width - LIST_CONTEXT_MENU_VIEWPORT_MARGIN, LIST_KEYBOARD_CONTEXT_MENU_OFFSET),
+      rect.top + Math.min(rect.height - LIST_CONTEXT_MENU_VIEWPORT_MARGIN, LIST_KEYBOARD_CONTEXT_MENU_OFFSET),
+    );
+  }, [openContextMenuAt]);
+
+  const handleListPointerMove = useCallback((event: React.PointerEvent) => {
+    const start = longPressStartRef.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    if (Math.abs(event.clientX - start.x) > LIST_TOUCH_MOVE_THRESHOLD || Math.abs(event.clientY - start.y) > LIST_TOUCH_MOVE_THRESHOLD) {
+      clearLongPressTimer();
+    }
+  }, [clearLongPressTimer]);
+
+  const handleListPointerUpOrCancel = useCallback(() => {
+    clearLongPressTimer();
+  }, [clearLongPressTimer]);
+
+  /*
+  FNXC:ListContextMenu 2026-06-30-00:15:
+  List menus are portaled out of table/card flow and then measured so desktop rows, mobile cards, and keyboard invocations stay inside the visible viewport without selecting the row.
+
+  FNXC:ListContextMenu 2026-06-30-13:02:
+  Manual PR context actions must open the PR creation dialog from list rows, while Merge & Close remains wired to the direct merge handler.
+  */
+  useLayoutEffect(() => {
+    if (!contextMenuState) return;
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    const nextX = Math.max(
+      LIST_CONTEXT_MENU_VIEWPORT_MARGIN,
+      Math.min(contextMenuState.x, window.innerWidth - rect.width - LIST_CONTEXT_MENU_VIEWPORT_MARGIN),
+    );
+    const nextY = Math.max(
+      LIST_CONTEXT_MENU_VIEWPORT_MARGIN,
+      Math.min(contextMenuState.y, window.innerHeight - rect.height - LIST_CONTEXT_MENU_VIEWPORT_MARGIN),
+    );
+    if (nextX !== contextMenuState.x || nextY !== contextMenuState.y) {
+      setContextMenuState({ ...contextMenuState, x: nextX, y: nextY });
+    }
+  }, [contextMenuState]);
+
+  useEffect(() => {
+    if (!contextMenuState) return;
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) return;
+      closeContextMenu();
+    };
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeContextMenu();
+    };
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+    window.addEventListener("scroll", closeContextMenu, true);
+    return () => {
+      document.removeEventListener("pointerdown", handleDocumentPointerDown);
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+      window.removeEventListener("scroll", closeContextMenu, true);
+    };
+  }, [closeContextMenu, contextMenuState]);
+
+  useEffect(() => {
+    const cancelLongPress = () => clearLongPressTimer();
+    window.addEventListener("scroll", cancelLongPress, true);
+    return () => {
+      window.removeEventListener("scroll", cancelLongPress, true);
+      clearLongPressTimer();
+    };
+  }, [clearLongPressTimer]);
+
   const handleRowClick = useCallback(
     (task: Task) => {
+      if (suppressNextRowClickRef.current) {
+        suppressNextRowClickRef.current = false;
+        return;
+      }
+      closeContextMenu();
       if (isMobile) {
         onOpenDetail(task, { origin: "list-mobile" });
         return;
@@ -1384,7 +1788,7 @@ export function ListView({
       setSelectedTaskId(task.id);
       setSelectedTaskSnapshot(task);
     },
-    [isMobile, onOpenDetail]
+    [closeContextMenu, isMobile, onOpenDetail]
   );
 
   // Debounce detail fetches so rapid keyboard/mouse navigation through a
@@ -1857,6 +2261,32 @@ export function ListView({
 
   return (
     <div className="list-view">
+      {contextMenuState && hasContextMenuActions && createPortal(
+        <div
+          ref={contextMenuRef}
+          className="list-context-menu-popover"
+          style={{ left: contextMenuState.x, top: contextMenuState.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <TaskContextMenu
+            actions={contextMenuActions}
+            className="task-context-menu list-context-menu"
+            onActionSelect={closeContextMenu}
+          />
+        </div>,
+        document.body,
+      )}
+      {prCreateState && (
+        <PrCreateModal
+          open={true}
+          taskId={prCreateState.task.id}
+          projectId={projectId}
+          onClose={() => setPrCreateState(null)}
+          onCreated={(prInfo) => handleListPrCreated(prCreateState.task, prInfo)}
+          addToast={addToast}
+        />
+      )}
       {isMobile && (
         <>
           <div className="list-toolbar">
@@ -1932,6 +2362,8 @@ export function ListView({
                 onPlanningMode={onPlanningMode}
                 onSubtaskBreakdown={onSubtaskBreakdown}
                 workflowId={listQuickEntryWorkflowId}
+                workflowOptions={workflowMode ? workflowOptions : undefined}
+                defaultWorkflowId={workflowMode ? selectedWorkflow?.id ?? boardWorkflows?.defaultWorkflowId ?? null : undefined}
                 projectId={projectId}
                 autoExpand={false}
                 defaultExpanded={false}
@@ -2021,7 +2453,15 @@ export function ListView({
                               key={task.id}
                               className={`list-card${isAgentActive ? " agent-active" : ""}${isSelectionMode ? " list-card--selectable" : ""}`}
                               onClick={() => handleRowClick(task)}
+                              onContextMenu={(event) => handleListContextMenu(event, task)}
+                              onPointerDown={(event) => handleListPointerDown(event, task)}
+                              onPointerMove={handleListPointerMove}
+                              onPointerUp={handleListPointerUpOrCancel}
+                              onPointerCancel={handleListPointerUpOrCancel}
+                              onKeyDown={(event) => handleListKeyDown(event, task)}
                               data-id={task.id}
+                              tabIndex={0}
+                              aria-haspopup="menu"
                             >
                               {isSelectionMode && (
                                 <label className="list-card-checkbox" onClick={(e) => e.stopPropagation()}>
@@ -2214,10 +2654,14 @@ export function ListView({
                                   isDragging ? " dragging" : ""
                                 }${selectedTaskId === task.id ? " list-row--selected" : ""}`}
                                 onClick={() => handleRowClick(task)}
+                                onContextMenu={(event) => handleListContextMenu(event, task)}
+                                onKeyDown={(event) => handleListKeyDown(event, task)}
                                 draggable={!isPaused}
                                 onDragStart={(e) => handleDragStart(e, task)}
                                 onDragEnd={handleDragEnd}
                                 data-id={task.id}
+                                tabIndex={0}
+                                aria-haspopup="menu"
                               >
                                 {bulkEditEnabled && (
                                   <td className="list-cell list-cell-checkbox">

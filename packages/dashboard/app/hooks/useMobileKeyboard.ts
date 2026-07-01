@@ -4,6 +4,7 @@ const IOS_FALLBACK_MIN_GAP_PX = 30;
 const IOS_FALLBACK_MIN_FOCUSED_GAP_PX = 16;
 const IOS_VIEWPORT_SHRINK_MIN_PX = 16;
 const IMPOSSIBLE_VIEWPORT_EPSILON_PX = 2;
+const SETTLED_FOLDED_VIEWPORT_MIN_HEIGHT_PX = 480;
 
 /** Whether the current device is likely mobile (touch-primary, small viewport). */
 function isMobileDevice(): boolean {
@@ -19,23 +20,41 @@ function isMobileDevice(): boolean {
  * Kept as max-observed value to recover if first sample was keyboard-open.
  */
 let _baselineViewportHeight: number | null = null;
+let _baselineViewportWidth: number | null = null;
+
+function getCurrentViewportWidth(): number {
+  return window.visualViewport?.width && window.visualViewport.width > 0
+    ? window.visualViewport.width
+    : window.innerWidth;
+}
+
+function setBaselineViewport(height: number, width: number): void {
+  _baselineViewportHeight = height;
+  _baselineViewportWidth = width;
+}
 
 function getBaselineViewportHeight(): number {
   if (_baselineViewportHeight === null) {
-    _baselineViewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    setBaselineViewport(window.visualViewport?.height ?? window.innerHeight, getCurrentViewportWidth());
   }
-  return _baselineViewportHeight;
+  return _baselineViewportHeight ?? (window.visualViewport?.height ?? window.innerHeight);
 }
 
-function updateBaselineViewportHeight(nextHeight: number): void {
+function updateBaselineViewportHeight(nextHeight: number, nextWidth: number): void {
   const current = getBaselineViewportHeight();
-  if (nextHeight > current) {
-    _baselineViewportHeight = nextHeight;
+  const widthChanged = _baselineViewportWidth !== null && Math.abs(nextWidth - _baselineViewportWidth) >= 1;
+  /*
+  FNXC:Terminal 2026-06-30-08:51:
+  SessionTerminal shares the folded-phone root cause: a keyboard-closed width/posture settle can be shorter than the previous unfolded baseline, so max-only baselines overestimate later iOS keyboard overlap and lift/refit the embedded terminal against stale geometry. Replace the baseline on settled folded posture changes while preserving the max-observed recovery for same-posture keyboard-open first samples.
+  */
+  if (nextHeight > current || (widthChanged && nextHeight >= SETTLED_FOLDED_VIEWPORT_MIN_HEIGHT_PX)) {
+    setBaselineViewport(nextHeight, nextWidth);
   }
 }
 
 function resetBaselineViewportHeight(): void {
   _baselineViewportHeight = null;
+  _baselineViewportWidth = null;
 }
 
 function isKeyboardFocusableElement(el: Element | null): boolean {
@@ -101,7 +120,7 @@ function getKeyboardMetrics(
 
   // Only refresh baseline while keyboard is likely closed.
   if (!focused) {
-    updateBaselineViewportHeight(vv.height);
+    updateBaselineViewportHeight(vv.height, getCurrentViewportWidth());
   }
 
   // FN-5155: iOS focus/restore can briefly report offsetTop from the keyboard

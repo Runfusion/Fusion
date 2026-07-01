@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { TaskStore, TaskDetail, Settings } from "@fusion/core";
 import { TriageProcessor } from "../triage.js";
+import { reviewStep } from "../reviewer.js";
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");
@@ -11,6 +12,10 @@ vi.mock("@fusion/core", async (importOriginal) => {
     resolveAgentPrompt: vi.fn().mockReturnValue(null),
   });
 });
+
+vi.mock("../reviewer.js", () => ({
+  reviewStep: vi.fn().mockResolvedValue({ verdict: "APPROVE", review: "ok", summary: "ok" }),
+}));
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
@@ -58,7 +63,7 @@ const mockTaskDetail: TaskDetail = {
 };
 
 describe("triage deterministic plan validation for external integration evidence", () => {
-  it("rejects incomplete evidence without invoking reviewer", async () => {
+  it("does not reject incomplete evidence during deterministic triage validation", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-ext-evidence-"));
     try {
       const taskId = "FN-5321";
@@ -71,7 +76,11 @@ describe("triage deterministic plan validation for external integration evidence
         `## Mission\nAdd third-party external binary integration.\n## Steps\n- install and probe \`worktrunk\` from release URL https://github.com/${fabricatedRepo}/releases/latest/download/worktrunk.tar.gz\n`,
       );
 
-      expect(failure).toContain("External-integration evidence gaps");
+      expect(failure).toBeNull();
+      expect(store.logEntry).not.toHaveBeenCalledWith(
+        taskId,
+        expect.stringContaining("external-integration evidence gaps"),
+      );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }
@@ -106,6 +115,60 @@ describe("triage deterministic plan validation for external integration evidence
       );
 
       expect(failure).toBeNull();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks the per-step review workflow during Plan Review when external evidence is missing", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "fusion-triage-ext-evidence-plan-review-"));
+    try {
+      const taskId = "FN-5321";
+      const prompt = "## Mission\nAdd an external CLI.\n\n## Steps\n- Download and run `wt` from https://github.com/worktrunk/worktrunk/releases/latest/download/wt-linux-x64.tar.gz\n";
+      const task = {
+        ...mockTaskDetail,
+        id: taskId,
+        enabledWorkflowSteps: ["plan-review"],
+        workflowStepResults: [],
+      };
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+        getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:stepwise-coding", stepIds: ["plan-review"] }),
+        getWorkflowDefinition: vi.fn().mockResolvedValue({
+          id: "builtin:stepwise-coding",
+          ir: {
+            nodes: [
+              {
+                id: "plan-review",
+                kind: "optional-group",
+                config: {
+                  template: {
+                    nodes: [
+                      {
+                        id: "plan-review-step",
+                        kind: "prompt",
+                        config: { requireExternalIntegrationEvidence: true },
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      } as Partial<TaskStore>);
+      const processor = new TriageProcessor(store, rootDir);
+
+      const result = await (processor as any).runPlanReviewBeforeExecution(task, prompt, {} as Settings);
+
+      expect(result).toBe("blocked");
+      expect(reviewStep).not.toHaveBeenCalled();
+      expect(store.updateTask).toHaveBeenCalledWith(taskId, expect.objectContaining({ status: "needs-replan" }));
+      expect(store.logEntry).toHaveBeenCalledWith(
+        taskId,
+        "[pre-merge] Workflow step failed: Plan Review",
+        expect.stringContaining("External-integration evidence gaps"),
+      );
     } finally {
       await rm(rootDir, { recursive: true, force: true });
     }

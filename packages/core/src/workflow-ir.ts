@@ -670,7 +670,10 @@ function validateOptionalGroup(
   }
   /*
    * FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:22:
-   * Parse-time validation accepts only an explicit non-negative integer budget or `"unbounded"`; absent remains byte-inert and resolves through the global `maxPostReviewFixes` fallback at execution time.
+   * Parse-time validation accepts only an explicit non-negative integer budget or `"unbounded"`; absent remains byte-inert and resolves through the gate-specific runtime fallback at execution time.
+   *
+   * FNXC:WorkflowRevisionBudget 2026-06-30-20:36:
+   * The Plan Review/Code Review workflow setting values are validated separately from IR authoring. Invalid runtime values are ignored by the shared budget resolver, while invalid authored node budgets remain a parse error so custom workflow definitions cannot persist ambiguous caps.
    */
   if (cfg.maxRevisions !== undefined) {
     const maxRevisions = cfg.maxRevisions;

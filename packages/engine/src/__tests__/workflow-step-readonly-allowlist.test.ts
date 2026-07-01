@@ -66,7 +66,22 @@ describe("workflow-step readonly allowlist policy", () => {
     ]);
 
     expect(filtered.allowed.map((tool) => tool.name)).toEqual(["read", "fn_task_list"]);
-    expect(filtered.denied).toEqual(["edit"]);
+    expect(filtered.denied).toEqual(["edit", "fn_task_update"]);
+  });
+
+  it("allows explicitly approved tool objects without blanket-allowing mcp names", () => {
+    const connectedMcpTool = { name: "mcp__docs__lookup" } as any;
+    const callerSuppliedMcpNamedTool = { name: "mcp__docs__write" } as any;
+
+    const filtered = filterCustomToolsForReadonly([
+      connectedMcpTool,
+      callerSuppliedMcpNamedTool,
+    ], {
+      allowTool: (tool) => tool === connectedMcpTool,
+    });
+
+    expect(filtered.allowed).toEqual([connectedMcpTool]);
+    expect(filtered.allowed).not.toContain(callerSuppliedMcpNamedTool);
   });
 
   it("captures readonly violation error shape", () => {

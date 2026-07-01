@@ -43,6 +43,7 @@ import {
   reconcileClaudeCliPaths,
   reconcileDroidCliPaths,
   mergeBuiltInZaiProviderModels,
+  mergeSupplementalAnthropicModels,
   registerBuiltInZaiProvider,
   resolvePiExtensionProjectRoot,
 } from "@fusion/core";
@@ -1006,6 +1007,11 @@ export interface AgentOptions {
    * below decides whether to forward or skip them without logging contents.
    */
   mcpServers?: ResolvedMcpServerDefinition[];
+  /**
+   * Allow connected MCP session tools through the read-only custom-tool filter.
+   * Defaults to false so validators/read-only helpers do not inherit arbitrary external tools.
+   */
+  allowMcpToolsInReadonly?: boolean;
   /** Test seam for MCP session tools; production uses the SDK client/transport factories. */
   mcpClientFactory?: McpClientFactory;
   /** Optional task-scoped env injected into this session's subprocess tools only. */
@@ -2034,6 +2040,7 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     }
   }
   modelRegistry.refresh();
+  mergeSupplementalAnthropicModels(modelRegistry, (message) => extensionsLog.warn(message));
 
   // Build the pi built-in tool set. We deliberately do NOT use the bundled
   // `createCodingTools` / `createReadOnlyTools` presets — they're missing
@@ -2215,10 +2222,14 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
     // tools through `customTools` instead. The wrapped tools preserve the same
     // names (`read`, `bash`, ...) as the built-ins they replace.
     let mcpToolset: McpSessionToolset | undefined;
-    if (forwardedMcpServers.length > 0 && !isReadonly) {
+    const allowReadonlyMcpTools = options.allowMcpToolsInReadonly === true;
+    if (forwardedMcpServers.length > 0 && (!isReadonly || allowReadonlyMcpTools)) {
       /*
        * FNXC:McpConfig 2026-06-27-14:06:
        * pi-coding-agent does not have a createAgentSession `mcpServers` option, so passing resolved servers is silently ignored. Connect MCP servers here and merge namespaced tools into the same customTools filtering/gating/boundary pipeline as engine tools before the session sees them.
+       *
+       * FNXC:McpConfig 2026-06-29-00:00:
+       * Planning and mission interviews are read-only lanes that still need operator-configured documentation/context MCP tools. They must opt in explicitly; other read-only sessions continue to skip MCP connection so unknown external tools do not bypass the read-only allowlist by default.
        */
       mcpToolset = await connectMcpSessionTools(forwardedMcpServers, {
         cwd: options.cwd,
@@ -2229,12 +2240,16 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
       piLog.log(`readonly session — MCP servers (${forwardedMcpServers.length}) skipped`);
     }
 
+    const mcpReadonlyTools = new Set(mcpToolset?.tools ?? []);
     const candidateCustomTools = [
       ...(options.customTools ?? []),
       ...(mcpToolset?.tools ?? []),
     ];
     const readonlyFilteredCustomTools = isReadonly
-      ? filterCustomToolsForReadonly(candidateCustomTools)
+      ? filterCustomToolsForReadonly(
+          candidateCustomTools,
+          allowReadonlyMcpTools ? { allowTool: (tool) => mcpReadonlyTools.has(tool) } : {},
+        )
       : { allowed: candidateCustomTools, denied: [] };
     const allowlistFilteredCustomTools = {
       ...readonlyFilteredCustomTools,

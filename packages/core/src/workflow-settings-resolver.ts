@@ -34,7 +34,54 @@ import {
 } from "./workflow-ir-resolver.js";
 import { resolveEffectiveSettingValues, findOrphanedSettingValues } from "./workflow-settings.js";
 import { BUILTIN_WORKFLOW_SETTINGS } from "./builtin-workflow-settings.js";
-import type { WorkflowSettingDefinition, WorkflowIr } from "./workflow-ir-types.js";
+import type { WorkflowSettingDefinition, WorkflowIr, WorkflowOptionalGroupConfig } from "./workflow-ir-types.js";
+
+export const PLAN_REVIEW_MAX_REVISIONS_SETTING_ID = "planReviewMaxRevisions";
+export const CODE_REVIEW_MAX_REVISIONS_SETTING_ID = "codeReviewMaxRevisions";
+export type OptionalReviewRevisionBudget = NonNullable<WorkflowOptionalGroupConfig["maxRevisions"]>;
+
+const REVIEW_REVISION_SETTING_BY_GROUP_ID: Record<string, string | undefined> = {
+  "plan-review": PLAN_REVIEW_MAX_REVISIONS_SETTING_ID,
+  "code-review": CODE_REVIEW_MAX_REVISIONS_SETTING_ID,
+};
+
+function asRevisionBudget(value: unknown): OptionalReviewRevisionBudget | undefined {
+  if (value === "unbounded") return value;
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value) || value < 0) return undefined;
+  return value;
+}
+
+export interface ResolveOptionalReviewRevisionBudgetInput {
+  optionalGroupId: string;
+  workflowSettings?: Record<string, unknown>;
+  nodeMaxRevisions?: unknown;
+  fallbackMaxRevisions?: OptionalReviewRevisionBudget;
+}
+
+/**
+ * Resolve the automatic remediation budget for graph-native optional review gates.
+ *
+ * FNXC:WorkflowRevisionBudget 2026-06-30-20:31:
+ * Built-in Plan Review/spec and Code Review remediation are unbounded when their workflow value is unset. A stored non-negative integer workflow value wins first (including `0` to disable automatic remediation), then an authored node `maxRevisions` keeps custom workflow semantics, and only matching built-in review groups fall back to unbounded; Browser Verification and custom optional gates keep their caller fallback.
+ */
+export function resolveOptionalReviewRevisionBudget({
+  optionalGroupId,
+  workflowSettings,
+  nodeMaxRevisions,
+  fallbackMaxRevisions,
+}: ResolveOptionalReviewRevisionBudgetInput): OptionalReviewRevisionBudget | undefined {
+  const settingId = REVIEW_REVISION_SETTING_BY_GROUP_ID[optionalGroupId];
+  if (settingId) {
+    const workflowBudget = asRevisionBudget(workflowSettings?.[settingId]);
+    if (workflowBudget !== undefined) return workflowBudget;
+  }
+
+  const nodeBudget = asRevisionBudget(nodeMaxRevisions);
+  if (nodeBudget !== undefined) return nodeBudget;
+
+  if (settingId) return "unbounded";
+  return fallbackMaxRevisions;
+}
 
 /**
  * The effective map PLUS the subset of keys whose value came from an EXPLICIT

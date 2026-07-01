@@ -17,6 +17,8 @@ import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 type StoredCredential = StoredAuthCredential;
 
 const OAUTH_REFRESH_BUFFER_MS = 60_000;
+const ANTHROPIC_PROVIDER_ID = "anthropic";
+const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
 const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
 const ANTHROPIC_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const ANTHROPIC_DEFAULT_SCOPES = ["user:profile"];
@@ -101,6 +103,10 @@ function resolveStoredApiKey(key: string | undefined): string | undefined {
   return process.env[key] ?? key;
 }
 
+function getOAuthResolutionProviderId(providerId: string): string {
+  return providerId === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID ? ANTHROPIC_PROVIDER_ID : providerId;
+}
+
 function resolveOAuthApiKey(providerId: string, credential: StoredCredential): string | undefined {
   if (
     credential.type !== "oauth" ||
@@ -112,7 +118,7 @@ function resolveOAuthApiKey(providerId: string, credential: StoredCredential): s
     return undefined;
   }
 
-  return getOAuthProvider(providerId)?.getApiKey(credential as OAuthCredentials);
+  return getOAuthProvider(getOAuthResolutionProviderId(providerId))?.getApiKey(credential as OAuthCredentials);
 }
 
 function shouldRefreshOAuthCredential(credential: StoredCredential): boolean {
@@ -249,7 +255,7 @@ async function refreshOAuthCredential(providerId: string, credential: StoredCred
   if (!shouldRefreshOAuthCredential(credential)) {
     return credential;
   }
-  if (providerId !== "anthropic") {
+  if (getOAuthResolutionProviderId(providerId) !== ANTHROPIC_PROVIDER_ID) {
     return undefined;
   }
   return refreshAnthropicOAuthCredential(credential);
@@ -342,7 +348,7 @@ export function createFusionAuthStorage(): AuthStorage {
   };
 
   const refreshProviderOAuthCredential = async (
-    provider: string,
+    storageProvider: string,
     credential: StoredCredential,
   ): Promise<StoredCredential | undefined> => {
     if (!shouldRefreshOAuthCredential(credential)) {
@@ -350,35 +356,182 @@ export function createFusionAuthStorage(): AuthStorage {
     }
 
     const now = Date.now();
-    const cooldownUntil = oauthRefreshCooldownUntil.get(provider);
+    const cooldownUntil = oauthRefreshCooldownUntil.get(storageProvider);
     if (cooldownUntil && cooldownUntil > now) {
       return undefined;
     }
 
-    const existing = oauthRefreshInFlight.get(provider);
+    const existing = oauthRefreshInFlight.get(storageProvider);
     if (existing) {
       return existing;
     }
 
-    const refreshPromise = refreshOAuthCredential(provider, credential)
+    const refreshPromise = refreshOAuthCredential(storageProvider, credential)
       .then((refreshed) => {
         if (refreshed) {
-          oauthRefreshCooldownUntil.delete(provider);
+          oauthRefreshCooldownUntil.delete(storageProvider);
         } else {
-          oauthRefreshCooldownUntil.set(provider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
+          oauthRefreshCooldownUntil.set(storageProvider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
         }
         return refreshed;
       })
       .catch(() => {
-        oauthRefreshCooldownUntil.set(provider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
+        oauthRefreshCooldownUntil.set(storageProvider, Date.now() + OAUTH_REFRESH_FAILURE_COOLDOWN_MS);
         return undefined;
       })
       .finally(() => {
-        oauthRefreshInFlight.delete(provider);
+        oauthRefreshInFlight.delete(storageProvider);
       });
 
-    oauthRefreshInFlight.set(provider, refreshPromise);
+    oauthRefreshInFlight.set(storageProvider, refreshPromise);
     return refreshPromise;
+  };
+
+  const selectStoredCredential = (provider: string) => choosePreferredStoredCredential(
+    primary.get(provider) as StoredCredential | undefined,
+    supplementalCredentials[provider],
+  );
+
+  const selectStoredCredentialByType = (
+    provider: string,
+    type: StoredCredential["type"],
+  ) => choosePreferredStoredCredential(
+    ((primary.get(provider) as StoredCredential | undefined)?.type === type
+      ? primary.get(provider) as StoredCredential
+      : undefined),
+    supplementalCredentials[provider]?.type === type ? supplementalCredentials[provider] : undefined,
+  );
+
+  const isAnthropicSubscriptionLoggedOut = () => loggedOutProviders.has(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+  const isAnthropicRawProviderLoggedOut = () => loggedOutProviders.has(ANTHROPIC_PROVIDER_ID);
+
+  const selectVisibleStoredCredential = (provider: string) => {
+    if (loggedOutProviders.has(provider)) {
+      return undefined;
+    }
+    if (provider === ANTHROPIC_PROVIDER_ID && isAnthropicSubscriptionLoggedOut()) {
+      return selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "api_key");
+    }
+    return selectStoredCredential(provider);
+  };
+
+  const resolveTargetFallbackApiKey = (provider: string): string | undefined => {
+    const fallbackResolver = (primary as unknown as {
+      fallbackResolver?: (provider: string) => string | undefined;
+    }).fallbackResolver;
+    return fallbackResolver?.(provider);
+  };
+
+  const hasTargetFallbackAuth = (provider: string): boolean => Boolean(resolveTargetFallbackApiKey(provider));
+
+  const hasVisibleAnthropicCredential = () => {
+    const hasVisibleRawAnthropicApiKey = !isAnthropicRawProviderLoggedOut()
+      && (Boolean(selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "api_key"))
+        || modelsJsonApiKeys.has(ANTHROPIC_PROVIDER_ID));
+    const hasVisibleLegacyAnthropicOAuth = !isAnthropicRawProviderLoggedOut()
+      && Boolean(selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "oauth"));
+    const hasVisibleSubscriptionCredential = !isAnthropicSubscriptionLoggedOut()
+      && (primary.has(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)
+        || ANTHROPIC_SUBSCRIPTION_PROVIDER_ID in supplementalCredentials);
+    const hasVisibleAnthropicFallback = !isAnthropicRawProviderLoggedOut()
+      && hasTargetFallbackAuth(ANTHROPIC_PROVIDER_ID);
+
+    if (!isAnthropicSubscriptionLoggedOut()) {
+      /*
+      FNXC:ProviderAuth 2026-06-30-12:23:
+      Logging out of the raw Anthropic API-key provider must suppress only the raw/legacy `anthropic` storage slot.
+      Model-runtime reads for `anthropic` still need to see an independently logged-in `anthropic-subscription` credential from the separated subscription card.
+
+      FNXC:ProviderAuth 2026-06-30-12:47:
+      Anthropic's subscription alias is an extra runtime credential source, not a replacement for AuthStorage's existing fallback-resolver contract.
+      Keep custom fallback auth visible after explicit raw/subscription credentials are checked so ModelRegistry provider request configs still work for `anthropic` like every other provider.
+      */
+      return hasVisibleRawAnthropicApiKey
+        || hasVisibleLegacyAnthropicOAuth
+        || hasVisibleSubscriptionCredential
+        || hasVisibleAnthropicFallback;
+    }
+
+    /*
+    FNXC:ProviderAuth 2026-06-30-12:05:
+    Logging out of the Anthropic subscription must suppress legacy `anthropic` OAuth aliases from status/list reads as well as model-runtime resolution.
+    Keep raw API-key credentials and models.json fallback visible so the separate API-key card is not hidden by subscription logout.
+    */
+    return hasVisibleRawAnthropicApiKey || hasVisibleAnthropicFallback;
+  };
+
+  const resolveRefreshableCredentialApiKey = async (
+    storageProvider: string,
+    credential: StoredCredential | undefined,
+  ): Promise<string | undefined> => {
+    if (!credential) {
+      return undefined;
+    }
+    const refreshWasNeeded = shouldRefreshOAuthCredential(credential);
+    const refreshedCredential = await refreshProviderOAuthCredential(storageProvider, credential);
+    if (refreshedCredential?.type === "oauth" && refreshedCredential.access) {
+      if (refreshWasNeeded) {
+        /*
+        FNXC:ClaudeOAuth 2026-06-13-22:46:
+        A manual re-login or replacement credential must win over an older in-flight refresh response.
+        Re-check the credential identity before persisting so a delayed refresh cannot restore stale OAuth material after the user already fixed auth.
+        */
+        const latestCredential = selectStoredCredential(storageProvider);
+        if (!isSameOAuthCredentialIdentity(latestCredential, credential)) {
+          return resolveStoredCredentialApiKey(storageProvider, latestCredential);
+        }
+      }
+      primary.set(storageProvider, refreshedCredential as AuthCredential);
+      loggedOutProviders.delete(storageProvider);
+      return resolveStoredCredentialApiKey(storageProvider, refreshedCredential);
+    }
+
+    return resolveStoredCredentialApiKey(storageProvider, credential);
+  };
+
+  const resolveAnthropicRuntimeApiKey = async (): Promise<string | undefined> => {
+    const rawProviderLoggedOut = isAnthropicRawProviderLoggedOut();
+    if (!rawProviderLoggedOut) {
+      const anthropicApiKeyCredential = selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "api_key");
+      if (anthropicApiKeyCredential) {
+        return resolveStoredCredentialApiKey(ANTHROPIC_PROVIDER_ID, anthropicApiKeyCredential);
+      }
+    }
+
+    const subscriptionLoggedOut = loggedOutProviders.has(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+    const legacyAnthropicOAuthCredential = rawProviderLoggedOut
+      ? undefined
+      : selectStoredCredentialByType(ANTHROPIC_PROVIDER_ID, "oauth");
+    if (!subscriptionLoggedOut && legacyAnthropicOAuthCredential) {
+      const legacyKey = await resolveRefreshableCredentialApiKey(ANTHROPIC_PROVIDER_ID, legacyAnthropicOAuthCredential);
+      if (legacyKey) return legacyKey;
+    }
+
+    if (!subscriptionLoggedOut) {
+      const subscriptionCredential = selectStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+      if (subscriptionCredential?.type === "oauth") {
+        /*
+        FNXC:ProviderAuth 2026-06-30-11:26:
+        Anthropic model execution still requests provider `anthropic`, but the separated subscription login now stores OAuth material under `anthropic-subscription` so the API-key card can remain raw-key-only.
+        Resolve and refresh the subscription credential with the upstream Anthropic OAuth provider id while persisting rotated tokens back to `anthropic-subscription`.
+        */
+        const subscriptionKey = await resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential);
+        if (subscriptionKey) return subscriptionKey;
+      }
+    }
+
+    if (!rawProviderLoggedOut) {
+      /*
+      FNXC:ProviderAuth 2026-06-30-13:28:
+      Logging out of the raw Anthropic provider must suppress raw-key sources consistently across status and runtime resolution.
+      Treat models.json Anthropic keys and ModelRegistry fallback resolver keys as raw-key fallback material, while subscription OAuth remains governed by the separate `anthropic-subscription` logout state above.
+      */
+      const modelsJsonApiKey = modelsJsonApiKeys.get(ANTHROPIC_PROVIDER_ID);
+      if (modelsJsonApiKey) return modelsJsonApiKey;
+      return resolveTargetFallbackApiKey(ANTHROPIC_PROVIDER_ID);
+    }
+
+    return undefined;
   };
 
   syncSupplementalOauthCredentials();
@@ -398,6 +551,12 @@ export function createFusionAuthStorage(): AuthStorage {
         return (provider: string) => {
           target.logout(provider);
           loggedOutProviders.add(provider);
+          if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
+            const legacyAnthropicCredential = target.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
+            if (legacyAnthropicCredential?.type === "oauth") {
+              target.logout(ANTHROPIC_PROVIDER_ID);
+            }
+          }
         };
       }
 
@@ -405,6 +564,12 @@ export function createFusionAuthStorage(): AuthStorage {
         return (provider: string) => {
           target.remove(provider);
           loggedOutProviders.add(provider);
+          if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
+            const legacyAnthropicCredential = target.get(ANTHROPIC_PROVIDER_ID) as StoredCredential | undefined;
+            if (legacyAnthropicCredential?.type === "oauth") {
+              target.remove(ANTHROPIC_PROVIDER_ID);
+            }
+          }
         };
       }
 
@@ -426,19 +591,14 @@ export function createFusionAuthStorage(): AuthStorage {
       }
 
       if (prop === "get") {
-        return (provider: string) => {
-          if (loggedOutProviders.has(provider)) {
-            return undefined;
-          }
-          return choosePreferredStoredCredential(
-            target.get(provider) as StoredCredential | undefined,
-            supplementalCredentials[provider],
-          );
-        };
+        return (provider: string) => selectVisibleStoredCredential(provider);
       }
 
       if (prop === "has") {
         return (provider: string) => {
+          if (provider === ANTHROPIC_PROVIDER_ID) {
+            return hasVisibleAnthropicCredential();
+          }
           if (loggedOutProviders.has(provider)) {
             return false;
           }
@@ -448,6 +608,9 @@ export function createFusionAuthStorage(): AuthStorage {
 
       if (prop === "hasAuth") {
         return (provider: string) => {
+          if (provider === ANTHROPIC_PROVIDER_ID) {
+            return hasVisibleAnthropicCredential();
+          }
           if (loggedOutProviders.has(provider)) {
             return false;
           }
@@ -465,13 +628,7 @@ export function createFusionAuthStorage(): AuthStorage {
           ]);
           const merged: Record<string, StoredCredential> = {};
           for (const providerId of providerIds) {
-            if (loggedOutProviders.has(providerId)) {
-              continue;
-            }
-            const credential = choosePreferredStoredCredential(
-              (target.get(providerId) as StoredCredential | undefined),
-              supplementalCredentials[providerId],
-            );
+            const credential = selectVisibleStoredCredential(providerId);
             if (credential) {
               merged[providerId] = credential;
             }
@@ -493,14 +650,39 @@ export function createFusionAuthStorage(): AuthStorage {
               providers.add(p);
             }
           }
-          return Array.from(providers).filter((p) => !loggedOutProviders.has(p));
+          if (
+            !loggedOutProviders.has(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID)
+            && (providers.has(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) || supplementalCredentials[ANTHROPIC_SUBSCRIPTION_PROVIDER_ID])
+          ) {
+            providers.add(ANTHROPIC_PROVIDER_ID);
+          }
+          return Array.from(providers).filter((p) => {
+            if (p === ANTHROPIC_PROVIDER_ID) {
+              return hasVisibleAnthropicCredential();
+            }
+            if (loggedOutProviders.has(p)) {
+              return false;
+            }
+            return true;
+          });
         };
       }
 
       if (prop === "getApiKey") {
         return async (provider: string) => {
+          if (provider === ANTHROPIC_PROVIDER_ID) {
+            return resolveAnthropicRuntimeApiKey();
+          }
+
           if (loggedOutProviders.has(provider)) {
             return undefined;
+          }
+
+          if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) {
+            const subscriptionCredential = selectStoredCredential(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+            return subscriptionCredential?.type === "oauth"
+              ? resolveRefreshableCredentialApiKey(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID, subscriptionCredential)
+              : undefined;
           }
 
           // 1. Primary Fusion auth
@@ -508,31 +690,9 @@ export function createFusionAuthStorage(): AuthStorage {
           if (primaryKey) return primaryKey;
 
           // 2. Supplemental auth.json credentials (.pi + .codex)
-          const refreshCandidate = choosePreferredStoredCredential(
-            target.get(provider) as StoredCredential | undefined,
-            supplementalCredentials[provider],
-          ) ?? {};
-          const refreshWasNeeded = shouldRefreshOAuthCredential(refreshCandidate);
-          const refreshedCredential = await refreshProviderOAuthCredential(provider, refreshCandidate);
-          if (refreshedCredential?.type === "oauth" && refreshedCredential.access) {
-            if (refreshWasNeeded) {
-              /*
-              FNXC:ClaudeOAuth 2026-06-13-22:46:
-              A manual re-login or replacement credential must win over an older in-flight refresh response.
-              Re-check the credential identity before persisting so a delayed refresh cannot restore stale OAuth material after the user already fixed auth.
-              */
-              const latestCredential = choosePreferredStoredCredential(
-                target.get(provider) as StoredCredential | undefined,
-                supplementalCredentials[provider],
-              );
-              if (!isSameOAuthCredentialIdentity(latestCredential, refreshCandidate)) {
-                return resolveStoredCredentialApiKey(provider, latestCredential);
-              }
-            }
-            target.set(provider, refreshedCredential as AuthCredential);
-            loggedOutProviders.delete(provider);
-            return resolveStoredCredentialApiKey(provider, refreshedCredential);
-          }
+          const refreshCandidate = selectStoredCredential(provider);
+          const refreshedKey = await resolveRefreshableCredentialApiKey(provider, refreshCandidate);
+          if (refreshedKey) return refreshedKey;
 
           const supplementalKey = resolveStoredCredentialApiKey(provider, supplementalCredentials[provider]);
           if (supplementalKey) return supplementalKey;

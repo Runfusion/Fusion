@@ -199,7 +199,10 @@ Enable state reuses the per-task `enabledWorkflowSteps` facet keyed by the group
 Single pass only: no iteration, no rework budget. Rework edges are forbidden inside the template so the single-pass guarantee is unambiguous (validated in `validateOptionalGroup`).
 
 FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:15:
-Optional-group remediation still runs the template once per graph pass, but workflow authors can now set a per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against the shared task `postReviewFixCount`, `"unbounded"` removes the ceiling, and absence preserves the effective global `maxPostReviewFixes` behavior.
+Optional-group remediation still runs the template once per graph pass, but workflow authors can set a per-step `maxRevisions` override for the PRE-merge fix→re-review cycle. A non-negative integer caps that optional step against its own review-attempt partition, `"unbounded"` removes the ceiling, and absence preserves the effective global `maxPostReviewFixes` behavior for generic optional gates.
+
+FNXC:WorkflowRevisionBudget 2026-06-30-20:34:
+Built-in Plan Review/spec and Code Review groups have workflow-value overrides (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) that resolve before this node config; when those workflow values are unset, those two built-in review paths default to unbounded remediation.
 */
 /** Config for an `optional-group` container node. `defaultOn` seeds the per-task
  *  enable set at creation; the `template` is the subgraph run once when enabled.
@@ -210,10 +213,12 @@ export interface WorkflowOptionalGroupConfig {
   /** Display name for the group (editor + per-task toggle surfaces). */
   name?: string;
   /**
-   * Per-step override for the global `maxPostReviewFixes` budget used by this
-   * optional step's PRE-merge fix→re-review cycle. A non-negative integer caps
-   * revisions for this step; `"unbounded"` keeps cycling until the step returns
-   * APPROVE/APPROVE_WITH_NOTES; absence falls back to effective settings.
+   * Per-step override for the optional step's PRE-merge fix→re-review cycle. A
+   * non-negative integer caps revisions for this step; `"unbounded"` keeps cycling
+   * until the step returns APPROVE/APPROVE_WITH_NOTES. Plan Review and Code Review
+   * workflow-setting values override this field; absence falls back to the
+   * gate-specific runtime default (unbounded for those built-in reviews, global
+   * fallback for generic optional gates).
    */
   maxRevisions?: number | "unbounded";
   /*

@@ -11,6 +11,7 @@ import { LoadingSpinner } from "./LoadingSpinner";
 import { Sparkles, ChevronUp, ChevronDown, Maximize2, Minimize2, Paperclip, Flag, Zap, Brain, Server } from "lucide-react";
 import { REPO_OVERRIDE_RE, resolveEffectiveGithubRepoDefault } from "./githubTracking";
 import { ProviderIcon } from "./ProviderIcon";
+import { WorkflowIcon } from "./WorkflowIcon";
 
 function getNodeStatusLabel(status: NodeInfo["status"], t: (key: string, defaultValue: string) => string): string {
   if (status === "online") return t("taskForm.nodeStatusOnline", "Online");
@@ -50,6 +51,9 @@ export interface PendingImage {
 
 type TaskExecutionModeSelection = "standard" | "fast";
 export type BranchSelectionMode = "project-default" | "auto-new" | "existing" | "custom-new" | "shared-group";
+export interface EnabledWorkflowStepsChangeMeta {
+  optionalStepsAvailable: boolean;
+}
 
 const PRESET_OPTION_SEPARATOR = "──────────";
 
@@ -106,7 +110,7 @@ export interface TaskFormProps {
   // from the selected workflow's `defaultOn` and lifts the enabled set to the
   // parent (which puts it in the create payload). Only active in create mode.
   enabledWorkflowSteps?: string[];
-  onEnabledWorkflowStepsChange?: (ids: string[]) => void;
+  onEnabledWorkflowStepsChange?: (ids: string[], meta?: EnabledWorkflowStepsChangeMeta) => void;
 
   // Attachments
   pendingImages: PendingImage[];
@@ -250,6 +254,11 @@ export function TaskForm({
     (githubRepoOverride || "") !== "";
 
   const [showDepDropdown, setShowDepDropdown] = useState(false);
+  const [showWorkflowDropdown, setShowWorkflowDropdown] = useState(false);
+  const executionModeRef = useRef(executionMode);
+  useEffect(() => {
+    executionModeRef.current = executionMode;
+  }, [executionMode]);
   const [showMoreOptions, setShowMoreOptions] = useState(
     autoExpandMoreOptionsOnSelection ? hasInitialMoreOptions : false,
   );
@@ -278,6 +287,7 @@ export function TaskForm({
   const refineMenuRef = useRef<HTMLDivElement>(null);
 
   const depDropdownRef = useRef<HTMLDivElement>(null);
+  const workflowDropdownRef = useRef<HTMLDivElement>(null);
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -339,7 +349,7 @@ export function TaskForm({
       // Clear any in-flight loading state (a prior fetch may have been cancelled
       // mid-flight when switching to "No workflow"), so the loading row never sticks.
       setOptionalStepsLoading(false);
-      onEnabledWorkflowStepsChange?.([]);
+      onEnabledWorkflowStepsChange?.([], { optionalStepsAvailable: false });
       return;
     }
     setOptionalStepsLoading(true);
@@ -347,13 +357,19 @@ export function TaskForm({
       .then((steps) => {
         if (cancelled) return;
         setOptionalSteps(steps);
-        // Re-seed the enabled set from each step's defaultOn on every workflow change.
-        onEnabledWorkflowStepsChange?.(steps.filter((s) => s.defaultOn).map((s) => s.templateId));
+        /*
+        FNXC:FastOptionalSteps 2026-06-30-10:25:
+        Optional-step fetches race user mode changes. When the latest mode is Fast, seed an explicit empty set after loading instead of defaultOn ids so async workflow metadata cannot re-enable optional gates the operator has not manually reselected.
+        */
+        const seededSteps = executionModeRef.current === "fast"
+          ? []
+          : steps.filter((s) => s.defaultOn).map((s) => s.templateId);
+        onEnabledWorkflowStepsChange?.(seededSteps, { optionalStepsAvailable: steps.length > 0 });
       })
       .catch(() => {
         if (cancelled) return;
         setOptionalSteps([]);
-        onEnabledWorkflowStepsChange?.([]);
+        onEnabledWorkflowStepsChange?.([], { optionalStepsAvailable: false });
       })
       .finally(() => {
         if (!cancelled) setOptionalStepsLoading(false);
@@ -367,15 +383,26 @@ export function TaskForm({
   }, [onWorkflowIdChange, effectiveOptionalWorkflowId, projectId]);
 
   const enabledOptionalStepIds = enabledWorkflowSteps ?? [];
+  /*
+  FNXC:FastOptionalSteps 2026-06-30-09:08:
+  Full-dialog Fast controls share one transition contract: entering fast mode clears currently enabled optional workflow steps exactly once, while the inline dropdown remains active so manual reselection is persisted as explicit create intent.
+  */
+  const handleExecutionModeChange = useCallback((nextMode: TaskExecutionModeSelection) => {
+    onExecutionModeChange?.(nextMode);
+    if (nextMode === "fast") {
+      onEnabledWorkflowStepsChange?.([], { optionalStepsAvailable: optionalSteps.length > 0 });
+    }
+  }, [onEnabledWorkflowStepsChange, onExecutionModeChange, optionalSteps.length]);
+
   const toggleOptionalStep = useCallback(
     (templateId: string) => {
       const current = enabledWorkflowSteps ?? [];
       const next = current.includes(templateId)
         ? current.filter((id) => id !== templateId)
         : [...current, templateId];
-      onEnabledWorkflowStepsChange?.(next);
+      onEnabledWorkflowStepsChange?.(next, { optionalStepsAvailable: optionalSteps.length > 0 });
     },
-    [enabledWorkflowSteps, onEnabledWorkflowStepsChange],
+    [enabledWorkflowSteps, onEnabledWorkflowStepsChange, optionalSteps.length],
   );
 
   const availablePresets = settings?.modelPresets || [];
@@ -463,6 +490,7 @@ export function TaskForm({
     if (moreOptionsOpen) return;
     setShowDepDropdown(false);
     setDepSearch("");
+    setShowWorkflowDropdown(false);
   }, [moreOptionsOpen]);
 
   // Auto-select title input text in edit mode (focus is handled by autoFocus)
@@ -485,6 +513,17 @@ export function TaskForm({
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showDepDropdown]);
+
+  useEffect(() => {
+    if (!showWorkflowDropdown) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (workflowDropdownRef.current && !workflowDropdownRef.current.contains(e.target as Node)) {
+        setShowWorkflowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showWorkflowDropdown]);
 
   // Exit description fullscreen mode when edit controls are unavailable
   useEffect(() => {
@@ -711,12 +750,31 @@ export function TaskForm({
 
   // U6/R3: the project default workflow id (preselected + "(default)" badged).
   const defaultWorkflowId = settings?.defaultWorkflowId ?? null;
+  const inheritedWorkflowId = defaultWorkflowId ?? (settings ? "builtin:coding" : null);
+  const defaultWorkflow = defaultWorkflowId ? workflows.find((workflow) => workflow.id === defaultWorkflowId) : undefined;
   const selectedWorkflow = selectedWorkflowId === null
     ? null
-    : workflows.find((workflow) => workflow.id === (selectedWorkflowId ?? defaultWorkflowId));
+    : workflows.find((workflow) => workflow.id === (selectedWorkflowId ?? inheritedWorkflowId));
+  const selectedWorkflowValue = selectedWorkflowId === null
+    ? "__none__"
+    : selectedWorkflowId === undefined
+      ? (inheritedWorkflowId ?? "")
+      : selectedWorkflowId;
+  const workflowNameCounts = workflows.reduce((counts, workflow) => {
+    counts.set(workflow.name, (counts.get(workflow.name) ?? 0) + 1);
+    return counts;
+  }, new Map<string, number>());
+  const workflowOptionLabel = (workflow: WorkflowDefinition) => {
+    const duplicateName = (workflowNameCounts.get(workflow.name) ?? 0) > 1;
+    return duplicateName ? `${workflow.name} (${workflow.id})` : workflow.name;
+  };
   const workflowInlineLabel = selectedWorkflowId === null
     ? t("taskForm.workflowNone", "No workflow")
-    : selectedWorkflow?.name ?? t("taskForm.workflowInlineDefault", "Normal");
+    : selectedWorkflow ? workflowOptionLabel(selectedWorkflow) : t("taskForm.workflowInlineDefault", "Normal");
+  const orderedWorkflowOptions = [
+    ...(defaultWorkflow ? [defaultWorkflow] : []),
+    ...workflows.filter((workflow) => workflow.id !== defaultWorkflowId),
+  ];
   const selectedNode = (nodeOptions ?? []).find((node) => node.id === nodeId);
   const nodeInlineLabel = selectedNode?.name ?? t("taskForm.nodeInlineDefault", "Node");
   const modelInlineLabel = selectedPreset?.name ?? (presetMode === "custom" ? t("taskForm.modelsCustom", "Models") : t("taskForm.modelsDefault", "Models"));
@@ -956,7 +1014,7 @@ export function TaskForm({
             <button
               type="button"
               className={`btn btn-sm ${executionMode === "fast" ? "btn-primary" : ""}`}
-              onClick={() => onExecutionModeChange(executionMode === "fast" ? "standard" : "fast")}
+              onClick={() => handleExecutionModeChange(executionMode === "fast" ? "standard" : "fast")}
               aria-pressed={executionMode === "fast"}
               disabled={disabled}
               data-testid="task-form-inline-fast"
@@ -990,13 +1048,19 @@ export function TaskForm({
             <button
               type="button"
               className="btn btn-sm"
-              onClick={() => revealAdvancedControl("#task-workflow-select, [data-testid='task-workflow-cta']")}
+              onClick={() => {
+                revealAdvancedControl("#task-workflow-dropdown-trigger, [data-testid='task-workflow-cta']");
+                window.setTimeout(() => setShowWorkflowDropdown(true), 0);
+              }}
               disabled={disabled}
               data-testid="task-form-inline-workflow"
               aria-label={t("taskForm.workflowInlineAria", "Choose workflow: {{workflow}}", { workflow: workflowInlineLabel })}
               title={t("taskForm.workflowLabel", "Workflow")}
             >
-              {workflowInlineLabel}
+              {selectedWorkflow ? (
+                <WorkflowIcon workflowId={selectedWorkflow.id} icon={selectedWorkflow.icon} className="task-workflow-trigger-icon" decorative />
+              ) : null}
+              <span className="task-form-inline-workflow-label">{workflowInlineLabel}</span>
             </button>
           )}
 
@@ -1368,7 +1432,7 @@ export function TaskForm({
               id="task-execution-mode"
               data-testid="task-form-execution-mode-select"
               value={executionMode}
-              onChange={(e) => onExecutionModeChange(e.target.value as TaskExecutionModeSelection)}
+              onChange={(e) => handleExecutionModeChange(e.target.value as TaskExecutionModeSelection)}
               disabled={disabled}
             >
               <option value="standard">{t("taskForm.executionModeStandard", "Standard")}</option>
@@ -1558,7 +1622,7 @@ export function TaskForm({
           selection is materialized atomically server-side via `workflowId`. */}
       {onWorkflowIdChange && (
         <div className="form-group" data-testid="workflow-steps-section">
-          <label htmlFor="task-workflow-select">{t("taskForm.workflowLabel", "Workflow")}</label>
+          <label htmlFor="task-workflow-dropdown-trigger">{t("taskForm.workflowLabel", "Workflow")}</label>
           {workflowsLoading ? (
             <div className="workflow-select-loading" data-testid="task-workflow-loading">
               <LoadingSpinner label={t("taskForm.workflowsLoading", "Loading workflows…")} />
@@ -1571,40 +1635,90 @@ export function TaskForm({
               {t("taskForm.workflowsCta", "Set up workflows in the editor")}
             </div>
           ) : (
-            <select
-              id="task-workflow-select"
-              data-testid="task-workflow-select"
-              value={
-                selectedWorkflowId === null
-                  ? "__none__"
-                  : selectedWorkflowId === undefined
-                    // Inherit project default: show the default option preselected,
-                    // or "No workflow" when no project default is configured.
-                    ? (defaultWorkflowId ?? "__none__")
-                    : selectedWorkflowId
-              }
-              disabled={disabled}
-              onChange={(e) => {
-                const next = e.target.value;
-                onWorkflowIdChange(next === "__none__" ? null : next);
-              }}
-            >
-              {/* "No workflow" listed FIRST (maps to null → explicit opt-out). */}
-              <option value="__none__">{t("taskForm.workflowNone", "No workflow")}</option>
-              {/* Project default preselected + badged when configured. */}
-              {defaultWorkflowId && workflows.some((w) => w.id === defaultWorkflowId) && (
-                <option value={defaultWorkflowId}>
-                  {`${workflows.find((w) => w.id === defaultWorkflowId)?.name ?? defaultWorkflowId} ${t("taskForm.workflowDefaultBadge", "(default)")}`}
-                </option>
+            <div className="task-workflow-dropdown-wrap" ref={workflowDropdownRef}>
+              {/*
+              FNXC:NewTaskWorkflowDropdown 2026-06-30-18:31:
+              Native selects cannot render the shared workflow identity icons. The create-time workflow selector uses a styled button/listbox while keeping the atomic `workflowId` contract: `__none__` becomes null, undefined still displays inherited default state, and real workflow ids are passed through unchanged.
+              */}
+              <button
+                id="task-workflow-dropdown-trigger"
+                type="button"
+                className="btn dep-trigger task-workflow-dropdown-trigger"
+                data-testid="task-workflow-dropdown-trigger"
+                aria-haspopup="listbox"
+                aria-expanded={showWorkflowDropdown}
+                aria-label={t("taskForm.workflowInlineAria", "Choose workflow: {{workflow}}", { workflow: workflowInlineLabel })}
+                disabled={disabled}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setShowWorkflowDropdown((open) => !open)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setShowWorkflowDropdown(false);
+                  }
+                }}
+              >
+                {selectedWorkflow ? (
+                  <WorkflowIcon workflowId={selectedWorkflow.id} icon={selectedWorkflow.icon} className="task-workflow-trigger-icon" decorative />
+                ) : null}
+                <span className="task-workflow-trigger-label">{workflowInlineLabel}</span>
+                {selectedWorkflowId === undefined && defaultWorkflow ? (
+                  <span className="task-workflow-default-badge">{t("taskForm.workflowDefaultBadge", "(default)")}</span>
+                ) : null}
+                <ChevronDown size={12} aria-hidden="true" />
+              </button>
+              {showWorkflowDropdown && (
+                <div className="dep-dropdown task-workflow-dropdown-menu" role="listbox" data-testid="task-workflow-dropdown-menu">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selectedWorkflowValue === "__none__"}
+                    className={`dep-dropdown-item task-workflow-dropdown-option${selectedWorkflowValue === "__none__" ? " selected" : ""}`}
+                    data-testid="task-workflow-option-none"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onWorkflowIdChange(null);
+                      setShowWorkflowDropdown(false);
+                    }}
+                  >
+                    <span className="task-workflow-option-copy">
+                      <span className="dep-dropdown-title task-workflow-option-name">{t("taskForm.workflowNone", "No workflow")}</span>
+                    </span>
+                  </button>
+                  {orderedWorkflowOptions.map((workflow) => {
+                    const optionLabel = workflowOptionLabel(workflow);
+                    const isSelected = selectedWorkflowValue === workflow.id;
+                    return (
+                      <button
+                        key={workflow.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        aria-label={workflow.id === defaultWorkflowId ? `${optionLabel} ${t("taskForm.workflowDefaultBadge", "(default)")}` : optionLabel}
+                        className={`dep-dropdown-item task-workflow-dropdown-option${isSelected ? " selected" : ""}`}
+                        data-testid={`task-workflow-option-${workflow.id}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          onWorkflowIdChange(workflow.id);
+                          setShowWorkflowDropdown(false);
+                        }}
+                      >
+                        <WorkflowIcon workflowId={workflow.id} icon={workflow.icon} className="task-workflow-option-icon" decorative />
+                        <span className="task-workflow-option-copy">
+                          <span className="dep-dropdown-title task-workflow-option-name">{workflow.name}</span>
+                          {(workflowNameCounts.get(workflow.name) ?? 0) > 1 ? (
+                            <span className="dep-dropdown-subtitle task-workflow-option-id">{workflow.id}</span>
+                          ) : null}
+                        </span>
+                        {workflow.id === defaultWorkflowId ? (
+                          <span className="task-workflow-default-badge">{t("taskForm.workflowDefaultBadge", "(default)")}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
-              {workflows
-                .filter((w) => w.id !== defaultWorkflowId)
-                .map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-            </select>
+            </div>
           )}
           <small className="workflow-select-help" data-testid="task-workflow-help">
             {t("taskForm.workflowHelp", "The selected workflow's steps run automatically around this task's execution.")}

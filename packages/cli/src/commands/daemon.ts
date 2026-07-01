@@ -25,7 +25,7 @@ import {
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
-import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv, registerGithubTrackingHook } from "@fusion/dashboard";
+import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
 import {
   ProjectEngineManager,
   PeerExchangeService,
@@ -76,6 +76,7 @@ import { getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-pa
 import { resolveProject } from "../project-context.js";
 import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
+import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
 
 const DIAGNOSTIC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -674,6 +675,18 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
     modelRegistry.refresh();
+
+    try {
+      const globalSettings = await store.getGlobalSettingsStore().getSettings();
+      registerCustomProviders(
+        modelRegistry,
+        globalSettings.customProviders,
+        (message) => console.log(`[custom-providers] ${message}`),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[custom-providers] Failed to load custom providers from global settings: ${message}`);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.log(`[extensions] Failed to discover extensions: ${message}`);
@@ -686,6 +699,21 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     authStorage: dashboardAuthStorage,
     modelRegistry,
     log: (scope, message) => console.log(`[${scope}] ${message}`),
+  });
+
+  store.on("settings:updated", ({ settings, previous }) => {
+    const currentProviders = settings.customProviders;
+    const previousProviders = previous.customProviders;
+    if (JSON.stringify(currentProviders ?? []) === JSON.stringify(previousProviders ?? [])) {
+      return;
+    }
+
+    reregisterCustomProviders(
+      modelRegistry,
+      previousProviders,
+      currentProviders,
+      (message) => console.log(`[custom-providers] ${message}`),
+    );
   });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────
@@ -809,6 +837,15 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   });
 
   const actualPort = (server.address() as AddressInfo).port;
+
+  /*
+  FNXC:CustomProviders 2026-06-30-00:00:
+  Daemon startup must not wait on custom-provider model probes because offline provider endpoints can take one timeout each. Start the refresh after listen and let settings:updated reconcile the model registry when persisted models change.
+  */
+  void refreshAllCustomProviderModels(store, (message) => console.log(`[custom-providers] ${message}`)).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[custom-providers] Failed to refresh custom provider models from global settings: ${message}`);
+  });
 
   // ── CentralCore: node registration ────────────────────────────────────
   let centralCore: CentralCore | null = sharedCentralCore;

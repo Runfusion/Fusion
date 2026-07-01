@@ -1,9 +1,9 @@
 import "./TaskCard.css";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { memo, useCallback, useState, useRef, useEffect, useMemo, type ReactElement } from "react";
+import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight } from "lucide-react";
-import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult } from "@fusion/core";
 import {
   DEFAULT_TASK_PRIORITY,
   HIGH_FANOUT_BLOCKER_TODO_THRESHOLD,
@@ -12,7 +12,7 @@ import {
   getErrorMessage,
 } from "@fusion/core";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
-import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, type WorkflowFieldDefinition } from "../api";
+import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, rebuildTaskSpec, refreshPrStatus, type WorkflowFieldDefinition } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { PrCreateModal } from "./PrCreateModal";
 import { ProviderIcon } from "./ProviderIcon";
@@ -38,6 +38,8 @@ import { MAX_AUTO_MERGE_RETRIES, type BlockerFanoutEntry } from "../hooks/useBlo
 import { useRetryWarning } from "../context/RetryWarningContext";
 import { useColumnLabel } from "../i18n/labels";
 import { WorkspaceWorktreesSummary, isWorkspaceTask } from "./WorkspaceWorktreesSummary";
+import { WorkflowIcon } from "./WorkflowIcon";
+import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel, type TaskContextMenuColumnFlags, type TaskContextMenuColumnMetadata, type TaskMenuActionDescriptor } from "./TaskContextMenu";
 
 /** Per-branch progress snapshot (U13). Surfaced as an optional additive field
  *  on the task payload for the parallel-window badge (U9). */
@@ -389,14 +391,23 @@ interface TaskCardProps {
     removeLineageReferences?: boolean;
     githubIssueAction?: GithubIssueAction;
   }) => Promise<Task>;
+  onPauseTask?: (id: string) => Promise<Task>;
   onRetryTask?: (id: string) => Promise<Task>;
+  onUnpauseTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string) => Promise<Task>;
+  onDuplicateTask?: (id: string) => Promise<Task>;
+  onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetailWithTab?: (task: Task | TaskDetail, initialTab: "changes" | "retries" | "workflow") => void;
   /** Project-level stuck task timeout in milliseconds (undefined = disabled) */
   taskStuckTimeoutMs?: number;
   /** Called when user clicks the mission badge on a task card. */
   onOpenMission?: (missionId: string) => void;
   /** Called when user moves a task to a different column from the card. */
-  onMoveTask?: (id: string, column: Column, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onMoveTask?: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  /** Workflow-column flags for this task's current column, used for detail-equivalent card action availability. */
+  taskColumnFlags?: TaskContextMenuColumnFlags;
+  /** Ordered workflow columns that define card move targets in workflow-column mode. */
+  taskMoveColumns?: readonly TaskContextMenuColumnMetadata[];
   /** Called when user promotes a held task out of a hold column. */
   onPromote?: (taskId: string) => Promise<void>;
   /** True while this task's promote action is in flight. */
@@ -411,11 +422,13 @@ interface TaskCardProps {
   prAuthAvailable?: boolean;
   /** Project default auto-merge setting; per-task overrides are applied via resolveEffectiveAutoMerge. */
   autoMergeEnabled?: boolean;
+  /** Project merge strategy so manual PR tasks match Task Detail before a PR exists. */
+  mergeStrategy?: string;
   /** Card-placed custom field definitions for this task's workflow (U13/KTD-14).
    *  Empty/undefined → no field badges render (card byte-identical to today). */
   cardFieldDefs?: WorkflowFieldDefinition[];
   /** Board aggregate-view workflow metadata. Absent outside trusted board callers so empty workflow badges never render. */
-  workflowBadge?: { workflowId: string; workflowName: string };
+  workflowBadge?: { workflowId: string; workflowName: string; workflowIcon?: string };
   /** Unified PR entity node-state for this task's work, surfaced on the card (R12).
    *  When present, the card shows a node-state badge linking to the PR view. The
    *  `failed` state renders a DISTINCT error badge (not the open-PR badge). */
@@ -572,6 +585,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.taskStuckTimeoutMs === next.taskStuckTimeoutMs &&
     previous.prAuthAvailable === next.prAuthAvailable &&
     previous.autoMergeEnabled === next.autoMergeEnabled &&
+    previous.mergeStrategy === next.mergeStrategy &&
     previous.onOpenPullRequest === next.onOpenPullRequest &&
     previous.prNode?.id === next.prNode?.id &&
     previous.prNode?.state === next.prNode?.state &&
@@ -580,6 +594,9 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.nearDuplicateCanonicalInactive === next.nearDuplicateCanonicalInactive &&
     previous.workflowBadge?.workflowId === next.workflowBadge?.workflowId &&
     previous.workflowBadge?.workflowName === next.workflowBadge?.workflowName &&
+    previous.workflowBadge?.workflowIcon === next.workflowBadge?.workflowIcon &&
+    previous.taskColumnFlags === next.taskColumnFlags &&
+    previous.taskMoveColumns === next.taskMoveColumns &&
     previous.cardFieldDefs === next.cardFieldDefs &&
     (previous.cardFieldDefs == null && next.cardFieldDefs == null
       ? true
@@ -591,7 +608,12 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onArchiveTask === next.onArchiveTask &&
     previous.onUnarchiveTask === next.onUnarchiveTask &&
     previous.onDeleteTask === next.onDeleteTask &&
+    previous.onPauseTask === next.onPauseTask &&
     previous.onRetryTask === next.onRetryTask &&
+    previous.onUnpauseTask === next.onUnpauseTask &&
+    previous.onResetTask === next.onResetTask &&
+    previous.onDuplicateTask === next.onDuplicateTask &&
+    previous.onMergeTask === next.onMergeTask &&
     previous.onOpenDetailWithTab === next.onOpenDetailWithTab &&
     previous.onOpenMission === next.onOpenMission &&
     previous.onMoveTask === next.onMoveTask &&
@@ -702,11 +724,18 @@ function TaskCardComponent({
   onArchiveTask,
   onUnarchiveTask,
   onDeleteTask,
+  onPauseTask,
   onRetryTask,
+  onUnpauseTask,
+  onResetTask,
+  onDuplicateTask,
+  onMergeTask,
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
   onOpenMission,
   onMoveTask,
+  taskColumnFlags,
+  taskMoveColumns,
   onPromote,
   isPromoting = false,
   lastFetchTimeMs,
@@ -714,6 +743,7 @@ function TaskCardComponent({
   fanout,
   prAuthAvailable,
   autoMergeEnabled = false,
+  mergeStrategy = "direct",
   cardFieldDefs,
   workflowBadge,
   prNode,
@@ -735,6 +765,7 @@ function TaskCardComponent({
   const [missionTitle, setMissionTitle] = useState<string | null>(null);
   const [agentName, setAgentName] = useState<string | null>(null);
   const [showSendBackMenu, setShowSendBackMenu] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isPrCreateOpen, setIsPrCreateOpen] = useState(false);
   const [isAddressingPrFeedback, setIsAddressingPrFeedback] = useState(false);
@@ -743,6 +774,7 @@ function TaskCardComponent({
   const descTextareaRef = useRef<HTMLTextAreaElement>(null);
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const sendBackRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
@@ -753,6 +785,9 @@ function TaskCardComponent({
   // Touch gesture detection refs
   const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const hasTouchMovedRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const suppressNextCardClickRef = useRef(false);
 
   const isInteractiveTarget = useCallback((target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) return false;
@@ -860,6 +895,11 @@ function TaskCardComponent({
   }, [isEditing, task.id]);
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+      longPressStartRef.current = null;
+    }
     e.dataTransfer.setData("text/plain", task.id);
     e.dataTransfer.effectAllowed = "move";
     setDragging(true);
@@ -915,6 +955,10 @@ function TaskCardComponent({
       touchOpenHandledRef.current = false;
       return;
     }
+    if (suppressNextCardClickRef.current) {
+      suppressNextCardClickRef.current = false;
+      return;
+    }
     if (isInteractiveTarget(e.target)) return;
     void handleClick();
   }, [handleClick, isInteractiveTarget]);
@@ -939,10 +983,26 @@ function TaskCardComponent({
     // If moved beyond threshold, mark as moved (scrolling/dragging)
     if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
       hasTouchMovedRef.current = true;
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+        longPressStartRef.current = null;
+      }
     }
   }, []);
 
   const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+      longPressStartRef.current = null;
+    }
+    if (contextMenuPosition) {
+      e.preventDefault();
+      touchStartPosRef.current = null;
+      hasTouchMovedRef.current = false;
+      return;
+    }
     if (isInteractiveTarget(e.target)) return;
     
     // Check if this was a valid tap (not a scroll)
@@ -964,7 +1024,7 @@ function TaskCardComponent({
     // Reset touch tracking
     touchStartPosRef.current = null;
     hasTouchMovedRef.current = false;
-  }, [handleClick, isInteractiveTarget]);
+  }, [contextMenuPosition, handleClick, isInteractiveTarget]);
 
   const handleDepClick = useCallback(async (e: React.MouseEvent, depId: string) => {
     e.stopPropagation(); // Prevent card click
@@ -979,6 +1039,14 @@ function TaskCardComponent({
   const isDoneColumn = task.column === "done";
   const visualStatus = isDoneColumn ? "done" : task.status;
   const isFailed = !isDoneColumn && task.status === "failed";
+  const canRetryTask =
+    task.status === "failed" ||
+    task.status === "stuck-killed" ||
+    task.status === "planning" ||
+    task.status === "needs-replan" ||
+    (task.stuckKillCount ?? 0) > 0 ||
+    (task.recoveryRetryCount ?? 0) > 0 ||
+    Boolean(task.nextRecoveryAt);
   const isPaused = !isDoneColumn && (task.paused === true || task.userPaused === true);
   const pausedByAgent = Boolean(!isDoneColumn && task.paused && task.pausedByAgentId);
   const normalizedPriority = normalizeTaskPriorityValue(task.priority);
@@ -1652,6 +1720,376 @@ function TaskCardComponent({
     }
   }, [addToast, confirm, onDeleteTask, t, task.githubTracking?.enabled, task.githubTracking?.issue, task.id, task.issueInfo?.url, task.sourceIssue, task.sourceMetadata]);
 
+  const handleTaskActionArchive = useCallback(() => {
+    handleArchiveClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
+  }, [handleArchiveClick]);
+
+  const handleTaskActionDelete = useCallback(() => {
+    void handleDeleteClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
+  }, [handleDeleteClick]);
+
+  const handleTaskActionUnarchive = useCallback(() => {
+    handleUnarchiveClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
+  }, [handleUnarchiveClick]);
+
+  const handleTaskActionRetry = useCallback(async () => {
+    if (!onRetryTask || isRetrying) return;
+    setIsRetrying(true);
+    try {
+      await onRetryTask(task.id);
+    } catch (err) {
+      addToast(t("tasks.retryFailed", "Failed to retry {{taskId}}: {{error}}", { taskId: task.id, error: getErrorMessage(err) }), "error");
+    } finally {
+      setIsRetrying(false);
+    }
+  }, [addToast, isRetrying, onRetryTask, task.id, t]);
+
+  const handleTaskActionTogglePause = useCallback(async () => {
+    try {
+      if (isPaused) {
+        if (!onUnpauseTask) return;
+        await onUnpauseTask(task.id);
+        addToast(t("taskDetail.pause.unpaused", "Unpaused {{id}}", { id: task.id }), "success");
+      } else {
+        if (!onPauseTask) return;
+        await onPauseTask(task.id);
+        addToast(t("taskDetail.pause.paused", "Paused {{id}}", { id: task.id }), "success");
+      }
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, isPaused, onPauseTask, onUnpauseTask, task.id, t]);
+
+  const handleTaskActionReset = useCallback(() => {
+    if (!onResetTask) return;
+    if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
+    void onResetTask(task.id)
+      .then(() => addToast(t("taskDetail.reset.resetSuccess", "Reset {{id}} — fresh run will be allocated", { id: task.id }), "success"))
+      .catch((err) => addToast(getErrorMessage(err), "error"));
+  }, [addToast, onResetTask, task.id, t]);
+
+  const handleTaskActionDuplicate = useCallback(async () => {
+    if (!onDuplicateTask) return;
+    const shouldDuplicate = await confirm({
+      title: t("taskDetail.duplicate.title", "Duplicate Task"),
+      message: t("taskDetail.duplicate.message", "Duplicate {{id}}? This will create a new task in Triage with the same description and prompt.", { id: task.id }),
+    });
+    if (!shouldDuplicate) return;
+    try {
+      const newTask = await onDuplicateTask(task.id);
+      addToast(t("taskDetail.duplicate.success", "Duplicated {{id}} → {{newId}}", { id: task.id, newId: newTask.id }), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, confirm, onDuplicateTask, task.id, t]);
+
+  const handleTaskActionMerge = useCallback(async () => {
+    if (!onMergeTask) return;
+    const shouldMerge = await confirm({
+      title: t("taskDetail.merge.title", "Merge Task"),
+      message: t("taskDetail.merge.message", "Merge {{id}} into the current branch?", { id: task.id }),
+    });
+    if (!shouldMerge) return;
+    addToast(t("taskDetail.merge.merging", "Merging {{id}}…", { id: task.id }), "info");
+    void onMergeTask(task.id)
+      .then((result) => {
+        const message = result.merged
+          ? t("taskDetail.merge.merged", "Merged {{id}} (branch: {{branch}})", { id: task.id, branch: result.branch })
+          : t("taskDetail.merge.closed", "Closed {{id}} ({{reason}})", { id: task.id, reason: result.error || t("taskDetail.merge.noBranchToMerge", "no branch to merge") });
+        addToast(message, "success");
+      })
+      .catch((err) => addToast(getErrorMessage(err), "error"));
+  }, [addToast, confirm, onMergeTask, task.id, t]);
+
+  const handleTaskActionRespecify = useCallback(async () => {
+    const shouldRebuild = await confirm({
+      title: t("taskDetail.plan.rebuildTitle", "Rebuild Plan"),
+      message: t("taskDetail.plan.rebuildMessage", "Rebuild the plan for this task? The task will move to planning for replanning."),
+    });
+    if (!shouldRebuild) return;
+    try {
+      await rebuildTaskSpec(task.id, projectId);
+      addToast(t("taskDetail.plan.replanning", "Replanning {{id}}…", { id: task.id }), "info");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, confirm, projectId, task.id, t]);
+
+  const handleTaskActionMove = useCallback(async (column: ColumnId) => {
+    if (!onMoveTask) return;
+    try {
+      const hasStepProgress = task.steps.some((step) => step.status !== "pending");
+      const shouldPrompt = (column === "todo" || column === "triage") && hasStepProgress;
+      let moveOptions: { preserveProgress?: boolean } | undefined;
+
+      if (shouldPrompt) {
+        const keepProgress = await confirm({
+          title: t("taskDetail.move.preserveProgressTitle", "Preserve Progress?"),
+          message: t("taskDetail.move.preserveProgressMessage", "This task has completed steps. Keep progress before moving?"),
+          confirmLabel: t("taskDetail.move.keepProgress", "Keep Progress"),
+          cancelLabel: t("taskDetail.move.resetProgress", "Reset Progress"),
+        });
+
+        if (keepProgress) {
+          moveOptions = { preserveProgress: true };
+        } else {
+          const resetProgress = await confirm({
+            title: t("taskDetail.move.resetProgressTitle", "Reset Progress?"),
+            message: t("taskDetail.move.resetProgressMessage", "Reset all step progress before moving this task?"),
+            confirmLabel: t("taskDetail.move.resetProgress", "Reset Progress"),
+            cancelLabel: t("taskDetail.move.cancelMove", "Cancel Move"),
+            danger: true,
+          });
+          if (!resetProgress) return;
+        }
+      }
+
+      await onMoveTask(task.id, column, moveOptions);
+      addToast(t("taskDetail.move.movedTo", "Moved to {{column}}", { column: columnLabel(column) }), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, columnLabel, confirm, onMoveTask, task.id, task.steps, t]);
+
+  const handleTaskActionCheckPrStatus = useCallback(async () => {
+    try {
+      await refreshPrStatus(task.id, projectId);
+      addToast(t("taskDetail.pr.statusRefreshed", "PR status refreshed"), "success");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, projectId, task.id, t]);
+
+  /*
+  FNXC:BoardCardActions 2026-06-29-00:00:
+  Board cards expose the same lifecycle actions as Task Detail from right-click, keyboard context menu, and touch long-press so operators can act without opening detail. Dock/plugin TaskCard users stay unchanged because the menu only mounts when Board/List owners pass action handlers.
+
+  FNXC:BoardCardActions 2026-06-30-00:30:
+  Context-menu moves reuse the Task Detail preserve/reset progress confirmation path before moving back to Todo or Triage, because those transitions can reset completed steps. Refine stays hidden outside Task Detail until card surfaces can open the actual refine modal, while manual PR entries open the existing PR flows instead of silently dropping unavailable actions.
+
+  FNXC:BoardCardActions 2026-06-30-00:42:
+  Board context menus must receive the project merge strategy, not infer pull-request mode from existing PR data, so manual PR projects show Start PR Review before the PR entity is created.
+
+  FNXC:BoardCardActions 2026-06-30-12:42:
+  Workflow-column card menus must use the task's workflow column flags and ordered column list instead of legacy column literals. Custom complete or archived lanes are terminal for Reset/Pause, while custom active lanes still expose neighbor move targets.
+
+  FNXC:BoardCardActions 2026-06-30-13:02:
+  Manual pull-request projects need a distinct Start PR Review callback from direct Merge & Close so context menus open PrCreateModal instead of calling the merge endpoint.
+  */
+  const taskActionColumnLabel = useCallback((column: ColumnId) => {
+    return taskMoveColumns?.find((candidate) => candidate.id === column)?.label ?? columnLabel(column);
+  }, [columnLabel, taskMoveColumns]);
+
+  const taskActionMenuModel = useMemo(() => buildTaskActionMenuModel({
+    task,
+    t,
+    columnLabel: taskActionColumnLabel,
+    currentColumnFlags: taskColumnFlags,
+    workflowMoveColumns: taskMoveColumns,
+    canRetryTask,
+    hasDuplicateHandler: Boolean(onDuplicateTask),
+    hasRetryHandler: Boolean(onRetryTask),
+    hasResetHandler: Boolean(onResetTask),
+    hasAssignedAgent: Boolean(task.assignedAgentId),
+    autoMergeEnabled: effectiveAutoMerge,
+    mergeStrategy,
+    prAutomationLabel: getTaskPrAutomationLabel(t, task.status),
+    onDelete: onDeleteTask ? handleTaskActionDelete : undefined,
+    onDuplicate: onDuplicateTask ? handleTaskActionDuplicate : undefined,
+    onOpenRefine: undefined,
+    onRespecify: handleTaskActionRespecify,
+    onRetry: onRetryTask ? handleTaskActionRetry : undefined,
+    onReset: onResetTask ? handleTaskActionReset : undefined,
+    onTogglePause: (isPaused ? onUnpauseTask : onPauseTask) ? handleTaskActionTogglePause : undefined,
+    onMerge: onMergeTask ? handleTaskActionMerge : undefined,
+    onStartPrReview: () => setIsPrCreateOpen(true),
+    onCheckPrStatus: task.prInfo ? handleTaskActionCheckPrStatus : undefined,
+  }), [
+    task,
+    t,
+    taskActionColumnLabel,
+    taskColumnFlags,
+    taskMoveColumns,
+    canRetryTask,
+    onDuplicateTask,
+    onRetryTask,
+    onResetTask,
+    effectiveAutoMerge,
+    mergeStrategy,
+    handleTaskActionArchive,
+    handleTaskActionCheckPrStatus,
+    handleTaskActionDelete,
+    handleTaskActionDuplicate,
+    handleTaskActionMerge,
+    handleTaskActionReset,
+    handleTaskActionRespecify,
+    handleTaskActionRetry,
+    handleTaskActionTogglePause,
+    handleTaskActionUnarchive,
+    isPaused,
+    onDeleteTask,
+    onMergeTask,
+    onOpenDetail,
+    onPauseTask,
+    onUnpauseTask,
+    task,
+    task.assignedAgentId,
+    task.column,
+    task.prInfo,
+  ]);
+  const contextMenuActions = useMemo<TaskMenuActionDescriptor[]>(() => {
+    if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onMoveTask) {
+      return [];
+    }
+    const actions = [...taskActionMenuModel.actions];
+    if (task.column === "done" && onArchiveTask) {
+      actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: handleTaskActionArchive });
+    }
+    if (task.column === "archived" && onUnarchiveTask) {
+      actions.push({ id: "unarchive", label: t("tasks.unarchive", "Unarchive"), onSelect: handleTaskActionUnarchive });
+    }
+    if (taskActionMenuModel.reviewAction) {
+      actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
+    }
+    if (onMoveTask) {
+      for (const transition of taskActionMenuModel.moveTransitions) {
+        actions.push({
+          id: `move-${transition.column}`,
+          label: transition.label,
+          onSelect: () => handleTaskActionMove(transition.column),
+        });
+      }
+    }
+    return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
+  }, [handleTaskActionArchive, handleTaskActionMove, handleTaskActionUnarchive, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onMoveTask, onPauseTask, onResetTask, onRetryTask, onUnarchiveTask, onUnpauseTask, t, task.column, taskActionMenuModel.actions, taskActionMenuModel.moveTransitions, taskActionMenuModel.reviewAction]);
+  const hasContextMenuActions = contextMenuActions.length > 0;
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenuPosition(null);
+  }, []);
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
+  const openContextMenuAt = useCallback((clientX: number, clientY: number) => {
+    if (!hasContextMenuActions || isEditing) return;
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setShowSendBackMenu(false);
+    setContextMenuPosition({
+      x: Math.max(CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(clientX - rect.left, rect.width - CONTEXT_MENU_VIEWPORT_MARGIN)),
+      y: Math.max(CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(clientY - rect.top, rect.height - CONTEXT_MENU_VIEWPORT_MARGIN)),
+    });
+  }, [hasContextMenuActions, isEditing]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!hasContextMenuActions || isInteractiveTarget(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressNextCardClickRef.current = true;
+    openContextMenuAt(e.clientX, e.clientY);
+  }, [hasContextMenuActions, isInteractiveTarget, openContextMenuAt]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!hasContextMenuActions) return;
+    if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+    if (isInteractiveTarget(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    suppressNextCardClickRef.current = true;
+    openContextMenuAt(
+      rect.left + Math.min(rect.width - CONTEXT_MENU_VIEWPORT_MARGIN, KEYBOARD_CONTEXT_MENU_OFFSET),
+      rect.top + Math.min(rect.height - CONTEXT_MENU_VIEWPORT_MARGIN, KEYBOARD_CONTEXT_MENU_OFFSET),
+    );
+  }, [hasContextMenuActions, isInteractiveTarget, openContextMenuAt]);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!hasContextMenuActions || e.pointerType === "mouse" || isInteractiveTarget(e.target)) return;
+    clearLongPressTimer();
+    longPressStartRef.current = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      suppressNextCardClickRef.current = true;
+      touchOpenHandledRef.current = true;
+      openContextMenuAt(e.clientX, e.clientY);
+    }, TOUCH_CONTEXT_MENU_DELAY_MS);
+  }, [clearLongPressTimer, hasContextMenuActions, isInteractiveTarget, openContextMenuAt]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const start = longPressStartRef.current;
+    if (!start || start.pointerId !== e.pointerId) return;
+    if (Math.abs(e.clientX - start.x) > TOUCH_MOVE_THRESHOLD || Math.abs(e.clientY - start.y) > TOUCH_MOVE_THRESHOLD) {
+      clearLongPressTimer();
+    }
+  }, [clearLongPressTimer]);
+
+  const handlePointerUpOrCancel = useCallback(() => {
+    clearLongPressTimer();
+  }, [clearLongPressTimer]);
+
+  /*
+  FNXC:TaskContextMenu 2026-06-30-00:15:
+  Board card context menus open from pointer and keyboard coordinates, so clamp after render using the measured menu size. This keeps long action lists inside the viewport without changing normal card click or drag behavior.
+  */
+  useLayoutEffect(() => {
+    if (!contextMenuPosition) return;
+    const menu = contextMenuRef.current;
+    const card = cardRef.current;
+    if (!menu || !card) return;
+    const menuRect = menu.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const maxX = Math.max(
+      CONTEXT_MENU_VIEWPORT_MARGIN,
+      Math.min(cardRect.width - CONTEXT_MENU_VIEWPORT_MARGIN, window.innerWidth - cardRect.left - menuRect.width - CONTEXT_MENU_VIEWPORT_MARGIN),
+    );
+    const maxY = Math.max(
+      CONTEXT_MENU_VIEWPORT_MARGIN,
+      Math.min(cardRect.height - CONTEXT_MENU_VIEWPORT_MARGIN, window.innerHeight - cardRect.top - menuRect.height - CONTEXT_MENU_VIEWPORT_MARGIN),
+    );
+    const nextPosition = {
+      x: Math.max(CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(contextMenuPosition.x, maxX)),
+      y: Math.max(CONTEXT_MENU_VIEWPORT_MARGIN, Math.min(contextMenuPosition.y, maxY)),
+    };
+    if (nextPosition.x !== contextMenuPosition.x || nextPosition.y !== contextMenuPosition.y) {
+      setContextMenuPosition(nextPosition);
+    }
+  }, [contextMenuPosition]);
+
+  useEffect(() => {
+    if (!contextMenuPosition) return;
+    const handleDocumentPointerDown = (event: PointerEvent) => {
+      if (contextMenuRef.current?.contains(event.target as Node)) return;
+      closeContextMenu();
+    };
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeContextMenu();
+    };
+    document.addEventListener("pointerdown", handleDocumentPointerDown);
+    document.addEventListener("keydown", handleDocumentKeyDown);
+    window.addEventListener("scroll", closeContextMenu, true);
+    return () => {
+      document.removeEventListener("pointerdown", handleDocumentPointerDown);
+      document.removeEventListener("keydown", handleDocumentKeyDown);
+      window.removeEventListener("scroll", closeContextMenu, true);
+    };
+  }, [closeContextMenu, contextMenuPosition]);
+
+  useEffect(() => {
+    const cancelLongPress = () => clearLongPressTimer();
+    window.addEventListener("scroll", cancelLongPress, true);
+    return () => {
+      window.removeEventListener("scroll", cancelLongPress, true);
+      clearLongPressTimer();
+    };
+  }, [clearLongPressTimer]);
+
   const handleOpenFiles = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onOpenDetailWithTab?.(task, "changes");
@@ -1849,8 +2287,7 @@ function TaskCardComponent({
     && workflowBadge.workflowName.trim().length > 0;
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
-    || isAgentCreated
-    || hasWorkflowBadge;
+    || isAgentCreated;
 
   if (isEditing) {
     return (
@@ -1897,11 +2334,34 @@ function TaskCardComponent({
       onDragLeave={handleFileDragLeave}
       onDrop={handleFileDrop}
       onClick={handleCardClick}
+      onContextMenu={handleContextMenu}
+      onKeyDown={handleKeyDown}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUpOrCancel}
+      onPointerCancel={handlePointerUpOrCancel}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={handlePointerUpOrCancel}
       onDoubleClick={handleDoubleClick}
+      tabIndex={hasContextMenuActions ? 0 : undefined}
+      aria-haspopup={hasContextMenuActions ? "menu" : undefined}
     >
+      {contextMenuPosition && hasContextMenuActions && (
+        <div
+          ref={contextMenuRef}
+          className="task-card-context-menu-popover"
+          style={{ "--task-card-context-menu-x": `${contextMenuPosition.x}px`, "--task-card-context-menu-y": `${contextMenuPosition.y}px` } as CSSProperties}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <TaskContextMenu
+            actions={contextMenuActions}
+            onActionSelect={closeContextMenu}
+          />
+        </div>
+      )}
       <div className="card-header">
         <span className="card-id">{task.id}</span>
         {isPaused && (
@@ -2046,17 +2506,6 @@ function TaskCardComponent({
         )}
         {hasCardMetaBadges && (
           <div className="card-meta-badges" data-testid="card-meta-badges">
-            {hasWorkflowBadge && (
-              <span
-                className="card-workflow-badge"
-                title={t("tasks.workflowBadgeTitle", "Workflow: {{name}}", { name: workflowBadge.workflowName })}
-                aria-label={t("tasks.workflowBadgeAriaLabel", "Workflow {{name}}", { name: workflowBadge.workflowName })}
-                data-testid="card-workflow-badge"
-                data-workflow-id={workflowBadge.workflowId}
-              >
-                {workflowBadge.workflowName}
-              </span>
-            )}
             {showPriorityBadge && (
               <span className={`card-priority-badge card-priority-badge--${normalizedPriority}`}>
                 {normalizedPriority}
@@ -2586,6 +3035,24 @@ function TaskCardComponent({
           {showInReviewMoveControl && !metaRowVisible && renderInReviewMoveControl()}
         </div>
       )}
+      {hasWorkflowBadge && (
+        <div className="card-workflow-badge-row" data-testid="card-workflow-badge-row">
+          {/*
+          FNXC:WorkflowBoard 2026-06-30-00:00:
+          All workflows Board cards need workflow identity anchored at the card's bottom-left, below footer chips, dependency/meta rows, provider icons, and action controls, while per-workflow cards keep omitting this opt-in metadata.
+          */}
+          <span
+            className="card-workflow-badge"
+            title={t("tasks.workflowBadgeTitle", "Workflow: {{name}}", { name: workflowBadge.workflowName })}
+            aria-label={t("tasks.workflowBadgeAriaLabel", "Workflow {{name}}", { name: workflowBadge.workflowName })}
+            data-testid="card-workflow-badge"
+            data-workflow-id={workflowBadge.workflowId}
+          >
+            <WorkflowIcon workflowId={workflowBadge.workflowId} icon={workflowBadge.workflowIcon} decorative />
+            <span>{workflowBadge.workflowName}</span>
+          </span>
+        </div>
+      )}
       <PluginSlot slotId="task-card-badge" projectId={projectId} />
       {(showCreatePrQuickAction || isPrCreateOpen) && (
         <PrCreateModal
@@ -2606,6 +3073,9 @@ function TaskCardComponent({
 
 const TOUCH_MOVE_THRESHOLD = 10; // pixels
 const TOUCH_TAP_MAX_DURATION = 300; // milliseconds
+const TOUCH_CONTEXT_MENU_DELAY_MS = 550; // milliseconds
+const CONTEXT_MENU_VIEWPORT_MARGIN = 8;
+const KEYBOARD_CONTEXT_MENU_OFFSET = 32;
 const MAX_TITLE_LENGTH = 140;
 
 function truncate(s: string | undefined, max: number): string {

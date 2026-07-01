@@ -14,10 +14,12 @@ describe("pi MCP session tool integration", () => {
     expect(source).not.toContain("mcpServers: forwardedMcpServers");
   });
 
-  it("skips MCP servers in readonly sessions and chains disposal into session dispose", () => {
+  it("keeps readonly MCP exposure behind an explicit opt-in while preserving disposal", () => {
     const source = piSource();
-    expect(source).toContain("forwardedMcpServers.length > 0 && !isReadonly");
+    expect(source).toContain("allowMcpToolsInReadonly");
+    expect(source).toContain("forwardedMcpServers.length > 0 && (!isReadonly || allowReadonlyMcpTools)");
     expect(source).toContain("readonly session — MCP servers");
+    expect(source).toContain("allowReadonlyMcpTools ? { allowTool: (tool) => mcpReadonlyTools.has(tool) } : {}");
     expect(source).toContain("await mcpToolset.dispose()");
     expect(source).toContain("await mcpToolset?.dispose()");
   });

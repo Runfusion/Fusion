@@ -15,14 +15,13 @@ import {
   DEFAULT_TASK_PRIORITY,
   REPO_OVERRIDE_RE,
   TASK_PRIORITIES,
-  VALID_TRANSITIONS,
-  isColumn,
   getErrorMessage,
 } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 import { uploadAttachment, deleteAttachment, updateTask, repairOverlapBlocker, pauseTask, unpauseTask, fetchTaskDetail, fetchSettings, fetchTaskEffectiveSettings, fetchGlobalSettings, requestSpecRevision, rebuildTaskSpec, approvePlan, rejectPlan, refineTask, fetchWorkflowResults, assignTask, fetchAgents, fetchAgent, refreshPrStatus, fetchBoardWorkflows, updateTaskCustomFields, summarizeTitle, api } from "../api";
 import type { BoardWorkflowsPayload, WorkflowFieldDefinition, CustomFieldRejection } from "../api";
+import { WorkflowIcon } from "./WorkflowIcon";
 import { ApiRequestError } from "../api";
 import { TaskFieldsSection } from "./TaskFieldsSection";
 import type { ToastType } from "../hooks/useToast";
@@ -34,6 +33,7 @@ import { PrPanel } from "./PrPanel";
 import { PrCreateModal } from "./PrCreateModal";
 import { TaskComments } from "./TaskComments";
 import { TaskChatTab } from "./TaskChatTab";
+import { TaskPlannerChatTab } from "./TaskPlannerChatTab";
 import { TaskReviewTab } from "./TaskReviewTab";
 import { MergeDetails } from "./MergeDetails";
 import { TaskChangesTab } from "./TaskChangesTab";
@@ -66,6 +66,8 @@ import { findInReviewStallLogEntry, IN_REVIEW_STALL_LOG_REGEX } from "../utils/f
 import { getTaskLogEntryAction, getTaskLogEntryOutcome } from "../utils/taskLogEntryDisplay";
 import { getRelativeTimeBucket } from "../utils/relativeTimeAgo";
 import { ACTIVE_STATUSES, resolveEffectiveExecutor, resolveEffectivePlanning, resolveEffectiveValidator, type ModelSelection } from "./effective-model-resolution";
+import { TaskContextMenu, buildTaskActionMenuModel, getTaskPrAutomationLabel } from "./TaskContextMenu";
+import { useFileBrowser } from "../context/FileBrowserContext";
 
 const STALE_PAUSED_REVIEW_LOG_REGEX = /^Stale paused review surfaced \[([^\]]+)\]/;
 const EMPTY_MARKDOWN_CHILD_SEPARATOR = "";
@@ -190,23 +192,37 @@ function formatDurationCompact(ageMs: number): string {
   return `${minutes}m`;
 }
 
-type TabId = "summary" | "definition" | "chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | `plugin-${string}`;
+type TabId = "summary" | "definition" | "chat" | "planner-chat" | "logs" | "changes" | "review" | "pr" | "comments" | "model" | "workflow" | "documents" | "stats" | "routing" | "retries" | "terminal" | `plugin-${string}`;
+type ActivitySegment = "current" | "feed" | "raw-logs";
 
 /*
-FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
-Done tasks land on Summary instead of Chat so completed work opens on the completion overview. Chat stays the implicit default for every other column, and explicit tab requests continue to win for done tasks.
+FNXC:TaskDetailActivityTab 2026-06-30-00:00:
+The existing task activity/steering surface keeps the stable internal `chat` tab id for deep-link/plugin compatibility, but its top-level user-facing label is Activity. Activity is the implicit default for active task columns; done tasks keep Summary as their omitted-initial-tab landing surface so completed work still opens on the completion report while Activity remains first in tab order.
 
-FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
-Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so done tasks can still deep-link directly to Chat.
+FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+Task detail now separates Activity from planner-model Chat. `chat` remains the legacy Activity id for old links and Activity → Current/Feed/Raw Logs/steering, while `planner-chat` is the new top-level Chat tab for task-aware planning conversation and must render immediately after Activity.
+
+FNXC:TaskDetailActivity 2026-06-30-15:50:
+Only an omitted initial tab is the implicit default. Preserve explicit `initialTab="chat"` requests from plugins and task-detail entrypoints so existing links continue to open Activity → Current. Legacy `initialTab="logs"` now routes to Activity → Feed, and Raw Logs remains an Activity segment.
+
+FNXC:TaskDetailActivity 2026-06-30-21:55:
+The first Activity segment keeps the stable Current label for legacy segment tests and links, but its embedded composer labels the operational steering-comment affordance explicitly. Do not reuse this segment as planner-model Chat conversation; that belongs to the `planner-chat` top-level tab.
 */
 function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId): TabId {
   if (initialTab === "retries") {
     return "definition";
   }
+  if (initialTab === "logs") {
+    return "chat";
+  }
   if (initialTab) {
     return initialTab;
   }
   return column === "done" ? "summary" : "chat";
+}
+
+function resolveDefaultActivitySegment(initialTab: TabId | undefined): ActivitySegment {
+  return initialTab === "logs" ? "feed" : "current";
 }
 
 // Lazy-load the terminal so xterm + addons stay out of the main bundle (U11).
@@ -358,13 +374,13 @@ function normalizeTaskPriorityValue(priority: Task["priority"]): TaskPriority {
     : DEFAULT_TASK_PRIORITY;
 }
 
-function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, taskId: string): { name: string; fields: WorkflowFieldDefinition[] | null } | null {
+function resolveTaskWorkflowMetadata(payload: BoardWorkflowsPayload, taskId: string): { id: string; name: string; icon?: string; fields: WorkflowFieldDefinition[] | null } | null {
   if (payload.flagEnabled !== true) return null;
   const workflowId = payload.taskWorkflowIds[taskId] ?? payload.defaultWorkflowId;
   const workflow = payload.workflows.find((candidate) => candidate.id === workflowId);
   const name = workflow?.name?.trim();
   if (!workflow || !name) return null;
-  return { name, fields: workflow.fields ?? null };
+  return { id: workflow.id, name, icon: workflow.icon, fields: workflow.fields ?? null };
 }
 
 function normalizeExecutionModeValue(executionMode: Task["executionMode"]): "standard" | "fast" {
@@ -500,8 +516,8 @@ export function TaskDetailContent({
   autoMergeEnabled: autoMergeEnabledProp,
   onOpenWorkflowEditor,
   /**
-   * FNXC:TaskDetailTabs 2026-06-17-00:00:
-   * FN-6532 makes Chat the default task-detail view when no caller supplies an explicit initial tab.
+   * FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+   * The Activity tab is still addressed as `chat` internally so existing callers and deep links do not break; the visible Chat tab uses `planner-chat` for planner-model conversation.
    */
   initialTab,
   mobileHeaderMode = "close",
@@ -513,7 +529,9 @@ export function TaskDetailContent({
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
   const columnLabel = useColumnLabel();
+  const fileBrowser = useFileBrowser();
   const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column));
+  const [activitySegment, setActivitySegment] = useState<ActivitySegment>(() => resolveDefaultActivitySegment(initialTab));
   const [chatExpanded, setChatExpanded] = useState(false);
 
   // ── CLI agent session (U11) ────────────────────────────────────────────────
@@ -607,6 +625,9 @@ export function TaskDetailContent({
     () => getUnifiedTaskProgress(workingTask),
     [workingTask.steps, workingTask.enabledWorkflowSteps, workingTask.workflowStepResults],
   );
+  const openPromptFile = useCallback(() => {
+    fileBrowser?.openFile(`.fusion/tasks/${workingTask.id}/PROMPT.md`, { workspace: "project" });
+  }, [fileBrowser, workingTask.id]);
   const canRetryTask =
     task.status === "failed" ||
     task.status === "stuck-killed" ||
@@ -641,6 +662,7 @@ export function TaskDetailContent({
   // Sync activeTab when the caller changes initialTab (e.g. opening a different tab)
   useEffect(() => {
     setActiveTab(resolveDefaultTab(initialTab, task.column));
+    setActivitySegment(resolveDefaultActivitySegment(initialTab));
     if (initialTab === "retries") {
       setRetriesExpanded(true);
     }
@@ -663,7 +685,6 @@ export function TaskDetailContent({
     setDescriptionExpanded(false);
   }, [task.column, task.id]);
 
-  const [logSubview, setLogSubview] = useState<"activity" | "agent-log">("activity");
   const [highlightStallCode, setHighlightStallCode] = useState<string | null>(null);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const [titleOverflows, setTitleOverflows] = useState(false);
@@ -727,7 +748,7 @@ export function TaskDetailContent({
   FNXC:WorkflowBadges 2026-06-29-00:00:
   Task details need a stable workflow-name badge because aggregate Board cards can mix tasks from multiple workflows. Resolve the badge name and custom field definitions from the same board-workflows payload so detail headers do not issue duplicate workflow-metadata fetches.
   */
-  const [taskWorkflowName, setTaskWorkflowName] = useState<string | null>(null);
+  const [taskWorkflowBadge, setTaskWorkflowBadge] = useState<{ id: string; name: string; icon?: string } | null>(null);
   // Custom field definitions (U13/KTD-14). Resolved for this task's workflow
   // from the board-workflows payload; absent when the workflow declares none,
   // in which case the fields section renders nothing (today's UI byte-identical).
@@ -751,7 +772,7 @@ export function TaskDetailContent({
     if (workflowFieldDefsProp !== undefined) {
       // Prop-driven path: keep in sync if the prop changes (task switch etc.).
       setCustomFieldDefs(workflowFieldDefsProp ?? null);
-      setTaskWorkflowName(null);
+      setTaskWorkflowBadge(null);
       return;
     }
     /*
@@ -759,19 +780,19 @@ export function TaskDetailContent({
     Mounted task-detail hosts can swap from one task to another (List split-pane, right dock, floating windows). Clear the previous workflow badge before the shared board-workflows lookup resolves so aggregate-board context never shows a stale cross-workflow label.
     */
     setCustomFieldDefs(null);
-    setTaskWorkflowName(null);
+    setTaskWorkflowBadge(null);
     let cancelled = false;
     void fetchBoardWorkflows(projectId)
       .then((payload) => {
         if (cancelled) return;
         const metadata = resolveTaskWorkflowMetadata(payload, task.id);
         setCustomFieldDefs(metadata?.fields ?? null);
-        setTaskWorkflowName(metadata?.name ?? null);
+        setTaskWorkflowBadge(metadata ? { id: metadata.id, name: metadata.name, icon: metadata.icon } : null);
       })
       .catch(() => {
         if (!cancelled) {
           setCustomFieldDefs(null);
-          setTaskWorkflowName(null);
+          setTaskWorkflowBadge(null);
         }
       });
     return () => {
@@ -802,7 +823,7 @@ export function TaskDetailContent({
   );
 
   useEffect(() => {
-    if (activeTab !== "logs" || logSubview !== "activity") {
+    if (activeTab !== "chat" || activitySegment !== "feed") {
       setHighlightStallCode(null);
       return;
     }
@@ -815,7 +836,7 @@ export function TaskDetailContent({
     if (highlighted && typeof highlighted.scrollIntoView === "function") {
       highlighted.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
-  }, [activeTab, logSubview, highlightStallCode]);
+  }, [activeTab, activitySegment, highlightStallCode]);
   const [refineFeedback, setRefineFeedback] = useState("");
   const [isRefining, setIsRefining] = useState(false);
 
@@ -823,10 +844,10 @@ export function TaskDetailContent({
   const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
-    if (activeTab !== "chat" || isEditing) {
+    if (activeTab !== "chat" || activitySegment !== "current" || isEditing) {
       setChatExpanded(false);
     }
-  }, [activeTab, isEditing]);
+  }, [activeTab, activitySegment, isEditing]);
 
   const [editTitle, setEditTitle] = useState(task.title || "");
   const [editDescription, setEditDescription] = useState(task.description || "");
@@ -950,7 +971,7 @@ export function TaskDetailContent({
     activeTaskIdRef.current = task.id;
   }, [task.id]);
 
-  // Merged project settings for effective model resolution in Agent Log header
+  // Merged project settings for effective model resolution in Raw Logs header
   const [settings, setSettings] = useState<Settings | undefined>(undefined);
   const [globalSettings, setGlobalSettings] = useState<GlobalSettings | null>(null);
 
@@ -1007,7 +1028,7 @@ export function TaskDetailContent({
     let cancelled = false;
     /*
     FNXC:ModelResolution 2026-06-27-10:52:
-    Task-detail model displays are task-scoped because project model lanes moved into workflow setting values. Fetch the effective settings for the selected task so Workflow, Chat, Agent Log, and Model editor surfaces resolve the same Executor/Reviewer/Planning models the engine uses.
+    Task-detail model displays are task-scoped because project model lanes moved into workflow setting values. Fetch the effective settings for the selected task so Workflow, Activity → Raw Logs, and Model editor surfaces resolve the same Executor/Reviewer/Planning models the engine uses.
     */
     fetchTaskEffectiveSettings(task.id, projectId)
       .catch(() => fetchSettings(projectId))
@@ -1769,7 +1790,7 @@ export function TaskDetailContent({
     loadingMore: agentLogLoadingMore,
   } = useAgentLogs(
     task.id,
-    activeTab === "logs" && logSubview === "agent-log",
+    activeTab === "chat" && activitySegment === "raw-logs",
     projectId,
   );
   const requestClose = useCallback(() => {
@@ -2192,15 +2213,15 @@ export function TaskDetailContent({
     handleMove(column);
   }, [closeMenus]);
 
-  const handleActionsMenuItemClick = useCallback((action: () => void) => {
-    closeMenus();
-    action();
-  }, [closeMenus]);
-
   const handleMergeMenuItemClick = useCallback(() => {
     closeMenus();
     void handleMerge();
   }, [closeMenus, handleMerge]);
+
+  const handleStartPrReviewMenuItemClick = useCallback(() => {
+    closeMenus();
+    setPrCreateOpen(true);
+  }, [closeMenus]);
 
   const handleCheckPrStatus = useCallback(async () => {
     if (isCheckingPrStatus) return;
@@ -2583,14 +2604,68 @@ export function TaskDetailContent({
     return providers;
   }, [workingTask.modelProvider, workingTask.validatorModelProvider, workingTask.planningModelProvider]);
 
-  // #1403: legacy transitions only exist for legacy columns; a custom column id
-  // has no VALID_TRANSITIONS row, so the move menu shows no legacy targets.
-  const transitions: Column[] = isColumn(task.column) ? [...VALID_TRANSITIONS[task.column]] : [];
-  const inReviewMoveTransitions: Column[] = ["todo", "in-progress"];
-  const moveTransitions = task.column === "in-review" ? inReviewMoveTransitions : transitions;
-  const primaryMoveTransition = moveTransitions[0];
-  const secondaryMoveTransitions = moveTransitions.slice(1);
+
+  const prAutomationLabel = getTaskPrAutomationLabel(t, task.status);
+  const mergeStrategy = settings?.mergeStrategy ?? "direct";
+  const autoMergeEnabled = autoMergeEnabledProp ?? (settings?.autoMerge ?? false);
+  const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMergeEnabled });
+  const isManualPrFlow = mergeStrategy === "pull-request" && !effectiveAutoMerge;
+  const isChatExpanded = chatExpanded && activeTab === "chat" && !isEditing;
+  /*
+  FNXC:TaskDetailChat 2026-06-30-23:30:
+  Maximized Activity chat should reserve the detail surface for the header context and chat only. Do not mount branch-group chrome in this mode so its expand/promote controls are not hidden-but-focusable, while normal and embedded task details keep the BranchGroupCard behavior.
+  */
+  const shouldShowBranchGroupCard = Boolean(task.branchContext?.groupId && !isChatExpanded);
+
+  const taskActionMenuModel = useMemo(() => buildTaskActionMenuModel({
+    task,
+    t,
+    columnLabel,
+    canRetryTask,
+    hasDuplicateHandler: Boolean(onDuplicateTask),
+    hasRetryHandler: Boolean(onRetryTask),
+    hasResetHandler: Boolean(onResetTask),
+    mergeStrategy,
+    autoMergeEnabled: effectiveAutoMerge,
+    prAutomationLabel,
+    isCheckingPrStatus,
+    onDelete: handleDelete,
+    onDuplicate: handleDuplicate,
+    onOpenRefine: handleOpenRefineModal,
+    onRespecify: handleRespecify,
+    onRetry: handleRetry,
+    onReset: handleReset,
+    onTogglePause: handleTogglePause,
+    onMerge: handleMergeMenuItemClick,
+    onStartPrReview: handleStartPrReviewMenuItemClick,
+    onCheckPrStatus: handleCheckPrStatus,
+  }), [
+    task,
+    t,
+    columnLabel,
+    canRetryTask,
+    onDuplicateTask,
+    onRetryTask,
+    onResetTask,
+    mergeStrategy,
+    effectiveAutoMerge,
+    prAutomationLabel,
+    isCheckingPrStatus,
+    handleDelete,
+    handleDuplicate,
+    handleOpenRefineModal,
+    handleRespecify,
+    handleRetry,
+    handleReset,
+    handleTogglePause,
+    handleMergeMenuItemClick,
+    handleStartPrReviewMenuItemClick,
+    handleCheckPrStatus,
+  ]);
+  const primaryMoveTransition = taskActionMenuModel.moveTransitions[0]?.column;
+  const secondaryMoveTransitions = taskActionMenuModel.moveTransitions.slice(1);
   const hasSecondaryMoveOptions = secondaryMoveTransitions.length > 0;
+  const reviewAction = taskActionMenuModel.reviewAction;
 
   const closeMoveMenuAndFocusTrigger = useCallback(() => {
     setShowMoveMenu(false);
@@ -2600,7 +2675,7 @@ export function TaskDetailContent({
   const handleMoveButtonClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     if (!hasSecondaryMoveOptions) {
       if (primaryMoveTransition) {
-        void handleMoveMenuItemClick(primaryMoveTransition);
+        void handleMoveMenuItemClick(primaryMoveTransition as Column);
       }
       return;
     }
@@ -2618,7 +2693,7 @@ export function TaskDetailContent({
     }
 
     if (primaryMoveTransition) {
-      void handleMoveMenuItemClick(primaryMoveTransition);
+      void handleMoveMenuItemClick(primaryMoveTransition as Column);
     }
   }, [hasSecondaryMoveOptions, primaryMoveTransition, handleMoveMenuItemClick]);
 
@@ -2656,31 +2731,6 @@ export function TaskDetailContent({
     firstMenuItem?.focus();
   }, [showMoveMenu]);
 
-  const prAutomationStatusLabels: Record<string, string> = {
-    "creating-pr": t("taskDetail.pr.creatingPr", "Creating PR…"),
-    "awaiting-pr-checks": t("taskDetail.pr.awaitingChecks", "Awaiting PR checks"),
-    "merging-pr": t("taskDetail.pr.mergingPr", "Merging PR…"),
-    "merging-fix": t("taskDetail.pr.mergingFixes", "Merging fixes…"),
-  };
-  const prAutomationLabel = task.status ? prAutomationStatusLabels[task.status] : undefined;
-  const mergeStrategy = settings?.mergeStrategy ?? "direct";
-  const autoMergeEnabled = autoMergeEnabledProp ?? (settings?.autoMerge ?? false);
-  const effectiveAutoMerge = resolveEffectiveAutoMerge({ autoMerge: task.autoMerge }, { autoMerge: autoMergeEnabled });
-  const isManualPrFlow = mergeStrategy === "pull-request" && !autoMergeEnabled;
-  const isChatExpanded = chatExpanded && activeTab === "chat" && !isEditing;
-
-  const isCheckPrStatusAction = isManualPrFlow && !prAutomationLabel && task.prInfo?.status === "open";
-  let manualReviewActionLabel = t("taskDetail.pr.mergeAndClose", "Merge & Close");
-  if (isManualPrFlow && !prAutomationLabel) {
-    if (!task.prInfo) {
-      manualReviewActionLabel = t("taskDetail.pr.startPrReview", "Start PR Review");
-    } else if (task.prInfo.status === "open") {
-      manualReviewActionLabel = t("taskDetail.pr.checkPrStatus", "Check PR Status");
-    } else if (task.prInfo.status === "merged") {
-      manualReviewActionLabel = t("taskDetail.pr.finishAndClose", "Finish & Close");
-    }
-  }
-
   return (
     <div
       className={`task-detail-content${embedded ? " task-detail-content--embedded" : ""}${isChatExpanded ? " task-detail-content--chat-expanded" : ""}`}
@@ -2693,11 +2743,6 @@ export function TaskDetailContent({
             <span className={`detail-column-badge badge-${task.column}`}>
               {columnLabel(task.column)}
             </span>
-            {taskWorkflowName && (
-              <span className="detail-workflow-badge" data-testid="task-detail-workflow-badge">
-                {taskWorkflowName}
-              </span>
-            )}
           </div>
           <div className="modal-header-actions">
             {!isEditing && canEdit && (
@@ -2768,7 +2813,7 @@ export function TaskDetailContent({
             )}
           </div>
         </div>
-        <div className={`detail-body${activeTab === "logs" && logSubview === "agent-log" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && !isEditing ? " detail-body--chat" : ""}`}>
+        <div className={`detail-body${activeTab === "chat" && activitySegment === "raw-logs" && !isEditing ? " detail-body--agent-log" : ""}${activeTab === "chat" && activitySegment === "current" && !isEditing ? " detail-body--chat" : ""}`}>
           {isEditing ? (
             <div className="modal-edit-form">
               <TaskForm
@@ -3070,10 +3115,17 @@ export function TaskDetailContent({
                       {formatTimestamp(task.updatedAt)}
                     </time>
                   </span>
+                  {taskWorkflowBadge && (
+                    <span className="detail-workflow-badge" data-testid="task-detail-workflow-badge">
+                      <WorkflowIcon workflowId={taskWorkflowBadge.id} icon={taskWorkflowBadge.icon} decorative />
+                      <span>{taskWorkflowBadge.name}</span>
+                    </span>
+                  )}
                 </div>
               </div>
-              {task.branchContext?.groupId && (
-                <BranchGroupCard groupId={task.branchContext.groupId} projectId={projectId} />
+              {shouldShowBranchGroupCard && task.branchContext?.groupId && (
+                /* FNXC:BranchGroupDetails 2026-06-30-00:00: Task-detail branch groups must return to their compact collapsed default when users switch tasks, including between members of the same shared branch group. Key by task and group so a manual expansion never leaks into the next task detail view. */
+                <BranchGroupCard key={`${task.id}:${task.branchContext.groupId}`} groupId={task.branchContext.groupId} projectId={projectId} />
               )}
               {/* FNXC:Workspace 2026-06-21-00:00: workspace tasks have no singular
                   task.worktree/task.branch; surface their acquired per-sub-repo worktrees
@@ -3106,12 +3158,21 @@ export function TaskDetailContent({
             <>
           <div className="detail-tabs">
             {/*
-              FNXC:TaskDetailTabs 2026-06-17-00:00:
-              FN-6532 requires Chat to be the first task-detail tab while preserving every explicit tab entrypoint.
-
-              FNXC:TaskDetailSummaryTab 2026-06-27-00:00:
-              Done tasks expose Summary as the first tab because the implicit Chat default resolves there for completed work; non-done tasks keep Chat first and never render an empty Summary shell.
+              FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+              The existing task activity/steering surface is labelled Activity and always renders first with the legacy `chat` tab id. The adjacent `planner-chat` tab is the separate planner-model Chat destination, so `initialTab="chat"` remains Activity while visible Chat opens task-aware planning conversation.
             */}
+            <button
+              className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("chat")}
+            >
+              {t("taskDetail.tabs.activity", "Activity")}
+            </button>
+            <button
+              className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
+              onClick={() => setActiveTab("planner-chat")}
+            >
+              {t("taskDetail.tabs.chat", "Chat")}
+            </button>
             {task.column === "done" && (
               <button
                 className={`detail-tab${activeTab === "summary" ? " detail-tab-active" : ""}`}
@@ -3121,22 +3182,10 @@ export function TaskDetailContent({
               </button>
             )}
             <button
-              className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("chat")}
-            >
-              {t("taskDetail.tabs.chat", "Chat")}
-            </button>
-            <button
               className={`detail-tab${activeTab === "definition" ? " detail-tab-active" : ""}`}
               onClick={() => setActiveTab("definition")}
             >
-              {t("taskDetail.tabs.definition", "Definition")}
-            </button>
-            <button
-              className={`detail-tab${activeTab === "logs" ? " detail-tab-active" : ""}`}
-              onClick={() => setActiveTab("logs")}
-            >
-              {t("taskDetail.tabs.logs", "Logs")}
+              {t("taskDetail.tabs.definition", "Plan")}
             </button>
             {(task.column === "in-progress" || task.column === "in-review" || task.column === "done") && (
               <button
@@ -3254,42 +3303,72 @@ export function TaskDetailContent({
             <div className="detail-section detail-section--summary">
               <TaskSummaryTab task={workingTask} pricingOverrides={globalSettings?.modelPricingOverrides} />
             </div>
-          ) : activeTab === "chat" ? (
-            <div className="detail-section detail-section--chat">
-              <TaskChatTab
+          ) : activeTab === "planner-chat" ? (
+            <div className="detail-section detail-section--planner-chat">
+              <TaskPlannerChatTab
                 task={workingTask}
                 projectId={projectId}
-                active={activeTab === "chat"}
+                active={activeTab === "planner-chat"}
+                planningModel={resolveEffectivePlanning(workingTask, agentLogEntries, settings)}
                 addToast={addToast}
-                sessionLive={isCliSessionLive(cliSession)}
-                onTaskUpdated={handleChatTaskUpdated}
-                expanded={chatExpanded}
-                onToggleExpanded={() => setChatExpanded((value) => !value)}
-                effectiveModels={{
-                  triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
-                  executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings)),
-                  reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
-                  merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
-                }}
               />
             </div>
-          ) : activeTab === "logs" ? (
-            <div className={`detail-section${logSubview === "agent-log" ? " detail-section--agent-log" : ""}`}>
-              <div className="log-subview-toggle">
+          ) : activeTab === "chat" ? (
+            <div className={`detail-section detail-section--activity${activitySegment === "current" ? " detail-section--chat" : ""}${activitySegment === "raw-logs" ? " detail-section--agent-log" : ""}`}>
+              {/*
+                FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+                Activity owns the existing steering/current view, Feed, and Raw Logs inside one segmented control. The stable Activity tab id remains `chat`, legacy `logs` callers land on Feed, and Raw Logs is the only segment that enables raw agent-log fetching. Planner-model conversation belongs to the separate `planner-chat` tab and must not route into steering comments.
+
+                FNXC:TaskDetailActivity 2026-06-30-21:55:
+                The first Activity segment keeps the stable Current label for legacy segment tests and links, but its embedded composer labels the operational steering-comment affordance explicitly. Do not reuse this segment as planner-model Chat conversation.
+              */}
+              <div className="activity-segmented-control" role="tablist" aria-label={t("taskDetail.activity.segmentsLabel", "Activity views")}>
                 <button
-                  className={`log-subview-btn${logSubview === "activity" ? " log-subview-btn-active" : ""}`}
-                  onClick={() => setLogSubview("activity")}
+                  type="button"
+                  role="tab"
+                  aria-selected={activitySegment === "current"}
+                  className={`activity-segment${activitySegment === "current" ? " activity-segment-active" : ""}`}
+                  onClick={() => setActivitySegment("current")}
                 >
-                  {t("taskDetail.logs.activity", "Activity")}
+                  {t("taskDetail.activity.current", "Current")}
                 </button>
                 <button
-                  className={`log-subview-btn${logSubview === "agent-log" ? " log-subview-btn-active" : ""}`}
-                  onClick={() => setLogSubview("agent-log")}
+                  type="button"
+                  role="tab"
+                  aria-selected={activitySegment === "feed"}
+                  className={`activity-segment${activitySegment === "feed" ? " activity-segment-active" : ""}`}
+                  onClick={() => setActivitySegment("feed")}
                 >
-                  {t("taskDetail.logs.agentLog", "Agent Log")}
+                  {t("taskDetail.activity.feed", "Feed")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activitySegment === "raw-logs"}
+                  className={`activity-segment${activitySegment === "raw-logs" ? " activity-segment-active" : ""}`}
+                  onClick={() => setActivitySegment("raw-logs")}
+                >
+                  {t("taskDetail.activity.rawLogs", "Raw Logs")}
                 </button>
               </div>
-              {logSubview === "agent-log" ? (
+              {activitySegment === "current" ? (
+                <TaskChatTab
+                  task={workingTask}
+                  projectId={projectId}
+                  active={activeTab === "chat" && activitySegment === "current"}
+                  addToast={addToast}
+                  sessionLive={isCliSessionLive(cliSession)}
+                  onTaskUpdated={handleChatTaskUpdated}
+                  expanded={chatExpanded}
+                  onToggleExpanded={() => setChatExpanded((value) => !value)}
+                  effectiveModels={{
+                    triage: toTaskChatModelInfo(resolveEffectivePlanning(workingTask, agentLogEntries, settings)),
+                    executor: toTaskChatModelInfo(resolveEffectiveExecutor(workingTask, agentLogEntries, assignedAgent, settings)),
+                    reviewer: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
+                    merger: toTaskChatModelInfo(resolveEffectiveValidator(workingTask, agentLogEntries, assignedAgent, settings)),
+                  }}
+                />
+              ) : activitySegment === "raw-logs" ? (
                 <AgentLogViewer
                   entries={agentLogEntries}
                   loading={agentLogLoading}
@@ -3302,8 +3381,8 @@ export function TaskDetailContent({
                   totalCount={agentLogTotal}
                 />
               ) : (
-                <div className="detail-activity">
-                  <h4>{t("taskDetail.logs.activityHeading", "Activity")}</h4>
+                <div className="detail-activity" role="tabpanel">
+                  <h4>{t("taskDetail.activity.feedHeading", "Feed")}</h4>
                   {(workingTask as typeof workingTask & { activityLogTruncatedCount?: number }).activityLogTruncatedCount ? (
                     <div className="detail-log-truncated">
                       {t("taskDetail.logs.truncated", "Showing the most recent {{count}} activity entries.", { count: workingTask.log.length })}
@@ -3399,8 +3478,8 @@ export function TaskDetailContent({
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
-                                setActiveTab("logs");
-                                setLogSubview("activity");
+                                setActiveTab("chat");
+                                setActivitySegment("feed");
                                 setHighlightStallCode(workingTask.inReviewStall?.code ?? null);
                               }}
                             >
@@ -3447,8 +3526,8 @@ export function TaskDetailContent({
                               type="button"
                               className="btn btn-sm detail-in-review-stall-jump"
                               onClick={() => {
-                                setActiveTab("logs");
-                                setLogSubview("activity");
+                                setActiveTab("chat");
+                                setActivitySegment("feed");
                                 setHighlightStallCode(workingTask.stalePausedReview?.code ?? null);
                               }}
                             >
@@ -3750,6 +3829,19 @@ export function TaskDetailContent({
           <div className="detail-section">
             {!isEditingSpec && (
               <div className="detail-spec-edit-trigger">
+                {/*
+                FNXC:TaskDetailPlan 2026-06-30-00:00:
+                The Plan tab keeps the internal definition route for stable links, while exposing a direct PROMPT.md editor action so operators can comment on the executable task plan file without replacing the inline AI revision flow.
+                */}
+                {fileBrowser && (
+                  <button
+                    className="btn btn-sm"
+                    onClick={openPromptFile}
+                    title={t("taskDetail.spec.openPromptTitle", "Open this task's PROMPT.md in the file editor")}
+                  >
+                    {t("taskDetail.spec.openPromptBtn", "Open PROMPT.md")}
+                  </button>
+                )}
                 <button className="btn btn-sm" onClick={enterSpecEditMode}>
                   {t("taskDetail.spec.editBtn", "Edit")}
                 </button>
@@ -4284,13 +4376,7 @@ export function TaskDetailContent({
               )}
 
               {/* Actions dropdown — less common operations */}
-              {(
-                task.column !== "triage"
-                || task.status === "awaiting-approval"
-                || canRetryTask
-                || isTaskPaused
-                || Boolean(task.assignedAgentId)
-              ) && (
+              {taskActionMenuModel.shouldShowActionsMenu && (
                 <div className="detail-actions-dropdown" ref={actionsMenuRef}>
                   <button
                     className="btn btn-sm"
@@ -4305,91 +4391,23 @@ export function TaskDetailContent({
                     <ChevronDown size={12} />
                   </button>
                   {showActionsMenu && (
-                    <div className="detail-actions-menu" role="menu">
-                      {/* Delete — destructive, always first */}
-                      <button
-                        className="detail-actions-menu-item detail-actions-menu-item-danger"
-                        role="menuitem"
-                        onClick={() => handleActionsMenuItemClick(handleDelete)}
-                      >
-                        {t("taskDetail.delete.btn", "Delete")}
-                      </button>
-
-                      {/* Duplicate */}
-                      {onDuplicateTask && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleDuplicate)}
-                        >
-                          {t("taskDetail.duplicate.btn", "Duplicate")}
-                        </button>
-                      )}
-
-                      {/* Refine */}
-                      {(task.column === "done" || task.column === "in-review") && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleOpenRefineModal)}
-                        >
-                          {t("taskDetail.refine.btn", "Refine")}
-                        </button>
-                      )}
-
-                      {/* Respecify */}
-                      <button
-                        className="detail-actions-menu-item"
-                        role="menuitem"
-                        onClick={() => handleActionsMenuItemClick(handleRespecify)}
-                      >
-                        {t("taskDetail.respecify.btn", "Respecify")}
-                      </button>
-
-                      {/* Retry */}
-                      {canRetryTask && onRetryTask && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleRetry)}
-                        >
-                          {t("taskDetail.retry.btn", "Retry")}
-                        </button>
-                      )}
-
-                      {/* Reset (nuclear) — wipes all progress and reallocates worktree */}
-                      {onResetTask && task.column !== "done" && task.column !== "archived" && (
-                        <button
-                          className="detail-actions-menu-item detail-actions-menu-item-danger"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleReset)}
-                        >
-                          {t("taskDetail.reset.btn", "Reset")}
-                        </button>
-                      )}
-
+                    <>
                       {/*
                       FNXC:TaskPauseControls 2026-06-21-00:00:
                       Users may pause or unpause agent-assigned and agent-paused tasks at any time from the detail Actions menu. The Paused by agent note remains informational context, not a substitute for the actionable unpause control.
                       */}
-                      {task.column !== "done" && task.column !== "archived" && (
-                        <button
-                          className="detail-actions-menu-item"
-                          role="menuitem"
-                          onClick={() => handleActionsMenuItemClick(handleTogglePause)}
-                        >
-                          {isTaskPaused ? t("taskDetail.pause.unpauseBtn", "Unpause") : t("taskDetail.pause.pauseBtn", "Pause")}
-                        </button>
-                      )}
-                      {task.column !== "done" && task.column !== "archived" && task.paused && task.pausedByAgentId && (
-                        <span
-                          className="detail-actions-menu-item detail-actions-menu-note"
-                          role="note"
-                        >
-                          {t("taskDetail.pause.pausedByAgent", "Paused by agent")}
-                        </span>
-                      )}
-                    </div>
+                      <TaskContextMenu
+                        actions={taskActionMenuModel.actions}
+                        className="detail-actions-menu"
+                        itemClassName="detail-actions-menu-item"
+                        dangerItemClassName="detail-actions-menu-item-danger"
+                        noteItemClassName="detail-actions-menu-note"
+                        onActionSelect={(action) => {
+                          closeMenus();
+                          if (action.tone === "note") return;
+                        }}
+                      />
+                    </>
                   )}
                 </div>
               )}
@@ -4422,31 +4440,27 @@ export function TaskDetailContent({
                       </button>
                       {showMoveMenu && hasSecondaryMoveOptions && (
                         <div className="detail-move-menu" role="menu" onKeyDown={handleMoveMenuKeyDown}>
-                          {secondaryMoveTransitions.map((col) => (
+                          {secondaryMoveTransitions.map((moveAction) => (
                             <button
-                              key={col}
+                              key={moveAction.column}
                               className="detail-move-menu-item"
                               role="menuitem"
-                              onClick={() => handleMoveMenuItemClick(col)}
+                              onClick={() => handleMoveMenuItemClick(moveAction.column as Column)}
                               onKeyDown={handleMoveMenuKeyDown}
                             >
-                              {col === "in-progress" ? t("taskDetail.move.backToInProgress", "Back to In Progress") : t("taskDetail.move.moveTo", "Move to {{column}}", { column: columnLabel(col) })}
+                              {moveAction.label}
                             </button>
                           ))}
                         </div>
                       )}
                     </div>
-                    {prAutomationLabel ? (
-                      <button className="btn btn-primary btn-sm" disabled>
-                        {prAutomationLabel}
-                      </button>
-                    ) : (
+                    {reviewAction && (
                       <button
                         className="btn btn-primary btn-sm"
-                        onClick={isCheckPrStatusAction ? handleCheckPrStatus : handleMergeMenuItemClick}
-                        disabled={isCheckPrStatusAction && isCheckingPrStatus}
+                        onClick={reviewAction.onSelect}
+                        disabled={reviewAction.disabled}
                       >
-                        {manualReviewActionLabel}
+                        {reviewAction.label}
                       </button>
                     )}
                   </div>
@@ -4473,15 +4487,15 @@ export function TaskDetailContent({
                     </button>
                     {showMoveMenu && hasSecondaryMoveOptions && (
                       <div className="detail-move-menu" role="menu" onKeyDown={handleMoveMenuKeyDown}>
-                        {secondaryMoveTransitions.map((col) => (
+                        {secondaryMoveTransitions.map((moveAction) => (
                           <button
-                            key={col}
+                            key={moveAction.column}
                             className="detail-move-menu-item"
                             role="menuitem"
-                            onClick={() => handleMoveMenuItemClick(col)}
+                            onClick={() => handleMoveMenuItemClick(moveAction.column as Column)}
                             onKeyDown={handleMoveMenuKeyDown}
                           >
-                            {t("taskDetail.move.moveTo", "Move to {{column}}", { column: columnLabel(col) })}
+                            {moveAction.label}
                           </button>
                         ))}
                       </div>

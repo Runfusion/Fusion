@@ -1,9 +1,10 @@
 import "./GroupTaskModal.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckCircle2, CircleDashed, ExternalLink, Loader2, X } from "lucide-react";
 import { apiAbandonBranchGroup, apiGetBranchGroup, apiPromoteBranchGroup, type BranchGroupSummary } from "../api";
 import { subscribeSse } from "../sse-bus";
+import { BRANCH_GROUP_REFRESH_TASK_EVENTS, shouldRefreshBranchGroupForTaskEvent } from "../utils/branchGroupSse";
 
 interface GroupTaskModalProps {
   isOpen: boolean;
@@ -35,6 +36,12 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
     }
   }, [groupId, projectId]);
 
+  const loadGroupRef = useRef(loadGroup);
+
+  useEffect(() => {
+    loadGroupRef.current = loadGroup;
+  }, [loadGroup]);
+
   useEffect(() => {
     if (!isOpen || !groupId) return;
     void loadGroup();
@@ -43,25 +50,22 @@ export function GroupTaskModal({ isOpen, onClose, groupId, projectId, onOpenMemb
   useEffect(() => {
     if (!isOpen || !groupId) return;
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const refreshFromCurrentGroup = (event?: MessageEvent) => {
+      if (event && !shouldRefreshBranchGroupForTaskEvent(event, projectId)) {
+        return;
+      }
+      void loadGroupRef.current();
+    };
+    /*
+    FNXC:BranchGroupDetails 2026-06-30-18:04:
+    The full branch group modal shares task-derived completion state with task details, so it listens to the same lifecycle SSE set while preserving its open/closed guard.
+    */
+    const events = Object.fromEntries(BRANCH_GROUP_REFRESH_TASK_EVENTS.map((eventName) => [eventName, refreshFromCurrentGroup]));
     return subscribeSse(`/api/events${query}`, {
-      events: {
-        "task:updated": (event) => {
-          try {
-            const payload = JSON.parse(event.data) as { projectId?: string };
-            if (projectId && payload.projectId && payload.projectId !== projectId) {
-              return;
-            }
-          } catch {
-            // no-op
-          }
-          void loadGroup();
-        },
-      },
-      onReconnect: () => {
-        void loadGroup();
-      },
+      events,
+      onReconnect: () => refreshFromCurrentGroup(),
     });
-  }, [groupId, isOpen, loadGroup, projectId]);
+  }, [groupId, isOpen, projectId]);
 
   const completionText = useMemo(() => {
     if (!group) return "";

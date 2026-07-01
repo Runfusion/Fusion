@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveWorkflowIrForTask, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -78,6 +78,37 @@ import { filterPathsByIgnoreList, getUnmetSchedulingDependencies, isCoordination
 import { evaluateParkedAgentTaskLink, PARKED_AGENT_LINK_FRESH_RUN_MS } from "./task-agent-sync.js";
 
 const log = createLogger("self-healing");
+const OPTIONAL_STEP_REVISION_KEY_MARKER = "Workflow revision key:";
+
+function normalizeOptionalStepRevisionKey(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function optionalStepRevisionKey(nodeId: string | undefined, stepName: string | undefined): string {
+  return normalizeOptionalStepRevisionKey(nodeId) || normalizeOptionalStepRevisionKey(stepName) || "pre-merge-optional-step";
+}
+
+function countOptionalStepRevisionAttempts(task: Pick<Task, "log">, key: string, stepName: string | undefined): number {
+  const normalizedKey = normalizeOptionalStepRevisionKey(key);
+  const normalizedStepName = normalizeOptionalStepRevisionKey(stepName);
+  return (task.log ?? []).filter((entry) => {
+    const action = entry.action ?? "";
+    const outcome = entry.outcome ?? "";
+    if (!/attempt \d+\//.test(action)) return false;
+    const markerIndex = outcome.indexOf(OPTIONAL_STEP_REVISION_KEY_MARKER);
+    if (markerIndex >= 0) {
+      const markerValue = outcome.slice(markerIndex + OPTIONAL_STEP_REVISION_KEY_MARKER.length).split(/\r?\n/, 1)[0]?.trim();
+      return normalizeOptionalStepRevisionKey(markerValue) === normalizedKey;
+    }
+    if (!normalizedStepName) return false;
+    return normalizeOptionalStepRevisionKey(outcome).includes(`step: ${normalizedStepName}`);
+  }).length;
+}
+
+function optionalStepRevisionLogOutcome(details: string, key: string): string {
+  return `${details}\n${OPTIONAL_STEP_REVISION_KEY_MARKER} ${key}`;
+}
+
 const worktreeMetadataReconcileLog = createLogger("worktree-metadata-reconcile");
 const execAsync = promisify(exec);
 const yieldEventLoop = (): Promise<void> => new Promise((resolve) => setImmediateCb(resolve));
@@ -6264,9 +6295,27 @@ export class SelfHealingManager {
       /*
        * FNXC:WorkflowOptionalStepRevisionBudget 2026-06-27-12:34:
        * Self-healing pre-computes the same optional-step budget the live graph seam uses before the synchronous candidate filter runs. The target step is the latest blocking pre-merge failure, matching `recoverFailedPreMergeWorkflowStep`; IR lookup failures fall back to the effective global `maxPostReviewFixes` so older tasks remain recoverable.
+       *
+       * FNXC:WorkflowRevisionBudget 2026-06-30-20:50:
+       * Offline recovery must share live execution's workflow-value precedence: explicit `planReviewMaxRevisions`/`codeReviewMaxRevisions` caps win, unset Plan Review/spec and Code Review values are unbounded, and Browser Verification keeps the existing fallback budget.
+       *
+       * FNXC:WorkflowRevisionBudget 2026-06-30-22:06:
+       * Self-healing uses the same per-step attempt partition as live execution. `postReviewFixCount` remains an aggregate observability counter, but cap exhaustion is computed from prior log markers for the failed workflow step so Plan Review and Code Review budgets do not consume each other.
+       *
+       * FNXC:WorkflowRevisionBudget 2026-06-30-23:03:
+       * The in-review sweep stays slim for board-scale filtering, but slim TaskStore rows intentionally omit `log`. Hydrate the full task before counting revision markers so offline recovery enforces Code Review and Plan Review caps against production data instead of treating every task as attempt zero.
        */
-      const revisionBudgetByTask = new Map<string, { unbounded: boolean; max: number; label: string }>();
+      const revisionBudgetByTask = new Map<string, { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number }>();
       const irCache = new Map<string, Awaited<ReturnType<typeof resolveWorkflowIrForTask>>>();
+      const loadRevisionAttemptSource = async (task: Task): Promise<Pick<Task, "log">> => {
+        try {
+          const fullTask = await this.store.getTask(task.id);
+          if (fullTask?.id === task.id && Array.isArray(fullTask.log)) return fullTask;
+        } catch {
+          // Keep recovery fail-soft; older stores/tests can still provide log entries on the list row.
+        }
+        return task;
+      };
       for (const task of tasks) {
         const eff = await mergeEffectiveSettings(this.store, task, settings);
         const fallback = eff.maxPostReviewFixes ?? 3;
@@ -6283,15 +6332,28 @@ export class SelfHealingManager {
             rawMaxRevisions = undefined;
           }
         }
-        const budget = resolveOptionalStepRevisionBudget(rawMaxRevisions, fallback);
+        const maxRevisions = resolveOptionalReviewRevisionBudget({
+          optionalGroupId: target?.workflowStepId ?? "",
+          workflowSettings: eff as Record<string, unknown>,
+          nodeMaxRevisions: rawMaxRevisions,
+          fallbackMaxRevisions: fallback,
+        });
+        const budget = resolveOptionalStepRevisionBudget(maxRevisions, fallback);
+        const key = optionalStepRevisionKey(target?.workflowStepId, target?.workflowStepName);
+        const revisionAttemptSource = await loadRevisionAttemptSource(task);
         revisionBudgetByTask.set(task.id, {
           ...budget,
+          key,
+          stepName: target?.workflowStepName,
+          attempts: countOptionalStepRevisionAttempts(revisionAttemptSource, key, target?.workflowStepName),
           label: budget.unbounded ? "unbounded" : String(budget.max),
         });
       }
-      const revisionBudgetFor = (taskId: string): { unbounded: boolean; max: number; label: string } => {
-        const budget = revisionBudgetByTask.get(taskId) ?? resolveOptionalStepRevisionBudget(undefined, 3);
-        return { ...budget, label: budget.unbounded ? "unbounded" : String(budget.max) };
+      const revisionBudgetFor = (taskId: string): { unbounded: boolean; max: number; label: string; key: string; stepName?: string; attempts: number } => {
+        const budget = revisionBudgetByTask.get(taskId);
+        if (budget) return budget;
+        const fallbackBudget = resolveOptionalStepRevisionBudget(undefined, 3);
+        return { ...fallbackBudget, key: "pre-merge-optional-step", attempts: 0, label: fallbackBudget.unbounded ? "unbounded" : String(fallbackBudget.max) };
       };
 
       const candidates = tasks.filter((task) => {
@@ -6304,7 +6366,7 @@ export class SelfHealingManager {
         if (executingIds.has(task.id)) return false;
         const budget = revisionBudgetFor(task.id);
         if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
-        if (!budget.unbounded && (task.postReviewFixCount ?? 0) >= budget.max) return false;
+        if (!budget.unbounded && budget.attempts >= budget.max) return false;
 
         // Must have at least one failed pre-merge workflow step result.
         if (!latestFailedPreMergeStep(task)) return false;
@@ -6329,16 +6391,18 @@ export class SelfHealingManager {
 
       let recovered = 0;
       for (const task of candidates) {
-        const nextCount = (task.postReviewFixCount ?? 0) + 1;
         const budget = revisionBudgetFor(task.id);
+        const nextCount = budget.attempts + 1;
+        const totalFixCount = (task.postReviewFixCount ?? 0) + 1;
         try {
           // Increment the counter BEFORE delegating so that even if the
           // executor path crashes or races, the budget is still consumed and
           // we can't enter an infinite revival loop.
-          await this.store.updateTask(task.id, { postReviewFixCount: nextCount });
+          await this.store.updateTask(task.id, { postReviewFixCount: totalFixCount });
           await this.store.logEntry(
             task.id,
             `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${nextCount}/${budget.label})`,
+            optionalStepRevisionLogOutcome(`Step: ${budget.stepName ?? budget.key}`, budget.key),
           );
           const sentBack = await recoverFn(task);
           if (sentBack) {

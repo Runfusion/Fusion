@@ -5,6 +5,7 @@ import type { WorkflowIr } from "../workflow-ir-types.js";
 import {
   resolveEffectiveSettings,
   resolveEffectiveSettingsById,
+  resolveOptionalReviewRevisionBudget,
   type WorkflowSettingsResolverStore,
 } from "../workflow-settings-resolver.js";
 
@@ -56,6 +57,78 @@ function makeStore(opts: {
     }),
   };
 }
+
+describe("resolveOptionalReviewRevisionBudget", () => {
+  it("treats unset built-in Plan Review and Code Review settings as unbounded", () => {
+    expect(resolveOptionalReviewRevisionBudget({ optionalGroupId: "plan-review", workflowSettings: {} })).toBe("unbounded");
+    expect(resolveOptionalReviewRevisionBudget({ optionalGroupId: "code-review", workflowSettings: {} })).toBe("unbounded");
+  });
+
+  it("uses explicit workflow values before node config, including zero", () => {
+    expect(
+      resolveOptionalReviewRevisionBudget({
+        optionalGroupId: "plan-review",
+        workflowSettings: { planReviewMaxRevisions: 2 },
+        nodeMaxRevisions: "unbounded",
+      }),
+    ).toBe(2);
+    expect(
+      resolveOptionalReviewRevisionBudget({
+        optionalGroupId: "code-review",
+        workflowSettings: { codeReviewMaxRevisions: 0 },
+        nodeMaxRevisions: "unbounded",
+      }),
+    ).toBe(0);
+  });
+
+  it("preserves authored node maxRevisions for custom or duplicated workflows", () => {
+    expect(
+      resolveOptionalReviewRevisionBudget({
+        optionalGroupId: "plan-review",
+        workflowSettings: {},
+        nodeMaxRevisions: 4,
+      }),
+    ).toBe(4);
+    expect(
+      resolveOptionalReviewRevisionBudget({
+        optionalGroupId: "custom-review",
+        workflowSettings: { planReviewMaxRevisions: 1 },
+        nodeMaxRevisions: "unbounded",
+        fallbackMaxRevisions: 3,
+      }),
+    ).toBe("unbounded");
+  });
+
+  it("ignores invalid workflow and node budgets safely", () => {
+    for (const invalid of [-1, 1.5, Number.POSITIVE_INFINITY, Number.NaN, "3"]) {
+      expect(
+        resolveOptionalReviewRevisionBudget({
+          optionalGroupId: "plan-review",
+          workflowSettings: { planReviewMaxRevisions: invalid },
+          nodeMaxRevisions: 5,
+        }),
+      ).toBe(5);
+    }
+    expect(
+      resolveOptionalReviewRevisionBudget({
+        optionalGroupId: "custom-review",
+        nodeMaxRevisions: -1 as never,
+        fallbackMaxRevisions: 3,
+      }),
+    ).toBe(3);
+  });
+
+  it("leaves Browser Verification and other optional gates on the existing fallback unless configured", () => {
+    expect(
+      resolveOptionalReviewRevisionBudget({
+        optionalGroupId: "browser-verification",
+        workflowSettings: {},
+        fallbackMaxRevisions: 3,
+      }),
+    ).toBe(3);
+    expect(resolveOptionalReviewRevisionBudget({ optionalGroupId: "browser-verification", workflowSettings: {} })).toBeUndefined();
+  });
+});
 
 describe("resolveEffectiveSettings (per-task)", () => {
   it("parity anchor: builtin:coding with no stored values → effective equals declaration defaults", async () => {

@@ -1,5 +1,5 @@
 import { type NextFunction, type Request, type Response } from "express";
-import { isAbsolute, resolve, relative } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { realpathSync } from "node:fs";
 import { exec as execCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -57,6 +57,7 @@ import {
 } from "../github-webhooks.js";
 import type { ApiRoutesContext } from "./types.js";
 import { runGitCommand } from "./resolve-diff-base.js";
+import { assertWorktreePathSafe, isPathWithin, listRegisteredWorktreePaths } from "../git-worktree-safety.js";
 
 const execAsync = promisify(execCb);
 const PR_ROUTE_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -1247,57 +1248,6 @@ async function dropStashBySha(sha: string, cwd?: string): Promise<void> {
   const ref = await findStashRefBySha(sha, cwd);
   if (!ref) return;
   await runGitCommand(["stash", "drop", ref], cwd, 10_000);
-}
-
-function isPathWithin(parent: string, candidate: string): boolean {
-  const rel = relative(parent, candidate);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-async function listRegisteredWorktreePaths(rootDir: string): Promise<string[]> {
-  const output = await runGitCommand(["worktree", "list", "--porcelain"], rootDir, 10_000);
-  const paths: string[] = [];
-  for (const line of output.split("\n")) {
-    if (!line.startsWith("worktree ")) continue;
-    const worktreePath = line.slice("worktree ".length).trim();
-    if (!worktreePath) continue;
-    paths.push(resolve(worktreePath));
-  }
-  return paths;
-}
-
-async function assertWorktreePathSafe(
-  scopedStore: Pick<TaskStore, "getRootDir">,
-  worktreePath: string,
-  cache: Map<string, string[]>,
-): Promise<string> {
-  if (typeof worktreePath !== "string" || worktreePath.trim().length === 0) {
-    throw badRequest("worktreePath is required");
-  }
-
-  if (!isAbsolute(worktreePath)) {
-    throw badRequest("worktreePath must be an absolute path");
-  }
-  const rootDir = resolve(scopedStore.getRootDir());
-  const resolved = resolve(worktreePath);
-  if (resolved !== worktreePath) {
-    throw badRequest("worktreePath must be normalized");
-  }
-  if (isPathWithin(rootDir, resolved)) {
-    return resolved;
-  }
-
-  let allowlisted = cache.get(rootDir);
-  if (!allowlisted) {
-    allowlisted = await listRegisteredWorktreePaths(rootDir);
-    cache.set(rootDir, allowlisted);
-  }
-
-  if (allowlisted.some((allowed) => isPathWithin(allowed, resolved))) {
-    return resolved;
-  }
-
-  throw badRequest("worktreePath outside project");
 }
 
 type DashboardGitMutationType = "stash:push" | "stash:pop" | "pull:fast-forward" | "stash:pop-conflict";

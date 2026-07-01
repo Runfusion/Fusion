@@ -630,6 +630,8 @@ export type { WorkflowSettingDefinition, WorkflowSettingType, WorkflowSettingOpt
 export interface BoardWorkflowDefinition {
   id: string;
   name: string;
+  /** Optional compact custom workflow icon; built-ins render the Fusion mark by id. */
+  icon?: string;
   columns: BoardWorkflowColumn[];
   /** Custom field definitions declared by this workflow (U13/KTD-14). Absent on
    *  workflows with no fields, or from older servers. */
@@ -2236,6 +2238,17 @@ export function updateCustomProvider(
 export function deleteCustomProvider(id: string): Promise<{ success: boolean }> {
   return api<{ success: boolean }>(`/custom-providers/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+}
+
+export interface RefreshProviderModelsResponse {
+  provider: CustomProvider;
+  modelsRefreshed: number;
+}
+
+export function refreshProviderModels(id: string): Promise<RefreshProviderModelsResponse> {
+  return api<RefreshProviderModelsResponse>(`/custom-providers/${encodeURIComponent(id)}/refresh-models`, {
+    method: "POST",
   });
 }
 
@@ -5483,7 +5496,11 @@ export function compileWorkflow(id: string, projectId?: string): Promise<{ steps
 /** A workflow export envelope (U5/R9/KTD-5). `schemaVersion` is the SERVER's
  *  schema version at export time — the import route version-gates against it
  *  (the app build aliases @fusion/core to types-only, so the value can only come
- *  from the server, never an app-side core import). */
+ *  from the server, never an app-side core import).
+ *
+ *  FNXC:WorkflowPortability 2026-06-30-00:00:
+ *  Dashboard downloads must carry project-scoped setting values and prompt overrides with the workflow graph so the same shared API path supports portable desktop and mobile Workflow Editor imports.
+ */
 export interface WorkflowExportEnvelope {
   fusionWorkflowExport: 1;
   schemaVersion: number;
@@ -5492,6 +5509,8 @@ export interface WorkflowExportEnvelope {
   description: string;
   ir: import("@fusion/core").WorkflowIr;
   layout: import("@fusion/core").WorkflowDefinition["layout"];
+  settingValues: Record<string, unknown>;
+  promptOverrides: Record<string, string>;
 }
 
 /** Fetch a workflow's export envelope and trigger a browser download as
@@ -5521,6 +5540,8 @@ export interface ImportWorkflowResult {
   workflow: import("@fusion/core").WorkflowDefinition;
   strippedApprovalFlags: boolean;
   warnings: string[];
+  settingValues: Record<string, unknown>;
+  promptOverrides: Record<string, string>;
 }
 
 /** Import a workflow export envelope (U5/R10). The server is the sole validator;
@@ -9828,6 +9849,11 @@ export interface ChatMessageListResponse {
   messages: ChatMessage[];
 }
 
+export interface TaskPlannerChatSessionInput {
+  modelProvider?: string;
+  modelId?: string;
+}
+
 export interface ChatRoomListResponse {
   rooms: ChatRoom[];
 }
@@ -9911,6 +9937,36 @@ export function createChatSession(
 /** Fetch a single chat session */
 export function fetchChatSession(id: string, projectId?: string): Promise<ChatSessionResponse> {
   return api<ChatSessionResponse>(withProjectId(`/chat/sessions/${encodeURIComponent(id)}`, projectId));
+}
+
+export function ensureTaskPlannerChatSession(
+  taskId: string,
+  input: TaskPlannerChatSessionInput = {},
+  projectId?: string,
+): Promise<ChatSessionResponse> {
+  const normalizedTaskId = taskId.trim();
+  if (!normalizedTaskId) {
+    throw new Error("taskId is required");
+  }
+  const normalizedProvider = input.modelProvider?.trim();
+  const normalizedModelId = input.modelId?.trim();
+  if ((normalizedProvider && !normalizedModelId) || (!normalizedProvider && normalizedModelId)) {
+    throw new Error("Both modelProvider and modelId must be provided together, or neither should be provided");
+  }
+
+  /*
+  FNXC:TaskDetailPlannerChat 2026-06-30-22:30:
+  Task planner chat uses a task-scoped session seam instead of the generic agent-chat creator so it can bind the conversation to the task and planning model without requiring a real executor/reviewer agent or turning the message into steering.
+  */
+  return api<ChatSessionResponse>(
+    withProjectId(`/chat/task-planner/${encodeURIComponent(normalizedTaskId)}/session`, projectId),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        ...(normalizedProvider && normalizedModelId ? { modelProvider: normalizedProvider, modelId: normalizedModelId } : {}),
+      }),
+    },
+  );
 }
 
 /** Update a chat session (title, status) */

@@ -41,8 +41,23 @@ Be specific: cite the plan section or file path for every finding and explain th
 /** Build the `plan-review` optional-group node placed between planning and execution. */
 export function planReviewOptionalGroupNode(
   column: string,
-  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded" } = {},
+  options: { defaultOn?: boolean; maxRevisions?: number | "unbounded"; requireExternalIntegrationEvidence?: boolean } = {},
 ): WorkflowIrNode {
+  const promptConfig: Record<string, unknown> = {
+    name: PLAN_REVIEW_NAME,
+    description: PLAN_REVIEW_DESCRIPTION,
+    prompt: PLAN_REVIEW_PROMPT,
+    toolMode: "readonly",
+    gateMode: "gate",
+  };
+  if (options.requireExternalIntegrationEvidence === true) {
+    /*
+     * FNXC:PlanValidation 2026-06-30-08:56:
+     * Only Coding (per-step review) keeps deterministic external-integration evidence as part of Plan Review. Default Coding must not inherit this pre-review blocker; graph execution reads this flag from the Plan Review template node and turns missing evidence into a REVISE outcome.
+     */
+    promptConfig.requireExternalIntegrationEvidence = true;
+  }
+
   return {
     id: PLAN_REVIEW_GROUP_ID,
     kind: "optional-group",
@@ -57,22 +72,16 @@ export function planReviewOptionalGroupNode(
       reworkRegion: true,
       maxReworkCycles: 3,
       /*
-       * FNXC:WorkflowRemediationBudget 2026-06-29-13:56:
-       * Built-in Plan Review owns the pre-execution replan budget. Default to three graph-mediated revise→replan→review attempts while allowing workflow authors to override `maxRevisions`.
+       * FNXC:WorkflowRevisionBudget 2026-06-30-19:49:
+       * Built-in Plan Review/spec remediation is unbounded by default; workflow setting value `planReviewMaxRevisions` is the operator cap for read-only built-ins, while authored `maxRevisions` still lets custom/duplicated workflows encode their own budget.
        */
-      maxRevisions: options.maxRevisions ?? 3,
+      maxRevisions: options.maxRevisions ?? "unbounded",
       template: {
         nodes: [
           {
             id: PLAN_REVIEW_STEP_NODE_ID,
             kind: "prompt",
-            config: {
-              name: PLAN_REVIEW_NAME,
-              description: PLAN_REVIEW_DESCRIPTION,
-              prompt: PLAN_REVIEW_PROMPT,
-              toolMode: "readonly",
-              gateMode: "gate",
-            },
+            config: promptConfig,
           },
         ],
         edges: [],

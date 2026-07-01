@@ -5,8 +5,9 @@
  * a parser id to an implementation that reads an artifact's content and yields a
  * canonical step list. Built-ins:
  *   - `step-headings` — the extracted `parseStepsFromPrompt` logic (the
- *     `### Step N:` regex + `(depends: …)` annotation from U1); legacy callers
- *     in `store.ts` delegate to this exact function (byte-identical parity).
+ *     `### Step N:` regex + `(depends: …)` annotation from U1), plus a bounded
+ *     fallback for plain `### Heading` entries inside `## Steps`; legacy callers
+ *     in `store.ts` delegate to this exact function.
  *   - `json-steps` — a structured `[{ name, depends? }]` JSON document for
  *     workflows that plan in JSON.
  *
@@ -228,7 +229,29 @@ export function parseStepHeadings(content: string): TaskStep[] {
       if (fallbackName) steps.push({ name: fallbackName, status: "pending" });
     }
   }
+  if (steps.length > 0) return steps;
+
+  const stepsSection = extractStepsSection(content);
+  if (!stepsSection) return steps;
+  const plainHeadingRegex = /^###\s+(?!Step\s+\d+\b)(.+?)\s*$/gm;
+  while ((match = plainHeadingRegex.exec(stepsSection)) !== null) {
+    const name = match[1].trim();
+    if (name) steps.push({ name, status: "pending" });
+  }
   return steps;
+}
+
+/*
+FNXC:WorkflowSteps 2026-06-30-00:54:
+Default Coding parses PROMPT.md before step execution. FN-7260/FN-7271 specs used plain `### Preflight`/`### Implementation` headings under `## Steps`; the previous parser returned zero steps, so fast-mode tasks reached merge with no implementation session. Accept plain third-level headings only inside the Steps section, and only when no legacy `### Step N:` headings were found, so unrelated spec sections do not become executable work.
+*/
+function extractStepsSection(content: string): string | undefined {
+  const sectionMatch = /^##\s+Steps\s*$/gim.exec(content);
+  if (!sectionMatch) return undefined;
+  const start = sectionMatch.index + sectionMatch[0].length;
+  const rest = content.slice(start);
+  const nextSection = /^##\s+(?!#)/gm.exec(rest);
+  return nextSection ? rest.slice(0, nextSection.index) : rest;
 }
 
 /** Parse a `depends:` value list (1-indexed step numbers) into 0-indexed,

@@ -1,0 +1,42 @@
+.workflow-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 1em;
+  height: 1em;
+  color: currentColor;
+  line-height: 1;
+}
+
+.workflow-icon--builtin {
+  color: var(--accent);
+}
+
+.workflow-icon-mark {
+  display: block;
+  width: 1em;
+  height: 1em;
+  overflow: visible;
+}
+
+.workflow-icon-mark circle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: calc(var(--space-xs) * 2);
+}
+
+.workflow-icon-mark path {
+  fill: currentColor;
+}
+
+.workflow-icon--custom {
+  font: inherit;
+}
+
+.workflow-icon-custom-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1em;
+}

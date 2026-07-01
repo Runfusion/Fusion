@@ -52,6 +52,7 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `shadcnCustomColors` | `Record<string, string>` | `undefined` | Optional shadcn design-token override map for `"shadcn-custom"` only. Keys are CSS token names such as `--accent`, `--bg`, `--surface`, `--card`, `--border`, `--text`, `--text-muted`, workflow status tokens, and `--color-success`/`--color-warning`/`--color-error`; values must be sanitized `#RGB` or `#RRGGBB` hex colors. Missing or invalid entries fall back to the `shadcn-custom` base defaults and are not applied to other themes. |
 | `language` | `"en" \| "zh-CN" \| "zh-TW" \| "fr" \| "es" \| "ko"` | `undefined` | UI language for the dashboard and TUI. When unset, the dashboard detects from localStorage → browser language and the CLI from `--lang` flag → environment locale, falling back to `en`. Validated at the store write boundary (`validateLocale`); invalid values are dropped. Reset to auto-detect via the dashboard's "Auto" language option or `fn settings set language auto` (clears the persisted key). |
 | `dashboardFontScalePct` | `number` | `100` | Dashboard font scale percentage used by Appearance settings. Valid range: `85` to `125`; applied pre-hydration via document root font-size so board typography (column headers/counts, task cards, and quick-entry text) scales with the setting from first paint. |
+| `dismissModalsOnOutsideClick` | `boolean` | `false` | Global dashboard preference for closing fixed modal overlays by clicking/tapping the backdrop. Off by default to prevent accidental modal dismissal; explicit close, cancel, and Escape paths remain available. |
 | `defaultProvider` | `string` | `undefined` | Default AI provider. |
 | `defaultModelId` | `string` | `undefined` | Default AI model ID. |
 | `modelPricingOverrides` | `Record<string, ModelPricing>` | `undefined` | Optional global Command Center pricing overrides keyed by lowercased `provider:model` or bare `:model`. Values store USD per 1M input, output, cache-read, and cache-write tokens plus optional `source`; they override the built-in pricing table for cost estimates only and are editable from Settings → Global Models → View pricing table. |
@@ -78,7 +79,7 @@ Fusion automatically falls back to ntfy's JSON publish format when a notificatio
 | `webhookFormat` | `"slack" \| "discord" \| "generic"` | `"generic"` | Webhook payload format. Part of legacy flat settings. |
 | `webhookEvents` | `string[]` | `[]` | Event filter for webhook notifications. Empty/omitted means all events. Part of legacy flat settings. |
 | `notificationProviders` | `NotificationProviderConfig[]` | `[]` | Array of pluggable notification provider configurations. Each entry uses `{ id, name, enabled, config }` and is dispatched by provider ID (for example `ntfy` or `webhook`). |
-| `customProviders` | `CustomProvider[]` | `[]` | <a id="customproviders"></a>User-defined OpenAI-compatible, OpenAI Responses API (`apiType: "openai-responses"`), Anthropic-compatible, or Google Generative AI (`apiType: "google-generative-ai"`) providers used by the custom-provider API (`/api/custom-providers`). Each entry uses `{ id, name, apiType, baseUrl, apiKey?, supportsDeveloperRole?, models? }`; `supportsDeveloperRole` is an OpenAI-compatible opt-in that enables `developer` role emission (default/omitted is `false`, forcing safe `system` role). API keys are stored raw but masked in API responses. Fusion resolves these providers from the active global settings directory (`~/.fusion`, with legacy `~/.pi/fusion` and `~/.pi/kb` migration support) so custom-provider models remain available after restart. |
+| `customProviders` | `CustomProvider[]` | `[]` | <a id="customproviders"></a>User-defined OpenAI-compatible, OpenAI Responses API (`apiType: "openai-responses"`), Anthropic-compatible, or Google Generative AI (`apiType: "google-generative-ai"`) providers used by the custom-provider API (`/api/custom-providers`). Each entry uses `{ id, name, apiType, baseUrl, apiKey?, supportsDeveloperRole?, models? }`; `supportsDeveloperRole` is an OpenAI-compatible opt-in that enables `developer` role emission (default/omitted is `false`, forcing safe `system` role). API keys are stored raw but masked in API responses. Fusion resolves these providers from the active global settings directory (`~/.fusion`, with legacy `~/.pi/fusion` and `~/.pi/kb` migration support) so custom-provider models remain available after restart. Dashboard, serve, and daemon startup refresh each configured provider's persisted `models` list from its `/models` endpoint on a best-effort basis; failures leave the previous list intact and do not block startup. In Settings → Authentication → Advanced: Custom Providers, use **Refresh Models** on a provider row to manually refresh that provider after changing credentials, endpoints, or upstream model availability. Saved local/LAN/internal provider URLs are eligible for this stored-provider refresh path, while the add/edit **Detect Models** form keeps stricter SSRF protections for untrusted one-off input. |
 | `defaultProjectId` | `string` | `undefined` | Default project for multi-project CLI operations when `--project` is omitted. |
 | `setupComplete` | `boolean` | `undefined` | Tracks completion of first-run setup. |
 | `favoriteProviders` | `string[]` | `undefined` | Pinned providers shown first in model selectors. |
@@ -268,7 +269,11 @@ Actions. It has two tabs:
   (Plan/Triage, Executor, Reviewer, and fallbacks declared by the workflow) use the
   same model dropdown picker as Project Models so clearing or selecting a model
   updates both keys together. Advanced/custom non-model settings still use typed
-  controls. Edits batch and commit through a single **Save** in the Values tab.
+  controls. Built-in Plan Review/spec and Code Review revision caps also live here:
+  leave `planReviewMaxRevisions` or `codeReviewMaxRevisions` empty for unbounded
+  automatic revisions, enter a non-negative integer to cap attempts, or enter `0`
+  to disable automatic revision for that path. Edits batch and commit through a
+  single **Save** in the Values tab.
 
 **How values resolve.** The engine resolves *effective settings* per task as
 `stored value ?? declaration default`. The task-detail Workflow, Chat, and Agent
@@ -306,7 +311,7 @@ These groups moved out of project settings and into workflow settings (built-in
 | Group | Keys (examples) |
 |---|---|
 | **Step execution** | `workflowStepTimeoutMs`, `runStepsInNewSessions`, `maxParallelSteps`, `workflowStepScopeEnforcement`, `strictScopeEnforcement`, `verificationFixRetries`, `maxPostReviewFixes`, `buildRetryCount` |
-| **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`; project override: `planApprovalMode` |
+| **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`, `planReviewMaxRevisions`, `codeReviewMaxRevisions`; project override: `planApprovalMode` |
 | **Per-phase model lanes** | `executionProvider`/`executionModelId`, `planningProvider`/`planningModelId` (+ fallbacks), `validatorProvider`/`validatorModelId` (+ fallbacks) |
 
 ### Workflow-native triage policy settings
@@ -334,6 +339,8 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 | `triageDefaultWorkflowId` | `builtin:coding` | Default workflow for standard coding tasks and for existing tasks without an explicit user-requested or creator-owned workflow selection. |
 | `leanPlanning` | `false` | Workflow-native fast-mode policy: select the lean `planning-fast` prompt variant instead of the full triage spec prompt. |
 | `autoApproveSpec` | `false` | Legacy compatibility setting. Workflow Plan Review now owns optional pre-execution AI plan approval. |
+| `planReviewMaxRevisions` | unset | Workflow-native Plan Review/spec revision cap. Unset/empty means unbounded automatic replans; a non-negative integer caps attempts; `0` disables automatic Plan Review revision. |
+| `codeReviewMaxRevisions` | unset | Workflow-native Code Review remediation cap. Unset/empty means unbounded automatic code-fix passes; a non-negative integer caps attempts; `0` disables automatic Code Review remediation. |
 
 In the dashboard Settings modal, Project Models exposes Plan/Triage, Executor,
 Reviewer, and declared fallback dropdown controls for the default workflow. The
@@ -561,7 +568,7 @@ Default notes:
 | `maxReviewerContextRetries` | `number` | `2` | Max reviewer context-compaction retries (FN-4082) per task. |
 | `maxReviewerFallbackRetries` | `number` | `2` | Max reviewer fallback-model retries (FN-4092) per task. |
 | `maxTotalRetriesBeforeFail` | `number` | `25` | Master retry budget across all tracked retry counters; exceeding this fails the task with `RetryStormError`. |
-| `maxPostReviewFixes` | `number` | `3` | Default max automatic fix passes for review/pre-merge optional-step feedback, including self-healing auto-revival of in-review tasks failing pre-merge workflow steps. Individual `optional-group` workflow nodes can override this with `config.maxRevisions` (non-negative integer or `"unbounded"`). |
+| `maxPostReviewFixes` | `number` | `3` | Default max automatic fix passes for generic review/pre-merge optional-step feedback, including self-healing auto-revival of in-review tasks failing pre-merge workflow steps. Individual `optional-group` workflow nodes can override this with `config.maxRevisions` (non-negative integer or `"unbounded"`). Built-in Plan Review/spec and Code Review use workflow values `planReviewMaxRevisions` / `codeReviewMaxRevisions` first, and are unbounded when those values are unset. |
 | `maxSpawnedAgentsPerParent` | `number` | `5` | Max child agents per parent task. |
 | `maxSpawnedAgentsGlobal` | `number` | `20` | Max spawned agents across one executor instance. |
 | `maintenanceIntervalMs` | `number` | `300000` | Periodic maintenance interval in ms (5 min). |

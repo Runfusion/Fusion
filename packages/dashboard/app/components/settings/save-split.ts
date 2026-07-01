@@ -71,6 +71,7 @@ const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   "global-general": new Set([
     "githubTrackingDefaultRepo",
     "language",
+    "dismissModalsOnOutsideClick",
     "persistAgentToolOutput",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",

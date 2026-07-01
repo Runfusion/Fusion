@@ -327,7 +327,7 @@ function withPostMergeVerificationNode(nodes: BuiltinSpec["nodes"]): BuiltinSpec
 export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   {
     id: "builtin:coding",
-    name: "Coding (built-in)",
+    name: "Coding",
     description: "Default coding pipeline: plan steps, execute them one at a time, then run the optional final code review and merge.",
     kind: "workflow",
     ir: BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR,
@@ -358,7 +358,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   },
   {
     id: "builtin:legacy-coding",
-    name: "Legacy coding (built-in)",
+    name: "Legacy coding",
     description: "The original monolithic coding pipeline: implement, review, then merge without graph-owned per-step execution.",
     kind: "workflow",
     ir: BUILTIN_CODING_WORKFLOW_IR,
@@ -393,7 +393,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   },
   linear({
     id: "builtin:quick-fix",
-    name: "Quick fix (built-in)",
+    name: "Quick fix",
     description: "Implement and merge with no review step — for trivial, low-risk changes.",
     engineeringOptionalGroups: {
       planReviewDefaultOn: false,
@@ -407,7 +407,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   }),
   linear({
     id: "builtin:review-heavy",
-    name: "Review-heavy (built-in)",
+    name: "Review-heavy",
     description: "Adds an extra security pass before merge, on top of the standard review.",
     engineeringOptionalGroups: {},
     nodes: [
@@ -427,7 +427,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   }),
   {
     id: "builtin:marketing",
-    name: "Marketing (built-in)",
+    name: "Marketing",
     description: "Marketing content pipeline: ideate, brief, draft, editorial review, then publish via the standard lifecycle merge primitives.",
     kind: "workflow",
     ir: BUILTIN_MARKETING_WORKFLOW_IR,
@@ -456,7 +456,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
    */
   linear({
     id: "builtin:compound-engineering",
-    name: "Compound engineering (built-in)",
+    name: "Compound engineering",
     description: "Plan → implement → review → document, invoking the compound-engineering skills at each stage.",
     nodes: [
       {
@@ -548,7 +548,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   // workflow graph runtime.
   {
     id: "builtin:stepwise-coding",
-    name: "Coding (per-step review) (built-in)",
+    name: "Coding (per-step review)",
     description:
       "Per-step review coding pipeline: each planned step runs and is reviewed (approve / revise / rethink) before the next, with bounded rework before final review and merge.",
     kind: "workflow",
@@ -588,7 +588,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
    */
   linear({
     id: "builtin:design",
-    name: "Design (built-in)",
+    name: "Design",
     description: "Implement, then run a design/UX review gate before the standard review and merge — for UI-heavy work.",
     engineeringOptionalGroups: {},
     nodes: [
@@ -630,7 +630,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   // follow-up work").
   {
     id: "builtin:pr-workflow",
-    name: "PR lifecycle (built-in)",
+    name: "PR lifecycle",
     description:
       "The unified PR lifecycle as graph nodes: create the PR, await review, respond to changes (bounded rework loop), gate on auto-merge, then merge — with GitHub reconciliation advancing the await holds.",
     kind: "fragment",
@@ -653,7 +653,7 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
   },
   {
     id: "builtin:lead-generation",
-    name: "Lead generation (built-in)",
+    name: "Lead generation",
     description:
       "A business pipeline for sourcing, qualifying, enriching, and contacting leads with custom lead fields and stage columns.",
     kind: "workflow",

@@ -47,6 +47,7 @@ export type WorkflowNodeAbortKind = "engine-pause";
 
 export const WORKFLOW_INTERRUPTED_NODE_ID_CONTEXT_KEY = "workflow:interruptedNodeId";
 export const WORKFLOW_INTERRUPTED_NODE_ABORT_KIND_CONTEXT_KEY = "workflow:interruptedNodeAbortKind";
+export const WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY = "workflow:optionalGroupActive";
 export const WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND: WorkflowNodeAbortKind = "engine-pause";
 
 export interface WorkflowNodeResult {
@@ -198,7 +199,10 @@ export interface WorkflowGraphExecutorDeps {
   recordWorkflowStepResult?: (taskId: string, result: WorkflowStepResult) => void | Promise<void>;
   /*
    * FNXC:WorkflowOptionalStepFix 2026-06-26-16:20:
-   * Enabled PRE-merge optional workflow steps that return REVISE must offer the executor one remediation path before normal advisory/gate fall-through. The graph forwards the optional-group node id and per-step `maxRevisions` override so the executor can resolve the budget against `maxPostReviewFixes` or honor `"unbounded"`; absent or false preserves prior byte-inert behavior for in-memory tests and exhausted budgets.
+   * Enabled PRE-merge optional workflow steps that return REVISE must offer the executor one remediation path before normal advisory/gate fall-through. The graph forwards the optional-group node id and per-step `maxRevisions` override so the executor can resolve the budget against workflow-value caps, `maxPostReviewFixes`, or `"unbounded"`; absent or false preserves prior byte-inert behavior for in-memory tests and exhausted budgets.
+   *
+   * FNXC:WorkflowRevisionBudget 2026-06-30-20:46:
+   * Forward the optional-group id for every failure context because Plan Review/spec and Code Review budget resolution is keyed by that id. The graph does not read workflow setting values directly; live execution and self-healing share the core resolver at the remediation boundary.
    */
   requestPreMergeOptionalStepFix?: (taskId: string, info: {
     stepName: string;
@@ -683,8 +687,17 @@ export class WorkflowGraphExecutor {
 
           const groupResult = await runOptionalGroup(node, {
             context,
-            runTemplateNode: (tNode, sig, contextOverride) =>
-              this.executeNodeWithRetries(tNode, task, settings, contextOverride ?? context, ir, sig, false),
+            runTemplateNode: (tNode, sig, contextOverride) => {
+              /*
+              FNXC:FastOptionalSteps 2026-06-30-09:12:
+              Optional-group template execution carries the parent group id in context so fast mode can skip only top-level review/validation gates. Once an operator explicitly enables an optional group, that selection is stronger than the fast default and its prompt/script/gate body must run.
+              */
+              const optionalGroupContext = {
+                ...(contextOverride ?? context),
+                [WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]: node.id,
+              };
+              return this.executeNodeWithRetries(tNode, task, settings, optionalGroupContext, ir, sig, false);
+            },
             shouldTraverseEdge: (edge, src) => this.shouldTraverseEdge(edge, src),
             signal: this.deps.signal,
           });

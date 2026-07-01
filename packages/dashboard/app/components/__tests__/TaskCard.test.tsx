@@ -82,6 +82,8 @@ vi.mock("../../api", () => ({
   fetchMission: vi.fn(),
   fetchAgent: vi.fn(),
   fetchAgents: vi.fn(),
+  rebuildTaskSpec: vi.fn(),
+  refreshPrStatus: vi.fn(),
 }));
 
 const mockConfirm = vi.fn<(options: ConfirmOptions) => Promise<boolean>>();
@@ -90,7 +92,7 @@ vi.mock("../../hooks/useConfirm", () => ({
   useConfirm: () => ({ confirm: mockConfirm, confirmWithChoice: mockConfirmWithChoice }),
 }));
 
-import { addressPrFeedback, uploadAttachment, fetchMission, fetchAgent, fetchAgents } from "../../api";
+import { addressPrFeedback, uploadAttachment, fetchMission, fetchAgent, fetchAgents, refreshPrStatus } from "../../api";
 import { loadAllAppCss, loadAllAppCssBaseOnly } from "../../test/cssFixture";
 import { writeCache, SWR_CACHE_KEYS } from "../../utils/swrCache";
 
@@ -169,6 +171,7 @@ afterEach(() => {
   mockConfirm.mockReset();
   mockConfirmWithChoice.mockReset();
   vi.mocked(addressPrFeedback).mockReset();
+  vi.mocked(refreshPrStatus).mockReset();
 });
 
 describe("TaskCard", () => {
@@ -187,6 +190,169 @@ describe("TaskCard", () => {
     fireEvent.click(btn);
     expect(onOpenDetailWithTab).toHaveBeenCalledTimes(1);
     expect(onOpenDetailWithTab.mock.calls[0][1]).toBe("workflow");
+  });
+
+  it("opens the board card context menu on right-click without opening detail", async () => {
+    const onOpenDetail = vi.fn();
+    const onPauseTask = vi.fn(async () => makeTask({ paused: true }));
+    render(
+      <TaskCard
+        task={makeTask({ column: "in-progress", status: "executing" as any })}
+        onOpenDetail={onOpenDetail}
+        addToast={noop}
+        onPauseTask={onPauseTask}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pause" }));
+    await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-001"));
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("opens the board card context menu from keyboard without opening detail", () => {
+    const onOpenDetail = vi.fn();
+    render(
+      <TaskCard
+        task={makeTask({ column: "done", status: "done" as any })}
+        onOpenDetail={onOpenDetail}
+        addToast={noop}
+        onArchiveTask={vi.fn()}
+      />,
+    );
+
+    const card = document.querySelector(".card") as HTMLElement;
+    card.focus();
+    fireEvent.keyDown(card, { key: "F10", shiftKey: true });
+
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("confirms preserving progress before moving from the board context menu", async () => {
+    const onMoveTask = vi.fn(async () => makeTask({ column: "todo" }));
+    mockConfirm.mockResolvedValueOnce(true);
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          steps: [{ id: "s1", title: "done", status: "done" } as any],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMoveTask={onMoveTask}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Todo" }));
+
+    await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-001", "todo", { preserveProgress: true }));
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({ title: "Preserve Progress?" }));
+  });
+
+  it("omits refine without a real modal callback and offers PR status actions from the board context menu", async () => {
+    const onOpenDetail = vi.fn();
+    vi.mocked(refreshPrStatus).mockResolvedValueOnce({} as any);
+    render(
+      <TaskCard
+        task={makeTask({
+          column: "in-review",
+          prInfo: { number: 12, url: "https://example.test/pr/12", status: "open" } as any,
+        })}
+        projectId="project-1"
+        onOpenDetail={onOpenDetail}
+        addToast={noop}
+        onMergeTask={vi.fn()}
+        mergeStrategy="pull-request"
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    expect(screen.queryByRole("menuitem", { name: "Refine" })).not.toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Check PR Status" }));
+    await waitFor(() => expect(refreshPrStatus).toHaveBeenCalledWith("FN-001", "project-1"));
+  });
+
+  it("matches detail PR review labels before and during PR automation", () => {
+    const onMergeTask = vi.fn(async () => ({ merged: false }));
+    const { rerender } = render(
+      <TaskCard
+        task={makeTask({ column: "in-review" })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMergeTask={onMergeTask}
+        mergeStrategy="pull-request"
+        autoMergeEnabled={false}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    expect(screen.getByRole("menuitem", { name: "Start PR Review" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
+
+    rerender(
+      <TaskCard
+        task={makeTask({ column: "in-review", status: "creating-pr" as any })}
+        onOpenDetail={noop}
+        addToast={noop}
+        onMergeTask={onMergeTask}
+        mergeStrategy="pull-request"
+        autoMergeEnabled={false}
+      />,
+    );
+
+    fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+    expect(screen.getByRole("menuitem", { name: "Creating PR…" })).toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
+  });
+
+  it("opens the board card context menu on touch long-press and suppresses detail click", () => {
+    vi.useFakeTimers();
+    const onOpenDetail = vi.fn();
+    render(
+      <TaskCard
+        task={makeTask({ paused: true, userPaused: true })}
+        onOpenDetail={onOpenDetail}
+        addToast={noop}
+        onUnpauseTask={vi.fn(async () => makeTask())}
+      />,
+    );
+
+    const card = document.querySelector(".card") as HTMLElement;
+    fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 16, clientY: 16 });
+    act(() => vi.advanceTimersByTime(550));
+
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.pointerUp(card, { pointerType: "touch", pointerId: 1, clientX: 16, clientY: 16 });
+    fireEvent.click(card);
+    expect(onOpenDetail).not.toHaveBeenCalled();
+  });
+
+  it("cancels board card long-press when touch moves before the delay", () => {
+    vi.useFakeTimers();
+    render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={vi.fn()}
+        addToast={noop}
+        onPauseTask={vi.fn()}
+      />,
+    );
+
+    const card = document.querySelector(".card") as HTMLElement;
+    fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 16, clientY: 16 });
+    fireEvent.pointerMove(card, { pointerType: "touch", pointerId: 1, clientX: 40, clientY: 16 });
+    act(() => vi.advanceTimersByTime(550));
+
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 
   it("does not show the Answer-questions button when not awaiting input", () => {
@@ -4674,6 +4840,18 @@ describe("TaskCard memo comparator provenance behavior", () => {
     ).toBe(false);
   });
 
+  it("returns false when board context-menu action handlers change", () => {
+    const task = makeTask();
+    const actionHandler = vi.fn();
+
+    expect(
+      __test_areTaskCardPropsEqual(
+        { task, onOpenDetail: noop, addToast: noop, onPauseTask: actionHandler } as any,
+        { task, onOpenDetail: noop, addToast: noop, onUnpauseTask: actionHandler } as any,
+      ),
+    ).toBe(false);
+  });
+
   it("returns false when sourceMetadata.agentName changes", () => {
     const previousTask = makeTask({ sourceType: "automation", sourceMetadata: { agentName: "Agent One" } });
     const nextTask = makeTask({ sourceType: "automation", sourceMetadata: { agentName: "Agent Two" } });
@@ -4815,19 +4993,29 @@ describe("TaskCard memo comparator provenance behavior", () => {
 
 describe("TaskCard workflow badges", () => {
   it("renders a compact accessible workflow badge only when metadata is present", () => {
-    const { rerender } = render(
+    const { container, rerender } = render(
       <TaskCard
         task={makeTask()}
         onOpenDetail={noop}
         addToast={noop}
-        workflowBadge={{ workflowId: "wf-custom", workflowName: "Custom Flow" }}
+        workflowBadge={{ workflowId: "wf-custom", workflowName: "Custom Flow", workflowIcon: "⚙️" }}
       />,
     );
 
     const badge = screen.getByTestId("card-workflow-badge");
+    const row = screen.getByTestId("card-workflow-badge-row");
+    const workflowBadgeBlock = [...loadAllAppCssBaseOnly().matchAll(/^\.card-workflow-badge\s*\{([^}]*)\}/gm)]
+      .map((match) => match[1])
+      .join("\n");
     expect(badge).toHaveTextContent("Custom Flow");
+    expect(badge.querySelector(".workflow-icon")).not.toBeNull();
+    expect(badge.querySelector(".workflow-icon")?.nextElementSibling).toHaveTextContent("Custom Flow");
+    expect(workflowBadgeBlock).toContain("column-gap: calc(var(--space-xs) / 2);");
     expect(badge).toHaveAttribute("data-workflow-id", "wf-custom");
     expect(badge).toHaveAccessibleName("Workflow Custom Flow");
+    expect(row).toContainElement(badge);
+    expect(badge.closest(".card-meta-badges")).toBeNull();
+    expect(container.querySelector(".card-meta-badges")).toBeNull();
 
     rerender(
       <TaskCard
@@ -4838,6 +5026,49 @@ describe("TaskCard workflow badges", () => {
       />,
     );
     expect(screen.queryByTestId("card-workflow-badge")).toBeNull();
+    expect(screen.queryByTestId("card-workflow-badge-row")).toBeNull();
+  });
+
+  it("keeps top badges in the meta cluster while rendering workflow identity below card rows", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T12:10:00.000Z"));
+
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "in-progress",
+          priority: "high",
+          executionMode: "fast",
+          sourceType: "automation",
+          sourceMetadata: { agentName: "Task Robot" },
+          assignedAgentId: "agent-1",
+          columnMovedAt: "2026-06-30T12:00:00.000Z",
+          updatedAt: "2026-06-30T12:00:00.000Z",
+          dependencies: ["FN-1"],
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+        workflowBadge={{ workflowId: "wf-long", workflowName: "Very long custom workflow name for aggregate cards", workflowIcon: "🧭" }}
+      />,
+    );
+
+    const metaBadges = screen.getByTestId("card-meta-badges");
+    const badge = screen.getByTestId("card-workflow-badge");
+    const workflowRow = screen.getByTestId("card-workflow-badge-row");
+    expect(metaBadges.querySelector(".card-priority-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-execution-mode-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-workflow-badge")).toBeNull();
+    expect(workflowRow).toContainElement(badge);
+
+    [".card-footer-row", ".card-meta", ".card-agent-row"].forEach((selector) => {
+      const row = container.querySelector(selector);
+      expect(row, `${selector} should render for the placement fixture`).not.toBeNull();
+      expect(row!.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    expect(badge.closest(".card-action-row")).toBeNull();
+    vi.useRealTimers();
   });
 });
 

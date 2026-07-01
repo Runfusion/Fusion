@@ -9,7 +9,7 @@ import {
 import { useConfirm } from "../../../hooks/useConfirm";
 import type { DateRange } from "../DateRangePicker";
 import { Bar } from "../charts/Bar";
-import { PieChart } from "../charts/recharts";
+import { LineChart, PieChart } from "../charts/recharts";
 import { AreaShell } from "./AreaShell";
 import { useAnalyticsArea } from "./useAnalyticsArea";
 import { formatCount, formatDurationMs } from "./areaShared";
@@ -133,6 +133,42 @@ export function ProductivityArea({ range }: { range: DateRange }) {
     totalMs: null,
     unavailable: true,
   };
+  const taskDurationTrend = useMemo(
+    () =>
+      (data?.taskDurationTrend ?? [])
+        .filter(
+          (bucket) =>
+            !bucket.unavailable
+            && bucket.completedTasks > 0
+            && bucket.averageMs !== null
+            && bucket.medianMs !== null
+            && Number.isFinite(bucket.averageMs)
+            && Number.isFinite(bucket.medianMs),
+        ),
+    [data?.taskDurationTrend],
+  );
+  const durationTrendSeries = useMemo(
+    () => [
+      {
+        label: t("commandCenter.productivity.averageDuration", "Average"),
+        values: taskDurationTrend.map((bucket) => bucket.averageMs ?? 0),
+      },
+      {
+        label: t("commandCenter.productivity.medianDuration", "Median"),
+        values: taskDurationTrend.map((bucket) => bucket.medianMs ?? 0),
+      },
+    ],
+    [t, taskDurationTrend],
+  );
+  const durationTrendLabels = useMemo(
+    () => taskDurationTrend.map((bucket) => bucket.bucket),
+    [taskDurationTrend],
+  );
+  const hasDurationTrend = taskDurationTrend.length > 0;
+  /*
+  FNXC:CommandCenterProductivity 2026-06-30-10:32:
+  Operators need an average/median task-duration line graph sourced only from completed-task active execution history. Hide the graph for loading, error, legacy, empty, and no-trend payloads rather than rendering an empty shell or converting missing buckets to zero.
+  */
   /*
   FNXC:CommandCenterProductivity 2026-06-22-00:32:
   Backfill-era dashboard tests and cached clients can render ProductivityArea with legacy productivity payloads that predate LOC and hours-saved summaries. Treat missing nested summaries as unavailable sentinels so the whole Command Center remains mounted instead of crashing during responsive-layout verification.
@@ -338,6 +374,20 @@ export function ProductivityArea({ range }: { range: DateRange }) {
           </div>
         </div>
       </div>
+
+      {hasDurationTrend ? (
+        <div className="cc-area-section" data-testid="cc-productivity-duration-trend">
+          <h3 className="cc-area-section-title">
+            {t("commandCenter.productivity.durationTrendTitle", "Task duration over time")}
+          </h3>
+          <LineChart
+            series={durationTrendSeries}
+            ariaLabel={t("commandCenter.productivity.durationTrendTitle", "Task duration over time")}
+            xAxisLabels={durationTrendLabels}
+            valueFormatter={formatDurationMs}
+          />
+        </div>
+      ) : null}
 
       <div className="cc-area-section">
         <h3 className="cc-area-section-title">

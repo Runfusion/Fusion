@@ -9,7 +9,7 @@ const dashboardIndexPath = path.resolve(__dirname, "../index.html");
 
 /*
 FNXC:DashboardTheming 2026-06-20-00:00:
-Shadcn Gray is a zinc-only accent variant. This test locks the dashboard wiring and neutral token intent without asserting the desktop bootstrap validator, which intentionally excludes all shadcn variants.
+Shadcn Gray is a zinc-only accent variant. This test locks the dashboard wiring and neutral token intent; default-theme bootstrap coverage for the shadcn family lives in the Shadcn Ember contract test.
 */
 describe("Shadcn Gray color theme", () => {
   const themeData = fs.readFileSync(themeDataPath, "utf-8");

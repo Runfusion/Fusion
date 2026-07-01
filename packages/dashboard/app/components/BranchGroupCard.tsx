@@ -1,10 +1,11 @@
 import "./BranchGroupCard.css";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, ExternalLink, GitBranch, GitPullRequest, Loader2 } from "lucide-react";
 import type { BranchGroupSummary } from "../api";
 import { apiAbandonBranchGroup, apiGetBranchGroup, apiPromoteBranchGroup } from "../api";
 import { subscribeSse } from "../sse-bus";
+import { BRANCH_GROUP_REFRESH_TASK_EVENTS, shouldRefreshBranchGroupForTaskEvent } from "../utils/branchGroupSse";
 
 interface BranchGroupCardProps {
   groupId: string;
@@ -18,7 +19,11 @@ export function BranchGroupCard({ groupId, projectId }: BranchGroupCardProps) {
   const [error, setError] = useState<string | null>(null);
   const [promoting, setPromoting] = useState(false);
   const [abandoning, setAbandoning] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  /*
+  FNXC:BranchGroupDetails 2026-06-30-00:00:
+  Task-detail branch groups must be collapsed by default on every breakpoint while preserving the user's expand/collapse control for member and action inspection.
+  */
+  const [collapsed, setCollapsed] = useState(true);
 
   const loadGroup = useCallback(async () => {
     try {
@@ -33,47 +38,35 @@ export function BranchGroupCard({ groupId, projectId }: BranchGroupCardProps) {
     }
   }, [groupId, projectId, t]);
 
+  const loadGroupRef = useRef(loadGroup);
+
+  useEffect(() => {
+    loadGroupRef.current = loadGroup;
+  }, [loadGroup]);
+
   useEffect(() => {
     setLoading(true);
     void loadGroup();
   }, [loadGroup]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-    const mediaQuery = window.matchMedia("(max-width: 768px)");
-    const syncCollapsed = (matches: boolean) => {
-      setCollapsed(matches);
-    };
-
-    syncCollapsed(mediaQuery.matches);
-    const onMediaChange = (event: MediaQueryListEvent) => {
-      syncCollapsed(event.matches);
-    };
-
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", onMediaChange);
-      return () => mediaQuery.removeEventListener("change", onMediaChange);
-    }
-
-    mediaQuery.addListener(onMediaChange);
-    return () => mediaQuery.removeListener(onMediaChange);
-  }, []);
-
-  useEffect(() => {
     const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+    const refreshFromCurrentGroup = (event?: MessageEvent) => {
+      if (event && !shouldRefreshBranchGroupForTaskEvent(event, projectId)) {
+        return;
+      }
+      void loadGroupRef.current();
+    };
+    /*
+    FNXC:BranchGroupDetails 2026-06-30-18:04:
+    Task-detail branch group refreshes use the current loader callback so live SSE updates do not reset the local collapsed/expanded state.
+    */
+    const events = Object.fromEntries(BRANCH_GROUP_REFRESH_TASK_EVENTS.map((eventName) => [eventName, refreshFromCurrentGroup]));
     return subscribeSse(`/api/events${query}`, {
-      events: {
-        "task:updated": () => {
-          void loadGroup();
-        },
-      },
-      onReconnect: () => {
-        void loadGroup();
-      },
+      events,
+      onReconnect: () => refreshFromCurrentGroup(),
     });
-  }, [loadGroup, projectId]);
+  }, [projectId]);
 
   const completionText = useMemo(() => {
     if (!group) return "";
@@ -117,7 +110,7 @@ export function BranchGroupCard({ groupId, projectId }: BranchGroupCardProps) {
   const complete = group.completion.complete;
 
   return (
-    <section className="card branch-group-card">
+    <section className={`card branch-group-card${collapsed ? " branch-group-card--collapsed" : ""}`}>
       <header className="branch-group-card-header">
         <div className="branch-group-card-title">
           <GitBranch size={14} />

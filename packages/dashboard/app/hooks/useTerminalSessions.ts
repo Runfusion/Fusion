@@ -19,10 +19,19 @@ export interface TerminalTab {
   sessionId: string;
   /** Display title (e.g., "bash", "zsh", or "Terminal 1") */
   title: string;
+  /** Optional working directory used when this tab's server session was created. */
+  cwd?: string;
   /** Whether this tab is currently active */
   isActive: boolean;
   /** Creation timestamp */
   createdAt: number;
+}
+
+export interface CreateTerminalTabInput {
+  /** Optional registered workspace/worktree path for the server-created session. */
+  cwd?: string;
+  /** Optional display title supplied by workspace picker callers. */
+  title?: string;
 }
 
 interface UseTerminalSessionsReturn {
@@ -35,7 +44,7 @@ interface UseTerminalSessionsReturn {
   /** Error during bootstrap/session creation, or null if no error */
   bootstrapError: string | null;
   /** Creates a new tab with a fresh server session */
-  createTab: () => Promise<TerminalTab>;
+  createTab: (input?: CreateTerminalTabInput) => Promise<TerminalTab>;
   /** Closes a specific tab (kills server session) */
   closeTab: (tabId: string) => void;
   /** Switches to a different tab */
@@ -82,6 +91,18 @@ function isRelativeUrlFetchError(error: unknown): boolean {
   const message =
     error instanceof Error ? error.message : typeof error === "string" ? error : "";
   return message.includes("Failed to parse URL") || message.includes("Invalid URL");
+}
+
+function titleFromCwd(cwd: string): string {
+  const trimmed = cwd.replace(/[\\/]+$/, "");
+  const basename = trimmed.split(/[\\/]+/).filter(Boolean).pop();
+  return basename || cwd;
+}
+
+function buildTabTitle(input: CreateTerminalTabInput | undefined, terminalNumber: number): string {
+  if (input?.title?.trim()) return input.title.trim();
+  if (input?.cwd?.trim()) return titleFromCwd(input.cwd.trim());
+  return `Terminal ${terminalNumber}`;
 }
 
 /**
@@ -270,14 +291,22 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
   }, [isReady, serverAvailable, tabs.length, retryGeneration]); // Run when ready or when tabs become empty
 
   /**
-   * Internal create tab function (used for auto-creation and user-initiated creation)
+   * Internal create tab function (used for auto-creation and user-initiated creation).
+   *
+   * FNXC:TerminalWorktrees 2026-06-29-00:00:
+   * Worktree picker callers need to create independent terminal sessions in registered worktree directories while the existing no-argument plus, auto-create, restart, and initial-command flows keep creating project-root terminals named with Terminal N numbering.
+   * Persist cwd only as optional metadata so older kb-terminal-tabs payloads without workspace data continue to restore and stale-session filtering still keys on server session ids.
    */
-  const createTabInternal = useCallback(async (): Promise<TerminalTab> => {
-    const session = await createTerminalSession(undefined, undefined, undefined, projectId);
+  const createTabInternal = useCallback(async (input?: CreateTerminalTabInput): Promise<TerminalTab> => {
+    const requestedCwd = input?.cwd?.trim() || undefined;
+    const session = await createTerminalSession(requestedCwd, undefined, undefined, projectId);
+    const confirmedCwd = requestedCwd ? session.cwd : undefined;
+    const confirmedInput = confirmedCwd ? { ...input, cwd: confirmedCwd } : input;
     const newTab: TerminalTab = {
       id: generateTabId(),
       sessionId: session.sessionId,
-      title: `Terminal ${tabs.length + 1}`,
+      title: buildTabTitle(confirmedInput, tabs.length + 1),
+      ...(confirmedCwd ? { cwd: confirmedCwd } : {}),
       isActive: true,
       createdAt: Date.now(),
     };
@@ -292,14 +321,14 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     });
 
     return newTab;
-  }, [tabs.length]);
+  }, [projectId, tabs.length]);
 
   /**
    * Creates a new tab with a fresh server session.
    * The new tab becomes the active tab.
    */
-  const createTab = useCallback(async (): Promise<TerminalTab> => {
-    return createTabInternal();
+  const createTab = useCallback(async (input?: CreateTerminalTabInput): Promise<TerminalTab> => {
+    return createTabInternal(input);
   }, [createTabInternal]);
 
   /**
@@ -397,17 +426,17 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     const currentActiveTab = tabs.find((t) => t.isActive);
     if (!currentActiveTab) return;
 
-    // Create new session and update the tab's sessionId
-    const session = await createTerminalSession(undefined, undefined, undefined, projectId);
+    // Recreate worktree-scoped tabs in their original cwd so restart does not silently fall back to the project root.
+    const session = await createTerminalSession(currentActiveTab.cwd, undefined, undefined, projectId);
     
     setTabs((currentTabs) =>
       currentTabs.map((tab) =>
         tab.id === currentActiveTab.id
-          ? { ...tab, sessionId: session.sessionId }
+          ? { ...tab, sessionId: session.sessionId, cwd: currentActiveTab.cwd ? session.cwd : undefined }
           : tab
       )
     );
-  }, [tabs]);
+  }, [projectId, tabs]);
 
   /**
    * Replace the active tab's session with a fresh server session.
@@ -429,12 +458,12 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
     if (!currentActiveTab) return;
 
     try {
-      const session = await createTerminalSession(undefined, undefined, undefined, projectId);
+      const session = await createTerminalSession(currentActiveTab.cwd, undefined, undefined, projectId);
 
       setTabs((currentTabs) =>
         currentTabs.map((tab) =>
           tab.id === currentActiveTab.id
-            ? { ...tab, sessionId: session.sessionId }
+            ? { ...tab, sessionId: session.sessionId, cwd: currentActiveTab.cwd ? session.cwd : undefined }
             : tab
         )
       );
@@ -447,7 +476,7 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
         err instanceof Error ? err.message : typeof err === "string" ? err : "Failed to create terminal session";
       setBootstrapError(message);
     }
-  }, [tabs]);
+  }, [projectId, tabs]);
 
   // Derive active tab
   const activeTab = tabs.find((tab) => tab.isActive) ?? null;

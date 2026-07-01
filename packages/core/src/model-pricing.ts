@@ -28,7 +28,7 @@
  * The date the rates in {@link MODEL_PRICING} were last verified, ISO-8601.
  * Bump this whenever you edit a rate. Surfaced in the UI as "prices as of".
  */
-export const pricingAsOf = "2026-06-21";
+export const pricingAsOf = "2026-06-30";
 
 /**
  * Pricing entries older than this (relative to a caller-supplied `now`) are
@@ -104,6 +104,17 @@ export interface CostResult {
 export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
   // ── Anthropic Claude ────────────────────────────────────────────────
   // input / output / cacheRead(0.1×) / cacheWrite(1.25×, 5-min TTL)
+  /*
+   * FNXC:ModelCatalog 2026-06-30-12:10:
+   * Anthropic's docs publish Claude Sonnet 5 as the dateless pinned API ID `claude-sonnet-5`. Keep it in Fusion's hand-maintained support data before upstream pi-ai catalogs necessarily refresh so direct Anthropic runtime and cost surfaces can resolve it consistently.
+   */
+  "anthropic:claude-sonnet-5": {
+    inputPer1M: 2,
+    outputPer1M: 10,
+    cacheReadPer1M: 0.2,
+    cacheWritePer1M: 2.5,
+    source: "platform.claude.com/docs/en/pricing#claude-sonnet-5-introductory-pricing",
+  },
   "anthropic:claude-opus-4-8": {
     inputPer1M: 5,
     outputPer1M: 25,

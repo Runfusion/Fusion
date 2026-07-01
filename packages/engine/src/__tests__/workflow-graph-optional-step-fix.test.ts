@@ -33,6 +33,14 @@ const reviseInfo = {
   verdict: "REVISE",
 };
 
+function revisionLog(stepName: string, key: string, attempt: number) {
+  return {
+    timestamp: new Date().toISOString(),
+    action: `Pre-merge optional workflow step requested executor fixes (attempt ${attempt}/2)`,
+    outcome: `Step: ${stepName}\nWorkflow revision key: ${key}`,
+  };
+}
+
 describe("TaskExecutor pre-merge optional-step fix seam", () => {
   beforeEach(() => {
     resetExecutorMocks();
@@ -152,7 +160,14 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       expect.stringContaining("PROMPT.md is missing the new workflow-order requirement"),
       undefined,
     );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-7066",
+      "Plan Review failed — moved to triage for automatic replan (attempt 1/unbounded)",
+      expect.stringContaining("PROMPT.md is missing the new workflow-order requirement"),
+      undefined,
+    );
     expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage");
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
     expect(store.updateTask).toHaveBeenCalledWith("FN-7066", {
       status: "needs-replan",
       error: null,
@@ -160,8 +175,48 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       nextRecoveryAt: null,
       graphResumeRetryCount: 0,
     }, undefined);
-    expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
+  });
+
+  it("honors Plan Review workflow-setting caps before automatic replan", async () => {
+    const zeroStore = createMockStore();
+    const zeroTask = task({ postReviewFixCount: 0, column: "in-progress" });
+    zeroStore.getTask.mockResolvedValue(zeroTask);
+    zeroStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 0 });
+    const zeroExecutor = new TaskExecutor(zeroStore, "/tmp/test");
+
+    await expect((zeroExecutor as any).requestPreMergeOptionalStepFix(zeroTask.id, zeroTask, {
+      stepName: "Plan Review",
+      feedback: "needs spec edits",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      verdict: "REVISE",
+      nodeId: "plan-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(false);
+    expect(zeroStore.moveTask).not.toHaveBeenCalled();
+    expect(zeroStore.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 1 }, undefined);
+
+    const cappedStore = createMockStore();
+    const exhaustedTask = task({
+      postReviewFixCount: 2,
+      column: "in-progress",
+      log: [revisionLog("Plan Review", "plan-review", 1), revisionLog("Plan Review", "plan-review", 2)],
+    });
+    cappedStore.getTask.mockResolvedValue(exhaustedTask);
+    cappedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 2 });
+    const cappedExecutor = new TaskExecutor(cappedStore, "/tmp/test");
+
+    await expect((cappedExecutor as any).requestPreMergeOptionalStepFix(exhaustedTask.id, exhaustedTask, {
+      stepName: "Plan Review",
+      feedback: "needs spec edits",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      verdict: "REVISE",
+      nodeId: "plan-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(false);
+    expect(cappedStore.moveTask).not.toHaveBeenCalled();
   });
 
   it("clears stale pause-abort provenance silently before a fresh unpaused execution dispatch", async () => {
@@ -216,7 +271,10 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
 
     for (const count of [0, 1, 2, 3]) {
       const store = createMockStore();
-      const liveTask = task({ postReviewFixCount: count });
+      const liveTask = task({
+        postReviewFixCount: count,
+        log: Array.from({ length: count }, (_, index) => revisionLog("Code Review", "code review", index + 1)),
+      });
       store.getTask.mockResolvedValue(liveTask);
       store.getSettings.mockResolvedValue({});
       const executor = new TaskExecutor(store, "/tmp/test");
@@ -249,7 +307,10 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
   it("lets per-step maxRevisions override the global budget", async () => {
     for (const count of [1, 2]) {
       const store = createMockStore();
-      const liveTask = task({ postReviewFixCount: count });
+      const liveTask = task({
+        postReviewFixCount: count,
+        log: Array.from({ length: count }, (_, index) => revisionLog("Code Review", "code review", index + 1)),
+      });
       store.getTask.mockResolvedValue(liveTask);
       store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 });
       const executor = new TaskExecutor(store, "/tmp/test");
@@ -292,9 +353,65 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(guard).toContain("split them into a separate task");
   });
 
+  it("honors workflow-setting revision caps before node and global budgets for Code Review", async () => {
+    const cappedStore = createMockStore();
+    const cappedTask = task({ postReviewFixCount: 1, log: [revisionLog("Code Review", "code-review", 1)] });
+    cappedStore.getTask.mockResolvedValue(cappedTask);
+    cappedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, codeReviewMaxRevisions: 2 });
+    const cappedExecutor = new TaskExecutor(cappedStore, "/tmp/test");
+    const cappedSendBack = vi.spyOn(cappedExecutor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((cappedExecutor as any).requestPreMergeOptionalStepFix(cappedTask.id, cappedTask, {
+      ...reviseInfo,
+      nodeId: "code-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(true);
+    expect(cappedStore.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 2/2"), expect.any(String), undefined);
+    expect(cappedSendBack).toHaveBeenCalledOnce();
+
+    const zeroStore = createMockStore();
+    const zeroTask = task({ postReviewFixCount: 0 });
+    zeroStore.getTask.mockResolvedValue(zeroTask);
+    zeroStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, codeReviewMaxRevisions: 0 });
+    const zeroExecutor = new TaskExecutor(zeroStore, "/tmp/test");
+    const zeroSendBack = vi.spyOn(zeroExecutor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((zeroExecutor as any).requestPreMergeOptionalStepFix(zeroTask.id, zeroTask, {
+      ...reviseInfo,
+      nodeId: "code-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(false);
+    expect(zeroSendBack).not.toHaveBeenCalled();
+  });
+
+  it("keeps Plan Review and Code Review workflow caps independent", async () => {
+    const store = createMockStore();
+    const liveTask = task({
+      postReviewFixCount: 1,
+      log: [revisionLog("Plan Review", "plan-review", 1)],
+    });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9, planReviewMaxRevisions: 1, codeReviewMaxRevisions: 1 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+    const sendBack = vi.spyOn(executor as any, "sendTaskBackForFix").mockResolvedValue(undefined);
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      ...reviseInfo,
+      nodeId: "code-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(true);
+
+    expect(store.logEntry).toHaveBeenCalledWith("FN-7066", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"), undefined);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 2 }, undefined);
+    expect(sendBack).toHaveBeenCalledOnce();
+  });
+
   it("honors unbounded and zero per-step maxRevisions states", async () => {
     const unboundedStore = createMockStore();
-    const exhaustedTask = task({ postReviewFixCount: 99 });
+    const exhaustedTask = task({
+      postReviewFixCount: 99,
+      log: Array.from({ length: 99 }, (_, index) => revisionLog("Code Review", "code review", index + 1)),
+    });
     unboundedStore.getTask.mockResolvedValue(exhaustedTask);
     unboundedStore.getSettings.mockResolvedValue({ maxPostReviewFixes: 1 });
     const unboundedExecutor = new TaskExecutor(unboundedStore, "/tmp/test");
@@ -327,7 +444,10 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
       { settingsMax: 1, count: 1 },
     ]) {
       const store = createMockStore();
-      const liveTask = task({ postReviewFixCount: count });
+      const liveTask = task({
+        postReviewFixCount: count,
+        log: Array.from({ length: count }, (_, index) => revisionLog("Code Review", "code review", index + 1)),
+      });
       store.getTask.mockResolvedValue(liveTask);
       store.getSettings.mockResolvedValue({ maxPostReviewFixes: settingsMax });
       const executor = new TaskExecutor(store, "/tmp/test");

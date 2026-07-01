@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useCallback,
+  useMemo,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -23,9 +24,13 @@ import {
   Settings,
   Maximize2,
   Minimize2,
+  ChevronDown,
+  FolderGit2,
+  FolderRoot,
 } from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
+import { useWorkspaces } from "../hooks/useWorkspaces";
 import { nextFloatingZ, currentFloatingZ } from "./floatingWindowStack";
 import { getPathBasename } from "../utils/pathDisplay";
 import {
@@ -74,6 +79,13 @@ interface TerminalFloatSize {
 interface TerminalFloatPosition {
   x: number;
   y: number;
+}
+
+interface TerminalWorkspaceMenuPosition {
+  top: number;
+  left: number;
+  width: number;
+  maxHeight: number;
 }
 
 function readTerminalDisplayMode(projectId?: string): TerminalDisplayMode {
@@ -305,6 +317,16 @@ function isMacPlatform(): boolean {
   return /mac/i.test(platform) || /mac/i.test(userAgent);
 }
 
+function isKeyboardFocusableElement(el: Element | null): boolean {
+  if (!el) return false;
+  if (el instanceof HTMLTextAreaElement) return true;
+  if (el instanceof HTMLInputElement) {
+    const nonTextTypes = new Set(["checkbox", "radio", "button", "submit", "reset", "file", "range", "color", "hidden"]);
+    return !nonTextTypes.has(el.type);
+  }
+  return el instanceof HTMLElement && el.isContentEditable;
+}
+
 /**
  * Compute how many CSS pixels the virtual keyboard covers from the bottom
  * of the layout viewport. Returns 0 on desktop or when visualViewport is
@@ -319,35 +341,76 @@ function isMacPlatform(): boolean {
 function getKeyboardOverlap(): number {
   if (typeof window === "undefined" || !window.visualViewport) return 0;
   const vv = window.visualViewport;
-  const chromeOverlap = Math.max(0, window.innerHeight - vv.offsetTop - vv.height);
+  const viewportWidth = vv.width > 0 ? vv.width : window.innerWidth;
+  const layoutViewportHeight = Math.max(window.innerHeight, document.documentElement?.clientHeight || 0);
+  const viewportHeight = Math.max(layoutViewportHeight, vv.height);
+  const chromeOverlap = Math.max(0, layoutViewportHeight - vv.offsetTop - vv.height);
   if (chromeOverlap > 0) return chromeOverlap;
+
+  /*
+  FNXC:Terminal 2026-06-30-08:48:
+  Folded phones can report an unfolded iOS fallback baseline first, then settle to a narrower closed-posture viewport before the keyboard opens. If that closed sample does not replace the old baseline, the terminal overestimates --keyboard-overlap, fits against a too-short/wrong-width box, and commands like `pnpm build` wrap into spaced glyphs. Re-baseline on settled width/posture changes before computing the iOS gap; do not touch xterm's symbols-free font stack.
+
+  FNXC:Terminal 2026-06-30-09:38:
+  A later folded-posture width sample can arrive while xterm's helper textarea is focused and the soft keyboard is already open. Never re-baseline from that focused keyboard-open sample, because it makes the keyboard height look like the closed viewport and clears --keyboard-overlap/--vv-height before the final fit.
+
+  FNXC:Terminal 2026-06-30-10:36:
+  The reported recurrence starts with the folded phone already focused and keyboard-open, so there is no prior closed visualViewport sample to seed the iOS fallback baseline. Prefer the current layout viewport height before falling back to visualViewport height; this preserves --keyboard-overlap/--vv-height and the post-layout xterm fit before any later unfold can repair stale geometry.
+
+  FNXC:Terminal 2026-06-30-11:42:
+  Touch-primary short landscape and folded closed postures can be <=480px tall. A keyboard-closed width/posture sample must replace an unfolded baseline even at that height, while focused keyboard-open samples remain excluded so xterm does not clear overlap before the first correct folded fit.
+  */
+  if (!isKeyboardFocusableElement(document.activeElement) && hasSettledViewportPostureChange(viewportWidth)) {
+    setInitialViewportBaseline(viewportHeight, viewportWidth);
+  }
+
   // On iOS Safari, window.innerHeight shrinks to match visualViewport.
   // Detect keyboard by checking if visual viewport is shorter than initial
   // height by more than 80px (with a 30px noise filter).
-  const initialHeight = getInitialViewportHeight();
+  const initialHeight = getInitialViewportHeight(viewportWidth, viewportHeight);
   const gap = initialHeight - vv.offsetTop - vv.height;
   // Minimum 30px gap required to filter noise (address bar, toolbar changes).
   // Threshold of 80px: only consider keyboard present when gap exceeds this.
-  return gap >= 30 && gap > 80 ? gap : 0;
+  if (gap >= 30 && gap > 80) {
+    return gap;
+  }
+
+  setInitialViewportBaseline(viewportHeight, viewportWidth);
+  return 0;
 }
 
 /** Cached initial viewport height before any keyboard opened. */
 let _initialViewportHeight: number | null = null;
+let _initialViewportWidth: number | null = null;
+
+function setInitialViewportBaseline(height: number, width: number): void {
+  _initialViewportHeight = height;
+  _initialViewportWidth = width;
+}
+
+function hasSettledViewportPostureChange(width: number): boolean {
+  return (
+    _initialViewportHeight !== null &&
+    _initialViewportWidth !== null &&
+    Math.abs(width - _initialViewportWidth) >= 1
+  );
+}
 
 /**
  * Returns the viewport height at page load (before any keyboard opens).
  * Cached after first read.
  */
-function getInitialViewportHeight(): number {
+function getInitialViewportHeight(width: number, height: number): number {
   if (_initialViewportHeight === null) {
-    _initialViewportHeight = window.innerHeight;
+    setInitialViewportBaseline(height, width);
   }
-  return _initialViewportHeight;
+  return _initialViewportHeight ?? height;
 }
 
 /** Reset the cached initial viewport height. Exported for tests only. */
 export function _resetInitialViewportHeight(): void {
   _initialViewportHeight = null;
+  _initialViewportWidth = null;
 }
 
 interface TerminalModalProps {
@@ -416,6 +479,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   
   const terminalRef = useRef<HTMLDivElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const terminalWorkspacePickerRef = useRef<HTMLDivElement>(null);
+  const terminalWorkspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const terminalWorkspaceMenuRef = useRef<HTMLDivElement>(null);
   const overlayMouseDownRef = useRef(false);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<ITerminalAddon | null>(null);
@@ -882,6 +948,148 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     retryBootstrap,
     replaceActiveTabSession,
   } = useTerminalSessions(projectId);
+
+  const {
+    projectName: terminalWorkspaceProjectName,
+    workspaces: terminalWorkspaces,
+    loading: terminalWorkspacesLoading,
+    error: terminalWorkspacesError,
+  } = useWorkspaces(projectId);
+  const [terminalWorkspaceMenuOpen, setTerminalWorkspaceMenuOpen] = useState(false);
+  const [terminalWorkspaceMenuPosition, setTerminalWorkspaceMenuPosition] = useState<TerminalWorkspaceMenuPosition | null>(null);
+  const [selectedTerminalWorkspaceId, setSelectedTerminalWorkspaceId] = useState("project");
+
+  const selectedTerminalWorkspace = useMemo(
+    () => terminalWorkspaces.find((workspace) => workspace.id === selectedTerminalWorkspaceId) ?? null,
+    [selectedTerminalWorkspaceId, terminalWorkspaces],
+  );
+  const shouldShowTerminalWorkspacePicker = terminalWorkspaces.length > 0 && !terminalWorkspacesError;
+  const selectedTerminalWorkspaceCanOpen = selectedTerminalWorkspaceId === "project" || Boolean(selectedTerminalWorkspace?.worktree);
+  const selectedTerminalWorkspaceLabel =
+    selectedTerminalWorkspaceId === "project"
+      ? t("terminal.projectRoot", "Project Root")
+      : (selectedTerminalWorkspace?.label ?? selectedTerminalWorkspaceId);
+
+  /*
+  FNXC:TerminalWorkspaces 2026-06-29-00:00:
+  Terminal worktree selection follows the file-browser workspace model: Project Root opens the default terminal cwd, and task entries use only registered WorkspaceInfo.worktree paths. Keep this header affordance compact and available in docked, floating, and mobile terminal modes without replacing the fast + new-terminal path.
+
+  FNXC:TerminalWorkspaces 2026-06-29-00:00:
+  The picker is a header menu, not terminal input: Escape and outside clicks close the listbox first so users do not accidentally close the whole terminal while navigating worktrees with keyboard or touch.
+  */
+  useEffect(() => {
+    if (selectedTerminalWorkspaceId === "project") {
+      return;
+    }
+    const stillAvailable = terminalWorkspaces.some((workspace) => workspace.id === selectedTerminalWorkspaceId);
+    if (!stillAvailable) {
+      setSelectedTerminalWorkspaceId("project");
+      setTerminalWorkspaceMenuOpen(false);
+    }
+  }, [selectedTerminalWorkspaceId, terminalWorkspaces]);
+
+  const getEffectiveViewport = useCallback(() => {
+    const visualViewport = window.visualViewport;
+    if (visualViewport && visualViewport.width > 0 && visualViewport.height > 0) {
+      return {
+        width: visualViewport.width,
+        height: visualViewport.height,
+        offsetTop: visualViewport.offsetTop,
+        offsetLeft: visualViewport.offsetLeft,
+      };
+    }
+    return { width: window.innerWidth, height: window.innerHeight, offsetTop: 0, offsetLeft: 0 };
+  }, []);
+
+  const updateTerminalWorkspaceMenuPosition = useCallback(() => {
+    const trigger = terminalWorkspaceTriggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const menu = terminalWorkspaceMenuRef.current;
+    const { width: viewportWidth, height: viewportHeight, offsetTop, offsetLeft } = getEffectiveViewport();
+    const rootStyle = getComputedStyle(document.documentElement);
+    const horizontalGutter = Number.parseFloat(rootStyle.getPropertyValue("--space-md")) || 16;
+    const verticalGutter = horizontalGutter;
+    const gap = Number.parseFloat(rootStyle.getPropertyValue("--space-xs")) || 6;
+    const minWidth = Number.parseFloat(rootStyle.getPropertyValue("--terminal-workspace-menu-min-width")) || 220;
+    const preferredWidth = Number.parseFloat(rootStyle.getPropertyValue("--terminal-workspace-menu-width")) || 340;
+    const preferredHeight = Number.parseFloat(rootStyle.getPropertyValue("--terminal-workspace-menu-height")) || 360;
+
+    const measuredWidth = menu?.offsetWidth || Math.max(rect.width, preferredWidth);
+    const maxWidth = Math.max(viewportWidth - horizontalGutter * 2, minWidth);
+    const width = Math.min(Math.max(measuredWidth, minWidth), maxWidth);
+    const measuredHeight = menu?.offsetHeight || preferredHeight;
+    const maxHeight = Math.max(viewportHeight - verticalGutter * 2, minWidth);
+    const constrainedHeight = Math.min(measuredHeight, maxHeight);
+    const triggerTop = rect.top - offsetTop;
+    const triggerBottom = rect.bottom - offsetTop;
+    const triggerRight = rect.right - offsetLeft;
+    const spaceBelow = viewportHeight - triggerBottom;
+    const spaceAbove = triggerTop;
+    const openUpward = spaceBelow < constrainedHeight && spaceAbove > spaceBelow;
+    const left = Math.min(
+      Math.max(triggerRight - width, horizontalGutter),
+      viewportWidth - horizontalGutter - width,
+    ) + offsetLeft;
+    const top = openUpward
+      ? Math.max(verticalGutter + offsetTop, triggerTop - constrainedHeight - gap + offsetTop)
+      : Math.min(triggerBottom + gap + offsetTop, viewportHeight + offsetTop - verticalGutter - constrainedHeight);
+
+    setTerminalWorkspaceMenuPosition({ top, left, width, maxHeight: constrainedHeight });
+  }, [getEffectiveViewport]);
+
+  useEffect(() => {
+    if (!terminalWorkspaceMenuOpen) {
+      setTerminalWorkspaceMenuPosition(null);
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        (terminalWorkspacePickerRef.current?.contains(target) || terminalWorkspaceMenuRef.current?.contains(target))
+      ) {
+        return;
+      }
+      setTerminalWorkspaceMenuOpen(false);
+    };
+
+    const handleReposition = () => updateTerminalWorkspaceMenuPosition();
+    const frame = requestAnimationFrame(handleReposition);
+    document.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("resize", handleReposition);
+    window.addEventListener("scroll", handleReposition, true);
+    const visualViewport = window.visualViewport;
+    visualViewport?.addEventListener("resize", handleReposition);
+    visualViewport?.addEventListener("scroll", handleReposition);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("resize", handleReposition);
+      window.removeEventListener("scroll", handleReposition, true);
+      visualViewport?.removeEventListener("resize", handleReposition);
+      visualViewport?.removeEventListener("scroll", handleReposition);
+    };
+  }, [terminalWorkspaceMenuOpen, terminalWorkspaces.length, updateTerminalWorkspaceMenuPosition]);
+
+  const handleOpenSelectedTerminalWorkspace = useCallback(() => {
+    setTerminalWorkspaceMenuOpen(false);
+    if (selectedTerminalWorkspaceId === "project") {
+      void createTab();
+      return;
+    }
+
+    if (!selectedTerminalWorkspace?.worktree) {
+      return;
+    }
+
+    void createTab({
+      cwd: selectedTerminalWorkspace.worktree,
+      title: selectedTerminalWorkspace.label,
+    });
+  }, [createTab, selectedTerminalWorkspace, selectedTerminalWorkspaceId]);
 
   // Get the WebSocket connection for the active session
   const { connectionStatus, sendInput, resize, onData, onConnect, onExit, onScrollback, reconnect, onSessionInvalid } = 
@@ -1438,23 +1646,60 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     xtermRef.current.options.cursorStyle = terminalPreferences.cursorStyle;
     xtermRef.current.options.cursorBlink = terminalPreferences.cursorBlink;
 
+    let cancelled = false;
+
     // Defer fit until the next frame so layout reflects the new font metrics
     // before FitAddon measures rows/cols. Reuse pendingFitRef so font changes and
     // visualViewport-triggered fits are coalesced into a single scheduled fit.
-    if (pendingFitRef.current !== null) {
-      cancelAnimationFrame(pendingFitRef.current);
-      pendingFitRef.current = null;
-    }
+    const scheduleRefit = () => {
+      if (pendingFitRef.current !== null) {
+        cancelAnimationFrame(pendingFitRef.current);
+        pendingFitRef.current = null;
+      }
 
-    const frame = requestAnimationFrame(() => {
-      pendingFitRef.current = null;
-      refitTerminal();
-    });
-    pendingFitRef.current = frame;
+      const frame = requestAnimationFrame(() => {
+        pendingFitRef.current = null;
+        if (cancelled) {
+          return;
+        }
+        refitTerminal();
+        xtermRef.current?.refresh?.(0, Math.max(0, xtermRef.current.rows - 1));
+      });
+      pendingFitRef.current = frame;
+      return frame;
+    };
+
+    const immediateFrame = scheduleRefit();
+
+    /*
+    FNXC:Terminal 2026-06-30-13:18:
+    The mobile screenshot recurrence happens at the visible 10px setting with the soft keyboard already open. A live font-size preference change must wait for the symbols-free measured stack to settle, then reapply xterm font options, refit, resize, and refresh; otherwise canvas/DOM metrics can keep the old wider cells until an unfold/orientation event forces a later measurement.
+    */
+    void waitForTerminalFontMetrics(terminalPreferences.fontSize, resolvedFontFamily).then(
+      (fontMetricsSettled) => {
+        if (
+          cancelled ||
+          !fontMetricsSettled ||
+          !xtermRef.current ||
+          xtermRef.current.options.fontSize !== terminalPreferences.fontSize ||
+          xtermRef.current.options.fontFamily !== resolvedFontFamily
+        ) {
+          return;
+        }
+        xtermRef.current.options.fontFamily = resolvedFontFamily;
+        xtermRef.current.options.fontSize = terminalPreferences.fontSize;
+        scheduleRefit();
+      },
+      () => {
+        // FontFaceSet failures are non-fatal; the immediate frame above still
+        // applies the current preference and keeps terminal input usable.
+      },
+    );
 
     return () => {
-      if (pendingFitRef.current === frame) {
-        cancelAnimationFrame(frame);
+      cancelled = true;
+      if (immediateFrame !== undefined && pendingFitRef.current === immediateFrame) {
+        cancelAnimationFrame(immediateFrame);
         pendingFitRef.current = null;
       }
     };
@@ -1493,18 +1738,24 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, setFontSize]);
 
-  // Handle escape key to close
+  // Handle escape key to close the open worktree menu before closing the terminal.
   useEffect(() => {
     if (!isOpen) return;
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (terminalWorkspaceMenuOpen) {
+          e.preventDefault();
+          e.stopPropagation();
+          setTerminalWorkspaceMenuOpen(false);
+          return;
+        }
         onClose();
       }
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, terminalWorkspaceMenuOpen]);
 
   // Focus terminal when connected
   useEffect(() => {
@@ -1899,12 +2150,124 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             ))}
             <button
               className="terminal-tab terminal-tab--new"
-              onClick={createTab}
+              onClick={() => void createTab()}
               title={t("terminal.newTerminal", "New terminal")}
+              aria-label={t("terminal.newTerminal", "New terminal")}
             >
               +
             </button>
           </div>
+
+          {shouldShowTerminalWorkspacePicker && (
+            <div
+              ref={terminalWorkspacePickerRef}
+              className="terminal-workspace-picker"
+              data-testid="terminal-workspace-picker"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                ref={terminalWorkspaceTriggerRef}
+                className="terminal-workspace-picker-trigger"
+                onClick={() => setTerminalWorkspaceMenuOpen((open) => !open)}
+                aria-haspopup="listbox"
+                aria-expanded={terminalWorkspaceMenuOpen}
+                aria-controls={terminalWorkspaceMenuOpen ? "terminal-workspace-picker-menu" : undefined}
+                aria-label={t("terminal.selectWorkspaceWithCurrent", "Select terminal workspace: {{workspace}}", { workspace: selectedTerminalWorkspaceLabel })}
+                title={t("terminal.selectWorkspace", "Select terminal workspace")}
+              >
+                {selectedTerminalWorkspaceId === "project" ? <FolderRoot size={14} /> : <FolderGit2 size={14} />}
+                <span className="terminal-workspace-picker-label">{selectedTerminalWorkspaceLabel}</span>
+                <ChevronDown size={14} className={`terminal-workspace-picker-chevron${terminalWorkspaceMenuOpen ? " open" : ""}`} />
+              </button>
+              <button
+                type="button"
+                className="terminal-workspace-picker-open"
+                onClick={handleOpenSelectedTerminalWorkspace}
+                disabled={!selectedTerminalWorkspaceCanOpen}
+                title={
+                  selectedTerminalWorkspaceCanOpen
+                    ? t("terminal.openWorkspaceTerminal", "Open terminal in selected workspace")
+                    : t("terminal.workspaceMissingWorktree", "This task has no worktree path yet")
+                }
+                aria-label={t("terminal.openWorkspaceTerminal", "Open terminal in selected workspace")}
+              >
+                <Plus size={14} />
+              </button>
+              {terminalWorkspaceMenuOpen && createPortal(
+                <div
+                  ref={terminalWorkspaceMenuRef}
+                  id="terminal-workspace-picker-menu"
+                  className="terminal-workspace-picker-menu"
+                  role="listbox"
+                  aria-label={t("terminal.selectWorkspace", "Select terminal workspace")}
+                  style={terminalWorkspaceMenuPosition
+                    ? {
+                        top: terminalWorkspaceMenuPosition.top,
+                        left: terminalWorkspaceMenuPosition.left,
+                        width: terminalWorkspaceMenuPosition.width,
+                        maxHeight: terminalWorkspaceMenuPosition.maxHeight,
+                      }
+                    : undefined}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className={`terminal-workspace-picker-option${selectedTerminalWorkspaceId === "project" ? " active" : ""}`}
+                    onClick={() => {
+                      setSelectedTerminalWorkspaceId("project");
+                      setTerminalWorkspaceMenuOpen(false);
+                    }}
+                    role="option"
+                    aria-selected={selectedTerminalWorkspaceId === "project"}
+                  >
+                    <div className="terminal-workspace-picker-option-main">
+                      <FolderRoot size={14} />
+                      <span>{t("terminal.projectRoot", "Project Root")}</span>
+                    </div>
+                    <span className="terminal-workspace-picker-option-meta">{terminalWorkspaceProjectName}</span>
+                  </button>
+                  <div className="terminal-workspace-picker-group-label">
+                    {terminalWorkspacesLoading
+                      ? t("terminal.loadingWorkspaces", "Task worktrees (refreshing…)")
+                      : t("terminal.taskWorktrees", "Task Worktrees")}
+                  </div>
+                  {terminalWorkspaces.map((workspace) => {
+                    const disabled = !workspace.worktree;
+                    return (
+                      <button
+                        key={workspace.id}
+                        type="button"
+                        className={`terminal-workspace-picker-option${selectedTerminalWorkspaceId === workspace.id ? " active" : ""}${disabled ? " disabled" : ""}`}
+                        onClick={() => {
+                          if (disabled) return;
+                          setSelectedTerminalWorkspaceId(workspace.id);
+                          setTerminalWorkspaceMenuOpen(false);
+                        }}
+                        disabled={disabled}
+                        role="option"
+                        aria-selected={selectedTerminalWorkspaceId === workspace.id}
+                        aria-disabled={disabled}
+                        title={disabled ? t("terminal.workspaceMissingWorktree", "This task has no worktree path yet") : workspace.title}
+                      >
+                        <div className="terminal-workspace-picker-option-main">
+                          <FolderGit2 size={14} />
+                          <span>{workspace.label}</span>
+                        </div>
+                        <span className="terminal-workspace-picker-option-meta">
+                          {disabled
+                            ? t("terminal.noWorktree", "No worktree")
+                            : (workspace.title ?? workspace.worktree)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>,
+                document.body,
+              )}
+            </div>
+          )}
           
           {/* Status indicator */}
           <div className="terminal-title" data-testid="terminal-title">

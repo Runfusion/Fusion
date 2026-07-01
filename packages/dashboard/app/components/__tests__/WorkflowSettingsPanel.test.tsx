@@ -193,6 +193,8 @@ describe("WorkflowSettingsPanel — Values tab", () => {
           { id: "planningModelId", name: "Planning model", type: "string" },
           { id: "validatorProvider", name: "Validator provider", type: "string" },
           { id: "requirePlanApproval", name: "Require plan approval", type: "boolean" },
+          { id: "planReviewMaxRevisions", name: "Plan Review revision cap", type: "number" },
+          { id: "codeReviewMaxRevisions", name: "Code Review revision cap", type: "number" },
           { id: "workflowStepTimeoutMs", name: "Step timeout", type: "number" },
           { id: "customThing", name: "Custom thing", type: "string" },
         ]}
@@ -206,6 +208,10 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(within(screen.getByTestId("wf-settings-group-advanced")).getByText("Advanced")).toBeInTheDocument();
     expect(screen.getByLabelText("Plan/Triage Model")).toBeInTheDocument();
     expect(screen.getByLabelText("Reviewer provider")).toBeInTheDocument();
+    expect(screen.getByLabelText("Plan Review revision cap")).toBeInTheDocument();
+    expect(screen.getByText(/Leave empty for unbounded automatic Plan Review\/spec revision/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Code Review revision cap")).toBeInTheDocument();
+    expect(screen.getByText(/Leave empty for unbounded automatic Code Review remediation/i)).toBeInTheDocument();
   });
 
   it("batches three field edits into exactly ONE patch on Save values", async () => {
@@ -348,6 +354,52 @@ describe("WorkflowSettingsPanel — Values tab", () => {
 
     fireEvent.click(within(orphanRow).getByLabelText("Delete orphaned value"));
     await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledWith("wf-1", { "old-key": null }, "proj-1"));
+  });
+
+  it("edits, saves, clears, and refetches built-in review revision caps without duplicating definitions", async () => {
+    const builtinReviewCaps: WorkflowSettingDefinition[] = [
+      { id: "planReviewMaxRevisions", name: "Plan Review revision cap", type: "number" },
+      { id: "codeReviewMaxRevisions", name: "Code Review revision cap", type: "number" },
+    ];
+    mockFetchValues
+      .mockResolvedValueOnce(payload({ effective: {} }))
+      .mockResolvedValueOnce(payload({ stored: { planReviewMaxRevisions: 2, codeReviewMaxRevisions: 0 }, effective: { planReviewMaxRevisions: 2, codeReviewMaxRevisions: 0 } }));
+    mockUpdateValues
+      .mockResolvedValueOnce(payload({ stored: { planReviewMaxRevisions: 2, codeReviewMaxRevisions: 0 }, effective: { planReviewMaxRevisions: 2, codeReviewMaxRevisions: 0 } }))
+      .mockResolvedValueOnce(payload({ stored: { codeReviewMaxRevisions: 0 }, effective: { codeReviewMaxRevisions: 0 } }));
+
+    const firstRender = render(<Host initial={builtinReviewCaps} readOnly />);
+    await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
+    expect(screen.getByTestId("wf-settings-tab-values")).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/Leave empty for unbounded automatic Plan Review\/spec revision/i)).toBeInTheDocument();
+    expect(screen.getByText(/Leave empty for unbounded automatic Code Review remediation/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Plan Review revision cap"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Code Review revision cap"), { target: { value: "0" } });
+    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
+
+    await waitFor(() => expect(mockUpdateValues).toHaveBeenCalledWith(
+      "wf-1",
+      { planReviewMaxRevisions: 2, codeReviewMaxRevisions: 0 },
+      "proj-1",
+    ));
+    expect(screen.getByTestId("wf-settings-customized-planReviewMaxRevisions")).toBeInTheDocument();
+    expect(screen.getByTestId("wf-settings-customized-codeReviewMaxRevisions")).toBeInTheDocument();
+
+    firstRender.unmount();
+    render(<Host initial={builtinReviewCaps} readOnly />);
+    await waitFor(() => expect(mockFetchValues).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText("Plan Review revision cap")).toHaveValue(2);
+    expect(screen.getByLabelText("Code Review revision cap")).toHaveValue(0);
+
+    const planRow = screen.getByTestId("wf-settings-value-planReviewMaxRevisions");
+    fireEvent.click(within(planRow).getByRole("button"));
+    fireEvent.click(screen.getByTestId("wf-settings-save-values"));
+    await waitFor(() => expect(mockUpdateValues).toHaveBeenLastCalledWith(
+      "wf-1",
+      { planReviewMaxRevisions: null },
+      "proj-1",
+    ));
   });
 
   it("clear-to-default emits a null patch for a customized value", async () => {

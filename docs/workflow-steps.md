@@ -81,7 +81,7 @@ Use this inventory as the documentation map for current workflow behavior:
 | Agent workflow tools | Agents can list/get/create/update/delete workflows, inspect traits, read/write workflow settings, select workflows for explicit task contexts, and pass `workflow_id` when creating/delegating tasks. Prompt-injectable lanes strip approval-bypass flags on workflow writes. | [Agents](./agents.md#interactive-cli-chat) and [CLI Reference](./cli-reference.md#published-agent-extension-workflow-tools). |
 | Routing boundary | Agents may select/change a workflow only for explicit user requests or tasks they created; no-commit markers do not imply Quick fix or any other workflow. | This page, [Selecting workflows](#selecting-workflows); [Agents](./agents.md#interactive-cli-chat). |
 | Dashboard board/list/graph selection | Board/List/Header/Graph share durable per-project workflow selection; stale saved ids fall back to a valid workflow. Board adds a dashboard-only **All workflows** aggregate and task workflow-name badges; Graph uses **All workflows** for the full active graph. | [Dashboard Guide → Board View](./dashboard-guide.md#board-view), [Graph View](./dashboard-guide.md#graph-view), and [Workflow Selection and Editor](./dashboard-guide.md#workflow-selection-and-editor). |
-| Create/planning forwarding | Inline quick-create, Planning Mode, Subtask Breakdown, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
+| Create/planning forwarding | Quick-create task creation, Planning Mode, Subtask Breakdown, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
 
 ### Skill-backed workflow steps
 
@@ -360,27 +360,31 @@ Workflows declare typed task fields via IR `fields: [{ id, name, type, required?
 FNXC:WorkflowOptionalGroup 2026-06-26-15:00:
 FN-7039 retired the declaration-based optional-steps model (`WorkflowOptionalStep` / the `optionalSteps` IR field). Optional quality gates are now first-class graph `optional-group` NODES; per-task persisted selections reuse `enabledWorkflowSteps` keyed by the group NODE ID (not a template id). Docs must describe the node model, not the deleted declaration facet.
 
-FNXC:WorkflowOptionalGroup 2026-06-29-16:10:
-Default-on optional groups are effective for execution and in-progress display even when a task has an empty persisted selection array. Keep edit-mode language separate because editors show the stored ids, not the default-augmented runtime set.
+FNXC:FastOptionalSteps 2026-06-30-09:18:
+Default-on optional groups apply only when `enabledWorkflowSteps` is omitted. An explicit persisted empty array means the operator disabled all optional groups (for example by selecting Fast during task creation), while explicit ids on a Fast task still run because manual selection is stronger than the fast default.
+
+FNXC:FastOptionalSteps 2026-06-30-10:48:
+Fast creation surfaces submit explicit `enabledWorkflowSteps: []` even before optional-step metadata loads, so asynchronous dropdown loading cannot accidentally turn default-on gates back on.
 -->
 
 Optional quality gates are authored directly in the workflow graph as `optional-group` **nodes**. An `optional-group` node is a container (mirroring `foreach`/`loop`) whose `template` subgraph the executor runs **once** when the group is enabled for the task, and passes through (skips) when disabled. There is no iteration and no rework budget — a single pass — and rework edges inside the template are rejected by `validateOptionalGroup`.
 
 Node config (`WorkflowOptionalGroupConfig`): `{ name?, defaultOn?, maxRevisions?: number | "unbounded", phase?: "pre-merge" | "post-merge", template: { nodes, edges } }`.
 
-- `defaultOn` contributes to the runtime/display effective enable set for the task; operators can still toggle persisted selections when creating or editing tasks.
-- `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, the step keeps the global `maxPostReviewFixes` behavior.
+- `defaultOn` contributes to the runtime/display effective enable set only when the task has no persisted `enabledWorkflowSteps` array; operators can still toggle persisted selections when creating or editing tasks.
+- `maxRevisions` optionally overrides the workflow/project `maxPostReviewFixes` budget for this one optional group's pre-merge fix → re-review loop. Use a non-negative integer for a bounded number of automatic fix passes, `0` to disable automatic fixes for that step, or `"unbounded"` to keep cycling until the step returns `APPROVE` / `APPROVE_WITH_NOTES`. When omitted, generic optional gates keep the global `maxPostReviewFixes` behavior; built-in `plan-review` and `code-review` instead default to unbounded remediation unless a workflow setting value caps them.
 - `phase` defaults to `"pre-merge"` (the prior, only behavior). `"post-merge"` marks a group the executor runs after a successful merge (see [Execution Phases](#execution-phases)).
-- Persisted enable state lives on the per-task `enabledWorkflowSteps` array, keyed by the **group node id** (for example `browser-verification`, `code-review`). For execution and in-progress display, Fusion treats a group as enabled when its id is present in `enabledWorkflowSteps` **or** the workflow node has `defaultOn: true`; this preserves default-on gates even for tasks whose persisted array is empty. Edit-mode controls remain based on the persisted array so an operator can distinguish stored selections from workflow defaults.
+- Persisted enable state lives on the per-task `enabledWorkflowSteps` array, keyed by the **group node id** (for example `browser-verification`, `code-review`). For execution, Fusion treats a group as enabled when `enabledWorkflowSteps` is present and includes the group id; if the field is omitted, Fusion falls back to the workflow node's `defaultOn: true`. An explicit empty array disables every optional group and prevents default-on gates from reappearing.
 
 Built-in optional gates ship as inlined IR builders, not as a template catalog:
 
 - `builtin:coding` carries the `browser-verification` optional-group node (`builtin-browser-verification-group.ts`), default-off, so browser verification runs only for tasks whose `enabledWorkflowSteps` includes `browser-verification`.
 - `builtin:coding` and `builtin:stepwise-coding` carry the `plan-review` optional-group node (`builtin-plan-review-group.ts`), default-on, before `parse-steps` so the plan can be reviewed before execution begins even when a task has not persisted explicit optional-step ids.
 - The `code-review` optional-group node (`builtin-code-review-group.ts`) is the inlined default-on code-review gate. On default `builtin:coding`, this is the only final review surface before merge; it is effective by default even when no explicit optional-step ids are stored. On `builtin:stepwise-coding`, it remains a post-foreach optional final review gate before the workflow's final review seam.
+- Plan Review/spec revision and Code Review remediation loops are unbounded by default for built-in workflows, including Compound Engineering's CE Code Review path. Operators can cap them per workflow from the Workflow Editor **Settings → Values** tab with `planReviewMaxRevisions` and `codeReviewMaxRevisions`; leaving the value empty means unbounded, a non-negative integer caps automatic revisions, and `0` disables automatic revision for that review path. These values are editable for read-only built-ins without duplicating the workflow.
 - A workflow (for example compound-engineering) can add a **post-merge** optional-group node via the generic `postMergeOptionalGroupNode(...)` builder (`builtin-post-merge-group.ts`) — e.g. a `document` step that runs after merge.
 
-Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. They resolve the workflow's optional-group nodes (plus plugin-contributed palette templates, see [Plugin-Contributed Steps](#plugin-contributed-steps)) into toggleable rows. Workflows with no optional groups render no trigger, and the selected node ids are submitted through `enabledWorkflowSteps` when the task is created. Unknown or removed ids are skipped during resolution so stale selections never render blank controls or break workflow loading.
+Create-time optional-step controls appear in the quick-add action row and the **New Task** dialog inline quick buttons for the active workflow. They resolve the workflow's optional-group nodes (plus plugin-contributed palette templates, see [Plugin-Contributed Steps](#plugin-contributed-steps)) into toggleable rows. Selecting **Fast** clears currently enabled optional steps and submits `enabledWorkflowSteps: []` even if optional-step metadata is still loading, but the dropdown stays available once loaded; any manual reselection before create is submitted as explicit ids and executes even on the Fast task. Workflows with no optional groups render no trigger and omit `enabledWorkflowSteps` unless the operator selects Fast, where the explicit empty array preserves the speed-first opt-out. Unknown or removed ids are skipped during resolution so stale selections never render blank controls or break workflow loading.
 
 ## What They Are
 
@@ -409,7 +413,7 @@ An `optional-group` node's `phase` config selects one of two phases:
 
 Post-merge runs **graph-native**: after a successful merge the executor continues traversal to any post-merge optional-group node reachable from the merge region (and to plain post-merge nodes that follow a `seam:"merge"` node), running it via the same optional-group execution + recording path with `phase: "post-merge"` and non-blocking failures. This is gated by `experimentalFeatures.graphNativePostMerge`, which is **default-ON** and is now the single owner of post-merge execution — the legacy merger-owned post-merge path was deleted, so there is no fallback and post-merge work runs exactly once via the graph.
 
-> **Note on Fast Mode:** When a task has `executionMode: "fast"`, pre-merge optional-group gates are bypassed entirely during executor completion on the workflow graph executor path (custom pre-merge prompt/script/gate validation nodes are skipped too). Post-merge steps remain active and run normally (post-merge is unaffected by execution mode).
+> **Note on Fast Mode:** When a task has `executionMode: "fast"`, omitted/default optional groups are bypassed for speed and top-level custom pre-merge prompt/script/gate validation nodes are skipped. Explicitly selected optional groups still run their template prompt/script/gate nodes, so a Fast task with `enabledWorkflowSteps: ["browser-verification"]` runs Browser Verification. Post-merge steps remain active and run normally (post-merge is unaffected by execution mode).
 
 ## Execution Modes
 
@@ -417,6 +421,13 @@ Post-merge runs **graph-native**: after a successful merge the executor continue
 - **Script mode**: runs a named script from project settings (`settings.scripts`)
 
 Prompt mode can run with readonly or coding-capable tool access depending on step/template configuration.
+
+<!--
+FNXC:AgentSteering 2026-06-30-14:18:
+Workflow-step prompt agents are reviewer-style gates even when they do not call the shared reviewStep helper. They receive the same canonical user-authored task comments and legacy steering context as Plan Review and Code Review so Browser Verification and custom gates evaluate explicit operator requirements.
+-->
+
+Prompt-mode workflow-step agents receive user-authored task comments plus legacy steering entries in their system prompt. Agent-authored comments are excluded, duplicate ids are de-duped, and this context is omitted when no user-authored entries exist.
 
 ## Tool Modes
 

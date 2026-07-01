@@ -27,7 +27,7 @@
     "lint": "eslint .",
     "sync:fusion-skill": "node scripts/sync-fusion-skill-tools.mjs",
     "sync:fusion-skill:check": "node scripts/sync-fusion-skill-tools.mjs --check",
-    "build": "pnpm -r --filter=!@fusion/desktop --filter=!@fusion/mobile build",
+    "build": "node scripts/build-workspace.mjs",
     "build:all": "pnpm -r build",
     "verify:workspace": "pnpm lint && pnpm test:full && pnpm build",
     "build:exe": "pnpm build && pnpm --filter @runfusion/fusion build:exe",

@@ -287,6 +287,8 @@ describe("resolveAgentPrompt", () => {
     expect(BUILTIN_SEAM_PROMPTS["planning-fast"]).toBe(fastTemplate?.prompt);
     expect(fastPrompt).toBe(fastTemplate?.prompt);
     expect(fastPrompt).toContain("This task is running in **fast mode**");
+    expect(fastPrompt).toContain("### Step N: <name>");
+    expect(fastPrompt).toContain("Do not write bare `### Preflight` / `### Implementation` headings");
     expect(fastPrompt).not.toContain("## Review Level");
     expect(fastPrompt.length).toBeLessThan(standardPrompt.length / 3);
     expect(fastPrompt.length).toBeLessThan(6000);

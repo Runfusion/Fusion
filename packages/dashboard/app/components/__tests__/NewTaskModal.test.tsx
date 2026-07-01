@@ -98,6 +98,20 @@ function makeTask(id: string): Task {
   };
 }
 
+
+async function chooseWorkflowOption(value: string) {
+  const trigger = await screen.findByTestId("task-workflow-dropdown-trigger");
+  fireEvent.click(trigger);
+  const optionTestId = value === "__none__" ? "task-workflow-option-none" : `task-workflow-option-${value}`;
+  fireEvent.click(await screen.findByTestId(optionTestId));
+}
+
+async function openWorkflowDropdown() {
+  const trigger = await screen.findByTestId("task-workflow-dropdown-trigger");
+  fireEvent.click(trigger);
+  return screen.findByTestId("task-workflow-dropdown-menu");
+}
+
 function renderNewTaskModal(props: Partial<ComponentProps<typeof NewTaskModal>> = {}) {
   const defaultProps: ComponentProps<typeof NewTaskModal> = {
     isOpen: true,
@@ -579,7 +593,8 @@ describe("NewTaskModal", () => {
 
     fireEvent.click(screen.getByTestId("task-form-inline-workflow"));
     await waitFor(() => expect(screen.getByTestId("task-form-more-options")).not.toHaveAttribute("hidden"));
-    expect(await screen.findByTestId("task-workflow-select")).toBeInTheDocument();
+    expect(await screen.findByTestId("task-workflow-dropdown-trigger")).toBeInTheDocument();
+    expect(screen.getByTestId("task-workflow-dropdown-menu")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
     expect(screen.getByTestId("task-form-more-options")).toHaveAttribute("hidden");
@@ -816,7 +831,7 @@ describe("NewTaskModal", () => {
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), {
         target: { value: "Verify the login page" },
       });
-      fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "wf-x" } });
+      await chooseWorkflowOption("wf-x");
 
       const trigger = await screen.findByTestId("task-form-inline-optional-steps");
       expect(trigger).toHaveTextContent("Steps: none");
@@ -837,7 +852,7 @@ describe("NewTaskModal", () => {
       vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([STEP]);
 
       renderNewTaskModal();
-      fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "wf-x" } });
+      await chooseWorkflowOption("wf-x");
 
       await screen.findByTestId("task-form-inline-optional-steps");
       fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
@@ -853,7 +868,7 @@ describe("NewTaskModal", () => {
 
       const { props } = renderNewTaskModal();
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "task" } });
-      fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "wf-x" } });
+      await chooseWorkflowOption("wf-x");
 
       const trigger = await screen.findByTestId("task-form-inline-optional-steps");
       await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
@@ -866,6 +881,64 @@ describe("NewTaskModal", () => {
       });
     });
 
+    it("submits explicit empty optional steps when Fast is created before optional-step metadata loads", async () => {
+      const { fetchWorkflows, fetchWorkflowOptionalSteps } = await import("../../api");
+      vi.mocked(fetchWorkflows).mockResolvedValue([WF]);
+      vi.mocked(fetchWorkflowOptionalSteps).mockReturnValue(new Promise(() => undefined) as any);
+
+      const { props } = renderNewTaskModal();
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "fast before metadata" } });
+      await chooseWorkflowOption("wf-x");
+      await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-x", undefined));
+
+      fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: [] }),
+        );
+      });
+    });
+
+    it("persists explicit empty optional steps after Fast clears defaults and allows manual reselection", async () => {
+      const { fetchWorkflows, fetchWorkflowOptionalSteps } = await import("../../api");
+      vi.mocked(fetchWorkflows).mockResolvedValue([WF]);
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([{ ...STEP, defaultOn: true }]);
+
+      const { props } = renderNewTaskModal();
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "fast task" } });
+      await chooseWorkflowOption("wf-x");
+      const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+
+      fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: [] }),
+        );
+      });
+
+      vi.mocked(props.onCreateTask).mockClear();
+      vi.mocked(props.onCreateTask).mockResolvedValue(makeTask("FN-002"));
+      fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "fast task with browser" } });
+      await chooseWorkflowOption("wf-x");
+      const nextTrigger = await screen.findByTestId("task-form-inline-optional-steps");
+      fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+      fireEvent.click(nextTrigger);
+      fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-browser-verification"));
+      fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+      await waitFor(() => {
+        expect(props.onCreateTask).toHaveBeenCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: ["browser-verification"] }),
+        );
+      });
+    });
+
     it("renders no dropdown and omits enabledWorkflowSteps for 'No workflow'", async () => {
       const { fetchWorkflows, fetchWorkflowOptionalSteps } = await import("../../api");
       vi.mocked(fetchWorkflows).mockResolvedValue([WF]);
@@ -874,7 +947,7 @@ describe("NewTaskModal", () => {
       const { props } = renderNewTaskModal();
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "task" } });
       // "No workflow" → null selection → no optional-steps fetch, no dropdown.
-      fireEvent.change(await screen.findByTestId("task-workflow-select"), { target: { value: "__none__" } });
+      await chooseWorkflowOption("__none__");
 
       expect(screen.queryByTestId("task-form-inline-optional-steps")).toBeNull();
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
@@ -1369,7 +1442,7 @@ describe("NewTaskModal", () => {
       const { props } = renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy();
       });
 
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Inherit default" } });
@@ -1387,10 +1460,10 @@ describe("NewTaskModal", () => {
       const { props } = renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy();
       });
 
-      fireEvent.change(screen.getByTestId("task-workflow-select"), { target: { value: "WF-1" } });
+      await chooseWorkflowOption("WF-1");
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Pick a workflow" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
@@ -1406,12 +1479,12 @@ describe("NewTaskModal", () => {
       const { props } = renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy();
       });
 
       // Pick a workflow, then switch to "No workflow" to register an explicit null.
-      fireEvent.change(screen.getByTestId("task-workflow-select"), { target: { value: "WF-1" } });
-      fireEvent.change(screen.getByTestId("task-workflow-select"), { target: { value: "__none__" } });
+      await chooseWorkflowOption("WF-1");
+      await chooseWorkflowOption("__none__");
       fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "No workflow task" } });
       fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
 
@@ -1427,7 +1500,7 @@ describe("NewTaskModal", () => {
       renderNewTaskModal();
 
       await waitFor(() => {
-        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy();
       });
       expect(screen.queryByTestId("workflow-step-order")).toBeNull();
       expect(document.querySelector('[data-testid^="workflow-step-checkbox-"]')).toBeNull();
@@ -1844,6 +1917,22 @@ describe("NewTaskModal", () => {
   FNXC:NewTask 2026-06-22-20:30:
   On desktop the New Task dialog is a floating, draggable, resizable, NON-BLOCKING window: the overlay is `pointer-events: none` and aria-modal="false" so behind-clicks pass through and never close the dialog (only the header X / Cancel / Escape dismiss). It carries a draggable header handle and resize handles.
   */
+  describe("workflow dropdown styling", () => {
+    it("uses tokenized bounded dropdown styles without legacy native-select assumptions", () => {
+      const workflowRules = Array.from(newTaskModalCss.matchAll(/\.task-workflow[^,{\s]*(?:[^{}]*)\{([^}]*)\}/g))
+        .map((match) => match[0])
+        .join("\n");
+
+      expect(newTaskModalCss).toContain("FNXC:NewTaskWorkflowDropdown 2026-06-30");
+      expect(workflowRules).toContain("var(--space-");
+      expect(workflowRules).toContain("max-width: 100%");
+      expect(workflowRules).toContain("overflow-y: auto");
+      expect(workflowRules).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgb\(/);
+      expect(newTaskModalCss).toMatch(/@media \(max-width: 768px\)[\s\S]*\.task-form \.dep-dropdown/);
+      expect(newTaskModalCss).not.toMatch(/task-workflow-select\s*\{/);
+    });
+  });
+
   describe("desktop floating window", () => {
     beforeEach(() => {
       mockViewportMode = "desktop";

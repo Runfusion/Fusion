@@ -268,6 +268,8 @@ Runtime support is guarded. Claude/pi/ACP-compatible runtimes receive MCP server
 
 The default pi runtime connects resolved MCP servers inside the engine because pi does not consume raw `mcpServers` declarations itself. For each reachable server, Fusion performs the MCP handshake, lists tools, and registers each tool as a pi custom tool named `mcp__<server>__<tool>` with sanitized, deterministic suffixes for collisions. Unreachable or disabled servers fail soft with content-free logs, and all MCP clients/transports are closed when the agent session is disposed so stdio subprocesses are reaped.
 
-Expected outcome: enabling a server makes it available to subsequent supported AI sessions, while unsupported sessions continue without MCP tools and without logging secret-bearing server definitions.
+Read-only sessions do not receive MCP tools automatically. Interactive planning and mission interview lanes (planning, streaming planning, mission interview, milestone interview, and slice interview) explicitly opt in because their job is to gather context and create plans, so configured MCP documentation/context tools are available there while still passing through the same custom-tool read-only filter, allowlists, permanent-agent gating, action-gate wrapping, worktree-boundary wrapping, schema preservation, redacted logging, and teardown path. Other read-only validator/helper lanes must make their own reviewed opt-in before external MCP tools appear.
+
+Expected outcome: enabling a server makes it available to subsequent supported AI sessions and explicitly opted-in planning/mission read-only sessions, while unsupported sessions and read-only sessions without the opt-in continue without MCP tools and without logging secret-bearing server definitions.
 
 See [Settings Reference](./settings-reference.md) for the `mcpServers` settings contract and [Agents](./agents.md) for runtime/model lane behavior.

@@ -51,10 +51,12 @@ describe("useMobileKeyboard", () => {
     innerHeight,
     vvHeight,
     vvOffsetTop = 0,
+    width = 375,
   }: {
     innerHeight: number;
     vvHeight: number;
     vvOffsetTop?: number;
+    width?: number;
   }) {
     (window as any).ontouchstart = null;
     Object.defineProperty(navigator, "maxTouchPoints", {
@@ -62,7 +64,7 @@ describe("useMobileKeyboard", () => {
       configurable: true,
     });
     Object.defineProperty(window, "innerWidth", {
-      value: 375,
+      value: width,
       writable: true,
       configurable: true,
     });
@@ -78,7 +80,7 @@ describe("useMobileKeyboard", () => {
     };
 
     const mockVV = {
-      width: 375,
+      width,
       height: vvHeight,
       offsetTop: vvOffsetTop,
       offsetLeft: 0,
@@ -228,6 +230,53 @@ describe("useMobileKeyboard", () => {
     await waitFor(() => {
       expect(result.current.keyboardOverlap).toBe(324);
       expect(result.current.viewportHeight).toBe(520);
+    });
+
+    input.remove();
+  });
+
+  it("re-baselines iOS fallback after a folded viewport settles while the keyboard is closed", async () => {
+    const { listeners, mockVV } = setupMobileVisualViewport({
+      innerHeight: 844,
+      vvHeight: 844,
+      width: 700,
+    });
+
+    const { result } = renderHook(() => useMobileKeyboard());
+
+    await waitFor(() => {
+      expect(result.current.keyboardOverlap).toBe(0);
+      expect(result.current.viewportHeight).toBeNull();
+    });
+
+    Object.defineProperty(window, "innerWidth", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 667, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "width", { value: 375, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 667, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      expect(result.current.keyboardOverlap).toBe(0);
+      expect(result.current.viewportHeight).toBeNull();
+    });
+
+    const input = document.createElement("textarea");
+    document.body.appendChild(input);
+    input.focus();
+
+    Object.defineProperty(window, "innerHeight", { value: 300, writable: true, configurable: true });
+    Object.defineProperty(mockVV, "height", { value: 300, writable: true, configurable: true });
+
+    act(() => {
+      for (const cb of listeners.resize) cb();
+    });
+
+    await waitFor(() => {
+      expect(result.current.keyboardOverlap).toBe(367);
+      expect(result.current.viewportHeight).toBe(300);
     });
 
     input.remove();

@@ -241,7 +241,7 @@ function builtinPrDef(): WorkflowDefinition {
   return {
     id: "builtin:pr-workflow",
     kind: "fragment",
-    name: "PR lifecycle (built-in)",
+    name: "PR lifecycle",
     description: "Ships with Fusion",
     ir: BUILTIN_PR_WORKFLOW_IR,
     layout: {},
@@ -1692,7 +1692,11 @@ describe("WorkflowNodeEditor — U10 columns/traits/holds", () => {
     vi.mocked(createWorkflow).mockResolvedValue({ ...v2Def(), id: "WF-copy", name: "Copy" });
 
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
-    expect(await screen.findByTestId("wf-readonly-banner")).toBeInTheDocument();
+    const banner = await screen.findByTestId("wf-readonly-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent("Workflow structure is read-only; prompts are editable.");
+    expect(banner).not.toHaveTextContent(/built-in/i);
+    expect(banner.querySelector(".workflow-icon--builtin")).toBeInTheDocument();
     // No Save button (toolbar replaced).
     expect(screen.queryByText("Save")).not.toBeInTheDocument();
     const dup = screen.getByText(/Duplicate to customize/i);
@@ -2431,7 +2435,7 @@ function builtinStepwiseDef(): WorkflowDefinition {
   return {
     id: "builtin:stepwise-coding",
     kind: "workflow",
-    name: "Coding (per-step review) (built-in)",
+    name: "Coding (per-step review)",
     description: "",
     ir: BUILTIN_STEPWISE_CODING_WORKFLOW_IR,
     layout: {},
@@ -2751,11 +2755,13 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={addToast} />);
     fireEvent.click(await screen.findByTestId("wf-new-workflow"));
     fireEvent.change(await screen.findByTestId("wf-create-name"), { target: { value: "Pipeline" } });
+    fireEvent.change(screen.getByTestId("wf-create-icon"), { target: { value: "🚀" } });
     fireEvent.click(screen.getByTestId("wf-create-submit"));
 
     await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
     const [input] = vi.mocked(createWorkflow).mock.calls[0];
-    expect((input as { name: string }).name).toBe("Pipeline");
+    expect((input as { name: string; icon?: string }).name).toBe("Pipeline");
+    expect((input as { icon?: string }).icon).toBe("🚀");
     // Dialog closes and the new workflow is active (its name shows in the strip).
     await waitFor(() => expect(screen.queryByTestId("wf-create-dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByTestId("wf-workflow-name")).toHaveTextContent("Pipeline"));
@@ -2794,7 +2800,9 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
     const options = within(group).getAllByRole("radio");
     expect(options[0]).toBe(blank);
 
-    // Built-in + user workflow present; fragment excluded.
+    // Fusion + user workflow present; fragment excluded.
+    expect(screen.getByText("Fusion workflows")).toBeInTheDocument();
+    expect(screen.queryByText("Built-in workflows")).not.toBeInTheDocument();
     expect(screen.getByTestId("wf-template-option-builtin:coding")).toBeInTheDocument();
     expect(screen.getByTestId("wf-template-option-WF-002")).toBeInTheDocument();
     expect(screen.queryByTestId("wf-template-option-WF-FRAG")).not.toBeInTheDocument();
@@ -2832,6 +2840,23 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
     expect((screen.getByTestId("wf-create-description") as HTMLTextAreaElement).value).toBe(
       "Ships with Fusion",
     );
+    expect((screen.getByTestId("wf-create-icon") as HTMLInputElement).value).toBe("✨");
+  });
+
+  it("keeps a typed copy name while defaulting built-in template icons", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([builtinDef()]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    fireEvent.change(screen.getByTestId("wf-create-name"), { target: { value: "My custom pipeline" } });
+    fireEvent.click(screen.getByTestId("wf-template-option-builtin:coding"));
+
+    expect((screen.getByTestId("wf-create-name") as HTMLInputElement).value).toBe("My custom pipeline");
+    expect((screen.getByTestId("wf-create-description") as HTMLTextAreaElement).value).toBe(
+      "Ships with Fusion",
+    );
+    expect((screen.getByTestId("wf-create-icon") as HTMLInputElement).value).toBe("✨");
   });
 
   it("submitting a template seeds a fresh-ID copy: same node count, all ids differ, description inherited", async () => {
@@ -2847,9 +2872,10 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
 
     await waitFor(() => expect(createWorkflow).toHaveBeenCalled());
     const [input] = vi.mocked(createWorkflow).mock.calls[0];
-    const created = input as { name: string; description?: string; kind?: string; ir: { nodes: { id: string }[] } };
+    const created = input as { name: string; description?: string; icon?: string; kind?: string; ir: { nodes: { id: string }[] } };
     expect(created.kind).toBe("workflow");
     expect(created.description).toBe("Ships with Fusion");
+    expect(created.icon).toBe("✨");
     // Same node count as the source IR.
     expect(created.ir.nodes).toHaveLength(builtin.ir.nodes.length);
     // Every node id is fresh (none shared with the source).
@@ -2857,6 +2883,20 @@ describe("WorkflowNodeEditor — U4 create dialog / delete / inline rename / dir
     for (const n of created.ir.nodes) {
       expect(sourceIds.has(n.id)).toBe(false);
     }
+  });
+
+  it("custom template picker preserves existing custom icons without empty shells", async () => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([{ ...v2Def(), icon: "🧪" }]);
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+    fireEvent.click(await screen.findByTestId("wf-new-workflow"));
+    await screen.findByTestId("wf-create-dialog");
+
+    const customOption = screen.getByTestId("wf-template-option-WF-002");
+    expect(customOption.querySelector(".workflow-icon--custom")).toHaveTextContent("🧪");
+    expect(screen.getByTestId("wf-template-option-blank").querySelector(".workflow-icon")).toBeNull();
+
+    fireEvent.click(customOption);
+    expect((screen.getByTestId("wf-create-icon") as HTMLInputElement).value).toBe("🧪");
   });
 
   it("blank flow seeds an emptyWorkflowIr-shaped graph (start → end)", async () => {
@@ -3353,7 +3393,7 @@ describe("WorkflowNodeEditor — U9 palette Templates section", () => {
     const section = await screen.findByTestId("wf-palette-templates");
     // Three subsection headers present.
     expect(within(section).getByText("Fragments")).toBeInTheDocument();
-    expect(within(section).getByText("Built-in steps")).toBeInTheDocument();
+    expect(within(section).getByText("Fusion steps")).toBeInTheDocument();
     expect(within(section).getByText("Plugin steps")).toBeInTheDocument();
 
     // Fragments alphabetical: Alpha before Zeta.
@@ -3500,7 +3540,8 @@ describe("WorkflowNodeEditor — U9 palette Templates section", () => {
     render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
     const section = await screen.findByTestId("wf-palette-templates");
     expect(within(section).queryByText("Fragments")).not.toBeInTheDocument();
-    expect(within(section).getByText("Built-in steps")).toBeInTheDocument();
+    expect(within(section).getByText("Fusion steps")).toBeInTheDocument();
+    expect(within(section).queryByText("Built-in steps")).not.toBeInTheDocument();
   });
 
   it("disables all entries when the active workflow is a built-in", async () => {

@@ -66,7 +66,7 @@ describe("useTerminalSessions", () => {
         expect(result.current.activeTab).not.toBeNull();
       });
 
-      expect(mockCreateTerminalSession).toHaveBeenCalled();
+      expect(mockCreateTerminalSession).toHaveBeenCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
     });
 
     it("restores tabs from localStorage on mount", async () => {
@@ -136,6 +136,52 @@ describe("useTerminalSessions", () => {
       expect(result.current.activeTab?.id).toBe("tab-2");
     });
 
+    it("filters stale sessions while preserving mixed project-root and worktree tabs", async () => {
+      const storedTabs = [
+        {
+          id: "tab-root",
+          sessionId: "session-root",
+          title: "Terminal 1",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-worktree",
+          sessionId: "session-worktree",
+          title: "FN-7253",
+          cwd: "/project/.worktrees/FN-7253",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+        {
+          id: "tab-stale-worktree",
+          sessionId: "session-stale-worktree",
+          title: "FN-0000",
+          cwd: "/project/.worktrees/FN-0000",
+          isActive: false,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+
+      mockListTerminalSessions.mockResolvedValue([
+        { id: "session-root", shell: "/bin/bash", cwd: "/project", createdAt: "2026-01-01T00:00:00.000Z" },
+        { id: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253", createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      expect(result.current.tabs.map((tab) => tab.id)).toEqual(["tab-root", "tab-worktree"]);
+      expect(result.current.tabs[0].cwd).toBeUndefined();
+      expect(result.current.tabs[1].cwd).toBe("/project/.worktrees/FN-7253");
+      expect(result.current.activeTab?.id).toBe("tab-root");
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+    });
+
     it("creates new tab if all stored sessions are stale", async () => {
       const storedTabs = [
         {
@@ -203,6 +249,127 @@ describe("useTerminalSessions", () => {
       // First tab should be deactivated
       expect(result.current.tabs[0].isActive).toBe(false);
       expect(result.current.tabs[1].isActive).toBe(true);
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+    });
+
+    it("passes an explicit cwd when creating a worktree tab", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253" });
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID
+      );
+      expect(result.current.activeTab?.title).toBe("FN-7253");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+
+    it("persists the server-confirmed cwd for worktree tabs", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.isReady).toBe(true);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253/", title: "FN-7253" });
+      });
+
+      expect(result.current.activeTab?.title).toBe("FN-7253");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
+
+    it("treats an explicit undefined cwd like the default project-root flow", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-2", shell: "/bin/bash", cwd: "/project" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: undefined });
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(undefined, undefined, undefined, TEST_PROJECT_ID);
+      expect(result.current.activeTab?.title).toBe("Terminal 2");
+      expect(result.current.activeTab?.cwd).toBeUndefined();
+    });
+
+    it("creates independent sessions for duplicate cwd selections", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-1", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-2", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenNthCalledWith(
+        2,
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID
+      );
+      expect(mockCreateTerminalSession).toHaveBeenNthCalledWith(
+        3,
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID
+      );
+      expect(result.current.tabs.map((tab) => tab.sessionId)).toEqual([
+        "session-1",
+        "session-worktree-1",
+        "session-worktree-2",
+      ]);
+      expect(result.current.tabs.slice(1).map((tab) => tab.cwd)).toEqual([
+        "/project/.worktrees/FN-7253",
+        "/project/.worktrees/FN-7253",
+      ]);
     });
 
     it("names tabs with incrementing numbers", async () => {
@@ -429,6 +596,38 @@ describe("useTerminalSessions", () => {
       // Tab should have new session
       expect(result.current.activeTab?.sessionId).toBe("session-new");
     });
+
+    it("restarts worktree tabs in their preserved cwd", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-new", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+      await act(async () => {
+        await result.current.restartActiveTab();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(result.current.activeTab?.sessionId).toBe("session-worktree-new");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
+    });
   });
 
   describe("replacing active tab session (invalid session recovery)", () => {
@@ -460,6 +659,42 @@ describe("useTerminalSessions", () => {
       expect(result.current.tabs.length).toBe(1);
       expect(result.current.activeTab?.id).toBe(tabId);
       expect(result.current.activeTab?.sessionId).toBe("session-replacement");
+    });
+
+    it("replaces stale worktree sessions in their preserved cwd", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+
+      mockCreateTerminalSession
+        .mockResolvedValueOnce({ sessionId: "session-1", shell: "/bin/bash", cwd: "/project" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" })
+        .mockResolvedValueOnce({ sessionId: "session-worktree-replacement", shell: "/bin/bash", cwd: "/project/.worktrees/FN-7253" });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+
+      await act(async () => {
+        await result.current.createTab({ cwd: "/project/.worktrees/FN-7253", title: "FN-7253" });
+      });
+      const tabId = result.current.activeTab!.id;
+
+      await act(async () => {
+        await result.current.replaceActiveTabSession();
+      });
+
+      expect(mockCreateTerminalSession).toHaveBeenLastCalledWith(
+        "/project/.worktrees/FN-7253",
+        undefined,
+        undefined,
+        TEST_PROJECT_ID,
+      );
+      expect(mockKillPtyTerminalSession).not.toHaveBeenCalled();
+      expect(result.current.activeTab?.id).toBe(tabId);
+      expect(result.current.activeTab?.sessionId).toBe("session-worktree-replacement");
+      expect(result.current.activeTab?.cwd).toBe("/project/.worktrees/FN-7253");
     });
 
     it("sets bootstrapError when replacement session creation fails", async () => {

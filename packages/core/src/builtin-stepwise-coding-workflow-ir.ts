@@ -86,7 +86,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
     { id: "start", kind: "start", column: "triage" },
     // Planning seam: produces PROMPT.md (the declared step-source artifact).
     { id: "plan", kind: "prompt", column: "in-progress", config: builtinPromptConfig("planning", "Plan") },
-    planReviewOptionalGroupNode("in-progress"),
+    planReviewOptionalGroupNode("in-progress", { requireExternalIntegrationEvidence: true }),
     planReplanNode("triage"),
     // KTD-12: parse the planned PROMPT.md into the task step list. This node must
     // dominate the foreach (validator-enforced).

@@ -1257,6 +1257,71 @@ describe("ChatManager.sendMessage", () => {
     expect(createOptions?.systemPrompt).toContain(CHAT_ASK_QUESTION_GUIDANCE);
   });
 
+  it("adds rich task context and steering tools for synthetic task planner chat sessions", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "task-planner:FN-7310",
+      status: "active",
+      modelProvider: "anthropic",
+      modelId: "claude-plan",
+    });
+
+    const createResolvedSession = vi.fn(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: {
+          messages: [{ role: "assistant", content: "Planning response" }],
+        },
+      },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+
+    const taskStore = {
+      getTask: vi.fn().mockResolvedValue({
+        id: "FN-7310",
+        title: "Add planner chat",
+        description: "Short list description should not replace the task prompt",
+        prompt: "# PROMPT.md\n\nImplement the planner-model Chat tab from the detailed task plan.",
+        column: "todo",
+        status: "planning",
+        dependencies: ["FN-7309"],
+        steps: [{ title: "Polish", status: "in-progress" }],
+        comments: [{ text: "User wants planner chat", author: "user" }],
+        steeringComments: [{ text: "Keep Activity intact", author: "user" }],
+        log: [{ level: "info", message: "Activity transcript loaded" }],
+      }),
+      getSettings: vi.fn().mockResolvedValue({}),
+    };
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      undefined,
+      undefined,
+      taskStore as any,
+    );
+
+    await chatManager.sendMessage("chat-001", "How should I plan this?");
+
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    expect(createOptions.defaultProvider).toBe("anthropic");
+    expect(createOptions.defaultModelId).toBe("claude-plan");
+    expect(createOptions.systemPrompt).toContain("## Task Planner Chat Context");
+    expect(createOptions.systemPrompt).toContain("Task ID: FN-7310");
+    expect(createOptions.systemPrompt).toContain("Title: Add planner chat");
+    expect(createOptions.systemPrompt).toContain("Prompt:\n# PROMPT.md");
+    expect(createOptions.systemPrompt).toContain("Implement the planner-model Chat tab from the detailed task plan.");
+    expect(createOptions.systemPrompt).toContain("Dependencies: FN-7309");
+    expect(createOptions.systemPrompt).toContain("Polish: in-progress");
+    expect(createOptions.systemPrompt).toContain("Activity transcript loaded");
+    expect(createOptions.systemPrompt).toContain("fn_task_planner_add_steering");
+    expect(createOptions.systemPrompt).toContain("fn_ask_question");
+    expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_add_steering");
+    expect(taskStore.getTask).toHaveBeenCalledWith("FN-7310", { activityLogLimit: 20 });
+  });
+
   it("guides chat agents to use ask-question cards for option sets", () => {
     expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("## Asking the User");
     expect(CHAT_ASK_QUESTION_GUIDANCE).toContain("fn_ask_question");

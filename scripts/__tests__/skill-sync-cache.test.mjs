@@ -47,6 +47,11 @@ function fakeGit(shaByPath, { dirty = [] } = {}) {
 
 const baseShas = Object.fromEntries(SKILL_SYNC_INPUT_PATHS.map((p, i) => [p, `sha${i}`]));
 
+test("skill sync cache watches extension and engine workflow tool sources", () => {
+  assert.ok(SKILL_SYNC_INPUT_PATHS.includes("packages/cli/src/extension.ts"));
+  assert.ok(SKILL_SYNC_INPUT_PATHS.includes("packages/engine/src/agent-tools.ts"));
+});
+
 test("recordSkillSyncCheckPass then isSkillSyncCheckCached returns true on unchanged inputs", () => {
   withRoot((root) => {
     const deps = { gitFn: fakeGit(baseShas), readFn: () => Buffer.from("") };

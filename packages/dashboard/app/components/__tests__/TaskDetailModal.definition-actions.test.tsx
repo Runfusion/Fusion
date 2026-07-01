@@ -15,13 +15,14 @@ import {
   setupTaskDetailModalHooks,
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
+import { FileBrowserProvider } from "../../context/FileBrowserContext";
 import { readBoardWorkflowSelection, removeBoardWorkflowSelection, writeBoardWorkflowSelection } from "../../utils/boardWorkflowSelection";
 
 setupTaskDetailModalHooks();
 
 describe("TaskDetailModal", () => {
-  describe("Definition tab edit mode", () => {
-    it("shows Edit button in Definition tab", () => {
+  describe("Plan tab edit mode", () => {
+    it("shows Edit button in Plan tab", () => {
       render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Test\n\nSpec content." })}
@@ -35,7 +36,37 @@ describe("TaskDetailModal", () => {
         />,
       );
 
+      expect(screen.getByRole("button", { name: "Plan" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Definition" })).toBeNull();
       expect(screen.getByText("Edit")).toBeTruthy();
+    });
+
+    it("opens the task PROMPT.md file from the near-top Plan action", async () => {
+      const user = userEvent.setup();
+      const openFile = vi.fn();
+      const { container } = render(
+        <FileBrowserProvider openFile={openFile}>
+          <TaskDetailModal
+            task={makeTask({ id: "FN-099", prompt: "# Test\n\nSpec content." })}
+            initialTab="definition"
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />
+        </FileBrowserProvider>,
+      );
+
+      const actionRow = container.querySelector(".detail-spec-edit-trigger");
+      expect(actionRow).toBeTruthy();
+      const promptButton = screen.getByRole("button", { name: "Open PROMPT.md" });
+      expect(actionRow?.contains(promptButton)).toBe(true);
+
+      await user.click(promptButton);
+
+      expect(openFile).toHaveBeenCalledWith(".fusion/tasks/FN-099/PROMPT.md", { workspace: "project" });
     });
 
     it("clicking Edit shows textarea with current prompt content", () => {
@@ -191,11 +222,11 @@ describe("TaskDetailModal", () => {
       );
 
       // In-progress tasks show exactly 11 tabs:
-      // Chat, Definition, Logs, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
+      // Activity, Plan, Logs, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Chat");
-      expect(tabs[1].textContent).toBe("Definition");
+      expect(tabs[0].textContent).toBe("Activity");
+      expect(tabs[1].textContent).toBe("Plan");
       expect(tabs[2].textContent).toBe("Logs");
       expect(tabs[3].textContent).toBe("Changes");
       expect(tabs[4].textContent).toBe("Review");
@@ -226,8 +257,8 @@ describe("TaskDetailModal", () => {
       // In-progress task with workflow steps: 11 tabs (Review after Changes, Workflow after Model)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(11);
-      expect(tabs[0].textContent).toBe("Chat");
-      expect(tabs[1].textContent).toBe("Definition");
+      expect(tabs[0].textContent).toBe("Activity");
+      expect(tabs[1].textContent).toBe("Plan");
       expect(tabs[2].textContent).toBe("Logs");
       expect(tabs[3].textContent).toBe("Changes");
       expect(tabs[4].textContent).toBe("Review");
@@ -256,12 +287,12 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Done task with commit SHA: Summary, Chat, Definition, Logs, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing (12 tabs, no Commits)
+      // Done task with commit SHA: Activity, Summary, Plan, Logs, Changes, Review, Comments, Artifacts, Model, Workflow, Stats, Routing (12 tabs, no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(12);
-      expect(tabs[0].textContent).toBe("Summary");
-      expect(tabs[1].textContent).toBe("Chat");
-      expect(tabs[2].textContent).toBe("Definition");
+      expect(tabs[0].textContent).toBe("Activity");
+      expect(tabs[1].textContent).toBe("Summary");
+      expect(tabs[2].textContent).toBe("Plan");
       expect(tabs[3].textContent).toBe("Logs");
       expect(tabs[4].textContent).toBe("Changes");
       expect(tabs[5].textContent).toBe("Review");
@@ -296,9 +327,9 @@ describe("TaskDetailModal", () => {
       // Done task with workflow steps and commit SHA: 12 tabs including Summary and Review (no Commits)
       const tabs = container.querySelectorAll(".detail-tab");
       expect(tabs.length).toBe(12);
-      expect(tabs[0].textContent).toBe("Summary");
-      expect(tabs[1].textContent).toBe("Chat");
-      expect(tabs[2].textContent).toBe("Definition");
+      expect(tabs[0].textContent).toBe("Activity");
+      expect(tabs[1].textContent).toBe("Summary");
+      expect(tabs[2].textContent).toBe("Plan");
       expect(tabs[3].textContent).toBe("Logs");
       expect(tabs[4].textContent).toBe("Changes");
       expect(tabs[5].textContent).toBe("Review");
@@ -327,9 +358,9 @@ describe("TaskDetailModal", () => {
       );
 
       const triageTabs = triageContainer.querySelectorAll(".detail-tab");
-      expect(triageTabs.length).toBe(10); // Chat, Definition, Logs, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
+      expect(triageTabs.length).toBe(10); // Activity, Plan, Logs, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
       expect(Array.from(triageTabs).map(t => t.textContent)).toEqual([
-        "Chat", "Definition", "Logs", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Plan", "Logs", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
 
       const { container: todoContainer } = render(
@@ -346,9 +377,9 @@ describe("TaskDetailModal", () => {
       );
 
       const todoTabs = todoContainer.querySelectorAll(".detail-tab");
-      expect(todoTabs.length).toBe(10); // Chat, Definition, Logs, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
+      expect(todoTabs.length).toBe(10); // Activity, Plan, Logs, Review, Comments, Artifacts, Model, Workflow, Stats, Routing
       expect(Array.from(todoTabs).map(t => t.textContent)).toEqual([
-        "Chat", "Definition", "Logs", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
+        "Activity", "Plan", "Logs", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing",
       ]);
     });
 

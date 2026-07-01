@@ -258,6 +258,9 @@ The floating-mode header is the move grip. `touch-action: none` is required so a
   transition: color var(--transition-fast), border-color var(--transition-fast);
   position: relative;
   min-height: 44px;
+  max-width: min(260px, 42vw);
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .terminal-tab:hover {
@@ -285,6 +288,10 @@ The floating-mode header is the move grip. `touch-action: none` is required so a
 }
 
 .terminal-tab-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 12px;
 }
@@ -342,6 +349,163 @@ The floating-mode header is the move grip. `touch-action: none` is required so a
 .terminal-tab--empty:hover {
   background: none;
   color: var(--text-muted);
+}
+
+/*
+FNXC:TerminalWorkspaces 2026-06-29-00:00:
+Terminal worktree selection mirrors the file-browser workspace model while staying header-sized for docked, floating, and mobile terminals. Render the picker only when task workspace entries exist so failures or empty worktree lists never leave an inert button shell next to the always-fast + terminal affordance.
+
+FNXC:TerminalWorkspaces 2026-06-29-00:00:
+Terminal headers must survive many tabs, long task titles, floating narrow widths, and mobile touch controls. Bound tab/picker labels and make menus scroll within the viewport so close/reconnect/keyboard controls and the xterm viewport remain reachable.
+
+FNXC:TerminalWorkspaces 2026-06-30-00:00:
+The worktree listbox must escape the mobile terminal header's clipped overflow. It is portaled to the viewport, positioned from the trigger, and constrained with tokenized gutters so narrow phones can reach and scroll every workspace option without hiding the fast + terminal action.
+*/
+.terminal-workspace-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: var(--space-xs);
+  border-left: 1px solid var(--border);
+  padding-left: var(--space-xs);
+  z-index: 3;
+}
+
+.terminal-workspace-picker-trigger,
+.terminal-workspace-picker-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.terminal-workspace-picker-trigger:hover,
+.terminal-workspace-picker-open:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card-hover);
+  border-color: var(--text-muted);
+}
+
+.terminal-workspace-picker-trigger {
+  gap: var(--space-xs);
+  width: clamp(112px, 16vw, 220px);
+  max-width: 220px;
+  min-width: 0;
+  padding: 0 var(--space-sm);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.terminal-workspace-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.terminal-workspace-picker-chevron {
+  transition: transform var(--transition-fast);
+}
+
+.terminal-workspace-picker-chevron.open {
+  transform: rotate(180deg);
+}
+
+.terminal-workspace-picker-open {
+  width: 34px;
+  margin-left: -1px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.terminal-workspace-picker-open:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.terminal-workspace-picker-menu {
+  --terminal-workspace-menu-width: calc(var(--space-xl) * 14.167);
+  --terminal-workspace-menu-min-width: calc(var(--space-xl) * 9.167);
+  --terminal-workspace-menu-height: calc(var(--space-xl) * 15);
+  position: fixed;
+  top: calc(var(--space-xl) * 2);
+  left: var(--space-md);
+  width: min(var(--terminal-workspace-menu-width), calc(100vw - (var(--space-md) * 2)));
+  max-height: min(var(--terminal-workspace-menu-height), calc(100dvh - (var(--space-md) * 2)));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+  z-index: 5000;
+}
+
+.terminal-workspace-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  width: 100%;
+  padding: var(--space-sm);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.terminal-workspace-picker-option:hover:not(:disabled),
+.terminal-workspace-picker-option.active {
+  background: var(--card-hover);
+}
+
+.terminal-workspace-picker-option:disabled,
+.terminal-workspace-picker-option.disabled {
+  cursor: not-allowed;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.terminal-workspace-picker-option-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.terminal-workspace-picker-option-main span,
+.terminal-workspace-picker-option-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-workspace-picker-option-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  max-width: 180px;
+}
+
+.terminal-workspace-picker-group-label {
+  padding: var(--space-sm) var(--space-sm) var(--space-xs);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .terminal-close {
@@ -501,13 +665,15 @@ The terminal header pop-out/dock affordance is an icon-only utility control. It 
   font-size: 14px;
   font-weight: 500;
   color: var(--text);
-  flex: 1;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .terminal-actions {
   display: flex;
   align-items: center;
   gap: 0;
+  flex: 0 0 auto;
 }
 
 .terminal-output {
@@ -1159,6 +1325,34 @@ Footer reads left-to-right: text-size control, then the relocated Clear/Shortcut
   .terminal-tabs {
     flex: 1 1 auto;
     min-width: 0;
+  }
+
+  .terminal-workspace-picker {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .terminal-workspace-picker-trigger {
+    width: clamp(92px, 28vw, 132px);
+    max-width: 132px;
+    min-height: 36px;
+    padding: 0 var(--space-xs);
+  }
+
+  .terminal-workspace-picker-open {
+    width: 36px;
+    min-height: 36px;
+  }
+
+  .terminal-workspace-picker-menu {
+    width: min(var(--terminal-workspace-menu-width), calc(100vw - (var(--space-sm) * 2)));
+    max-height: min(var(--terminal-workspace-menu-height), calc(100dvh - (var(--space-sm) * 2)));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .terminal-workspace-picker-option-meta {
+    max-width: 150px;
   }
 
   /* Hide the redundant title/status indicator on mobile — .terminal-status-bar shows connection state */

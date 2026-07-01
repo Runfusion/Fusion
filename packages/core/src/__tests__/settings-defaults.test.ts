@@ -176,6 +176,15 @@ describe("settings defaults invariants", () => {
     });
   });
 
+  describe("dismissModalsOnOutsideClick default", () => {
+    it("defaults modal backdrop dismissal off and global-scoped only", () => {
+      expect(DEFAULT_GLOBAL_SETTINGS.dismissModalsOnOutsideClick).toBe(false);
+      expect(GLOBAL_SETTINGS_KEYS).toContain("dismissModalsOnOutsideClick");
+      expect("dismissModalsOnOutsideClick" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+      expect(PROJECT_SETTINGS_KEYS).not.toContain("dismissModalsOnOutsideClick");
+    });
+  });
+
   describe("mergeIntegrationWorktree default", () => {
     it("defaults project settings to reuse-task-worktree", () => {
       expect(DEFAULT_PROJECT_SETTINGS.mergeIntegrationWorktree).toBe("reuse-task-worktree");

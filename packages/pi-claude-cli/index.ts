@@ -190,6 +190,19 @@ export default function (pi: ExtensionAPI) {
     // catalog catches up.
     // https://platform.claude.com/docs/en/about-claude/models/overview
     const extraModels: typeof catalogModels = [
+      /*
+       * FNXC:ModelCatalog 2026-06-30-12:31:
+       * The vendored Claude CLI provider has its own model list because it exposes `pi-claude-cli` independently from direct `anthropic`. Add Claude Sonnet 5 here as supplemental metadata so Claude CLI users can select it before the upstream pi-ai catalog catches up, while the dedupe below prevents duplicate rows after it does.
+       */
+      {
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
       {
         id: "claude-opus-4-7",
         name: "Claude Opus 4.7",

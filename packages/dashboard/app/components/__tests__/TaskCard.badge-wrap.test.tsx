@@ -114,4 +114,20 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(styles.maxWidth).not.toBe("none");
     expect(styles.whiteSpace).toBe("nowrap");
   });
+
+  it("places the workflow badge in a left-aligned bottom row outside the header badge cluster", () => {
+    const workflowRow = container.querySelector(".card-workflow-badge-row") as HTMLElement;
+    const workflowBadge = container.querySelector(".card-workflow-badge") as HTMLElement;
+    const metaBadges = container.querySelector(".card-meta-badges") as HTMLElement;
+
+    expect(workflowRow).toBeTruthy();
+    expect(workflowBadge).toBeTruthy();
+    expect(workflowRow.contains(workflowBadge)).toBe(true);
+    expect(metaBadges.contains(workflowBadge)).toBe(false);
+
+    const styles = getComputedStyle(workflowRow);
+    expect(styles.display).toBe("flex");
+    expect(styles.justifyContent).toBe("flex-start");
+    expect(styles.minWidth).toBe("0px");
+  });
 });

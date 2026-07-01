@@ -21,7 +21,7 @@ import { Bot } from "lucide-react";
 import { useSetupReadiness } from "../hooks/useSetupReadiness";
 import { SetupWarningBanner } from "./SetupWarningBanner";
 import { LoadingSpinner } from "./LoadingSpinner";
-import { TaskForm, type BranchSelectionMode, type PendingImage } from "./TaskForm";
+import { TaskForm, type BranchSelectionMode, type EnabledWorkflowStepsChangeMeta, type PendingImage } from "./TaskForm";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
 import { REPO_OVERRIDE_RE } from "./githubTracking";
 import { useConfirm } from "../hooks/useConfirm";
@@ -579,6 +579,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   // Optional workflow steps the user opted into; TaskForm fetches + seeds these
   // from the selected workflow's defaultOn and lifts the enabled set up here.
   const [enabledWorkflowSteps, setEnabledWorkflowSteps] = useState<string[]>([]);
+  const [shouldSubmitEnabledWorkflowSteps, setShouldSubmitEnabledWorkflowSteps] = useState(false);
   const [reviewLevel, setReviewLevel] = useState<number | undefined>(undefined);
   const [autoMerge, setAutoMerge] = useState<boolean | undefined>(undefined);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -592,6 +593,17 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
    */
   const [executionMode, setExecutionMode] = useState<"standard" | "fast">("standard");
   const [githubTrackingEnabled, setGithubTrackingEnabled] = useState(false);
+  /*
+  FNXC:FastOptionalSteps 2026-06-30-09:10:
+  New task create payloads must distinguish omitted optional-step intent (no controls/no workflow; allow store defaults) from explicit `[]` (operator chose Fast or deselected all; do not re-seed default-on groups) and non-empty manual selections.
+
+  FNXC:FastOptionalSteps 2026-06-30-10:42:
+  Fast is itself explicit optional-step intent. Submit the current enabledWorkflowSteps array even before optional-step metadata finishes loading so default-on workflow gates cannot revive through an omitted field.
+  */
+  const handleEnabledWorkflowStepsChange = useCallback((ids: string[], meta?: EnabledWorkflowStepsChangeMeta) => {
+    setEnabledWorkflowSteps(ids);
+    setShouldSubmitEnabledWorkflowSteps(meta?.optionalStepsAvailable === true);
+  }, []);
   const [githubRepoOverride, setGithubRepoOverride] = useState("");
 
   // Agent assignment state
@@ -690,6 +702,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       // Optional workflow steps the user toggled count as unsaved work. (Workflows
       // whose steps are defaultOn:false — today's only shipped step — seed an empty
       // set, so this stays false until the user actually opts a step in.)
+      shouldSubmitEnabledWorkflowSteps ||
       enabledWorkflowSteps.length > 0 ||
       executorModel !== "" ||
       validatorModel !== "" ||
@@ -707,7 +720,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, enabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -724,6 +737,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setPresetMode("default");
     setSelectedWorkflowId(undefined);
     setEnabledWorkflowSteps([]);
+    setShouldSubmitEnabledWorkflowSteps(false);
     setSelectedAgentId(null);
     setShowAgentPicker(false);
     setReviewLevel(undefined);
@@ -778,9 +792,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       //  - null      → explicit "No workflow" (store skips default materialization)
       //  - string    → that workflow, materialized atomically at create time.
       ...(selectedWorkflowId !== undefined ? { workflowId: selectedWorkflowId } : {}),
-      // Optional steps the user toggled on (omit when none so the store keeps its
-      // default materialization behavior).
-      ...(enabledWorkflowSteps.length ? { enabledWorkflowSteps } : {}),
+      // Optional steps are omitted only when no controls were available. Fast always submits explicit []/ids so async metadata races cannot fall back to store defaultOn gates.
+      ...(shouldSubmitEnabledWorkflowSteps || executionMode === "fast" ? { enabledWorkflowSteps } : {}),
       ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
       modelPresetId: presetMode === "preset" ? selectedPresetId || undefined : undefined,
       modelProvider: executorModel && executorSlashIdx !== -1 ? executorModel.slice(0, executorSlashIdx) : undefined,
@@ -834,7 +847,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     resetForm();
     addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
     onClose();
-  }, [executorModel, validatorModel, planningModel, thinkingLevel, dependencies, selectedWorkflowId, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, validatorModel, planningModel, thinkingLevel, dependencies, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
   const handleSubmit = useCallback(async () => {
     const trimmedDesc = description.trim();
@@ -1143,7 +1156,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             selectedWorkflowId={selectedWorkflowId}
             onWorkflowIdChange={setSelectedWorkflowId}
             enabledWorkflowSteps={enabledWorkflowSteps}
-            onEnabledWorkflowStepsChange={setEnabledWorkflowSteps}
+            onEnabledWorkflowStepsChange={handleEnabledWorkflowStepsChange}
             pendingImages={pendingImages}
             onImagesChange={setPendingImages}
             tasks={tasks}

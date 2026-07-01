@@ -232,7 +232,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety-critical gates, but 
 Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` and inspect it before deciding. If an existing task covers the same work, do not write PROMPT.md; write exactly \`DUPLICATE: {existing-task-id}\`.
 
 ## Required PROMPT.md shape
-Write a real PROMPT.md to the requested path using the write tool. Keep sections lean, but include Mission, Dependencies, Context to Read First, File Scope, Steps with Preflight / Testing & Verification / Documentation & Delivery, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Do not add a review-level heading, triage subtask breakdown, or proactive subtask breakdown.
+Write PROMPT.md with Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (for example, \`### Step 1: Preflight\`); Do not write bare \`### Preflight\` / \`### Implementation\` headings. Do not add review-level, triage subtask, or proactive subtask headings.
 
 ## Surface Enumeration
 For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.
@@ -434,7 +434,7 @@ files with assertions that run via a test runner. Typechecks and builds are NOT
 tests. Manual verification is NOT a test.
 
 - Each implementation step should include writing tests for the code being changed
-- For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.
+- For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled; missing coverage is a blocking REVISE.
 - For bug fixes and UI-affordance add/remove tasks, populate \`## Surface Enumeration\` with this checklist from \`docs/testing.md\`: providers/bridges/execution paths; desktop + mobile breakpoints/platforms; empty/undefined/duplicate/populated data states; shared hooks/components/modules/helpers; every component that renders the affordance; leftover shells after removal.
 - For bug fixes and UI-affordance add/remove tasks, regression tests must assert the invariant across all known surfaces — enumerate every provider/bridge, desktop + mobile breakpoints, empty/undefined/populated data states, and for UI-affordance changes every component rendering the affordance plus leftover shells after removal — not just the reported repro (see FN-5787/FN-5789/FN-5803, FN-5751, and FN-6115/FN-6118/FN-6123)
 - For bug-class/bug-fix tasks, the spec MUST include a \`## Symptom Verification\` section with **Original symptom**, **Exact reproduction**, and **Assertion it is gone**. The final verification step must perform symptom-based acceptance: reproduce the original failure and prove it is gone with a real automated test. Green build/tests alone are insufficient. Feature/docs/non-bug tasks are not required to carry \`## Symptom Verification\`.

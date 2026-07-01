@@ -17,9 +17,17 @@ import {
 } from "./TaskDetailModal.test-helpers";
 import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 
+vi.mock("../BranchGroupCard", () => ({
+  BranchGroupCard: ({ groupId }: { groupId: string }) => (
+    <section className="card branch-group-card" data-testid="mock-branch-group-card" aria-label={`Mock branch group ${groupId}`}>
+      <button type="button">Mock branch group toggle {groupId}</button>
+    </section>
+  ),
+}));
+
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-6532 made Chat the default TaskDetailModal tab. Definition-tab regression coverage must prove both the no-`initialTab` Chat landing state and the explicit `initialTab="definition"` Definition surface for prompt, GitHub tracking, and dependency sections.
+FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Definition-tab regression coverage must prove both the no-`initialTab` Activity landing state and the explicit `initialTab="definition"` Definition surface for prompt, GitHub tracking, and dependency sections.
 */
 setupTaskDetailModalHooks();
 
@@ -368,8 +376,9 @@ describe("TaskDetailModal", () => {
       />,
     );
 
-    // Click Logs tab — Activity is the default subview
-    fireEvent.click(screen.getByText("Logs"));
+    // Click Activity tab — Activity is the default subview
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
 
     const activityList = container.querySelector(".detail-activity-list");
     expect(activityList).toBeTruthy();
@@ -439,7 +448,7 @@ describe("TaskDetailModal", () => {
   });
 
   describe("tab toggle", () => {
-    it("defaults to the Chat tab", () => {
+    it("defaults to the Activity tab", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
@@ -452,29 +461,24 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByText("Definition")).toBeTruthy();
-      expect(screen.getByText("Logs")).toBeTruthy();
-      // Activity and Agent Log are subviews inside the Logs tab, not top-level tabs.
-      // They should NOT be visible on the default Chat tab.
-      expect(screen.queryByText("Activity")).toBeNull();
+      expect(screen.getByText("Plan")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
+      expect(container.querySelector(".activity-segmented-control")).toBeTruthy();
       expect(screen.queryByText("Agent Log")).toBeNull();
-      // Chat content should be visible by default.
+      const segments = screen.getAllByRole("tab");
+      expect(segments.map((segment) => segment.textContent)).toEqual(["Current", "Feed", "Raw Logs"]);
+      expect(screen.getByRole("tab", { name: "Current" })).toHaveAttribute("aria-selected", "true");
       expect(container.querySelector(".detail-section--chat")).toBeTruthy();
       expect(container.querySelector("[data-testid='task-chat-tab']")).toBeTruthy();
-      // Activity section should NOT be visible initially.
       expect(container.querySelector(".detail-activity")).toBeNull();
-      // Agent log viewer should not be visible.
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
 
-      // After clicking Logs tab, the subview toggle buttons should appear.
-      fireEvent.click(screen.getByText("Logs"));
-      const logSubviewToggle = container.querySelector(".log-subview-toggle");
-      expect(logSubviewToggle).toBeTruthy();
-      expect(logSubviewToggle!.textContent).toContain("Activity");
-      expect(logSubviewToggle!.textContent).toContain("Agent Log");
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
+      expect(screen.getByRole("tab", { name: "Feed" })).toHaveAttribute("aria-selected", "true");
     });
 
-    it("switches to Activity subview via Logs tab and shows activity feed", () => {
+    it("switches to Feed segment via Activity tab and shows activity feed", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -492,8 +496,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Click Logs tab — Activity is the default subview
-      fireEvent.click(screen.getByText("Logs"));
+      // Click Activity tab — Activity is the default subview
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
 
       // Activity section should be visible
       expect(container.querySelector(".detail-activity")).toBeTruthy();
@@ -503,7 +508,7 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".markdown-body")).toBeNull();
     });
 
-    it("Activity subview renders log entries correctly", () => {
+    it("Feed segment renders log entries correctly", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -522,8 +527,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Click Logs tab — Activity is the default subview
-      fireEvent.click(screen.getByText("Logs"));
+      // Click Activity tab — Activity is the default subview
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
 
       const activityList = container.querySelector(".detail-activity-list");
       expect(activityList).toBeTruthy();
@@ -539,7 +545,36 @@ describe("TaskDetailModal", () => {
       expect(logEntries[2].textContent).toContain("Created task");
     });
 
-    it("Activity subview keeps action/outcome rendering intact", () => {
+    it("Feed segment preserves legacy text/detail and duplicate entries", () => {
+      const duplicateEntry = { timestamp: "2026-01-01T00:02:00Z", action: "Repeated diagnostic", outcome: "same payload" };
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({
+            log: [
+              { timestamp: "2026-01-01T00:00:00Z", text: "Legacy text entry", detail: "Legacy detail body" } as any,
+              duplicateEntry,
+              { ...duplicateEntry },
+            ],
+          })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+
+      const actions = Array.from(container.querySelectorAll(".detail-log-action")).map((entry) => entry.textContent);
+      const outcomes = Array.from(container.querySelectorAll(".detail-log-outcome")).map((entry) => entry.textContent);
+      expect(actions).toEqual(["Repeated diagnostic", "Repeated diagnostic", "Legacy text entry"]);
+      expect(outcomes).toEqual(["same payload", "same payload", "Legacy detail body"]);
+    });
+
+    it("Feed segment keeps action/outcome rendering intact", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -557,7 +592,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Logs"));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
 
       const actions = container.querySelectorAll(".detail-log-action");
       const outcomes = container.querySelectorAll(".detail-log-outcome");
@@ -582,7 +618,7 @@ describe("TaskDetailModal", () => {
       expect(timestampRule).not.toContain("color: var(--text);");
     });
 
-    it("Activity subview shows empty state when no logs", () => {
+    it("Feed segment shows empty state when no logs", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ log: [] })}
@@ -595,8 +631,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Click Logs tab — Activity is the default subview
-      fireEvent.click(screen.getByText("Logs"));
+      // Click Activity tab — Activity is the default subview
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
 
       // Activity section should be visible
       expect(container.querySelector(".detail-activity")).toBeTruthy();
@@ -607,7 +644,7 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-activity-list")).toBeNull();
     });
 
-    it("can switch between all tabs and Logs subviews", () => {
+    it("can switch between all tabs and Activity segments", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({
@@ -628,18 +665,19 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".markdown-body")).toBeTruthy();
       expect(container.querySelector(".detail-activity")).toBeNull();
 
-      // Switch to Logs tab (Activity subview is default)
-      fireEvent.click(screen.getByText("Logs"));
+      // Switch to Activity tab (Feed segment is default)
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
       expect(container.querySelector(".detail-activity")).toBeTruthy();
       expect(container.querySelector(".markdown-body")).toBeNull();
 
-      // Switch to Agent Log subview within Logs tab
-      fireEvent.click(screen.getByText("Agent Log"));
+      // Switch to Raw Activity segment within Activity tab
+      fireEvent.click(screen.getByText("Raw Logs"));
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeTruthy();
       expect(container.querySelector(".detail-activity")).toBeNull();
 
-      // Switch back to Activity subview within Logs tab
-      fireEvent.click(screen.getByText("Activity"));
+      // Switch back to Feed segment within Activity tab.
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
       expect(container.querySelector(".detail-activity")).toBeTruthy();
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
 
@@ -649,13 +687,13 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-activity")).toBeNull();
 
       // Switch back to Definition tab
-      fireEvent.click(screen.getByText("Definition"));
+      fireEvent.click(screen.getByText("Plan"));
       expect(container.querySelector(".markdown-body")).toBeTruthy();
       expect(container.querySelector(".detail-activity")).toBeNull();
 
     });
 
-    it("switches to Agent Log subview via Logs tab and back", async () => {
+    it("switches to Raw Activity segment via Activity tab and back", async () => {
       const { useAgentLogs } = await import("../../hooks/useAgentLogs");
       const mockUseAgentLogs = vi.mocked(useAgentLogs);
 
@@ -671,9 +709,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Click Logs tab, then Agent Log subview
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      // Click Activity tab, then Raw Activity segment
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+      fireEvent.click(screen.getByText("Raw Logs"));
 
       // Agent log viewer should appear
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeTruthy();
@@ -681,14 +720,14 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".markdown-body")).toBeNull();
 
       // Click Definition tab to go back
-      fireEvent.click(screen.getByText("Definition"));
+      fireEvent.click(screen.getByText("Plan"));
 
       // Definition content should reappear
       expect(container.querySelector(".markdown-body")).toBeTruthy();
       expect(container.querySelector("[data-testid='agent-log-viewer']")).toBeNull();
     });
 
-    it("passes enabled=true to useAgentLogs only when Logs → Agent Log subview is active", async () => {
+    it("passes enabled=true to useAgentLogs only when Activity → Raw Logs segment is active", async () => {
       const { useAgentLogs } = await import("../../hooks/useAgentLogs");
       const mockUseAgentLogs = vi.mocked(useAgentLogs);
       mockUseAgentLogs.mockClear();
@@ -705,17 +744,18 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Default: Chat tab active → enabled should be false
+      // Default: Activity tab active → enabled should be false
       const initialCall = mockUseAgentLogs.mock.calls[mockUseAgentLogs.mock.calls.length - 1];
       expect(initialCall[1]).toBe(false);
 
-      // Switch to Logs tab (Activity subview is default) — enabled should still be false
-      fireEvent.click(screen.getByText("Logs"));
+      // Switch to Activity tab (Feed segment is default) — enabled should still be false
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
       const afterLogsClick = mockUseAgentLogs.mock.calls[mockUseAgentLogs.mock.calls.length - 1];
       expect(afterLogsClick[1]).toBe(false);
 
-      // Switch to Agent Log subview — enabled should become true
-      fireEvent.click(screen.getByText("Agent Log"));
+      // Switch to Raw Activity segment — enabled should become true
+      fireEvent.click(screen.getByText("Raw Logs"));
       const afterAgentLog = mockUseAgentLogs.mock.calls[mockUseAgentLogs.mock.calls.length - 1];
       expect(afterAgentLog[1]).toBe(true);
     });
@@ -744,7 +784,7 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".markdown-body")).toBeNull();
     });
 
-    it("shows correct top-level tabs including Logs", async () => {
+    it("shows correct top-level tabs without Logs", async () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask()}
@@ -758,18 +798,19 @@ describe("TaskDetailModal", () => {
       );
 
       // For an in-progress task (no workflow steps, no merge commit), the
-      // top-level tabs are: Chat, Definition, Logs, Changes, Review, Comments,
+      // top-level tabs are: Activity, Chat, Plan, Changes, Review, Comments,
       // Artifacts, Model, Workflow, Stats, Routing.
-      const tabTexts = ["Chat", "Definition", "Logs", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
+      const tabTexts = ["Activity", "Chat", "Plan", "Changes", "Review", "Comments", "Artifacts", "Model", "Workflow", "Stats", "Routing"];
       const tabs = screen.getAllByRole("button").filter((b) =>
         tabTexts.includes(b.textContent || "")
       );
       expect(tabs.map((tab) => tab.textContent)).toEqual(tabTexts);
-      expect(tabs[0].textContent).toBe("Chat");
-      expect(tabs[1].textContent).toBe("Definition");
-      expect(tabs[2].textContent).toBe("Logs");
+      expect(tabs[0].textContent).toBe("Activity");
+      expect(tabs[1].textContent).toBe("Chat");
+      expect(tabs[2].textContent).toBe("Plan");
+      expect(tabs[3].textContent).toBe("Changes");
+      expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
 
-      // Activity and Agent Log are NOT top-level tabs (they are subviews inside Logs)
       expect(container.querySelectorAll(".detail-tab").length).toBe(11);
       // Workflow tab should always appear even when no workflow steps are configured
       expect(screen.getByText("Workflow")).toBeInTheDocument();
@@ -841,7 +882,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       const content = container.querySelector(".task-detail-content");
       const titleRow = container.querySelector(".detail-title-row");
       expect(content).not.toHaveClass("task-detail-content--chat-expanded");
@@ -865,6 +906,56 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".modal-actions")).toBeTruthy();
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Expand chat to full modal");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("FN-7320 removes branch group chrome only while Activity chat is expanded", () => {
+      const branchContext = { groupId: "BG-7320", source: "planning", assignmentMode: "shared" } as const;
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent", branchContext })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      const content = container.querySelector(".task-detail-content");
+      expect(content).not.toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.getByTestId("mock-branch-group-card")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mock branch group toggle BG-7320" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
+      expect(content).toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.queryByTestId("mock-branch-group-card")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Mock branch group toggle BG-7320" })).toBeNull();
+
+      fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
+      expect(content).not.toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.getByTestId("mock-branch-group-card")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Mock branch group toggle BG-7320" })).toBeInTheDocument();
+    });
+
+    it("FN-7320 expands Activity chat for tasks without branch groups without rendering branch shells", () => {
+      const { container } = render(
+        <TaskDetailModal
+          task={makeTask({ prompt: "# Hello\n\nContent", branchContext: undefined })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByTestId("mock-branch-group-card")).toBeNull();
+      fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
+      expect(container.querySelector(".task-detail-content")).toHaveClass("task-detail-content--chat-expanded");
+      expect(screen.queryByTestId("mock-branch-group-card")).toBeNull();
+      expect(screen.queryByRole("button", { name: /Mock branch group toggle/ })).toBeNull();
     });
 
     it("FN-6517 keeps the title row visible when embedded chat expands", () => {
@@ -942,7 +1033,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
       expect(container.querySelector(".task-detail-content")).toHaveClass("task-detail-content--chat-expanded");
 
@@ -951,7 +1042,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByTestId("task-chat-expand-toggle")).toBeNull();
     });
 
-    it("FN-6532 defaults to Chat first while preserving explicit tab requests", () => {
+    it("FN-6532 defaults to Activity first while preserving explicit tab requests", () => {
       const { container, rerender } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
@@ -965,10 +1056,10 @@ describe("TaskDetailModal", () => {
       );
 
       const tabs = Array.from(container.querySelectorAll<HTMLButtonElement>(".detail-tab"));
-      expect(tabs.map((tab) => tab.textContent)).toEqual(expect.arrayContaining(["Chat", "Definition"]));
-      expect(tabs[0]).toHaveTextContent("Chat");
-      const chatTab = screen.getByRole("button", { name: "Chat" });
-      const definitionTab = screen.getByRole("button", { name: "Definition" });
+      expect(tabs.map((tab) => tab.textContent)).toEqual(expect.arrayContaining(["Activity", "Plan"]));
+      expect(tabs[0]).toHaveTextContent("Activity");
+      const chatTab = screen.getByRole("button", { name: "Activity" });
+      const definitionTab = screen.getByRole("button", { name: "Plan" });
       expect(chatTab.compareDocumentPosition(definitionTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(chatTab).toHaveClass("detail-tab-active");
       expect(definitionTab).not.toHaveClass("detail-tab-active");
@@ -987,9 +1078,11 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Logs" })).toHaveClass("detail-tab-active");
-      expect(screen.getByRole("button", { name: "Chat" })).not.toHaveClass("detail-tab-active");
+      expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
+      expect(screen.getByRole("tab", { name: "Feed" })).toHaveAttribute("aria-selected", "true");
+      expect(container.querySelector(".detail-tabs .detail-tab:first-child")).toHaveTextContent("Activity");
       expect(container.querySelector(".detail-section--chat")).toBeNull();
+      expect(container.querySelector(".detail-activity")).toBeTruthy();
     });
 
     it("FN-6574 renders Definition-only content when initialTab requests definition", () => {
@@ -1010,8 +1103,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.getByRole("button", { name: "Definition" })).toHaveClass("detail-tab-active");
-      expect(screen.getByRole("button", { name: "Chat" })).not.toHaveClass("detail-tab-active");
+      expect(screen.getByRole("button", { name: "Plan" })).toHaveClass("detail-tab-active");
+      expect(screen.getByRole("button", { name: "Activity" })).not.toHaveClass("detail-tab-active");
       expect(container.querySelector(".detail-section--chat")).toBeNull();
       expect(screen.getByText("Definition body unique text.")).toBeInTheDocument();
       expect(screen.getByText("GitHub tracking")).toBeInTheDocument();
@@ -1021,7 +1114,7 @@ describe("TaskDetailModal", () => {
       expect(container).toHaveTextContent("FN-200");
     });
 
-    it("FN-6347 applies chat modifiers only while the Chat tab is active", () => {
+    it("FN-6347 applies chat modifiers only while the Activity tab is active", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
@@ -1041,8 +1134,9 @@ describe("TaskDetailModal", () => {
       expect(chatSection).toBeTruthy();
       expect(chatSection!.querySelector("[data-testid='task-chat-tab']")).toBeTruthy();
 
-      fireEvent.click(screen.getByRole("button", { name: "Logs" }));
-      fireEvent.click(screen.getByText("Agent Log"));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+      fireEvent.click(screen.getByText("Raw Logs"));
       expect(container.querySelector(".detail-body--chat")).toBeNull();
       expect(container.querySelector(".detail-section--chat")).toBeNull();
       expect(container.querySelector(".detail-body--agent-log")).toBeTruthy();
@@ -1061,7 +1155,7 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       expect(container.querySelector(".detail-body--chat")).toBeTruthy();
 
       fireEvent.click(screen.getByLabelText("Edit task"));
@@ -1070,8 +1164,8 @@ describe("TaskDetailModal", () => {
     });
   });
 
-  describe("Agent Log full-height layout", () => {
-    it("applies detail-body--agent-log class when Logs → Agent Log subview is active", () => {
+  describe("Raw Logs full-height layout", () => {
+    it("applies detail-body--agent-log class when Activity → Raw Logs segment is active", () => {
       const { container } = render(
         <TaskDetailModal
           task={makeTask({ prompt: "# Hello\n\nContent" })}
@@ -1087,17 +1181,18 @@ describe("TaskDetailModal", () => {
       // Initially, detail-body should NOT have the agent-log modifier
       expect(container.querySelector(".detail-body--agent-log")).toBeNull();
 
-      // Switch to Logs tab, then Agent Log subview
-      fireEvent.click(screen.getByText("Logs"));
-      expect(container.querySelector(".detail-body--agent-log")).toBeNull(); // Activity subview default
+      // Switch to Activity tab, then Raw Activity segment
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+      expect(container.querySelector(".detail-body--agent-log")).toBeNull(); // Feed segment default
 
-      fireEvent.click(screen.getByText("Agent Log"));
+      fireEvent.click(screen.getByText("Raw Logs"));
 
       // detail-body should now have the agent-log modifier class
       expect(container.querySelector(".detail-body--agent-log")).toBeTruthy();
 
       // Switch back to Definition tab
-      fireEvent.click(screen.getByText("Definition"));
+      fireEvent.click(screen.getByText("Plan"));
 
       // modifier class should be removed
       expect(container.querySelector(".detail-body--agent-log")).toBeNull();
@@ -1116,9 +1211,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Switch to Logs tab, then Agent Log subview
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      // Switch to Activity tab, then Raw Activity segment
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+      fireEvent.click(screen.getByText("Raw Logs"));
 
       // The section wrapping AgentLogViewer should have the full-height class
       const section = container.querySelector(".detail-section--agent-log");
@@ -1139,9 +1235,10 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      // Switch to Logs tab, then Agent Log subview first
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      // Switch to Activity tab, then Raw Activity segment first
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
+      fireEvent.click(screen.getByText("Raw Logs"));
       expect(container.querySelector(".detail-body--agent-log")).toBeTruthy();
 
       // Now enter edit mode via the pencil button in the header

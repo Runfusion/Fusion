@@ -5,6 +5,11 @@ import {
   TerminalService,
   STALE_SESSION_THRESHOLD_MS,
 } from "../terminal-service.js";
+import { runGitCommand } from "../routes/resolve-diff-base.js";
+
+const { mockStat } = vi.hoisted(() => ({
+  mockStat: vi.fn(),
+}));
 
 // Mock node-pty
 const mockPtyProcess = {
@@ -36,6 +41,18 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    stat: mockStat,
+  };
+});
+
+vi.mock("../routes/resolve-diff-base.js", () => ({
+  runGitCommand: vi.fn(),
+}));
+
 describe("TerminalService", () => {
   let service: TerminalService;
   const projectRoot = "/test/project";
@@ -45,6 +62,8 @@ describe("TerminalService", () => {
     service = new TerminalService(projectRoot, 10);
     mockPtyProcess._onDataCallback = null;
     mockPtyProcess._onExitCallback = null;
+    mockStat.mockResolvedValue({ isDirectory: () => true });
+    vi.mocked(runGitCommand).mockResolvedValue("worktree /test/project\nHEAD abc\n");
   });
 
   afterEach(() => {
@@ -85,6 +104,112 @@ describe("TerminalService", () => {
         success: false,
         code: "invalid_shell",
         error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
+      });
+    });
+
+    it("allows an explicit project-root cwd", async () => {
+      const result = await service.createSession({ cwd: projectRoot });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected terminal session creation to succeed");
+      expect(result.session.cwd).toBe(projectRoot);
+      expect(runGitCommand).not.toHaveBeenCalled();
+    });
+
+    it("allows a Git-registered worktree cwd outside the project root", async () => {
+      vi.mocked(runGitCommand).mockResolvedValue("worktree /test/project\nHEAD abc\n\nworktree /tmp/fusion-worktrees/FN-7253\nHEAD def\n");
+
+      const result = await service.createSession({ cwd: "/tmp/fusion-worktrees/FN-7253" });
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected terminal session creation to succeed");
+      expect(result.session.cwd).toBe("/tmp/fusion-worktrees/FN-7253");
+    });
+
+    it("refreshes the registered-worktree allowlist after a cached miss", async () => {
+      vi.mocked(runGitCommand)
+        .mockResolvedValueOnce("worktree /test/project\nHEAD abc\n")
+        .mockResolvedValueOnce("worktree /test/project\nHEAD abc\n\nworktree /tmp/fusion-worktrees/FN-7253\nHEAD def\n")
+        .mockResolvedValueOnce("worktree /test/project\nHEAD abc\n\nworktree /tmp/fusion-worktrees/FN-7253\nHEAD def\n");
+
+      const beforeRefresh = await service.createSession({ cwd: "/tmp/fusion-worktrees/FN-7253" });
+      const afterRefresh = await service.createSession({ cwd: "/tmp/fusion-worktrees/FN-7253" });
+
+      expect(beforeRefresh.success).toBe(true);
+      if (!beforeRefresh.success) throw new Error("Expected first terminal session creation to succeed");
+      expect(beforeRefresh.session.cwd).toBe("/tmp/fusion-worktrees/FN-7253");
+      expect(afterRefresh.success).toBe(true);
+      if (!afterRefresh.success) throw new Error("Expected second terminal session creation to succeed");
+      expect(afterRefresh.session.cwd).toBe("/tmp/fusion-worktrees/FN-7253");
+      expect(runGitCommand).toHaveBeenCalledTimes(3);
+    });
+
+    it("revalidates a cached registered worktree before authorizing cwd reuse", async () => {
+      vi.mocked(runGitCommand)
+        .mockResolvedValueOnce("worktree /test/project\nHEAD abc\n\nworktree /tmp/fusion-worktrees/stale\nHEAD def\n")
+        .mockResolvedValueOnce("worktree /test/project\nHEAD abc\n");
+
+      const beforeRemoval = await service.createSession({ cwd: "/tmp/fusion-worktrees/stale" });
+      const afterRemoval = await service.createSession({ cwd: "/tmp/fusion-worktrees/stale" });
+
+      expect(beforeRemoval.success).toBe(true);
+      if (!beforeRemoval.success) throw new Error("Expected first terminal session creation to succeed");
+      expect(beforeRemoval.session.cwd).toBe("/tmp/fusion-worktrees/stale");
+      expect(afterRemoval).toEqual({
+        success: false,
+        code: "invalid_cwd",
+        error: "Terminal working directory is not an authorized project or task worktree.",
+      });
+      expect(runGitCommand).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects an explicit external unregistered cwd", async () => {
+      vi.mocked(runGitCommand).mockResolvedValue("worktree /test/project\nHEAD abc\n");
+
+      const result = await service.createSession({ cwd: "/etc" });
+
+      expect(result).toEqual({
+        success: false,
+        code: "invalid_cwd",
+        error: "Terminal working directory is not an authorized project or task worktree.",
+      });
+    });
+
+    it("rejects relative traversal even when the target is registered", async () => {
+      vi.mocked(runGitCommand).mockResolvedValue("worktree /tmp/fusion-worktrees/FN-7253\nHEAD def\n");
+
+      const result = await service.createSession({ cwd: "../../tmp/fusion-worktrees/FN-7253" });
+
+      expect(result).toEqual({
+        success: false,
+        code: "invalid_cwd",
+        error: "Terminal working directory is not an authorized project or task worktree.",
+      });
+      expect(runGitCommand).not.toHaveBeenCalled();
+    });
+
+    it("rejects an authorized worktree cwd when the directory is missing", async () => {
+      vi.mocked(runGitCommand).mockResolvedValue("worktree /tmp/fusion-worktrees/missing\nHEAD def\n");
+      mockStat.mockRejectedValueOnce(new Error("ENOENT"));
+
+      const result = await service.createSession({ cwd: "/tmp/fusion-worktrees/missing" });
+
+      expect(result).toEqual({
+        success: false,
+        code: "invalid_cwd",
+        error: "Terminal working directory is not a readable directory.",
+      });
+    });
+
+    it("does not authorize duplicate or overlapping registered-worktree siblings", async () => {
+      vi.mocked(runGitCommand).mockResolvedValue("worktree /tmp/fusion-worktrees/task\nHEAD def\n\nworktree /tmp/fusion-worktrees/task\nHEAD def\n\nworktree /tmp/fusion-worktrees/task/nested\nHEAD abc\n");
+
+      const result = await service.createSession({ cwd: "/tmp/fusion-worktrees/task-evil" });
+
+      expect(result).toEqual({
+        success: false,
+        code: "invalid_cwd",
+        error: "Terminal working directory is not an authorized project or task worktree.",
       });
     });
 

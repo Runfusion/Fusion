@@ -15,15 +15,23 @@ function secrets(values: Record<string, string>): McpSecretReader {
   };
 }
 
-function expectResolvedMcpForwarded(sourcePath: string, resolveNeedle: string, createNeedle: string, forwardNeedle: string) {
+function expectResolvedMcpForwarded(
+  sourcePath: string,
+  resolveNeedle: string,
+  createNeedle: string,
+  forwardNeedle: string,
+  afterForwardNeedle?: string,
+) {
   const source = readFileSync(join(process.cwd(), sourcePath), "utf8");
   const resolveIndex = source.indexOf(resolveNeedle);
   const createIndex = source.indexOf(createNeedle, resolveIndex);
   const forwardIndex = source.indexOf(forwardNeedle, createIndex);
+  const afterForwardIndex = afterForwardNeedle ? source.indexOf(afterForwardNeedle, forwardIndex) : -1;
 
   expect(resolveIndex).toBeGreaterThan(-1);
   expect(createIndex).toBeGreaterThan(resolveIndex);
   expect(forwardIndex).toBeGreaterThan(createIndex);
+  if (afterForwardNeedle) expect(afterForwardIndex).toBeGreaterThan(forwardIndex);
 }
 
 describe("MCP surface coverage", () => {
@@ -121,21 +129,32 @@ describe("MCP surface coverage", () => {
     );
   });
 
-  it("keeps mission interview forwarding the store-resolved MCP result", () => {
+  it("keeps dashboard planning forwarding resolved MCP with the readonly opt-in", () => {
+    const source = readFileSync(join(process.cwd(), "../dashboard/src/planning.ts"), "utf8");
+    const forwardingNeedle = "mcpServers: (await resolveMcpServersForStore(store)).servers,";
+    expect(source.match(new RegExp(forwardingNeedle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"))?.length).toBe(2);
+    expect(source.match(/allowMcpToolsInReadonly: true,/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(source).toContain("const agentResult = await createFnAgent({");
+    expect(source).toContain("return createFnAgent({");
+  });
+
+  it("keeps mission interview forwarding the store-resolved MCP result with the readonly opt-in", () => {
     expectResolvedMcpForwarded(
       "../dashboard/src/mission-interview.ts",
       "const mcpServers = (await resolveMcpServersForStore(store)).servers;",
       "return createFnAgent({",
       "mcpServers,",
+      "allowMcpToolsInReadonly: true,",
     );
   });
 
-  it("keeps milestone and slice interview forwarding the store-resolved MCP result", () => {
+  it("keeps milestone and slice interview forwarding the store-resolved MCP result with the readonly opt-in", () => {
     expectResolvedMcpForwarded(
       "../dashboard/src/milestone-slice-interview.ts",
       "const mcpServers = (await resolveMcpServersForStore(store)).servers;",
       "return createFnAgent({",
       "mcpServers,",
+      "allowMcpToolsInReadonly: true,",
     );
   });
 });

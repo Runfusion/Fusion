@@ -5328,6 +5328,12 @@ describe("SelfHealingManager", () => {
   });
 
   describe("recoverReviewTasksWithFailedPreMergeSteps", () => {
+    const revisionLog = (stepName: string, key: string, attempt: number) => ({
+      timestamp: new Date().toISOString(),
+      action: `Auto-reviving in-review task with failed pre-merge workflow step (attempt ${attempt}/2)`,
+      outcome: `Step: ${stepName}\nWorkflow revision key: ${key}`,
+    });
+
     const baseTask = {
       id: "FN-1572",
       column: "in-review" as const,
@@ -5372,6 +5378,7 @@ describe("SelfHealingManager", () => {
       expect(store.logEntry).toHaveBeenCalledWith(
         "FN-1572",
         expect.stringContaining("Auto-reviving in-review task"),
+        expect.stringContaining("Workflow revision key: ws-004"),
       );
 
       managerWithRecovery.stop();
@@ -5404,7 +5411,11 @@ describe("SelfHealingManager", () => {
       (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({ maxPostReviewFixes: 9 });
       (store as unknown as { getTaskWorkflowSelection: ReturnType<typeof vi.fn> }).getTaskWorkflowSelection = vi.fn(() => ({ workflowId: "WF-budget", stepIds: ["WS-004"] }));
       (store as unknown as { getWorkflowDefinition: ReturnType<typeof vi.fn> }).getWorkflowDefinition = vi.fn().mockResolvedValue({ ir: workflowIr });
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask, postReviewFixCount: 2 }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        ...baseTask,
+        postReviewFixCount: 2,
+        log: [revisionLog("Browser Verification", "WS-004", 1), revisionLog("Browser Verification", "WS-004", 2)],
+      }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
       expect(recoverFn).not.toHaveBeenCalled();
@@ -5413,10 +5424,101 @@ describe("SelfHealingManager", () => {
         ...workflowIr.nodes[1],
         config: { ...(workflowIr.nodes[1] as { config: Record<string, unknown> }).config, maxRevisions: "unbounded" },
       };
-      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask, postReviewFixCount: 99 }]);
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        ...baseTask,
+        postReviewFixCount: 99,
+        log: Array.from({ length: 99 }, (_, index) => revisionLog("Browser Verification", "WS-004", index + 1)),
+      }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"));
+      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 100/unbounded"), expect.stringContaining("Workflow revision key: ws-004"));
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
+
+      managerWithRecovery.stop();
+    });
+
+    it("honors workflow-setting caps for stale Code Review recovery", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        maxPostReviewFixes: 9,
+        codeReviewMaxRevisions: 0,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          ...baseTask,
+          workflowStepResults: [
+            {
+              ...baseTask.workflowStepResults[0],
+              workflowStepId: "code-review",
+              workflowStepName: "Code Review",
+            },
+          ],
+        },
+      ]);
+
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        maxPostReviewFixes: 1,
+        codeReviewMaxRevisions: 2,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          ...baseTask,
+          postReviewFixCount: 1,
+          log: [revisionLog("Code Review", "code-review", 1)],
+          workflowStepResults: [
+            {
+              ...baseTask.workflowStepResults[0],
+              workflowStepId: "code-review",
+              workflowStepName: "Code Review",
+            },
+          ],
+        },
+      ]);
+
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
+      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 2/2"), expect.stringContaining("Workflow revision key: code-review"));
+      expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
+
+      managerWithRecovery.stop();
+    });
+
+    it("keeps Plan Review and Code Review workflow caps independent during recovery", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        maxPostReviewFixes: 9,
+        planReviewMaxRevisions: 1,
+        codeReviewMaxRevisions: 1,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          ...baseTask,
+          postReviewFixCount: 1,
+          log: [revisionLog("Plan Review", "plan-review", 1)],
+          workflowStepResults: [
+            {
+              ...baseTask.workflowStepResults[0],
+              workflowStepId: "code-review",
+              workflowStepName: "Code Review",
+            },
+          ],
+        },
+      ]);
+
+      await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-1572", { postReviewFixCount: 2 });
+      expect(store.logEntry).toHaveBeenLastCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: code-review"));
       expect(recoverFn).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-1572" }));
 
       managerWithRecovery.stop();
@@ -5434,13 +5536,13 @@ describe("SelfHealingManager", () => {
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{ ...baseTask, postReviewFixCount: 0 }]);
 
       await expect(managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps()).resolves.toBe(1);
-      expect(store.logEntry).toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"));
+      expect(store.logEntry).toHaveBeenCalledWith("FN-1572", expect.stringContaining("attempt 1/1"), expect.stringContaining("Workflow revision key: ws-004"));
       expect(recoverFn).toHaveBeenCalledOnce();
 
       managerWithRecovery.stop();
     });
 
-    it("skips tasks whose postReviewFixCount has reached maxPostReviewFixes", async () => {
+    it("skips tasks whose per-step attempts have reached maxPostReviewFixes", async () => {
       const recoverFn = vi.fn().mockResolvedValue(true);
       const managerWithRecovery = new SelfHealingManager(store, {
         rootDir: "/tmp/test-project",
@@ -5450,12 +5552,41 @@ describe("SelfHealingManager", () => {
         maxPostReviewFixes: 2,
       });
       (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
-        { ...baseTask, postReviewFixCount: 2 },
+        { ...baseTask, postReviewFixCount: 2, log: [revisionLog("Browser Verification", "WS-004", 1), revisionLog("Browser Verification", "WS-004", 2)] },
       ]);
 
       const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
 
       expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+      expect(store.updateTask).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
+
+    it("hydrates slim in-review rows before enforcing per-step revision caps", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        maxPostReviewFixes: 2,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([
+        { ...baseTask, postReviewFixCount: 2, log: [] },
+      ]);
+      (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue({
+        ...baseTask,
+        postReviewFixCount: 2,
+        log: [revisionLog("Browser Verification", "WS-004", 1), revisionLog("Browser Verification", "WS-004", 2)],
+      });
+
+      const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
+
+      expect(result).toBe(0);
+      expect(store.listTasks).toHaveBeenCalledWith({ column: "in-review", slim: true });
+      expect(store.getTask).toHaveBeenCalledWith("FN-1572");
       expect(recoverFn).not.toHaveBeenCalled();
       expect(store.updateTask).not.toHaveBeenCalled();
 

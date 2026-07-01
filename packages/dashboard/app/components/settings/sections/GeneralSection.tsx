@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { WorkflowDefinition } from "@fusion/core";
 import { ProjectDefaultWorkflowField } from "../../WorkflowSelector";
+import { WorkflowIcon } from "../../WorkflowIcon";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { fetchWorkflows } from "../../../api";
 import type { ToastType } from "../../../hooks/useToast";
@@ -80,14 +81,15 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         <small>{t("settings.general.newTasksInheritThisCustomWorkflowsStepsOverridable", "New tasks inherit this custom workflow's steps (overridable per task)")}</small>
       </div>
       {builtinWorkflows.length > 0 && (<div className="form-group">
-          <label>{t("settings.general.builtInWorkflows", "Built-in workflows")}</label>
+          <label>{t("settings.general.fusionWorkflows", "Fusion workflows")}</label>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
             {builtinWorkflows.map((workflow) => (<label key={workflow.id} htmlFor={`builtin-workflow-${workflow.id}`} className="checkbox-label">
                 <input id={`builtin-workflow-${workflow.id}`} type="checkbox" checked={enabledBuiltinWorkflowIds.has(workflow.id)} onChange={(e) => setBuiltinWorkflowEnabled(workflow.id, e.target.checked)}/>
+                <WorkflowIcon workflowId={workflow.id} decorative />
                 <span>{workflow.name}</span>
               </label>))}
           </div>
-          <small>{t("settings.general.disabledBuiltInWorkflowsAreHiddenFromWorkflow", "Disabled built-in workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve.")}</small>
+          <small>{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve.")}</small>
         </div>)}
       <div className="form-group">
         <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">

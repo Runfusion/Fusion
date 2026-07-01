@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState } from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { TaskForm } from "../TaskForm";
 import type { Task, Column } from "@fusion/core";
 
@@ -85,6 +85,12 @@ function renderTaskForm(props: Partial<React.ComponentProps<typeof TaskForm>> = 
   const mergedProps = { ...defaultProps, ...props };
   const result = render(<TaskForm {...mergedProps} />);
   return { ...result, props: mergedProps };
+}
+
+async function openWorkflowDropdown() {
+  const trigger = await screen.findByTestId("task-workflow-dropdown-trigger");
+  fireEvent.click(trigger);
+  return screen.getByTestId("task-workflow-dropdown-menu");
 }
 
 function renderTaskFormWithDescriptionState(props: Partial<React.ComponentProps<typeof TaskForm>> = {}) {
@@ -212,6 +218,89 @@ describe("TaskForm", () => {
 
     const options = Array.from(executionModeSelect.options).map((option) => option.value);
     expect(options).toEqual(["standard", "fast"]);
+  });
+
+  it("clears optional workflow steps when inline Fast or execution-mode select enters fast mode", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([
+      { templateId: "code-review", name: "Code Review", phase: "pre-merge", defaultOn: true },
+      { templateId: "browser-verification", name: "Browser Verification", phase: "pre-merge", defaultOn: false },
+    ] as any);
+    const onExecutionModeChange = vi.fn();
+    const onEnabledWorkflowStepsChange = vi.fn();
+
+    const { rerender, props } = renderTaskForm({
+      executionMode: "standard",
+      onExecutionModeChange,
+      enabledWorkflowSteps: ["code-review"],
+      onEnabledWorkflowStepsChange,
+    });
+
+    const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+    expect(trigger).toHaveTextContent("Steps: 1 selected");
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
+    expect(onEnabledWorkflowStepsChange).toHaveBeenCalledWith([], expect.objectContaining({ optionalStepsAvailable: true }));
+
+    rerender(
+      <TaskForm
+        {...props}
+        executionMode="fast"
+        enabledWorkflowSteps={[]}
+        onExecutionModeChange={onExecutionModeChange}
+        onEnabledWorkflowStepsChange={onEnabledWorkflowStepsChange}
+      />,
+    );
+    expect(screen.getByTestId("task-form-inline-optional-steps")).toHaveTextContent("Steps: none");
+    fireEvent.click(screen.getByTestId("task-form-inline-optional-steps"));
+    fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-browser-verification"));
+    expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith(["browser-verification"], expect.objectContaining({ optionalStepsAvailable: true }));
+
+    onExecutionModeChange.mockClear();
+    onEnabledWorkflowStepsChange.mockClear();
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    fireEvent.change(screen.getByTestId("task-form-execution-mode-select"), { target: { value: "fast" } });
+    expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
+    expect(onEnabledWorkflowStepsChange).toHaveBeenCalledWith([], expect.objectContaining({ optionalStepsAvailable: true }));
+  });
+
+  it("seeds no optional steps when loading resolves after Fast is selected", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    let resolveOptionalSteps: (steps: Array<{ templateId: string; name: string; phase: string; defaultOn: boolean }>) => void = () => {};
+    vi.mocked(fetchWorkflowOptionalSteps).mockReturnValue(new Promise((resolve) => {
+      resolveOptionalSteps = resolve;
+    }) as any);
+    const onExecutionModeChange = vi.fn();
+    const onEnabledWorkflowStepsChange = vi.fn();
+
+    const { rerender, props } = renderTaskForm({
+      executionMode: "standard",
+      onExecutionModeChange,
+      enabledWorkflowSteps: [],
+      onEnabledWorkflowStepsChange,
+      selectedWorkflowId: "wf-explicit",
+    });
+    await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-explicit", undefined));
+    fireEvent.click(screen.getByTestId("task-form-inline-fast"));
+    expect(onExecutionModeChange).toHaveBeenCalledWith("fast");
+
+    rerender(
+      <TaskForm
+        {...props}
+        executionMode="fast"
+        enabledWorkflowSteps={[]}
+        onExecutionModeChange={onExecutionModeChange}
+        onEnabledWorkflowStepsChange={onEnabledWorkflowStepsChange}
+      />,
+    );
+
+    await act(async () => {
+      resolveOptionalSteps([{ templateId: "code-review", name: "Code Review", phase: "pre-merge", defaultOn: true }]);
+    });
+
+    const trigger = await screen.findByTestId("task-form-inline-optional-steps");
+    await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+    expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith([], expect.objectContaining({ optionalStepsAvailable: true }));
   });
 
   it("calls onExecutionModeChange when execution mode selection changes", () => {
@@ -680,13 +769,11 @@ describe("TaskForm", () => {
     const onWorkflowIdChange = vi.fn();
     renderTaskForm({ onWorkflowIdChange });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
-    });
+    await openWorkflowDropdown();
 
-    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "WF-1" } });
+    fireEvent.click(screen.getByTestId("task-workflow-option-WF-1"));
     expect(onWorkflowIdChange).toHaveBeenCalledWith("WF-1");
+    expect(screen.queryByTestId("task-workflow-select")).toBeNull();
   });
 
   it("disables all inputs when disabled prop is true", () => {
@@ -1028,12 +1115,13 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     vi.clearAllMocks();
   });
 
-  async function mockWorkflows(defs: Array<{ id: string; name: string; kind?: "workflow" | "fragment" }>) {
+  async function mockWorkflows(defs: Array<{ id: string; name: string; kind?: "workflow" | "fragment"; icon?: string }>) {
     const { fetchWorkflows } = await import("../../api");
     vi.mocked(fetchWorkflows).mockResolvedValueOnce(
       defs.map((d) => ({
         id: d.id,
         name: d.name,
+        icon: d.icon,
         description: "",
         kind: d.kind ?? "workflow",
         ir: { version: "v1", name: d.name, nodes: [], edges: [] },
@@ -1048,12 +1136,11 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     await mockWorkflows([{ id: "WF-1", name: "QA" }]);
     renderTaskForm({ onWorkflowIdChange: vi.fn() });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
-    });
-    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
-    expect(select.options[0].textContent).toBe("No workflow");
+    const menu = await openWorkflowDropdown();
+    expect(menu.querySelector('[data-testid="task-workflow-option-none"]')).toBeTruthy();
+    expect(Array.from(menu.querySelectorAll('[role="option"]'))[0]).toHaveAttribute("data-testid", "task-workflow-option-none");
     expect(screen.getByTestId("task-workflow-help")).toBeTruthy();
+    expect(screen.queryByTestId("task-workflow-select")).toBeNull();
   });
 
   it("badges the project default workflow with (default)", async () => {
@@ -1072,9 +1159,59 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     renderTaskForm({ onWorkflowIdChange: vi.fn() });
 
     await waitFor(() => {
-      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+      expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy();
     });
-    expect(screen.getByText("QA (default)")).toBeTruthy();
+    expect(screen.getByTestId("task-workflow-dropdown-trigger")).toHaveTextContent("QA");
+    expect(screen.getByTestId("task-workflow-dropdown-trigger")).toHaveTextContent("(default)");
+    await openWorkflowDropdown();
+    expect(screen.getByTestId("task-workflow-option-WF-1")).toHaveTextContent("(default)");
+  });
+
+  it("renders built-in and custom icons without empty custom shells", async () => {
+    await mockWorkflows([
+      { id: "builtin:coding", name: "Coding" },
+      { id: "WF-CUSTOM", name: "Custom", icon: "🧪" },
+      { id: "WF-PLAIN", name: "Plain" },
+    ]);
+    renderTaskForm({ onWorkflowIdChange: vi.fn(), selectedWorkflowId: "builtin:coding" });
+
+    await openWorkflowDropdown();
+    const builtin = screen.getByTestId("task-workflow-option-builtin:coding");
+    const custom = screen.getByTestId("task-workflow-option-WF-CUSTOM");
+    const plain = screen.getByTestId("task-workflow-option-WF-PLAIN");
+    expect(builtin.querySelector(".workflow-icon--builtin")).toBeTruthy();
+    expect(custom.querySelector(".workflow-icon--custom")).toHaveTextContent("🧪");
+    expect(plain.querySelector(".workflow-icon")).toBeNull();
+    expect(screen.getByTestId("task-workflow-dropdown-trigger").querySelector(".workflow-icon--builtin")).toBeTruthy();
+  });
+
+  it("shows inherited builtin workflow instead of selecting No workflow when project default is unset", async () => {
+    await mockWorkflows([
+      { id: "builtin:coding", name: "Coding" },
+      { id: "WF-1", name: "QA" },
+    ]);
+    renderTaskForm({ onWorkflowIdChange: vi.fn(), selectedWorkflowId: undefined });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("task-workflow-dropdown-trigger")).toHaveTextContent("Coding");
+    });
+    expect(screen.getByTestId("task-workflow-dropdown-trigger").querySelector(".workflow-icon--builtin")).toBeTruthy();
+    await openWorkflowDropdown();
+    expect(screen.getByTestId("task-workflow-option-none")).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByTestId("task-workflow-option-builtin:coding")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("disambiguates duplicate workflow names by id in aria text and subtitle", async () => {
+    await mockWorkflows([
+      { id: "WF-A", name: "Review" },
+      { id: "WF-B", name: "Review" },
+    ]);
+    renderTaskForm({ onWorkflowIdChange: vi.fn() });
+
+    await openWorkflowDropdown();
+    expect(screen.getByTestId("task-workflow-option-WF-A")).toHaveAttribute("aria-label", "Review (WF-A)");
+    expect(screen.getByTestId("task-workflow-option-WF-A")).toHaveTextContent("WF-A");
+    expect(screen.getByTestId("task-workflow-option-WF-B")).toHaveTextContent("WF-B");
   });
 
   it("excludes fragments from the dropdown", async () => {
@@ -1084,13 +1221,9 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     ]);
     renderTaskForm({ onWorkflowIdChange: vi.fn() });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
-    });
-    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
-    const labels = Array.from(select.options).map((o) => o.textContent);
-    expect(labels).toContain("QA");
-    expect(labels).not.toContain("Doc Fragment");
+    await openWorkflowDropdown();
+    expect(screen.getByText("QA")).toBeTruthy();
+    expect(screen.queryByText("Doc Fragment")).toBeNull();
   });
 
   it("passes the chosen workflow id via onWorkflowIdChange", async () => {
@@ -1098,11 +1231,8 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     const onWorkflowIdChange = vi.fn();
     renderTaskForm({ onWorkflowIdChange });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
-    });
-    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "WF-1" } });
+    await openWorkflowDropdown();
+    fireEvent.click(screen.getByTestId("task-workflow-option-WF-1"));
     expect(onWorkflowIdChange).toHaveBeenCalledWith("WF-1");
   });
 
@@ -1111,12 +1241,24 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     const onWorkflowIdChange = vi.fn();
     renderTaskForm({ onWorkflowIdChange, selectedWorkflowId: "WF-1" });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
-    });
-    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "__none__" } });
+    await openWorkflowDropdown();
+    fireEvent.click(screen.getByTestId("task-workflow-option-none"));
     expect(onWorkflowIdChange).toHaveBeenCalledWith(null);
+  });
+
+  it("closes the dropdown on Escape and outside click", async () => {
+    await mockWorkflows([{ id: "WF-1", name: "QA" }]);
+    renderTaskForm({ onWorkflowIdChange: vi.fn() });
+
+    const trigger = await screen.findByTestId("task-workflow-dropdown-trigger");
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("task-workflow-dropdown-menu")).toBeTruthy();
+    fireEvent.keyDown(trigger, { key: "Escape" });
+    expect(screen.queryByTestId("task-workflow-dropdown-menu")).toBeNull();
+    fireEvent.click(trigger);
+    expect(screen.getByTestId("task-workflow-dropdown-menu")).toBeTruthy();
+    fireEvent.mouseDown(document.body);
+    expect(screen.queryByTestId("task-workflow-dropdown-menu")).toBeNull();
   });
 
   it("shows a loading placeholder while workflows load", async () => {
@@ -1132,14 +1274,11 @@ describe("TaskForm workflow picker (U6/R3)", () => {
     expect(screen.getByTestId("task-workflow-loading")).toBeTruthy();
     resolveFn([{ id: "WF-1", name: "QA" }]);
 
-    // After the promise resolves, the loading placeholder is replaced by the
-    // populated select containing the fetched workflow option.
     await waitFor(() => {
       expect(screen.queryByTestId("task-workflow-loading")).toBeNull();
     });
-    const select = screen.getByTestId("task-workflow-select") as HTMLSelectElement;
-    const optionValues = Array.from(select.options).map((o) => o.value);
-    expect(optionValues).toContain("WF-1");
+    await openWorkflowDropdown();
+    expect(screen.getByTestId("task-workflow-option-WF-1")).toBeTruthy();
   });
 
   it.each([
@@ -1152,7 +1291,7 @@ describe("TaskForm workflow picker (U6/R3)", () => {
       renderTaskForm({ onWorkflowIdChange: vi.fn(), ...modeProps });
 
       await waitFor(() => {
-        expect(screen.getByTestId("task-workflow-select")).toBeTruthy();
+        expect(screen.getByTestId("task-workflow-dropdown-trigger")).toBeTruthy();
       });
       // The old per-step checkbox UI and execution-order controls are gone on
       // every TaskForm surface (create and edit).

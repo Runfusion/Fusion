@@ -143,6 +143,7 @@ vi.mock("@fusion/engine", async () => {
   promptWithFallback: vi.fn(async (session: { prompt: (message: string) => Promise<void> }, prompt: string) => {
     await session.prompt(prompt);
   }),
+  resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
   AgentReflectionService: class MockAgentReflectionService {
     async generateReflection(): Promise<import("@fusion/core").AgentReflection | null> {
       throw new Error("Reflection service unavailable in route tests");
@@ -319,7 +320,7 @@ describe("Terminal session routes", () => {
       const mockService = {
         getAllSessions: vi.fn().mockReturnValue(mockSessions),
       };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+      const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
       const res = await GET(buildApp(), "/api/terminal/sessions");
 
@@ -332,7 +333,7 @@ describe("Terminal session routes", () => {
       expect(res.body[0].scrollbackBuffer).toBeUndefined();
       expect(res.body[0].env).toBeUndefined();
 
-      vi.restoreAllMocks();
+      terminalServiceSpy.mockRestore();
     });
   });
 
@@ -345,7 +346,7 @@ describe("Terminal session routes", () => {
           error: "Maximum terminal sessions reached. Please close an existing terminal and try again.",
         }),
       };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+      const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
       const res = await REQUEST(
         buildApp(),
@@ -361,11 +362,12 @@ describe("Terminal session routes", () => {
         details: { code: "max_sessions" },
       });
 
-      vi.restoreAllMocks();
+      terminalServiceSpy.mockRestore();
     });
 
     it.each([
       ["invalid_shell", 400, "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell)."],
+      ["invalid_cwd", 400, "Terminal working directory is not an authorized project or task worktree."],
       ["pty_load_failed", 503, "Terminal service unavailable. The PTY module could not be loaded."],
       ["pty_spawn_failed", 500, "Failed to start terminal shell process."],
     ] as const)("returns %s errors with the correct status and body", async (code, status, error) => {
@@ -376,7 +378,7 @@ describe("Terminal session routes", () => {
           error,
         }),
       };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+      const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
       const res = await REQUEST(
         buildApp(),
@@ -389,7 +391,7 @@ describe("Terminal session routes", () => {
       expect(res.status).toBe(status);
       expect(res.body).toEqual({ error, details: { code } });
 
-      vi.restoreAllMocks();
+      terminalServiceSpy.mockRestore();
     });
 
     it("returns 201 for a successful session creation", async () => {
@@ -403,24 +405,29 @@ describe("Terminal session routes", () => {
           },
         }),
       };
-      vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+      const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
       const res = await REQUEST(
         buildApp(),
         "POST",
         "/api/terminal/sessions",
-        JSON.stringify({}),
+        JSON.stringify({ cwd: "/fake/root", cols: 120, rows: 40 }),
         { "Content-Type": "application/json" },
       );
 
       expect(res.status).toBe(201);
+      expect(mockService.createSession).toHaveBeenCalledWith({
+        cwd: "/fake/root",
+        cols: 120,
+        rows: 40,
+      });
       expect(res.body).toEqual({
         sessionId: "term-123",
         shell: "/bin/zsh",
         cwd: "/fake/root",
       });
 
-      vi.restoreAllMocks();
+      terminalServiceSpy.mockRestore();
     });
   });
 });
@@ -451,7 +458,7 @@ describe("Terminal WebSocket close handler", () => {
       onExit: onExitMock,
     };
 
-    vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+    const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
     const { setupTerminalWebSocket } = await import("../server.js");
 
@@ -480,7 +487,7 @@ describe("Terminal WebSocket close handler", () => {
     // The session must NOT be killed on WebSocket close
     expect(killSessionMock).not.toHaveBeenCalled();
 
-    vi.restoreAllMocks();
+    terminalServiceSpy.mockRestore();
   });
 
   it("does NOT kill PTY session when WebSocket encounters an error (session persists for reconnect)", async () => {
@@ -505,7 +512,7 @@ describe("Terminal WebSocket close handler", () => {
       onExit: onExitMock,
     };
 
-    vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+    const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
     const { setupTerminalWebSocket } = await import("../server.js");
 
@@ -534,7 +541,7 @@ describe("Terminal WebSocket close handler", () => {
     // The session must NOT be killed on WebSocket error
     expect(killSessionMock).not.toHaveBeenCalled();
 
-    vi.restoreAllMocks();
+    terminalServiceSpy.mockRestore();
   });
 
   it("cleans up data/exit subscriptions on WebSocket close without killing session", async () => {
@@ -563,7 +570,7 @@ describe("Terminal WebSocket close handler", () => {
       onExit: onExitMock,
     };
 
-    vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+    const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
 
     const { setupTerminalWebSocket } = await import("../server.js");
 
@@ -595,7 +602,7 @@ describe("Terminal WebSocket close handler", () => {
     // But session should NOT be killed
     expect(killSessionMock).not.toHaveBeenCalled();
 
-    vi.restoreAllMocks();
+    terminalServiceSpy.mockRestore();
   });
 });
 

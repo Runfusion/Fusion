@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ListView } from "../ListView";
@@ -27,6 +27,8 @@ vi.mock("../../api", () => ({
   batchUpdateTaskModels: vi.fn(),
   fetchNodes: vi.fn(() => new Promise(() => {})),
   fetchBoardWorkflows: vi.fn(() => new Promise(() => {})),
+  rebuildTaskSpec: vi.fn().mockResolvedValue({}),
+  refreshPrStatus: vi.fn().mockResolvedValue({}),
   api: vi.fn().mockResolvedValue({ sessions: [] }),
 }));
 
@@ -50,22 +52,36 @@ vi.mock("../QuickEntryBox", () => ({
     onPlanningMode,
     onSubtaskBreakdown,
     workflowId,
+    workflowOptions,
+    defaultWorkflowId,
   }: {
-    onCreate?: (input: { description: string }) => Promise<unknown>;
+    onCreate?: (input: { description: string; workflowId?: string | null }) => Promise<unknown>;
     addToast: (message: string, type?: "error" | "success" | "info" | "warning") => void;
     onPlanningMode?: (initialPlan: string, workflowId?: string | null) => void;
     onSubtaskBreakdown?: (description: string, workflowId?: string | null) => void;
     workflowId?: string | null;
+    workflowOptions?: { id: string; name: string }[];
+    defaultWorkflowId?: string | null;
   }) => {
     const [value, setValue] = useState("");
+    const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null | undefined>(
+      workflowId ?? defaultWorkflowId ?? workflowOptions?.[0]?.id,
+    );
     const [expanded, setExpanded] = useState(false);
     const [modelMenuOpen, setModelMenuOpen] = useState(false);
+
+    useEffect(() => {
+      setSelectedWorkflowId(workflowId ?? defaultWorkflowId ?? workflowOptions?.[0]?.id);
+    }, [defaultWorkflowId, workflowId, workflowOptions]);
 
     const submit = async () => {
       const description = value.trim();
       if (!description || !onCreate) return;
       try {
-        await onCreate({ description });
+        await onCreate({
+          description,
+          ...(selectedWorkflowId !== undefined ? { workflowId: selectedWorkflowId } : {}),
+        });
         setValue("");
       } catch (err) {
         addToast(err instanceof Error ? err.message : "Failed to create task", "error");
@@ -75,8 +91,8 @@ vi.mock("../QuickEntryBox", () => ({
     const handoff = (callback?: (description: string, workflowId?: string | null) => void) => {
       const description = value.trim();
       if (!description || !callback) return;
-      if (workflowId !== undefined) {
-        callback(description, workflowId);
+      if (selectedWorkflowId !== undefined) {
+        callback(description, selectedWorkflowId);
         return;
       }
       callback(description);
@@ -119,6 +135,12 @@ vi.mock("../QuickEntryBox", () => ({
           <button type="button" data-testid="quick-entry-subtask" onClick={() => handoff(onSubtaskBreakdown)}>
             Subtask
           </button>
+          {workflowOptions && workflowOptions.length > 1 ? (
+            <button type="button" data-testid="quick-entry-workflow-option-wf-custom" onClick={() => setSelectedWorkflowId("wf-custom")}>
+              Custom workflow
+            </button>
+          ) : null}
+          <span data-testid="quick-entry-workflow-props" data-workflow-id={workflowId ?? ""} data-default-workflow-id={defaultWorkflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((option) => option.id))} />
           <button type="button" data-testid="quick-entry-save" onClick={() => void submit()}>
             Save
           </button>
@@ -175,7 +197,7 @@ vi.mock("../TaskDetailModal", () => ({
   ),
 }));
 
-import { fetchTaskDetail, batchUpdateTaskModels, fetchBoardWorkflows, fetchNodes } from "../../api";
+import { fetchTaskDetail, batchUpdateTaskModels, fetchBoardWorkflows, fetchNodes, refreshPrStatus } from "../../api";
 
 const mockConfirm = vi.fn();
 const mockConfirmWithChoice = vi.fn();
@@ -363,6 +385,7 @@ describe("ListView", () => {
       ...createMockTask(),
       prompt: "# Detail",
     } as TaskDetail);
+    vi.mocked(refreshPrStatus).mockResolvedValue({} as any);
     mockConfirm.mockReset();
     mockConfirmWithChoice.mockReset();
     subscribeSseMock.mockClear();
@@ -612,6 +635,160 @@ describe("ListView", () => {
     expect(mockOnOpenDetail).toHaveBeenCalledTimes(1);
     expect(fetchTaskDetail).not.toHaveBeenCalled();
     viewportSpy.mockRestore();
+  });
+
+  it("opens the task context menu from desktop row right-click without selecting or opening detail", async () => {
+    const viewportSpy = mockDesktopViewport();
+    const onOpenDetail = vi.fn();
+    const onPauseTask = vi.fn(async () => createMockTask());
+    const onUnpauseTask = vi.fn(async () => createMockTask());
+    const onRetryTask = vi.fn(async () => createMockTask());
+    const onArchiveTask = vi.fn(async () => createMockTask());
+    const onMoveTask = vi.fn(async () => createMockTask());
+    const tasks = [
+      createMockTask({ id: "FN-001", title: "Failed retryable", column: "todo", status: "failed" }),
+      createMockTask({ id: "FN-002", title: "Paused task", column: "todo", paused: true }),
+      createMockTask({ id: "FN-003", title: "Review task", column: "in-review" }),
+      createMockTask({ id: "FN-004", title: "Done task", column: "done", status: "done" }),
+      createMockTask({ id: "FN-005", title: "Archived task", column: "archived", status: "done" }),
+      createMockTask({ id: "FN-006", title: "PR review", column: "in-review", prInfo: { number: 6, url: "https://example.test/pr/6", status: "open" } as any }),
+      createMockTask({ id: "FN-007", title: "Progress move", column: "in-progress", steps: [{ id: "s1", title: "done", status: "done" } as any] }),
+    ];
+
+    renderListView({ tasks, onOpenDetail, onPauseTask, onUnpauseTask, onRetryTask, onArchiveTask, onMoveTask });
+
+    const failedRow = document.querySelector('.list-row[data-id="FN-001"]') as HTMLElement;
+    fireEvent.contextMenu(failedRow, { clientX: 40, clientY: 50 });
+
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Pause" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Move to In Progress" })).toBeInTheDocument();
+    expect(failedRow).not.toHaveClass("list-row--selected");
+    expect(onOpenDetail).not.toHaveBeenCalled();
+    expect(fetchTaskDetail).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-002"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Unpause" })).toBeInTheDocument();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Refine" })).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Back to In Progress" })).toBeInTheDocument();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-006"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-004"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.queryByRole("menuitem", { name: "Refine" })).not.toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-004"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toBeInTheDocument();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-005"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Move to Done" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    const reviewRow = document.querySelector('.list-row[data-id="FN-003"]') as HTMLElement;
+    reviewRow.focus();
+    fireEvent.keyDown(reviewRow, { key: "ContextMenu" });
+    expect(screen.getByRole("menuitem", { name: "Merge & Close" })).toBeInTheDocument();
+
+    mockConfirm.mockResolvedValueOnce(true);
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-007"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Todo" }));
+    await waitFor(() => expect(onMoveTask).toHaveBeenCalledWith("FN-007", "todo", { preserveProgress: true }));
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-005"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Move to Done" }));
+    expect(onPauseTask).not.toHaveBeenCalled();
+    expect(onRetryTask).not.toHaveBeenCalled();
+    expect(onArchiveTask).not.toHaveBeenCalled();
+    viewportSpy.mockRestore();
+  });
+
+  it("matches detail PR review labels from list context menus before and during PR automation", () => {
+    const viewportSpy = mockDesktopViewport();
+    const tasks = [
+      createMockTask({ id: "FN-008", title: "Manual PR", column: "in-review" }),
+      createMockTask({ id: "FN-009", title: "Creating PR", column: "in-review", status: "creating-pr" }),
+      createMockTask({ id: "FN-010", title: "Open PR", column: "in-review", prInfo: { number: 10, url: "https://example.test/pr/10", status: "open" } as any }),
+    ];
+
+    renderListView({ tasks, autoMerge: false, mergeStrategy: "pull-request" });
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-008"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Start PR Review" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-009"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menuitem", { name: "Creating PR…" })).toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: "Merge & Close" })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(document.querySelector('.list-row[data-id="FN-010"]') as HTMLElement, { clientX: 40, clientY: 50 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Check PR Status" }));
+    expect(refreshPrStatus).toHaveBeenCalledWith("FN-010", TEST_PROJECT_ID);
+    viewportSpy.mockRestore();
+  });
+
+  it("does not attach context menus to headers, empty sections, or bulk-edit checkboxes", () => {
+    const viewportSpy = mockDesktopViewport();
+    const tasks = [createMockTask({ id: "FN-001", title: "Selectable", column: "todo" })];
+    renderListView({ tasks });
+    enterBulkEditMode();
+
+    const checkbox = screen.getByRole("checkbox", { name: "Select FN-001" });
+    expect(checkbox).not.toBeChecked();
+    fireEvent.contextMenu(checkbox, { clientX: 20, clientY: 20 });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
+
+    const selectedRow = document.querySelector('.list-row[data-id="FN-001"]') as HTMLElement;
+    fireEvent.contextMenu(selectedRow, { clientX: 40, clientY: 50 });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
+
+    fireEvent.pointerDown(document.body);
+    const planningHeader = screen.getAllByRole("row").find((row) => row.className.includes("list-section-header") && row.textContent?.includes("Planning")) as HTMLElement;
+    fireEvent.contextMenu(planningHeader, { clientX: 20, clientY: 20 });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    const doneHeader = screen.getAllByRole("row").find((row) => row.className.includes("list-section-header") && row.textContent?.includes("Done")) as HTMLElement;
+    fireEvent.click(doneHeader);
+    fireEvent.contextMenu(doneHeader, { clientX: 20, clientY: 20 });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(document.querySelector('.list-row[data-id="FN-001"]')).toBeInTheDocument();
+    viewportSpy.mockRestore();
+  });
+
+  it("opens the task context menu from mobile card long-press without ordinary tap-to-open", () => {
+    vi.useFakeTimers();
+    const viewportSpy = mockMobileViewport();
+    const onOpenDetail = vi.fn();
+    const onPauseTask = vi.fn(async () => createMockTask());
+    const tasks = [createMockTask({ id: "FN-001", title: "Mobile menu", column: "todo" })];
+
+    renderListView({ tasks, onOpenDetail, onPauseTask });
+
+    const card = document.querySelector('.list-card[data-id="FN-001"]') as HTMLElement;
+    fireEvent.pointerDown(card, { pointerType: "touch", pointerId: 1, clientX: 24, clientY: 32 });
+    act(() => {
+      vi.advanceTimersByTime(550);
+    });
+    fireEvent.pointerUp(card, { pointerType: "touch", pointerId: 1, clientX: 24, clientY: 32 });
+    fireEvent.click(card);
+
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Pause" })).toBeInTheDocument();
+    expect(onOpenDetail).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pause" }));
+    expect(onPauseTask).toHaveBeenCalledWith("FN-001");
+    viewportSpy.mockRestore();
+    vi.useRealTimers();
   });
 
   it("exposes view options controls on mobile", () => {
@@ -2911,6 +3088,43 @@ describe("ListView Quick Entry", () => {
         workflowId: "builtin:coding",
       }));
     });
+  });
+
+  it("passes workflow options to quick-add and submits the changed selector workflow", async () => {
+    const mockOnQuickCreate = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(fetchBoardWorkflows).mockResolvedValue({
+      flagEnabled: true,
+      defaultWorkflowId: "builtin:default",
+      workflows: [
+        {
+          id: "builtin:default",
+          name: "Default",
+          columns: [{ id: "triage", name: "Triage", flags: { intake: true } }],
+        },
+        {
+          id: "wf-custom",
+          name: "Custom",
+          columns: [{ id: "backlog", name: "Backlog", flags: { intake: true } }],
+        },
+      ],
+      taskWorkflowIds: {},
+    });
+    renderListView({ onQuickCreate: mockOnQuickCreate });
+
+    await waitFor(() => expect(screen.getByTestId("quick-entry-workflow-props")).toHaveAttribute("data-workflow-id", "builtin:default"));
+    expect(screen.getByTestId("quick-entry-workflow-props")).toHaveAttribute("data-default-workflow-id", "builtin:default");
+    expect(JSON.parse(screen.getByTestId("quick-entry-workflow-props").getAttribute("data-workflow-options") || "[]")).toEqual(["builtin:default", "wf-custom"]);
+
+    fireEvent.click(screen.getByTestId("quick-entry-toggle"));
+    fireEvent.click(screen.getByTestId("quick-entry-workflow-option-wf-custom"));
+    fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create on changed list workflow" } });
+    fireEvent.click(screen.getByTestId("quick-entry-save"));
+
+    await waitFor(() => expect(mockOnQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
+      description: "Create on changed list workflow",
+      workflowId: "wf-custom",
+      column: "backlog",
+    })));
   });
 
   it("passes the selected workflow id to list quick-entry Plan and Subtask handoffs", async () => {

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type Keyboard
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { BoardWorkflowDefinition } from "../api";
+import { WorkflowIcon } from "./WorkflowIcon";
 import type { WorkflowStatusCounts } from "./workflowStatusCounts";
 
 export interface WorkflowSwitcherAggregateOption {
@@ -67,6 +68,10 @@ export function computeMenuWidth({
 
 function getCounts(counts: Map<string, WorkflowStatusCounts>, workflowId: string): WorkflowStatusCounts {
   return counts.get(workflowId) ?? ZERO_COUNTS;
+}
+
+function getWorkflowIconValue(workflow: WorkflowSwitcherAggregateOption | BoardWorkflowDefinition): string | undefined {
+  return "icon" in workflow ? workflow.icon : undefined;
 }
 
 /**
@@ -350,7 +355,10 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
                   className="workflow-switcher-option"
                   onClick={() => selectWorkflow(workflow.id)}
                 >
-                  <span className="workflow-switcher-option-name">{workflow.name}</span>
+                  <span className="workflow-switcher-option-label">
+                    <WorkflowIcon workflowId={workflow.id} icon={getWorkflowIconValue(workflow)} decorative />
+                    <span className="workflow-switcher-option-name">{workflow.name}</span>
+                  </span>
                   {renderCountBadges(workflowCounts, "option")}
                   {renderAccessibleCounts(workflowCounts)}
                 </button>
@@ -407,7 +415,10 @@ export function WorkflowSwitcher({ workflows, value, onChange, counts, aggregate
         onKeyDown={handleKeyDown}
       >
         <span className="workflow-switcher-trigger-main">
-          <span className="workflow-switcher-current-name">{selectedWorkflow.name}</span>
+          <span className="workflow-switcher-current-label">
+            <WorkflowIcon workflowId={selectedWorkflow.id} icon={getWorkflowIconValue(selectedWorkflow)} decorative />
+            <span className="workflow-switcher-current-name">{selectedWorkflow.name}</span>
+          </span>
           {isOpen ? renderCountBadges(selectedCounts, "trigger") : null}
           {isOpen ? renderAccessibleCounts(selectedCounts) : null}
         </span>

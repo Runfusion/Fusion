@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentErrorDetailsModal, AgentErrorIndicator } from "../AgentErrorDetailsModal";
 import { loadAllAppCss } from "../../test/cssFixture";
+import { ModalDismissPreferenceProvider } from "../../hooks/useOverlayDismiss";
 
 const issueContext = {
   surface: "AgentsView",
@@ -49,6 +50,31 @@ describe("AgentErrorDetailsModal", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Copied error to clipboard" })).toBeInTheDocument();
     });
+  });
+
+  it("gates backdrop dismissal behind the global modal dismiss preference", () => {
+    const disabledClose = vi.fn();
+    const { unmount } = render(<AgentErrorDetailsModal open={true} onClose={disabledClose} errorText="boom" issueContext={issueContext} />);
+    const disabledOverlay = screen.getByRole("dialog", { name: "Agent error details" });
+
+    fireEvent.mouseDown(disabledOverlay);
+    fireEvent.mouseUp(disabledOverlay);
+
+    expect(disabledClose).not.toHaveBeenCalled();
+    unmount();
+
+    const enabledClose = vi.fn();
+    render(
+      <ModalDismissPreferenceProvider enabled>
+        <AgentErrorDetailsModal open={true} onClose={enabledClose} errorText="boom" issueContext={issueContext} />
+      </ModalDismissPreferenceProvider>,
+    );
+    const enabledOverlay = screen.getByRole("dialog", { name: "Agent error details" });
+
+    fireEvent.mouseDown(enabledOverlay);
+    fireEvent.mouseUp(enabledOverlay);
+
+    expect(enabledClose).toHaveBeenCalledTimes(1);
   });
 
   it("opens github report link", async () => {

@@ -33,6 +33,19 @@ const RAW_BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR: WorkflowIr = (() => 
     throw new Error("stepwise final-review built-in requires the stepwise foreach template");
   }
 
+  const inheritedPlanReview = ir.nodes.find((node) => node.id === "plan-review");
+  const inheritedPlanReviewTemplate = inheritedPlanReview?.config?.template as
+    | { nodes?: Array<{ id: string; config?: Record<string, unknown> }> }
+    | undefined;
+  const inheritedPlanReviewStep = inheritedPlanReviewTemplate?.nodes?.find((node) => node.id === "plan-review-step");
+  if (inheritedPlanReviewStep?.config) {
+    /*
+     * FNXC:PlanValidation 2026-06-30-09:00:
+     * Default Coding is cloned from Coding (per-step review), but the deterministic external-integration evidence check belongs only to the review-heavy/per-step workflow. Remove the inherited flag here so default Coding relies on the normal Plan Review agent rather than pre-agent deterministic rejection.
+     */
+    delete inheritedPlanReviewStep.config.requireExternalIntegrationEvidence;
+  }
+
   const planIndex = ir.nodes.findIndex((node) => node.id === "plan");
   if (planIndex < 0) {
     throw new Error("stepwise final-review built-in requires a plan node");

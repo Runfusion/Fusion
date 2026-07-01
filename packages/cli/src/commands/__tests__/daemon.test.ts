@@ -76,6 +76,11 @@ const mocks = vi.hoisted(() => {
       getRootDir: vi.fn().mockReturnValue("/repo"),
       getMissionStore: vi.fn().mockReturnValue(missionStore),
       getPluginStore: vi.fn().mockReturnValue(pluginStore),
+      getGlobalSettingsStore: vi.fn(() => globalSettingsStoreInstance),
+      updateGlobalSettings: vi.fn().mockImplementation((settings: Record<string, unknown>) => {
+        globalSettingsData = { ...globalSettingsData, ...settings };
+        return Promise.resolve(globalSettingsData);
+      }),
       getSettings: vi.fn().mockResolvedValue({
         maxConcurrent: 2,
         recycleWorktrees: false,
@@ -343,6 +348,8 @@ const mocks = vi.hoisted(() => {
     refresh: vi.fn(),
   };
 
+  const refreshAllCustomProviderModels = vi.fn().mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
+
   const agentSemaphoreCtor = vi.fn().mockImplementation(function () {
     return {
       _active: 0,
@@ -492,6 +499,7 @@ const mocks = vi.hoisted(() => {
     processAndAuditInsightExtractionMock,
     authStorage,
     modelRegistry,
+    refreshAllCustomProviderModels,
     reset() {
       taskStores.length = 0;
       automationStores.length = 0;
@@ -515,6 +523,10 @@ const mocks = vi.hoisted(() => {
       syncInsightExtractionAutomationMock.mockResolvedValue(undefined);
       processAndAuditInsightExtractionMock.mockClear();
       createAiPromptExecutorMock.mockClear();
+      refreshAllCustomProviderModels.mockReset();
+      refreshAllCustomProviderModels.mockResolvedValue({ refreshed: 0, failed: 0, skipped: 0 });
+      globalSettingsStoreInstance.getSettings.mockReset();
+      globalSettingsStoreInstance.getSettings.mockImplementation(() => Promise.resolve({ ...globalSettingsData }));
     },
   };
 });
@@ -558,6 +570,7 @@ vi.mock("@fusion/dashboard", () => ({
   createSkillsAdapter: vi.fn().mockReturnValue(undefined),
   getProjectSettingsPath: vi.fn().mockReturnValue("/tmp/project/.fusion/settings.json"),
   loadTlsCredentialsFromEnv: vi.fn().mockReturnValue(undefined),
+  refreshAllCustomProviderModels: mocks.refreshAllCustomProviderModels,
 }));
 
 vi.mock("@fusion/engine", async (importOriginal) => {
@@ -691,6 +704,52 @@ describe("runDaemon", () => {
       models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
     }));
     expect(mocks.modelRegistry.refresh).toHaveBeenCalled();
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("starts daemon before background custom provider refresh settles", async () => {
+    mocks.refreshAllCustomProviderModels.mockImplementationOnce(() => new Promise(() => undefined));
+    mocks.globalSettingsStoreInstance.getSettings.mockResolvedValue({
+      customProviders: [{
+        id: "cp-1",
+        name: "Custom Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      }],
+    });
+
+    await runDaemon({});
+
+    expect(mocks.refreshAllCustomProviderModels).toHaveBeenCalledTimes(1);
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith(
+      expect.stringContaining("custom-proxy"),
+      expect.objectContaining({ models: [expect.objectContaining({ id: "configured-model" })] }),
+    );
+
+    await triggerSignal("SIGINT");
+  });
+
+  it("continues startup provider registration when custom provider refresh fails", async () => {
+    mocks.refreshAllCustomProviderModels.mockRejectedValueOnce(new Error("provider offline"));
+    mocks.globalSettingsStoreInstance.getSettings.mockResolvedValue({
+      customProviders: [{
+        id: "cp-1",
+        name: "Custom Proxy",
+        apiType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+        models: [{ id: "configured-model", name: "Configured model" }],
+      }],
+    });
+
+    await runDaemon({});
+
+    expect(mocks.refreshAllCustomProviderModels).toHaveBeenCalledTimes(1);
+    expect(mocks.modelRegistry.registerProvider).toHaveBeenCalledWith(
+      expect.stringContaining("custom-proxy"),
+      expect.objectContaining({ models: [expect.objectContaining({ id: "configured-model" })] }),
+    );
 
     await triggerSignal("SIGINT");
   });

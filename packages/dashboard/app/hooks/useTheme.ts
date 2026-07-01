@@ -16,7 +16,7 @@ const DEFAULT_FONT_SCALE_PCT = 100;
 const MIN_FONT_SCALE_PCT = 85;
 const MAX_FONT_SCALE_PCT = 125;
 const VALID_COLOR_THEMES = [...COLOR_THEMES] satisfies ColorTheme[];
-const DEFAULT_COLOR_THEME: ColorTheme = "ocean";
+const DEFAULT_COLOR_THEME: ColorTheme = "shadcn-ember";
 const THEME_DATA_ID = "theme-data";
 const THEME_DATA_FILENAME = "theme-data.css";
 
@@ -96,8 +96,8 @@ function readCachedColorTheme(): ColorTheme {
     // localStorage not available, use default
   }
   /*
-  FNXC:DashboardTheming 2026-06-22-18:36:
-  Missing/invalid cached theme resolves to Ocean for new installs, but an explicit cached "default" remains valid above and stays on Fusion Legacy.
+  FNXC:DashboardTheming 2026-06-30-00:00:
+  Missing/invalid cached theme resolves to Shadcn Ember for new installs, but explicit cached legacy ids such as "default" and "ocean" remain valid above and must not be migrated.
   */
   return DEFAULT_COLOR_THEME;
 }
@@ -467,7 +467,7 @@ export function getThemeInitScript(): string {
         var mode = localStorage.getItem('${THEME_MODE_STORAGE_KEY}') || 'dark';
         var colorTheme = localStorage.getItem('${COLOR_THEME_STORAGE_KEY}') || '${DEFAULT_COLOR_THEME}';
         var validThemes = ${JSON.stringify(VALID_COLOR_THEMES)};
-        // FNXC:DashboardTheming 2026-06-22-18:36: Unset startup theme is Ocean; an explicit stored "default" remains the Fusion Legacy theme and must not be migrated.
+        // FNXC:DashboardTheming 2026-06-30-00:00: Unset startup theme is Shadcn Ember; explicit stored legacy ids such as "default" and "ocean" remain valid and must not be migrated.
         // FNXC:DashboardTheming 2026-06-20-00:00: FN-6813 remaps the legacy mono id before bootstrap validation so persisted users keep the red mono accent.
         if (colorTheme === 'shadcn-mono') colorTheme = 'shadcn-mono-red';
         if (!validThemes.includes(colorTheme)) {

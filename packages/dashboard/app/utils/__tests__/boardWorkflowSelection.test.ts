@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ALL_WORKFLOWS_BOARD_VIEW_ID,
   BOARD_WORKFLOW_SELECTION_STORAGE_KEY,
   readBoardWorkflowSelection,
+  readBoardWorkflowViewSelection,
   removeBoardWorkflowSelection,
   writeBoardWorkflowSelection,
 } from "../boardWorkflowSelection";
@@ -30,6 +32,17 @@ describe("boardWorkflowSelection", () => {
     expect(window.localStorage.getItem(projectKey("project-a"))).toBe("builtin:coding");
     expect(window.localStorage.getItem(projectKey("project-b"))).toBe("WF-123");
     expect(readBoardWorkflowSelection("project-a")).toBe("builtin:coding");
+    expect(readBoardWorkflowSelection("project-b")).toBe("WF-123");
+    expect(readBoardWorkflowViewSelection("project-a")).toBe("builtin:coding");
+  });
+
+  it("persists the Board-only all-workflows view without exposing it as a real workflow id", () => {
+    writeBoardWorkflowSelection("project-a", ALL_WORKFLOWS_BOARD_VIEW_ID);
+    writeBoardWorkflowSelection("project-b", "WF-123");
+
+    expect(window.localStorage.getItem(projectKey("project-a"))).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
+    expect(readBoardWorkflowViewSelection("project-a")).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
+    expect(readBoardWorkflowSelection("project-a")).toBeNull();
     expect(readBoardWorkflowSelection("project-b")).toBe("WF-123");
   });
 

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import { useOverlayDismiss } from "../useOverlayDismiss";
+import { ModalDismissPreferenceProvider, useOverlayDismiss } from "../useOverlayDismiss";
 
-function OverlayHarness({ onClose }: { onClose: () => void }) {
-  const props = useOverlayDismiss(onClose);
+function OverlayHarness({ onClose, enabled }: { onClose: () => void; enabled?: boolean }) {
+  const props = useOverlayDismiss(onClose, enabled === undefined ? undefined : { enabled });
   return (
     <div data-testid="overlay" {...props}>
       <div data-testid="modal-content">content</div>
@@ -12,9 +12,20 @@ function OverlayHarness({ onClose }: { onClose: () => void }) {
 }
 
 describe("useOverlayDismiss", () => {
-  it("closes on real overlay mouse down/up", () => {
+  it("does not close on real overlay mouse down/up when the global setting is disabled by default", () => {
     const onClose = vi.fn();
     const { getByTestId } = render(<OverlayHarness onClose={onClose} />);
+    const overlay = getByTestId("overlay");
+
+    fireEvent.mouseDown(overlay);
+    fireEvent.mouseUp(overlay);
+
+    expect(onClose).toHaveBeenCalledTimes(0);
+  });
+
+  it("closes on real overlay mouse down/up when enabled", () => {
+    const onClose = vi.fn();
+    const { getByTestId } = render(<OverlayHarness onClose={onClose} enabled />);
     const overlay = getByTestId("overlay");
 
     fireEvent.mouseDown(overlay);
@@ -25,7 +36,7 @@ describe("useOverlayDismiss", () => {
 
   it("ignores compatibility mouse sequence immediately after touch", () => {
     const onClose = vi.fn();
-    const { getByTestId } = render(<OverlayHarness onClose={onClose} />);
+    const { getByTestId } = render(<OverlayHarness onClose={onClose} enabled />);
     const overlay = getByTestId("overlay");
 
     fireEvent.touchStart(overlay);
@@ -38,7 +49,7 @@ describe("useOverlayDismiss", () => {
 
   it("does not close when mouse starts inside modal and ends on overlay", () => {
     const onClose = vi.fn();
-    const { getByTestId } = render(<OverlayHarness onClose={onClose} />);
+    const { getByTestId } = render(<OverlayHarness onClose={onClose} enabled />);
     const overlay = getByTestId("overlay");
     const modal = getByTestId("modal-content");
 
@@ -46,5 +57,20 @@ describe("useOverlayDismiss", () => {
     fireEvent.mouseUp(overlay);
 
     expect(onClose).toHaveBeenCalledTimes(0);
+  });
+
+  it("uses the modal dismiss preference provider when no per-call override is supplied", () => {
+    const onClose = vi.fn();
+    const { getByTestId } = render(
+      <ModalDismissPreferenceProvider enabled>
+        <OverlayHarness onClose={onClose} />
+      </ModalDismissPreferenceProvider>,
+    );
+    const overlay = getByTestId("overlay");
+
+    fireEvent.mouseDown(overlay);
+    fireEvent.mouseUp(overlay);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

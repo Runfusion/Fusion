@@ -847,6 +847,22 @@ describe("ProductivityArea", () => {
         totalMs: 16_200_000,
         unavailable: false,
       },
+      taskDurationTrend: [
+        {
+          bucket: "2026-06-08",
+          completedTasks: 1,
+          averageMs: 3_600_000,
+          medianMs: 3_600_000,
+          unavailable: false,
+        },
+        {
+          bucket: "2026-06-09",
+          completedTasks: 2,
+          averageMs: 6_300_000,
+          medianMs: 6_300_000,
+          unavailable: false,
+        },
+      ],
     });
     render(<ProductivityArea range={range7d} />);
     await screen.findByTestId("cc-area-productivity");
@@ -864,6 +880,13 @@ describe("ProductivityArea", () => {
     expect(screen.getByTestId("cc-productivity-duration-median").textContent).toContain("1h");
     expect(screen.getByTestId("cc-productivity-duration-p90").textContent).toContain("2h");
     expect(screen.getByTestId("cc-productivity-duration-total").textContent).toContain("4h 30m");
+    const durationTrend = screen.getByRole("img", { name: "Task duration over time" });
+    expect(durationTrend).toBeTruthy();
+    expect(durationTrend.getAttribute("data-responsive-width")).toBe("100%");
+    expect(screen.getByTestId("cc-productivity-duration-trend").textContent).toContain("Average");
+    expect(screen.getByTestId("cc-productivity-duration-trend").textContent).toContain("Median");
+    expect(screen.getByTestId("cc-productivity-duration-trend").textContent).not.toContain("NaN");
+    expect(screen.getByTestId("cc-productivity-duration-trend").textContent).not.toContain("Infinity");
     expect(screen.getByRole("list", { name: "Files by language" })).toBeTruthy();
     expect(screen.getByTestId("cc-productivity-pie")).toBeTruthy();
     expect(screen.getByRole("img", { name: "Language share" })).toBeTruthy();
@@ -888,12 +911,14 @@ describe("ProductivityArea", () => {
         totalMs: null,
         unavailable: true,
       },
+      taskDurationTrend: [],
     });
     const { unmount } = render(<ProductivityArea range={range7d} />);
     await screen.findByTestId("cc-area-productivity-empty");
     expect(screen.queryByRole("list", { name: "Files by language" })).toBeNull();
     expect(screen.queryByTestId("cc-productivity-pie")).toBeNull();
     expect(screen.queryByTestId("cc-productivity-duration-avg")).toBeNull();
+    expect(screen.queryByTestId("cc-productivity-duration-trend")).toBeNull();
     unmount();
 
     apiMock.mockImplementationOnce(() => new Promise(() => undefined));
@@ -907,6 +932,7 @@ describe("ProductivityArea", () => {
     expect(screen.getByTestId("cc-area-productivity-error").textContent).toContain("productivity failed");
     expect(screen.queryByTestId("cc-productivity-pie")).toBeNull();
     expect(screen.queryByTestId("cc-productivity-duration-avg")).toBeNull();
+    expect(screen.queryByTestId("cc-productivity-duration-trend")).toBeNull();
   });
 
   it("renders unavailable task duration as dash sentinels, never zero", async () => {
@@ -927,6 +953,22 @@ describe("ProductivityArea", () => {
         totalMs: null,
         unavailable: true,
       },
+      taskDurationTrend: [
+        {
+          bucket: "2026-06-08",
+          completedTasks: 0,
+          averageMs: null,
+          medianMs: null,
+          unavailable: true,
+        },
+        {
+          bucket: "2026-06-09",
+          completedTasks: 1,
+          averageMs: Number.NaN,
+          medianMs: Number.POSITIVE_INFINITY,
+          unavailable: false,
+        },
+      ],
     });
 
     render(<ProductivityArea range={range7d} />);
@@ -939,6 +981,9 @@ describe("ProductivityArea", () => {
     expect(screen.getByTestId("cc-productivity-duration-p90-unavailable").textContent).toBe("—");
     expect(screen.getByTestId("cc-productivity-duration-total-unavailable").textContent).toBe("—");
     expect(screen.getByTestId("cc-productivity-duration-avg").textContent).not.toContain("0");
+    expect(screen.queryByTestId("cc-productivity-duration-trend")).toBeNull();
+    expect(screen.getByTestId("cc-area-productivity").textContent).not.toContain("NaN");
+    expect(screen.getByTestId("cc-area-productivity").textContent).not.toContain("Infinity");
   });
 
   it("renders dash sentinels for contract-incomplete productivity payloads", async () => {
@@ -960,6 +1005,7 @@ describe("ProductivityArea", () => {
     expect(screen.getByTestId("cc-productivity-duration-median-unavailable").textContent).toBe("—");
     expect(screen.getByTestId("cc-productivity-duration-p90-unavailable").textContent).toBe("—");
     expect(screen.getByTestId("cc-productivity-duration-total-unavailable").textContent).toBe("—");
+    expect(screen.queryByTestId("cc-productivity-duration-trend")).toBeNull();
     expect(area.textContent).not.toContain("NaN");
     expect(area.textContent?.trim()).not.toBe("");
   });

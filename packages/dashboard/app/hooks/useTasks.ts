@@ -600,7 +600,43 @@ export function useTasks(options?: UseTasksOptions) {
   }, [projectId]);
 
   const retryTask = useCallback(async (id: string): Promise<Task> => {
-    return normalizeTask(await api.retryTask(id, projectId));
+    const retriedTask = normalizeTask(await api.retryTask(id, projectId));
+    /*
+    FNXC:DashboardTaskRetry 2026-06-30-12:57:
+    Manual retry success is a user-visible state boundary. Replace matching rows in shared hook state and the project SWR cache as soon as the retry API returns so Board/List/detail/right-dock retry affordances do not depend on later SSE, polling, remount, or route re-entry to clear stale failed/stuck state.
+
+    FNXC:DashboardTaskRetry 2026-06-30-12:58:
+    Retry success also invalidates refreshes that began before the API returned; a late pre-retry fetch snapshot must not rehydrate the failed card after the operator has already received server confirmation for the retry.
+    */
+    fetchVersionRef.current++;
+
+    const projectUpdatedTasks = (currentTasks: Task[]) => currentTasks.map((task) => (task.id === id ? retriedTask : task));
+
+    if (projectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const cacheContainsOnlyTaskRows = cachedTasks.every((task) => Boolean(task && typeof task === "object" && typeof (task as Task).id === "string"));
+        if (cacheContainsOnlyTaskRows) {
+          const nextCachedTasks = cachedTasks.map((task) => ((task as Task).id === id ? retriedTask : normalizeTask(task as Task)));
+          writeCache(cacheKey, nextCachedTasks.length > 500 ? nextCachedTasks.slice(0, 500) : nextCachedTasks, { maxBytes: 500_000 });
+        } else {
+          clearCache(cacheKey);
+        }
+      } else if (cachedTasks === null) {
+        const nextCurrentTasks = projectUpdatedTasks(tasksRef.current);
+        writeCache(cacheKey, nextCurrentTasks.length > 500 ? nextCurrentTasks.slice(0, 500) : nextCurrentTasks, { maxBytes: 500_000 });
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+
+    setTasks((prev) => {
+      const next = projectUpdatedTasks(prev);
+      tasksRef.current = next;
+      return next;
+    });
+    return retriedTask;
   }, [projectId]);
 
   const resetTask = useCallback(async (id: string): Promise<Task> => {

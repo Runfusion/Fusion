@@ -2,6 +2,7 @@ import "./AgentErrorDetailsModal.css";
 import { useMemo, useState } from "react";
 import { AlertCircle, Check, Copy, ExternalLink } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 
 const DEFAULT_ISSUE_URL = "https://github.com/Runfusion/Fusion/issues/new";
 
@@ -53,13 +54,14 @@ export function AgentErrorDetailsModal({ open, onClose, errorText, issueContext 
   const [copied, setCopied] = useState(false);
   const { t } = useTranslation("app");
   const issueUrl = useMemo(() => buildAgentErrorIssueUrl(errorText, issueContext), [errorText, issueContext]);
+  const overlayDismissProps = useOverlayDismiss(onClose);
 
   if (!open) {
     return null;
   }
 
   return (
-    <div className="modal-overlay open" onClick={(event) => event.target === event.currentTarget && onClose()} role="dialog" aria-modal="true" aria-label={t("agentError.dialogLabel", "Agent error details")}>
+    <div className="modal-overlay open" {...overlayDismissProps} role="dialog" aria-modal="true" aria-label={t("agentError.dialogLabel", "Agent error details")}>
       <div className="modal agent-error-modal">
         <div className="modal-header">
           <h2 className="modal-title">

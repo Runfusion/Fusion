@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_MOVED_WORKFLOW_SETTINGS,
+  BUILTIN_REVIEW_REVISION_SETTINGS,
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_WORKFLOW_SETTINGS,
   renderTriagePolicyPlaceholders,
@@ -27,8 +28,8 @@ const expectedDefaults: Record<string, { type: string; default: unknown }> = {
   autoApproveSpec: { type: "boolean", default: false },
 };
 
-describe("workflow-native triage policy settings", () => {
-  it("declares behavior-equivalent typed defaults outside the moved-key catalog", () => {
+describe("workflow-native built-in workflow settings", () => {
+  it("declares behavior-equivalent triage defaults outside the moved-key catalog", () => {
     const triageById = new Map(BUILTIN_TRIAGE_POLICY_SETTINGS.map((setting) => [setting.id, setting]));
     const fullIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
     const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
@@ -40,6 +41,38 @@ describe("workflow-native triage policy settings", () => {
       expect(setting, `${id} should be declared`).toBeDefined();
       expect(setting?.type).toBe(expected.type);
       expect(setting?.default).toStrictEqual(expected.default);
+      expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
+      expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
+      expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
+    }
+  });
+
+  it("declares review revision caps as unset workflow values outside moved/project settings", () => {
+    const revisionById = new Map(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => [setting.id, setting]));
+    const fullIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
+
+    expect(BUILTIN_REVIEW_REVISION_SETTINGS.map((setting) => setting.id)).toEqual([
+      "reviewerInlineFixes",
+      "planReviewMaxRevisions",
+      "codeReviewMaxRevisions",
+    ]);
+    const inlineFixes = revisionById.get("reviewerInlineFixes");
+    expect(inlineFixes).toMatchObject({
+      type: "boolean",
+      default: true,
+    });
+    expect(fullIds.has("reviewerInlineFixes")).toBe(true);
+    expect(movedIds.has("reviewerInlineFixes")).toBe(false);
+    expect(movedKeyIds.has("reviewerInlineFixes")).toBe(false);
+    for (const id of ["planReviewMaxRevisions", "codeReviewMaxRevisions"]) {
+      const setting = revisionById.get(id);
+      expect(setting, `${id} should be declared`).toBeDefined();
+      expect(setting?.type).toBe("number");
+      expect(setting).not.toHaveProperty("default");
+      expect(setting?.description).toMatch(/Leave unset for unbounded|Leave unset|unbounded/i);
+      expect(setting?.description).toContain("0");
       expect(fullIds.has(id), `${id} should be in the full built-in catalog`).toBe(true);
       expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
       expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);

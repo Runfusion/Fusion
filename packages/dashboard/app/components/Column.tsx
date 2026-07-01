@@ -2,7 +2,7 @@ import { memo, useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useFlashOnIncrease } from "../hooks/useFlashOnIncrease";
 import { useConfirm } from "../hooks/useConfirm";
-import type { Task, TaskDetail, Column as ColumnType, TaskCreateInput, GithubIssueAction } from "@fusion/core";
+import type { Task, TaskDetail, Column as ColumnType, ColumnId, TaskCreateInput, GithubIssueAction, MergeResult } from "@fusion/core";
 import { COLUMN_LABELS, COLUMN_DESCRIPTIONS, getErrorMessage } from "@fusion/core";
 import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplicate-canonical";
 import { TaskCard } from "./TaskCard";
@@ -11,8 +11,9 @@ import { QuickEntryBox } from "./QuickEntryBox";
 import { PluginSlot } from "./PluginSlot";
 import { groupByWorktree } from "../utils/worktreeGrouping";
 import type { ToastType } from "../hooks/useToast";
-import { ChevronDown, ChevronUp, Archive, MoreVertical } from "lucide-react";
-import type { ModelInfo, BoardWorkflowColumnFlags } from "../api";
+import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
+import { ChevronDown, ChevronUp, MoreVertical } from "lucide-react";
+import type { BoardWorkflowDefinition, ModelInfo, BoardWorkflowColumnFlags } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import type { DoneColumnSortMode } from "./taskSorting";
 
@@ -93,14 +94,20 @@ interface ColumnProps {
   projectId?: string;
   maxConcurrent: number;
   showWorktreeGrouping: boolean;
-  onMoveTask: (id: string, column: ColumnType, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
+  onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onPauseTask?: (id: string) => Promise<Task>;
+  onUnpauseTask?: (id: string) => Promise<Task>;
+  onResetTask?: (id: string) => Promise<Task>;
+  onDuplicateTask?: (id: string) => Promise<Task>;
+  onMergeTask?: (id: string) => Promise<MergeResult>;
   onOpenDetail: (task: Task | TaskDetail) => void;
   onOpenGroupModal?: (groupId: string) => void;
   addToast: (message: string, type?: ToastType) => void;
   onQuickCreate?: (input: TaskCreateInput) => Promise<Task | void>;
   onNewTask?: () => void;
   autoMerge?: boolean;
+  /** Project merge strategy for Task Detail-equivalent card context actions. */
+  mergeStrategy?: string;
   onToggleAutoMerge?: () => void;
   globalPaused?: boolean;
   onUpdateTask?: (
@@ -148,7 +155,7 @@ interface ColumnProps {
   /** Per-task card-placed custom field definitions (U13/KTD-14). */
   taskCardFieldDefs?: ReadonlyMap<string, import("../api").WorkflowFieldDefinition[]>;
   /** Trusted aggregate-board workflow badges keyed by task id; omitted in per-workflow and non-board surfaces. */
-  taskWorkflowBadges?: ReadonlyMap<string, { workflowId: string; workflowName: string }>;
+  taskWorkflowBadges?: ReadonlyMap<string, { workflowId: string; workflowName: string; workflowIcon?: string }>;
   /** Precomputed blocker fanout keyed by blocker task ID. */
   blockerFanoutMap?: ReadonlyMap<string, BlockerFanoutEntry>;
   /** Whether GitHub CLI auth is available for creating PRs from task cards. */
@@ -160,10 +167,18 @@ interface ColumnProps {
   workflowMode?: boolean;
   /** Workflow id for column-aware task creation in workflow mode. */
   workflowId?: string;
+  /** Real workflow choices for the quick-add selector in workflow mode. */
+  workflowOptions?: BoardWorkflowDefinition[];
+  /** Default workflow target for quick-add when the parent view is aggregate or stale. */
+  defaultWorkflowId?: string | null;
   /** Display name for this column, from the workflow definition. */
   columnDisplayName?: string;
   /** Resolved trait flags for this column (workflow mode). */
   columnFlags?: BoardWorkflowColumnFlags;
+  /** Ordered workflow columns for deriving context-menu move targets in workflow mode. */
+  workflowContextMenuColumns?: readonly TaskContextMenuColumnMetadata[];
+  /** Per-task workflow columns for aggregate Board cards whose tasks come from different workflows. */
+  taskContextMenuColumnsByTaskId?: ReadonlyMap<string, readonly TaskContextMenuColumnMetadata[]>;
   /** Manually promote a held card out of this hold column (workflow mode). */
   onPromote?: (taskId: string) => Promise<void>;
   /**
@@ -179,7 +194,7 @@ interface ColumnProps {
   getDraggingTaskId?: () => string | null;
 }
 
-function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, columnDisplayName, columnFlags, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
+function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, doneSortMode, onDoneSortModeChange, collapsed, onToggleCollapse, allTasks, availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, isSearchActive, taskStuckTimeoutMs, onOpenMission, lastFetchTimeMs, taskCardFieldDefs, taskWorkflowBadges, blockerFanoutMap, prAuthAvailable, workflowMode, workflowId, workflowOptions, defaultWorkflowId, columnDisplayName, columnFlags, workflowContextMenuColumns, taskContextMenuColumnsByTaskId, onPromote, canDropTask, getDraggingTaskId }: ColumnProps) {
   const { t } = useTranslation("app");
   // Anchor the board.rejection.* catalog keys for the i18next extractor (it
   // scopes `t` to the useTranslation binding, so the shared translateRejection
@@ -249,6 +264,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   const isHoldColumn = workflowMode && Boolean(columnFlags?.hold);
   const isCollapsed = isArchived && collapsed;
   const isWipProcessingColumn = workflowMode ? Boolean(columnFlags?.countsTowardWip) : column === "in-progress";
+  const getTaskContextMenuColumns = useCallback((task: Task) => (
+    taskContextMenuColumnsByTaskId?.get(task.id) ?? workflowContextMenuColumns
+  ), [taskContextMenuColumnsByTaskId, workflowContextMenuColumns]);
+  const getTaskColumnFlags = useCallback((task: Task) => (
+    getTaskContextMenuColumns(task)?.find((candidate) => candidate.id === task.column)?.flags ?? (task.column === column ? columnFlags : undefined)
+  ), [column, columnFlags, getTaskContextMenuColumns]);
   /*
   FNXC:WorktreeGroupingSetting 2026-06-27-22:30:
   The project setting is an explicit show/hide control: worktree grouping and labels render only when enabled and only for the board's WIP/processing column. Turning it off must leave plain task cards with no legacy group shell in either legacy or workflow-mode columns.
@@ -404,7 +425,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
         return onQuickCreate({
           ...input,
           column,
-          ...(workflowId ? { workflowId } : {}),
+          ...(input.workflowId !== undefined ? { workflowId: input.workflowId } : (workflowId ? { workflowId } : {})),
         });
       }
       return onQuickCreate(input);
@@ -548,9 +569,22 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
   */
   const isDoneSortColumn = workflowMode ? columnFlags?.complete === true && columnFlags?.archived !== true : column === "done";
   const showDoneSortControl = isDoneSortColumn && doneSortMode !== undefined && !!onDoneSortModeChange;
+  const showDoneArchiveAction = isDoneSortColumn && !!onArchiveAllDone;
+  const hasDoneMenuActions = showDoneSortControl || showDoneArchiveAction;
+  const hasColumnMenu = hasColumnBulkActions || hasDoneMenuActions;
   const doneSortControlLabel = t("column.doneSortControlLabel", "Sort Done tasks");
+  const doneSortOptions: Array<{ mode: DoneColumnSortMode; label: string }> = [
+    { mode: "completion-date-desc", label: t("column.doneSortCompletionDateDesc", "Completion date (newest first)") },
+    { mode: "task-id-desc", label: t("column.doneSortTaskIdDesc", "Task ID (newest first)") },
+  ];
+
+  const handleDoneSortModeSelect = useCallback((mode: DoneColumnSortMode) => {
+    onDoneSortModeChange?.(mode);
+    setIsMenuOpen(false);
+  }, [onDoneSortModeChange]);
 
   const handleArchiveAll = useCallback(async () => {
+    setIsMenuOpen(false);
     if (!onArchiveAllDone) return;
     if (tasks.length === 0) return;
 
@@ -597,35 +631,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
             + {t("column.newTask", "New Task")}
           </button>
         )}
-        {showDoneSortControl && (
-          <label className="done-sort-control" title={doneSortControlLabel}>
-            {/*
-            FNXC:DoneColumnSorting 2026-06-29-18:09:
-            The Done header needs an accessible, Done-only control that preserves Archive All and other header actions while allowing operators to switch between completion-date-desc and task-id-desc display orders.
-            */}
-            <span className="done-sort-control__label">{t("column.doneSortLabel", "Sort")}</span>
-            <select
-              className="done-sort-control__select"
-              aria-label={doneSortControlLabel}
-              value={doneSortMode}
-              onChange={(event) => onDoneSortModeChange(event.target.value as DoneColumnSortMode)}
-            >
-              <option value="completion-date-desc">{t("column.doneSortCompletionDateDesc", "Completion date (newest first)")}</option>
-              <option value="task-id-desc">{t("column.doneSortTaskIdDesc", "Task ID (newest first)")}</option>
-            </select>
-          </label>
-        )}
-        {column === "done" && onArchiveAllDone && (
-          <button
-            className="btn btn-icon btn-sm"
-            onClick={handleArchiveAll}
-            disabled={tasks.length === 0}
-            title={t("column.archiveAllDoneTitle", "Archive all done tasks")}
-            aria-label={t("column.archiveAllDoneAriaLabel", "Archive all done tasks")}
-          >
-            <Archive />
-          </button>
-        )}
+
         {isArchived && onToggleCollapse && (
           <button
             className="btn btn-icon btn-sm"
@@ -637,15 +643,19 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
             {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
           </button>
         )}
-        {hasColumnBulkActions && (
+        {hasColumnMenu && (
           <div className="column-menu" ref={menuRef}>
+            {/**
+            FNXC:DoneColumnActions 2026-06-30-00:00:
+            Done and workflow complete-column archive/sort affordances must share this column actions dropdown with existing bulk actions, preventing duplicate header controls on desktop and mobile while preserving the original sort modes and archive confirmation path.
+            */}
             <button
               type="button"
               className="btn btn-icon btn-sm"
               onClick={() => setIsMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={isMenuOpen}
-              aria-label={t("column.actionsAriaLabel", "{{columnLabel}} column actions", { columnLabel: workflowMode ? (columnDisplayName ?? column) : COLUMN_LABELS[column] })}
+              aria-label={t("column.actionsAriaLabel", "{{columnLabel}} column actions", { columnLabel: columnLabelText })}
               title={t("column.actionsTitle", "Column actions")}
               disabled={isMenuBusy}
             >
@@ -653,6 +663,46 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
             </button>
             {isMenuOpen && (
               <div className="column-menu-popover" role="menu">
+                {showDoneSortControl && (
+                  <div className="column-menu-group" role="group" aria-label={doneSortControlLabel}>
+                    {doneSortOptions.map((option) => (
+                      <button
+                        key={option.mode}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={doneSortMode === option.mode}
+                        className="column-menu-item column-menu-item-radio"
+                        onClick={() => handleDoneSortModeSelect(option.mode)}
+                      >
+                        <span className="column-menu-item-row">
+                          <span className="column-menu-item-check" aria-hidden="true">{doneSortMode === option.mode ? "✓" : ""}</span>
+                          <span>{option.label}</span>
+                        </span>
+                        <span className="column-menu-item-hint">
+                          {option.mode === "completion-date-desc"
+                            ? t("column.doneSortCompletionDateDescHint", "Show recently completed tasks first")
+                            : t("column.doneSortTaskIdDescHint", "Show highest task IDs first")}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {showDoneArchiveAction && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="column-menu-item"
+                    onClick={() => void handleArchiveAll()}
+                    disabled={tasks.length === 0}
+                  >
+                    {t("column.archiveAllDoneTitle", "Archive all done tasks")}
+                    <span className="column-menu-item-hint">
+                      {tasks.length === 0
+                        ? t("column.noDoneTasksToArchive", "No done tasks to archive")
+                        : t("column.archiveAllDoneHint", "Archive {{count}} done task{{plural}}", { count: tasks.length, plural: tasks.length === 1 ? "" : "s" })}
+                    </span>
+                  </button>
+                )}
                 {isTodoLikeColumn && (
                   <button
                     type="button"
@@ -723,6 +773,8 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
               onPlanningMode={onPlanningMode}
               onSubtaskBreakdown={onSubtaskBreakdown}
               workflowId={workflowMode ? workflowId : undefined}
+              workflowOptions={workflowMode ? workflowOptions : undefined}
+              defaultWorkflowId={workflowMode ? defaultWorkflowId : undefined}
               projectId={projectId}
               autoExpand={false}
               favoriteProviders={favoriteProviders}
@@ -753,10 +805,19 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   queuedTasks={group.queuedTasks}
                   projectId={projectId}
                   onOpenDetail={onOpenDetail}
+                  onMoveTask={onMoveTask}
                   addToast={addToast}
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
+                  onPauseTask={onPauseTask}
                   onRetryTask={onRetryTask}
+                  onUnpauseTask={onUnpauseTask}
+                  onResetTask={onResetTask}
+                  onDuplicateTask={onDuplicateTask}
+                  onMergeTask={onMergeTask}
+                  onArchiveTask={onArchiveTask}
+                  onUnarchiveTask={onUnarchiveTask}
+                  onDeleteTask={onDeleteTask}
                   onOpenDetailWithTab={onOpenDetailWithTab}
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                   onOpenMission={onOpenMission}
@@ -766,6 +827,9 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   blockerFanoutMap={blockerFanoutMap}
                   prAuthAvailable={prAuthAvailable}
                   autoMergeEnabled={Boolean(autoMerge)}
+                  mergeStrategy={mergeStrategy}
+                  workflowContextMenuColumns={workflowContextMenuColumns}
+                  taskContextMenuColumnsByTaskId={taskContextMenuColumnsByTaskId}
                   allTasks={allTasks}
                 />
               ))
@@ -784,7 +848,12 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   addToast={addToast}
                   globalPaused={globalPaused}
                   onUpdateTask={onUpdateTask}
+                  onPauseTask={onPauseTask}
                   onRetryTask={onRetryTask}
+                  onUnpauseTask={onUnpauseTask}
+                  onResetTask={onResetTask}
+                  onDuplicateTask={onDuplicateTask}
+                  onMergeTask={onMergeTask}
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
                   onDeleteTask={onDeleteTask}
@@ -792,6 +861,8 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   taskStuckTimeoutMs={taskStuckTimeoutMs}
                   onOpenMission={onOpenMission}
                   onMoveTask={onMoveTask}
+                  taskColumnFlags={getTaskColumnFlags(task)}
+                  taskMoveColumns={getTaskContextMenuColumns(task)}
                   onPromote={isHoldColumn && onPromote ? handlePromote : undefined}
                   isPromoting={isHoldColumn && onPromote ? promotingIds.has(task.id) : undefined}
                   lastFetchTimeMs={lastFetchTimeMs}
@@ -800,6 +871,7 @@ function ColumnComponent({ column, tasks, projectId, maxConcurrent, showWorktree
                   fanout={blockerFanoutMap?.get(task.id)}
                   prAuthAvailable={prAuthAvailable}
                   autoMergeEnabled={Boolean(autoMerge)}
+                  mergeStrategy={mergeStrategy}
                   nearDuplicateCanonicalInactive={resolveNearDuplicateCanonicalInactive(task)}
                 />
               ))}

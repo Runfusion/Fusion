@@ -481,6 +481,25 @@ FN-7241 adds timestamps inside individual task-detail transcript blocks. Keep bl
   padding: var(--space-sm) var(--space-md);
 }
 
+.task-chat-composer-affordance {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.task-chat-composer-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.task-chat-composer-hint {
+  color: var(--text-muted);
+  font-size: var(--space-md);
+  text-align: right;
+}
+
 .task-chat-composer-row {
   display: flex;
   align-items: flex-end;
@@ -616,6 +635,16 @@ FN-6660 corrects the repeated mobile sizing misses from FN-6507, FN-6604, and FN
 
   .task-chat-composer {
     padding: var(--space-xs) var(--space-sm);
+  }
+
+  .task-chat-composer-affordance {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: calc(var(--space-xs) / 2);
+  }
+
+  .task-chat-composer-hint {
+    text-align: left;
   }
 
   .task-chat-composer-row {

@@ -11,6 +11,7 @@ export interface UseAppSettingsResult {
   maxConcurrent: number;
   rootDir: string;
   autoMerge: boolean;
+  mergeStrategy: string;
   showWorktreeGrouping: boolean;
   testMode: boolean;
   isTestMode: boolean;
@@ -24,6 +25,7 @@ export interface UseAppSettingsResult {
   openMobileTasksInPopup: boolean;
   quickChatButtonMode: QuickChatButtonMode;
   quickChatCloseOnOutsideClick: boolean;
+  dismissModalsOnOutsideClick: boolean;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
   prAuthAvailable: boolean;
@@ -52,6 +54,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [maxConcurrent, setMaxConcurrent] = useState(2);
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
+  const [mergeStrategy, setMergeStrategy] = useState("direct");
   const [showWorktreeGrouping, setShowWorktreeGrouping] = useState(false);
   const [testMode, setTestMode] = useState(false);
   const [isTestMode, setIsTestMode] = useState(false);
@@ -65,6 +68,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [openMobileTasksInPopup, setOpenMobileTasksInPopup] = useState(false);
   const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
+  const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
   const [prAuthAvailable, setPrAuthAvailable] = useState(false);
@@ -96,6 +100,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     if (settingsResult.status === "fulfilled") {
       const settings = settingsResult.value;
       setAutoMerge(Boolean(settings.autoMerge));
+      /*
+      FNXC:BoardCardActions 2026-06-30-00:42:
+      Board and List context menus need the project merge strategy before PR creation so manual PR projects can show Start PR Review with the same availability as Task Detail.
+      */
+      setMergeStrategy(typeof settings.mergeStrategy === "string" ? settings.mergeStrategy : "direct");
       setShowWorktreeGrouping(settings.showWorktreeGrouping === true);
       const nextTestMode = settings.testMode === true;
       const nextIsTestMode = nextTestMode || settings.defaultProvider?.trim().toLowerCase() === "mock";
@@ -116,6 +125,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
             : "off";
       setQuickChatButtonMode(nextQuickChatButtonMode);
       setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
+      setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
       setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
       setCapacityRiskBannerEnabled(settings.capacityRiskBannerEnabled === true);
@@ -151,6 +161,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setOpenTasksInRightSidebar(false);
     setOpenMobileTasksInPopup(false);
     setQuickChatCloseOnOutsideClick(true);
+    setDismissModalsOnOutsideClick(false);
     setTodosEnabled(true);
     setGoalsEnabled(true);
     void refresh();
@@ -241,6 +252,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     maxConcurrent,
     rootDir,
     autoMerge,
+    mergeStrategy,
     showWorktreeGrouping,
     testMode,
     isTestMode,
@@ -254,6 +266,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     openMobileTasksInPopup,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
+    dismissModalsOnOutsideClick,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,

@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Activity landing state.
 */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
@@ -90,6 +90,20 @@ function expectTabTouchAction(ruleBlock: string, surface: string): void {
 
 describe("TaskDetailModal", () => {
   describe("mobile responsive structure", () => {
+    it("keeps planner chat composer usable on narrow task-detail layouts", () => {
+      const css = readDashboardStylesSource();
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".task-planner-chat-composer");
+
+      expectBaseRule(css, ".task-planner-chat", "display: flex;");
+      expectBaseRule(css, ".task-planner-chat-transcript", "overflow: auto;");
+      expect(mobileBlock).toContain(".task-planner-chat-composer");
+      expect(mobileBlock).toContain("flex-direction: column;");
+      expect(mobileBlock).toContain("align-items: stretch;");
+      expectBaseRule(css, ".task-planner-chat-starters", "grid-template-columns: repeat(2, minmax(0, 1fr));");
+      expect(mobileBlock).toContain(".task-planner-chat-starters");
+      expect(mobileBlock).toContain("grid-template-columns: 1fr;");
+    });
+
     it("keeps detail metadata as a single wrapping flex row without mobile column fallbacks", () => {
       const css = readDashboardStylesSource();
 
@@ -119,6 +133,26 @@ describe("TaskDetailModal", () => {
       expect(css).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.detail-timestamps\s*\{[^}]*align-items:\s*center;[^}]*flex-wrap:\s*nowrap;/);
       expect(css).not.toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.detail-timestamps\s*\{[^}]*flex-direction:\s*column;/);
       expect(css).not.toMatch(/@media[^{]*\(max-width: 768px\)[^{]*\{[\s\S]*?\.detail-timestamp-separator\s*\{[^}]*display:\s*none;/);
+    });
+
+    it("keeps the canonical workflow badge owned by the timestamp group across breakpoints", () => {
+      const css = readDashboardStylesSource();
+      const workflowBadgeBlock = css.match(/^\.detail-workflow-badge\s*\{([^}]*)\}/m)?.[1] ?? "";
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-timestamps");
+      const mobileTimestampsBlock = getCssRuleBlock(mobileBlock, ".detail-timestamps");
+
+      expect(workflowBadgeBlock).toContain("display: inline-flex;");
+      expect(workflowBadgeBlock).toContain("align-items: center;");
+      expect(workflowBadgeBlock).toContain("column-gap: calc(var(--space-xs) / 2);");
+      expect(workflowBadgeBlock).toContain("flex: 0 1 auto;");
+      expect(workflowBadgeBlock).toContain("text-overflow: ellipsis;");
+      expect(mobileTimestampsBlock).toContain("display: flex;");
+      expect(mobileTimestampsBlock).toContain("align-items: center;");
+      expect(mobileTimestampsBlock).toContain("flex-wrap: nowrap;");
+      expect(css).not.toMatch(/detail-workflow-badge--desktop/);
+      expect(css).not.toMatch(/detail-workflow-badge--mobile/);
+      expect(css).not.toMatch(/task-detail-workflow-badge-mobile/);
+      expect(css).not.toMatch(/\.detail-title-row\s+\.detail-workflow-badge\s*\{/);
     });
     it("keeps desktop and mobile modal sizing guards unchanged", () => {
       const css = readDashboardStylesSource();
@@ -205,9 +239,9 @@ describe("TaskDetailModal", () => {
       expect(container.querySelectorAll(".detail-timestamp-item").length).toBe(2);
       const tabs = container.querySelectorAll(".detail-tab");
       expect(Array.from(tabs).map((tab) => tab.textContent?.trim())).toEqual([
+        "Activity",
         "Chat",
-        "Definition",
-        "Logs",
+        "Plan",
         "Changes",
         "Review",
         "Comments",
@@ -737,7 +771,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByRole("button", { name: "Finish & Close" })).toBeNull();
     });
 
-    it("shows Start PR Review and calls onMergeTask for pull-request strategy when autoMerge is off and no PR exists", async () => {
+    it("shows Start PR Review and opens PR creation for pull-request strategy when autoMerge is off and no PR exists", async () => {
       const { fetchSettings } = await import("../../api");
       const onMergeTask = vi.fn(async () => ({ merged: false } as MergeResult));
       vi.mocked(fetchSettings).mockResolvedValueOnce({
@@ -764,9 +798,8 @@ describe("TaskDetailModal", () => {
       const button = await screen.findByRole("button", { name: "Start PR Review" });
       fireEvent.click(button);
 
-      await waitFor(() => {
-        expect(onMergeTask).toHaveBeenCalledWith("FN-099");
-      });
+      expect(await screen.findByRole("heading", { name: "Create Pull Request" })).toBeInTheDocument();
+      expect(onMergeTask).not.toHaveBeenCalled();
     });
 
     it("refreshes PR status for Check PR Status without merge prompt", async () => {

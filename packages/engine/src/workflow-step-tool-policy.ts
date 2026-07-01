@@ -47,14 +47,25 @@ export function isReadonlyAllowed(toolName: string): boolean {
   return READONLY_ALLOWLIST_SET.has(toolName.trim());
 }
 
-export function filterCustomToolsForReadonly(tools: ToolDefinition[]): { allowed: ToolDefinition[]; denied: string[] } {
+export interface ReadonlyCustomToolFilterOptions {
+  /**
+   * FNXC:McpConfig 2026-06-29-00:00:
+   * Planning and mission interviews use read-only sessions but intentionally opt into MCP session tools after Fusion has connected, namespaced, and materialized those tools. Keep this as a per-tool predicate instead of a blanket `mcp__` name allowlist so other read-only lanes and caller-supplied custom tools remain protected by default.
+   */
+  allowTool?: (tool: ToolDefinition) => boolean;
+}
+
+export function filterCustomToolsForReadonly(
+  tools: ToolDefinition[],
+  options: ReadonlyCustomToolFilterOptions = {},
+): { allowed: ToolDefinition[]; denied: string[] } {
   const allowed: ToolDefinition[] = [];
   const denied: string[] = [];
 
   for (const tool of tools) {
     const name = tool.name?.trim() ?? "";
     if (!name) continue;
-    if (isReadonlyAllowed(name)) {
+    if (isReadonlyAllowed(name) || options.allowTool?.(tool) === true) {
       allowed.push(tool);
       continue;
     }

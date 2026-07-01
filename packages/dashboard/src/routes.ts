@@ -13,7 +13,7 @@ import * as nodeFs from "node:fs";
 import os from "node:os";
 import v8 from "node:v8";
 
-import type { TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType, McpServerDefinition } from "@fusion/core";
+import type { AnthropicProviderRegistration, TaskStore, ScheduleType, ActivityEventType, ModelPreset, RoutineTriggerType, McpServerDefinition } from "@fusion/core";
 import {
   type Task,
   type PiExtensionEntry,
@@ -206,6 +206,10 @@ export interface ModelRegistryLike {
   refresh(): void;
   /** Get models that have auth configured. */
   getAvailable(): Array<{ id: string; name: string; provider: string; reasoning: boolean; contextWindow: number }>;
+  /** Optional pi ModelRegistry surface used for supplemental model registration. */
+  getAll?: () => Array<{ id: string; name?: string; provider: string; reasoning?: boolean; input?: string[]; cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }; contextWindow?: number; maxTokens?: number; compat?: unknown }>;
+  /** Optional pi ModelRegistry surface used for supplemental model registration. */
+  registerProvider?: (providerName: string, config: AnthropicProviderRegistration) => void;
 }
 
 /**

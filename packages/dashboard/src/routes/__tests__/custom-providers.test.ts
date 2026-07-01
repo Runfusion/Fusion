@@ -600,6 +600,18 @@ describe("POST /api/custom-providers/probe-models", () => {
     expect(res.status).toBe(400);
   });
 
+  it("keeps SSRF protection for untrusted Detect Models probe input", async () => {
+    const app = setupApp(createCustomProviderStore().store);
+    const res = await doRequest(app, "POST", "/api/custom-providers/probe-models", {
+      baseUrl: "http://localhost:1234/v1",
+      apiType: "openai-compatible",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("loopback or private address");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("returns error when provider returns non-200", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

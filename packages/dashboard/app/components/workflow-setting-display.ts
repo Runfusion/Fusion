@@ -83,6 +83,24 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
     group: "review",
     label: "Reflection enabled",
   },
+  planReviewMaxRevisions: {
+    group: "review",
+    label: "Plan Review revision cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-06-30-19:47:
+     * The Values tab must tell operators that an empty built-in workflow value is intentionally unbounded, not the old three-pass Plan Review default. Numeric values cap retries and `0` turns off automatic revision.
+     */
+    description: "Leave empty for unbounded automatic Plan Review/spec revision; set 0 to disable automatic revision.",
+  },
+  codeReviewMaxRevisions: {
+    group: "review",
+    label: "Code Review revision cap",
+    /*
+     * FNXC:WorkflowRevisionBudget 2026-06-30-19:47:
+     * Built-in workflow values are editable even when definitions are read-only, so this label is the operator-facing cap for Code Review remediation without requiring a workflow duplicate.
+     */
+    description: "Leave empty for unbounded automatic Code Review remediation; set 0 to disable automatic revision.",
+  },
   workflowStepTimeoutMs: {
     group: "steps",
     label: "Step timeout",

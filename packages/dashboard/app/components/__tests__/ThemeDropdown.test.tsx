@@ -10,12 +10,12 @@ describe("ThemeDropdown", () => {
   });
 
   it("renders the current theme chip and opens all swatched theme options", () => {
-    render(<ThemeDropdown colorTheme="ocean" onColorThemeChange={vi.fn()} />);
+    render(<ThemeDropdown colorTheme="shadcn-ember" onColorThemeChange={vi.fn()} />);
 
-    const trigger = screen.getByRole("button", { name: /ocean/i });
+    const trigger = screen.getByRole("button", { name: /shadcn ember/i });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
-    expect(within(trigger).getByText("Ocean (Default)")).toBeDefined();
-    expect(trigger.querySelector(".theme-swatch-ocean")).toBeTruthy();
+    expect(within(trigger).getByText("Shadcn Ember (Default)")).toBeDefined();
+    expect(trigger.querySelector(".theme-swatch-shadcn-ember")).toBeTruthy();
 
     fireEvent.click(trigger);
 
@@ -27,6 +27,18 @@ describe("ThemeDropdown", () => {
         .find((element) => element.textContent?.trim().startsWith(theme.label));
       expect(option?.querySelector(`.${theme.className}`)).toBeTruthy();
     }
+  });
+
+  it("labels only Shadcn Ember as the default option", () => {
+    render(<ThemeDropdown colorTheme="ocean" onColorThemeChange={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /ocean/i }).textContent).toContain("Ocean");
+    expect(screen.getByRole("button", { name: /ocean/i }).textContent).not.toContain("Default");
+
+    fireEvent.click(screen.getByRole("button", { name: /ocean/i }));
+    const defaultOptions = screen.getAllByRole("option").filter((option) => option.textContent?.includes("(Default)"));
+    expect(defaultOptions).toHaveLength(1);
+    expect(defaultOptions[0]).toHaveTextContent("Shadcn Ember (Default)");
   });
 
   it("selects themes and closes from click, escape, and outside click", () => {
@@ -77,6 +89,17 @@ describe("ThemeDropdown", () => {
       />,
     );
     expect(screen.getByTestId("shadcn-color-picker")).toBeDefined();
+    const showCustomColors = screen.getByRole("button", { name: "Show custom colors" });
+    expect(showCustomColors).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("shadcn-color-picker-controls")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reset custom colors" })).toBeNull();
+    expect(screen.queryByTestId("shadcn-color---accent")).toBeNull();
+
+    fireEvent.click(showCustomColors);
+    expect(screen.getByRole("button", { name: "Collapse custom colors" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("shadcn-color-picker-controls")).toBeDefined();
+    const accentRow = screen.getByTestId("shadcn-color---accent");
+    expect(within(accentRow).getByRole("textbox")).toHaveValue("#123456");
   });
 
   it("renders compact theme mode controls when mode props are supplied", () => {

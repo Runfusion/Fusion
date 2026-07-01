@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Activity landing state.
 */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
@@ -35,7 +35,7 @@ import { FileBrowserProvider } from "../../context/FileBrowserContext";
 setupTaskDetailModalHooks();
 
 describe("TaskDetailModal", () => {
-  describe("workflow header badge", () => {
+  describe("workflow timestamp badge", () => {
     const workflowPayload = {
       flagEnabled: true,
       defaultWorkflowId: "builtin:coding",
@@ -71,14 +71,17 @@ describe("TaskDetailModal", () => {
       );
     }
 
-    it("renders the resolved workflow name beside the task id and column badge", async () => {
+    it("renders the resolved workflow name in the timestamp section instead of the title row", async () => {
       vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce(workflowPayload);
 
-      renderDetail();
+      const { container } = renderDetail();
 
       const badge = await screen.findByTestId("task-detail-workflow-badge");
       expect(badge).toHaveTextContent("Docs");
-      expect(badge.parentElement).toHaveClass("detail-title-row");
+      expect(badge.closest(".detail-timestamps")).toBeTruthy();
+      expect(badge.closest(".detail-title-row")).toBeNull();
+      expect(container.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
+      expect(screen.getAllByTestId("task-detail-workflow-badge")).toHaveLength(1);
       expect(screen.getByText("FN-101")).toBeInTheDocument();
       expect(screen.getByText("Todo")).toBeInTheDocument();
       expect(dashboardApi.fetchBoardWorkflows).toHaveBeenCalledTimes(1);
@@ -170,10 +173,10 @@ describe("TaskDetailModal", () => {
       expect(container.querySelector(".detail-workflow-badge")).toBeNull();
     });
 
-    it("renders in the mobile back-header variant", async () => {
+    it("renders the canonical badge beside the Updated timestamp in the mobile back-header variant", async () => {
       vi.mocked(dashboardApi.fetchBoardWorkflows).mockResolvedValueOnce(workflowPayload);
 
-      render(
+      const { container } = render(
         <TaskDetailModal
           initialTab="definition"
           mobileHeaderMode="back"
@@ -187,7 +190,15 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(await screen.findByTestId("task-detail-workflow-badge")).toHaveTextContent("Docs");
+      const badge = await screen.findByTestId("task-detail-workflow-badge");
+      const timestamps = container.querySelector(".detail-timestamps");
+      const updatedLabel = screen.getByText("Updated").closest(".detail-timestamp-item");
+      expect(badge).toHaveTextContent("Docs");
+      expect(badge.parentElement).toBe(timestamps);
+      expect(updatedLabel?.nextElementSibling).toBe(badge);
+      expect(screen.getAllByTestId("task-detail-workflow-badge")).toHaveLength(1);
+      expect(screen.queryByTestId("task-detail-workflow-badge-mobile")).toBeNull();
+      expect(container.querySelector(".detail-title-row .detail-workflow-badge")).toBeNull();
       expect(screen.getByRole("button", { name: "Back to task list" })).toBeInTheDocument();
     });
   });
@@ -875,7 +886,7 @@ describe("TaskDetailModal", () => {
 
     expect(container.querySelector(".task-detail-content--embedded")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Definition" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Plan" })).toBeInTheDocument();
   });
 
   it("renders header close control for embedded floating task details", () => {
@@ -2417,7 +2428,8 @@ describe("TaskDetailModal", () => {
         expect(container.querySelector(".markdown-body")).toBeTruthy();
       }, { timeout: 3000 });
 
-      fireEvent.click(screen.getByText("Logs"));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Feed" }));
 
       const activityList = container.querySelector(".detail-activity-list");
       expect(activityList).toBeTruthy();

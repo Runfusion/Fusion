@@ -16,6 +16,13 @@ export type {
   EntryPointBranchAssignment,
 } from "./branch-assignment.js";
 export { customProviderRegistryKey } from "./custom-provider-key.js";
+export {
+  ANTHROPIC_PROVIDER_ID,
+  CLAUDE_SONNET_5_MODEL_ID,
+  SUPPLEMENTAL_ANTHROPIC_PROVIDER_REGISTRATION,
+  mergeSupplementalAnthropicModels,
+} from "./anthropic-models.js";
+export type { AnthropicProviderRegistration } from "./anthropic-models.js";
 export { detectImageMimeFromBytes } from "./image-mime.js";
 export type { DetectedImageMime } from "./image-mime.js";
 export { redactSecrets } from "./redact-secrets.js";
@@ -373,6 +380,10 @@ export type {
   WorkflowNodeLayout,
 } from "./workflow-definition-types.js";
 export {
+  MAX_WORKFLOW_ICON_LENGTH,
+  normalizeWorkflowIcon,
+} from "./workflow-definition-types.js";
+export {
   compileWorkflowToSteps,
   validateLinearity,
   WorkflowCompileError,
@@ -403,9 +414,14 @@ export {
   resolveEffectiveSettings,
   resolveEffectiveSettingsDetailed,
   resolveEffectiveSettingsById,
+  resolveOptionalReviewRevisionBudget,
+  PLAN_REVIEW_MAX_REVISIONS_SETTING_ID,
+  CODE_REVIEW_MAX_REVISIONS_SETTING_ID,
   type WorkflowSettingsResolverStore,
   type EffectiveSettingsResult,
   type EffectiveSettingsTaskRef,
+  type OptionalReviewRevisionBudget,
+  type ResolveOptionalReviewRevisionBudgetInput,
 } from "./workflow-settings-resolver.js";
 export {
   applyWorkflowSettingsOverlay,

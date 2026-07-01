@@ -513,7 +513,9 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "global-general" });
       await waitForSettingsModalReady();
 
-      // persistAgentToolOutput defaults to unchecked; Star-on-GitHub control absent.
+      // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
+      expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
+      expect(screen.getByText(/Off by default to prevent accidental dismissal/i).closest("small")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
@@ -580,6 +582,25 @@ describe("SettingsModal", () => {
 
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for permanent agents" })).toBeChecked();
       expect(screen.getByRole("checkbox", { name: "Save AI thinking for ephemeral / task-worker agents" })).toBeChecked();
+    });
+
+    it("saves modal outside-dismiss only via global settings payload", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalled();
+      });
+
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.dismissModalsOnOutsideClick).toBe(true);
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.dismissModalsOnOutsideClick).toBeUndefined();
+      }
     });
 
     it("saves persistAgentToolOutput only via global settings payload", async () => {

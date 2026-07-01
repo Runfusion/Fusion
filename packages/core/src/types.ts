@@ -333,6 +333,8 @@ export const COLOR_THEMES = [
   "neon-bloom",
   "sepia",
   "shadcn",
+  // FNXC:DashboardTheming 2026-06-30-00:00: Shadcn Ember is the default for unset installs; keep it adjacent to the shadcn base so dashboard options and bootstrap validators preserve published theme order while explicit legacy ids remain valid.
+  "shadcn-ember",
   // FNXC:DashboardTheming 2026-06-20-18:20: FN-6816 adds the user-customizable shadcn variant; keep this union in lockstep with dashboard theme options, swatches, theme-data base blocks, and the shadcn custom color token list.
   "shadcn-custom",
   // FNXC:DashboardTheming 2026-06-19-16:07: FN-6756 extends the published color-theme union with shadcn-family accent variants; keep dashboard theme options, bootstrap validation, swatches, and theme-data token blocks in lockstep with this ordered list.
@@ -2948,12 +2950,17 @@ export interface McpServersSettings {
 export interface GlobalSettings {
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
-  /** Color theme preference for accent colors and styling. Default: "ocean"; "default" is the legacy Fusion theme id. */
+  /** Color theme preference for accent colors and styling. Default: "shadcn-ember"; "default" and "ocean" remain valid explicit legacy selections. */
   colorTheme?: ColorTheme;
   /** Token→hex override map for the customizable shadcn theme. Applied only when `colorTheme === "shadcn-custom"`; dashboard sanitizes keys and values before writing CSS custom properties. */
   shadcnCustomColors?: Record<string, string>;
   /** Dashboard font size scale percentage. Bounded to 85-125. Default: 100. */
   dashboardFontScalePct?: number;
+  /**
+   * FNXC:ModalDismissal 2026-06-29-00:00:
+   * Modal backdrop dismissal is a global operator preference, not project policy. Default false keeps fixed modal overlays from closing on accidental outside clicks unless the operator opts in.
+   */
+  dismissModalsOnOutsideClick?: boolean;
   /** Active UI locale (e.g. `"en"`, `"zh-CN"`, `"fr"`). One of `SUPPORTED_LOCALES`.
    *  When unset, each surface resolves the locale at runtime (browser/env
    *  detection) and falls back to `DEFAULT_LOCALE` ("en"). */

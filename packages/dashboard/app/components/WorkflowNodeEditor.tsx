@@ -53,6 +53,7 @@ FN-6770 localizes this workflow surface through t() and authored en catalog keys
 */
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { isMobileViewport, useViewportMode } from "../hooks/useViewportMode";
+import { WorkflowIcon } from "./WorkflowIcon";
 import { workflowNodeTypes, type WorkflowFlowNodeData, type WorkflowEditorNodeKind } from "./nodes/WorkflowNodeTypes";
 import { WorkflowEditorCatalogContext } from "./nodes/WorkflowEditorCatalogContext";
 import { bareSkillName, type NodeSummaryCatalogs } from "./nodes/node-summary";
@@ -189,6 +190,7 @@ function miniMapNodeStrokeColor(node: FlowNode<WorkflowFlowNodeData>): string {
 function serializeGraph(
   name: string,
   description: string,
+  icon: string | undefined,
   nodes: FlowNode<WorkflowFlowNodeData>[],
   edges: FlowEdge[],
   columns: WorkflowIrColumn[],
@@ -203,7 +205,7 @@ function serializeGraph(
     fields.length ? fields : undefined,
     settings.length ? settings : undefined,
   );
-  return JSON.stringify({ name, description, ir, layout });
+  return JSON.stringify({ name, description, icon: icon?.trim() || undefined, ir, layout });
 }
 
 interface WorkflowNodeEditorProps {
@@ -338,6 +340,8 @@ interface WorkflowCreateTemplate {
   id: string | null;
   name: string;
   description: string;
+  /** Optional compact icon copied from custom workflow sources. */
+  icon?: string;
   /** Node count of the source IR (0 for blank). */
   nodeCount: number;
   /** Source definition for seeding via copyIrWithFreshIds (absent for blank). */
@@ -364,7 +368,7 @@ function CreateWorkflowDialog({
   onClose,
 }: {
   workflows: WorkflowDefinition[];
-  onCreate: (name: string, description: string, template: WorkflowCreateTemplate) => Promise<void>;
+  onCreate: (name: string, description: string, icon: string, template: WorkflowCreateTemplate) => Promise<void>;
   /** U10/R11: design a brand-new workflow from a prompt. Resolves on success
    *  (the parent seeds + activates the workflow and closes the dialog); throws on
    *  failure so the dialog surfaces the server message inline without closing.
@@ -375,6 +379,7 @@ function CreateWorkflowDialog({
   const { t } = useTranslation("app");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [icon, setIcon] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // U10/R11: AI-design disclosure state. `aiOpen` reveals the prompt textarea;
@@ -406,6 +411,7 @@ function CreateWorkflowDialog({
       id: w.id,
       name: w.name,
       description: w.description ?? "",
+      icon: w.icon,
       nodeCount: w.ir.nodes.length,
       source: w,
       builtin: isBuiltinWorkflowId(w.id),
@@ -423,21 +429,31 @@ function CreateWorkflowDialog({
   }, []);
 
   // Apply a template selection: move the radio focus state and (R7) prefill the
-  // name ("<source> copy") + description from the source, but only while the user
-  // has not edited the name.
+  // name ("<source> copy") only while the user has not edited it. Description and
+  // copy icon follow the selected source so typed-name copies still satisfy the
+  // custom-workflow icon contract.
   const selectTemplate = useCallback(
     (index: number) => {
       const tmpl = templates[index];
       if (!tmpl) return;
       setSelectedIndex(index);
-      if (!nameTouched) {
-        if (tmpl.id === null) {
-          setName("");
-          setDescription("");
-        } else {
+      if (tmpl.id === null) {
+        if (!nameTouched) setName("");
+        setDescription("");
+        setIcon("");
+      } else {
+        if (!nameTouched) {
           setName(t("workflows.templateCopyName", "{{name}} copy", { name: tmpl.name }));
-          setDescription(tmpl.description);
         }
+        setDescription(tmpl.description);
+        /*
+        FNXC:WorkflowIcons 2026-06-30-12:20:
+        Copying a built-in or iconless workflow must create an editable custom workflow with a non-Fusion icon, while custom workflow copies preserve their existing non-Fusion icon.
+
+        FNXC:WorkflowIcons 2026-06-30-15:06:
+        Template selection must default the copied icon even after the author types a custom name; only the name prefill is protected by the dirty-name guard.
+        */
+        setIcon(tmpl.builtin || !tmpl.icon ? "✨" : tmpl.icon);
       }
       if (error) setError(null);
     },
@@ -480,14 +496,14 @@ function CreateWorkflowDialog({
       setSubmitting(true);
       setError(null);
       try {
-        await onCreate(trimmed, description.trim(), selected);
+        await onCreate(trimmed, description.trim(), icon.trim(), selected);
         // Success path closes the dialog from the parent.
       } catch (err) {
         setError(getErrorMessage(err) || t("workflows.createFailed", "Failed to create workflow"));
         setSubmitting(false);
       }
     },
-    [name, description, selected, onCreate, t],
+    [name, description, icon, selected, onCreate, t],
   );
 
   // U10/R11: submit the AI design request. On success the parent seeds the
@@ -638,8 +654,9 @@ function CreateWorkflowDialog({
                   return (
                     <div key={optionKey}>
                       {index === firstBuiltinIndex && firstBuiltinIndex >= 0 && (
-                        <p className="wf-template-section">
-                          {t("workflows.templateSectionBuiltin", "Built-in workflows")}
+                        <p className="wf-template-section wf-template-section--icon">
+                          <WorkflowIcon workflowId="builtin:template-section" decorative />
+                          <span>{t("workflows.templateSectionBuiltin", "Fusion workflows")}</span>
                         </p>
                       )}
                       {index === firstYoursIndex && firstYoursIndex >= 0 && (
@@ -662,7 +679,10 @@ function CreateWorkflowDialog({
                         }}
                         onKeyDown={handleOptionKeyDown}
                       >
-                        <span className="wf-template-option-name">{tmpl.name}</span>
+                        <span className="wf-template-option-heading">
+                          <WorkflowIcon workflowId={tmpl.id ?? ""} icon={tmpl.icon} decorative />
+                          <span className="wf-template-option-name">{tmpl.name}</span>
+                        </span>
                         {tmpl.description && (
                           <span className="wf-template-option-desc">{tmpl.description}</span>
                         )}
@@ -688,6 +708,16 @@ function CreateWorkflowDialog({
                   setNameTouched(true);
                   if (error) setError(null);
                 }}
+              />
+            </label>
+            <label className="wf-field">
+              <span>{t("workflows.iconLabel", "Icon (optional)")}</span>
+              <input
+                data-testid="wf-create-icon"
+                value={icon}
+                maxLength={16}
+                placeholder={t("workflows.iconPlaceholder", "e.g. 🚀")}
+                onChange={(e) => setIcon(e.target.value)}
               />
             </label>
             <label className="wf-field">
@@ -773,6 +803,7 @@ function InnerEditor({
   // `editingDescription` flag the active inline input.
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [icon, setIcon] = useState<string | undefined>(undefined);
   const [editingName, setEditingName] = useState(false);
   const [editingDescription, setEditingDescription] = useState(false);
   // Snapshot of the workflow as loaded, serialized through flowToIr AFTER
@@ -1076,10 +1107,10 @@ function InnerEditor({
     if (isBuiltin) return false;
     if (!activeWorkflow || loadedSnapshotRef.current === null) return false;
     return (
-      serializeGraph(name, description, nodes, edges, columns, fields, settings) !==
+      serializeGraph(name, description, icon, nodes, edges, columns, fields, settings) !==
       loadedSnapshotRef.current
     );
-  }, [isBuiltin, activeWorkflow, name, description, nodes, edges, columns, fields, settings]);
+  }, [isBuiltin, activeWorkflow, name, description, icon, nodes, edges, columns, fields, settings]);
 
   const loadWorkflows = useCallback(async () => {
     setLoading(true);
@@ -1192,6 +1223,7 @@ function InnerEditor({
       setPromptOverrideSavingNodeId(null);
       setName("");
       setDescription("");
+      setIcon(undefined);
       loadedSnapshotRef.current = null;
       return;
     }
@@ -1210,6 +1242,7 @@ function InnerEditor({
     setSettings(loadedSettings);
     setName(activeWorkflow.name);
     setDescription(activeWorkflow.description ?? "");
+    setIcon(activeWorkflow.icon);
     setEditingName(false);
     setEditingDescription(false);
     // Compute the normalized loaded snapshot from the materialized flow (so
@@ -1217,6 +1250,7 @@ function InnerEditor({
     loadedSnapshotRef.current = serializeGraph(
       activeWorkflow.name,
       activeWorkflow.description ?? "",
+      activeWorkflow.icon,
       laidOutNodes,
       flow.edges,
       loadedColumns,
@@ -1852,7 +1886,7 @@ function InnerEditor({
   // Perform the createWorkflow call. Throws on failure so the dialog surfaces
   // the server error (e.g. duplicate name) inline without losing the input.
   const handleCreateWorkflow = useCallback(
-    async (workflowName: string, workflowDescription: string, template: WorkflowCreateTemplate) => {
+    async (workflowName: string, workflowDescription: string, workflowIcon: string, template: WorkflowCreateTemplate) => {
       // Blank → empty start→end graph; template → a fresh-ID copy of the source
       // graph + layout (U4/R7, never a reference). Always created kind "workflow".
       const seed =
@@ -1863,6 +1897,7 @@ function InnerEditor({
         {
           name: workflowName,
           description: workflowDescription || undefined,
+          icon: workflowIcon || undefined,
           kind: "workflow",
           ir: seed.ir,
           layout: seed.layout,
@@ -1947,6 +1982,7 @@ function InnerEditor({
         {
           name: `${activeWorkflow.name} (copy)`,
           description: activeWorkflow.description,
+          icon: isBuiltinWorkflowId(activeWorkflow.id) || !activeWorkflow.icon ? "✨" : activeWorkflow.icon,
           ir: activeWorkflow.ir,
           layout: activeWorkflow.layout,
         },
@@ -2006,6 +2042,8 @@ function InnerEditor({
       // loaded workflow (KTD-10 inline rename/description persist here).
       const nameChanged = trimmedName !== activeWorkflow.name;
       const descChanged = description !== (activeWorkflow.description ?? "");
+      const normalizedIcon = icon?.trim() || undefined;
+      const iconChanged = normalizedIcon !== activeWorkflow.icon;
       const finishSave = async (updated: Awaited<ReturnType<typeof updateWorkflow>>) => {
         setWorkflows((ws) => ws.map((w) => (w.id === updated.id ? updated : w)));
         // Re-baseline the dirty snapshot to the just-saved state so the editor is
@@ -2013,6 +2051,7 @@ function InnerEditor({
         loadedSnapshotRef.current = serializeGraph(
           updated.name,
           updated.description ?? "",
+          updated.icon,
           nodes,
           edges,
           columns,
@@ -2021,6 +2060,7 @@ function InnerEditor({
         );
         setName(updated.name);
         setDescription(updated.description ?? "");
+        setIcon(updated.icon);
         // Validate by compiling — surfaces non-linear graphs as a banner.
         try {
           await compileWorkflow(updated.id, projectId);
@@ -2046,6 +2086,7 @@ function InnerEditor({
         layout,
         ...(nameChanged ? { name: trimmedName } : {}),
         ...(descChanged ? { description } : {}),
+        ...(iconChanged ? { icon: normalizedIcon ?? null } : {}),
       };
       try {
         await finishSave(await updateWorkflow(activeWorkflow.id, savePayload, projectId));
@@ -2748,6 +2789,7 @@ function InnerEditor({
                       <ChevronRight size={14} aria-hidden />
                     </button>
                   )}
+                  <WorkflowIcon workflowId={activeWorkflow.id} icon={icon} decorative />
                   {isBuiltin ? (
                     <span className="wf-workflow-name wf-workflow-name--readonly" data-testid="wf-workflow-name">
                       {activeWorkflow.name}
@@ -2787,6 +2829,17 @@ function InnerEditor({
                       {name || activeWorkflow.name}
                     </button>
                   )}
+                  {!isBuiltin ? (
+                    <input
+                      className="wf-workflow-icon-input"
+                      data-testid="wf-workflow-icon-input"
+                      value={icon ?? ""}
+                      maxLength={16}
+                      aria-label={t("workflows.iconLabel", "Icon (optional)")}
+                      placeholder={t("workflows.iconPlaceholder", "e.g. 🚀")}
+                      onChange={(e) => setIcon(e.target.value)}
+                    />
+                  ) : null}
                   {isBuiltin ? (
                     activeWorkflow.description ? (
                       <span className="wf-workflow-description wf-workflow-description--readonly" data-testid="wf-workflow-description">
@@ -2907,8 +2960,9 @@ function InnerEditor({
                       {mobilePanel === "add" && (
                         <div className="wf-mobile-add">
                           {isBuiltin ? (
-                            <p className="wf-inspector-note wf-inspector-note--info">
-                              {t("workflows.readOnlyBuiltin", "Built-in workflow: structure is read-only, prompts are editable.")}
+                            <p className="wf-inspector-note wf-inspector-note--info wf-inspector-note--with-icon">
+                              <WorkflowIcon workflowId={activeWorkflow.id} decorative />
+                              <span>{t("workflows.readOnlyBuiltin", "Workflow structure is read-only; prompts are editable.")}</span>
                             </p>
                           ) : (
                             <>
@@ -2976,7 +3030,7 @@ function InnerEditor({
                                   )}
                                   {templateGroups.stepEntries.length > 0 && (
                                     <div className="wf-mobile-template-group">
-                                      <h4>{t("workflowNodes.templatesBuiltinSteps", "Built-in steps")}</h4>
+                                      <h4>{t("workflowNodes.templatesBuiltinSteps", "Fusion steps")}</h4>
                                       {/* FNXC:WorkflowOptionalGroup 2026-06-21-14:38: mobile mirrors the desktop two-variant insert (node / optional group). */}
                                       {templateGroups.stepEntries.map((s) => (
                                         <div key={s.id} className="wf-mobile-template-option-row">
@@ -3082,8 +3136,9 @@ function InnerEditor({
                         <div className="wf-mobile-actions">
                           {isBuiltin ? (
                             <>
-                              <p className="wf-inspector-note wf-inspector-note--info">
-                                {t("workflows.readOnlyBuiltin", "Built-in workflow: structure is read-only, prompts are editable.")}
+                              <p className="wf-inspector-note wf-inspector-note--info wf-inspector-note--with-icon">
+                                <WorkflowIcon workflowId={activeWorkflow.id} decorative />
+                                <span>{t("workflows.readOnlyBuiltin", "Workflow structure is read-only; prompts are editable.")}</span>
                               </p>
                               <button className="wf-editor-action" data-testid="wf-mobile-export" onClick={handleExport}>
                                 <Download size={15} /> {t("workflows.export", "Export")}
@@ -3159,11 +3214,12 @@ function InnerEditor({
                   </div>
                 )}
                 {isBuiltin ? (
-                  // Read-only built-in: a banner *replaces* the save/edit toolbar
+                  // Read-only Fusion workflow: a banner *replaces* the save/edit toolbar
                   // (not an overlay); the canvas below stays inspectable.
                   <div className="wf-editor-readonly-banner" role="status" data-testid="wf-readonly-banner">
                     <span className="wf-editor-readonly-note">
-                      {t("workflows.readOnlyBuiltin", "Built-in workflow: structure is read-only, prompts are editable.")}
+                      <WorkflowIcon workflowId={activeWorkflow.id} decorative />
+                      <span>{t("workflows.readOnlyBuiltin", "Workflow structure is read-only; prompts are editable.")}</span>
                     </span>
                     <button
                       className="wf-editor-action"
@@ -3386,7 +3442,7 @@ function InnerEditor({
                         {templateGroups.stepEntries.length > 0 && (
                           <div className="wf-templates-group">
                             <h4 className="wf-templates-group-title">
-                              {t("workflowNodes.templatesBuiltinSteps", "Built-in steps")}
+                              {t("workflowNodes.templatesBuiltinSteps", "Fusion steps")}
                             </h4>
                             <div className="wf-templates-entries">
                               {/*
@@ -3659,8 +3715,9 @@ function InnerEditor({
                 </details>
               )}
               {isBuiltin && (
-                <p className="wf-inspector-note wf-inspector-note--info">
-                  {t("workflowNodes.readOnlyDuplicateToEdit", "Built-in structure is read-only — prompts on prompt and gate nodes can be edited here.")}
+                <p className="wf-inspector-note wf-inspector-note--info wf-inspector-note--with-icon">
+                  <WorkflowIcon workflowId={activeWorkflow.id} decorative />
+                  <span>{t("workflowNodes.readOnlyDuplicateToEdit", "Workflow structure is read-only — prompts on prompt and gate nodes can be edited here.")}</span>
                 </p>
               )}
               <fieldset className="wf-inspector-fields" disabled={isBuiltin}>

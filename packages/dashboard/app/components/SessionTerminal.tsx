@@ -147,6 +147,10 @@ function buildCliWsUrl(sessionId: string, ticket: string): string {
   return appendTokenQuery(base);
 }
 
+function isMacPlatform(): boolean {
+  return /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+}
+
 function decodeBase64ToString(b64: string): string {
   if (typeof window !== "undefined" && typeof window.atob === "function") {
     // atob → binary string → UTF-8 decode.
@@ -187,15 +191,18 @@ export function SessionTerminal({
   // Sticky Ctrl: tap Ctrl, then the next tapped key combines into a control
   // sequence (Ctrl-C → 0x03, Ctrl-D → 0x04, Ctrl-Z → 0x1A).
   const [ctrlSticky, setCtrlSticky] = useState(false);
+  const [ticketReadOnly, setTicketReadOnly] = useState<boolean | null>(null);
+  const effectiveReadOnly = readOnly || ticketReadOnly === true;
+  const canAcceptInput = !readOnly && ticketReadOnly === false && mode === "live";
 
   /** Write raw bytes to the session input path (mobile bar + submit). */
   const sendInput = useCallback((data: string) => {
-    if (!data) return;
+    if (!data || !canAcceptInput) return;
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "input", data }));
     }
-  }, []);
+  }, [canAcceptInput]);
 
   /**
    * Emit one accessory-bar key. If sticky Ctrl is active and the key has a
@@ -263,6 +270,13 @@ export function SessionTerminal({
     if (showConfirmAdvance) setAdvanceDismissed(false);
   }, [showConfirmAdvance, sessionId]);
 
+  const sendResizeMessage = useCallback((cols: number, rows: number) => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+  }, []);
+
   const applyLiveTerminalPreferences = useCallback(() => {
     const terminal = xtermRef.current;
     if (!terminal) {
@@ -270,21 +284,55 @@ export function SessionTerminal({
     }
 
     const terminalPreferences = readTerminalPreferences();
-    terminal.options.fontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+    const resolvedFontFamily = resolveTerminalFontFamily(terminalPreferences.fontFamily);
+    terminal.options.fontFamily = resolvedFontFamily;
     containerRef.current?.style.setProperty(
       "--terminal-glyph-font-family",
       resolveTerminalGlyphFontFamily(terminalPreferences.fontFamily),
     );
     terminal.options.fontSize = terminalPreferences.fontSize;
     terminal.options.cursorStyle = terminalPreferences.cursorStyle;
-    terminal.options.cursorBlink = terminalPreferences.cursorBlink && !readOnly && mode === "live";
+    terminal.options.cursorBlink = terminalPreferences.cursorBlink && canAcceptInput;
 
     try {
       (fitAddonRef.current as { fit?: () => void } | null)?.fit?.();
+      sendResizeMessage(terminal.cols, terminal.rows);
     } catch {
       /* ignore transient measure failures */
     }
-  }, [mode, readOnly]);
+
+    /*
+    FNXC:Terminal 2026-06-30-13:22:
+    SessionTerminal shares TerminalModal's mobile 10px font-size invariant through the same preference storage. Storage-driven font changes must wait for the symbols-free measured stack, then refit, send one resize frame, and refresh so embedded CLI attach surfaces do not keep stale wide ASCII cells after the soft keyboard has constrained the viewport.
+
+    FNXC:Terminal 2026-06-30-22:47:
+    Async font-metric waits can resolve out of order when a second terminal preference change lands first. Reapply only if the currently mounted xterm options still match the preference snapshot that scheduled this wait, preserving the latest small-font cell metrics instead of resurrecting stale spacing.
+    */
+    void waitForTerminalFontMetrics(terminalPreferences.fontSize, resolvedFontFamily).then(
+      (fontMetricsSettled) => {
+        if (
+          !fontMetricsSettled ||
+          xtermRef.current !== terminal ||
+          terminal.options.fontSize !== terminalPreferences.fontSize ||
+          terminal.options.fontFamily !== resolvedFontFamily
+        ) {
+          return;
+        }
+        terminal.options.fontFamily = resolvedFontFamily;
+        terminal.options.fontSize = terminalPreferences.fontSize;
+        try {
+          (fitAddonRef.current as { fit?: () => void } | null)?.fit?.();
+          sendResizeMessage(terminal.cols, terminal.rows);
+          terminal.refresh(0, Math.max(0, terminal.rows - 1));
+        } catch {
+          /* ignore teardown or transient measure failures */
+        }
+      },
+      () => {
+        /* FontFaceSet failures are non-fatal; the immediate fit above remains. */
+      },
+    );
+  }, [canAcceptInput, sendResizeMessage]);
 
   /*
   FNXC:Terminal 2026-06-17-01:05:
@@ -313,13 +361,9 @@ export function SessionTerminal({
     let resizeObserver: ResizeObserver | null = null;
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     let unackedBytes = 0;
+    setTicketReadOnly(null);
 
-    const sendResize = (cols: number, rows: number) => {
-      const ws = wsRef.current;
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols, rows }));
-      }
-    };
+    const sendResize = sendResizeMessage;
 
     const ackBytes = (n: number) => {
       unackedBytes += n;
@@ -343,6 +387,8 @@ export function SessionTerminal({
         return; // surfaced via the "disconnected" state header below
       }
       if (disposed) return;
+      setTicketReadOnly(ticketRes.readOnly);
+      const ticketCanAcceptInput = !readOnly && !ticketRes.readOnly && mode === "live";
 
       // 2. Lazy-load xterm + addons (out of the main bundle).
       const [{ Terminal }, { FitAddon }, { Unicode11Addon }] = await Promise.all([
@@ -364,13 +410,16 @@ export function SessionTerminal({
       SessionTerminal shares TerminalModal's recurrence #5 root cause: FN-6638's 66.76px diagnostic compared only symbols-inclusive stacks, so real iOS Safari still let the loaded symbols @font-face pollute xterm's ASCII measurement. Pass only the symbols-free resolved family to xterm on this attach surface too; DOM glyph fallback is scoped to the viewport CSS variable and never to the xterm font option used by DOM/canvas measurement or desktop WebGL.
 
       FNXC:Terminal 2026-06-17-00:50:
-      SessionTerminal consumes the shared localStorage terminal preferences for parity with TerminalModal, but replay safety still owns input posture: cursor blink is the user preference AND-gated by !readOnly && mode === "live" so read-only, idle, and ended sessions never blink.
+      SessionTerminal consumes the shared localStorage terminal preferences for parity with TerminalModal, but replay safety still owns input posture: cursor blink is the user preference AND-gated by effective write permission so read-only, idle, ended, and server-downgraded attach sessions never blink.
+
+      FNXC:Terminal 2026-06-30-21:24:
+      Attach tickets are authoritative for replay/permission downgrades. Derive xterm stdin, keyboard handlers, and mobile affordance rendering from both the caller props and ticketRes.readOnly so a server read-only attach cannot accept input even when the mount props still say live+writable.
       */
       const term = new Terminal({
         convertEol: false,
-        cursorBlink: terminalPreferences.cursorBlink && !readOnly && mode === "live",
+        cursorBlink: terminalPreferences.cursorBlink && ticketCanAcceptInput,
         cursorStyle: terminalPreferences.cursorStyle,
-        disableStdin: readOnly,
+        disableStdin: !ticketCanAcceptInput,
         scrollback: 10000,
         // Defensive: do NOT register an OSC 52 (clipboard-write) handler. The
         // server-side neutralizer (U10) strips it; we add no client handling.
@@ -427,7 +476,9 @@ export function SessionTerminal({
           !fontMetricsSettled ||
           disposed ||
           xtermRef.current !== term ||
-          fitAddonRef.current !== fitAddon
+          fitAddonRef.current !== fitAddon ||
+          term.options.fontSize !== terminalPreferences.fontSize ||
+          term.options.fontFamily !== resolvedFontFamily
         ) {
           return;
         }
@@ -446,13 +497,45 @@ export function SessionTerminal({
         }
       })();
 
-      // term.onData → input frames (skip entirely when read-only).
-      if (!readOnly) {
+      /*
+      FNXC:Terminal 2026-06-30-00:10:
+      FN-7262 root cause: the embedded SessionTerminal attach surface forwarded raw xterm data but never installed the copy/paste key filter already used by TerminalModal, so physical Ctrl/Cmd+C with a selection could be swallowed by xterm/browser routing inconsistently while replay states still accepted input. Register exactly one handler with the xterm instance for live writable sessions: platform copy+C copies selected text, copy+C without selection stays on the PTY/SIGINT path, and paste is left to xterm's native onData flow so it is delivered once.
+      */
+      if (ticketCanAcceptInput) {
         term.onData((data: string) => {
           const ws = wsRef.current;
           if (ws?.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "input", data }));
           }
+        });
+
+        term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+          if (event.type !== "keydown") {
+            return true;
+          }
+
+          const isCopyPasteModifier = isMacPlatform() ? event.metaKey : event.ctrlKey;
+          if (!isCopyPasteModifier || event.altKey || event.shiftKey) {
+            return true;
+          }
+
+          const key = event.key.toLowerCase();
+          if (key === "c") {
+            const selection = term.hasSelection() ? term.getSelection() : "";
+            if (!selection) {
+              return true;
+            }
+            navigator.clipboard?.writeText(selection).catch(() => {
+              // Ignore clipboard permission/errors so terminal input stays responsive.
+            });
+            return false;
+          }
+
+          if (key === "v") {
+            return true;
+          }
+
+          return true;
         });
       }
 
@@ -534,7 +617,7 @@ export function SessionTerminal({
       }
       fitAddonRef.current = null;
     };
-  }, [sessionId, readOnly, mode, projectId]);
+  }, [sessionId, readOnly, mode, projectId, sendResizeMessage]);
 
   const replayLabel = useMemo(() => {
     if (mode === "idle") return t("cliTerminal.replayIdle", "Session idle");
@@ -574,7 +657,7 @@ export function SessionTerminal({
         isMobile && keyboardOpen ? " cli-session-terminal--keyboard-open" : ""
       }`}
       data-mode={mode}
-      data-read-only={readOnly}
+      data-read-only={effectiveReadOnly}
       data-mobile={isMobile}
       data-keyboard-open={isMobile && keyboardOpen}
     >
@@ -631,7 +714,7 @@ export function SessionTerminal({
             )}
           </div>
         )}
-        {readOnly && (
+        {effectiveReadOnly && (
           <span className="cli-session-terminal__readonly-badge">
             <Eye size={12} aria-hidden="true" />
             {t("cliTerminal.readOnly", "Read-only")}
@@ -680,7 +763,7 @@ export function SessionTerminal({
         </div>
       )}
 
-      {isMobile && !readOnly && (
+      {isMobile && canAcceptInput && (
         <div
           className={`cli-session-terminal__mobile-bar${
             keyboardOpen ? " cli-session-terminal__mobile-bar--keyboard-open" : ""
@@ -816,11 +899,12 @@ export function SessionTerminal({
               className="cli-session-terminal__mobile-send"
               data-testid="cli-terminal-mobile-send"
               aria-label={t("cliTerminal.mobileSend", "Send")}
-              // iOS pattern: act on click, preventDefault on pointer/mouse down
-              // so the input doesn't blur (which dismisses the keyboard).
+              /*
+              FNXC:Terminal 2026-06-30-22:10:
+              The mobile send affordance must submit through exactly one path. Keep the form submit handler so keyboard Enter and touch activation share one input sequence, while pointer/mouse down still prevents blur on iOS.
+              */
               onPointerDown={keepFocus}
               onMouseDown={keepFocus}
-              onClick={() => handleMobileSubmit()}
             >
               {t("cliTerminal.mobileSend", "Send")}
             </button>

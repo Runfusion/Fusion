@@ -1,11 +1,11 @@
 # Engine Session-Scoped Tools
 
-These tools are **not** part of the user-invokable extension surface. They are injected by the engine at runtime for specific agent session types.
+This reference documents tools injected by the engine at runtime for specific agent session types. Some shared workflow tools are also part of the public extension surface; use `references/extension-tools.md` as the canonical user-invokable extension reference and this page for runtime agent-role availability.
 
 - Source files: `packages/engine/src/agent-tools.ts`, `triage.ts`, `executor.ts`, `merger.ts`, `agent-heartbeat.ts`
 - Availability: only when the engine creates a session for the matching agent role
 - Runtime contract: engine sessions now forward requested skill names (`skillSelection.requestedSkillNames`) into the generic runtime `skills` field so non-pi runtimes can still receive Fusion skill intent.
-- Important: do not tell users to call these directly from the generic extension tool list
+- Important: do not tell users to call runtime-only tools directly from the generic extension tool list
 
 ## Shared runtime tools (`agent-tools.ts`)
 

@@ -57,8 +57,41 @@
 
 .custom-provider-item-actions {
   display: flex;
+  align-items: center;
   gap: var(--space-xs);
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.custom-provider-refresh-btn {
+  white-space: nowrap;
+}
+
+.custom-provider-detect-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.custom-provider-row-message {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+.custom-provider-row-message--success {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+}
+
+.custom-provider-row-message--error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 .custom-provider-badge {
@@ -132,7 +165,13 @@
   }
 
   .custom-provider-item-actions {
-    align-self: flex-end;
+    align-self: stretch;
+    justify-content: flex-start;
     margin-top: var(--space-xs);
+  }
+
+  .custom-provider-refresh-btn {
+    flex: 1 1 auto;
+    justify-content: center;
   }
 }

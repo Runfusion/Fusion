@@ -9,7 +9,7 @@
       (function () {
         try {
           var mode = localStorage.getItem("kb-dashboard-theme-mode") || "dark";
-          var colorTheme = localStorage.getItem("kb-dashboard-color-theme") || "default";
+          var colorTheme = localStorage.getItem("kb-dashboard-color-theme") || "shadcn-ember";
           var validThemes = [
             "default",
             "ocean",
@@ -27,6 +27,7 @@
             "silver",
             "solarized",
             "factory",
+            "factory-mono",
             "ayu",
             "one-dark",
             "nord",
@@ -42,6 +43,20 @@
             "palenight",
             "monokai-pro",
             "slime",
+            "brutalist",
+            "neon-city",
+            "parchment",
+            "terminal",
+            "glass",
+            "horizon",
+            "vitesse",
+            "outrun",
+            "snazzy",
+            "porple",
+            "espresso",
+            "mars",
+            "poimandres",
+            "ember",
             "rust",
             "copper",
             "foundry",
@@ -52,10 +67,31 @@
             "lavender",
             "neon-bloom",
             "sepia",
+            "shadcn",
+            "shadcn-ember",
+            "shadcn-custom",
+            "shadcn-blue",
+            "shadcn-green",
+            "shadcn-red",
+            "shadcn-purple",
+            "shadcn-pink",
+            "shadcn-orange",
+            "shadcn-yellow",
+            "shadcn-mono-red",
+            "shadcn-mono-blue",
+            "shadcn-mono-green",
+            "shadcn-mono-purple",
+            "shadcn-mono-pink",
+            "shadcn-mono-orange",
+            "shadcn-mono-yellow",
+            "shadcn-black",
+            "shadcn-gray",
+            "shadcn-gray-blue",
           ];
 
+          // FNXC:DashboardTheming 2026-06-30-00:00: Desktop pre-hydration mirrors the full core theme union before falling back to Shadcn Ember, so every explicit legacy id stays valid on native startup.
           if (!validThemes.includes(colorTheme)) {
-            colorTheme = "default";
+            colorTheme = "shadcn-ember";
           }
 
           var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -64,7 +100,7 @@
           document.documentElement.setAttribute("data-color-theme", colorTheme);
         } catch (error) {
           document.documentElement.setAttribute("data-theme", "dark");
-          document.documentElement.setAttribute("data-color-theme", "default");
+          document.documentElement.setAttribute("data-color-theme", "shadcn-ember");
         }
       })();
     </script>

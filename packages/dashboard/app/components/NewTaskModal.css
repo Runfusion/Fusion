@@ -438,6 +438,81 @@ The GitHub reference picker is a compact prompt-seeding helper inside the primar
   gap: var(--space-sm);
 }
 
+/*
+FNXC:NewTaskWorkflowDropdown 2026-06-30-18:35:
+The New Task create workflow selector is a real dropdown so workflow identity icons can appear in the trigger and option rows. Keep all sizing token-based and bounded inside both the floating desktop panel and the mobile full-screen sheet.
+*/
+.task-workflow-dropdown-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.task-workflow-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-xs);
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-form-inline-workflow-label,
+.task-workflow-trigger-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-workflow-trigger-icon,
+.task-workflow-option-icon {
+  flex: 0 0 auto;
+}
+
+.task-workflow-dropdown-menu {
+  width: min(calc(var(--space-xl) * 18), 100%);
+  min-width: min(calc(var(--space-xl) * 12), 100%);
+  max-width: 100%;
+  max-height: min(calc(var(--space-xl) * 12), calc(100dvh - var(--space-xl) * 2));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.task-workflow-dropdown-option {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  align-items: flex-start;
+}
+
+.task-workflow-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.task-workflow-option-name,
+.task-workflow-option-id {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-workflow-default-badge {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+}
+
 .workflow-steps-description {
   margin-bottom: var(--space-xs);
   display: block;

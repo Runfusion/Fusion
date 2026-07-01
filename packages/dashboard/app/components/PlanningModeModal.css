@@ -1127,13 +1127,25 @@ An empty footer must NOT reserve vertical space or paint its divider band. When 
   gap: var(--space-sm);
 }
 
-.planning-expand-btn {
+.planning-summary-description-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.planning-summary-description-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
   margin-left: auto;
+}
+
+.planning-expand-btn {
   padding: 0;
   background: none;
   border: none;
   color: var(--todo);
-  font-size: 12px;
+  font-size: calc(var(--space-sm) + var(--space-xs));
   font-weight: 500;
   cursor: pointer;
 }
@@ -1559,6 +1571,16 @@ Tablet embedded Planning keeps the desktop two-pane shell, so the summary footer
 
   .planning-summary-meta-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planning-summary-description-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .planning-summary-description-actions {
+    margin-left: 0;
+    margin-inline-start: auto;
   }
 
   .planning-example-chips {

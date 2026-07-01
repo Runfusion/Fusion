@@ -1319,6 +1319,55 @@ describe("TriageProcessor", () => {
     expect(store.moveTask).toHaveBeenCalledWith("FN-PLAN-APPROVE", "todo");
   });
 
+  it("passes fresh user comments and legacy steering into enabled Plan Review", async () => {
+    const task = createTriageTask({
+      id: "FN-PLAN-COMMENTS",
+      title: "Plan comments",
+      status: "planning",
+      enabledWorkflowSteps: ["plan-review"],
+      comments: [
+        ...Array.from({ length: 21 }, (_, index) => ({
+          id: `c-old-${index}`,
+          text: `Older reviewer requirement ${index}`,
+          author: "user" as const,
+          createdAt: `2026-06-21T09:${String(index).padStart(2, "0")}:00.000Z`,
+        })),
+        { id: "c-user", text: "Unified reviewer requirement", author: "user", createdAt: "2026-06-21T10:00:00.000Z" },
+        { id: "c-agent", text: "agent-only unified note", author: "agent", createdAt: "2026-06-21T10:01:00.000Z" },
+      ],
+      steeringComments: [
+        { id: "s-user", text: "Legacy steering reviewer requirement", author: "user", createdAt: "2026-06-21T10:02:00.000Z" },
+        { id: "s-agent", text: "agent-only steering note", author: "agent", createdAt: "2026-06-21T10:03:00.000Z" },
+      ],
+    } as Partial<Task>);
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(task);
+    mockReviewStep.mockResolvedValue({
+      verdict: "APPROVE",
+      review: "### Verdict: APPROVE\n\n### Summary\nReady.",
+      summary: "Ready.",
+    });
+
+    await (processor as unknown as {
+      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+    }).finalizeApprovedTask(
+      task,
+      "# Task: FN-PLAN-COMMENTS - Plan comments\n\n## Mission\n\nDo it.\n",
+      { requirePlanApproval: false } as Settings,
+    );
+
+    const options = mockReviewStep.mock.calls[0]?.[7] as any;
+    expect(options.userComments).toHaveLength(23);
+    expect(options.userComments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "c-old-0", text: "Older reviewer requirement 0", author: "user" }),
+      expect.objectContaining({ id: "c-user", text: "Unified reviewer requirement", author: "user" }),
+      expect.objectContaining({ id: "s-user", text: "Legacy steering reviewer requirement", author: "user" }),
+    ]));
+    expect(options.userComments).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "c-agent" }),
+      expect.objectContaining({ id: "s-agent" }),
+    ]));
+  });
+
   it("keeps the task in triage when Plan Review requests revision", async () => {
     const task = createTriageTask({
       id: "FN-PLAN-REVISE",

@@ -1,6 +1,6 @@
 /*
 FNXC:TaskDetailTabs 2026-06-17-08:20:
-FN-6532 made Chat the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Chat landing state.
+FN-7306 labels the stable internal `chat` tab as Activity and keeps it as the default TaskDetailModal tab. Tests that assert Definition-only sections must opt into `initialTab="definition"` so they verify the intended surface instead of the Activity landing state.
 */
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
@@ -24,7 +24,7 @@ import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 setupTaskDetailModalHooks();
 
 describe("TaskDetailModal", () => {
-  describe("Agent Log model resolution", () => {
+  describe("Raw Logs model resolution", () => {
     // AgentLogViewer only renders the model header when entries.length > 0,
     // so we mock useAgentLogs to return at least one entry.
     const mockLogEntry = { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-099", text: "hello", type: "text" as const };
@@ -100,8 +100,8 @@ describe("TaskDetailModal", () => {
     }
 
     async function openAgentLogAndExpandModelDetails(container: HTMLElement) {
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Raw Logs" }));
 
       await waitFor(() => {
         const header = container.querySelector("[data-testid='agent-log-model-header']");
@@ -116,7 +116,7 @@ describe("TaskDetailModal", () => {
       return container.querySelector("[data-testid='agent-log-model-header']") as HTMLElement;
     }
 
-    it("uses task effective settings success path for Agent Log model display", async () => {
+    it("uses task effective settings success path for Raw Logs model display", async () => {
       const { fetchTaskEffectiveSettings, fetchSettings } = await import("../../api");
       const { useAgentLogs } = await import("../../hooks/useAgentLogs");
 
@@ -574,8 +574,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Raw Logs" }));
       await waitFor(() => {
         const header = container.querySelector("[data-testid='agent-log-model-header']");
         expect(header).toBeTruthy();
@@ -631,8 +631,8 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Raw Logs" }));
       await waitFor(() => {
         const header = container.querySelector("[data-testid='agent-log-model-header']");
         expect(header).toBeTruthy();
@@ -872,7 +872,7 @@ describe("TaskDetailModal", () => {
       expect(segments[1].getAttribute("data-tooltip")).toBe("Add tests (in-progress)");
     });
 
-    it("step progress only renders in Definition tab, not in Agent Log subview", () => {
+    it("step progress only renders in Definition tab, not in Raw Logs segment", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -894,11 +894,11 @@ describe("TaskDetailModal", () => {
       // Should be visible in Definition tab
       expect(container.querySelector(".detail-step-progress")).toBeTruthy();
 
-      // Switch to Logs tab, then Agent Log subview
-      fireEvent.click(screen.getByText("Logs"));
-      fireEvent.click(screen.getByText("Agent Log"));
+      // Switch to Activity tab, then Raw Logs segment
+      fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Raw Logs" }));
 
-      // Should not be visible in Agent Log subview
+      // Should not be visible in Raw Logs segment
       expect(container.querySelector(".detail-step-progress")).toBeNull();
     });
 

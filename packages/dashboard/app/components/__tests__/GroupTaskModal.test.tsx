@@ -1,7 +1,17 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GroupTaskModal } from "../GroupTaskModal";
 import { apiGetBranchGroup, apiPromoteBranchGroup, apiAbandonBranchGroup } from "../../api";
+
+type SseSubscription = {
+  url: string;
+  options: {
+    events?: Record<string, (event: MessageEvent) => void>;
+    onReconnect?: () => void;
+  };
+};
+
+const sseSubscriptions: SseSubscription[] = [];
 
 vi.mock("../../api", async () => {
   const actual = await vi.importActual<typeof import("../../api")>("../../api");
@@ -16,6 +26,13 @@ vi.mock("../../api", async () => {
 vi.mock("../../hooks/useNavigationHistory", () => ({
   useNavigationHistory: () => ({ canGoBack: false, goBack: vi.fn() }),
   useNavigationHistoryContext: () => ({ pushNav: vi.fn(), replaceCurrent: vi.fn() }),
+}));
+
+vi.mock("../../sse-bus", () => ({
+  subscribeSse: (url: string, options: SseSubscription["options"]) => {
+    sseSubscriptions.push({ url, options });
+    return () => {};
+  },
 }));
 
 const mockedGet = vi.mocked(apiGetBranchGroup);
@@ -50,6 +67,7 @@ describe("GroupTaskModal", () => {
     mockedPromote.mockReset();
     mockedGet.mockReset();
     mockedAbandon.mockReset();
+    sseSubscriptions.length = 0;
   });
 
   it("renders group summary and member open action", async () => {
@@ -145,6 +163,44 @@ describe("GroupTaskModal", () => {
 
     expect(await screen.findByRole("button", { name: /abandon group/i })).toBeDefined();
     expect(screen.queryByRole("button", { name: /open pr|merge group into main/i })).toBeNull();
+  });
+
+
+  it("refetches on task:moved and updates completion-gated actions in place", async () => {
+    mockedGet
+      .mockResolvedValueOnce({ group: makeGroup() } as Awaited<ReturnType<typeof apiGetBranchGroup>>)
+      .mockResolvedValueOnce({
+        group: makeGroup({ completion: { landed: 2, total: 2, complete: true }, members: completeMembers }),
+      } as Awaited<ReturnType<typeof apiGetBranchGroup>>);
+
+    render(<GroupTaskModal isOpen onClose={vi.fn()} groupId="BG-1" onOpenMemberTask={vi.fn()} />);
+    await screen.findByText("1 of 2 members finished");
+    expect(screen.queryByRole("button", { name: /open pr/i })).toBeNull();
+
+    await act(async () => {
+      sseSubscriptions.at(-1)?.options.events?.["task:moved"]?.(new MessageEvent("task:moved", { data: JSON.stringify({ task: { id: "FN-2" } }) }));
+    });
+
+    expect(await screen.findByText("2 of 2 members finished")).toBeDefined();
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "2");
+    expect(screen.getByRole("button", { name: /open pr/i })).toBeDefined();
+  });
+
+  it("refetches the open group modal on reconnect", async () => {
+    mockedGet
+      .mockResolvedValueOnce({ group: makeGroup() } as Awaited<ReturnType<typeof apiGetBranchGroup>>)
+      .mockResolvedValueOnce({
+        group: makeGroup({ completion: { landed: 2, total: 2, complete: true }, members: completeMembers }),
+      } as Awaited<ReturnType<typeof apiGetBranchGroup>>);
+
+    render(<GroupTaskModal isOpen onClose={vi.fn()} groupId="BG-1" onOpenMemberTask={vi.fn()} />);
+    await screen.findByText("1 of 2 members finished");
+
+    await act(async () => {
+      sseSubscriptions.at(-1)?.options.onReconnect?.();
+    });
+
+    expect(await screen.findByText("2 of 2 members finished")).toBeDefined();
   });
 
   it("shows terminal state and hides controls when merged", async () => {

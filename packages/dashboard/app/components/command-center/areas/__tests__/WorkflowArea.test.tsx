@@ -44,7 +44,7 @@ function populatedWorkflowFixture() {
     workflows: [
       {
         workflowId: "builtin:coding",
-        workflowName: "Coding (built-in)",
+        workflowName: "Coding",
         isBuiltin: true,
         tokens: { inputTokens: 900, outputTokens: 450, cachedTokens: 150, cacheWriteTokens: 0, totalTokens: 1500, nTasks: 2 },
         cost: { usd: 4.25, unavailable: false, stale: false },
@@ -98,10 +98,10 @@ describe("WorkflowArea", () => {
     expect(screen.getByTestId("cc-workflows-total-tokens").textContent).toContain("1,650");
     expect(screen.getByTestId("cc-workflows-total-cost").textContent).toContain("—");
     expect(screen.getByTestId("cc-workflows-total-cost").textContent).not.toContain("$0");
-    expect(screen.getByTestId("cc-workflows-tokens-chart").textContent).toContain("Coding (built-in)");
+    expect(screen.getByTestId("cc-workflows-tokens-chart").textContent).toContain("Coding");
 
     const table = screen.getByTestId("cc-workflows-table");
-    expect(within(table).getByText("Coding (built-in)")).toBeTruthy();
+    expect(within(table).getByText("Coding")).toBeTruthy();
     expect(within(table).getByText("Unpriced Workflow")).toBeTruthy();
     expect(screen.getByTestId("cc-workflows-row-builtin:coding").textContent).toContain("$4.25");
     const unpricedRow = screen.getByTestId("cc-workflows-row-WF-unpriced");

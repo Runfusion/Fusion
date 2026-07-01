@@ -132,7 +132,7 @@ Workflow settings are typed settings declared by a workflow in its IR. The edito
 The **Settings** panel has two tabs:
 
 - **Definitions:** edit the workflow's setting schema — id, name, type, default, enum options, description, and widget. This tab is read-only for built-in workflows and editable for custom workflows. Declarations save with the workflow IR through the editor's normal **Save** action.
-- **Values:** edit per-project values for the currently open workflow. Values are writable even for built-in workflows. Edits batch locally and commit through the tab's dedicated **Save values** action, separate from the workflow IR save.
+- **Values:** edit per-project values for the currently open workflow. Values are writable even for built-in workflows. This is where operators cap built-in Plan Review/spec and Code Review revision loops (`planReviewMaxRevisions`, `codeReviewMaxRevisions`) without duplicating the read-only workflow; empty values mean unbounded, non-negative integers cap attempts, and `0` disables automatic revision for that path. Edits batch locally and commit through the tab's dedicated **Save values** action, separate from the workflow IR save.
 
 Resolution is `stored value ?? declaration default`. Stored values that no longer validate against the current declaration are treated as orphaned and dropped from the effective settings the engine reads. The Values tab exposes provider/model lane pairs with the same model dropdown used elsewhere in Settings, while custom settings use controls based on their declared type. See [Settings Reference → Workflow Settings](./settings-reference.md#workflow-settings) for moved settings, model lane hierarchy, export behavior, and sync posture.
 
@@ -156,8 +156,8 @@ If you switch workflows while an AI design request is in flight, the stale resul
 
 ## Import, export, auto-layout, save, and delete
 
-- **Export:** downloads the active persisted workflow as a JSON envelope. Export is available for built-ins too because it reads the server's saved definition.
-- **Import:** choose a JSON workflow envelope to create a workflow from it. Invalid JSON and server validation errors render in a persistent inline error region; non-blocking import warnings render beside it.
+- **Export:** downloads the active persisted workflow as a JSON envelope. Export is available for built-ins too because it reads the server's saved definition. The envelope includes the Workflow IR, layout, metadata, and the active project's stored workflow setting values and prompt overrides for the selected workflow.
+- **Import:** choose a JSON workflow envelope to create a workflow from it. Fusion creates a fresh editable workflow id, restores exported setting values and prompt overrides onto that new id, and keeps validating those restored maps against the imported setting declarations and prompt-bearing nodes. Invalid JSON and server validation errors render in a persistent inline error region; non-blocking import warnings render beside it.
 - **Auto-layout:** applies a left-to-right tidy layout to editable graph nodes. It changes positions only and marks the workflow dirty.
 - **Save:** custom workflows serialize the current graph, columns, fields, and setting declarations to Workflow IR and update the active workflow. After saving, Fusion compiles the workflow to report whether it can run on the linear engine or must run on the graph interpreter.
 - **Delete:** deletes the active custom workflow after confirmation. Built-in workflows cannot be deleted.
@@ -179,7 +179,7 @@ Fusion ships built-in workflows as read-only references:
 - `builtin:design` — a UI-heavy work path with a gated design/UX review before standard review and merge.
 - `builtin:lead-generation` — a lead workflow for sourcing, qualifying, enriching, and contacting prospects.
 
-Built-ins can be viewed, exported, and used as templates, but their graph, columns, field declarations, and setting declarations are not editable. Their per-project setting **values** are editable from the Settings panel's Values tab. Selectable built-ins all use a capacity-released queue column (`todo` or a workflow-specific backlog) that dispatches to the active WIP column through the standard hold/release sweep.
+Built-ins can be viewed, exported, and used as templates, but their graph, columns, field declarations, and setting declarations are not editable. Their per-project setting **values** are editable from the Settings panel's Values tab, including the Plan Review/spec and Code Review revision-cap values that default to unbounded when left empty. Selectable built-ins all use a capacity-released queue column (`todo` or a workflow-specific backlog) that dispatches to the active WIP column through the standard hold/release sweep.
 
 <!--
 FNXC:WorkflowEditorDocs 2026-06-30-09:05:

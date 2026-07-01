@@ -271,6 +271,45 @@ describe("U2 KTD3 — step-inversion review seam (executor.ts:5668) loops per su
     expect(result.verdict).toBe("APPROVE");
   });
 
+  it("passes unified user comments and legacy steering into workflow graph stepReview", async () => {
+    const task = makeTask({
+      worktree: WT_A,
+      comments: [
+        ...Array.from({ length: 21 }, (_, index) => ({
+          id: `c-old-${index}`,
+          text: `Older graph-review requirement ${index}`,
+          author: "user" as const,
+          createdAt: `2026-06-21T09:${String(index).padStart(2, "0")}:00.000Z`,
+        })),
+        { id: "c-user", text: "Unified graph-review requirement", author: "user", createdAt: "2026-06-21T10:00:00.000Z" },
+        { id: "c-agent", text: "agent-only unified note", author: "agent", createdAt: "2026-06-21T10:01:00.000Z" },
+      ],
+      steeringComments: [
+        { id: "s-user", text: "Legacy graph-review steering", author: "user", createdAt: "2026-06-21T10:02:00.000Z" },
+        { id: "s-agent", text: "agent-only steering note", author: "agent", createdAt: "2026-06-21T10:03:00.000Z" },
+      ],
+    } as any);
+    const store = makeStore(task);
+    const executor = new TaskExecutor(store, ROOT);
+    scriptReviewByCwd({ [WT_A]: { verdict: "APPROVE", review: "a", summary: "a" } });
+    const seams = executor.createAuthoritativeWorkflowSeams({ autoMerge: false } as any);
+    const context = { [FOREACH_ACTIVE_CONTEXT_KEY]: { stepIndex: 1, worktreePath: WT_A, baselineSha: "base" } } as any;
+
+    await seams.stepReview!(task as any, context, { type: "code", advisory: true } as any);
+
+    const options = mockedReviewStep.mock.calls[0]?.[7] as any;
+    expect(options.userComments).toHaveLength(23);
+    expect(options.userComments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "c-old-0", text: "Older graph-review requirement 0", author: "user" }),
+      expect.objectContaining({ id: "c-user", text: "Unified graph-review requirement", author: "user" }),
+      expect.objectContaining({ id: "s-user", text: "Legacy graph-review steering", author: "user" }),
+    ]));
+    expect(options.userComments).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "c-agent" }),
+      expect.objectContaining({ id: "s-agent" }),
+    ]));
+  });
+
   it("regression: single-repo stepReview reviews the active worktree once", async () => {
     const task = makeTask({ worktree: WT_A });
     const store = makeStore(task);

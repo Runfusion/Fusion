@@ -18,12 +18,15 @@ import {
 
 type CapturedSession = {
   skillSelection?: { requestedSkillNames?: string[]; projectRootDir?: string; sessionPurpose?: string };
+  tools?: "coding" | "readonly";
+  systemPrompt?: string;
+  customTools?: Array<{ name?: string }>;
 };
 
 function captureSession(output = '{"verdict":"APPROVE","notes":""}') {
   const holder: { last?: CapturedSession } = {};
   mockedCreateFnAgent.mockImplementation(async (opts: any) => {
-    holder.last = { skillSelection: opts.skillSelection };
+    holder.last = { skillSelection: opts.skillSelection, tools: opts.tools, systemPrompt: opts.systemPrompt, customTools: opts.customTools };
     const listeners: Array<(event: any) => void> = [];
     return {
       session: {
@@ -91,6 +94,41 @@ function browserVerificationStep(overrides: Record<string, unknown> = {}) {
     enabled: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function planReviewStep(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "graph:plan-review-step",
+    name: "Plan Review",
+    description: "",
+    mode: "prompt",
+    phase: "pre-merge",
+    gateMode: "gate",
+    prompt: "Review the plan.",
+    toolMode: "readonly",
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function codeReviewStep(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "graph:code-review-step",
+    name: "Code Review",
+    description: "",
+    mode: "prompt",
+    phase: "pre-merge",
+    gateMode: "gate",
+    prompt: "Review the code.",
+    toolMode: "readonly",
+    enabled: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    optionalGroupId: "code-review",
     ...overrides,
   };
 }
@@ -263,5 +301,88 @@ describe("browser-verification workflow-step browser capability", () => {
     expect(cap.last?.skillSelection?.requestedSkillNames ?? []).not.toContain(AGENT_BROWSER_NAVIGATION_SKILL_ID);
     expect(store.logEntry.mock.calls.some(([, message]: [string, string]) => message.includes("[browser-verification]"))).toBe(false);
     expect(store.appendAgentLog.mock.calls.some(([, message]: [string, string]) => message.includes("[browser-verification]"))).toBe(false);
+  });
+
+  it("returns a Plan Review revision for flagged external-integration evidence gaps without launching a session", async () => {
+    const store = createMockStore();
+    store.getTask.mockResolvedValue({
+      ...baseTask(),
+      prompt: "## Mission\nAdd an external CLI.\n\n## Steps\n- Download and run `wt` from https://github.com/worktrunk/worktrunk/releases/latest/download/wt-linux-x64.tar.gz\n",
+    });
+    const executor = makeExecutor(store);
+
+    const result = await (executor as any).executeWorkflowStep(
+      baseTask(),
+      planReviewStep({ requireExternalIntegrationEvidence: true }),
+      "/tmp/wt",
+      {},
+      undefined,
+      undefined,
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      revisionRequested: true,
+      verdict: "REVISE",
+    });
+    expect(result.notes).toContain("External-integration evidence gaps");
+    expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-7130",
+      expect.stringContaining("Plan Review deterministic external-integration evidence check requested revision"),
+    );
+  });
+
+  it("lets review-type workflow steps fix inline by default and respects the off switch", async () => {
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+
+    const enabledResult = await (executor as any).executeWorkflowStep(
+      baseTask(),
+      codeReviewStep(),
+      "/tmp/wt",
+      { reviewerInlineFixes: true },
+      undefined,
+      undefined,
+    );
+
+    expect(enabledResult.success).toBe(true);
+    expect(cap.last?.tools).toBe("coding");
+    expect(cap.last?.systemPrompt).toContain("Same-Session Fix Policy");
+
+    const offCap = captureSession();
+    const disabledResult = await (executor as any).executeWorkflowStep(
+      baseTask(),
+      codeReviewStep(),
+      "/tmp/wt",
+      { reviewerInlineFixes: false },
+      undefined,
+      undefined,
+    );
+
+    expect(disabledResult.success).toBe(true);
+    expect(offCap.last?.tools).toBe("readonly");
+    expect(offCap.last?.systemPrompt).not.toContain("Same-Session Fix Policy");
+  });
+
+  it("keeps Plan Review readonly while allowing PROMPT.md inline repair", async () => {
+    const store = createMockStore();
+    const executor = makeExecutor(store);
+    const cap = captureSession();
+
+    const result = await (executor as any).executeWorkflowStep(
+      baseTask(),
+      planReviewStep(),
+      "/tmp/wt",
+      { reviewerInlineFixes: true },
+      undefined,
+      undefined,
+    );
+
+    expect(result.success).toBe(true);
+    expect(cap.last?.tools).toBe("readonly");
+    expect(cap.last?.customTools?.map((tool) => tool.name)).toContain("fn_task_prompt_write");
+    expect(cap.last?.systemPrompt).toContain("fn_task_prompt_write");
   });
 });

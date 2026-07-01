@@ -11,10 +11,12 @@ import { EventEmitter } from "events";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "node:fs";
+import { stat } from "node:fs/promises";
 // The node-pty native-asset loader (lazy-load, prebuild resolution, dlopen
 // fallback, and permission repair) lives in @fusion/engine so PTY owners share
 // one implementation. See packages/engine/src/pty-native.ts.
 import { loadPtyModule } from "@fusion/engine";
+import { isAuthorizedProjectOrRegisteredWorktreePath, isPathWithin } from "./git-worktree-safety.js";
 
 // Maximum scrollback buffer size (characters)
 const MAX_SCROLLBACK_SIZE = 50000; // ~50KB per terminal
@@ -115,8 +117,16 @@ export interface TerminalOptions {
 export type CreateSessionErrorCode =
   | "max_sessions"
   | "invalid_shell"
+  | "invalid_cwd"
   | "pty_load_failed"
   | "pty_spawn_failed";
+
+class TerminalCwdError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TerminalCwdError";
+  }
+}
 
 export type CreateSessionResult =
   | { success: true; session: TerminalSession }
@@ -132,6 +142,7 @@ export class TerminalService extends EventEmitter {
   private isWindows = os.platform() === "win32";
   private projectRoot: string;
   private maxSessions: number;
+  private registeredWorktreeCache: Map<string, string[]> = new Map();
 
   constructor(projectRoot: string, maxSessions: number = DEFAULT_MAX_SESSIONS) {
     super();
@@ -244,7 +255,10 @@ export class TerminalService extends EventEmitter {
   }
 
   /**
-   * Validate and resolve a working directory path
+   * Validate and resolve a working directory path.
+   *
+   * FNXC:TerminalWorktrees 2026-06-29-00:00:
+   * Terminal cwd selection may target the project root or a Git-registered task worktree, including worktrees outside the root. Explicit cwd requests that are stale, missing, traversal-based, or otherwise unauthorized must fail instead of falling back, so the UI never labels a project-root shell as a selected worktree shell.
    */
   private async resolveWorkingDirectory(requestedCwd?: string): Promise<string> {
     // If no cwd requested, use project root
@@ -258,34 +272,42 @@ export class TerminalService extends EventEmitter {
     // Reject paths with null bytes (could bypass path checks)
     if (cwd.includes("\0")) {
       console.warn(`Rejecting path with null byte: ${cwd.replace(/\0/g, "\\0")}`);
-      return this.projectRoot;
+      throw new TerminalCwdError("Terminal working directory is not an authorized project or task worktree.");
     }
 
-    // Normalize the path to resolve . and .. segments
+    const isAbsoluteRequest = path.isAbsolute(cwd);
+
+    // Normalize the path to resolve . and .. segments. Absolute cwd values remain absolute;
+    // relative cwd values resolve beneath the project root before authorization.
     cwd = path.resolve(this.projectRoot, cwd);
 
-    // Ensure path is within project root (path traversal protection)
-    const relativeToProjectRoot = path.relative(this.projectRoot, cwd);
-    if (
-      relativeToProjectRoot.startsWith("..") ||
-      path.isAbsolute(relativeToProjectRoot)
-    ) {
-      console.warn(`Path traversal attempt blocked: ${requestedCwd}`);
-      return this.projectRoot;
+    if (!isAbsoluteRequest && !isPathWithin(this.projectRoot, cwd)) {
+      console.warn(`Terminal relative working directory escape blocked: ${requestedCwd}`);
+      throw new TerminalCwdError("Terminal working directory is not an authorized project or task worktree.");
+    }
+
+    const authorized = await isAuthorizedProjectOrRegisteredWorktreePath(
+      this.projectRoot,
+      cwd,
+      this.registeredWorktreeCache,
+    );
+    if (!authorized) {
+      console.warn(`Terminal working directory outside project worktrees blocked: ${requestedCwd}`);
+      throw new TerminalCwdError("Terminal working directory is not an authorized project or task worktree.");
     }
 
     // Check if path exists and is a directory
     try {
-      const stat = await import("node:fs/promises").then((fs) => fs.stat(cwd));
-      if (stat.isDirectory()) {
+      const cwdStat = await stat(cwd);
+      if (cwdStat.isDirectory()) {
         return cwd;
       }
+      console.warn(`Working directory is not a directory: ${cwd}`);
     } catch {
-      // Path doesn't exist, fall back to project root
       console.warn(`Working directory does not exist: ${cwd}`);
     }
 
-    return this.projectRoot;
+    throw new TerminalCwdError("Terminal working directory is not a readable directory.");
   }
 
   /**
@@ -446,7 +468,19 @@ export class TerminalService extends EventEmitter {
     }
 
     // Validate and resolve working directory
-    const cwd = await this.resolveWorkingDirectory(options.cwd);
+    let cwd: string;
+    try {
+      cwd = await this.resolveWorkingDirectory(options.cwd);
+    } catch (error) {
+      if (error instanceof TerminalCwdError) {
+        return {
+          success: false,
+          code: "invalid_cwd",
+          error: error.message,
+        };
+      }
+      throw error;
+    }
     const spawnDiagnostics = this.getSpawnDiagnostics(options.shell, detectedShell, shellArgs, cwd);
 
     // Build environment with stripped sensitive vars

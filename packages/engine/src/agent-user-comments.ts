@@ -1,4 +1,4 @@
-import type { TaskComment } from "@fusion/core";
+import type { SteeringComment, TaskComment } from "@fusion/core";
 
 const DEFAULT_USER_COMMENT_LIMIT = 20;
 
@@ -17,26 +17,48 @@ function quoteCommentText(text: string): string[] {
   return normalized.split(/\r?\n/).map((line) => `> ${line}`);
 }
 
+function normalizeSteeringComment(comment: SteeringComment): TaskComment {
+  return {
+    id: comment.id,
+    text: comment.text,
+    author: comment.author,
+    createdAt: comment.createdAt,
+  };
+}
+
 /**
  * FNXC:AgentSteering 2026-06-22-00:05:
  * Task-detail chat and user comments must reach every agent lane that builds prompts: executor, merger, reviewer, and planner. This helper is the canonical formatter for next-prompt delivery outside the executor's live steering injection path, so merger and reviewer prompts do not drift or duplicate comment logic.
+ *
+ * FNXC:AgentSteering 2026-06-30-12:28:
+ * Reviewer gates are quality gates for explicit operator requirements. Select unified comments plus legacy steering comments here so mandatory Plan Review and optional workflow review nodes receive the same de-duped user-authored context without caller-specific formatting.
+ *
+ * FNXC:AgentSteering 2026-06-30-13:18:
+ * Reviewer callers must request an uncapped selection because older user requirements remain binding quality-gate context; the default limit stays for non-review prompts that need bounded context.
  */
 export function selectUserCommentsForAgentContext(
-  task: { comments?: TaskComment[] },
-  opts: { limit?: number } = {},
+  task: { comments?: TaskComment[]; steeringComments?: SteeringComment[] },
+  opts: { limit?: number | null } = {},
 ): TaskComment[] {
-  const limit = opts.limit ?? DEFAULT_USER_COMMENT_LIMIT;
-  if (!task.comments || task.comments.length === 0 || limit <= 0) return [];
+  const limit = opts.limit === null ? null : opts.limit ?? DEFAULT_USER_COMMENT_LIMIT;
+  if (limit !== null && limit <= 0) return [];
 
   const byId = new Map<string, TaskComment>();
-  for (const comment of task.comments) {
+  const candidates: TaskComment[] = [
+    ...(task.comments ?? []),
+    ...(task.steeringComments ?? []).map(normalizeSteeringComment),
+  ];
+
+  for (const comment of candidates) {
     if (comment.author !== "user") continue;
-    byId.set(comment.id, comment);
+    const existing = byId.get(comment.id);
+    if (!existing || timestampMs(existing) <= timestampMs(comment)) {
+      byId.set(comment.id, comment);
+    }
   }
 
-  return [...byId.values()]
-    .sort((a, b) => timestampMs(a) - timestampMs(b))
-    .slice(-limit);
+  const sorted = [...byId.values()].sort((a, b) => timestampMs(a) - timestampMs(b));
+  return limit === null ? sorted : sorted.slice(-limit);
 }
 
 export function buildUserCommentsPromptSection(

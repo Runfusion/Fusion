@@ -388,6 +388,14 @@
   --swatch-sample-4: #27272a;
 }
 
+/* FNXC:DashboardTheming 2026-06-30-00:00: Shadcn Ember is the default selector chip; it previews shadcn zinc surfaces with Ember's warm orange accent so users can distinguish the default from base Shadcn. */
+.theme-swatch-shadcn-ember {
+  --swatch-sample-1: #09090b;
+  --swatch-sample-2: #18181b;
+  --swatch-sample-3: #e8773a;
+  --swatch-sample-4: #27272a;
+}
+
 .theme-swatch-shadcn-custom {
   --swatch-sample-1: #09090b;
   --swatch-sample-2: #18181b;
@@ -732,6 +740,13 @@
   --swatch-sample-1: #ffffff;
   --swatch-sample-2: #f4f4f5;
   --swatch-sample-3: #ea580c;
+  --swatch-sample-4: #e4e4e7;
+}
+
+[data-theme="light"] .theme-swatch-shadcn-ember {
+  --swatch-sample-1: #ffffff;
+  --swatch-sample-2: #f4f4f5;
+  --swatch-sample-3: #d4622a;
   --swatch-sample-4: #e4e4e7;
 }
 

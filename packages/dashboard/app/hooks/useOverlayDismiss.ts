@@ -1,4 +1,20 @@
-import { useCallback, useEffect, useRef } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useRef, type ReactNode } from "react";
+
+const ModalDismissPreferenceContext = createContext(false);
+
+export function ModalDismissPreferenceProvider({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: ReactNode;
+}) {
+  return createElement(ModalDismissPreferenceContext.Provider, { value: enabled }, children);
+}
+
+export function useModalDismissPreference(): boolean {
+  return useContext(ModalDismissPreferenceContext);
+}
 
 /**
  * Returns props for a modal-overlay element that dismisses only when a real
@@ -15,12 +31,18 @@ import { useCallback, useEffect, useRef } from "react";
  * does NOT need to stopPropagation — mousedown on the modal sets the ref to
  * `false`, so the overlay's mouseup handler bails.
  */
-export function useOverlayDismiss(onClose: () => void): {
+export function useOverlayDismiss(onClose: () => void, options?: { enabled?: boolean }): {
   onMouseDown: (e: React.MouseEvent) => void;
   onMouseUp: (e: React.MouseEvent) => void;
   onTouchStart: () => void;
   onTouchEnd: () => void;
 } {
+  const contextEnabled = useModalDismissPreference();
+  /*
+  FNXC:ModalDismissal 2026-06-29-00:00:
+  Modal backdrop dismissal is globally default-off to prevent accidental data loss. Components using this helper keep explicit close, cancel, and Escape paths, while backdrop mouse/touch dismissal only runs when the global preference is enabled.
+  */
+  const dismissEnabled = options?.enabled ?? contextEnabled;
   const startedOnOverlayRef = useRef(false);
   const lastTouchAtRef = useRef(0);
 
@@ -29,6 +51,10 @@ export function useOverlayDismiss(onClose: () => void): {
   }, []);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!dismissEnabled) {
+      startedOnOverlayRef.current = false;
+      return;
+    }
     // Android/webview may emit compatibility mouse events right after touchend.
     // Ignore those so a newly-mounted overlay is not dismissed immediately.
     if (Date.now() - lastTouchAtRef.current < 500) {
@@ -36,7 +62,7 @@ export function useOverlayDismiss(onClose: () => void): {
       return;
     }
     startedOnOverlayRef.current = e.target === e.currentTarget;
-  }, []);
+  }, [dismissEnabled]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -56,11 +82,11 @@ export function useOverlayDismiss(onClose: () => void): {
 
   const onMouseUp = useCallback(
     (e: React.MouseEvent) => {
-      const shouldClose = startedOnOverlayRef.current && e.target === e.currentTarget;
+      const shouldClose = dismissEnabled && startedOnOverlayRef.current && e.target === e.currentTarget;
       startedOnOverlayRef.current = false;
       if (shouldClose) onClose();
     },
-    [onClose],
+    [dismissEnabled, onClose],
   );
 
   return { onMouseDown, onMouseUp, onTouchStart: markTouch, onTouchEnd: markTouch };

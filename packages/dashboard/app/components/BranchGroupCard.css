@@ -4,6 +4,15 @@
   gap: var(--space-sm);
 }
 
+/*
+FNXC:BranchGroupDetails 2026-06-30-00:00:
+Collapsed branch-group details must consume less task-detail space with token-based typography and spacing while keeping the expand button large enough to remain usable.
+*/
+.branch-group-card--collapsed {
+  gap: calc(var(--space-xs) / 2);
+  padding: var(--space-sm);
+}
+
 .branch-group-card-error {
   color: var(--color-error);
 }
@@ -21,10 +30,20 @@
   gap: var(--space-xs);
 }
 
+.branch-group-card--collapsed .branch-group-card-title {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+}
+
 .branch-group-card-header-meta {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+}
+
+.branch-group-card--collapsed .branch-group-card-header,
+.branch-group-card--collapsed .branch-group-card-header-meta {
+  gap: calc(var(--space-xs) / 2);
 }
 
 .branch-group-card-badge {
@@ -39,13 +58,22 @@
   padding: calc(var(--space-xs) / 2);
 }
 
+.branch-group-card--collapsed .branch-group-card-header-meta .btn-icon {
+  padding: 0;
+}
+
 .branch-group-card-header-meta .btn-icon svg {
   display: block;
 }
 
 .branch-group-card-progress-text {
   color: var(--text-muted);
-  font-size: 0.875rem;
+  font-size: calc(var(--font-size-base) * 0.875);
+}
+
+.branch-group-card--collapsed .branch-group-card-progress-text {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
 }
 
 .branch-group-card-progress {
@@ -54,6 +82,10 @@
   border-radius: var(--radius-pill);
   background: var(--surface-1);
   overflow: hidden;
+}
+
+.branch-group-card--collapsed .branch-group-card-progress {
+  height: calc(var(--space-xs) / 2);
 }
 
 .branch-group-card-progress-fill {
@@ -102,5 +134,9 @@
   .branch-group-card-header-meta {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .branch-group-card--collapsed .branch-group-card-header {
+    gap: calc(var(--space-xs) / 2);
   }
 }

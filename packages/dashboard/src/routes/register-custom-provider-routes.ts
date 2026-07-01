@@ -159,12 +159,28 @@ function parseCreateBody(body: unknown): Omit<CustomProvider, "id"> {
   return provider;
 }
 
-interface ProbeModelResult {
+export interface ProbeModelResult {
   id: string;
   name: string;
   reasoning?: boolean;
   contextWindow?: number;
   maxTokens?: number;
+}
+
+export interface RefreshCustomProviderModelsResult {
+  provider: CustomProvider;
+  modelsRefreshed: number;
+}
+
+export interface RefreshAllCustomProviderModelsResult {
+  refreshed: number;
+  failed: number;
+  skipped: number;
+}
+
+interface CustomProviderSettingsStore {
+  getGlobalSettingsStore: () => { getSettings: () => Promise<{ customProviders?: CustomProvider[] }> };
+  updateGlobalSettings: (patch: { customProviders: CustomProvider[] }) => Promise<unknown>;
 }
 
 const MAX_PROBE_MODELS = 100;
@@ -217,10 +233,15 @@ function isNonChatModel(m: Record<string, unknown>): boolean {
  * Probe a custom provider's /models endpoint to discover available models.
  * Supports OpenAI-compatible, Anthropic-compatible, and Google Generative AI providers.
  */
-async function probeProviderModels(
+interface ProbeProviderModelsOptions {
+  allowPrivateAddress?: boolean;
+}
+
+export async function probeProviderModels(
   baseUrl: string,
   apiKey: string | undefined,
   apiType: ProbeApiType,
+  options: ProbeProviderModelsOptions = {},
 ): Promise<ProbeModelResult[]> {
   let url: URL;
   try {
@@ -232,63 +253,68 @@ async function probeProviderModels(
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw badRequest("baseUrl must use http or https");
   }
-  // SSRF protection: reject private/loopback/link-local hosts
   const hostname = url.hostname.toLowerCase();
-  if (
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "[::1]" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
-  ) {
-    throw badRequest("baseUrl must not be a loopback or private address");
-  }
-  // Resolve hostname to IP and check against private ranges.
-  // If resolution fails, let the fetch attempt proceed naturally.
-  try {
-    const resolved = await dns.lookup(hostname, { all: true });
-    const addresses = resolved.map((a) => a.address);
-    for (const addr of addresses) {
-      if (net.isIP(addr) === 0) continue;
-      const parts = addr.split(".").map(Number);
-      if (parts.length === 4 && !Number.isNaN(parts[0])) {
-        // 127.0.0.0/8
-        if (parts[0] === 127) throw badRequest("baseUrl must not be a loopback or private address");
-        // 10.0.0.0/8
-        if (parts[0] === 10) throw badRequest("baseUrl must not be a loopback or private address");
-        // 172.16.0.0/12
-        if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) throw badRequest("baseUrl must not be a loopback or private address");
-        // 192.168.0.0/16
-        if (parts[0] === 192 && parts[1] === 168) throw badRequest("baseUrl must not be a loopback or private address");
-        // 169.254.0.0/16 (link-local, includes cloud metadata)
-        if (parts[0] === 169 && parts[1] === 254) throw badRequest("baseUrl must not be a loopback or private address");
-      } else if (net.isIPv6(addr)) {
-        const lower = addr.toLowerCase();
-        // ::1 — IPv6 loopback
-        if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") throw badRequest("baseUrl must not be a loopback or private address");
-        // fc00::/7 — Unique Local Addresses (private, RFC 4193)
-        if (lower.startsWith("fc") || lower.startsWith("fd")) throw badRequest("baseUrl must not be a loopback or private address");
-        // fe80::/10 — link-local addresses
-        if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) throw badRequest("baseUrl must not be a loopback or private address");
-        // ::ffff:0:0/96 — IPv4-mapped IPv6 — extract embedded IPv4 and re-check
-        const ipv4Mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)/);
-        if (ipv4Mapped) {
-          const v4Parts = ipv4Mapped[1].split(".").map(Number);
-          if (v4Parts.length === 4) {
-            if (v4Parts[0] === 127 || v4Parts[0] === 10 ||
-                (v4Parts[0] === 172 && v4Parts[1] >= 16 && v4Parts[1] <= 31) ||
-                (v4Parts[0] === 192 && v4Parts[1] === 168) ||
-                (v4Parts[0] === 169 && v4Parts[1] === 254)) {
-              throw badRequest("baseUrl must not be a loopback or private address");
+  /*
+   * FNXC:CustomProviders 2026-06-30-00:00:
+   * Detect Models accepts untrusted form input, so it keeps SSRF rejection for loopback, LAN, link-local, .local, and .internal hosts. Startup and Settings Refresh Models operate on an already-saved custom provider baseUrl that the user intentionally configured for generation, so they may probe local tools such as LM Studio, Ollama, vLLM, or internal proxies without exposing raw keys to the browser.
+   */
+  if (!options.allowPrivateAddress) {
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "[::1]" ||
+      hostname.endsWith(".local") ||
+      hostname.endsWith(".internal")
+    ) {
+      throw badRequest("baseUrl must not be a loopback or private address");
+    }
+    // Resolve hostname to IP and check against private ranges.
+    // If resolution fails, let the fetch attempt proceed naturally.
+    try {
+      const resolved = await dns.lookup(hostname, { all: true });
+      const addresses = resolved.map((a) => a.address);
+      for (const addr of addresses) {
+        if (net.isIP(addr) === 0) continue;
+        const parts = addr.split(".").map(Number);
+        if (parts.length === 4 && !Number.isNaN(parts[0])) {
+          // 127.0.0.0/8
+          if (parts[0] === 127) throw badRequest("baseUrl must not be a loopback or private address");
+          // 10.0.0.0/8
+          if (parts[0] === 10) throw badRequest("baseUrl must not be a loopback or private address");
+          // 172.16.0.0/12
+          if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) throw badRequest("baseUrl must not be a loopback or private address");
+          // 192.168.0.0/16
+          if (parts[0] === 192 && parts[1] === 168) throw badRequest("baseUrl must not be a loopback or private address");
+          // 169.254.0.0/16 (link-local, includes cloud metadata)
+          if (parts[0] === 169 && parts[1] === 254) throw badRequest("baseUrl must not be a loopback or private address");
+        } else if (net.isIPv6(addr)) {
+          const lower = addr.toLowerCase();
+          // ::1 — IPv6 loopback
+          if (lower === "::1" || lower === "0:0:0:0:0:0:0:1") throw badRequest("baseUrl must not be a loopback or private address");
+          // fc00::/7 — Unique Local Addresses (private, RFC 4193)
+          if (lower.startsWith("fc") || lower.startsWith("fd")) throw badRequest("baseUrl must not be a loopback or private address");
+          // fe80::/10 — link-local addresses
+          if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) throw badRequest("baseUrl must not be a loopback or private address");
+          // ::ffff:0:0/96 — IPv4-mapped IPv6 — extract embedded IPv4 and re-check
+          const ipv4Mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)/);
+          if (ipv4Mapped) {
+            const v4Parts = ipv4Mapped[1].split(".").map(Number);
+            if (v4Parts.length === 4) {
+              if (v4Parts[0] === 127 || v4Parts[0] === 10 ||
+                  (v4Parts[0] === 172 && v4Parts[1] >= 16 && v4Parts[1] <= 31) ||
+                  (v4Parts[0] === 192 && v4Parts[1] === 168) ||
+                  (v4Parts[0] === 169 && v4Parts[1] === 254)) {
+                throw badRequest("baseUrl must not be a loopback or private address");
+              }
             }
           }
         }
       }
+    } catch (err) {
+      if (err instanceof ApiError) throw err;
+      // DNS resolution failed — proceed without SSRF check; the fetch will fail naturally
     }
-  } catch (err) {
-    if (err instanceof ApiError) throw err;
-    // DNS resolution failed — proceed without SSRF check; the fetch will fail naturally
   }
 
   let modelsUrl: string;
@@ -408,6 +434,111 @@ async function probeProviderModels(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+function dedupeProviderModels(models: ProbeModelResult[]): ProbeModelResult[] {
+  const seen = new Set<string>();
+  const deduped: ProbeModelResult[] = [];
+  for (const model of models) {
+    const id = model.id.trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    deduped.push({ ...model, id, name: model.name.trim() || id });
+  }
+  return deduped;
+}
+
+async function discoverUsableProviderModels(provider: Pick<CustomProvider, "baseUrl" | "apiKey" | "apiType">): Promise<ProbeModelResult[]> {
+  const models = dedupeProviderModels(
+    await probeProviderModels(provider.baseUrl, provider.apiKey, provider.apiType, { allowPrivateAddress: true }),
+  );
+  if (models.length === 0) {
+    throw new ApiError(404, "No chat models found in provider response");
+  }
+  return models;
+}
+
+/**
+ * FNXC:CustomProviders 2026-06-29-00:00:
+ * Startup and Settings refreshes share this seam so persisted custom-provider model lists can be updated from the stored provider record while the browser only receives sanitized providers. The refresh must reuse probe SSRF checks, use the raw stored API key, and preserve the previous model list when probing fails or yields no chat models.
+ */
+export async function refreshCustomProviderModels(
+  store: CustomProviderSettingsStore,
+  providerId: string,
+): Promise<RefreshCustomProviderModelsResult> {
+  const settings = await store.getGlobalSettingsStore().getSettings();
+  const providers = settings.customProviders ?? [];
+  const targetIndex = providers.findIndex((provider) => provider.id === providerId);
+  if (targetIndex < 0) {
+    throw notFound(`custom provider '${providerId}' not found`);
+  }
+
+  const targetProvider = providers[targetIndex];
+  const models = await discoverUsableProviderModels(targetProvider);
+  const persistedModels = models.map((model) => ({ id: model.id, name: model.name }));
+
+  /*
+   * FNXC:CustomProviders 2026-06-30-00:00:
+   * Model refresh can be slow because it probes a user-configured endpoint. Re-read settings after discovery and merge only the target provider's models so startup/manual refresh cannot overwrite concurrent provider edits, additions, or deletions made while the probe was in flight.
+   *
+   * FNXC:CustomProviders 2026-06-30-10:24:
+   * The probed connection fields are part of the model-list provenance. If the user edits baseUrl, apiType, or apiKey while a refresh is in flight, abort instead of persisting model IDs discovered from the previous endpoint onto the updated provider.
+   */
+  const latestSettings = await store.getGlobalSettingsStore().getSettings();
+  const latestProviders = latestSettings.customProviders ?? [];
+  const latestTargetIndex = latestProviders.findIndex((provider) => provider.id === providerId);
+  if (latestTargetIndex < 0) {
+    throw notFound(`custom provider '${providerId}' not found`);
+  }
+
+  const latestTargetProvider = latestProviders[latestTargetIndex];
+  if (
+    latestTargetProvider.baseUrl !== targetProvider.baseUrl ||
+    latestTargetProvider.apiType !== targetProvider.apiType ||
+    latestTargetProvider.apiKey !== targetProvider.apiKey
+  ) {
+    throw new ApiError(409, "Custom provider connection changed during model refresh; retry refresh to use the latest endpoint");
+  }
+
+  const updatedProvider: CustomProvider = {
+    ...latestTargetProvider,
+    models: persistedModels,
+  };
+  const nextProviders = [...latestProviders];
+  nextProviders[latestTargetIndex] = updatedProvider;
+  await store.updateGlobalSettings({ customProviders: nextProviders });
+  invalidateAllGlobalSettingsCaches();
+
+  return { provider: sanitizeProvider(updatedProvider), modelsRefreshed: persistedModels.length };
+}
+
+export async function refreshAllCustomProviderModels(
+  store: CustomProviderSettingsStore,
+  logFn: (message: string) => void,
+): Promise<RefreshAllCustomProviderModelsResult> {
+  const settings = await store.getGlobalSettingsStore().getSettings();
+  const providers = settings.customProviders ?? [];
+  if (providers.length === 0) {
+    return { refreshed: 0, failed: 0, skipped: 0 };
+  }
+
+  let refreshed = 0;
+  let failed = 0;
+  for (const provider of providers) {
+    try {
+      const result = await refreshCustomProviderModels(store, provider.id);
+      refreshed += 1;
+      logFn(`Refreshed ${result.modelsRefreshed} model(s) for custom provider "${provider.name}" (id=${provider.id})`);
+    } catch (error) {
+      failed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      logFn(`Failed to refresh models for custom provider "${provider.name}" (id=${provider.id}): ${message}`);
+    }
+  }
+
+  return { refreshed, failed, skipped: 0 };
 }
 
 /**
@@ -572,6 +703,26 @@ export const registerCustomProviderRoutes: ApiRouteRegistrar = (ctx) => {
     }
   });
 
+  router.post("/custom-providers/:id/refresh-models", async (req, res) => {
+    try {
+      if (!store) {
+        throw new ApiError(500, "Settings store unavailable");
+      }
+
+      const providerId = String(req.params.id ?? "").trim();
+      if (!providerId) {
+        throw badRequest("id path parameter is required");
+      }
+
+      res.json(await refreshCustomProviderModels(store, providerId));
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
       // NOTE: probe-models must be registered AFTER the :id param routes
       // so Express does not match "probe-models" as an :id value.
   router.post("/custom-providers/probe-models", async (req, res) => {
@@ -603,7 +754,7 @@ export const registerCustomProviderRoutes: ApiRouteRegistrar = (ctx) => {
       }
       const apiType = rawApiType as ProbeApiType;
 
-      const models = await probeProviderModels(baseUrl, apiKey, apiType);
+      const models = dedupeProviderModels(await probeProviderModels(baseUrl, apiKey, apiType));
       res.json({ models, count: models.length });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

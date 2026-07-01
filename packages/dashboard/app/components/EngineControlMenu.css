@@ -158,14 +158,46 @@
   font-size: var(--font-size-xs);
 }
 
-@media (max-width: 768px) {
+.executor-status-bar__segment--engine-controls .engine-control-menu > .engine-control-menu__popover.card {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--space-xs));
+}
+
+@media (max-width: 1024px) {
   .engine-control-menu__popover {
+    /*
+    FNXC:EngineControls 2026-06-30-07:40:
+    The footer Engine Controls menu opens from a fixed mobile footer, so the mobile panel must not inherit desktop corner anchoring. Keep it viewport-fixed, full-width between token gutters, scrollable, and lifted above the executor footer plus mobile nav stack including safe-area, standalone, and ICB compensation.
+
+    FNXC:EngineControls 2026-06-30-16:10:
+    Browser verification showed the footer context can lose this low-specificity mobile override to later footer/card rules and collapse to the trigger's narrow corner. Keep a matching higher-specificity footer rule below so position:fixed and the full-width safe gutters win in the actual ExecutorStatusBar renderer.
+
+    FNXC:EngineControls 2026-06-30-16:25:
+    Tablet browser verification at 820px still overflowed with the desktop anchored popover. Extend the viewport-safe panel breakpoint through common narrow tablets so the footer trigger cannot place a 24rem menu outside the visible inline bounds.
+
+    FNXC:EngineControls 2026-06-30-16:42:
+    Browser verification at 1024px landscape showed the footer popover could still inherit the shared .card position and render off-screen. Keep the viewport-safe footer override active through that tablet width, and keep a footer-specific desktop rule outside the media query so .card cannot reset the anchored popover on wider screens.
+    */
+    --engine-control-mobile-bottom-stack: calc(var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
     position: fixed;
     left: var(--space-sm);
     right: var(--space-sm);
-    bottom: calc(var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--space-2xl));
+    bottom: var(--engine-control-mobile-bottom-stack);
     width: auto;
-    max-height: min(28rem, calc(100vh - var(--mobile-nav-height) - var(--space-2xl) - var(--space-lg)));
+    max-height: min(28rem, calc(100dvh - var(--engine-control-mobile-bottom-stack) - (var(--space-md) * 2)));
+    overflow: auto;
+  }
+
+  .executor-status-bar__segment--engine-controls .engine-control-menu > .engine-control-menu__popover.card {
+    --engine-control-mobile-bottom-stack: calc(var(--executor-footer-height) + var(--mobile-nav-height) + max(env(safe-area-inset-bottom, 0px), var(--space-md)) + var(--standalone-bottom-gap) + var(--icb-bottom-offset, 0px));
+    position: fixed;
+    left: var(--space-sm);
+    right: var(--space-sm);
+    bottom: var(--engine-control-mobile-bottom-stack);
+    width: auto;
+    max-height: min(28rem, calc(100dvh - var(--engine-control-mobile-bottom-stack) - (var(--space-md) * 2)));
+    overflow: auto;
   }
 
   .engine-control-menu__header {

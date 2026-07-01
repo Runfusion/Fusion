@@ -114,7 +114,7 @@ Create tasks from the board or CLI.
 
 ### Option B: Planning
 
-Open **Planning** from the left sidebar on desktop/tablet, or use the board/New Task **Plan** action to send your draft into AI planning mode:
+Open **Planning** from the left sidebar on desktop/tablet, or use the **New Task** dialog's **Plan** action to send your draft into AI planning mode:
 
 - Fusion asks clarifying questions
 - Produces a structured summary

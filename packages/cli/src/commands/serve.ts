@@ -25,7 +25,7 @@ import {
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
-import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv, registerGithubTrackingHook } from "@fusion/dashboard";
+import { createServer, GitHubClient, createSkillsAdapter, getProjectSettingsPath, loadTlsCredentialsFromEnv, refreshAllCustomProviderModels, registerGithubTrackingHook } from "@fusion/dashboard";
 import {
   ProjectEngineManager,
   PeerExchangeService,
@@ -945,6 +945,15 @@ export async function runServe(
   });
 
   const actualPort = (server.address() as AddressInfo).port;
+
+  /*
+  FNXC:CustomProviders 2026-06-30-00:00:
+  Headless serve must become reachable before custom-provider /models probes run. Refresh in the background after listen, then rely on the settings:updated listener to re-register refreshed model lists without delaying startup on slow or unreachable endpoints.
+  */
+  void refreshAllCustomProviderModels(store, (message) => console.log(`[custom-providers] ${message}`)).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[custom-providers] Failed to refresh custom provider models from global settings: ${message}`);
+  });
 
   // ── mDNS discovery: broadcast presence and listen for other nodes ───────
   //

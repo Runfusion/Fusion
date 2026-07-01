@@ -29,7 +29,7 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
 .detail-title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-sm);
 }
 
 .detail-id {
@@ -39,20 +39,34 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   color: var(--text-muted);
 }
 
-.detail-column-badge,
-.detail-workflow-badge {
-  font-size: 11px;
-  padding: 2px 8px;
+.detail-column-badge {
+  font-size: 0.6875rem;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
   border-radius: var(--radius-pill);
   font-weight: 600;
-  letter-spacing: 0.5px;
-}
-
-.detail-column-badge {
+  letter-spacing: 0.03125rem;
   text-transform: uppercase;
 }
 
+/*
+FNXC:WorkflowBadges 2026-06-30-00:00:
+Task detail workflow badges share the board badge's slight token-based icon-to-label gap so the canonical metadata badge stays readable while preserving inline truncation and timestamp ownership.
+*/
 .detail-workflow-badge {
+  column-gap: calc(var(--space-xs) / 2);
+  font-size: 0.6875rem;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  letter-spacing: 0.03125rem;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-muted);
   background: var(--surface-raised);
   border: 1px solid var(--border);
@@ -105,7 +119,7 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   background: var(--text-muted);
 }
 
-/* When the Agent Log tab is active, switch to flex layout so the log section
+/* When Activity → Raw Logs is active, switch to flex layout so the log section
    can stretch to fill the remaining space above the action bar.
    The detail-body itself should NOT scroll; the agent-log-viewer scrolls instead. */
 .detail-body--agent-log {
@@ -114,7 +128,7 @@ The gray top header band (task id + column badge) was over-padded. Trim its vert
   overflow-y: hidden;
 }
 
-/* Chat mirrors the Agent Log fill-height layout: the modal body does not scroll;
+/* Activity → Current mirrors the Raw Logs fill-height layout: the modal body does not scroll;
    the transcript owns internal scrolling while the composer stays visible. */
 .detail-body--chat {
   display: flex;
@@ -308,6 +322,10 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
     align-items: center;
   }
 
+  /*
+  FNXC:TaskDetailWorkflow 2026-06-30-07:37:
+  Task details show workflow identity in the Updated timestamp section across desktop and mobile. Keep the canonical badge inline with Created/Updated metadata so header rows, embedded detail hosts, and mobile back-header details do not render duplicate workflow badges or empty mobile-only shells.
+  */
   .detail-timestamps {
     display: flex;
     align-items: center;
@@ -775,7 +793,7 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   color: var(--color-error);
 }
 
-/* Agent Log tab: stretch to fill the remaining modal body height
+/* Activity → Raw Logs: stretch to fill the remaining modal body height
    so the log viewer uses all available space above the action bar. */
 .detail-section--agent-log {
   display: flex;
@@ -833,7 +851,21 @@ Expanded chat must also cover the task metadata row — priority, execution mode
 
 
 .detail-spec-edit-trigger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
   margin-bottom: var(--space-md);
+}
+
+@media (max-width: 768px) {
+  .detail-spec-edit-trigger {
+    align-items: stretch;
+  }
+
+  .detail-spec-edit-trigger .btn {
+    flex: 1 1 auto;
+  }
 }
 
 .detail-attachments-grid {
@@ -2321,36 +2353,54 @@ FNXC:TaskDetailTabs 2026-06-26-00:35:
   font-weight: 600;
 }
 
-/* === Log Subview Toggle === */
-.log-subview-toggle {
+/* === Activity Segmented Control === */
+/*
+FNXC:TaskDetailActivity 2026-06-30-22:15:
+The Activity top-level tab owns Current, Feed, and Raw Logs as an in-content segmented control. Keep this selector visually quieter than the top-level tab strip and horizontally reachable on narrow modal and embedded task-detail surfaces.
+*/
+.activity-segmented-control {
   display: inline-flex;
+  max-inline-size: 100%;
   gap: 0;
   background: var(--card);
-  border: 1px solid var(--border);
+  border: var(--border-width) solid var(--border);
   border-radius: var(--radius-md);
-  padding: 2px;
+  padding: calc(var(--space-xs) / 4);
   margin-bottom: var(--space-md);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
 
-.log-subview-btn {
-  padding: 4px 12px;
+.activity-segment {
+  flex: 0 0 auto;
+  padding: calc(var(--space-xs) / 2) var(--space-md);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   font-family: inherit;
+  touch-action: pan-x pan-y;
   transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.log-subview-btn:hover {
+.activity-segment:hover {
   color: var(--text);
   background: var(--card-hover);
 }
 
-.log-subview-btn-active {
+.activity-segment:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+
+.activity-segment-active {
   color: var(--text);
   background: var(--surface);
   box-shadow: var(--shadow-sm);

@@ -5,6 +5,7 @@ import { reviewStep as mockedReviewStepFn } from "../reviewer.js";
 import {
   createMockStore,
   mockedCreateFnAgent,
+  mockedExecSync,
   mockedExistsSync,
   resetExecutorMocks,
 } from "./executor-test-helpers.js";
@@ -148,6 +149,96 @@ describe("executor tool step numbering is 0-based", () => {
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-6607-R",
       expect.stringContaining("Step 1 (First) recovered as done on resume"),
+    );
+  });
+
+  it("does not reconcile reopened steps from older complete-step commits", async () => {
+    const store = createMockStore();
+    const detail = {
+      id: "FN-7273",
+      title: "Reopened suffix",
+      description: "",
+      column: "in-progress",
+      dependencies: [],
+      baseCommitSha: "base",
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Implementation", status: "done" },
+        { name: "Testing", status: "pending" },
+      ],
+      currentStep: 2,
+      log: [
+        { timestamp: "2026-06-30T14:59:30.110Z", action: "Step 2 (Testing) → pending" },
+      ],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n### Step 1: Implementation\n### Step 2: Testing",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as any;
+    store.getTask.mockResolvedValue(detail);
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("git log")) {
+        return "1782831500\tfeat(FN-7273): complete Step 2 — old verification\n";
+      }
+      return "";
+    });
+
+    const executor = new TaskExecutor(store as any, "/tmp/test");
+    await (executor as any).reconcileStepsFromGitHistory("FN-7273", detail, "/tmp/wt");
+
+    expect(store.updateStep).not.toHaveBeenCalled();
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-7273",
+      expect.stringContaining("Reconciled Step 2 as done from git history"),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does not log git-history reconciliation when TaskStore rejects the done write", async () => {
+    const store = createMockStore();
+    const detail = {
+      id: "FN-7273",
+      title: "Out of order reconciliation",
+      description: "",
+      column: "in-progress",
+      dependencies: [],
+      baseCommitSha: "base",
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Fix", status: "in-progress" },
+        { name: "Delivery", status: "pending" },
+      ],
+      currentStep: 1,
+      log: [],
+      prompt: "# test\n## Steps\n### Step 0: Preflight\n### Step 1: Fix\n### Step 2: Delivery",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as any;
+    store.getTask.mockResolvedValue(detail);
+    store.updateStep.mockResolvedValue({
+      ...detail,
+      steps: [
+        { name: "Preflight", status: "done" },
+        { name: "Fix", status: "in-progress" },
+        { name: "Delivery", status: "pending" },
+      ],
+    } as any);
+    mockedExecSync.mockImplementation((cmd: string) => {
+      if (cmd.includes("git log")) {
+        return "1782832000\tfeat(FN-7273): complete Step 2 — old delivery\n";
+      }
+      return "";
+    });
+
+    const executor = new TaskExecutor(store as any, "/tmp/test");
+    await (executor as any).reconcileStepsFromGitHistory("FN-7273", detail, "/tmp/wt");
+
+    expect(store.updateStep).toHaveBeenCalledWith("FN-7273", 2, "done");
+    expect(store.logEntry).not.toHaveBeenCalledWith(
+      "FN-7273",
+      expect.stringContaining("Reconciled Step 2 as done from git history"),
+      expect.anything(),
+      expect.anything(),
     );
   });
 

@@ -65,7 +65,7 @@ describe("GlobalSettingsStore", () => {
       const raw = await readFile(join(dir, "settings.json"), "utf-8");
       const parsed = JSON.parse(raw);
       expect(parsed.themeMode).toBe("dark");
-      expect(parsed.colorTheme).toBe("ocean");
+      expect(parsed.colorTheme).toBe("shadcn-ember");
       expect(parsed.ntfyEnabled).toBe(false);
     });
 
@@ -173,6 +173,23 @@ describe("GlobalSettingsStore", () => {
       expect(settings.defaultProvider).toBeUndefined();
     });
 
+    it("preserves explicit legacy color theme selections", async () => {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "settings.json"),
+        JSON.stringify({ colorTheme: "default" }),
+      );
+
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ colorTheme: "default" });
+
+      await writeFile(
+        join(dir, "settings.json"),
+        JSON.stringify({ colorTheme: "ocean" }),
+      );
+
+      await expect(new GlobalSettingsStore(dir).getSettings()).resolves.toMatchObject({ colorTheme: "ocean" });
+    });
+
     it("returns defaults on invalid JSON", async () => {
       await mkdir(dir, { recursive: true });
       await writeFile(join(dir, "settings.json"), "not-json{{{");
@@ -197,7 +214,7 @@ describe("GlobalSettingsStore", () => {
       const updated = await store.updateSettings({ themeMode: "system" });
 
       expect(updated.themeMode).toBe("system");
-      expect(updated.colorTheme).toBe("ocean"); // unchanged default
+      expect(updated.colorTheme).toBe("shadcn-ember"); // unchanged default
 
       // Verify persistence
       const raw = await readFile(join(dir, "settings.json"), "utf-8");
@@ -849,7 +866,7 @@ describe("GlobalSettingsStore", () => {
       const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
       // Only default theme fields should be present
       expect(raw.themeMode).toBe("dark");
-      expect(raw.colorTheme).toBe("ocean");
+      expect(raw.colorTheme).toBe("shadcn-ember");
       // Model fields should not be persisted
       expect(raw.defaultProvider).toBeUndefined();
       expect(raw.defaultModelId).toBeUndefined();

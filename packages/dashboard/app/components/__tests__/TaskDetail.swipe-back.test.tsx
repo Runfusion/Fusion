@@ -587,7 +587,7 @@ describe("Task detail mobile swipe-back", () => {
     });
   });
 
-  it("pushes a fresh mobile nav entry after close and reopen from the list", async () => {
+  it("dismisses the reopened list-mobile detail after a close-and-quick-reopen race", async () => {
     const task = makeTask("FN-1", "Repeat Mobile List Detail");
     mockUseTasks.mockImplementation(() => ({
       tasks: [task],
@@ -614,8 +614,13 @@ describe("Task detail mobile swipe-back", () => {
     });
     expect(window.history.pushState).toHaveBeenCalledTimes(1);
 
+    /*
+    FNXC:TaskDetailSwipeBack 2026-06-30-09:31:
+    The list-mobile modal path uses the shared closeDetailTask callback, so the
+    race repro must prove a deferred removeNav self-pop cannot strand the next
+    reopen without a dismissible mobile history entry.
+    */
     fireEvent.click(screen.getByTestId("task-detail-close"));
-    dispatchPopState({ navIndex: 0 });
     await waitFor(() => {
       expect(screen.queryByTestId("task-detail-modal")).toBeNull();
     });
@@ -625,9 +630,10 @@ describe("Task detail mobile swipe-back", () => {
       expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
     });
 
-    expect(window.history.pushState).toHaveBeenCalledTimes(2);
+    dispatchPopState({ navIndex: 1 });
+    expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
 
-    dispatchPopState({ navIndex: 0 });
+    dispatchPopState({ navIndex: 1 });
     await waitFor(() => {
       expect(screen.queryByTestId("task-detail-modal")).toBeNull();
       expect(screen.getByTestId("list-view")).toBeInTheDocument();

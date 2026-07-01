@@ -874,6 +874,9 @@ export async function createMissionInterviewAgent(
 
   FNXC:McpConfig 2026-06-26-00:00:
   Mission interviews have a TaskStore for planning-board tools and are agent-work sessions, so forward the store-resolved MCP set while keeping resolved secret values out of logs and persisted session state.
+
+  FNXC:McpConfig 2026-06-29-00:00:
+  Mission interviews are read-only planning lanes that intentionally expose configured MCP context tools; the engine opt-in preserves the read-only default for unrelated validator sessions.
   */
   const mcpServers = (await resolveMcpServersForStore(store)).servers;
   return createFnAgent({
@@ -881,6 +884,7 @@ export async function createMissionInterviewAgent(
     systemPrompt: effectivePrompt,
     tools: "readonly",
     mcpServers,
+    allowMcpToolsInReadonly: true,
     ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     builtinToolsAllowlist: [...MISSION_INTERVIEW_BUILTIN_WEB_TOOLS],
     customTools: [...createPlanningBoardTools(store)],

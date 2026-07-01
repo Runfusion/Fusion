@@ -941,7 +941,9 @@ export async function createSession(
     ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
     // FNXC:McpConfig 2026-06-25-22:31: Planning/chat session creation resolves trusted MCP servers through the dashboard-scoped store and forwards only the materialized in-memory set to the engine runtime guard.
+    // FNXC:McpConfig 2026-06-29-00:00: Planning sessions are intentionally read-only but still need configured MCP documentation/context tools; opt in at the session boundary while preserving engine-side namespacing, filtering, wrappers, and disposal.
     mcpServers: (await resolveMcpServersForStore(store)).servers,
+    allowMcpToolsInReadonly: true,
     customTools: [
       ...createPlanningBoardTools(store),
       ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),
@@ -1541,7 +1543,9 @@ async function createPlanningAgent(
     ...(skillContext.skillSelectionContext ? { skillSelection: skillContext.skillSelectionContext } : {}),
     builtinToolsAllowlist: [...PLANNING_BUILTIN_WEB_TOOLS],
     // FNXC:McpConfig 2026-06-25-22:31: Streaming planning uses the same dashboard-scoped MCP resolution seam as non-streaming planning so no planning lane silently drops enabled servers.
+    // FNXC:McpConfig 2026-06-29-00:00: Streaming planning uses the explicit read-only MCP opt-in; non-planning read-only lanes remain denied unless they set the same reviewed policy flag.
     mcpServers: (await resolveMcpServersForStore(store)).servers,
+    allowMcpToolsInReadonly: true,
     customTools: [
       ...createPlanningBoardTools(store),
       ...createWorkflowAuthoringTools(store, PLANNING_NO_AMBIENT_TASK_ID, { stripApprovalFlags: true }),

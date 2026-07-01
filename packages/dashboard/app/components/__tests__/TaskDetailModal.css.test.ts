@@ -15,4 +15,15 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-tabs\s*\{[^}]*touch-action\s*:\s*pan-x\s+pan-y\s*;/);
     expect(css).toMatch(/\.detail-tab\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
   });
+
+  it("FN-7307 keeps Activity segments reachable on narrow task-detail surfaces", async () => {
+    const css = await loadAllAppCssBaseOnly();
+
+    expect(css).toMatch(/\.activity-segmented-control\s*\{[^}]*max-inline-size\s*:\s*100%\s*;/);
+    expect(css).toMatch(/\.activity-segmented-control\s*\{[^}]*overflow-x\s*:\s*auto\s*;/);
+    expect(css).toMatch(/\.activity-segmented-control\s*\{[^}]*touch-action\s*:\s*pan-x\s+pan-y\s*;/);
+    expect(css).toMatch(/\.activity-segment\s*\{[^}]*flex\s*:\s*0\s+0\s+auto\s*;/);
+    expect(css).not.toContain(".log-subview-toggle");
+    expect(css).not.toContain(".log-subview-btn");
+  });
 });

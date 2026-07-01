@@ -1,4 +1,10 @@
 export { createServer, loadTlsCredentialsFromEnv, type ServerOptions } from "./server.js";
+export {
+  refreshAllCustomProviderModels,
+  refreshCustomProviderModels,
+  type RefreshAllCustomProviderModelsResult,
+  type RefreshCustomProviderModelsResult,
+} from "./routes/register-custom-provider-routes.js";
 export { stopAllDevServers, destroyAllDevServerManagers, getActiveProcessManagers } from "./dev-server-routes.js";
 export {
   createRuntimeLogger,

@@ -22,6 +22,7 @@ vi.mock("lucide-react", () => ({
   RotateCw: () => <svg />,
   Zap: () => <svg />,
   AlertTriangle: () => <svg />,
+  ArrowUpRight: () => <svg />,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -151,5 +152,37 @@ describe("TaskCard footer wrapping (FN-5210)", () => {
     const styles = getComputedStyle(chip);
     expect(styles.whiteSpace).toBe("nowrap");
     expect(styles.flexShrink).toBe("0");
+  });
+
+  it("places workflow badges after footer and action rows in DOM order", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask()}
+        onOpenDetail={noop}
+        addToast={noop}
+        onOpenDetailWithTab={noop}
+        onPromote={vi.fn(async () => undefined)}
+        workflowBadge={{ workflowId: "wf-footer", workflowName: "Workflow with a very long display name for wrapping" }}
+      />,
+    );
+
+    const footerRow = container.querySelector(".card-footer-row") as HTMLElement;
+    const actionRow = container.querySelector(".card-action-row") as HTMLElement;
+    const workflowRow = container.querySelector(".card-workflow-badge-row") as HTMLElement;
+    const workflowBadge = container.querySelector(".card-workflow-badge") as HTMLElement;
+
+    expect(footerRow).toBeTruthy();
+    expect(actionRow).toBeTruthy();
+    expect(workflowRow).toBeTruthy();
+    expect(workflowRow.contains(workflowBadge)).toBe(true);
+    expect(footerRow.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(actionRow.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const rowStyles = getComputedStyle(workflowRow);
+    expect(rowStyles.justifyContent).toBe("flex-start");
+    const badgeStyles = getComputedStyle(workflowBadge);
+    expect(badgeStyles.whiteSpace).toBe("nowrap");
+    expect(badgeStyles.overflow).toBe("hidden");
+    expect(badgeStyles.textOverflow).toBe("ellipsis");
   });
 });

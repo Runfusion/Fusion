@@ -5,10 +5,11 @@ import {
   deleteCustomProvider,
   fetchCustomProviders,
   probeProviderModels,
+  refreshProviderModels,
   updateCustomProvider,
   type CustomProvider,
 } from "../api";
-import { AlertCircle, Loader2, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { AlertCircle, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { OnboardingDisclosure } from "./OnboardingDisclosure";
 import "./CustomProvidersSection.css";
 
@@ -82,6 +83,8 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
   const [formError, setFormError] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
+  const [refreshingProviderId, setRefreshingProviderId] = useState<string | null>(null);
+  const [refreshStatus, setRefreshStatus] = useState<{ providerId: string; type: "success" | "error"; message: string } | null>(null);
 
   const loadProviders = useCallback(async () => {
     setLoading(true);
@@ -274,6 +277,46 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     [loadProviders, onProviderChange, t],
   );
 
+  const handleRefreshProviderModels = useCallback(
+    async (provider: CustomProvider) => {
+      setRefreshingProviderId(provider.id);
+      setRefreshStatus(null);
+      setError(null);
+      try {
+        const result = await refreshProviderModels(provider.id);
+        setProviders((current) => current.map((candidate) => (
+          candidate.id === provider.id ? result.provider : candidate
+        )));
+        if (editingProvider?.id === provider.id) {
+          /*
+          FNXC:CustomProviders 2026-06-30-00:00:
+          Manual refresh can run while a provider edit form is open. Keep that form's model input synchronized with the persisted refresh result so saving unrelated edits cannot overwrite newly discovered models with the pre-refresh list.
+          */
+          const refreshedModels = (result.provider.models ?? []).map((model) => model.id).join(", ");
+          setModels(refreshedModels);
+          setEditingProvider((current) => current?.id === provider.id
+            ? { ...current, models: result.provider.models ?? [] }
+            : current);
+        }
+        onProviderChange?.();
+        setRefreshStatus({
+          providerId: provider.id,
+          type: "success",
+          message: t("providers.refreshModelsSuccess", "Refreshed {{count}} model(s).", { count: result.modelsRefreshed }),
+        });
+      } catch (refreshError) {
+        setRefreshStatus({
+          providerId: provider.id,
+          type: "error",
+          message: refreshError instanceof Error ? refreshError.message : t("providers.refreshModelsFailed", "Failed to refresh models."),
+        });
+      } finally {
+        setRefreshingProviderId(null);
+      }
+    },
+    [editingProvider?.id, onProviderChange, t],
+  );
+
   const sectionContent = (
     <>
       {embedded ? null : loading ? (
@@ -294,6 +337,8 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
         <div className="custom-provider-list">
           {providers.map((provider) => {
             const isEditingThisProvider = isFormOpen && editingProvider?.id === provider.id;
+            const isRefreshingThisProvider = refreshingProviderId === provider.id;
+            const providerRefreshStatus = refreshStatus?.providerId === provider.id ? refreshStatus : null;
 
             return (
               <div key={provider.id}>
@@ -305,6 +350,16 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                     </div>
                   </div>
                   <div className="custom-provider-item-actions">
+                    <button
+                      type="button"
+                      className="btn btn-sm custom-provider-refresh-btn"
+                      onClick={() => void handleRefreshProviderModels(provider)}
+                      disabled={isRefreshingThisProvider}
+                      aria-label={t("providers.refreshModelsLabel", "Refresh models for {{name}}", { name: provider.name })}
+                    >
+                      {isRefreshingThisProvider ? <Loader2 aria-hidden="true" className="custom-provider-spin" /> : <RefreshCw aria-hidden="true" />}
+                      <span>{isRefreshingThisProvider ? t("providers.refreshingModels", "Refreshing…") : t("providers.refreshModels", "Refresh Models")}</span>
+                    </button>
                     <button
                       type="button"
                       className="btn btn-icon btn-sm"
@@ -323,6 +378,13 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                     </button>
                   </div>
                 </div>
+
+                {providerRefreshStatus ? (
+                  <div className={`custom-provider-row-message custom-provider-row-message--${providerRefreshStatus.type}`} role={providerRefreshStatus.type === "error" ? "alert" : "status"}>
+                    {providerRefreshStatus.type === "error" ? <AlertCircle aria-hidden="true" /> : null}
+                    <span>{providerRefreshStatus.message}</span>
+                  </div>
+                ) : null}
 
                 {isEditingThisProvider ? (
                   <div className="custom-provider-form custom-provider-item-edit-form">
@@ -392,7 +454,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                       />
                     </div>
 
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+                    <div className="custom-provider-detect-actions">
                       <button
                         type="button"
                         className="btn btn-sm"
@@ -509,7 +571,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
             />
           </div>
 
-          <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+          <div className="custom-provider-detect-actions">
             <button
               type="button"
               className="btn btn-sm"

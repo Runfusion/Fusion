@@ -239,6 +239,16 @@ vi.mock("../step-session-executor.js", () => ({
       steerActiveSessions: mockSteerActiveSessions,
     };
   }),
+  extractSection: (prompt: string, sectionName: string) => {
+    const escaped = sectionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = new RegExp(`^## ${escaped}\\s*$`, "m").exec(prompt);
+    if (!match) return "";
+    const start = match.index;
+    const afterStart = start + match[0].length;
+    const nextHeading = prompt.indexOf("\n## ", afterStart);
+    const end = nextHeading === -1 ? prompt.length : nextHeading;
+    return prompt.slice(start, end).trim();
+  },
 }));
 
 vi.mock("../rate-limit-retry.js", () => ({

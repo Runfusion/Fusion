@@ -86,7 +86,7 @@ const workflowPayload = {
   workflows: [
     {
       id: "builtin:coding",
-      name: "Coding (built-in)",
+      name: "Coding",
       columns: [
         { id: "triage", name: "Triage", flags: { intake: true } },
         { id: "todo", name: "Todo", flags: {} },

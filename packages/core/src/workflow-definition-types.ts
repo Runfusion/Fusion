@@ -14,6 +14,31 @@ export interface WorkflowNodeLayout {
  *  compile/selection paths; both kinds are stored as parseable full IRs. */
 export type WorkflowDefinitionKind = "workflow" | "fragment";
 
+export const MAX_WORKFLOW_ICON_LENGTH = 16;
+
+/**
+ * Normalize optional custom workflow icon metadata for persistence and API output.
+ *
+ * FNXC:WorkflowIcons 2026-06-30-12:00:
+ * Workflow icons are operator-authored compact plain text, not markup or remote media.
+ * Reject HTML/SVG/script/URL-shaped values at every write boundary so dashboard renderers can treat the icon as text-only identity metadata.
+ */
+export function normalizeWorkflowIcon(icon: unknown): string | undefined {
+  if (icon === undefined || icon === null) return undefined;
+  if (typeof icon !== "string") {
+    throw new Error("Workflow icon must be a string");
+  }
+  const normalized = icon.trim();
+  if (!normalized) return undefined;
+  if (normalized.length > MAX_WORKFLOW_ICON_LENGTH) {
+    throw new Error(`Workflow icon must be ${MAX_WORKFLOW_ICON_LENGTH} characters or fewer`);
+  }
+  if (/[<>]/.test(normalized) || /javascript:/i.test(normalized) || /^https?:\/\//i.test(normalized) || /^data:/i.test(normalized)) {
+    throw new Error("Workflow icon must be plain text, not HTML, SVG, script, or a URL");
+  }
+  return normalized;
+}
+
 /** A named, persisted workflow authored as a WorkflowIr graph plus editor layout. */
 export interface WorkflowDefinition {
   /** Unique identifier (e.g., "WF-001"). */
@@ -22,6 +47,8 @@ export interface WorkflowDefinition {
   name: string;
   /** Short description for UI display. */
   description: string;
+  /** Optional compact plain-text icon for custom workflow identity. */
+  icon?: string;
   /** Discriminates full workflows from reusable fragment templates (KTD-1). */
   kind: WorkflowDefinitionKind;
   /** The validated workflow graph (v1 IR contract). */
@@ -40,6 +67,8 @@ export interface WorkflowDefinition {
 export interface WorkflowDefinitionInput {
   name: string;
   description?: string;
+  /** Optional compact plain-text icon for custom workflow identity. */
+  icon?: string;
   /** Workflow graph; validated via parseWorkflowIr on write. */
   ir: WorkflowIr;
   layout?: Record<string, WorkflowNodeLayout>;
@@ -52,6 +81,8 @@ export interface WorkflowDefinitionInput {
 export interface WorkflowDefinitionUpdate {
   name?: string;
   description?: string;
+  /** Optional compact plain-text icon for custom workflow identity; blank clears it. */
+  icon?: string | null;
   ir?: WorkflowIr;
   layout?: Record<string, WorkflowNodeLayout>;
   /**

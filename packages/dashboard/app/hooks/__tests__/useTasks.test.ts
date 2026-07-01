@@ -49,6 +49,7 @@ async function flushPromises(): Promise<void> {
 const mockFetchTasks = vi.mocked(api.fetchTasks);
 const mockCreateTask = vi.mocked(api.createTask);
 const mockDeleteTask = vi.mocked(api.deleteTask);
+const mockRetryTask = vi.mocked(api.retryTask);
 const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
 const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
@@ -98,6 +99,7 @@ beforeEach(() => {
   (globalThis as any).EventSource = MockEventSource;
   mockFetchTasks.mockReset().mockResolvedValue([]);
   mockDeleteTask.mockReset();
+  mockRetryTask.mockReset();
   mockReadCache.mockReset();
   mockWriteCache.mockReset();
   mockClearCache.mockReset();
@@ -1595,6 +1597,220 @@ describe("useTasks", () => {
       });
 
       expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-ACTIVE"]);
+    });
+  });
+
+  describe("retryTask", () => {
+    it("FN-7295 immediately replaces every matching local retry task without SSE or refresh", async () => {
+      const failedOne = createMockTask({
+        id: "FN-RETRY",
+        title: "Failed duplicate one",
+        column: "in-progress" as Column,
+        status: "failed",
+        error: "Executor crashed",
+        worktree: "/tmp/stale-worktree",
+        branch: "fusion/FN-RETRY-stale",
+        currentStep: 2,
+      });
+      const keep = createMockTask({ id: "FN-KEEP", title: "Keep", column: "todo" as Column });
+      const failedTwo = createMockTask({
+        id: "FN-RETRY",
+        title: "Failed duplicate two",
+        column: "in-review" as Column,
+        status: "stuck-killed",
+        error: "Merge stalled",
+        worktree: "/tmp/stale-review",
+        branch: "fusion/FN-RETRY-review",
+        currentStep: 3,
+      });
+      const retried = createMockTask({
+        id: "FN-RETRY",
+        title: "Retried from server",
+        column: "todo" as Column,
+        status: null,
+        error: null,
+        worktree: null,
+        branch: null,
+        currentStep: 0,
+        updatedAt: "2026-06-30T12:00:00.000Z",
+      });
+      mockFetchTasks.mockResolvedValueOnce([failedOne, keep, failedTwo]);
+      mockRetryTask.mockResolvedValueOnce(retried);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(3));
+
+      let returned: Task | undefined;
+      await act(async () => {
+        returned = await result.current.retryTask("FN-RETRY");
+      });
+
+      expect(mockRetryTask).toHaveBeenCalledWith("FN-RETRY", "proj-1");
+      expect(returned).toEqual(expect.objectContaining({ id: "FN-RETRY", column: "todo", status: null, error: null }));
+      expect(result.current.tasks).toEqual([retried, keep, retried]);
+      expect(result.current.tasks.filter((task) => task.id === "FN-RETRY")).toHaveLength(2);
+      expect(result.current.tasks.filter((task) => task.id === "FN-RETRY").every((task) => task.status === null && task.error === null)).toBe(true);
+      expect(mockFetchTasks).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves empty and missing-id task collections stable after retry success", async () => {
+      const retried = createMockTask({ id: "FN-MISSING", column: "todo" as Column, status: null, error: null });
+      mockFetchTasks.mockResolvedValueOnce([]);
+      mockRetryTask.mockResolvedValueOnce(retried);
+
+      const emptyHook = renderHook(() => useTasks());
+
+      await waitFor(() => expect(emptyHook.result.current.tasks).toEqual([]));
+
+      await act(async () => {
+        await emptyHook.result.current.retryTask("FN-MISSING");
+      });
+
+      expect(emptyHook.result.current.tasks).toEqual([]);
+      emptyHook.unmount();
+
+      const keep = createMockTask({ id: "FN-KEEP", column: "in-progress" as Column });
+      mockFetchTasks.mockResolvedValueOnce([keep]);
+      mockRetryTask.mockResolvedValueOnce(retried);
+
+      const missingHook = renderHook(() => useTasks());
+
+      await waitFor(() => expect(missingHook.result.current.tasks.map((task) => task.id)).toEqual(["FN-KEEP"]));
+
+      await act(async () => {
+        await missingHook.result.current.retryTask("FN-MISSING");
+      });
+
+      expect(missingHook.result.current.tasks).toEqual([keep]);
+      missingHook.unmount();
+    });
+
+    it("updates project SWR task cache after retry success for array and absent payloads", async () => {
+      const failed = createMockTask({ id: "FN-RETRY", column: "in-progress" as Column, status: "failed", error: "boom" });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      const retried = createMockTask({ id: "FN-RETRY", column: "todo" as Column, status: null, error: null });
+      mockFetchTasks.mockResolvedValueOnce([failed, keep]);
+      mockRetryTask.mockResolvedValueOnce(retried);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+      mockReadCache.mockReturnValueOnce([failed, keep, failed]);
+
+      await act(async () => {
+        await result.current.retryTask("FN-RETRY");
+      });
+
+      expect(mockReadCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        { maxAgeMs: swrCache.SWR_TASKS_MAX_AGE_MS },
+      );
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        [retried, keep, retried],
+        { maxBytes: 500_000 },
+      );
+      expect(mockClearCache).not.toHaveBeenCalled();
+
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+      mockReadCache.mockReturnValueOnce(null);
+      const retriedAgain = createMockTask({ id: "FN-RETRY", column: "todo" as Column, status: null, error: null, updatedAt: "2026-06-30T12:01:00.000Z" });
+      mockRetryTask.mockResolvedValueOnce(retriedAgain);
+
+      await act(async () => {
+        await result.current.retryTask("FN-RETRY");
+      });
+
+      expect(mockWriteCache).toHaveBeenCalledWith(
+        `${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`,
+        [retriedAgain, keep],
+        { maxBytes: 500_000 },
+      );
+      expect(mockClearCache).not.toHaveBeenCalled();
+    });
+
+    it("clears malformed project SWR task cache payloads after retry success", async () => {
+      const failed = createMockTask({ id: "FN-RETRY", column: "in-progress" as Column, status: "failed", error: "boom" });
+      const retried = createMockTask({ id: "FN-RETRY", column: "todo" as Column, status: null, error: null });
+      mockFetchTasks.mockResolvedValueOnce([failed]);
+      mockRetryTask.mockResolvedValueOnce(retried);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(1));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+      mockReadCache.mockReturnValueOnce({ data: [failed] });
+
+      await act(async () => {
+        await result.current.retryTask("FN-RETRY");
+      });
+
+      expect(result.current.tasks).toEqual([retried]);
+      expect(mockWriteCache).not.toHaveBeenCalled();
+      expect(mockClearCache).toHaveBeenCalledWith(`${swrCache.SWR_CACHE_KEYS.TASKS_PREFIX}proj-1`);
+    });
+
+    it("does not let an older in-flight fetch restore stale failed retry state", async () => {
+      const failed = createMockTask({ id: "FN-RETRY", column: "in-progress" as Column, status: "failed", error: "boom" });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      const retried = createMockTask({ id: "FN-RETRY", column: "todo" as Column, status: null, error: null });
+      let resolveRefresh!: (tasks: Task[]) => void;
+      mockReadCache.mockReturnValue([failed, keep]);
+      mockFetchTasks.mockImplementationOnce(() => new Promise<Task[]>((resolve) => {
+        resolveRefresh = resolve;
+      }));
+      mockRetryTask.mockResolvedValueOnce(retried);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      expect(result.current.tasks.map((task) => task.id)).toEqual(["FN-RETRY", "FN-KEEP"]);
+      await waitFor(() => expect(mockFetchTasks).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await result.current.retryTask("FN-RETRY");
+      });
+
+      expect(result.current.tasks).toEqual([retried, keep]);
+
+      await act(async () => {
+        resolveRefresh([failed, keep]);
+        await flushPromises();
+      });
+
+      expect(result.current.tasks).toEqual([retried, keep]);
+    });
+
+    it("keeps local state and cache untouched when retry rejects", async () => {
+      const failed = createMockTask({ id: "FN-RETRY", column: "in-progress" as Column, status: "failed", error: "boom" });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([failed, keep]);
+      mockRetryTask.mockRejectedValueOnce(new Error("retry rejected"));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+      mockReadCache.mockClear();
+      mockWriteCache.mockClear();
+      mockClearCache.mockClear();
+
+      await expect(
+        act(async () => {
+          await result.current.retryTask("FN-RETRY");
+        }),
+      ).rejects.toThrow("retry rejected");
+
+      expect(result.current.tasks).toEqual([failed, keep]);
+      expect(mockReadCache).not.toHaveBeenCalled();
+      expect(mockWriteCache).not.toHaveBeenCalled();
+      expect(mockClearCache).not.toHaveBeenCalled();
     });
   });
 

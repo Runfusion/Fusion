@@ -127,6 +127,7 @@ describe("provider registration (default export)", () => {
     const modelIds = new Set(config.models.map((m: { id: string }) => m.id));
 
     for (const id of [
+      "claude-sonnet-5",
       "claude-opus-4-7",
       "claude-sonnet-4-6",
       "claude-sonnet-4-5",
@@ -134,6 +135,15 @@ describe("provider registration (default export)", () => {
     ]) {
       expect(modelIds.has(id)).toBe(true);
     }
+
+    expect(config.models.find((m: { id: string }) => m.id === "claude-sonnet-5")).toMatchObject({
+      name: "Claude Sonnet 5",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+    });
   });
 
   it("deduplicates extra models when catalog already includes them", async () => {
@@ -143,6 +153,17 @@ describe("provider registration (default export)", () => {
 
     getModelsMock.mockReturnValueOnce([
       ...mockModels,
+      {
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5 Upstream",
+        api: "anthropic",
+        provider: "anthropic",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      } as any,
       {
         id: "claude-sonnet-4-6",
         name: "Claude Sonnet 4.6",
@@ -160,10 +181,12 @@ describe("provider registration (default export)", () => {
     mod.default(mockPi);
 
     const config = registerProvider.mock.calls[0][1];
-    const matches = config.models.filter(
-      (m: { id: string }) => m.id === "claude-sonnet-4-6",
-    );
-    expect(matches).toHaveLength(1);
+    for (const id of ["claude-sonnet-5", "claude-sonnet-4-6"]) {
+      const matches = config.models.filter(
+        (m: { id: string }) => m.id === id,
+      );
+      expect(matches).toHaveLength(1);
+    }
   });
 });
 

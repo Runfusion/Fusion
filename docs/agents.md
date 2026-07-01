@@ -366,9 +366,9 @@ Triage inheritance behavior:
 
 As with execution, incomplete assigned-agent model configuration falls through cleanly to the existing planning hierarchy.
 
-### Task Detail Agent Log model provenance
+### Task Detail Raw Logs model provenance
 
-The Task Detail → Agent Log model header prefers runtime provenance markers written during execution/review:
+The Task Detail Activity → Raw Logs model header prefers runtime provenance markers written during execution/review:
 
 - `Executor using model: <provider>/<modelId>`
 - `Reviewer using model: <provider>/<modelId>`

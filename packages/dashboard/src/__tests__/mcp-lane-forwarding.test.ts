@@ -76,6 +76,8 @@ describe("dashboard MCP lane forwarding", () => {
     expect(resolveMcpServersForStoreMock).toHaveBeenCalledWith(store);
     expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/fusion-dashboard-test",
+      tools: "readonly",
+      allowMcpToolsInReadonly: true,
       mcpServers: [expect.objectContaining({ name: "docs", env: { TOKEN: "materialized-secret" } })],
     }));
   });
@@ -105,6 +107,7 @@ describe("dashboard MCP lane forwarding", () => {
     expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/fusion-dashboard-test",
       tools: "readonly",
+      allowMcpToolsInReadonly: true,
       mcpServers: [expect.objectContaining({ name: "docs", env: { TOKEN: "materialized-secret" } })],
     }));
   });
@@ -127,6 +130,7 @@ describe("dashboard MCP lane forwarding", () => {
     expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
       cwd: "/tmp/fusion-dashboard-test",
       tools: "readonly",
+      allowMcpToolsInReadonly: true,
       mcpServers: [expect.objectContaining({ name: "docs", env: { TOKEN: "materialized-secret" } })],
     }));
   });

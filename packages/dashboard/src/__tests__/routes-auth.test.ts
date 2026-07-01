@@ -5,6 +5,7 @@ import express from "express";
 import http from "node:http";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -328,6 +329,20 @@ function createMockModelRegistry(overrides: Partial<ModelRegistryLike> = {}): Mo
   };
 }
 
+function createMutableModelRegistry(initialModels: Array<Record<string, any>>): ModelRegistryLike & { models: Array<Record<string, any>> } {
+  const registry = {
+    models: [...initialModels],
+    refresh: vi.fn(),
+    getAll: vi.fn(() => registry.models as any),
+    getAvailable: vi.fn(() => registry.models as any),
+    registerProvider: vi.fn((providerName: string, config: { models?: Array<Record<string, any>> }) => {
+      registry.models = registry.models.filter((model) => model.provider !== providerName);
+      registry.models.push(...(config.models ?? []).map((model) => ({ ...model, provider: providerName })));
+    }),
+  };
+  return registry;
+}
+
 describe("GET /models", () => {
   let store: TaskStore;
 
@@ -381,6 +396,58 @@ describe("GET /models", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.models).toEqual([]);
+  });
+
+  it("adds Claude Sonnet 5 for configured direct Anthropic users without relying on Claude CLI", async () => {
+    const modelRegistry = createMutableModelRegistry([
+      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: true, contextWindow: 200000 },
+      { id: "gpt-4o", name: "GPT-4o", provider: "openai", reasoning: false, contextWindow: 128000 },
+    ]);
+
+    const res = await GET(buildApp(modelRegistry), "/api/models");
+
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual(expect.arrayContaining([
+      expect.objectContaining({ provider: "anthropic", id: "claude-sonnet-5", name: "Claude Sonnet 5", reasoning: true, contextWindow: 1_000_000 }),
+    ]));
+    expect(modelRegistry.registerProvider).toHaveBeenCalledWith("anthropic", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: "claude-sonnet-5" })]),
+    }));
+  });
+
+  it("does not expose Claude Sonnet 5 when direct Anthropic is not configured", async () => {
+    const readFileSpy = vi.spyOn(fsPromises, "readFile").mockImplementation(async (path: any) => {
+      const value = String(path);
+      if (value.endsWith("auth.json")) return "{}" as never;
+      if (value.endsWith("models.json")) return '{"providers":{}}' as never;
+      return "{}" as never;
+    });
+    try {
+      const modelRegistry = createMutableModelRegistry([
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic", reasoning: true, contextWindow: 200000 },
+      ]);
+
+      const res = await GET(buildApp(modelRegistry), "/api/models");
+
+      expect(res.status).toBe(200);
+      expect(res.body.models).toEqual([]);
+      expect(modelRegistry.models.some((model) => model.id === "claude-sonnet-5")).toBe(true);
+    } finally {
+      readFileSpy.mockRestore();
+    }
+  });
+
+  it("does not duplicate Claude Sonnet 5 when upstream registry already includes it", async () => {
+    const modelRegistry = createMutableModelRegistry([
+      { id: "claude-sonnet-5", name: "Claude Sonnet 5 Upstream", provider: "anthropic", reasoning: true, contextWindow: 1_000_000, maxTokens: 128_000 },
+    ]);
+
+    const res = await GET(buildApp(modelRegistry), "/api/models");
+
+    expect(res.status).toBe(200);
+    const sonnetFiveRows = res.body.models.filter((model: { provider: string; id: string }) => model.provider === "anthropic" && model.id === "claude-sonnet-5");
+    expect(sonnetFiveRows).toHaveLength(1);
+    expect(modelRegistry.registerProvider).not.toHaveBeenCalled();
   });
 
   // Regression guard: FN-2370's auto-resolved squash inverted this filter,
@@ -1107,6 +1174,31 @@ describe("Droid CLI auth routes", () => {
         ...createMockGlobalSettingsStore(),
         getSettings: vi.fn().mockResolvedValue({ useDroidCli: false }),
       }),
+    });
+
+    /*
+    FNXC:DashboardTests 2026-06-30-17:15 (FN-5048 — no slow tests):
+    GET /auth/status probes claude/cursor/llama CLIs UNCONDITIONALLY (register-auth-routes.ts:
+    probeClaudeCli/probeCursorCliProvider/probeLlamaCpp run regardless of the enabled toggle).
+    The two /auth/status tests in this describe previously mocked only probeDroidCli, so the
+    other three ran real subprocess probes and each blocked on a real CLI-absent timeout — ~6s
+    per test (12s of the suite's wall time). Stub every CLI probe here so no real subprocess or
+    wall-clock wait remains; the droid-specific tests still override probeDroidCli as needed.
+    */
+    vi.spyOn(claudeCliProbeModule, "probeClaudeCli").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
+      available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
     });
   });
 

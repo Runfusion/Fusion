@@ -39,6 +39,7 @@ import { ConfirmDialogProvider } from "./hooks/useConfirm";
 import { useTheme } from "./hooks/useTheme";
 import { useModalManager, type DetailTaskOrigin, type DetailTaskTab } from "./hooks/useModalManager";
 import { useAppSettings } from "./hooks/useAppSettings";
+import { ModalDismissPreferenceProvider } from "./hooks/useOverlayDismiss";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
 import { useAuthOnboarding } from "./hooks/useAuthOnboarding";
@@ -549,6 +550,7 @@ function AppInner() {
   const {
     maxConcurrent,
     autoMerge,
+    mergeStrategy,
     showWorktreeGrouping,
     globalPaused,
     isTestMode,
@@ -560,6 +562,7 @@ function AppInner() {
     openMobileTasksInPopup,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
+    dismissModalsOnOutsideClick,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
     settingsLoaded,
@@ -1214,6 +1217,7 @@ function AppInner() {
     openFileInBrowser,
     prAuthAvailable,
     autoMerge,
+    mergeStrategy,
     settingsLoaded,
     skillsEnabled,
     experimentalFeatures,
@@ -1372,9 +1376,10 @@ function AppInner() {
     setShowGitHubStarPrompt,
   };
   return (
-    <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
-      <FileBrowserProvider openFile={openFileInBrowser}>
-        <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
+    <ModalDismissPreferenceProvider enabled={dismissModalsOnOutsideClick}>
+      <NavigationHistoryProvider value={{ pushNav, replaceCurrent, removeNav }}>
+        <FileBrowserProvider openFile={openFileInBrowser}>
+          <RetryWarningProvider value={maxTotalRetriesBeforeFail * RETRY_WARNING_RATIO}>
         {isFirstEverBoot ? (
           <>
             <DashboardLoader stage={loadingStage} />
@@ -1702,9 +1707,10 @@ function AppInner() {
             )}
           </>
         )}
-        </RetryWarningProvider>
-      </FileBrowserProvider>
-    </NavigationHistoryProvider>
+          </RetryWarningProvider>
+        </FileBrowserProvider>
+      </NavigationHistoryProvider>
+    </ModalDismissPreferenceProvider>
   );
 }
 

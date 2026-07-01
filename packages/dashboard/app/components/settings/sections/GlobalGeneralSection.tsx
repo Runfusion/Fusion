@@ -22,6 +22,11 @@ export function GlobalGeneralSection({ scopeBanner, form, setForm, globalTrackin
       </div>
       <CliBinaryPanel />
       <div className="form-group">
+        <label htmlFor="dismissModalsOnOutsideClick" className="checkbox-label">
+          <input id="dismissModalsOnOutsideClick" type="checkbox" checked={form.dismissModalsOnOutsideClick === true} onChange={(e) => setForm((f) => ({ ...f, dismissModalsOnOutsideClick: e.target.checked }))}/>{t("settings.globalGeneral.dismissModalsByClickingOutside", " Dismiss modals by clicking outside ")}</label>
+        <small>{t("settings.globalGeneral.dismissModalsByClickingOutsideHint", " When enabled, clicking or tapping a modal backdrop closes the modal. Off by default to prevent accidental dismissal. ")}</small>
+      </div>
+      <div className="form-group">
         <label htmlFor="persistAgentToolOutput" className="checkbox-label">
           <input id="persistAgentToolOutput" type="checkbox" checked={form.persistAgentToolOutput === true} onChange={(e) => setForm((f) => ({ ...f, persistAgentToolOutput: e.target.checked }))}/>{t("settings.globalGeneral.saveToolOutputInAgentLogs", " Save tool output in agent logs ")}</label>
         <small>{t("settings.globalGeneral.whenDisabledToolRowsAreStillLoggedBut", " When disabled, tool rows are still logged but detailed tool payloads are omitted. Very large tool payloads may still be clipped even when this stays enabled. ")}</small>

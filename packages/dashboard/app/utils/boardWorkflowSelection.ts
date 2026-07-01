@@ -1,6 +1,7 @@
 import { getScopedItem, removeScopedItem, setScopedItem } from "./projectStorage";
 
 export const BOARD_WORKFLOW_SELECTION_STORAGE_KEY = "kb-dashboard-board-workflow-selection";
+export const ALL_WORKFLOWS_BOARD_VIEW_ID = "__all_workflows__";
 
 function isValidWorkflowSelection(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -15,15 +16,23 @@ function isValidWorkflowSelection(value: unknown): value is string {
 
 /**
  * FNXC:BoardWorkflowSelection 2026-06-29-12:00:
- * Persist only the last selected workflow id in project-scoped localStorage so Board, Header, Graph, and List selectors can restore the operator's workflow after board remounts, task state changes, respecification returns, and browser/server restarts. Storage is best-effort because private-mode, SSR, missing APIs, and quota failures must never block board rendering.
+ * Persist the last selected Board workflow view in project-scoped localStorage so Board, Header, Graph, and List selectors can restore the operator's workflow after board remounts, task state changes, respecification returns, and browser/server restarts. Storage is best-effort because private-mode, SSR, missing APIs, and quota failures must never block board rendering.
+ *
+ * FNXC:BoardWorkflowSelection 2026-06-30-00:00:
+ * The durable Board view preference may be either a real workflow id or the Board-only All workflows sentinel so a refresh can restore the aggregate board. Shared real-workflow consumers must call `readBoardWorkflowSelection`; it filters the sentinel out so Header, Graph, List, task creation, and workflow APIs never receive `__all_workflows__` as a backend workflow id.
  */
-export function readBoardWorkflowSelection(projectId?: string): string | null {
+export function readBoardWorkflowViewSelection(projectId?: string): string | null {
   try {
     const stored = getScopedItem(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId);
     return isValidWorkflowSelection(stored) ? stored.trim() : null;
   } catch {
     return null;
   }
+}
+
+export function readBoardWorkflowSelection(projectId?: string): string | null {
+  const selection = readBoardWorkflowViewSelection(projectId);
+  return selection === ALL_WORKFLOWS_BOARD_VIEW_ID ? null : selection;
 }
 
 export function writeBoardWorkflowSelection(projectId: string | undefined, workflowId: string): void {

@@ -61,14 +61,14 @@ describe("buildClaudeSpawnArgs", () => {
   });
 
   it("builds args including model and optional session/mcp flags", () => {
-    const args = buildClaudeSpawnArgs("claude-sonnet-4-6", undefined, {
+    const args = buildClaudeSpawnArgs("claude-sonnet-5", undefined, {
       resumeSessionId: "sess-1",
       effort: "high",
       mcpConfigPath: "/tmp/mcp.json",
     });
 
     expect(args).toContain("--model");
-    expect(args).toContain("claude-sonnet-4-6");
+    expect(args[args.indexOf("--model") + 1]).toBe("claude-sonnet-5");
     expect(args).toContain("--resume");
     expect(args).toContain("sess-1");
     expect(args).toContain("--effort");

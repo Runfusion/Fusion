@@ -7,6 +7,7 @@ import type {
   TaskAttachment,
   Settings,
   WorkflowStepResult,
+  WorkflowIr,
 } from "@fusion/core";
 import {
   DUPLICATE_OF_METADATA_KEY,
@@ -35,6 +36,8 @@ import {
   MAX_TASK_LIST_TEXT_CHARS,
   type NearDuplicateCandidate,
 } from "@fusion/core";
+
+const PLAN_REVIEW_TEMPLATE_STEP_NODE_ID = "plan-review-step";
 
 type TaskListClamp = (lines: string[], opts?: { maxChars?: number }) => string;
 type TaskListFormatter = (
@@ -138,6 +141,7 @@ import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { reviewStep } from "./reviewer.js";
+import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 
 
 export interface TriageProcessorOptions {
@@ -1837,6 +1841,9 @@ export class TriageProcessor {
     /*
     FNXC:PlanReview 2026-06-29-01:52:
     Triage owns only deterministic PROMPT.md hygiene. AI plan quality review is graph-owned by the optional Plan Review step, so this helper must never call reviewer agents or require a fn_review_spec APPROVE verdict.
+
+    FNXC:PlanValidation 2026-06-30-08:42:
+    External-integration evidence is a planning/review expectation, not a deterministic triage blocker. Operators saw valid generated plans fail before Plan Review with "Generated plan failed deterministic validation"; keep this local validator limited to structural task-file references the engine can prove.
     */
     if (!promptContent.trim()) {
       return "PROMPT.md file not found or empty";
@@ -1853,16 +1860,6 @@ export class TriageProcessor {
       return diagnostic;
     }
 
-    const evidenceGaps = detectExternalIntegrationEvidenceGaps({
-      promptContent,
-    });
-    if (evidenceGaps.length > 0) {
-      const diagnostic = formatExternalIntegrationEvidenceDiagnostic(evidenceGaps);
-      planLog.warn(`${taskId}: ${diagnostic}`);
-      await this.store.logEntry(taskId, "Generated plan validation failed: external-integration evidence gaps");
-      return diagnostic;
-    }
-
     return null;
   }
 
@@ -1872,6 +1869,30 @@ export class TriageProcessor {
     Plan Review is a triage-owned pre-release gate. Task creation materializes default-on optional groups into `enabledWorkflowSteps`; an explicit empty array from Quick Add means the operator disabled every optional group. Use only that materialized list here so triage does not resurrect disabled Plan Review.
     */
     return Array.isArray(task.enabledWorkflowSteps) && task.enabledWorkflowSteps.includes(PLAN_REVIEW_GROUP_ID);
+  }
+
+  private async shouldRequireExternalIntegrationEvidenceForPlanReview(task: Task): Promise<boolean> {
+    /*
+     * FNXC:PlanValidation 2026-06-30-09:20:
+     * Triage may run Plan Review before the graph reaches `plan-review`; the graph later skips an already-passed Plan Review result. Read the selected workflow's Plan Review template flag here so Coding (per-step review) enforces external-integration evidence in the same Plan Review gate, while default Coding and other workflows stay unblocked.
+     */
+    const selection = typeof this.store.getTaskWorkflowSelection === "function"
+      ? this.store.getTaskWorkflowSelection(task.id)
+      : undefined;
+    const workflowId = selection?.workflowId;
+    if (!workflowId || typeof this.store.getWorkflowDefinition !== "function") return false;
+    const definition = await this.store.getWorkflowDefinition(workflowId).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: failed to resolve workflow '${workflowId}' for Plan Review evidence policy: ${message}`);
+      return undefined;
+    });
+    const ir = definition?.ir as WorkflowIr | undefined;
+    const planReview = ir?.nodes.find((node) => node.id === PLAN_REVIEW_GROUP_ID);
+    const template = planReview?.config?.template as
+      | { nodes?: Array<{ id: string; config?: Record<string, unknown> }> }
+      | undefined;
+    const planReviewStep = template?.nodes?.find((node) => node.id === PLAN_REVIEW_TEMPLATE_STEP_NODE_ID);
+    return planReviewStep?.config?.requireExternalIntegrationEvidence === true;
   }
 
   private async recordPlanReviewWorkflowResult(task: Task, result: WorkflowStepResult): Promise<void> {
@@ -1911,6 +1932,52 @@ export class TriageProcessor {
     });
     await this.store.logEntry(task.id, "[pre-merge] Starting workflow step: Plan Review");
 
+    if (await this.shouldRequireExternalIntegrationEvidenceForPlanReview(task)) {
+      const evidenceGaps = detectExternalIntegrationEvidenceGaps({ promptContent });
+      if (evidenceGaps.length > 0) {
+        const completedAt = new Date().toISOString();
+        const diagnostic = formatExternalIntegrationEvidenceDiagnostic(evidenceGaps);
+        await this.recordPlanReviewWorkflowResult(task, {
+          workflowStepId: PLAN_REVIEW_GROUP_ID,
+          workflowStepName: "Plan Review",
+          phase: "pre-merge",
+          status: "failed",
+          verdict: "REVISE",
+          output: diagnostic,
+          notes: diagnostic,
+          startedAt,
+          completedAt,
+        });
+        await this.store.logEntry(task.id, "[pre-merge] Workflow step failed: Plan Review", diagnostic);
+        await this.store.logEntry(
+          task.id,
+          "AI spec revision requested",
+          `Plan Review deterministic external-integration evidence check requested a planning revision before execution.\n\nFeedback:\n${diagnostic}`,
+        );
+        await this.store.updateTask(task.id, {
+          status: "needs-replan",
+          error: null,
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        });
+        return "blocked";
+      }
+    }
+
+    const latestTaskForReview = await this.store.getTask(task.id).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      planLog.warn(`${task.id}: failed to load fresh task comments for Plan Review; using supplied task snapshot: ${message}`);
+      return task;
+    });
+    const userComments = selectUserCommentsForAgentContext(latestTaskForReview, { limit: null });
+
+    /*
+    FNXC:AgentSteering 2026-06-30-12:33:
+    Mandatory Plan Review must see user-authored unified comments and legacy steering from the latest task snapshot because it can block execution based on explicit operator requirements.
+
+    FNXC:AgentSteering 2026-06-30-13:19:
+    Plan Review receives the uncapped reviewer context so older task comments cannot be silently dropped before the mandatory execution gate evaluates operator requirements.
+    */
     const review = await reviewStep(
       this.rootDir,
       task.id,
@@ -1922,12 +1989,14 @@ export class TriageProcessor {
       {
         store: this.store,
         taskId: task.id,
-        taskTitle: task.title,
+        taskTitle: latestTaskForReview.title ?? task.title,
         settings,
-        task,
+        task: latestTaskForReview,
+        userComments: userComments.length > 0 ? userComments : undefined,
         rootDir: this.rootDir,
         agentStore: this.options.agentStore,
         pluginRunner: this.options.pluginRunner,
+        allowInlineFixes: (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false,
         onSessionCreated: (session) => this.registerSubagentSession(task.id, session),
         onSessionEnded: (session) => this.unregisterSubagentSession(task.id, session),
       },

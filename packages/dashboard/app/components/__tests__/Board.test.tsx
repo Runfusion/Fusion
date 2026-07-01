@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { Board } from "../Board";
 import { COLUMNS } from "@fusion/core";
-import { BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
+import { ALL_WORKFLOWS_BOARD_VIEW_ID, BOARD_WORKFLOW_SELECTION_STORAGE_KEY } from "../../utils/boardWorkflowSelection";
 import { scopedKey } from "../../utils/projectStorage";
 
 import type { Task } from "@fusion/core";
@@ -68,6 +68,8 @@ vi.mock("../Column", () => ({
     doneSortMode,
     onDoneSortModeChange,
     workflowId,
+    workflowOptions,
+    defaultWorkflowId,
     canDropTask,
     onPlanningMode,
     onSubtaskBreakdown,
@@ -90,6 +92,8 @@ vi.mock("../Column", () => ({
     doneSortMode?: string;
     onDoneSortModeChange?: (mode: "completion-date-desc" | "task-id-desc") => void;
     workflowId?: string;
+    workflowOptions?: { id: string; name: string }[];
+    defaultWorkflowId?: string | null;
     canDropTask?: unknown;
     onPlanningMode?: unknown;
     onSubtaskBreakdown?: unknown;
@@ -97,7 +101,12 @@ vi.mock("../Column", () => ({
   }) => {
     columnRenderCounts[column] = (columnRenderCounts[column] ?? 0) + 1;
     return (
-      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-workflow-badges={JSON.stringify(Object.fromEntries(taskWorkflowBadges ?? new Map()))} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"} data-workflow-id={workflowId ?? ""} data-column-display-name={columnDisplayName ?? ""} data-has-can-drop={canDropTask ? "yes" : "no"} data-has-planning={onPlanningMode ? "yes" : "no"} data-has-subtask={onSubtaskBreakdown ? "yes" : "no"}>
+      <div data-testid={`column-${column}`} data-tasks={JSON.stringify(tasks)} data-workflow-badges={JSON.stringify(Object.fromEntries(taskWorkflowBadges ?? new Map()))} data-collapsed={collapsed ? "true" : "false"} data-has-quick-create={onQuickCreate ? "yes" : "no"} data-has-new-task={onNewTask ? "yes" : "no"} data-has-auto-merge-toggle={onToggleAutoMerge ? "yes" : "no"} data-has-archive-all={onArchiveAllDone ? "yes" : "no"} data-favorite-providers={JSON.stringify(favoriteProviders ?? [])} data-favorite-models={JSON.stringify(favoriteModels ?? [])} data-has-toggle-favorite={onToggleFavorite ? "yes" : "no"} data-has-toggle-model-favorite={onToggleModelFavorite ? "yes" : "no"} data-is-search-active={isSearchActive ? "true" : "false"} data-done-sort-mode={doneSortMode ?? ""} data-has-done-sort-handler={onDoneSortModeChange ? "yes" : "no"} data-workflow-id={workflowId ?? ""} data-workflow-options={JSON.stringify((workflowOptions ?? []).map((workflow) => workflow.id))} data-default-workflow-id={defaultWorkflowId ?? ""} data-column-display-name={columnDisplayName ?? ""} data-has-can-drop={canDropTask ? "yes" : "no"} data-has-planning={onPlanningMode ? "yes" : "no"} data-has-subtask={onSubtaskBreakdown ? "yes" : "no"}>
+        {onQuickCreate ? (
+          <button type="button" data-testid={`mock-quick-create-${column}`} onClick={() => void (onQuickCreate as (input: { description: string; column?: string; workflowId?: string }) => Promise<unknown>)({ description: `Create from ${column}`, column, workflowId: "wf-custom" })}>
+            quick-create-{column}
+          </button>
+        ) : null}
         {tasks.map((task) => (
           <article key={task.id} data-testid={`board-task-card-${task.id}`}>
             {task.title ?? task.description ?? task.id}
@@ -126,7 +135,7 @@ vi.mock("../Lane", () => ({
 
 const DEFAULT_WORKFLOW = {
   id: "builtin:coding",
-  name: "Coding (built-in)",
+  name: "Coding",
   columns: [
     { id: "triage", name: "Triage", flags: { intake: true } },
     { id: "todo", name: "Todo", flags: { hold: true } },
@@ -1372,7 +1381,7 @@ describe("Board", () => {
       expect(onOpenWorkflowEditor).toHaveBeenCalledWith("wf-custom");
     });
 
-    it("selects the all-workflows aggregate view without persisting the sentinel", async () => {
+    it("selects and persists the all-workflows aggregate view", async () => {
       const projectId = "project-board-all-workflows";
       enableFlag(
         { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
@@ -1385,13 +1394,13 @@ describe("Board", () => {
         onSubtaskBreakdown: vi.fn(),
       });
 
-      await selectWorkflow("__all_workflows__");
+      await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
 
       expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows");
       expect(screen.getByTestId("column-todo")).toHaveAttribute("data-tasks", expect.stringContaining("FN-1"));
       expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
       expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-workflow-badges") || "{}")).toMatchObject({
-        "FN-1": { workflowId: "builtin:coding", workflowName: "Coding (built-in)" },
+        "FN-1": { workflowId: "builtin:coding", workflowName: "Coding" },
       });
       expect(JSON.parse(screen.getByTestId("column-intake").getAttribute("data-workflow-badges") || "{}")).toMatchObject({
         "FN-2": { workflowId: "wf-custom", workflowName: "Custom Flow" },
@@ -1400,10 +1409,89 @@ describe("Board", () => {
       expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-can-drop", "no");
       expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-planning", "yes");
       expect(screen.getByTestId("column-triage")).toHaveAttribute("data-has-subtask", "yes");
-      expect(window.localStorage.getItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId))).toBeNull();
+      expect(window.localStorage.getItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId))).toBe(ALL_WORKFLOWS_BOARD_VIEW_ID);
 
       fireEvent.click(screen.getByTestId("workflow-switcher"));
       expect(screen.queryByTestId("workflow-switcher-edit-__all_workflows__")).toBeNull();
+    });
+
+    it("passes workflow options and the selected workflow default to per-workflow quick-add", async () => {
+      enableFlag({ "FN-1": CUSTOM_WORKFLOW.id }, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "intake" })] });
+
+      await selectWorkflow(CUSTOM_WORKFLOW.id);
+
+      const intakeColumn = screen.getByTestId("column-intake");
+      expect(intakeColumn).toHaveAttribute("data-default-workflow-id", CUSTOM_WORKFLOW.id);
+      expect(JSON.parse(intakeColumn.getAttribute("data-workflow-options") || "[]")).toEqual(["builtin:coding", "wf-custom"]);
+    });
+
+    it("defaults All workflows quick-add to the default workflow and resolves selected workflow columns", async () => {
+      const onQuickCreate = vi.fn().mockResolvedValue({ id: "FN-new", workflowId: "wf-custom" });
+      enableFlag({}, [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW]);
+      renderBoard({ onQuickCreate });
+
+      await selectWorkflow("__all_workflows__");
+
+      const defaultCreateColumn = screen.getByTestId("column-triage");
+      expect(defaultCreateColumn).toHaveAttribute("data-workflow-id", "builtin:coding");
+      expect(defaultCreateColumn).toHaveAttribute("data-default-workflow-id", "builtin:coding");
+      fireEvent.click(screen.getByTestId("mock-quick-create-triage"));
+
+      await waitFor(() => expect(onQuickCreate).toHaveBeenCalledWith(expect.objectContaining({
+        workflowId: "wf-custom",
+        column: "intake",
+      })));
+      expect(onQuickCreate).not.toHaveBeenCalledWith(expect.objectContaining({ workflowId: "__all_workflows__" }));
+    });
+
+    it("restores all-workflows after remount and then persists a real workflow selection", async () => {
+      const projectId = "project-board-all-workflows-remount";
+      enableFlag(
+        { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
+        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+      );
+      const tasks = [mkTask({ id: "FN-1", column: "todo" }), mkTask({ id: "FN-2", column: "intake" })];
+      const first = renderBoard({ projectId, tasks });
+
+      await selectWorkflow(ALL_WORKFLOWS_BOARD_VIEW_ID);
+      expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows");
+      expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
+      first.unmount();
+
+      renderBoard({ projectId, tasks });
+
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows"));
+      expect(screen.getByTestId("column-todo")).toHaveAttribute("data-tasks", expect.stringContaining("FN-1"));
+      expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
+
+      await selectWorkflow("wf-custom");
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("Custom Flow"));
+      expect(window.localStorage.getItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId))).toBe("wf-custom");
+      expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
+      expect(screen.queryByTestId("column-todo")).toBeNull();
+    });
+
+    it("scopes persisted all-workflows preferences per project", async () => {
+      const allWorkflowsProjectId = "project-board-all-workflows-alpha";
+      const realWorkflowProjectId = "project-board-all-workflows-beta";
+      window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, allWorkflowsProjectId), ALL_WORKFLOWS_BOARD_VIEW_ID);
+      window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, realWorkflowProjectId), "wf-custom");
+      enableFlag(
+        { "FN-1": "builtin:coding", "FN-2": "wf-custom" },
+        [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW],
+      );
+      const tasks = [mkTask({ id: "FN-1", column: "todo" }), mkTask({ id: "FN-2", column: "intake" })];
+      const { rerender } = renderBoard({ projectId: allWorkflowsProjectId, tasks });
+
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("All workflows"));
+      expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
+
+      rerender(<Board {...createBoardProps({ projectId: realWorkflowProjectId, tasks })} />);
+
+      await waitFor(() => expect(screen.getByTestId("workflow-switcher")).toHaveTextContent("Custom Flow"));
+      expect(screen.queryByTestId("column-todo")).toBeNull();
+      expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-2"));
     });
 
     it("falls stale and missing task workflow ids back to the default workflow", async () => {
@@ -1430,9 +1518,9 @@ describe("Board", () => {
       const aggregateTodoIds = JSON.parse(screen.getByTestId("column-todo").getAttribute("data-tasks") || "[]").map((task: Task) => task.id).sort();
       expect(aggregateTodoIds).toEqual(["FN-default", "FN-missing", "FN-stale"]);
       expect(JSON.parse(screen.getByTestId("column-todo").getAttribute("data-workflow-badges") || "{}")).toMatchObject({
-        "FN-default": { workflowId: "builtin:coding", workflowName: "Coding (built-in)" },
-        "FN-missing": { workflowId: "builtin:coding", workflowName: "Coding (built-in)" },
-        "FN-stale": { workflowId: "builtin:coding", workflowName: "Coding (built-in)" },
+        "FN-default": { workflowId: "builtin:coding", workflowName: "Coding" },
+        "FN-missing": { workflowId: "builtin:coding", workflowName: "Coding" },
+        "FN-stale": { workflowId: "builtin:coding", workflowName: "Coding" },
       });
       expect(screen.getByTestId("column-intake")).toHaveAttribute("data-tasks", expect.stringContaining("FN-custom"));
     });
@@ -1511,7 +1599,7 @@ describe("Board", () => {
     it("uses default workflow column labels and flags for duplicate aggregate column ids", async () => {
       const duplicateNameWorkflow = {
         id: "wf-duplicate",
-        name: "Coding (built-in)",
+        name: "Coding",
         columns: [
           { id: "todo", name: "Queue from duplicate", flags: { intake: true } },
           { id: "done", name: "Complete from duplicate", flags: { complete: true } },

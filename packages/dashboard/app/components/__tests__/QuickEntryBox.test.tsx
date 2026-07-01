@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
 import type { Task } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
@@ -279,6 +279,19 @@ vi.mock("../CustomModelDropdown", () => ({
   ),
 }));
 
+function mockQuickEntryNodes(nodes: Array<{ id: string; name: string; status: "online" | "offline" | "connecting" | "error"; type: "local" | "remote" }>) {
+  vi.mocked(useNodes).mockReturnValue({
+    nodes: nodes.map((node) => ({ ...node, createdAt: "", updatedAt: "" })),
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    register: vi.fn(),
+    update: vi.fn(),
+    unregister: vi.fn(),
+    healthCheck: vi.fn(),
+  });
+}
+
 function renderQuickEntryBox(props = {}, { startExpanded = false } = {}) {
   // Legacy option retained for older test call sites; disclosure now defaults expanded.
   if (startExpanded) {
@@ -376,7 +389,6 @@ const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Fast", "quick-entry-fast-toggle"],
   ["GitHub", "quick-entry-github-toggle"],
   ["Priority", "quick-entry-priority-button"],
-  ["Plan", "plan-button"],
   ["Subtask", "subtask-button"],
   ["Refine", "refine-button"],
   ["Deps", "quick-entry-deps"],
@@ -739,18 +751,11 @@ describe("QuickEntryBox", () => {
       expect(document.activeElement).not.toBe(textarea);
     });
 
-    it("does not auto-focus after Plan or Subtask handoff reset the form", async () => {
+    it("does not auto-focus after Subtask handoff resets the form", async () => {
       mockDesktopViewport();
-      const onPlanningMode = vi.fn();
       const onSubtaskBreakdown = vi.fn();
-      renderQuickEntryBox({ onPlanningMode, onSubtaskBreakdown });
+      renderQuickEntryBox({ onSubtaskBreakdown });
       let textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
-
-      fireEvent.change(textarea, { target: { value: "Plan this" } });
-      fireEvent.click(screen.getByTestId("plan-button"));
-      await flushPendingTimers();
-      expect(onPlanningMode).toHaveBeenCalledWith("Plan this");
-      expect(document.activeElement).not.toBe(textarea);
 
       fireEvent.change(textarea, { target: { value: "Break this down" } });
       fireEvent.click(screen.getByTestId("subtask-button"));
@@ -1067,7 +1072,7 @@ describe("QuickEntryBox", () => {
       }
     });
 
-    it("does not fire disabled button actions via touch", async () => {
+    it("does not render a disabled Plan button action via touch", async () => {
       const onPlanningMode = vi.fn();
       mockMobileViewport();
       renderQuickEntryBox({ onPlanningMode });
@@ -1075,13 +1080,9 @@ describe("QuickEntryBox", () => {
       const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
       textarea.focus();
       expect(document.activeElement).toBe(textarea);
-      const planButton = screen.getByTestId("plan-button");
-      expect(planButton).toBeDisabled();
 
-      const { preventDefaultSpy } = fireCancelableTouchStart(planButton);
-      expect(preventDefaultSpy).not.toHaveBeenCalled();
-      fireEvent(planButton, new Event("touchend", { bubbles: true, cancelable: true }));
-
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Plan$/i })).not.toBeInTheDocument();
       expect(onPlanningMode).not.toHaveBeenCalled();
       expect(document.activeElement).toBe(textarea);
     });
@@ -1110,9 +1111,8 @@ describe("QuickEntryBox", () => {
       vi.mocked(fetchSettings).mockResolvedValueOnce({
         githubTrackingEnabledByDefault: true,
       } as any);
-      const onPlanningMode = vi.fn();
       const onSubtaskBreakdown = vi.fn();
-      const result = renderQuickEntryBox({ onPlanningMode, onSubtaskBreakdown });
+      const result = renderQuickEntryBox({ onSubtaskBreakdown });
       expandQuickEntry();
       await waitFor(() => {
         expect(screen.getByTestId("quick-entry-github-toggle")).not.toBeDisabled();
@@ -1124,7 +1124,7 @@ describe("QuickEntryBox", () => {
       textarea.blur();
       fireEvent.blur(textarea);
       expect(document.activeElement).not.toBe(textarea);
-      return { ...result, textarea, onPlanningMode, onSubtaskBreakdown };
+      return { ...result, textarea, onSubtaskBreakdown };
     }
 
     function fireCancelableTouchStart(target: Element) {
@@ -1179,9 +1179,6 @@ describe("QuickEntryBox", () => {
           break;
         case "refine-button":
           expect(await screen.findByTestId("refine-clarify")).toBeTruthy();
-          break;
-        case "plan-button":
-          expect(helpers.onPlanningMode).toHaveBeenCalledWith("Adjust options without keyboard");
           break;
         case "subtask-button":
           expect(helpers.onSubtaskBreakdown).toHaveBeenCalledWith("Adjust options without keyboard");
@@ -1614,6 +1611,182 @@ describe("QuickEntryBox", () => {
     innerWidthSpy.mockRestore();
   });
 
+
+  describe("quick-add workflow selector", () => {
+    const workflowOptions = [
+      { id: "wf-default", name: "Coding", columns: [] },
+      { id: "wf-review", name: "Review", columns: [] },
+      { id: "wf-review-copy", name: "Review", columns: [] },
+    ];
+
+    it("defaults to the provided workflow, changes selection, and passes it to Save/Subtask while omitting Plan", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([]);
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      const onPlanningMode = vi.fn();
+      const onSubtaskBreakdown = vi.fn();
+      renderQuickEntryBox({
+        onCreate,
+        onPlanningMode,
+        onSubtaskBreakdown,
+        workflowId: "wf-review",
+        defaultWorkflowId: "wf-default",
+        workflowOptions,
+      });
+
+      expect(screen.getByTestId("quick-entry-workflow-trigger")).toHaveTextContent("Review");
+      fireEvent.click(screen.getByTestId("quick-entry-workflow-trigger"));
+      expect(screen.getByLabelText("Review (wf-review-copy)")).toBeTruthy();
+      fireEvent.click(screen.getByTestId("quick-entry-workflow-option-wf-default"));
+      expect(screen.getByTestId("quick-entry-workflow-trigger")).toHaveTextContent("Coding");
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create in selected workflow" } });
+      clickSave();
+      await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: "wf-default" })));
+
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      expect(onPlanningMode).not.toHaveBeenCalled();
+
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Subtask in selected workflow" } });
+      fireEvent.click(screen.getByTestId("subtask-button"));
+      expect(onSubtaskBreakdown).toHaveBeenCalledWith("Subtask in selected workflow", "wf-default");
+    });
+
+    it("repairs stale parent workflow ids to the default workflow and refetches optional steps when changed", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([]);
+      renderQuickEntryBox({
+        workflowId: "__all_workflows__",
+        defaultWorkflowId: "wf-default",
+        workflowOptions,
+      });
+
+      await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-default", TEST_PROJECT_ID));
+      expect(screen.getByTestId("quick-entry-workflow-trigger")).toHaveTextContent("Coding");
+
+      fireEvent.click(screen.getByTestId("quick-entry-workflow-trigger"));
+      fireEvent.click(screen.getByTestId("quick-entry-workflow-option-wf-review"));
+      await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-review", TEST_PROJECT_ID));
+      expect(fetchWorkflowOptionalSteps).not.toHaveBeenCalledWith("__all_workflows__", TEST_PROJECT_ID);
+    });
+
+    it("renders built-in and custom workflow icons without blank custom-icon shells", () => {
+      renderQuickEntryBox({
+        workflowId: "builtin:coding",
+        defaultWorkflowId: "builtin:coding",
+        workflowOptions: [
+          { id: "builtin:coding", name: "Coding", columns: [] },
+          { id: "wf-custom", name: "Custom workflow", icon: "🚀", columns: [] },
+          { id: "wf-no-icon", name: "No icon workflow", columns: [] },
+        ],
+      });
+
+      const trigger = screen.getByTestId("quick-entry-workflow-trigger");
+      expect(trigger.querySelector(".workflow-icon--builtin")).toBeTruthy();
+      expect(trigger.querySelector(".quick-entry-workflow-label")).toHaveTextContent("Coding");
+
+      fireEvent.click(trigger);
+      const customOption = screen.getByTestId("quick-entry-workflow-option-wf-custom");
+      expect(customOption.querySelector(".workflow-icon--custom")).toHaveTextContent("🚀");
+      expect(screen.getByTestId("quick-entry-workflow-option-wf-no-icon").querySelector(".workflow-icon")).toBeNull();
+
+      fireEvent.click(customOption);
+      expect(screen.getByTestId("quick-entry-workflow-trigger").querySelector(".workflow-icon--custom")).toHaveTextContent("🚀");
+    });
+
+    it("hides the selector without real workflow choices and leaves no shell", () => {
+      renderQuickEntryBox({ workflowId: "wf-default", workflowOptions: [{ id: "wf-default", name: "Coding", columns: [] }] });
+
+      expect(screen.queryByTestId("quick-entry-workflow-trigger")).toBeNull();
+      expect(screen.getByTestId("quick-entry-actions").querySelector(".quick-entry-workflow-wrap")).toBeNull();
+    });
+
+    it("keeps long workflow names readable in the menu while the trigger uses a truncation label", () => {
+      const longName = "Long workflow name that should remain readable in the opened menu";
+      renderQuickEntryBox({
+        workflowId: "wf-long",
+        defaultWorkflowId: "wf-default",
+        workflowOptions: [
+          { id: "wf-default", name: "Coding", columns: [] },
+          { id: "wf-long", name: longName, icon: "🧭", columns: [] },
+        ],
+      });
+
+      const trigger = screen.getByTestId("quick-entry-workflow-trigger");
+      const triggerLabel = trigger.querySelector(".quick-entry-workflow-label");
+      expect(triggerLabel).toHaveTextContent(longName);
+      expect(triggerLabel).toHaveClass("quick-entry-workflow-label");
+
+      fireEvent.click(trigger);
+      expect(screen.getByTestId("quick-entry-workflow-menu")).toHaveTextContent(longName);
+      const optionName = screen.getByTestId("quick-entry-workflow-option-wf-long").querySelector(".quick-entry-workflow-option-name");
+      expect(optionName).toHaveTextContent(longName);
+      expect(optionName).toHaveClass("quick-entry-workflow-option-name");
+    });
+
+    it("clamps the wider workflow menu within the viewport from right-side triggers", () => {
+      const viewportWidth = 800;
+      vi.spyOn(window, "innerWidth", "get").mockReturnValue(viewportWidth);
+      vi.spyOn(window, "innerHeight", "get").mockReturnValue(720);
+      renderQuickEntryBox({
+        workflowId: "wf-long",
+        defaultWorkflowId: "wf-default",
+        workflowOptions: [
+          { id: "wf-default", name: "Coding", columns: [] },
+          { id: "wf-long", name: "A long readable workflow name", icon: "🧭", columns: [] },
+        ],
+      });
+
+      const trigger = screen.getByTestId("quick-entry-workflow-trigger");
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+        x: 720,
+        y: 100,
+        width: 64,
+        height: 32,
+        top: 100,
+        right: 784,
+        bottom: 132,
+        left: 720,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+      fireEvent.click(trigger);
+      const menu = screen.getByTestId("quick-entry-workflow-menu");
+      const left = parseFloat(menu.style.left);
+      const width = parseFloat(menu.style.width);
+
+      expect(menu.style.position).toBe("fixed");
+      expect(left).toBeGreaterThanOrEqual(16);
+      expect(left + width).toBeLessThanOrEqual(viewportWidth - 16);
+      expect(width).toBeGreaterThan(64);
+    });
+
+    it("uses tokenized responsive CSS for a compact workflow trigger and readable menu", () => {
+      const wrapRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-wrap");
+      const triggerRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-trigger");
+      const labelRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-label");
+      const menuRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-menu");
+      const optionCopyRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-option-copy");
+      const optionNameRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-workflow-option-name,\n.quick-entry-workflow-option-id");
+
+      expect(wrapRule).toContain("flex: 0 1 auto");
+      expect(wrapRule).toContain("width: fit-content");
+      expect(wrapRule).toContain("max-width: min(calc(var(--space-xl) * 5), 100%)");
+      expect(triggerRule).toContain("width: auto");
+      expect(triggerRule).toContain("max-width: min(calc(var(--space-xl) * 5), calc(100vw - var(--space-lg)))");
+      expect(triggerRule).toContain("gap: var(--space-xs)");
+      expect(labelRule).toContain("text-overflow: ellipsis");
+      expect(menuRule).toContain("position: fixed");
+      expect(menuRule).not.toContain("inset-inline-start: 0");
+      expect(menuRule).toContain("width: min(calc(var(--space-xl) * 16), calc(100vw - var(--space-lg)))");
+      expect(menuRule).toContain("min-width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)))");
+      expect(optionCopyRule).toContain("gap: var(--space-2xs)");
+      expect(optionNameRule).toContain("overflow-wrap: anywhere");
+      expect(optionNameRule).toContain("white-space: normal");
+      expect(optionNameRule).not.toContain("text-overflow: ellipsis");
+      expect(`${wrapRule}\n${triggerRule}\n${labelRule}\n${menuRule}\n${optionCopyRule}\n${optionNameRule}`).not.toMatch(/#[0-9a-f]{3,8}|rgb\(|\d+px/i);
+      expect(QUICK_ENTRY_BOX_CSS).toMatch(/@media \(max-width: 768px\) \{[\s\S]*?quick-entry-workflow-menu[\s\S]*?min-width: min\(calc\(var\(--space-xl\) \* 11\), calc\(100vw - var\(--space-lg\)\)\)/);
+    });
+  });
+
   describe("optional workflow steps", () => {
     const DEFAULT_ON_STEP = {
       templateId: "browser-verification",
@@ -1658,6 +1831,90 @@ describe("QuickEntryBox", () => {
       await waitFor(() => {
         expect(onCreate).toHaveBeenLastCalledWith(
           expect.objectContaining({ enabledWorkflowSteps: ["browser-verification"] }),
+        );
+      });
+    });
+
+    it("clears default-on optional steps when Fast is selected and preserves manual reselection", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP, MANUAL_STEP]);
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      const trigger = await screen.findByTestId("quick-entry-optional-steps-trigger");
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: 1 selected"));
+
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Fast without optional steps" } });
+      clickSave();
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: [] }),
+        );
+      });
+    });
+
+    it("submits explicit empty optional steps when Fast is created before optional-step metadata loads", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockReturnValue(new Promise(() => undefined));
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-explicit", TEST_PROJECT_ID));
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Fast before metadata" } });
+      clickSave();
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: [] }),
+        );
+      });
+    });
+
+    it("keeps Fast-selected tasks empty when optional-step loading resolves after the toggle", async () => {
+      let resolveOptionalSteps: (steps: typeof DEFAULT_ON_STEP[]) => void = () => {};
+      vi.mocked(fetchWorkflowOptionalSteps).mockReturnValue(new Promise((resolve) => {
+        resolveOptionalSteps = resolve;
+      }));
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-explicit", TEST_PROJECT_ID));
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+
+      await act(async () => {
+        resolveOptionalSteps([DEFAULT_ON_STEP]);
+      });
+
+      const trigger = await screen.findByTestId("quick-entry-optional-steps-trigger");
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Fast before optional steps loaded" } });
+      clickSave();
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: [] }),
+        );
+      });
+    });
+
+    it("keeps optional steps available for manual reselection after Fast clears defaults", async () => {
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([DEFAULT_ON_STEP, MANUAL_STEP]);
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate, workflowId: "wf-explicit" });
+
+      const trigger = await screen.findByTestId("quick-entry-optional-steps-trigger");
+      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
+      await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
+      fireEvent.click(trigger);
+      fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-manual-smoke"));
+      fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Fast with manual step" } });
+      clickSave();
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenLastCalledWith(
+          expect.objectContaining({ executionMode: "fast", enabledWorkflowSteps: ["manual-smoke"] }),
         );
       });
     });
@@ -1786,19 +2043,17 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
     });
 
-    it("shows Plan and Subtask buttons when expanded", () => {
+    it("shows Subtask but no Plan button when expanded", () => {
       renderQuickEntryBox({});
 
       // Controls region starts expanded/visible
       expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
 
-      // Type something
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
       fireEvent.change(textarea, { target: { value: "Task to plan" } });
 
-      // Now the Plan and Subtask buttons should be visible
-      expect(screen.getByTestId("plan-button")).toBeTruthy();
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
     });
 
@@ -2232,24 +2487,6 @@ describe("QuickEntryBox", () => {
       expect(secondPayload.executionMode).toBeUndefined();
     });
 
-    it("keeps Fast state after Plan handoff preserves the quick-add draft", async () => {
-      const onPlanningMode = vi.fn();
-      renderQuickEntryBox({ onPlanningMode });
-
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-      fireEvent.click(screen.getByTestId("quick-entry-fast-toggle"));
-      fireEvent.change(textarea, { target: { value: "plan input" } });
-      fireEvent.click(screen.getByTestId("plan-button"));
-
-      await waitFor(() => {
-        expect(onPlanningMode).toHaveBeenCalled();
-      });
-
-      expandQuickEntry();
-      expect(screen.getByTestId("quick-entry-fast-toggle").getAttribute("aria-pressed")).toBe("true");
-    });
-
     it("clears Fast state after Subtask flow reset", async () => {
       const onSubtaskBreakdown = vi.fn();
       renderQuickEntryBox({ onSubtaskBreakdown });
@@ -2284,25 +2521,6 @@ describe("QuickEntryBox", () => {
 
       expandQuickEntry();
       expect(screen.getByTestId("quick-entry-priority-button").textContent).toContain("Normal");
-    });
-
-    it("keeps selected priority after Plan handoff preserves the quick-add draft", async () => {
-      const onPlanningMode = vi.fn();
-      renderQuickEntryBox({ onPlanningMode });
-
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-      fireEvent.change(textarea, { target: { value: "plan priority" } });
-      openPriorityMenu();
-      fireEvent.click(screen.getByTestId("quick-entry-priority-option-urgent"));
-      fireEvent.click(screen.getByTestId("plan-button"));
-
-      await waitFor(() => {
-        expect(onPlanningMode).toHaveBeenCalled();
-      });
-
-      expandQuickEntry();
-      expect(screen.getByTestId("quick-entry-priority-button").textContent).toContain("Urgent");
     });
 
     it("resets priority to normal after Subtask flow", async () => {
@@ -2638,19 +2856,17 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("calls onPlanningMode and preserves input draft when Plan clicked", async () => {
+    it("omits the quick-add Plan button while preserving the draft", () => {
       const onPlanningMode = vi.fn();
       renderQuickEntryBox({ onPlanningMode });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input") as HTMLTextAreaElement;
 
       fireEvent.change(textarea, { target: { value: "  Plan this task  " } });
-      fireEvent.click(screen.getByTestId("plan-button"));
 
-      await waitFor(() => {
-        expect(onPlanningMode).toHaveBeenCalledWith("Plan this task");
-      });
-
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /^Plan$/i })).not.toBeInTheDocument();
+      expect(onPlanningMode).not.toHaveBeenCalled();
       expect(textarea.value).toBe("  Plan this task  ");
       expect(localStorage.getItem(QUICK_ENTRY_STORAGE_KEY)).toBe("  Plan this task  ");
     });
@@ -2672,10 +2888,7 @@ describe("QuickEntryBox", () => {
       expect((textarea as HTMLTextAreaElement).value).toBe("");
     });
 
-    it.each([
-      { label: "Plan", buttonId: "plan-button", callbackProp: "onPlanningMode" as const },
-      { label: "Subtask", buttonId: "subtask-button", callbackProp: "onSubtaskBreakdown" as const },
-    ])("passes selected workflow id through %s quick-entry handoff", async ({ buttonId, callbackProp }) => {
+    it("passes selected workflow id through Subtask quick-entry handoff and omits Plan", async () => {
       const onPlanningMode = vi.fn();
       const onSubtaskBreakdown = vi.fn();
       renderQuickEntryBox({ onPlanningMode, onSubtaskBreakdown, workflowId: "WF-123" });
@@ -2683,72 +2896,44 @@ describe("QuickEntryBox", () => {
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Create in custom workflow" } });
-      fireEvent.click(screen.getByTestId(buttonId));
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("subtask-button"));
 
       await waitFor(() => {
-        expect(callbackProp === "onPlanningMode" ? onPlanningMode : onSubtaskBreakdown)
-          .toHaveBeenCalledWith("Create in custom workflow", "WF-123");
+        expect(onSubtaskBreakdown).toHaveBeenCalledWith("Create in custom workflow", "WF-123");
       });
+      expect(onPlanningMode).not.toHaveBeenCalled();
     });
 
-    it("omits workflow id in legacy quick-entry handoff", async () => {
+    it("omits legacy quick-entry Plan handoff", () => {
       const onPlanningMode = vi.fn();
       renderQuickEntryBox({ onPlanningMode });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Create with default workflow" } });
-      fireEvent.click(screen.getByTestId("plan-button"));
 
-      await waitFor(() => {
-        expect(onPlanningMode).toHaveBeenCalledWith("Create with default workflow");
-      });
-      expect(onPlanningMode.mock.calls[0]).toHaveLength(1);
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      expect(onPlanningMode).not.toHaveBeenCalled();
     });
 
-    it("disables Plan and Subtask buttons when description is empty", () => {
+    it("omits Plan and keeps Subtask disabled when description is empty", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something first to make buttons appear
       fireEvent.change(textarea, { target: { value: "Some task" } });
 
-      const planButton = screen.getByTestId("plan-button") as HTMLButtonElement;
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       const subtaskButton = screen.getByTestId("subtask-button") as HTMLButtonElement;
-
-      // Buttons should be enabled when there's content
-      expect(planButton.disabled).toBe(false);
       expect(subtaskButton.disabled).toBe(false);
 
-      // Clear the input
       fireEvent.change(textarea, { target: { value: "" } });
 
-      // Buttons should now be disabled (or hidden since controls collapse)
-      // Since the controls might hide when empty, we check if they exist and are disabled
-      const updatedPlanButton = screen.queryByTestId("plan-button") as HTMLButtonElement | null;
-      if (updatedPlanButton) {
-        expect(updatedPlanButton.disabled).toBe(true);
-      }
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      expect((screen.getByTestId("subtask-button") as HTMLButtonElement).disabled).toBe(true);
     });
 
-    it("Plan button prevents textarea blur on mousedown", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      fireEvent.change(textarea, { target: { value: "Task to plan" } });
-
-      // Get plan button and trigger mousedown (prevents blur)
-      const planButton = screen.getByTestId("plan-button");
-      fireEvent.mouseDown(planButton);
-
-      // Trigger blur on textarea
-      fireEvent.blur(textarea);
-
-      // Controls should still be visible immediately after blur
-      expect(screen.getByTestId("plan-button")).toBeTruthy();
-    });
 
     it("Subtask button prevents textarea blur on mousedown", () => {
       renderQuickEntryBox({});
@@ -2768,24 +2953,18 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
     });
 
-    it("shows toast when Plan clicked with empty description", () => {
+    it("does not leave a Plan tooltip or click target when description is empty", () => {
       const addToast = vi.fn();
       renderQuickEntryBox({ addToast });
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
-      // Type something first to make buttons appear
       fireEvent.change(textarea, { target: { value: "Some task" } });
-
-      // Clear input
       fireEvent.change(textarea, { target: { value: "" } });
 
-      // Button should be hidden when input is empty (controls collapse)
-      const planButton = screen.queryByTestId("plan-button");
-      if (planButton) {
-        // If somehow visible, it should be disabled
-        expect((planButton as HTMLButtonElement).disabled).toBe(true);
-      }
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
+      expect(screen.queryByTitle("Open planning mode with current description")).not.toBeInTheDocument();
+      expect(addToast).not.toHaveBeenCalled();
     });
 
     it("includes all three selected model pairs in submit payload", async () => {
@@ -2933,14 +3112,20 @@ describe("QuickEntryBox", () => {
   });
 
   describe("image attachments", () => {
-    it("shows Attach as an inline control when expanded", () => {
+    it("shows an icon-only Attach control when expanded", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
-      expect(screen.getByTestId("quick-entry-attach")).toBeInTheDocument();
+      const attachButton = screen.getByTestId("quick-entry-attach");
+      expect(attachButton).toBeInTheDocument();
+      expect(attachButton).toHaveAccessibleName("Attach images");
+      expect(attachButton).toHaveAttribute("title", "Attach images");
+      expect(attachButton.textContent).not.toContain("Attach");
+      expect(attachButton.querySelector("svg")).toBeTruthy();
+      expect(attachButton.classList.contains("btn-icon")).toBe(true);
     });
 
-    it("clicking Attach triggers the hidden file input", () => {
+    it("clicking the icon-only Attach control triggers the hidden file input", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
@@ -3018,7 +3203,7 @@ describe("QuickEntryBox", () => {
       expect(uploadAttachment).not.toHaveBeenCalled();
     });
 
-    it("shows pending image count in the inline Attach label", () => {
+    it("preserves pending image count in accessible labels without visible Attach text", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
@@ -3026,7 +3211,117 @@ describe("QuickEntryBox", () => {
       const file = new File(["badge"], "badge.png", { type: "image/png" });
       fireEvent.change(fileInput, { target: { files: [file] } });
 
-      expect(screen.getByTestId("quick-entry-attach").textContent).toContain("Attach (1)");
+      const attachButton = screen.getByTestId("quick-entry-attach");
+      expect(attachButton).toHaveAccessibleName("Attach images (1 pending)");
+      expect(attachButton).toHaveAttribute("title", "Attach images (1 pending)");
+      expect(attachButton.textContent).toBe("1");
+      expect(attachButton.textContent).not.toContain("Attach");
+    });
+
+    it("keeps the icon-only Attach control in the mobile touch target action row", () => {
+      mockMobileViewport();
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      const attachButton = screen.getByTestId("quick-entry-attach");
+      expect(attachButton.closest(".quick-entry-actions")).toBeTruthy();
+      expect(attachButton.classList.contains("btn-icon")).toBe(true);
+      const touchRule = cssRuleBody(
+        QUICK_ENTRY_BOX_CSS,
+        ".quick-entry-actions .btn,\n  .quick-entry-actions .wf-optional-steps-dropdown-trigger",
+      );
+      expect(touchRule).toContain("min-height: calc(var(--space-2xl) + var(--space-xs))");
+    });
+
+    it("shows and clears a Quick Add drop target only for file drags", () => {
+      renderQuickEntryBox({});
+      const box = screen.getByTestId("quick-entry-box");
+
+      fireEvent.dragEnter(box, { dataTransfer: { types: ["text/plain"], files: [] } });
+      expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
+
+      fireEvent.dragEnter(box, { dataTransfer: { types: ["Files"], files: [] } });
+      expect(screen.getByTestId("quick-entry-drop-target")).toHaveTextContent("Drop images to attach");
+      expect(box.classList.contains("quick-entry-box--drag-over")).toBe(true);
+
+      fireEvent.dragLeave(box, { dataTransfer: { types: ["Files"], files: [] } });
+      expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
+      expect(box.classList.contains("quick-entry-box--drag-over")).toBe(false);
+    });
+
+    it("prevents browser navigation while dragging files over nested Quick Add controls", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const attachButton = screen.getByTestId("quick-entry-attach");
+      const dragOverEvent = createEvent.dragOver(attachButton);
+      Object.defineProperty(dragOverEvent, "dataTransfer", {
+        value: { types: ["Files"], files: [], dropEffect: "none" },
+      });
+      const preventDefault = vi.spyOn(dragOverEvent, "preventDefault");
+
+      fireEvent(attachButton, dragOverEvent);
+
+      expect(preventDefault).toHaveBeenCalled();
+      expect(screen.getByTestId("quick-entry-drop-target")).toBeInTheDocument();
+    });
+
+    it("adds previews for supported dropped images and rejects unsupported dropped files", () => {
+      renderQuickEntryBox({});
+      const box = screen.getByTestId("quick-entry-box");
+      const image = new File(["image"], "dropped.png", { type: "image/png" });
+      const text = new File(["text"], "notes.txt", { type: "text/plain" });
+
+      fireEvent.dragEnter(box, { dataTransfer: { types: ["Files"], files: [image, text] } });
+      fireEvent.drop(box, { dataTransfer: { types: ["Files"], files: [image, text] } });
+
+      expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
+      expect(screen.getByAltText("dropped.png")).toBeInTheDocument();
+      expect(screen.queryByAltText("notes.txt")).toBeNull();
+    });
+
+    it("uploads images added by dropping files after task creation", async () => {
+      const onCreate = vi.fn().mockResolvedValue(CREATED_TASK);
+      renderQuickEntryBox({ onCreate });
+      const box = screen.getByTestId("quick-entry-box");
+      const textarea = screen.getByTestId("quick-entry-input");
+      const image = new File(["dropped"], "create-dropped.webp", { type: "image/webp" });
+
+      fireEvent.drop(box, { dataTransfer: { types: ["Files"], files: [image] } });
+      fireEvent.change(textarea, { target: { value: "Create with dropped image" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(onCreate).toHaveBeenCalled();
+        expect(uploadAttachment).toHaveBeenCalledWith(CREATED_TASK.id, image, TEST_PROJECT_ID);
+      });
+    });
+
+    it("clears the drag target after dragend without expanding collapsed List quick add controls", () => {
+      renderQuickEntryBox({ singleLine: true, defaultExpanded: false });
+      const box = screen.getByTestId("quick-entry-box");
+      const controls = document.getElementById("quick-entry-controls");
+
+      expect(controls?.hasAttribute("hidden")).toBe(true);
+      fireEvent.dragEnter(box, { dataTransfer: { types: ["Files"], files: [] } });
+      expect(screen.getByTestId("quick-entry-drop-target")).toBeInTheDocument();
+
+      fireEvent.dragEnd(box);
+      expect(screen.queryByTestId("quick-entry-drop-target")).toBeNull();
+      expect(controls?.hasAttribute("hidden")).toBe(true);
+    });
+
+    it("keeps tokenized drag/drop and icon-only attachment CSS contracts", () => {
+      const dragRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-box--drag-over");
+      const dropRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-drop-target");
+      const attachRule = cssRuleBody(QUICK_ENTRY_BOX_CSS, ".quick-entry-attach-button");
+      expect(dragRule).not.toBeNull();
+      expect(dropRule).not.toBeNull();
+      expect(attachRule).not.toBeNull();
+      expect(dragRule).toContain("var(--triage)");
+      expect(dropRule).toContain("var(--triage)");
+      expect(dropRule).toContain("pointer-events: none");
+      expect(attachRule).toContain("min-width: calc(var(--space-xl) + var(--space-xs))");
+      expect(QUICK_ENTRY_BOX_CSS).toMatch(/@media \(max-width: 768px\) \{[\s\S]*\.quick-entry-drop-target/);
     });
 
     it("resetForm clears pending images and revokes object URLs", async () => {
@@ -3662,7 +3957,7 @@ describe("QuickEntryBox", () => {
       expandQuickEntry();
 
       expect(document.getElementById("quick-entry-controls")?.hasAttribute("hidden")).toBe(false);
-      expect(screen.getByTestId("plan-button")).toBeTruthy();
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
       expect(screen.getByTestId("refine-button")).toBeTruthy();
       expect(screen.getByTestId("quick-entry-deps")).toBeTruthy();
@@ -3683,14 +3978,14 @@ describe("QuickEntryBox", () => {
   });
 
   describe("Consolidated actions layout (FN-781, FN-1088)", () => {
-    it("renders Plan, Subtask, and Refine in actions area inside controls panel", () => {
+    it("renders Subtask and Refine in actions area without a Plan shell", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
       expect(screen.getByTestId("quick-entry-actions")).toBeTruthy();
 
       const actionsContainer = screen.getByTestId("quick-entry-actions");
-      expect(actionsContainer.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(actionsContainer.contains(screen.getByTestId("subtask-button"))).toBe(true);
       expect(actionsContainer.contains(screen.getByTestId("refine-button"))).toBe(true);
     });
@@ -3702,7 +3997,7 @@ describe("QuickEntryBox", () => {
       const actionsContainer = screen.getByTestId("quick-entry-actions");
       expect(screen.queryByTestId("subtask-button")).not.toBeInTheDocument();
       expect(screen.queryByTitle("Break down into AI-generated subtasks")).not.toBeInTheDocument();
-      expect(actionsContainer.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(actionsContainer.contains(screen.getByTestId("refine-button"))).toBe(true);
     });
 
@@ -3723,17 +4018,6 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
     });
 
-    it("Plan button disabled state still works in actions area", () => {
-      renderQuickEntryBox({});
-      expandQuickEntry();
-      const textarea = screen.getByTestId("quick-entry-input");
-
-      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(true);
-
-      fireEvent.change(textarea, { target: { value: "Some task" } });
-      expect((screen.getByTestId("plan-button") as HTMLButtonElement).disabled).toBe(false);
-    });
-
     it("keeps all task creation controls together when disclosure is expanded", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -3743,14 +4027,14 @@ describe("QuickEntryBox", () => {
       const controlsPanel = document.getElementById("quick-entry-controls");
       expect(controlsPanel?.hasAttribute("hidden")).toBe(false);
 
-      expect(screen.getByTestId("plan-button")).toBeTruthy();
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(screen.getByTestId("subtask-button")).toBeTruthy();
       expect(screen.getByTestId("refine-button")).toBeTruthy();
       expect(screen.getByTestId("quick-entry-deps")).toBeTruthy();
       expect(screen.getByTestId("quick-entry-models")).toBeTruthy();
       expect(screen.getByTestId("quick-entry-save")).toBeTruthy();
 
-      expect(controlsPanel?.contains(screen.getByTestId("plan-button"))).toBe(true);
+      expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(controlsPanel?.contains(screen.getByTestId("subtask-button"))).toBe(true);
       expect(controlsPanel?.contains(screen.getByTestId("refine-button"))).toBe(true);
       expect(controlsPanel?.contains(screen.getByTestId("quick-entry-deps"))).toBe(true);
@@ -4100,13 +4384,13 @@ describe("QuickEntryBox", () => {
       expect(modelsButton.className).toContain("btn");
     });
 
-    it("keeps Plan, Subtask, and Refine buttons in touch-target button classes", () => {
+    it("keeps Subtask and Refine buttons in touch-target classes without Plan", () => {
       vi.spyOn(window, "innerWidth", "get").mockReturnValue(375);
 
       renderQuickEntryBox({});
       expandQuickEntry();
 
-      expect(screen.getByRole("button", { name: /Plan/i }).className).toContain("btn");
+      expect(screen.queryByRole("button", { name: /^Plan$/i })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Subtask/i }).className).toContain("btn");
       expect(screen.getByRole("button", { name: /Refine/i }).className).toContain("btn");
     });
@@ -4143,7 +4427,7 @@ describe("QuickEntryBox", () => {
       expect(rect.right).toBeLessThanOrEqual(viewportWidth);
     });
 
-    it("responds to clicks for toggle, plan, subtask, refine, and deps", async () => {
+    it("responds to clicks for toggle, subtask, refine, and deps without Plan", async () => {
       const onPlanningMode = vi.fn();
       const onSubtaskBreakdown = vi.fn();
 
@@ -4161,8 +4445,8 @@ describe("QuickEntryBox", () => {
       expect(toggle).toHaveAttribute("aria-expanded", "true");
 
       fireEvent.change(input, { target: { value: "Mobile interaction task" } });
-      fireEvent.click(screen.getByRole("button", { name: /Plan/i }));
-      expect(onPlanningMode).toHaveBeenCalledWith("Mobile interaction task");
+      expect(screen.queryByRole("button", { name: /^Plan$/i })).not.toBeInTheDocument();
+      expect(onPlanningMode).not.toHaveBeenCalled();
 
       ensureExpanded();
       fireEvent.change(input, { target: { value: "Break this down" } });
@@ -4646,6 +4930,82 @@ describe("QuickEntryBox", () => {
       renderQuickEntryBox({});
       const wrapper = screen.getByTestId("quick-entry-input").parentElement;
       expect(wrapper).toHaveClass("quick-entry-textarea-wrap");
+    });
+  });
+
+  it("hides the node picker affordance for local-only projects without leaving shells", () => {
+    mockQuickEntryNodes([
+      { id: "local", name: "Local", status: "online", type: "local" },
+    ]);
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+
+    expect(screen.queryByTestId("quick-entry-node-button")).not.toBeInTheDocument();
+    expect(document.querySelector(".quick-entry-box .node-trigger-wrap")).toBeNull();
+    expect(document.body.querySelector(".node-picker-dropdown")).toBeNull();
+    expect(screen.queryByText("Select execution node")).not.toBeInTheDocument();
+  });
+
+  it("hides the node picker when no registered nodes are available", () => {
+    mockQuickEntryNodes([]);
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+
+    expect(screen.queryByTestId("quick-entry-node-button")).not.toBeInTheDocument();
+    expect(document.querySelector(".quick-entry-box .node-trigger-wrap")).toBeNull();
+  });
+
+  it("shows the node picker when any remote node is available", () => {
+    mockQuickEntryNodes([
+      { id: "remote", name: "Remote Only", status: "online", type: "remote" },
+    ]);
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+
+    expect(screen.getByTestId("quick-entry-node-button")).toBeInTheDocument();
+  });
+
+  it("shows the node picker when multiple local nodes are registered", () => {
+    mockQuickEntryNodes([
+      { id: "local-a", name: "Local A", status: "online", type: "local" },
+      { id: "local-b", name: "Local A", status: "offline", type: "local" },
+    ]);
+    renderQuickEntryBox({});
+
+    expandQuickEntry();
+
+    expect(screen.getByTestId("quick-entry-node-button")).toBeInTheDocument();
+  });
+
+  it("clears a stale selected node when the registry shrinks to local-only before submit", async () => {
+    const onCreate = vi.fn().mockResolvedValue(undefined);
+    mockQuickEntryNodes([
+      { id: "local", name: "Local", status: "online", type: "local" },
+      { id: "remote", name: "Remote", status: "online", type: "remote" },
+    ]);
+    const { rerender, props } = renderQuickEntryBox({ onCreate });
+
+    fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Route after node shrink" } });
+    expandQuickEntry();
+    fireEvent.click(screen.getByTestId("quick-entry-node-button"));
+    fireEvent.click(screen.getByText("Remote"));
+    expect(screen.getByTestId("quick-entry-node-button")).toHaveTextContent("Remote");
+
+    mockQuickEntryNodes([
+      { id: "local", name: "Local", status: "online", type: "local" },
+    ]);
+    rerender(<QuickEntryBox {...props} />);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("quick-entry-node-button")).not.toBeInTheDocument();
+    });
+    clickSave();
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ nodeId: undefined }));
     });
   });
 

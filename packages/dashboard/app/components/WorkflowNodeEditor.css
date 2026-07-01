@@ -529,6 +529,9 @@ tight; do not allow their short labels to split onto multiple lines.
 }
 
 .wf-editor-readonly-note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
   font-size: 0.75rem;
   color: var(--text-dim);
   text-transform: uppercase;
@@ -1191,6 +1194,12 @@ Built-in workflow prompts need visible override state and a reset action without
   color: var(--ws-warning);
 }
 
+.wf-inspector-note--with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 /* ── Per-node Help (FNXC:WorkflowEditor 2026-06-21-10:00) ───────────
  *  Collapsible <details> teaching what the selected node does, how to
  *  configure it, and its inputs/outputs/edges. Sits under the heading,
@@ -1620,6 +1629,16 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
   padding: 2px var(--space-xs);
 }
 
+.wf-workflow-icon-input {
+  width: calc(var(--space-xl) + var(--space-md));
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-xs);
+  text-align: center;
+}
+
 .wf-workflow-description,
 .wf-workflow-description--readonly {
   font-size: 0.78rem;
@@ -1673,6 +1692,12 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
   color: var(--text-dim);
 }
 
+.wf-template-section--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
 .wf-template-option {
   display: flex;
   flex-direction: column;
@@ -1696,6 +1721,13 @@ Workflow authors need store-produced lifecycle warnings visible in the editor be
 .wf-template-option:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+.wf-template-option-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
 }
 
 .wf-template-option-name {

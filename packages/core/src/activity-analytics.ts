@@ -130,7 +130,7 @@ export interface ActivityAnalytics {
   messages: number;
   /** Distinct nodes with any usage_event in range. */
   activeNodes: number;
-  /** Distinct agents with any usage_event in range. */
+  /** Distinct agents with any usage_event or agentRun in range. */
   activeAgents: number;
   /** Agent heartbeat runs started in range, grouped by status. */
   agentRuns: AgentRunSummary;
@@ -160,8 +160,16 @@ interface DistinctRow {
 interface DayAggRow {
   day: string;
   activeNodes: number;
-  activeAgents: number;
   messages: number;
+}
+
+interface AgentActivityRow {
+  agentId: string;
+}
+
+interface AgentActivityDayRow {
+  day: string;
+  agentId: string;
 }
 
 interface AgentRunStatusRow {
@@ -269,22 +277,17 @@ export async function aggregateActivityAnalytics(
       )
       .get(...eventRange.params) as DistinctRow
   ).count;
-  const activeAgents = (
-    db
-      .prepare(
-        `SELECT COUNT(DISTINCT agentId) AS count FROM usage_events ${eventWhereWith("agentId IS NOT NULL")}`,
-      )
-      .get(...eventRange.params) as DistinctRow
-  ).count;
+  const agentActivity = collectActiveAgentActivity(db, query, eventRange);
+  const activeAgents = agentActivity.rangeAgentIds.size;
 
-  // Per-day distinct nodes/agents + message count. substr(ts,1,10) is the UTC
-  // day key (ISO-8601 timestamps).
+  // Per-day distinct nodes + message count. substr(ts,1,10) is the UTC day key
+  // (ISO-8601 timestamps); distinct agents are merged from usage_events and
+  // agentRuns below so ephemeral task workers without usage rows participate.
   const dailyRows = db
     .prepare(
       `SELECT
          substr(ts, 1, 10) AS day,
          COUNT(DISTINCT nodeId) AS activeNodes,
-         COUNT(DISTINCT agentId) AS activeAgents,
          SUM(CASE WHEN kind = 'user_message' THEN 1 ELSE 0 END) AS messages
        FROM usage_events ${eventRange.where}
        GROUP BY day
@@ -301,7 +304,7 @@ export async function aggregateActivityAnalytics(
     dailyByDay.set(r.day, {
       day: r.day,
       activeNodes: r.activeNodes,
-      activeAgents: r.activeAgents,
+      activeAgents: agentActivity.dailyAgentIds.get(r.day)?.size ?? 0,
       messages: r.messages ?? 0,
       agentRuns: 0,
     });
@@ -314,7 +317,7 @@ export async function aggregateActivityAnalytics(
       dailyByDay.set(r.day, {
         day: r.day,
         activeNodes: 0,
-        activeAgents: 0,
+        activeAgents: agentActivity.dailyAgentIds.get(r.day)?.size ?? 0,
         messages: 0,
         agentRuns: r.count,
       });
@@ -356,6 +359,76 @@ export async function aggregateActivityAnalytics(
 
 function zeroAgentRunSummary(): AgentRunSummary {
   return { total: 0, active: 0, completed: 0, failed: 0 };
+}
+
+function collectActiveAgentActivity(
+  db: Database,
+  query: ActivityAnalyticsQuery,
+  eventRange: { where: string; params: string[] },
+): { rangeAgentIds: Set<string>; dailyAgentIds: Map<string, Set<string>> } {
+  const rangeAgentIds = new Set<string>();
+  const dailyAgentIds = new Map<string, Set<string>>();
+  const addDailyAgent = (day: string, agentId: string): void => {
+    rangeAgentIds.add(agentId);
+    const set = dailyAgentIds.get(day) ?? new Set<string>();
+    set.add(agentId);
+    dailyAgentIds.set(day, set);
+  };
+  const eventWhereWith = (extra: string): string =>
+    eventRange.where
+      ? `${eventRange.where} AND ${extra}`
+      : `WHERE ${extra}`;
+
+  const usageAgents = db
+    .prepare(`SELECT DISTINCT agentId FROM usage_events ${eventWhereWith("agentId IS NOT NULL")}`)
+    .all(...eventRange.params) as AgentActivityRow[];
+  for (const row of usageAgents) {
+    rangeAgentIds.add(row.agentId);
+  }
+
+  const usageDailyAgents = db
+    .prepare(
+      `SELECT substr(ts, 1, 10) AS day, agentId
+       FROM usage_events ${eventWhereWith("agentId IS NOT NULL")}
+       GROUP BY day, agentId`,
+    )
+    .all(...eventRange.params) as AgentActivityDayRow[];
+  for (const row of usageDailyAgents) {
+    addDailyAgent(row.day, row.agentId);
+  }
+
+  if (!tableExists(db, "agentRuns")) {
+    return { rangeAgentIds, dailyAgentIds };
+  }
+
+  /*
+   * FNXC:CommandCenterActivity 2026-06-30-00:00:
+   * Dashboard active-agent metrics must include ephemeral task-worker heartbeat runs because task execution can be recorded in agentRuns without a durable-agent usage_events row. Merge by agentId so durable usage and run-only task workers count once per range/day.
+   */
+  const runRange = rangeClauses("startedAt", query);
+  const runWhereWith = (extra: string): string =>
+    runRange.where
+      ? `${runRange.where} AND ${extra}`
+      : `WHERE ${extra}`;
+  const runAgents = db
+    .prepare(`SELECT DISTINCT agentId FROM agentRuns ${runWhereWith("agentId IS NOT NULL")}`)
+    .all(...runRange.params) as AgentActivityRow[];
+  for (const row of runAgents) {
+    rangeAgentIds.add(row.agentId);
+  }
+
+  const runDailyAgents = db
+    .prepare(
+      `SELECT substr(startedAt, 1, 10) AS day, agentId
+       FROM agentRuns ${runWhereWith("agentId IS NOT NULL")}
+       GROUP BY day, agentId`,
+    )
+    .all(...runRange.params) as AgentActivityDayRow[];
+  for (const row of runDailyAgents) {
+    addDailyAgent(row.day, row.agentId);
+  }
+
+  return { rangeAgentIds, dailyAgentIds };
 }
 
 function aggregateAgentRunMetrics(

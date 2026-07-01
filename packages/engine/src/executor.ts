@@ -11,7 +11,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, isSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget } from "@fusion/core";
+import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, isSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
@@ -40,7 +40,7 @@ import {
   type ForeachActiveContext,
   type WorkflowLegacySeams,
 } from "./workflow-node-handlers.js";
-import { MERGE_REGION_KINDS, WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND } from "./workflow-graph-executor.js";
+import { MERGE_REGION_KINDS, WORKFLOW_NODE_ENGINE_PAUSE_ABORT_KIND, WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY } from "./workflow-graph-executor.js";
 import type { WorkflowNodePreparationRequirement, WorkflowNodeResult } from "./workflow-graph-executor.js";
 import type {
   AuditPrimitiveInput,
@@ -83,7 +83,7 @@ import { buildSessionSkillContext } from "./session-skill-context.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { reviewStep, type ReviewVerdict, type ReviewResult } from "./reviewer.js";
-import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
+import { buildUserCommentsPromptSection, selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveSandboxBackend } from "./sandbox/index.js";
 import type { SandboxBackend } from "./sandbox/types.js";
 import { ModelRegistry, SessionManager, type ToolDefinition, type AgentSession } from "@earendil-works/pi-coding-agent";
@@ -148,6 +148,10 @@ import { TokenCapDetector } from "./token-cap-detector.js";
 import { isUsageLimitError, checkSessionError, type UsageLimitPauser } from "./usage-limit-detector.js";
 import { isNonContinuableSessionError, isTransientError, isSilentTransientError } from "./transient-error-detector.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
+import {
+  detectExternalIntegrationEvidenceGaps,
+  formatExternalIntegrationEvidenceDiagnostic,
+} from "./spec-validation/external-integration-evidence.js";
 import { computeRecoveryDecision, formatDelay, MAX_RECOVERY_RETRIES } from "./recovery-policy.js";
 import type { StuckTaskDetector, StuckTaskEvent } from "./stuck-task-detector.js";
 import type { PluginRunner } from "./plugin-runner.js";
@@ -199,6 +203,7 @@ import {
   createTaskCreateTool as sharedCreateTaskCreateTool,
   createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool,
   createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool,
+  createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool,
   createTaskLogTool as sharedCreateTaskLogTool,
   createWorkflowListTool as sharedCreateWorkflowListTool,
   createWorkflowGetTool as sharedCreateWorkflowGetTool,
@@ -423,6 +428,37 @@ function getResumeOrphanDelayMs(): number {
 }
 
 const tokenCacheMetricsLog = createLogger("token-cache-metrics");
+
+const OPTIONAL_STEP_REVISION_KEY_MARKER = "Workflow revision key:";
+
+function normalizeOptionalStepRevisionKey(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
+}
+
+function optionalStepRevisionKey(nodeId: string | undefined, stepName: string | undefined): string {
+  return normalizeOptionalStepRevisionKey(nodeId) || normalizeOptionalStepRevisionKey(stepName) || "pre-merge-optional-step";
+}
+
+function countOptionalStepRevisionAttempts(task: Pick<Task, "log">, key: string, stepName: string | undefined): number {
+  const normalizedKey = normalizeOptionalStepRevisionKey(key);
+  const normalizedStepName = normalizeOptionalStepRevisionKey(stepName);
+  return (task.log ?? []).filter((entry) => {
+    const action = entry.action ?? "";
+    const outcome = entry.outcome ?? "";
+    if (!/attempt \d+\//.test(action)) return false;
+    const markerIndex = outcome.indexOf(OPTIONAL_STEP_REVISION_KEY_MARKER);
+    if (markerIndex >= 0) {
+      const markerValue = outcome.slice(markerIndex + OPTIONAL_STEP_REVISION_KEY_MARKER.length).split(/\r?\n/, 1)[0]?.trim();
+      return normalizeOptionalStepRevisionKey(markerValue) === normalizedKey;
+    }
+    if (!normalizedStepName) return false;
+    return normalizeOptionalStepRevisionKey(outcome).includes(`step: ${normalizedStepName}`);
+  }).length;
+}
+
+function optionalStepRevisionLogOutcome(details: string, key: string): string {
+  return `${details}\n${OPTIONAL_STEP_REVISION_KEY_MARKER} ${key}`;
+}
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -3872,20 +3908,26 @@ export class TaskExecutor {
           executorLog.log(`${task.id}: recovered ${modifiedFiles.length} modified files`);
         }
 
-        // Run workflow steps before transitioning — skip in fast mode
-        if (task.executionMode !== "fast") {
-          if (areEnabledPreMergeWorkflowStepsSatisfied(liveForCompletenessCheck)) {
-            /*
-            FNXC:WorkflowLifecycle 2026-06-29-04:37:
-            Completed graph-owned tasks can be observed briefly as in-progress after
-            the main graph already recorded every enabled pre-merge gate. Recovery
-            must not restart the graph from parse in that state; foreach pins from
-            the completed run make parse fail with pin-mismatch. Hand off to review
-            instead, which is the same terminal seam the completed graph reached.
-            */
-            executorLog.log(`${task.id}: completed recovery found satisfied workflow gates — skipping graph re-entry`);
-          } else {
-            if (await this.shouldDeferCompletionForGlobalPause(task.id, "before workflow-graph re-entry during completed-task recovery")) {
+        const enabledWorkflowStepsAlreadySatisfied = task.executionMode === "fast"
+          ? areExplicitEnabledWorkflowStepsSatisfied(liveForCompletenessCheck)
+          : areEnabledPreMergeWorkflowStepsSatisfied(liveForCompletenessCheck);
+        const shouldReenterWorkflowGraph = task.executionMode === "fast"
+          ? hasUnsatisfiedExplicitEnabledWorkflowSteps(liveForCompletenessCheck)
+          : !enabledWorkflowStepsAlreadySatisfied;
+
+        // Run workflow steps before transitioning — fast mode still honors explicit optional-step selections.
+        if (enabledWorkflowStepsAlreadySatisfied) {
+          /*
+          FNXC:WorkflowLifecycle 2026-06-29-04:37:
+          Completed graph-owned tasks can be observed briefly as in-progress after
+          the main graph already recorded every enabled pre-merge gate. Recovery
+          must not restart the graph from parse in that state; foreach pins from
+          the completed run make parse fail with pin-mismatch. Hand off to review
+          instead, which is the same terminal seam the completed graph reached.
+          */
+          executorLog.log(`${task.id}: completed recovery found satisfied workflow gates — skipping graph re-entry`);
+        } else if (shouldReenterWorkflowGraph) {
+          if (await this.shouldDeferCompletionForGlobalPause(task.id, "before workflow-graph re-entry during completed-task recovery")) {
               return false;
             }
             /*
@@ -3917,13 +3959,16 @@ export class TaskExecutor {
               executorLog.log(`✓ ${task.id} auto-recovered completed task via workflow-graph re-entry`);
               return true;
             }
-            // Graph declined (minimal store WITHOUT the workflow-selection API and no
-            // enabled gates to run — a store WITH enabled steps would have been parked
-            // fail-closed above): there is nothing to gate, so fall through to the
-            // legacy in-review handoff below.
-          }
-        } else {
-          executorLog.log(`${task.id}: fast mode — skipping workflow steps on auto-recovery`);
+          // Graph declined (minimal store WITHOUT the workflow-selection API and no
+          // enabled gates to run — a store WITH enabled steps would have been parked
+          // fail-closed above): there is nothing to gate, so fall through to the
+          // legacy in-review handoff below.
+        } else if (task.executionMode === "fast") {
+          /*
+          FNXC:FastOptionalSteps 2026-06-30-12:00:
+          Fast recovery can hand off completed implementation directly only when the operator did not explicitly enable optional workflow steps, or when those enabled steps already have passed pre-merge results. Explicit optional selections are stronger than the fast default, so completed-task recovery must re-enter the workflow graph before review when any selected optional group is still unsatisfied.
+          */
+          executorLog.log(`${task.id}: fast mode — no unsatisfied explicit workflow steps on auto-recovery`);
         }
       }
 
@@ -3956,7 +4001,13 @@ export class TaskExecutor {
 
   /*
    * FNXC:WorkflowOptionalStepFix 2026-06-26-16:35:
-   * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent Code Review / Browser Verification REVISE loops are bounded by the optional-group `maxRevisions` override when present, otherwise by `maxPostReviewFixes`; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
+   * Inline graph optional-step remediation consumes `postReviewFixCount` BEFORE calling `sendTaskBackForFix`, matching self-healing's budget-first ordering. Persistent optional-step REVISE loops are bounded by the resolved optional-group budget; `"unbounded"` intentionally skips the ceiling check so the step cycles until it returns APPROVE/APPROVE_WITH_NOTES or a human intervenes.
+   *
+   * FNXC:WorkflowRevisionBudget 2026-06-30-20:48:
+   * Live Plan Review/spec and Code Review remediation must honor explicit workflow setting values before node `maxRevisions`, and must treat unset values as unbounded for those two built-in review paths. Browser Verification keeps the existing `maxPostReviewFixes` fallback unless its node config explicitly changes it.
+   *
+   * FNXC:WorkflowRevisionBudget 2026-06-30-22:04:
+   * Plan Review and Code Review caps are independent policy budgets, so attempts are counted by workflow step key instead of the legacy aggregate `postReviewFixCount`. The aggregate still increments for existing dashboard summaries, but it must not let a Plan Review replan consume a Code Review remediation slot.
    */
   private async requestPreMergeOptionalStepFix(
     taskId: string,
@@ -3987,6 +4038,22 @@ export class TaskExecutor {
        */
       const feedback = info.feedback?.trim()
         || "Plan Review failed before execution. Revise the task plan, then continue execution.";
+      const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
+      const maxRevisions = resolveOptionalReviewRevisionBudget({
+        optionalGroupId: info.nodeId ?? "plan-review",
+        workflowSettings: settings as Record<string, unknown>,
+        nodeMaxRevisions: info.maxRevisions,
+        fallbackMaxRevisions: settings.maxPostReviewFixes ?? 3,
+      });
+      const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? 3);
+      if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
+      const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
+      const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
+      if (!budget.unbounded && currentCount >= budget.max) return false;
+      const nextCount = currentCount + 1;
+      const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
+      const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
+      await this.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, this.getRunContextFor(taskId));
       this.clearPausedAborted(taskId);
       await this.store.logEntry(
         taskId,
@@ -3996,8 +4063,8 @@ export class TaskExecutor {
       );
       await this.store.logEntry(
         taskId,
-        "Plan Review failed — moved to triage for automatic replan",
-        feedback,
+        `Plan Review failed — moved to triage for automatic replan (attempt ${nextCount}/${budgetLabel})`,
+        optionalStepRevisionLogOutcome(feedback, revisionKey),
         this.getRunContextFor(taskId),
       );
       if (liveTask.column !== "triage") {
@@ -4015,19 +4082,27 @@ export class TaskExecutor {
 
     if (info.verdict !== "REVISE") return false;
     const settings = await mergeEffectiveSettings(this.store, liveTask, await this.store.getSettings());
-    const budget = resolveOptionalStepRevisionBudget(info.maxRevisions, settings.maxPostReviewFixes ?? 3);
+    const maxRevisions = resolveOptionalReviewRevisionBudget({
+      optionalGroupId: info.nodeId ?? "",
+      workflowSettings: settings as Record<string, unknown>,
+      nodeMaxRevisions: info.maxRevisions,
+      fallbackMaxRevisions: settings.maxPostReviewFixes ?? 3,
+    });
+    const budget = resolveOptionalStepRevisionBudget(maxRevisions, settings.maxPostReviewFixes ?? 3);
     if (!budget.unbounded && (!Number.isFinite(budget.max) || budget.max <= 0)) return false;
 
-    const currentCount = liveTask.postReviewFixCount ?? 0;
+    const revisionKey = optionalStepRevisionKey(info.nodeId, info.stepName);
+    const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
     if (!budget.unbounded && currentCount >= budget.max) return false;
 
     const nextCount = currentCount + 1;
+    const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
     const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
-    await this.store.updateTask(taskId, { postReviewFixCount: nextCount }, this.getRunContextFor(taskId));
+    await this.store.updateTask(taskId, { postReviewFixCount: totalFixCount }, this.getRunContextFor(taskId));
     await this.store.logEntry(
       taskId,
       `Pre-merge optional workflow step requested executor fixes (attempt ${nextCount}/${budgetLabel})`,
-      `Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`,
+      optionalStepRevisionLogOutcome(`Step: ${info.stepName}\nStatus: ${info.status}\nFeedback:\n${info.feedback}`, revisionKey),
       this.getRunContextFor(taskId),
     );
     await this.sendTaskBackForFix(
@@ -4494,7 +4569,10 @@ export class TaskExecutor {
         Graph execution is the default for production TaskStore implementations, which expose workflow-selection APIs. Minimal test stores and older embedded adapters can lack that API; fall back to the legacy executor instead of half-entering graph routing with no workflow persistence surface.
 
         FNXC:WorkflowExecution 2026-06-25-00:00:
-        U4 (KTD-2/KTD-5) FAIL-CLOSED. The legacy `runWorkflowSteps` execution path was deleted; the graph is now the sole workflow-step executor. A store without `getTaskWorkflowSelection` can no longer reach a legacy executor that runs the enabled pre-merge gates. If we returned `false` here for a task that has enabled workflow steps, execute() would proceed and SILENTLY SKIP every gate (the exact FN-7039 silent-skip class) before handing off to review. So when the task has enabled pre-merge workflow steps (and is not fast mode, which intentionally skips them), park the task as a workflow failure instead — loud, never silent. Tasks with NO enabled steps have nothing to gate, so they keep the legacy implementation path (no behavior change), which is what minimal test stores exercise.
+        U4 (KTD-2/KTD-5) FAIL-CLOSED. The legacy `runWorkflowSteps` execution path was deleted; the graph is now the sole workflow-step executor. A store without `getTaskWorkflowSelection` can no longer reach a legacy executor that runs the enabled pre-merge gates. If we returned `false` here for a task that has enabled workflow steps, execute() would proceed and SILENTLY SKIP every gate (the exact FN-7039 silent-skip class) before handing off to review. So when the task has enabled pre-merge workflow steps, park the task as a workflow failure instead — loud, never silent. Tasks with NO enabled steps have nothing to gate, so they keep the legacy implementation path (no behavior change), which is what minimal test stores exercise.
+
+        FNXC:FastOptionalSteps 2026-06-30-09:45:
+        Fast mode only clears optional workflow steps by default; explicit `enabledWorkflowSteps` remains operator intent. Minimal or older stores that cannot resolve the graph must fail closed for non-empty explicit selections, even in fast mode, rather than falling through and silently skipping the selected optional-group body.
         */
         let liveForGate: Task | null = null;
         try {
@@ -4504,7 +4582,7 @@ export class TaskExecutor {
         }
         const gateTask = liveForGate ?? task;
         const hasEnabledSteps = (gateTask.enabledWorkflowSteps?.length ?? 0) > 0;
-        if (hasEnabledSteps && gateTask.executionMode !== "fast") {
+        if (hasEnabledSteps) {
           await this.handleGraphFailure(task, {
             disposition: "failed",
             outcome: "failure",
@@ -4604,8 +4682,8 @@ export class TaskExecutor {
         seams: this.createAuthoritativeWorkflowSeams(settings),
         prepareNodeExecution: (node, nodeTask, requirement) =>
           this.prepareGraphNodeExecution(node, nodeTask, settings, requirement),
-        runCustomNode: (node, nodeTask) =>
-          this.runGraphCustomNode(node, nodeTask, settings, resolveBindingForNode(node.id)),
+        runCustomNode: (node, nodeTask, context) =>
+          this.runGraphCustomNode(node, nodeTask, settings, resolveBindingForNode(node.id), context),
         publishTaskProjection: async (taskId, patch) => {
           await this.store.updateTaskAtomic(taskId, (liveTask) => {
             const update: Parameters<TaskStore["updateTask"]>[1] = {};
@@ -5812,7 +5890,24 @@ export class TaskExecutor {
         /*
         FNXC:WorkflowMerge 2026-06-29-23:18:
         FN-7261 reached the merge node in fast mode with every legacy implementation step still pending, producing a no-op merge proof for work that never ran. A graph-native workflow may project its checklist at the merge boundary only when node workflow results prove implementation completed; otherwise incomplete legacy steps are authoritative and merge must fail before the merger can create stale no-op proof.
+
+        FNXC:WorkflowMerge 2026-06-30-00:38:
+        Fast default Coding tasks must still execute implementation work. FN-7260/FN-7271 reached merge with no parsed task steps, no foreach instances, and no implementation proof, then finalized through no-op merge. The workflow merge boundary must fail before requesting merge when a coding workflow has not produced implementation evidence; fast mode only bypasses review/verification gates.
         */
+        const missingImplementationProof = await this.getWorkflowMergeImplementationProofFailure(mergeTask);
+        if (missingImplementationProof) {
+          await this.store.logEntry(
+            mergeTask.id,
+            `Workflow merge blocked before requester: ${missingImplementationProof}`,
+            undefined,
+            this.getRunContextFor(mergeTask.id),
+          );
+          return {
+            outcome: "failure",
+            value: "implementation-incomplete",
+            data: { status: "failed", reason: "implementation-incomplete" },
+          };
+        }
         if (hasNonTerminalWorkflowSteps(mergeTask)) {
           await this.store.logEntry(
             mergeTask.id,
@@ -5963,6 +6058,50 @@ export class TaskExecutor {
     return { ...live, column: "in-review" };
   }
 
+  private async getWorkflowMergeImplementationProofFailure(task: TaskDetail): Promise<string | undefined> {
+    if (task.noCommitsExpected === true) return undefined;
+
+    let ir: WorkflowIr | undefined;
+    try {
+      ir = await resolveWorkflowIrForTask(this.store, task.id);
+    } catch {
+      ir = undefined;
+    }
+    if (!ir) return undefined;
+
+    const usesParsedSteps = ir.nodes.some((node) => node.kind === "parse-steps");
+    const usesExecuteSeam = ir.nodes.some((node) => node.kind === "prompt" && node.config?.seam === "execute");
+    if (!usesParsedSteps && !usesExecuteSeam) return undefined;
+
+    const steps = Array.isArray(task.steps) ? task.steps : [];
+    const hasTerminalParsedSteps =
+      steps.length > 0 && steps.every((step) => step.status === "done" || step.status === "skipped");
+    const hasModifiedFiles = (task.modifiedFiles?.length ?? 0) > 0;
+    const hasGraphNativeImplementationProof = (task.workflowStepResults ?? []).some((result) =>
+      result.source === "node"
+      && (result.phase ?? "pre-merge") === "pre-merge"
+      && (result.status === "passed" || result.status === "skipped")
+    );
+
+    /*
+    FNXC:WorkflowMerge 2026-06-30-00:38:
+    Stepwise Coding proves implementation through parsed task steps/foreach projection. Legacy monolithic Coding may prove through modified files or explicit no-op completion. Do not accept an empty step list as success for parse-step workflows; a valid PROMPT.md with unparsed steps must resume execution, not no-op merge.
+    */
+    if (usesParsedSteps) {
+      return hasTerminalParsedSteps || hasGraphNativeImplementationProof
+        ? undefined
+        : "implementation did not run: parsed coding steps are missing or incomplete";
+    }
+
+    if (usesExecuteSeam) {
+      return hasTerminalParsedSteps || hasModifiedFiles || hasGraphNativeImplementationProof
+        ? undefined
+        : "implementation did not run: execute seam has no completion proof";
+    }
+
+    return undefined;
+  }
+
   private shouldCompleteChecklistAtWorkflowMerge(task: TaskDetail): boolean {
     if (!Array.isArray(task.steps) || task.steps.length === 0) return false;
     if (task.steps.every((step) => step.status === "done" || step.status === "skipped")) return false;
@@ -6052,6 +6191,16 @@ export class TaskExecutor {
           workflowId: "legacy-seams",
           runId: this.getRunContextFor(seamTask.id)?.runId ?? "legacy-seam",
         });
+        const missingImplementationProof = await this.getWorkflowMergeImplementationProofFailure(mergeTask);
+        if (missingImplementationProof) {
+          await this.store.logEntry(
+            mergeTask.id,
+            `Workflow merge blocked before requester: ${missingImplementationProof}`,
+            undefined,
+            this.getRunContextFor(mergeTask.id),
+          );
+          return { outcome: "failure", value: "implementation-incomplete" };
+        }
         // Bound the wait: a wedged merge queue must not strand the graph walk
         // holding the routing claim. On timeout the run fails cleanly and the
         // task is parked for human review; the queue can still finish later.
@@ -6169,10 +6318,18 @@ export class TaskExecutor {
         const reviewCwd = resolveReviewCheckoutCwd(detail, worktreePath);
         const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex}`;
         const promptContent = detail.prompt ?? "";
+        const userComments = selectUserCommentsForAgentContext(detail, { limit: null });
         // Merge per-task effective workflow settings (U3, KTD-3) so the validator
         // model-lane reads below pick up workflow values. Behavior-inert by default.
         const settings = await mergeEffectiveSettings(this.store, detail, await this.store.getSettings());
 
+        /*
+        FNXC:AgentSteering 2026-06-30-12:37:
+        Workflow graph step-review nodes are optional or mandatory reviewer gates. Pass canonical user comments and legacy steering into each per-cwd reviewer so workspace aggregation never drops operator requirements.
+
+        FNXC:AgentSteering 2026-06-30-13:20:
+        Graph reviewer gates request uncapped comment context because every user-authored requirement can affect approval, including older steering retained on long-running tasks.
+        */
         const sem = this.options.semaphore;
         // FNXC:Workspace 2026-06-22-00:30: KTD3 — step-inversion review seam loops per sub-repo.
         // `reviewStep` stays single-cwd; THIS CALLER loops. Single-cwd by default reviews
@@ -6209,6 +6366,7 @@ export class TaskExecutor {
               store: this.store,
               taskId: seamTask.id,
               task: detail,
+              userComments: userComments.length > 0 ? userComments : undefined,
               agentPrompts: settings.agentPrompts,
               agentStore: this.options.agentStore,
               rootDir: this.rootDir,
@@ -6828,6 +6986,7 @@ export class TaskExecutor {
     nodeTask: TaskDetail,
     settings: Settings,
     columnBinding?: WorkflowColumnAgent,
+    graphContext?: Record<string, unknown>,
   ): Promise<WorkflowNodeResult> {
     const cfg = node.config ?? {};
     let live = await this.store.getTask(nodeTask.id);
@@ -6893,7 +7052,14 @@ export class TaskExecutor {
     // WorkflowStep executions below, so skip them here before worktree or CLI
     // approval gates can fire. Human waits (`awaitInput`) and implementation
     // CLI-agent nodes are handled above and remain enforced.
-    if (live.executionMode === "fast" && !cfg.seam && (node.kind === "prompt" || node.kind === "script" || node.kind === "gate")) {
+    const optionalGroupId = typeof graphContext?.[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY] === "string"
+      ? graphContext[WORKFLOW_OPTIONAL_GROUP_CONTEXT_KEY]
+      : undefined;
+    /*
+    FNXC:FastOptionalSteps 2026-06-30-09:14:
+    Fast skips top-level custom prompt/script/gate review bodies by default, but an enabled optional-group template is explicit operator intent. The graph marks those template nodes so Browser Verification and custom optional groups still run under fast mode.
+    */
+    if (live.executionMode === "fast" && !optionalGroupId && !cfg.seam && (node.kind === "prompt" || node.kind === "script" || node.kind === "gate")) {
       executorLog.log(`${live.id}: fast mode — skipping custom graph node '${node.id}'`);
       await this.store.logEntry(
         live.id,
@@ -6908,13 +7074,34 @@ export class TaskExecutor {
     const rawCliCommand = executorKind === "cli" && typeof cfg.cliCommand === "string" && cfg.cliCommand.trim()
       ? cfg.cliCommand.trim()
       : undefined;
+    const nodeNameForReviewDetection = typeof cfg.name === "string" && cfg.name.trim() ? cfg.name.trim() : node.id;
+    const isPlanReviewNode =
+      node.id === "plan-review-step"
+      || nodeNameForReviewDetection === "Plan Review"
+      || optionalGroupId === "plan-review";
+    const inlineFixesEnabledForNode = (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false;
+    const reviewTypeNode =
+      isPlanReviewNode
+      || cfg.reviewCanFixInline === true
+      || /(?:^|\b)(?:review|verification)(?:\b|$)/i.test(nodeNameForReviewDetection)
+      || optionalGroupId === "code-review"
+      || optionalGroupId === "browser-verification";
+    const inlineFixesMakeNodeWriteCapable =
+      inlineFixesEnabledForNode
+      && executorKind !== "cli"
+      && reviewTypeNode
+      && !isPlanReviewNode;
 
     // Isolation guard: write-capable nodes must run inside a task worktree, not
     // the shared repo root. Before the execute seam runs, live.worktree is unset
     // — a coding/script/CLI node falling back to this.rootDir would mutate the
     // main checkout and cross-contaminate other tasks. Reject such nodes until a
     // worktree exists. Read-only nodes (default toolMode) are safe against root.
-    const writeCapable = cfg.toolMode === "coding" || node.kind === "script" || Boolean(scriptName) || Boolean(rawCliCommand);
+    /*
+    FNXC:WorkflowReviewers 2026-07-01-13:28:
+    Inline-fix Code Review, Browser Verification, and custom review nodes become write-capable even when the workflow definition says `toolMode: readonly`, so the isolation guard must see that before selecting a worktree. Plan Review is excluded because it uses the narrow PROMPT.md writer instead of source-file write tools.
+    */
+    const writeCapable = cfg.toolMode === "coding" || inlineFixesMakeNodeWriteCapable || node.kind === "script" || Boolean(scriptName) || Boolean(rawCliCommand);
     const executionTarget = writeCapable ? await this.store.getTask(live.id) : live;
     if (writeCapable && !executionTarget.worktree && !this.workspaceConfig) {
       return { outcome: "failure", value: "no-worktree-for-write-node" };
@@ -7083,6 +7270,15 @@ export class TaskExecutor {
     };
     if (cfg.summaryTarget === "task") {
       (step as WorkflowStep & { summaryTarget?: "task" }).summaryTarget = "task";
+    }
+    if (cfg.requireExternalIntegrationEvidence === true) {
+      (step as WorkflowStep & { requireExternalIntegrationEvidence?: boolean }).requireExternalIntegrationEvidence = true;
+    }
+    if (optionalGroupId) {
+      (step as WorkflowStep & { optionalGroupId?: string }).optionalGroupId = optionalGroupId;
+    }
+    if (cfg.reviewCanFixInline === true) {
+      (step as WorkflowStep & { reviewCanFixInline?: boolean }).reviewCanFixInline = true;
     }
 
     // (U8a) Thread the plugin-injected runtime env (FUSION_CE_SKILLS_DIR /
@@ -11598,6 +11794,10 @@ export class TaskExecutor {
     return sharedCreateTaskDocumentReadTool(this.store, taskId);
   }
 
+  private createTaskPromptWriteTool(taskId: string): ToolDefinition {
+    return sharedCreateTaskPromptWriteTool(this.store, taskId, this.getRunContextFor(taskId));
+  }
+
   private createArtifactRegisterTool(authorId: string): ToolDefinition {
     return sharedCreateArtifactRegisterTool(this.store, authorId, this.options.messageStore);
   }
@@ -12697,7 +12897,14 @@ export class TaskExecutor {
           // validator model-lane reads below pick up workflow values; this tool
           // closure re-fetches independently. Behavior-inert by default.
           const latestDetailForReview = await store.getTask(taskId);
-          const userComments = selectUserCommentsForAgentContext(latestDetailForReview);
+          /*
+          FNXC:AgentSteering 2026-06-30-12:38:
+          The in-session fn_review_step tool must select fresh unified comments plus legacy steering immediately before spawning a reviewer so explicit user requirements posted during execution are reviewed.
+
+          FNXC:AgentSteering 2026-06-30-13:20:
+          In-session reviewer calls use uncapped selection so the manual review tool cannot lose older operator instructions while validating the current step.
+          */
+          const userComments = selectUserCommentsForAgentContext(latestDetailForReview, { limit: null });
           const settings = await mergeEffectiveSettings(store, latestDetailForReview, await store.getSettings());
           const reviewCwd = resolveReviewCheckoutCwd(latestDetailForReview, worktreePath);
           // Run the reviewer via semaphore.runNested so its slot accounting
@@ -13849,12 +14056,63 @@ ${scopeGuard}
     taskEnv?: NodeJS.ProcessEnv,
     stepOptions?: { unattended?: boolean },
   ): Promise<WorkflowStepOutcome> {
-    const toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
+    let toolMode: "coding" | "readonly" = workflowStep.toolMode || "readonly";
     // (U3) Genuinely-unattended run — set FUSION_HEADLESS=1 below so skills record
     // assumptions and proceed instead of parking on a question. Explicit opt-in
     // only (default false = board run); see runGraphCustomNode / KTD-3.
     const unattended = stepOptions?.unattended === true;
     const isPlanReviewStep = workflowStep.id === "graph:plan-review-step" || workflowStep.name === "Plan Review";
+    const workflowStepMetadata = workflowStep as WorkflowStep & {
+      optionalGroupId?: string;
+      reviewCanFixInline?: boolean;
+      requireExternalIntegrationEvidence?: boolean;
+    };
+    const optionalGroupId = workflowStepMetadata.optionalGroupId;
+    const isReviewTypeWorkflowStep =
+      isPlanReviewStep
+      || workflowStepMetadata.reviewCanFixInline === true
+      || /(?:^|\b)(?:review|verification)(?:\b|$)/i.test(workflowStep.name)
+      || optionalGroupId === "plan-review"
+      || optionalGroupId === "code-review"
+      || optionalGroupId === "browser-verification";
+    const reviewerInlineFixesEnabled = (settings as Settings & { reviewerInlineFixes?: boolean }).reviewerInlineFixes !== false;
+    const allowReviewerInlineFixes = reviewerInlineFixesEnabled && isReviewTypeWorkflowStep && workflowStep.mode === "prompt";
+    const allowPlanReviewPromptWrite = allowReviewerInlineFixes && isPlanReviewStep;
+    if (allowReviewerInlineFixes && !isPlanReviewStep) {
+      /*
+       * FNXC:WorkflowReviewers 2026-07-01-12:36:
+       * Review-type workflow nodes can now repair their own findings when the workflow setting `reviewerInlineFixes` is on. Use coding tools for implementation review sessions so Code Review, Browser Verification, and custom review/verification gates do not have to bounce through executor remediation for issues they can safely fix inline. Plan Review stays on a narrow PROMPT.md writer because it runs before implementation.
+       */
+      toolMode = "coding";
+    }
+    const requireExternalIntegrationEvidence =
+      workflowStepMetadata.requireExternalIntegrationEvidence === true;
+
+    if (isPlanReviewStep && requireExternalIntegrationEvidence) {
+      /*
+       * FNXC:PlanValidation 2026-06-30-09:03:
+       * Coding (per-step review) intentionally keeps external-integration evidence as a Plan Review gate. Enforce it here, not in triage, so only workflows that set `requireExternalIntegrationEvidence` block and failures route through the graph's normal plan-replan loop.
+       */
+      const promptContent = await this.readTaskArtifact(task.id, "PROMPT.md");
+      const evidenceGaps = detectExternalIntegrationEvidenceGaps({
+        promptContent: typeof promptContent === "string" ? promptContent : "",
+      });
+      if (evidenceGaps.length > 0) {
+        const diagnostic = formatExternalIntegrationEvidenceDiagnostic(evidenceGaps);
+        const output = `REVISE: ${diagnostic}`;
+        await this.store.logEntry(
+          task.id,
+          `[pre-merge] Plan Review deterministic external-integration evidence check requested revision: ${diagnostic}`,
+        );
+        return {
+          success: false,
+          revisionRequested: true,
+          output,
+          verdict: "REVISE",
+          notes: diagnostic,
+        };
+      }
+    }
 
     // Compute the diff scope so the workflow step agent reviews only what THIS
     // task changed — not unrelated files it might wander into. Without this,
@@ -13903,6 +14161,15 @@ CRITICAL SCOPING RULES — read before doing anything else:
 - If NONE of the files in the diff scope are relevant to your review category (e.g. a UX/design reviewer with no UI/CSS/component files in scope, a security reviewer with no auth/network code in scope, an a11y reviewer with no markup changes), respond IMMEDIATELY with a single short approval line such as "No relevant changes in scope — approved." and STOP. Do not start exploring the codebase.
 - Your wall-clock budget is short. Spending it browsing unmodified files will cause this step to time out and block merge.`;
 
+    const latestTaskForUserComments = await this.store.getTask(task.id).catch(() => task);
+    const workflowStepUserComments = selectUserCommentsForAgentContext(latestTaskForUserComments, { limit: null });
+    const workflowStepUserCommentSection = buildUserCommentsPromptSection(workflowStepUserComments);
+
+    /*
+     * FNXC:AgentSteering 2026-06-30-14:08:
+     * Prompt/custom workflow-step reviewers, including Browser Verification agents, do not call reviewStep. They still gate quality, so their system prompt must carry the same canonical uncapped user comments plus legacy steering selected from a fresh task snapshot.
+     */
+
     // (KTD-6) Verdict-contract reconciliation. The trailing-verdict JSON is the
     // gate-parsing contract — it only matters for steps that gate merge. A skill
     // step that isn't a gate (e.g. ce-plan / ce-work / ce-compound) produces
@@ -13940,6 +14207,18 @@ verdict JSON object — this step does not gate merge. If you need to ask the us
 a question, emit a single ===FUSION_AWAIT_INPUT=== block and stop (see the
 workflow-step conventions in your instructions).`;
 
+    const inlineFixBlock = allowReviewerInlineFixes
+      ? `
+
+## Same-Session Fix Policy
+
+This review-type node may fix issues it finds before returning a final verdict.
+- If you find an in-scope issue you can fix safely, edit the relevant files in this same session, run the smallest relevant verification, and then return APPROVE or APPROVE_WITH_NOTES.
+- Return REVISE only when the issue is still present, cannot be safely fixed in this reviewer session, needs broader executor remediation, or needs user input.
+- Plan Review may use fn_task_prompt_write to replace the task's PROMPT.md with the complete revised plan. Do not implement product code from Plan Review.
+- Code Review and Browser Verification may fix implementation issues inside the assigned task worktree and should mention the fix in notes.`
+      : "";
+
     const systemPrompt = `You are a workflow step agent executing: ${workflowStep.name}
 
 Task Context:
@@ -13947,7 +14226,7 @@ Task Context:
 - Task Description: ${task.description}
 - Worktree: ${worktreePath}
 
-${scopeBlock}
+${scopeBlock}${workflowStepUserCommentSection ? `\n\n${workflowStepUserCommentSection}` : ""}
 
 Your role:
 - Execute this workflow step exactly as scoped.
@@ -13957,7 +14236,7 @@ Your role:
 Your Instructions:
 ${workflowStep.prompt}
 
-You have access to the file system to review changes.${verdictBlock}`;
+You have access to the file system to review changes.${inlineFixBlock}${verdictBlock}`;
 
     const agentLogger = new AgentLogger({
       store: this.store,
@@ -14120,12 +14399,18 @@ You have access to the file system to review changes.${verdictBlock}`;
       // (a dedicated readonly-plus-spawn tool mode) is deferred; this is a
       // knowingly-accepted gap, not a closed one — re-evaluate before enabling the
       // CE workflow for genuinely-unattended (FUSION_HEADLESS) LFG/pipeline runs.
+      const planReviewPromptTools: ToolDefinition[] = allowPlanReviewPromptWrite
+        ? [this.createTaskPromptWriteTool(task.id)]
+        : [];
       const codingCustomTools: ToolDefinition[] = toolMode === "coding"
         ? [this.createSpawnAgentTool(task.id, worktreePath, settings, stepEnv)]
         : [];
+      const workflowCustomTools = [...planReviewPromptTools, ...codingCustomTools];
       const readonlyCustomTools = toolMode === "readonly"
-        ? filterCustomToolsForReadonly(codingCustomTools)
-        : { allowed: codingCustomTools, denied: [] as string[] };
+        ? filterCustomToolsForReadonly(workflowCustomTools, {
+            allowTool: (tool) => allowPlanReviewPromptWrite && tool.name === "fn_task_prompt_write",
+          })
+        : { allowed: workflowCustomTools, denied: [] as string[] };
       if (toolMode === "readonly" && readonlyCustomTools.denied.length > 0) {
         await this.store.logEntry(
           task.id,
@@ -16282,7 +16567,7 @@ You have access to the file system to review changes.${verdictBlock}`;
     let logOutput: string;
     try {
       const { stdout } = await execAsync(
-        `git log "${baseCommitSha}..HEAD" --oneline`,
+        `git log "${baseCommitSha}..HEAD" --format=%ct%x09%s`,
         { cwd: worktreePath },
       );
       logOutput = stdout;
@@ -16294,17 +16579,35 @@ You have access to the file system to review changes.${verdictBlock}`;
 
     if (!logOutput.trim()) return;
 
+    const latestPendingByStep = new Map<number, number>();
+    for (const entry of detail.log ?? []) {
+      const action = entry.action ?? "";
+      const match = action.match(/^Step (\d+) \(.+\) → pending$/);
+      if (!match) continue;
+      const stepIndex = Number.parseInt(match[1], 10);
+      const pendingAt = Date.parse(entry.timestamp);
+      if (!Number.isInteger(stepIndex) || !Number.isFinite(pendingAt)) continue;
+      latestPendingByStep.set(stepIndex, Math.max(latestPendingByStep.get(stepIndex) ?? -1, pendingAt));
+    }
+
+    /*
+    FNXC:WorkflowResume 2026-06-30-08:02:
+    Browser Verification and Code Review REVISE intentionally reopen the trailing implementation/verification suffix. FN-7273 showed git-history resume then found older `complete Step 5` commits from the previous attempt, tried to mark Step 5 done while Step 3 was active, and logged a false reconciliation after TaskStore rejected the out-of-order write. A reopened step may only be reconciled from a commit whose author time is newer than the latest `→ pending` transition for that step, and success is logged only after the store confirms the step is terminal.
+    */
     // Match: feat(FN-2978): complete Step 3  /  chore(fn-2978)!: Complete step 3
     const stepCommitRegex = /^(?:feat|chore|fix)\([Ff][Nn]-\d+\)(?:!)?:\s*complete\s+step\s+(\d+)/i;
     const reconciledStepIndices = new Set<number>();
 
     for (const line of logOutput.split("\n")) {
-      // git log --oneline format: "<sha> <message>"
-      const message = line.replace(/^[0-9a-f]+ /, "").trim();
+      const [commitSecondsRaw, ...messageParts] = line.split("\t");
+      const commitMs = Number.parseInt(commitSecondsRaw ?? "", 10) * 1000;
+      const message = messageParts.join("\t").trim();
       const match = message.match(stepCommitRegex);
       if (!match) continue;
       const stepIndex = parseInt(match[1], 10);
       if (Number.isNaN(stepIndex) || stepIndex < 0 || stepIndex >= detail.steps.length) continue;
+      const latestPendingAt = latestPendingByStep.get(stepIndex);
+      if (latestPendingAt !== undefined && (!Number.isFinite(commitMs) || commitMs <= latestPendingAt)) continue;
       const step = detail.steps[stepIndex];
       if (step.status === "pending" || step.status === "in-progress") {
         reconciledStepIndices.add(stepIndex);
@@ -16312,7 +16615,14 @@ You have access to the file system to review changes.${verdictBlock}`;
     }
 
     for (const stepIndex of reconciledStepIndices) {
-      await this.store.updateStep(taskId, stepIndex, "done");
+      const updated = await this.store.updateStep(taskId, stepIndex, "done");
+      const updatedStepStatus = updated.steps?.[stepIndex]?.status;
+      if (updatedStepStatus !== "done" && updatedStepStatus !== "skipped") {
+        executorLog.warn(
+          `${taskId}: skipped git-history reconciliation log for Step ${stepIndex}; store kept status ${updatedStepStatus ?? "missing"}`,
+        );
+        continue;
+      }
       await this.store.logEntry(
         taskId,
         `Reconciled Step ${stepIndex} as done from git history (resume)`,
@@ -17264,6 +17574,30 @@ function hasNonTerminalWorkflowSteps(task: Pick<TaskDetail, "steps">): boolean {
   return task.steps.length > 0 && task.steps.some((step) => step.status !== "done" && step.status !== "skipped");
 }
 
+function workflowStepResultPassed(task: Pick<Task, "workflowStepResults"> | undefined, workflowStepId: string): boolean {
+  const results = task?.workflowStepResults ?? [];
+  return results.some((result) =>
+    result.workflowStepId === workflowStepId
+    && result.phase === "pre-merge"
+    && result.status === "passed",
+  );
+}
+
+function areExplicitEnabledWorkflowStepsSatisfied(
+  task: Pick<Task, "enabledWorkflowSteps" | "workflowStepResults"> | undefined,
+): boolean {
+  const enabled = task?.enabledWorkflowSteps;
+  if (!Array.isArray(enabled) || enabled.length === 0) return false;
+  return enabled.every((id) => workflowStepResultPassed(task, id));
+}
+
+function hasUnsatisfiedExplicitEnabledWorkflowSteps(
+  task: Pick<Task, "enabledWorkflowSteps" | "workflowStepResults"> | undefined,
+): boolean {
+  const enabled = task?.enabledWorkflowSteps;
+  return Array.isArray(enabled) && enabled.length > 0 && !areExplicitEnabledWorkflowStepsSatisfied(task);
+}
+
 function areEnabledPreMergeWorkflowStepsSatisfied(
   task: Pick<Task, "enabledWorkflowSteps" | "workflowStepResults"> | undefined,
 ): boolean {
@@ -17281,14 +17615,7 @@ function areEnabledPreMergeWorkflowStepsSatisfied(
     : ["plan-review", "code-review"];
   if (enabledPreMerge.length === 0) return false;
   if (Array.isArray(enabled) && enabledPreMerge.length !== enabled.length) return false;
-  const results = task?.workflowStepResults ?? [];
-  return enabledPreMerge.every((id) =>
-    results.some((result) =>
-      result.workflowStepId === id
-      && result.phase === "pre-merge"
-      && result.status === "passed",
-    ),
-  );
+  return enabledPreMerge.every((id) => workflowStepResultPassed(task, id));
 }
 
 function preservePreExecutionWorkflowStepResults(task: Pick<Task, "workflowStepResults" | "log">): CoreWorkflowStepResult[] {

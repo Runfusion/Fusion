@@ -173,6 +173,7 @@ export function registerTerminalRoutes(router: Router, deps: TerminalRouteDeps):
         const statusByCode = {
           max_sessions: 503,
           invalid_shell: 400,
+          invalid_cwd: 400,
           pty_load_failed: 503,
           pty_spawn_failed: 500,
         } as const;

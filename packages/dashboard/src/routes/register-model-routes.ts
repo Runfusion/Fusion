@@ -1,7 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { customProviderRegistryKey, resolvePlanningSettingsModel } from "@fusion/core";
+import { customProviderRegistryKey, mergeSupplementalAnthropicModels, resolvePlanningSettingsModel } from "@fusion/core";
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -129,6 +129,9 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
 
     try {
       options.modelRegistry.refresh();
+      if (options.modelRegistry.registerProvider) {
+        mergeSupplementalAnthropicModels(options.modelRegistry as Parameters<typeof mergeSupplementalAnthropicModels>[0], (message) => runtimeLogger.child("models").warn(message));
+      }
       let models = options.modelRegistry.getAvailable().map((m) => ({
         provider: m.provider,
         id: m.id,

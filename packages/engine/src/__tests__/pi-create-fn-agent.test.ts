@@ -1108,6 +1108,7 @@ describe("createFnAgent", () => {
     readFileSyncMock.mockReturnValue("{}");
     realpathSyncNativeMock.mockImplementation((path: PathLike) => String(path));
     readCustomProvidersMock.mockReturnValue([]);
+    getAllMock.mockReturnValue([]);
     findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
     // #1675: re-establish default auth + session-id mock returns after clearAllMocks.
     getApiKeyAndHeadersMock.mockResolvedValue({ ok: true, apiKey: undefined, headers: undefined });
@@ -1624,6 +1625,72 @@ describe("createFnAgent", () => {
     });
   });
 
+  it("resolves direct Anthropic Claude Sonnet 5 when the mocked registry initially lacks it", async () => {
+    getAllMock.mockReturnValueOnce([]);
+    findMock.mockImplementation((provider: string, modelId: string) => {
+      if (provider === "anthropic" && modelId === "claude-sonnet-5") {
+        const anthropicRegistration = registerProviderMock.mock.calls.find(([name]) => name === "anthropic")?.[1] as { models?: Array<{ id: string; name: string }> } | undefined;
+        const registeredModel = anthropicRegistration?.models?.find((model) => model.id === modelId);
+        return registeredModel ? { ...registeredModel, provider } : undefined;
+      }
+      return { provider, id: modelId };
+    });
+
+    const { createFnAgent } = await import("../pi.js");
+    const result = await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-5",
+    });
+
+    expect(registerProviderMock).toHaveBeenCalledWith("anthropic", expect.objectContaining({
+      api: "anthropic-messages",
+      models: expect.arrayContaining([expect.objectContaining({
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      })]),
+    }));
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: expect.objectContaining({ provider: "anthropic", id: "claude-sonnet-5" }),
+    }));
+    expect((result.session as { model?: unknown }).model).toEqual(expect.objectContaining({
+      provider: "anthropic",
+      id: "claude-sonnet-5",
+    }));
+  });
+
+  it("does not duplicate Claude Sonnet 5 when the Anthropic registry already has it", async () => {
+    getAllMock.mockReturnValue([
+      {
+        provider: "anthropic",
+        id: "claude-sonnet-5",
+        name: "Claude Sonnet 5 Upstream",
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+      },
+    ]);
+    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+
+    const { createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-5",
+    });
+
+    const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
+    expect(anthropicRegistrations).toHaveLength(0);
+  });
+
   it("backfills the resolved model onto sessions that do not mirror it", async () => {
     const session = {
       prompt: vi.fn(),
@@ -1772,6 +1839,73 @@ describe("createFnAgent", () => {
 
     const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> };
     expect(createSessionArgs.customTools.map((tool) => tool.name)).toContain("fn_heartbeat_done");
+  });
+
+  it("exposes connected MCP tools in readonly sessions only with the explicit opt-in", async () => {
+    const { createFnAgent } = await import("../pi.js");
+    const close = vi.fn(async () => undefined);
+    const mcpClient = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({
+        tools: [{
+          name: "lookup",
+          description: "Lookup docs",
+          inputSchema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
+        }],
+      })),
+      callTool: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })),
+      close,
+    };
+
+    const created = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+      mcpServers: [{ name: "docs", transport: "stdio", command: "node", enabled: true }],
+      allowMcpToolsInReadonly: true,
+      mcpClientFactory: () => mcpClient as any,
+    });
+
+    const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string; parameters?: unknown }> };
+    expect(createSessionArgs.customTools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "mcp__docs__lookup",
+        parameters: expect.objectContaining({
+          type: "object",
+          properties: { topic: { type: "string" } },
+          required: ["topic"],
+        }),
+      }),
+    ]));
+
+    await created.session.dispose?.();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps MCP tools out of readonly sessions without the explicit opt-in", async () => {
+    const { createFnAgent } = await import("../pi.js");
+    const mcpClient = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [{ name: "lookup" }] })),
+      callTool: vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] })),
+      close: vi.fn(async () => undefined),
+    };
+
+    await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "anthropic",
+      defaultModelId: "claude-sonnet-4-5",
+      mcpServers: [{ name: "docs", transport: "stdio", command: "node", enabled: true }],
+      mcpClientFactory: () => mcpClient as any,
+    });
+
+    const createSessionArgs = createAgentSessionMock.mock.calls[0]?.[0] as { customTools: Array<{ name: string }> };
+    expect(mcpClient.connect).not.toHaveBeenCalled();
+    expect(createSessionArgs.customTools.map((tool) => tool.name)).not.toContain("mcp__docs__lookup");
   });
 
   it("logs createFnAgent startup diagnostics without leaking cwd", async () => {

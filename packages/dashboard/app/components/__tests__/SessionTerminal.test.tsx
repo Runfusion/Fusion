@@ -3,11 +3,16 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 
 // ── Mock xterm + addon dynamic imports (jsdom has no canvas/WebGL) ──────────
 const mockFitAddon = { fit: vi.fn() };
+let sessionKeyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
 const mockTerm = {
   loadAddon: vi.fn(),
   open: vi.fn(),
   onData: vi.fn(),
-  attachCustomKeyEventHandler: vi.fn(),
+  attachCustomKeyEventHandler: vi.fn((handler: (event: KeyboardEvent) => boolean) => {
+    sessionKeyEventHandler = handler;
+  }),
+  hasSelection: vi.fn(() => false),
+  getSelection: vi.fn(() => ""),
   write: vi.fn((_data: string, cb?: () => void) => cb?.()),
   refresh: vi.fn(),
   dispose: vi.fn(),
@@ -82,8 +87,19 @@ beforeEach(() => {
   mockTerm.loadAddon.mockClear();
   mockTerm.open.mockClear();
   mockTerm.onData.mockReset();
+  sessionKeyEventHandler = null;
   mockTerm.attachCustomKeyEventHandler.mockClear();
+  mockTerm.hasSelection.mockReturnValue(false);
+  mockTerm.getSelection.mockReturnValue("");
   mockTerm.write.mockClear();
+  Object.defineProperty(navigator, "platform", {
+    value: "Win32",
+    configurable: true,
+  });
+  Object.defineProperty(navigator, "clipboard", {
+    value: undefined,
+    configurable: true,
+  });
   mockTerm.refresh.mockClear();
   mockTerm.dispose.mockClear();
   mockTerm.options = {};
@@ -124,10 +140,34 @@ describe("SessionTerminal", () => {
     await waitFor(() => expect(mockTerm.write).toHaveBeenCalledWith("hello", expect.any(Function)));
   });
 
-  it("read-only: never registers term.onData (input suppressed)", async () => {
-    render(<SessionTerminal sessionId="s1" readOnly />);
+  it.each([
+    ["read-only", { readOnly: true }],
+    ["idle", { mode: "idle" as const }],
+    ["ended", { mode: "ended" as const }],
+  ])("%s: never registers input handlers", async (_label, props) => {
+    render(<SessionTerminal sessionId="s1" {...props} />);
     await waitFor(() => expect(FakeWS.instances.length).toBe(1));
     expect(mockTerm.onData).not.toHaveBeenCalled();
+    expect(mockTerm.attachCustomKeyEventHandler).not.toHaveBeenCalled();
+  });
+
+  it("honors server read-only attach tickets when props are live+writable", async () => {
+    const { Terminal } = await import("@xterm/xterm");
+    apiMock.mockResolvedValue({ ticket: "tkt-ro", expiresAt: "", readOnly: true });
+
+    render(<SessionTerminal sessionId="s1" />);
+
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    expect(FakeWS.instances[0].url).toContain("ticket=tkt-ro");
+    expect(Terminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cursorBlink: false,
+        disableStdin: true,
+      }),
+    );
+    expect(mockTerm.onData).not.toHaveBeenCalled();
+    expect(mockTerm.attachCustomKeyEventHandler).not.toHaveBeenCalled();
+    expect(await screen.findByText("Read-only")).toBeTruthy();
   });
 
   it("relies on native xterm paste while applying the default terminal font preference", async () => {
@@ -145,7 +185,6 @@ describe("SessionTerminal", () => {
       }),
     );
     expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
-    expect(mockTerm.attachCustomKeyEventHandler).not.toHaveBeenCalled();
 
     const inputHandler = mockTerm.onData.mock.calls[0]?.[0] as
       | ((data: string) => void)
@@ -155,6 +194,55 @@ describe("SessionTerminal", () => {
 
     expect(FakeWS.instances[0].sent).toEqual([
       JSON.stringify({ type: "input", data: "paste once\n" }),
+    ]);
+  });
+
+  it("drops physical input frames when the attach WebSocket is not open", async () => {
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    expect(mockTerm.onData).toHaveBeenCalledTimes(1);
+
+    const inputHandler = mockTerm.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    FakeWS.instances[0].readyState = 3;
+    inputHandler?.("dropped");
+
+    expect(FakeWS.instances[0].sent).toEqual([]);
+  });
+
+  it.each([
+    ["mac", "MacIntel", { metaKey: true }],
+    ["non-mac", "Win32", { ctrlKey: true }],
+  ] as const)("preserves physical copy/paste terminal semantics on %s", async (_name, platform, modifier) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const readText = vi.fn().mockResolvedValue("ignored because xterm handles paste");
+    Object.defineProperty(navigator, "platform", {
+      value: platform,
+      configurable: true,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText, readText },
+      configurable: true,
+    });
+
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    await waitFor(() => expect(sessionKeyEventHandler).not.toBeNull());
+
+    mockTerm.hasSelection.mockReturnValue(true);
+    mockTerm.getSelection.mockReturnValue("selected cli output");
+    expect(sessionKeyEventHandler?.(new KeyboardEvent("keydown", { key: "c", ...modifier }))).toBe(false);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("selected cli output"));
+
+    mockTerm.hasSelection.mockReturnValue(false);
+    expect(sessionKeyEventHandler?.(new KeyboardEvent("keydown", { key: "c", ...modifier }))).toBe(true);
+
+    const beforePasteFrames = FakeWS.instances[0].sent.length;
+    expect(sessionKeyEventHandler?.(new KeyboardEvent("keydown", { key: "v", ...modifier }))).toBe(true);
+    expect(readText).not.toHaveBeenCalled();
+    const inputHandler = mockTerm.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    inputHandler?.("pasted once");
+    expect(FakeWS.instances[0].sent.slice(beforePasteFrames)).toEqual([
+      JSON.stringify({ type: "input", data: "pasted once" }),
     ]);
   });
 
@@ -290,15 +378,25 @@ describe("SessionTerminal", () => {
   });
 
   it("live-applies font and cursor preference changes from storage events", async () => {
+    const fontLoad = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: fontLoad,
+        ready: Promise.resolve(),
+      },
+      configurable: true,
+    });
     render(<SessionTerminal sessionId="s1" />);
     await waitFor(() => expect(FakeWS.instances.length).toBe(1));
     mockFitAddon.fit.mockClear();
+    mockTerm.refresh.mockClear();
+    fontLoad.mockClear();
 
     window.localStorage.setItem(
       TERMINAL_PREFERENCES_KEY,
       JSON.stringify({
         fontFamily: "jetbrains-mono",
-        fontSize: 20,
+        fontSize: 10,
         cursorStyle: "bar",
         cursorBlink: false,
         renderer: "canvas",
@@ -309,11 +407,13 @@ describe("SessionTerminal", () => {
     await waitFor(() => {
       expect(mockTerm.options).toMatchObject({
         fontFamily: resolveTerminalFontFamily("jetbrains-mono"),
-        fontSize: 20,
+        fontSize: 10,
         cursorStyle: "bar",
         cursorBlink: false,
       });
     });
+    await waitFor(() => expect(fontLoad).toHaveBeenCalledWith(expect.stringContaining("10px")));
+    await waitFor(() => expect(mockTerm.refresh).toHaveBeenCalledWith(0, mockTerm.rows - 1));
     expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
     expect(mockFitAddon.fit).toHaveBeenCalled();
   });
