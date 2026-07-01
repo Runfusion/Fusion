@@ -138,8 +138,14 @@
 }
 
 .engine-control-menu__range {
-  width: 100%;
+  /*
+  FNXC:GlobalConcurrencyControls 2026-06-30-21:45:
+  Footer current-use dots must align with the Command Center concurrency sliders. Mirror the dashboard range-input geometry instead of nudging the marker so the shared current/cap marker math lands on the same effective track/thumb positions across footer and dashboard surfaces.
+  */
+  inline-size: 100%;
+  min-block-size: var(--space-xl);
   accent-color: var(--accent);
+  touch-action: pan-y;
 }
 
 /* FNXC:GlobalConcurrencyControls 2026-06-26-06:26: The current-use marker reuses the global .status-dot convention and is positioned with logical inset properties so utilization is visible on LTR/RTL slider tracks without intercepting drag input. */
@@ -162,6 +168,26 @@
   position: absolute;
   right: 0;
   bottom: calc(100% + var(--space-xs));
+}
+
+@media (max-width: 768px) {
+  .engine-control-menu__range-wrap {
+    --engine-control-range-thumb-size: var(--space-xl);
+  }
+
+  .engine-control-menu__range {
+    min-block-size: var(--space-2xl);
+  }
+
+  .engine-control-menu__range::-webkit-slider-thumb {
+    inline-size: var(--space-xl);
+    block-size: var(--space-xl);
+  }
+
+  .engine-control-menu__range::-moz-range-thumb {
+    inline-size: var(--space-xl);
+    block-size: var(--space-xl);
+  }
 }
 
 @media (max-width: 1024px) {

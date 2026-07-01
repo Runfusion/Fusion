@@ -1,7 +1,19 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-library/react";
 import { EngineControlMenu } from "../EngineControlMenu";
 import { ConfirmDialogProvider } from "../../hooks/useConfirm";
+
+const engineControlMenuCss = readFileSync(
+  join(process.cwd(), "app/components/EngineControlMenu.css"),
+  "utf8",
+);
+
+const commandCenterControlsCss = readFileSync(
+  join(process.cwd(), "app/components/command-center/CommandCenterControls.css"),
+  "utf8",
+);
 
 const defaultSettings = {
   maxConcurrent: 2,
@@ -65,6 +77,19 @@ function expectUseMarkerPct(testId: string, pct: string) {
   expect(screen.getByTestId(testId).style.getPropertyValue("--use-pct")).toBe(pct);
 }
 
+function expectFooterUseOffset(testId: string, ratio: number) {
+  expect(screen.getByTestId(testId).style.getPropertyValue("--use-offset")).toBe(
+    `calc((var(--engine-control-range-thumb-size) / 2) + ((100% - var(--engine-control-range-thumb-size)) * ${ratio}))`,
+  );
+}
+
+function cssRule(css: string, selector: string) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\}`));
+  expect(match, `Expected CSS rule for ${selector}`).not.toBeNull();
+  return match?.[1] ?? "";
+}
+
 describe("EngineControlMenu", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -87,6 +112,36 @@ describe("EngineControlMenu", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+  });
+
+
+  it("matches the Command Center slider geometry contract for footer current-use markers", () => {
+    const footerWrap = cssRule(engineControlMenuCss, ".engine-control-menu__range-wrap");
+    const footerRange = cssRule(engineControlMenuCss, ".engine-control-menu__range");
+    const footerMarker = cssRule(engineControlMenuCss, ".engine-control-menu__use-marker");
+    const commandWrap = cssRule(commandCenterControlsCss, ".cc-controls-range-wrap");
+    const commandTouchSliderRule = commandCenterControlsCss.match(/\.cc-controls-slider input\[type="range"\],\n\.cc-controls-touch-slider\s*\{([\s\S]*?)\}/)?.[1] ?? "";
+    const commandMarker = cssRule(commandCenterControlsCss, ".cc-controls-use-marker");
+
+    expect(footerWrap).toContain("--engine-control-range-thumb-size: var(--space-md);");
+    expect(commandWrap).toContain("--cc-controls-range-thumb-size: var(--space-md);");
+    expect(footerWrap).toContain("position: relative;");
+    expect(footerWrap).toContain("display: flex;");
+    expect(footerWrap).toContain("align-items: center;");
+    expect(footerRange).toContain("inline-size: 100%;");
+    expect(footerRange).toContain("min-block-size: var(--space-xl);");
+    expect(footerRange).toContain("accent-color: var(--accent);");
+    expect(footerRange).toContain("touch-action: pan-y;");
+    expect(commandTouchSliderRule).toContain("inline-size: 100%;");
+    expect(commandTouchSliderRule).toContain("min-block-size: var(--space-xl);");
+    expect(commandTouchSliderRule).toContain("accent-color: var(--accent);");
+    expect(commandTouchSliderRule).toContain("touch-action: pan-y;");
+    for (const declaration of ["position: absolute;", "inset-block-start: 50%;", "inset-inline-start: var(--use-offset, var(--use-pct));", "transform: translate(-50%, -50%);", "pointer-events: none;"]) {
+      expect(footerMarker).toContain(declaration);
+      expect(commandMarker).toContain(declaration);
+    }
+    expect(engineControlMenuCss).toContain("@media (max-width: 768px)");
+    expect(engineControlMenuCss).toContain("--engine-control-range-thumb-size: var(--space-xl);");
   });
 
   it("renders an explicit close button when opened", async () => {
@@ -570,6 +625,36 @@ describe("EngineControlMenu", () => {
     expect(screen.getByTestId("engine-control-project-running")).toHaveTextContent("0 running (this project)");
     expect(screen.getByTestId("engine-control-global-use-marker")).toHaveStyle({ "--use-pct": "0%" });
     expect(screen.getByTestId("engine-control-project-use-marker")).toHaveStyle({ "--use-pct": "0%" });
+    expectFooterUseOffset("engine-control-global-use-marker", 0);
+    expectFooterUseOffset("engine-control-project-use-marker", 0);
+  });
+
+  it("recomputes footer project marker positions from the visible pending cap", async () => {
+    legacyMocks.fetchSettings.mockResolvedValue({
+      ...defaultSettings,
+      maxConcurrent: 60,
+    });
+    mockGlobalConcurrency({
+      globalMaxConcurrent: 48,
+      currentlyActive: 16,
+      projectsActive: { proj_123: 30 },
+    });
+
+    await openMenu();
+
+    await screen.findByLabelText(/maximum concurrent agents across all projects/i);
+    const maxConcurrent = screen.getByLabelText(/max concurrent tasks/i);
+    vi.useFakeTimers();
+
+    expectUseMarkerPct("engine-control-global-use-marker", `${(16 / 48) * 100}%`);
+    expectUseMarkerPct("engine-control-project-use-marker", "50%");
+
+    fireEvent.change(maxConcurrent, { target: { value: "50" } });
+
+    expectUseMarkerPct("engine-control-global-use-marker", `${(16 / 48) * 100}%`);
+    expectUseMarkerPct("engine-control-project-use-marker", "60%");
+    expectFooterUseOffset("engine-control-global-use-marker", 16 / 48);
+    expectFooterUseOffset("engine-control-project-use-marker", 30 / 50);
   });
 
   it("suppresses footer running counts and markers while utilization is loading", async () => {
