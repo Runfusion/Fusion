@@ -264,6 +264,36 @@ describe("TaskDetailModal", () => {
       expect(detailBodyBlock).not.toContain("overflow: hidden;");
     });
 
+    it("keeps Activity segment tabs equal-height and horizontally reachable", () => {
+      const css = readDashboardStylesSource();
+      const controlBlock = getExactCssRuleBlock(css, ".activity-segmented-control");
+      const segmentBlock = getExactCssRuleBlock(css, ".activity-segment");
+      const activeSegmentBlock = getExactCssRuleBlock(css, ".activity-segment-active");
+      const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".activity-segmented-control");
+      const mobileControlBlock = getExactCssRuleBlock(mobileBlock, ".activity-segmented-control");
+
+      expectHorizontalTabScroller(controlBlock, "base .activity-segmented-control");
+      expectTabTouchAction(segmentBlock, "base .activity-segment");
+      expect(segmentBlock).toContain("box-sizing: border-box;");
+      expect(segmentBlock).toContain("flex: 0 0 auto;");
+      expect(segmentBlock).toContain("min-block-size: var(--space-2xl);");
+      expect(segmentBlock).toContain("font-size: var(--font-size-xs);");
+      expect(segmentBlock).toContain("line-height: var(--line-height-tight);");
+      expect(segmentBlock).toContain("padding: calc(var(--space-xs) / 2) var(--space-md);");
+      expect(segmentBlock).toContain("border: none;");
+      expect(activeSegmentBlock).toContain("color: var(--text);");
+      expect(activeSegmentBlock).toContain("background: var(--surface);");
+      expect(activeSegmentBlock).toContain("box-shadow: var(--shadow-sm);");
+      expect(activeSegmentBlock).not.toContain("padding:");
+      expect(activeSegmentBlock).not.toContain("min-block-size:");
+      expect(activeSegmentBlock).not.toContain("line-height:");
+      expect(activeSegmentBlock).not.toContain("font-size:");
+      expect(activeSegmentBlock).not.toContain("font-weight:");
+      expect(activeSegmentBlock).not.toContain("border:");
+      expect(mobileControlBlock).toContain("flex: 1 1 auto;");
+      expect(css).not.toMatch(/\.task-detail-content--embedded\s+\.activity-segment(?:ed-control)?\s*\{/);
+    });
+
     it("renders responsive structural classes (modal-lg, overlay, spacer, tabs, detail-body)", () => {
       const { container } = render(
         <TaskDetailModal

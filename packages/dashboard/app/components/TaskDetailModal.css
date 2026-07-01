@@ -2431,6 +2431,9 @@ FNXC:TaskDetailTabs 2026-06-26-00:35:
 /*
 FNXC:TaskDetailActivity 2026-06-30-23:55:
 The Activity top-level tab owns Live (internal `current`), Feed, and Raw Logs as an in-content segmented control. Keep this selector visually quieter than the top-level tab strip and horizontally reachable on narrow modal and embedded task-detail surfaces; the Activity-wide expand control must sit beside it on every segment.
+
+FNXC:TaskDetailActivity 2026-06-30-12:00:
+Selected Activity segments must stay the same height as inactive siblings while using a slightly smaller label. Keep sizing on the base segment contract so visual active-state styling cannot alter the Live/Feed/Raw Logs row height.
 */
 .activity-toolbar {
   display: flex;
@@ -2457,15 +2460,18 @@ The Activity top-level tab owns Live (internal `current`), Feed, and Raw Logs as
 }
 
 .activity-segment {
+  box-sizing: border-box;
   flex: 0 0 auto;
+  min-block-size: var(--space-2xl);
   padding: calc(var(--space-xs) / 2) var(--space-md);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   font-weight: 500;
+  line-height: var(--line-height-tight);
   font-family: inherit;
   touch-action: pan-x pan-y;
   transition: color var(--transition-fast), background var(--transition-fast);
