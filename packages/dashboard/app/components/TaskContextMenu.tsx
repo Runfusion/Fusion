@@ -208,14 +208,8 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     hasAssignedAgent = Boolean(task.assignedAgentId),
   } = options;
   const isTaskPaused = Boolean(task.paused || task.userPaused);
-  const actions: TaskMenuActionDescriptor[] = [
-    {
-      id: "delete",
-      label: t("taskDetail.delete.btn", "Delete"),
-      tone: "danger",
-      onSelect: options.onDelete,
-    },
-  ];
+  const actions: TaskMenuActionDescriptor[] = [];
+  const destructiveActions: TaskMenuActionDescriptor[] = [];
 
   if (hasDuplicateHandler) {
     actions.push({ id: "duplicate", label: t("taskDetail.duplicate.btn", "Duplicate"), onSelect: options.onDuplicate });
@@ -244,7 +238,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   }
 
   if (hasResetHandler && isMutableLiveColumn(task.column, currentColumnFlags)) {
-    actions.push({ id: "reset", label: t("taskDetail.reset.btn", "Reset"), tone: "danger", onSelect: options.onReset });
+    destructiveActions.push({ id: "reset", label: t("taskDetail.reset.btn", "Reset"), tone: "danger", onSelect: options.onReset });
   }
 
   if (isMutableLiveColumn(task.column, currentColumnFlags)) {
@@ -258,6 +252,18 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
   if (isMutableLiveColumn(task.column, currentColumnFlags) && task.paused && task.pausedByAgentId) {
     actions.push({ id: "paused-by-agent", label: t("taskDetail.pause.pausedByAgent", "Paused by agent"), tone: "note", disabled: true });
   }
+
+  destructiveActions.push({
+    id: "delete",
+    label: t("taskDetail.delete.btn", "Delete"),
+    tone: "danger",
+    onSelect: options.onDelete,
+  });
+  /*
+  FNXC:TaskContextMenu 2026-07-01-00:00:
+  Popup context menus intentionally group destructive Reset and Delete actions at the bottom, with Delete last, so Board, List, and Detail hosts share the safer operator action order without forking availability or confirmation behavior.
+  */
+  actions.push(...destructiveActions);
 
   return {
     actions,
