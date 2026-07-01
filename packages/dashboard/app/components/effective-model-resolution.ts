@@ -14,14 +14,25 @@ function isStringValue(value: unknown): value is string {
 /*
 FNXC:ModelResolution 2026-06-25-00:00:
 FN-7040 requires the Chat tab, Agent Log header, and Workflow tab Model settings to share one effective model resolver so runtime log markers, active assigned-agent runtime models, task overrides, and settings fallbacks never diverge between task-detail surfaces.
+
+FNXC:TaskLogModelThinking 2026-07-01-00:00:
+Runtime "using model" markers may append parenthesized diagnostics such as thinking effort, workflow-step overrides, or fallback reasons. Dashboard model resolution strips those suffix annotations while preserving legacy exact markers so provider icons and effective-model headers continue to resolve from the same row operators read in Activity and Raw Logs.
 */
+const MODEL_MARKER_PATTERN = /^(Triage|Executor|Reviewer) using model: ([^/\s]+)\/(.+?)(?:\s+\([^)]*\))*$/;
+
+export function parseRuntimeModelMarker(text: string, role: "Triage" | "Executor" | "Reviewer"): { provider: string; modelId: string } | null {
+  const match = text.match(MODEL_MARKER_PATTERN);
+  if (!match || match[1] !== role) return null;
+  return { provider: match[2], modelId: match[3] };
+}
+
 export function extractExecutorModelFromLog(entries: AgentLogEntry[]): { provider: string; modelId: string } | null {
   let result: { provider: string; modelId: string } | null = null;
   entries.forEach((entry) => {
     if (entry.agent !== "executor" || entry.type !== "text") return;
-    const match = entry.text.match(/^Executor using model: (.+?)\/(.+)$/);
+    const match = parseRuntimeModelMarker(entry.text, "Executor");
     if (match) {
-      result = { provider: match[1], modelId: match[2] };
+      result = match;
     }
   });
   return result;
@@ -31,9 +42,9 @@ export function extractReviewerModelFromLog(entries: AgentLogEntry[]): { provide
   let result: { provider: string; modelId: string } | null = null;
   entries.forEach((entry) => {
     if (entry.agent !== "reviewer" || entry.type !== "text") return;
-    const match = entry.text.match(/^Reviewer using model: (.+?)\/(.+)$/);
+    const match = parseRuntimeModelMarker(entry.text, "Reviewer");
     if (match) {
-      result = { provider: match[1], modelId: match[2] };
+      result = match;
     }
   });
   return result;
@@ -119,9 +130,9 @@ export function extractPlanningModelFromLog(entries: AgentLogEntry[]): { provide
   let result: { provider: string; modelId: string } | null = null;
   entries.forEach((entry) => {
     if (entry.agent !== "triage" || entry.type !== "text") return;
-    const match = entry.text.match(/^Triage using model: (.+?)\/(.+)$/);
+    const match = parseRuntimeModelMarker(entry.text, "Triage");
     if (match) {
-      result = { provider: match[1], modelId: match[2] };
+      result = match;
     }
   });
   return result;

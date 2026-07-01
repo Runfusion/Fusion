@@ -508,10 +508,10 @@ describe("TaskChatTab", () => {
     expect(document.querySelectorAll(".task-chat-provider-icon [data-provider='anthropic']")).toHaveLength(2);
   });
 
-  it("renders provider icons for task chat roles from runtime model markers", () => {
+  it("renders provider icons for task chat roles from legacy and suffixed runtime model markers", () => {
     mockLogs([
-      makeEntry({ agent: "triage", text: "Triage using model: google/gemini-pro" }),
-      makeEntry({ agent: "executor", text: "Executor using model: openai/gpt-4o" }),
+      makeEntry({ agent: "triage", text: "Triage using model: google/gemini-pro (thinking effort: low)" }),
+      makeEntry({ agent: "executor", text: "Executor using model: openai/gpt-4o (thinking effort: high)" }),
       makeEntry({ agent: "reviewer", text: "Reviewer using model: anthropic/claude-sonnet-4-5" }),
     ]);
 

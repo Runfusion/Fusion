@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { describeModel, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
+import { describeModel, formatModelMarkerDetails, compactSessionContext, COMPACTION_FALLBACK_INSTRUCTIONS, createFnAgent, getProjectRootFromWorktree, isModelAuthTierIncompatibilityError, isRetryableModelSelectionError, promptWithFallback, type AgentOptions } from "../pi.js";
 import { createAgentSession, ModelRegistry, type AgentSession } from "@earendil-works/pi-coding-agent";
 import { piLog } from "../logger.js";
 
@@ -144,6 +144,16 @@ describe("describeModel", () => {
     } as unknown as AgentSession;
 
     expect(describeModel(fakeSession)).toBe("openai/gpt-4o");
+  });
+});
+
+describe("formatModelMarkerDetails", () => {
+  it("adds thinking effort before workflow annotations and omits empty values", () => {
+    expect(formatModelMarkerDetails("openai/gpt-4o", "high", ["workflow step override", "fallback after timeout"])).toBe(
+      "openai/gpt-4o (thinking effort: high) (workflow step override) (fallback after timeout)",
+    );
+    expect(formatModelMarkerDetails("openai/gpt-4o", undefined, [""])).toBe("openai/gpt-4o");
+    expect(formatModelMarkerDetails("openai/gpt-4o", "off")).toBe("openai/gpt-4o (thinking effort: off)");
   });
 });
 

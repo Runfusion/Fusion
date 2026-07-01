@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),
   describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
+  formatModelMarkerDetails: vi.fn((model: string, thinking?: string | null, annotations: string[] = []) => {
+    const suffixes = [thinking ? `thinking effort: ${thinking}` : "", ...annotations].filter(Boolean);
+    return suffixes.length ? `${model} ${suffixes.map((suffix) => `(${suffix})`).join(" ")}` : model;
+  }),
   promptWithFallback: vi.fn(async (session, prompt, options) => {
     if (typeof session.prompt === "function") {
       if (options === undefined) {
@@ -203,6 +207,39 @@ describe("reviewStep — model settings threading", () => {
     expect(store.getSettings).toHaveBeenCalled();
     expect(mockedCreateFnAgent).not.toHaveBeenCalled();
     expect(result.verdict).toBe("APPROVE");
+  });
+
+  it("logs reviewer model rows with default thinking effort", async () => {
+    mockedCreateFnAgent.mockResolvedValue(
+      createMockSession("### Verdict: APPROVE\n### Summary\nLooks good."),
+    );
+    const store = {
+      getSettings: vi.fn().mockResolvedValue({}),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+      appendAgentLog: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await reviewStep(
+      "/tmp/worktree", "FN-100", 1, "Test Step", "plan", "# prompt",
+      undefined,
+      {
+        store: store as any,
+        taskId: "FN-100",
+        defaultThinkingLevel: "high",
+      },
+    );
+
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-100",
+      "Reviewer using model: mock-provider/mock-model (thinking effort: high)",
+    );
+    expect(store.appendAgentLog).toHaveBeenCalledWith(
+      "FN-100",
+      "Reviewer using model: mock-provider/mock-model (thinking effort: high)",
+      "text",
+      undefined,
+      "reviewer",
+    );
   });
 
   it("extracts APPROVE verdict correctly", async () => {

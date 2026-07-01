@@ -6,6 +6,10 @@ import { installTaskWorktreeIdentityGuard } from "../worktree-hooks.js";
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),
   describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
+  formatModelMarkerDetails: vi.fn((model: string, thinking?: string | null, annotations: string[] = []) => {
+    const suffixes = [thinking ? `thinking effort: ${thinking}` : "", ...annotations].filter(Boolean);
+    return suffixes.length ? `${model} ${suffixes.map((suffix) => `(${suffix})`).join(" ")}` : model;
+  }),
   compactSessionContext: vi.fn(async (session, instructions) => {
     if (typeof (session as any).compact === "function") {
       return (session as any).compact(instructions);

@@ -76,7 +76,7 @@ import {
 import { canonicalFusionBranchName, canonicalStepInstanceBranchName, generateWorktreeName, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveTaskWorktreePath, resolveWorktreesDir } from "./worktree-paths.js";
 import { Type, type Static } from "@earendil-works/pi-ai";
-import { describeModel, promptWithFallback, compactSessionContext } from "./pi.js";
+import { describeModel, formatModelMarkerDetails, promptWithFallback, compactSessionContext } from "./pi.js";
 import { accumulateSessionTokenUsage, mergeTokenUsagePerModel } from "./session-token-usage.js";
 import {
   createResolvedAgentSession,
@@ -10128,7 +10128,8 @@ export class TaskExecutor {
         }
 
         const executorModelDesc = describeModel(session);
-        const executorModelMarker = `Executor using model: ${executorModelDesc}`;
+        const executorModelDetails = formatModelMarkerDetails(executorModelDesc, executorThinkingLevel);
+        const executorModelMarker = `Executor using model: ${executorModelDetails}`;
         if (isResuming) {
           executorLog.log(`${task.id}: resumed session from ${task.sessionFile}`);
           await this.store.logEntry(task.id, `Resumed agent session after unpause (model: ${executorModelDesc})`, undefined, this.getRunContextFor(task.id));
@@ -14516,10 +14517,18 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         ...(readonlyCustomTools.allowed.length > 0 ? { customTools: readonlyCustomTools.allowed } : {}),
       });
 
-      executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${describeModel(session)}${useOverride && attemptLabel === "primary" ? " (workflow step override)" : ""}${attemptLabel === "fallback" ? " (fallback after timeout)" : ""}`);
+      const workflowModelDetails = formatModelMarkerDetails(
+        describeModel(session),
+        settings.defaultThinkingLevel,
+        [
+          useOverride && attemptLabel === "primary" ? "workflow step override" : "",
+          attemptLabel === "fallback" ? "fallback after timeout" : "",
+        ],
+      );
+      executorLog.log(`${task.id}: workflow step '${workflowStep.name}' using model ${workflowModelDetails}`);
       await this.store.logEntry(
         task.id,
-        `Workflow step '${workflowStep.name}' using model: ${describeModel(session)}${useOverride && attemptLabel === "primary" ? " (workflow step override)" : ""}${attemptLabel === "fallback" ? " (fallback after timeout)" : ""}`,
+        `Workflow step '${workflowStep.name}' using model: ${workflowModelDetails}`,
       );
       this.setActiveWorkflowStepSession(task.id, session, worktreePath, this.createSeenSteeringIds(task));
 

@@ -14,6 +14,7 @@ import { formatRelativeTimeAgo } from "../utils/relativeTimeAgo";
 import { ProviderIcon } from "./ProviderIcon";
 import { clampChatInputHeight, resolveChatInputOverflowY } from "../utils/chatInputAutosize";
 import { markdownComponents } from "./AgentLogViewer";
+import { parseRuntimeModelMarker } from "./effective-model-resolution";
 import "./TaskChatTab.css";
 
 interface TaskChatTabProps {
@@ -74,9 +75,9 @@ function getRoleLabel(role: AgentLogRole, t: TFunction<"app">): string {
 
 function parseModelMarker(entry: AgentLogEntry): TaskChatModelInfo | null {
   if (entry.type !== "text") return null;
-  const match = entry.text.match(/^(?:Triage|Executor|Reviewer) using model: (.+?)\/(.+)$/);
-  if (!match) return null;
-  return { provider: match[1], modelId: match[2] };
+  const role = entry.agent === "triage" ? "Triage" : entry.agent === "executor" ? "Executor" : entry.agent === "reviewer" ? "Reviewer" : null;
+  if (!role) return null;
+  return parseRuntimeModelMarker(entry.text, role);
 }
 
 function makeModelInfo(provider: string | undefined, modelId: string | undefined): TaskChatModelInfo | null {

@@ -5,6 +5,7 @@ import {
   extractExecutorModelFromLog,
   extractPlanningModelFromLog,
   extractReviewerModelFromLog,
+  parseRuntimeModelMarker,
   resolveEffectiveExecutor,
   resolveEffectivePlanning,
   resolveEffectiveValidator,
@@ -63,17 +64,25 @@ function runtimeAgent(runtimeConfig?: Record<string, unknown>): Agent {
 }
 
 describe("effective model resolution", () => {
-  it("extracts the latest role-specific model marker from agent logs", () => {
+  it("extracts the latest role-specific model marker from legacy and suffixed agent logs", () => {
     const entries = [
       log("executor", "Executor using model: old-provider/old-model"),
-      log("reviewer", "Reviewer using model: reviewer-provider/reviewer-model"),
-      log("triage", "Triage using model: triage-provider/triage-model"),
-      log("executor", "Executor using model: new-provider/new-model"),
+      log("reviewer", "Reviewer using model: reviewer-provider/reviewer-model (thinking effort: high)"),
+      log("triage", "Triage using model: triage-provider/triage-model (thinking effort: low)"),
+      log("executor", "Executor using model: new-provider/new-model (thinking effort: high)"),
     ];
 
     expect(extractExecutorModelFromLog(entries)).toEqual({ provider: "new-provider", modelId: "new-model" });
     expect(extractReviewerModelFromLog(entries)).toEqual({ provider: "reviewer-provider", modelId: "reviewer-model" });
     expect(extractPlanningModelFromLog(entries)).toEqual({ provider: "triage-provider", modelId: "triage-model" });
+  });
+
+  it("parses runtime model markers for all roles while ignoring parenthesized diagnostics", () => {
+    expect(parseRuntimeModelMarker("Triage using model: google/gemini-pro", "Triage")).toEqual({ provider: "google", modelId: "gemini-pro" });
+    expect(parseRuntimeModelMarker("Executor using model: openai/gpt-4o (thinking effort: high)", "Executor")).toEqual({ provider: "openai", modelId: "gpt-4o" });
+    expect(parseRuntimeModelMarker("Reviewer using model: anthropic/claude-sonnet-4-5 (thinking effort: high) (fallback after timeout)", "Reviewer")).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
+    expect(parseRuntimeModelMarker("Executor using model: openai/gpt-4o (thinking effort: high)", "Reviewer")).toBeNull();
+    expect(parseRuntimeModelMarker("Executor using model: unknown model", "Executor")).toBeNull();
   });
 
   it("parses assigned-agent runtime models from combined or split fields", () => {

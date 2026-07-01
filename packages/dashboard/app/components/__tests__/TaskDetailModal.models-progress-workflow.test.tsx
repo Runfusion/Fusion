@@ -345,7 +345,7 @@ describe("TaskDetailModal", () => {
         vi.mocked(useAgentLogs).mockReturnValue({
           entries: [
             { timestamp: "2026-01-01T00:00:00Z", taskId: "FN-099", text: "hello", type: "text" as const },
-            { timestamp: "2026-01-01T00:00:01Z", taskId: "FN-099", text: "Triage using model: google/gemini-pro", type: "text" as const, agent: "triage" },
+            { timestamp: "2026-01-01T00:00:01Z", taskId: "FN-099", text: "Triage using model: google/gemini-pro (thinking effort: high)", type: "text" as const, agent: "triage" },
           ],
           loading: false,
           clear: vi.fn(),
@@ -565,8 +565,8 @@ describe("TaskDetailModal", () => {
 
       vi.mocked(useAgentLogs).mockReturnValue({
         entries: [
-          { timestamp: "2026-01-01T00:00:01Z", taskId: "FN-099", text: "Executor using model: openai/gpt-4o", type: "text" as const, agent: "executor" },
-          { timestamp: "2026-01-01T00:00:02Z", taskId: "FN-099", text: "Reviewer using model: google/gemini-2.5-pro", type: "text" as const, agent: "reviewer" },
+          { timestamp: "2026-01-01T00:00:01Z", taskId: "FN-099", text: "Executor using model: openai/gpt-4o (thinking effort: high)", type: "text" as const, agent: "executor" },
+          { timestamp: "2026-01-01T00:00:02Z", taskId: "FN-099", text: "Reviewer using model: google/gemini-2.5-pro (thinking effort: medium)", type: "text" as const, agent: "reviewer" },
         ],
         loading: false,
         clear: vi.fn(),

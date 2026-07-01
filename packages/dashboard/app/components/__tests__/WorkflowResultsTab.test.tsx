@@ -533,21 +533,21 @@ describe("WorkflowResultsTab", () => {
         taskId: "FN-001",
         agent: "executor",
         type: "text",
-        text: "Executor using model: runtime-executor/runtime-executor-model",
+        text: "Executor using model: runtime-executor/runtime-executor-model (thinking effort: high)",
       },
       {
         timestamp: "2026-06-25T00:00:01Z",
         taskId: "FN-001",
         agent: "reviewer",
         type: "text",
-        text: "Reviewer using model: runtime-reviewer/runtime-reviewer-model",
+        text: "Reviewer using model: runtime-reviewer/runtime-reviewer-model (thinking effort: medium)",
       },
       {
         timestamp: "2026-06-25T00:00:02Z",
         taskId: "FN-001",
         agent: "triage",
         type: "text",
-        text: "Triage using model: runtime-planning/runtime-planning-model",
+        text: "Triage using model: runtime-planning/runtime-planning-model (thinking effort: low)",
       },
     ];
     const assignedAgent = {

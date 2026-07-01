@@ -32,6 +32,10 @@ vi.mock("../reviewer.js", () => ({
 vi.mock("../pi.js", () => ({
   createFnAgent: mockCreateFnAgent,
   describeModel: vi.fn().mockReturnValue("mock-model"),
+  formatModelMarkerDetails: vi.fn((model: string, thinking?: string | null, annotations: string[] = []) => {
+    const suffixes = [thinking ? `thinking effort: ${thinking}` : "", ...annotations].filter(Boolean);
+    return suffixes.length ? `${model} ${suffixes.map((suffix) => `(${suffix})`).join(" ")}` : model;
+  }),
   promptWithFallback: vi.fn().mockReturnValue("mock-prompt"),
 }));
 
@@ -3638,6 +3642,14 @@ describe("taskCreate tool model inheritance", () => {
 
       const store = createMockStore({
         getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          defaultThinkingLevel: "high",
+        } as Settings),
       });
 
       // Set up createFnAgent to return a session that immediately throws
@@ -3667,10 +3679,14 @@ describe("taskCreate tool model inheritance", () => {
 
       await processor.specifyTask(task);
 
-      // Verify appendAgentLog was called with model info and triage role
+      // Verify appendAgentLog was called with model and thinking effort info on the same triage row.
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-300",
+        "Triage using model: mock-model (thinking effort: high)",
+      );
       expect(store.appendAgentLog).toHaveBeenCalledWith(
         "FN-300",
-        "Triage using model: mock-model",
+        "Triage using model: mock-model (thinking effort: high)",
         "text",
         undefined,
         "triage",

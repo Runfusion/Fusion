@@ -19,7 +19,7 @@ import {
 } from "@fusion/core";
 import { recordRetry } from "./retry-burned-logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
-import { describeModel, promptWithFallback } from "./pi.js";
+import { describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
 import { isContextLimitError } from "./context-limit-detector.js";
 import { createResolvedAgentSession, extractRuntimeHint, resolveValidatorSessionModel } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
@@ -446,8 +446,9 @@ export async function reviewStep(
     });
 
     const reviewerModelDesc = describeModel(session);
-    const reviewerModelMarker = `Reviewer using model: ${reviewerModelDesc}`;
-    reviewerLog.log(`${taskId}: reviewer using model ${reviewerModelDesc}`);
+    const reviewerModelDetails = formatModelMarkerDetails(reviewerModelDesc, options.defaultThinkingLevel);
+    const reviewerModelMarker = `Reviewer using model: ${reviewerModelDetails}`;
+    reviewerLog.log(`${taskId}: reviewer using model ${reviewerModelDetails}`);
     if (options.store && options.taskId) {
       await options.store.logEntry(options.taskId, reviewerModelMarker);
       await options.store.appendAgentLog(options.taskId, reviewerModelMarker, "text", undefined, "reviewer").catch(() => undefined);

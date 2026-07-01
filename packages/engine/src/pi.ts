@@ -518,6 +518,25 @@ export function describeModel(session: AgentSession): string {
 }
 
 /**
+ * FNXC:TaskLogModelThinking 2026-07-01-00:00:
+ * Task-log model markers must keep the historical provider/model prefix stable while appending resolved thinking effort on the same row for operator diagnostics. Extra annotations stay parenthesized after the thinking-effort annotation so dashboard parsers can strip all suffix metadata deterministically.
+ */
+export function formatModelMarkerDetails(
+  modelDescription: string,
+  thinkingLevel?: string | null,
+  annotations: string[] = [],
+): string {
+  const suffixes: string[] = [];
+  const normalizedThinkingLevel = typeof thinkingLevel === "string" ? thinkingLevel.trim() : "";
+  if (normalizedThinkingLevel) {
+    suffixes.push(`thinking effort: ${normalizedThinkingLevel}`);
+  }
+  suffixes.push(...annotations.map((annotation) => annotation.trim()).filter(Boolean));
+  if (suffixes.length === 0) return modelDescription;
+  return `${modelDescription} ${suffixes.map((suffix) => `(${suffix})`).join(" ")}`;
+}
+
+/**
  * Default instructions used when calling `session.compact()` for loop recovery.
  * These guide the compaction summary to preserve essential context while
  * freeing up the context window for continued work.

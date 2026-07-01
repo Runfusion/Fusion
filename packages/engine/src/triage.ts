@@ -80,7 +80,7 @@ import type {
   ToolDefinition,
   AgentSession,
 } from "@earendil-works/pi-coding-agent";
-import { describeModel, promptWithFallback } from "./pi.js";
+import { describeModel, formatModelMarkerDetails, promptWithFallback } from "./pi.js";
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
@@ -1123,7 +1123,7 @@ export class TriageProcessor {
           }),
         });
 
-        const modelDesc = describeModel(session);
+        const modelDesc = formatModelMarkerDetails(describeModel(session), settings.defaultThinkingLevel);
         planLog.log(`${task.id}: using model ${modelDesc}`);
         await this.store.logEntry(task.id, `Triage using model: ${modelDesc}`);
         await this.store.appendAgentLog(

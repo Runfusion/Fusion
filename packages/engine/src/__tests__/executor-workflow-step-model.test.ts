@@ -114,7 +114,7 @@ async function runStepWithSettings(
     undefined,
   );
 
-  return captured.last;
+  return { ...captured.last, logCalls: store.logEntry.mock.calls };
 }
 
 describe("executor workflow-step model resolution", () => {
@@ -230,5 +230,26 @@ describe("executor workflow-step model resolution", () => {
       defaultProvider: "mock",
       defaultModelId: "scripted",
     });
+  });
+
+  it("logs workflow-step model rows with thinking effort before override annotations", async () => {
+    const primary = await runStepWithSettings(
+      {
+        defaultThinkingLevel: "high",
+        executionProvider: "project-exec-provider",
+        executionModelId: "project-exec-model",
+      },
+      {
+        step: {
+          modelProvider: "step-provider",
+          modelId: "step-model",
+        },
+      },
+    );
+
+    expect(primary.logCalls).toContainEqual([
+      "FN-MODEL-1",
+      "Workflow step 'Model Step' using model: mock-provider/mock-model (thinking effort: high) (workflow step override)",
+    ]);
   });
 });
