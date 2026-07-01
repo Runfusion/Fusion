@@ -1,12 +1,8 @@
 // ChatView.css is imported eagerly from App.tsx to avoid a flash of
 // unstyled content when the lazy chunk loads. Do not re-import here.
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Components } from "react-markdown";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   MessageSquare,
-  Send,
   Plus,
   Search,
   Trash2,
@@ -14,33 +10,27 @@ import {
   Pencil,
   ChevronLeft,
   Bot,
-  Square,
   Eye,
   EyeOff,
   Paperclip,
-  File,
-  Wrench,
   ChevronDown,
   Copy,
   Check,
-  TriangleAlert,
-  ArrowUpToLine,
   Maximize2,
   Minimize2,
   X,
   Hash,
 } from "lucide-react";
-import { useChat, type ChatMessageInfo, type FailureInfo, type ToolCallInfo } from "../hooks/useChat";
+import { useChat, type ChatMessageInfo } from "../hooks/useChat";
 import { RoomMessageDeliveredButReplyFailedError, useChatRooms } from "../hooks/useChatRooms";
 import { useChatUnread } from "../hooks/useChatUnread";
 import { useViewportMode } from "./Header";
 import { updateGlobalSettings, type DiscoveredSkill } from "../api";
 import type { Agent } from "@fusion/core";
 import { CustomModelDropdown } from "./CustomModelDropdown";
-import { ChatQuestionResponse } from "./ChatQuestionResponse";
-import { ProviderIcon } from "./ProviderIcon";
 import { AgentMentionPopup } from "./AgentMentionPopup";
 import { AgentAvatar } from "./AgentAvatar";
+import { ProviderIcon } from "./ProviderIcon";
 import { FileMentionPopup } from "./FileMentionPopup";
 import { CreateRoomModal } from "./CreateRoomModal";
 import { CliChatSurface, type CliChatTier } from "./CliChatSurface";
@@ -52,13 +42,17 @@ import { useMobileKeyboard } from "../hooks/useMobileKeyboard";
 import { useMobileKeyboardViewportLock, isIOS } from "../hooks/useMobileScrollLock";
 import { matchesAgentMentionFilter } from "./mentionMatching";
 import { useNavigationHistoryContext } from "../hooks/useNavigationHistory";
-import { linkifyFilePaths, linkifyReactChildren } from "../utils/filePathLinkify";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
-import { parseQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { estimateChatTokens, formatTokenCount } from "../utils/estimateChatTokens";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { ViewHeader } from "./ViewHeader";
+import {
+  StandardChatActionButton,
+  StandardChatMessageItem,
+  StandardStreamingMessage,
+  formatModelTag,
+} from "./StandardChatSurface";
 
 export interface ChatViewProps {
   projectId?: string;
@@ -115,313 +109,6 @@ function formatRelativeTime(dateStr: string, t: TFunction<"app">): string {
 }
 
 /**
- * Format a model provider and ID into a human-readable tag.
- * Returns null if provider or modelId is missing/empty.
- */
-function formatModelTag(provider?: string | null, modelId?: string | null): string | null {
-  if (!provider || !modelId) return null;
-
-  // Handle known provider/model patterns
-  const normalizedModel = modelId.toLowerCase();
-
-  // Claude models: "claude-sonnet-4-5" -> "Claude Sonnet 4.5"
-  if (normalizedModel.includes("claude")) {
-    let formatted = modelId
-      .replace(/^claude[- ]/i, "Claude ")
-      .replace(/sonnet[- ](\d+)[- ](\d+)/i, "Sonnet $1.$2")
-      .replace(/sonnet[- ](\d+)/i, "Sonnet $1")
-      .replace(/haiku[- ](\d+)/i, "Haiku $1")
-      .replace(/opus[- ](\d+)/i, "Opus $1")
-      .replace(/sonnet/i, "Sonnet")
-      .replace(/haiku/i, "Haiku")
-      .replace(/opus/i, "Opus")
-      .replace(/-/g, " ")
-      .trim();
-    // Fix double spaces
-    formatted = formatted.replace(/\s+/g, " ");
-    return formatted.length > 30 ? formatted.slice(0, 30) + "…" : formatted;
-  }
-
-  // OpenAI models: "gpt-4o" -> "GPT-4o", "gpt-4-turbo" -> "GPT-4 Turbo"
-  if (normalizedModel.includes("gpt") || normalizedModel.includes("openai")) {
-    // Format GPT model names: handle special cases first, then capitalize
-    // Note: We don't replace hyphens globally because special cases preserve them
-    const formatted = modelId
-      .replace(/^gpt-4-turbo$/i, "GPT-4 Turbo")
-      .replace(/^gpt-4o-mini$/i, "GPT-4o Mini")
-      .replace(/^gpt-4o$/i, "GPT-4o")
-      .replace(/^gpt-4$/i, "GPT-4")
-      .replace(/^gpt-o1-preview$/i, "GPT-o1 Preview")
-      .replace(/^gpt-o1-mini$/i, "GPT-o1 Mini")
-      .replace(/^gpt-o1$/i, "GPT-o1")
-      .replace(/^gpt/i, "GPT")  // Capitalize remaining GPT prefix
-      .trim();
-    return formatted.length > 30 ? formatted.slice(0, 30) + "…" : formatted;
-  }
-
-  // Gemini models: "gemini-2.5-pro" -> "Gemini 2.5 Pro"
-  if (normalizedModel.includes("gemini")) {
-    const formatted = modelId
-      .replace(/^gemini[- ]/i, "Gemini ")
-      .replace(/pro[- ](\d+)[- ](\d+)/i, "Pro $1.$2")
-      .replace(/pro[- ](\d+)/i, "Pro $1")
-      .replace(/-/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return formatted.length > 30 ? formatted.slice(0, 30) + "…" : formatted;
-  }
-
-  // Generic fallback: capitalize first letter, replace hyphens with spaces
-  const formatted = modelId
-    .replace(/-/g, " ")
-    .replace(/^\w/, (c) => c.toUpperCase())
-    .replace(/\s+/g, " ")
-    .trim();
-  return formatted.length > 30 ? formatted.slice(0, 30) + "…" : formatted;
-}
-
-function truncateToolValue(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}…`;
-}
-
-function formatToolArgsSummary(args?: Record<string, unknown>): string | null {
-  if (!args) return null;
-  const entries = Object.entries(args);
-  if (entries.length === 0) return null;
-
-  return entries
-    .map(([key, value]) => {
-      const stringValue =
-        typeof value === "string"
-          ? value
-          : (() => {
-              try {
-                return JSON.stringify(value);
-              } catch {
-                return String(value);
-              }
-            })();
-      return `${key}=${truncateToolValue(stringValue, 50)}`;
-    })
-    .join(", ");
-}
-
-function formatToolResultSummary(result: unknown): string | null {
-  if (result === undefined) return null;
-  if (typeof result === "string") return truncateToolValue(result, 200);
-  try {
-    return truncateToolValue(JSON.stringify(result), 200);
-  } catch {
-    return truncateToolValue(String(result), 200);
-  }
-}
-
-function buildFailureReferenceHref(reference: FailureInfo["reference"]): string | null {
-  if (!reference) {
-    return null;
-  }
-
-  if (reference.kind === "mailbox" || reference.kind === "mailbox-message") {
-    const pathname = typeof window === "undefined" ? "/" : window.location.pathname || "/";
-    const params = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
-    params.set("view", "mailbox");
-    params.set("mailbox-message", reference.id);
-    return `${pathname}?${params.toString()}#message-${encodeURIComponent(reference.id)}`;
-  }
-
-  return null;
-}
-
-function renderFailureReference(reference: FailureInfo["reference"], t: (key: string, defaultValue: string) => string): ReactNode {
-  if (!reference) {
-    return null;
-  }
-
-  const referenceLabel = reference.label ?? `${reference.kind} ${reference.id}`;
-  const referenceHref = buildFailureReferenceHref(reference);
-  const referenceDetailsId = `chat-failure-reference-${reference.kind}-${reference.id}`
-    .replace(/[^a-zA-Z0-9_-]+/g, "-")
-    .toLowerCase();
-
-  return (
-    <div className="chat-message-failure-reference">
-      <span className="chat-message-failure-reference-label">{t("chat.failureReferenceLabel", "Reference")}</span>
-      <span className="chat-message-failure-reference-value">{referenceLabel}</span>
-      {referenceHref ? (
-        <a className="btn btn-sm chat-message-failure-reference-link" href={referenceHref}>
-          {t("chat.openMailboxMessage", "Open mailbox message")}
-        </a>
-      ) : (
-        <details className="chat-message-failure-reference-details">
-          <summary className="btn btn-sm chat-message-failure-reference-link">{t("chat.viewFailureDetails", "View failure details")}</summary>
-          <dl className="chat-message-failure-reference-meta" id={referenceDetailsId}>
-            <div>
-              <dt>{t("chat.failureReferenceKind", "Kind")}</dt>
-              <dd>{reference.kind}</dd>
-            </div>
-            <div>
-              <dt>{t("chat.failureReferenceId", "ID")}</dt>
-              <dd>{reference.id}</dd>
-            </div>
-            {reference.label && (
-              <div>
-                <dt>{t("chat.failureReferenceMetaLabel", "Label")}</dt>
-                <dd>{reference.label}</dd>
-              </div>
-            )}
-          </dl>
-        </details>
-      )}
-    </div>
-  );
-}
-
-function renderToolCalls(
-  toolCalls: ToolCallInfo[] | undefined,
-  t: (key: string, defaultValue: string, opts?: Record<string, unknown>) => string,
-  options?: {
-    isAwaitingAnswer?: boolean;
-    submittedAnswer?: string;
-    onQuestionSubmit?: (answerText: string, structured: Record<string, unknown>) => void;
-  },
-): ReactNode {
-  if (!toolCalls || toolCalls.length === 0) return null;
-
-  const renderToolCallItem = (toolCall: ToolCallInfo, index: number) => {
-    const parsedQuestion = parseQuestionToolCall(toolCall);
-    if (parsedQuestion) {
-      const isAwaitingAnswer = options?.isAwaitingAnswer === true;
-      return (
-        <ChatQuestionResponse
-          key={`${toolCall.toolName}-${index}`}
-          parsed={parsedQuestion}
-          answered={!isAwaitingAnswer}
-          submittedAnswer={options?.submittedAnswer}
-          disabled={!isAwaitingAnswer}
-          onSubmit={(answerText, structured) => options?.onQuestionSubmit?.(answerText, structured)}
-        />
-      );
-    }
-
-    const isRunning = toolCall.status === "running";
-    const isError = toolCall.status === "completed" && toolCall.isError;
-    const argsSummary = formatToolArgsSummary(toolCall.args);
-    const resultSummary = formatToolResultSummary(toolCall.result);
-    const summaryPreview = isRunning
-      ? argsSummary
-      : resultSummary
-        ? `${t("chat.toolCallResultPrefix", "result")}: ${resultSummary}`
-        : argsSummary
-          ? `${t("chat.toolCallArgsPrefix", "args")}: ${argsSummary}`
-          : null;
-    const statusLabel = isRunning ? t("chat.toolCallStatusRunning", "running") : isError ? t("chat.toolCallStatusError", "error") : t("chat.toolCallStatusCompleted", "completed");
-
-    return (
-      <details
-        key={`${toolCall.toolName}-${index}`}
-        className={`chat-tool-call${isRunning ? " chat-tool-call--running" : ""}${isError ? " chat-tool-call--error" : ""}`}
-        open={isRunning}
-      >
-        <summary>
-          <span className="chat-tool-call-status-dot" aria-hidden="true" />
-          <span className="chat-tool-call-name" title={toolCall.toolName}>{toolCall.toolName}</span>
-          {summaryPreview && (
-            <span className="chat-tool-call-preview" title={summaryPreview}>
-              {summaryPreview}
-            </span>
-          )}
-          <span className="chat-tool-call-status-text">{statusLabel}</span>
-        </summary>
-        <div className="chat-tool-call-content">
-          {argsSummary && (
-            <div className="chat-tool-call-row">
-              <span className="chat-tool-call-label">{t("chat.toolCallArgsPrefix", "args")}</span>
-              <span className="chat-tool-call-value">{argsSummary}</span>
-            </div>
-          )}
-          {resultSummary && (
-            <div className={`chat-tool-call-row${isError ? " chat-tool-call-row--error" : ""}`}>
-              <span className="chat-tool-call-label">{t("chat.toolCallResultPrefix", "result")}</span>
-              <span className="chat-tool-call-value">{resultSummary}</span>
-            </div>
-          )}
-        </div>
-      </details>
-    );
-  };
-
-  const className = "chat-tool-calls";
-  if (toolCalls.length === 1) {
-    return (
-      <div className={className} data-testid="chat-tool-calls">
-        <div className="chat-tool-calls-header">
-          <Wrench size={12} aria-hidden="true" />
-          <span>{t("chat.toolCallsHeader", "Tool calls")}</span>
-        </div>
-        {renderToolCallItem(toolCalls[0], 0)}
-      </div>
-    );
-  }
-
-  const runningCount = toolCalls.filter((toolCall) => toolCall.status === "running").length;
-  const errorCount = toolCalls.filter((toolCall) => toolCall.status === "completed" && toolCall.isError).length;
-  const hasRunning = runningCount > 0;
-  const uniqueNames = Array.from(new Set(toolCalls.map((toolCall) => toolCall.toolName)));
-  const visibleNames = uniqueNames.slice(0, 5);
-  const overflowCount = Math.max(0, uniqueNames.length - visibleNames.length);
-  const namesSummary = overflowCount > 0
-    ? `${visibleNames.join(", ")}, +${overflowCount} more`
-    : visibleNames.join(", ");
-  const statusSummary = hasRunning
-    ? `(${runningCount} ${t("chat.toolCallStatusRunning", "running")})`
-    : errorCount > 0
-      ? `(${errorCount} ${errorCount === 1 ? t("chat.toolCallStatusError", "error") : t("chat.toolCallStatusErrors", "errors")})`
-      : null;
-
-  return (
-    <div className={className} data-testid="chat-tool-calls">
-      <details className="chat-tool-calls-group" data-testid="chat-tool-calls-group" open={hasRunning}>
-        <summary className="chat-tool-calls-group-summary">
-          <Wrench size={12} aria-hidden="true" />
-          <span className="chat-tool-calls-count">{t("chat.toolCallsCount", "{{count}} tool calls", { count: toolCalls.length })}</span>
-          <span className="chat-tool-calls-names" title={namesSummary}>{namesSummary}</span>
-          {statusSummary && <span className="chat-tool-calls-group-status">{statusSummary}</span>}
-        </summary>
-        {toolCalls.map((toolCall, index) => renderToolCallItem(toolCall, index))}
-      </details>
-    </div>
-  );
-}
-
-const chatMarkdownComponents: Components = {
-  p: ({ children, ...props }) => (
-    <p {...props}>{linkifyReactChildren(children)}</p>
-  ),
-  li: ({ children, ...props }) => (
-    <li {...props}>{linkifyReactChildren(children)}</li>
-  ),
-  pre: ({ children, ...props }) => (
-    <pre {...props} className="chat-markdown-pre">
-      {children}
-    </pre>
-  ),
-  code: ({ children, ...props }) => {
-    const text = typeof children === "string" ? children : React.Children.toArray(children).join("");
-    const linkedChildren = linkifyFilePaths(text);
-    if (linkedChildren.length === 1 && typeof linkedChildren[0] === "string") {
-      return <code {...props}>{children}</code>;
-    }
-    return <code {...props}>{linkedChildren}</code>;
-  },
-  table: ({ children, ...props }) => (
-    <table {...props} className="chat-markdown-table">
-      {children}
-    </table>
-  ),
-};
-
-/**
  * Constant agent ID for the built-in fn agent.
  * The chat system always uses createFnAgent with CHAT_SYSTEM_PROMPT regardless
  * of the agentId stored on the session. This ID serves as metadata only.
@@ -433,6 +120,10 @@ const CHAT_SIDEBAR_MAX_WIDTH = 500;
 const CHAT_SIDEBAR_STORAGE_KEY = "fusion:chat-sidebar-width";
 const CHAT_SCOPE_STORAGE_KEY = "fusion:chat-scope";
 const CHAT_DRAFT_STORAGE_PREFIX = "fusion:chat-draft:";
+
+function findSubmittedQuestionAnswer(messages: ChatMessageInfo[], messageIndex: number): string | undefined {
+  return messages.slice(messageIndex + 1).find((message) => message.role === "user")?.content;
+}
 
 function getChatDraftKey(scope: "direct" | "rooms", id: string | null | undefined): string | null {
   if (!id) {
@@ -760,238 +451,6 @@ interface RoomContext {
   memberIds: ReadonlySet<string>;
 }
 
-interface ChatMessageItemProps {
-  message: ChatMessageInfo;
-  /**
-   * When true, render assistant message content as plain text instead of
-   * Markdown. The per-message eye toggle has been removed in favor of a
-   * single thread-level toggle in the chat header, so this is a global
-   * mirror of that header state.
-   */
-  forcePlain: boolean;
-  agentName: string;
-  /**
-   * Hide the per-message agent identity (icon + name + model tag) on
-   * assistant bubbles. In model-only chats the agent identity *is* the
-   * active model and it's already shown in the thread header.
-   */
-  hideAssistantIdentity: boolean;
-  showAssistantModelTag: boolean;
-  activeModelTag: string | null;
-  activeModelProvider: string | null;
-  activeSessionId: string | null;
-  mentionAgentsByName: Map<string, Agent>;
-  roomContext: RoomContext | null;
-  copyAction?: ReactNode;
-  onScrollToTop?: (messageId: string) => void;
-  isAwaitingQuestionAnswer: boolean;
-  submittedQuestionAnswer?: string;
-  onQuestionSubmit: (answerText: string, structured: Record<string, unknown>) => void;
-}
-
-function findSubmittedQuestionAnswer(messages: ChatMessageInfo[], messageIndex: number): string | undefined {
-  return messages.slice(messageIndex + 1).find((message) => message.role === "user")?.content;
-}
-
-// Renders a single chat message bubble. Memoized so the streaming bubble's
-// per-frame state churn does not re-render every prior message (each one
-// would re-run ReactMarkdown over its full content otherwise).
-const ChatMessageItem = memo(function ChatMessageItem({
-  message,
-  forcePlain,
-  agentName,
-  hideAssistantIdentity,
-  showAssistantModelTag,
-  activeModelTag,
-  activeModelProvider,
-  activeSessionId,
-  mentionAgentsByName,
-  roomContext,
-  copyAction,
-  onScrollToTop,
-  isAwaitingQuestionAnswer,
-  submittedQuestionAnswer,
-  onQuestionSubmit,
-}: ChatMessageItemProps) {
-  const { t } = useTranslation("app");
-  const isAssistantMessage = message.role === "assistant";
-  const failureInfo = isAssistantMessage ? message.failureInfo : undefined;
-  const showAssistantIdentity = isAssistantMessage && (!hideAssistantIdentity || Boolean(failureInfo));
-
-  const renderedUserContent = useMemo<ReactNode>(() => {
-    if (isAssistantMessage) return null;
-    const content = message.content;
-    const mentionRegex = /@([\w-]+)/g;
-    const parts: ReactNode[] = [];
-    let lastIndex = 0;
-    let match = mentionRegex.exec(content);
-    while (match) {
-      const [fullMatch, rawName = ""] = match;
-      const start = match.index;
-      if (start > lastIndex) parts.push(content.slice(lastIndex, start));
-      const normalizedName = rawName.replace(/_/g, " ").toLowerCase();
-      const mentionedAgent = mentionAgentsByName.get(normalizedName);
-      if (mentionedAgent) {
-        const isNonMember = Boolean(roomContext && !roomContext.memberIds.has(mentionedAgent.id));
-        const nonMemberLabel = isNonMember ? t("chat.mentionNonMember", "Not a member of {{roomName}}", { roomName: roomContext?.roomName }) : undefined;
-        parts.push(
-          <span
-            key={`${mentionedAgent.id}-${start}`}
-            className={`chat-mention-chip${isNonMember ? " chat-mention-chip--non-member" : ""}`}
-            title={nonMemberLabel}
-            aria-label={nonMemberLabel}
-          >
-            @{mentionedAgent.name.replace(/\s+/g, "_")}
-          </span>,
-        );
-      } else {
-        parts.push(fullMatch);
-      }
-      lastIndex = start + fullMatch.length;
-      match = mentionRegex.exec(content);
-    }
-    if (lastIndex < content.length) parts.push(content.slice(lastIndex));
-    return parts.length === 0 ? content : parts;
-  }, [isAssistantMessage, message.content, mentionAgentsByName, roomContext]);
-
-  const renderedAttachments = useMemo<ReactNode>(() => {
-    const attachments = message.attachments;
-    if (!attachments || attachments.length === 0) return null;
-    const attachmentUrlBase = message.roomId
-      ? `/api/chat/rooms/${encodeURIComponent(message.roomId)}/attachments/`
-      : (activeSessionId ? `/api/chat/sessions/${encodeURIComponent(activeSessionId)}/attachments/` : null);
-    if (!attachmentUrlBase) return null;
-    return (
-      <div className="chat-message-attachments">
-        {attachments.map((attachment) => {
-          const isImage = attachment.mimeType.startsWith("image/");
-          const key = attachment.id || attachment.filename;
-          const href = `${attachmentUrlBase}${encodeURIComponent(attachment.filename)}`;
-          if (isImage) {
-            return (
-              <a
-                key={key}
-                className="chat-message-attachment-link"
-                data-testid="chat-message-attachment"
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <img
-                  className="chat-message-attachment"
-                  src={href}
-                  alt={attachment.originalName}
-                />
-              </a>
-            );
-          }
-          return (
-            <a
-              key={key}
-              className="chat-message-attachment-file"
-              data-testid="chat-message-attachment"
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <File size={14} />
-              <span>{attachment.originalName}</span>
-            </a>
-          );
-        })}
-      </div>
-    );
-  }, [message.attachments, message.roomId, activeSessionId]);
-  const assistantBody = useMemo<ReactNode>(() => {
-    if (!isAssistantMessage) return null;
-    if (failureInfo) {
-      return (
-        <div className="chat-message-content chat-message-content--failure">
-          <div className="chat-message-failure-summary-row">
-            <span className="status-dot status-dot--error" aria-hidden="true" />
-            <span className="chat-message-failure-label">{t("chat.responseFailed", "Response failed")}</span>
-          </div>
-          <div className="chat-message-failure-summary">{failureInfo.summary}</div>
-          {(failureInfo.errorClass || failureInfo.code) && (
-            <div className="chat-message-failure-badges">
-              {failureInfo.errorClass && <span className="chat-message-failure-badge">{failureInfo.errorClass}</span>}
-              {failureInfo.code && <span className="chat-message-failure-badge">{failureInfo.code}</span>}
-            </div>
-          )}
-          {(failureInfo.detail || failureInfo.reference) && (
-            <details className="chat-message-failure-details">
-              <summary>
-                <TriangleAlert size={14} aria-hidden="true" />
-                <span>{t("chat.failureDetails", "Failure details")}</span>
-              </summary>
-              {failureInfo.detail && <pre className="chat-message-failure-detail">{linkifyFilePaths(failureInfo.detail)}</pre>}
-              {renderFailureReference(failureInfo.reference, t)}
-            </details>
-          )}
-        </div>
-      );
-    }
-    if (forcePlain) {
-      return <div className="chat-message-content chat-message-content--plain">{message.content}</div>;
-    }
-    return (
-      <div className="chat-message-content chat-message-content--markdown">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>
-          {message.content}
-        </ReactMarkdown>
-      </div>
-    );
-  }, [failureInfo, forcePlain, isAssistantMessage, message.content]);
-
-  return (
-    <div
-      className={`chat-message chat-message--${message.role}${failureInfo ? " chat-message--failure" : ""}`}
-      data-testid={`chat-message-${message.id}`}
-      data-message-id={message.id}
-    >
-      {showAssistantIdentity && (
-        <div className="chat-message-avatar">
-          {activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}
-          <span>{agentName}</span>
-          {showAssistantModelTag && activeModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
-        </div>
-      )}
-      {isAssistantMessage
-        ? assistantBody
-        : <div className="chat-message-content">{renderedUserContent}</div>}
-      {isAssistantMessage && !failureInfo && (copyAction || onScrollToTop) && (
-        <div className="chat-message-actions">
-          {copyAction}
-          {onScrollToTop && (
-            <button
-              type="button"
-              className="btn-icon chat-message-scroll-to-top-action"
-              aria-label={t("chat.scrollMessageToTop", "Scroll message to top")}
-              data-testid={`chat-message-scroll-to-top-${message.id}`}
-              onClick={() => onScrollToTop(message.id)}
-            >
-              <ArrowUpToLine size={14} />
-            </button>
-          )}
-        </div>
-      )}
-      {renderToolCalls(message.toolCalls, t, {
-        isAwaitingAnswer: isAwaitingQuestionAnswer,
-        submittedAnswer: submittedQuestionAnswer,
-        onQuestionSubmit,
-      })}
-      {message.thinkingOutput && (
-        <details className="chat-message-thinking">
-          <summary>{t("chat.thinking", "Thinking")}</summary>
-          <pre className="chat-message-thinking-content">{linkifyFilePaths(message.thinkingOutput)}</pre>
-        </details>
-      )}
-      {renderedAttachments}
-      <div className="chat-message-time">{formatRelativeTime(message.createdAt, t)}</div>
-    </div>
-  );
-});
-
 export function ChatView({ projectId, addToast, floating = false, compactLayout = false, onPopOut, onMaximize, onMinimize, onClose }: ChatViewProps) {
   const { t } = useTranslation("app");
   useEffect(() => {
@@ -1161,9 +620,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   FNXC:ChatSendDedupe 2026-06-17-08:36:
   FN-6576 refines FN-6563 by matching QuickChatFAB's two-latch touch contract: pointerdown/touchstart claim a per-input-task gesture so one mobile tap sends exactly once, while the separate 700ms latch is consumed only by a trailing click. A suppressed iOS click must never leave the long latch blocking the next tap; a send-to-stop DOM swap must consume the trailing click without swallowing a genuine later stop tap.
   */
-  const handledSendTouchRef = useRef(false);
-  const handledSendTouchTimerRef = useRef<number | null>(null);
-  const touchActionGestureRef = useRef(false);
   const mode = useViewportMode();
   const isMobile = mode === "mobile";
   const isTablet = mode === "tablet";
@@ -2000,50 +1456,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     });
   }, [activeDraftKey]);
 
-  // Mark that a mobile pointer/touch handler already performed the action so
-  // the trailing onClick (if it survives) bails. This long latch is intentionally
-  // never consulted by pointerdown/touchstart, because iOS may suppress the
-  // click that would consume it.
-  const markHandledSendTouch = useCallback(() => {
-    handledSendTouchRef.current = true;
-    if (handledSendTouchTimerRef.current != null) {
-      clearTimeout(handledSendTouchTimerRef.current);
-    }
-    handledSendTouchTimerRef.current = window.setTimeout(() => {
-      handledSendTouchRef.current = false;
-      handledSendTouchTimerRef.current = null;
-    }, 700);
-  }, []);
-
-  // Claim one input task's touch gesture. Real mobile taps can dispatch both
-  // pointerdown and touchstart before React flushes state; only the first should
-  // run the action, and the claim must clear before the next tap.
-  const beginTouchActionGesture = useCallback(() => {
-    if (touchActionGestureRef.current) return false;
-    touchActionGestureRef.current = true;
-    window.setTimeout(() => {
-      touchActionGestureRef.current = false;
-    }, 0);
-    return true;
-  }, []);
-
-  // Consume the latch (cancelling its timer) so a trailing onClick bails once.
-  const consumeHandledSendTouch = useCallback(() => {
-    if (!handledSendTouchRef.current) return false;
-    handledSendTouchRef.current = false;
-    if (handledSendTouchTimerRef.current != null) {
-      clearTimeout(handledSendTouchTimerRef.current);
-      handledSendTouchTimerRef.current = null;
-    }
-    return true;
-  }, []);
-
-  useEffect(() => () => {
-    if (handledSendTouchTimerRef.current != null) {
-      clearTimeout(handledSendTouchTimerRef.current);
-    }
-  }, []);
-
   // Handle send message including pending attachment uploads.
   const handleSend = useCallback(() => {
     const trimmed = messageInput.trim();
@@ -2852,24 +2264,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     }
   }, [setCopyFeedback]);
 
-  const renderAssistantContent = useCallback(
-    (content: string, forcePlain = false) => {
-      const showPlainText = forcePlain;
-      if (showPlainText) {
-        return <div className="chat-message-content chat-message-content--plain">{content}</div>;
-      }
-
-      return (
-        <div className="chat-message-content chat-message-content--markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={chatMarkdownComponents}>
-            {content}
-          </ReactMarkdown>
-        </div>
-      );
-    },
-    [],
-  );
-
   const showProviderResponseCopy = activeSession?.agentId === FN_AGENT_ID;
 
   const renderCopyAction = useCallback((messageId: string, content: string, testId?: string) => (
@@ -2927,7 +2321,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       {isStreaming ? (
         <>
           {messages.map((message, index) => (
-            <ChatMessageItem
+            <StandardChatMessageItem
               key={message.id}
               message={message}
               forcePlain={showAllAsPlain}
@@ -2946,42 +2340,19 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
               onQuestionSubmit={handleQuestionSubmit}
             />
           ))}
-          <div className="chat-message chat-message--assistant chat-message--streaming">
-            {!hideAssistantIdentity && (
-              <div className="chat-message-avatar">
-                {activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}
-                <span>{agentName}</span>
-                {showAssistantModelTag && <span className="chat-model-tag">{activeModelTag}</span>}
-              </div>
-            )}
-            {streamingText ? (
-              renderAssistantContent(streamingText, showAllAsPlain)
-            ) : (
-              <div className="chat-message-content chat-message-content--waiting">
-                {/*
-                FNXC:ChatLoadingCopy 2026-06-19-06:13:
-                The post-send waiting indicator reads "Working…" when no streamed text or thinking content has arrived yet, because the UI is waiting on work rather than a transport connection.
-                */}
-                {streamingThinking ? t("chat.thinkingStatus", "Thinking…") : t("chat.workingStatus", "Working…")}
-              </div>
-            )}
-            {showProviderResponseCopy && streamingText && renderCopyAction("__streaming__", streamingText, "chat-copy-response-streaming")}
-            {renderToolCalls(streamingToolCalls, t, {
-              isAwaitingAnswer: true,
-              onQuestionSubmit: handleQuestionSubmit,
-            })}
-            {streamingThinking && (
-              <details className="chat-message-thinking">
-                <summary>{t("chat.thinking", "Thinking")}</summary>
-                <pre className="chat-message-thinking-content">{linkifyFilePaths(streamingThinking)}</pre>
-              </details>
-            )}
-            <div className="chat-typing-indicator">
-              <span />
-              <span />
-              <span />
-            </div>
-          </div>
+          <StandardStreamingMessage
+            streamingText={streamingText}
+            streamingThinking={streamingThinking}
+            streamingToolCalls={streamingToolCalls}
+            forcePlain={showAllAsPlain}
+            agentName={agentName}
+            hideAssistantIdentity={hideAssistantIdentity}
+            showAssistantModelTag={showAssistantModelTag}
+            activeModelTag={activeModelTag}
+            activeModelProvider={activeModelProvider}
+            copyAction={showProviderResponseCopy && streamingText ? renderCopyAction("__streaming__", streamingText, "chat-copy-response-streaming") : undefined}
+            onQuestionSubmit={handleQuestionSubmit}
+          />
         </>
       ) : messagesLoading ? (
         <div className="chat-empty-state">{t("chat.loadingMessages", "Loading messages...")}</div>
@@ -2992,7 +2363,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       ) : (
         <>
           {messages.map((message, index) => (
-            <ChatMessageItem
+            <StandardChatMessageItem
               key={message.id}
               message={message}
               forcePlain={showAllAsPlain}
@@ -3182,69 +2553,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             loading={fileMention.loading}
           />
         </div>
-        {isStreaming ? (
-          <button
-            className="chat-input-stop"
-            onPointerDown={(event) => {
-              if (event.pointerType && event.pointerType !== "mouse") {
-                event.preventDefault();
-                if (!beginTouchActionGesture()) return;
-                markHandledSendTouch();
-                stopStreaming();
-              }
-            }}
-            onTouchStart={(event) => {
-              event.preventDefault();
-              if (!beginTouchActionGesture()) return;
-              markHandledSendTouch();
-              stopStreaming();
-            }}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={() => {
-              if (consumeHandledSendTouch()) return;
-              stopStreaming();
-            }}
-            aria-label={t("chat.stopGeneration", "Stop generation")}
-            data-testid="chat-stop-btn"
-          >
-            <Square size={14} />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="chat-input-send"
-            onPointerDown={(event) => {
-              if (event.pointerType && event.pointerType !== "mouse") {
-                // iOS suppresses the trailing click after this preventDefault,
-                // so fire the send here (deduped) rather than relying on onClick.
-                event.preventDefault();
-                if (!beginTouchActionGesture()) return;
-                markHandledSendTouch();
-                void handleSend();
-              }
-            }}
-            onTouchStart={(event) => {
-              event.preventDefault();
-              if (!beginTouchActionGesture()) return;
-              markHandledSendTouch();
-              void handleSend();
-            }}
-            onMouseDown={(event) => {
-              event.preventDefault();
-            }}
-            onClick={() => {
-              if (consumeHandledSendTouch()) return;
-              void handleSend();
-            }}
-            disabled={!messageInput.trim() && pendingAttachments.length === 0}
-            data-testid="chat-send-btn"
-            style={{ touchAction: "manipulation" }}
-          >
-            <Send size={16} />
-          </button>
-        )}
+        <StandardChatActionButton
+          isStreaming={isStreaming}
+          canSend={Boolean(messageInput.trim() || pendingAttachments.length > 0)}
+          onSend={handleSend}
+          onStop={stopStreaming}
+        />
       </div>
     </div>
   );
@@ -3798,7 +3112,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       createdAt: message.createdAt,
                     };
                     return (
-                      <ChatMessageItem
+                      <StandardChatMessageItem
                         key={message.id}
                         message={roomMessage}
                         forcePlain={showAllAsPlain}
@@ -3932,40 +3246,11 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                     roomName={roomContext?.roomName}
                   />
                 </div>
-                <button
-                  type="button"
-                  className="chat-input-send"
-                  /*
-                  FNXC:ChatRoomSend 2026-06-17-08:36:
-                  FN-6576 requires the room composer to share the direct-chat two-latch dedupe contract: pointerdown/touchstart use the short per-gesture claim, while the 700ms latch is reserved for a trailing click. This preserves room routing through handleSendDispatch() and ensures a second iOS tap within the suppressed-click window still dispatches exactly one room send.
-                  */
-                  onPointerDown={(event) => {
-                    if (event.pointerType && event.pointerType !== "mouse") {
-                      event.preventDefault();
-                      if (!beginTouchActionGesture()) return;
-                      markHandledSendTouch();
-                      void handleSendDispatch();
-                    }
-                  }}
-                  onTouchStart={(event) => {
-                    event.preventDefault();
-                    if (!beginTouchActionGesture()) return;
-                    markHandledSendTouch();
-                    void handleSendDispatch();
-                  }}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                  }}
-                  onClick={() => {
-                    if (consumeHandledSendTouch()) return;
-                    void handleSendDispatch();
-                  }}
-                  disabled={!messageInput.trim() && pendingAttachments.length === 0}
-                  data-testid="chat-send-btn"
-                  style={{ touchAction: "manipulation" }}
-                >
-                  <Send size={16} />
-                </button>
+                <StandardChatActionButton
+                  isStreaming={false}
+                  canSend={Boolean(messageInput.trim() || pendingAttachments.length > 0)}
+                  onSend={handleSendDispatch}
+                />
               </div>
             </div>
           )}

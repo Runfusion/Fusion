@@ -1433,6 +1433,16 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   font-size: var(--space-md);
 }
 
+.chat-tool-calls-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--space-sm);
+  block-size: var(--space-sm);
+  color: var(--text-muted);
+  line-height: 1;
+}
+
 .chat-tool-calls-group {
   border: var(--btn-border-width, 1px) solid color-mix(in srgb, var(--border) 85%, transparent);
   border-radius: var(--radius-sm);
@@ -1838,6 +1848,14 @@ Narrow chat hosts need full-width bubbles for prose, code, tool output, failures
   justify-content: center;
   flex-shrink: 0;
   transition: background var(--transition-fast), transform var(--transition-fast), color var(--transition-fast);
+}
+
+.chat-input-stop-icon {
+  display: block;
+  inline-size: var(--space-sm);
+  block-size: var(--space-sm);
+  border-radius: var(--radius-xs);
+  background: currentColor;
 }
 
 .chat-input-stop:hover {

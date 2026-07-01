@@ -490,6 +490,58 @@ describe("TaskPlannerChatTab", () => {
     );
   });
 
+  it("renders live and stored thinking output through the standard chat surface", async () => {
+    const user = userEvent.setup();
+    mockFetchChatMessages.mockResolvedValueOnce({
+      messages: [{
+        id: "assistant-thinking",
+        sessionId: "chat-planner",
+        role: "assistant",
+        content: "Stored answer",
+        thinkingOutput: "stored plan notes",
+        metadata: null,
+        createdAt: "2026-06-30T00:02:00.000Z",
+      }],
+    });
+    mockStreamChatResponse.mockImplementation((_sessionId, _content, handlers) => {
+      setTimeout(() => {
+        handlers.onThinking?.("live plan");
+      }, 0);
+      return { close: vi.fn(), isConnected: () => true };
+    });
+    renderPlannerChat();
+
+    expect(await screen.findByText("Stored answer")).toBeInTheDocument();
+    expect(screen.getByText("stored plan notes")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Message planner chat"), "Think about this");
+    fireEvent.pointerDown(screen.getByTestId("chat-send-btn"), { pointerType: "touch" });
+
+    expect(await screen.findByText("Thinking…")).toBeInTheDocument();
+    expect(screen.getByText("live plan")).toBeInTheDocument();
+  });
+
+  it("dedupes mobile first-tap sends through the standard composer action", async () => {
+    const user = userEvent.setup();
+    renderPlannerChat();
+    await screen.findByTestId("task-planner-chat-empty");
+
+    await user.type(screen.getByLabelText("Message planner chat"), "Mobile first tap");
+    const sendButton = screen.getByTestId("chat-send-btn");
+    fireEvent.pointerDown(sendButton, { pointerType: "touch" });
+    fireEvent.click(sendButton);
+
+    expect(mockStreamChatResponse).toHaveBeenCalledTimes(1);
+    expect(mockStreamChatResponse).toHaveBeenCalledWith(
+      "chat-planner",
+      "Mobile first tap",
+      expect.any(Object),
+      undefined,
+      undefined,
+      { taskId: "FN-7310" },
+    );
+  });
+
   it("shows a recoverable error when the post-stream refresh fails", async () => {
     const user = userEvent.setup();
     const addToast = vi.fn();

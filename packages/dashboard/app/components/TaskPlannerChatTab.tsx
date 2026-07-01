@@ -1,17 +1,15 @@
 import type { ChatMessage, ResolvedModelSelection, Task, TaskDetail } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { Loader2, Maximize2, Minimize2, Send } from "lucide-react";
+import { Loader2, Maximize2, Minimize2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
-import type { ToolCallInfo } from "../hooks/chatTypes";
+import type { ChatMessageInfo, ToolCallInfo } from "../hooks/chatTypes";
 import { ensureTaskPlannerChatSession, fetchChatMessages, fetchTaskDetail, fetchTaskPlannerChatSession, streamChatResponse } from "../api";
 import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
-import { markdownComponents } from "./AgentLogViewer";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { ProviderIcon } from "./ProviderIcon";
+import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -103,13 +101,13 @@ function makeOptimisticUserMessage(sessionId: string, content: string): ChatMess
   };
 }
 
-function makeStreamingAssistantMessage(sessionId: string, content: string, toolCalls: ToolCallInfo[] = []): ChatMessage {
+function makeStreamingAssistantMessage(sessionId: string, content: string, toolCalls: ToolCallInfo[] = [], thinkingOutput = ""): ChatMessage {
   return {
     id: "streaming-assistant",
     sessionId,
     role: "assistant",
     content,
-    thinkingOutput: null,
+    thinkingOutput: thinkingOutput || null,
     metadata: { streaming: true, ...(toolCalls.length > 0 ? { toolCalls } : {}) },
     createdAt: new Date().toISOString(),
   };
@@ -159,7 +157,7 @@ function extractPlannerSteeringTextFromResult(result: unknown): string | null {
   return text || null;
 }
 
-function extractToolCalls(message: ChatMessage): ToolCallInfo[] {
+function extractToolCalls(message: Pick<ChatMessage, "metadata">): ToolCallInfo[] {
   const rawToolCalls = message.metadata?.toolCalls;
   if (!Array.isArray(rawToolCalls)) return [];
   return rawToolCalls
@@ -194,6 +192,18 @@ function isQuestionAnswerFor(message: ChatMessage, parsed: ParsedQuestionToolCal
   const trimmed = message.content.trim();
   if (!trimmed) return false;
   return parsed.questions.some((question) => trimmed.includes(`> Q: ${question.question}`));
+}
+
+function toStandardChatMessage(message: ChatMessage): ChatMessageInfo {
+  return {
+    id: message.id,
+    sessionId: message.sessionId,
+    role: message.role,
+    content: message.content,
+    thinkingOutput: message.thinkingOutput,
+    toolCalls: extractToolCalls(message),
+    createdAt: message.createdAt,
+  };
 }
 
 function buildPlannerQuestionRenderStates(messages: readonly ChatMessage[]): Map<string, PlannerQuestionRenderState> {
@@ -236,6 +246,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [streamingThinking, setStreamingThinking] = useState("");
   const [composerState, setComposerState] = useState<ComposerState>("idle");
   const composerStateRef = useRef<ComposerState>("idle");
   const [loading, setLoading] = useState(false);
@@ -249,6 +260,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   const planningModelProvider = isUsableModel(planningModel) ? planningModel.provider : undefined;
   const planningModelId = isUsableModel(planningModel) ? planningModel.modelId : undefined;
   const planningModelLabel = planningModelProvider && planningModelId ? `${planningModelProvider}/${planningModelId}` : "";
+  const activeModelTag = formatModelTag(planningModelProvider, planningModelId);
   const modelPayload = useMemo(() => {
     return planningModelProvider && planningModelId
       ? { modelProvider: planningModelProvider, modelId: planningModelId }
@@ -297,6 +309,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
     setMessages([]);
     setDraft("");
     composerStateRef.current = "idle";
+    setStreamingThinking("");
     setComposerState("idle");
     setLoading(false);
     setHistoryLoaded(false);
@@ -362,6 +375,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
       setSessionId(resolvedSessionId);
       setMessages((current) => [...current, makeOptimisticUserMessage(resolvedSessionId, content)]);
       let accumulated = "";
+      let accumulatedThinking = "";
       const streamingToolCalls: ToolCallInfo[] = [];
 
       streamRef.current?.close();
@@ -375,7 +389,16 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
             accumulated += delta;
             setMessages((current) => {
               const withoutStreaming = current.filter((message) => message.id !== "streaming-assistant");
-              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls)];
+              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls, accumulatedThinking)];
+            });
+          },
+          onThinking: (delta) => {
+            if (!isCurrentStreamRequest()) return;
+            accumulatedThinking += delta;
+            setStreamingThinking(accumulatedThinking);
+            setMessages((current) => {
+              const withoutStreaming = current.filter((message) => message.id !== "streaming-assistant");
+              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls, accumulatedThinking)];
             });
           },
           onToolStart: ({ toolName, args }) => {
@@ -383,7 +406,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
             streamingToolCalls.push({ toolName, args, isError: false, status: "running" });
             setMessages((current) => {
               const withoutStreaming = current.filter((message) => message.id !== "streaming-assistant");
-              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls)];
+              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls, accumulatedThinking)];
             });
           },
           onToolEnd: ({ toolName, isError, result }) => {
@@ -404,13 +427,14 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
             }
             setMessages((current) => {
               const withoutStreaming = current.filter((message) => message.id !== "streaming-assistant");
-              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls)];
+              return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls, accumulatedThinking)];
             });
           },
           onDone: (data) => {
             if (!isCurrentStreamRequest()) return;
             composerStateRef.current = "idle";
             setComposerState("idle");
+            setStreamingThinking("");
             streamRef.current = null;
             if (data.message) {
               setMessages((current) => {
@@ -437,6 +461,7 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
             setError(message || t("taskDetail.plannerChat.sendFailed", "Planner chat failed to respond"));
             composerStateRef.current = "idle";
             setComposerState("idle");
+            setStreamingThinking("");
             streamRef.current = null;
           },
         },
@@ -451,10 +476,21 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
       addToast(message, "error");
       composerStateRef.current = "idle";
       setComposerState("idle");
+      setStreamingThinking("");
     }
   }, [addToast, modelPayload, projectId, refreshTaskAfterSteering, sessionId, task.id, t]);
 
   const sendMessage = useCallback(() => sendMessageContent(draft), [draft, sendMessageContent]);
+
+  const stopPlannerStreaming = useCallback(() => {
+    streamRequestRef.current += 1;
+    streamRef.current?.close();
+    streamRef.current = null;
+    composerStateRef.current = "idle";
+    setComposerState("idle");
+    setStreamingThinking("");
+    setMessages((current) => current.filter((message) => message.id !== "streaming-assistant"));
+  }, []);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || event.shiftKey) return;
@@ -463,23 +499,6 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   }, [sendMessage]);
 
   const canSend = draft.trim().length > 0 && composerState !== "sending";
-
-  /*
-  FNXC:TaskDetailPlannerChat 2026-07-01-00:00:
-  Mobile soft keyboards can blur the focused planner-chat textarea before the Send button's click fires. Touch/pen pointer-down submits through the same planner Chat stream path with a synchronous composerStateRef duplicate guard; mouse down only preserves focus so desktop click and Enter behavior stay unchanged.
-  */
-  const handleSendPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
-    if (event.pointerType === "mouse") return;
-    if (!canSend) return;
-    event.preventDefault();
-    void sendMessage();
-  }, [canSend, sendMessage]);
-
-  const handleSendMouseDown = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    if (!canSend) return;
-    event.preventDefault();
-  }, [canSend]);
-
   const showEmptyState = historyLoaded && !loading && !error && messages.length === 0;
   const questionRenderStates = useMemo(() => buildPlannerQuestionRenderStates(messages), [messages]);
   const starterPrompts = useMemo(() => {
@@ -499,6 +518,47 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
       }];
     });
   }, [t]);
+
+  const renderPlannerToolCall = useCallback((message: ChatMessage, toolCall: ToolCallInfo, index: number) => {
+    const steeringResult = extractPlannerSteeringResult(toolCall);
+    if (steeringResult) {
+      return (
+        <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation" data-testid="task-planner-chat-steering-confirmation">
+          <strong>{t("taskDetail.plannerChat.steeringAdded", "Added as steering comment")}</strong>
+          <p>{steeringResult.text}</p>
+        </div>
+      );
+    }
+    const isRunningSteering = toolCall.toolName === TASK_PLANNER_STEERING_TOOL_NAME && toolCall.status === "running";
+    if (isRunningSteering) {
+      return (
+        <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation task-planner-chat-steering-confirmation--pending" data-testid="task-planner-chat-steering-pending">
+          <strong>{t("taskDetail.plannerChat.steeringAdding", "Adding steering comment…")}</strong>
+        </div>
+      );
+    }
+    if (toolCall.toolName === TASK_PLANNER_STEERING_TOOL_NAME && toolCall.isError) {
+      return (
+        <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation task-planner-chat-steering-confirmation--error" role="alert" data-testid="task-planner-chat-steering-error">
+          <strong>{t("taskDetail.plannerChat.steeringFailed", "Steering comment was not added")}</strong>
+        </div>
+      );
+    }
+    const questionState = questionRenderStates.get(`${message.id}:${index}`);
+    if (!questionState) return undefined;
+    if (questionState.hiddenDuplicate) return null;
+    return (
+      <ChatQuestionResponse
+        key={`${toolCall.toolName}-${index}`}
+        parsed={questionState.parsed}
+        answered={questionState.answered}
+        submittedAnswer={questionState.submittedAnswer}
+        disabled={composerState === "sending" || questionState.answered}
+        compact
+        onSubmit={(answerText) => void sendMessageContent(answerText)}
+      />
+    );
+  }, [composerState, questionRenderStates, sendMessageContent, t]);
 
   /*
   FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
@@ -521,6 +581,9 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
 
   FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
   Planner-generated clarification questions in the task-detail Chat transcript must reuse ChatQuestionResponse instead of bespoke chat text. Submitted answers stay in the planner-chat lane as ordinary follow-up user messages, render the prior question read-only, and duplicate refetched pending tool calls hide older live forms so users never see competing submit affordances.
+
+  FNXC:TaskDetailPlannerChat 2026-07-01-09:34:
+  Planner Chat delegates transcript bubbles, thinking details, tool-call framing, and mobile send/stop gestures to StandardChatSurface. TaskPlannerChatTab keeps lookup-only session loading, task-context sends, starter prompts, and steering confirmations local so reuse does not collapse the lazy ChatView chunk or merge planner chat with Activity.
 
   FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
   The planner Chat tab owns an in-view expand/collapse button so mobile users can reclaim vertical room while keeping close/back/task identity controls reachable. This state is independent from Activity Live expansion because Activity still represents operational steering/history, not planner-model conversation.
@@ -582,60 +645,57 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
             )}
           </div>
         ) : (
-          messages.map((message) => {
-            const toolCalls = extractToolCalls(message);
-            return (
-              <article key={message.id} className={`task-planner-chat-message task-planner-chat-message--${message.role}`} data-testid={`task-planner-chat-message-${message.role}`}>
-                <div className="task-planner-chat-message-role">
-                  {message.role === "user" ? t("taskDetail.plannerChat.user", "You") : t("taskDetail.plannerChat.assistant", "Planner")}
-                </div>
-                {message.content && (
-                  <div className="task-planner-chat-message-content markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown>
-                  </div>
-                )}
-                {toolCalls.map((toolCall, index) => {
-                  const steeringResult = extractPlannerSteeringResult(toolCall);
-                  if (steeringResult) {
-                    return (
-                      <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation" data-testid="task-planner-chat-steering-confirmation">
-                        <strong>{t("taskDetail.plannerChat.steeringAdded", "Added as steering comment")}</strong>
-                        <p>{steeringResult.text}</p>
-                      </div>
-                    );
-                  }
-                  const isRunningSteering = toolCall.toolName === TASK_PLANNER_STEERING_TOOL_NAME && toolCall.status === "running";
-                  if (isRunningSteering) {
-                    return (
-                      <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation task-planner-chat-steering-confirmation--pending" data-testid="task-planner-chat-steering-pending">
-                        <strong>{t("taskDetail.plannerChat.steeringAdding", "Adding steering comment…")}</strong>
-                      </div>
-                    );
-                  }
-                  if (toolCall.toolName === TASK_PLANNER_STEERING_TOOL_NAME && toolCall.isError) {
-                    return (
-                      <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation task-planner-chat-steering-confirmation--error" role="alert" data-testid="task-planner-chat-steering-error">
-                        <strong>{t("taskDetail.plannerChat.steeringFailed", "Steering comment was not added")}</strong>
-                      </div>
-                    );
-                  }
-                  const questionState = questionRenderStates.get(`${message.id}:${index}`);
-                  if (!questionState || questionState.hiddenDuplicate) return null;
-                  return (
-                    <ChatQuestionResponse
-                      key={`${toolCall.toolName}-${index}`}
-                      parsed={questionState.parsed}
-                      answered={questionState.answered}
-                      submittedAnswer={questionState.submittedAnswer}
-                      disabled={composerState === "sending" || questionState.answered}
-                      compact
-                      onSubmit={(answerText) => void sendMessageContent(answerText)}
-                    />
-                  );
-                })}
-              </article>
-            );
-          })
+          <>
+            {messages.map((message) => {
+              if (message.id === "streaming-assistant") {
+                const streamingToolCalls = extractToolCalls(message);
+                return (
+                  <StandardStreamingMessage
+                    key={message.id}
+                    streamingText={message.content}
+                    streamingThinking={message.thinkingOutput ?? streamingThinking}
+                    streamingToolCalls={streamingToolCalls}
+                    forcePlain={false}
+                    agentName={t("taskDetail.plannerChat.assistant", "Planner")}
+                    hideAssistantIdentity={false}
+                    showAssistantModelTag={Boolean(activeModelTag)}
+                    activeModelTag={activeModelTag}
+                    activeModelProvider={planningModelProvider ?? null}
+                    toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
+                  />
+                );
+              }
+              return (
+                <StandardChatMessageItem
+                  key={message.id}
+                  message={toStandardChatMessage(message)}
+                  forcePlain={false}
+                  agentName={t("taskDetail.plannerChat.assistant", "Planner")}
+                  hideAssistantIdentity={false}
+                  showAssistantModelTag={Boolean(activeModelTag)}
+                  activeModelTag={activeModelTag}
+                  activeModelProvider={planningModelProvider ?? null}
+                  activeSessionId={sessionId}
+                  isAwaitingQuestionAnswer={message.role === "assistant"}
+                  onQuestionSubmit={(answerText) => void sendMessageContent(answerText)}
+                  toolCallRenderer={(toolCall, index) => renderPlannerToolCall(message, toolCall, index)}
+                />
+              );
+            })}
+            {composerState === "sending" && !messages.some((message) => message.id === "streaming-assistant") && (
+              <StandardStreamingMessage
+                streamingText=""
+                streamingThinking={streamingThinking}
+                streamingToolCalls={[]}
+                forcePlain={false}
+                agentName={t("taskDetail.plannerChat.assistant", "Planner")}
+                hideAssistantIdentity={false}
+                showAssistantModelTag={Boolean(activeModelTag)}
+                activeModelTag={activeModelTag}
+                activeModelProvider={planningModelProvider ?? null}
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -650,17 +710,17 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
           disabled={composerState === "sending"}
           rows={1}
         />
-        <button
-          type="button"
-          className="btn btn-primary task-planner-chat-send"
-          onClick={() => void sendMessage()}
-          onPointerDown={handleSendPointerDown}
-          onMouseDown={handleSendMouseDown}
-          disabled={!canSend}
-        >
-          {composerState === "sending" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Send aria-hidden="true" />}
-          <span>{composerState === "sending" ? t("taskDetail.plannerChat.sending", "Sending") : t("taskDetail.plannerChat.send", "Send")}</span>
-        </button>
+        <StandardChatActionButton
+          isStreaming={composerState === "sending"}
+          canSend={canSend}
+          onSend={sendMessage}
+          onStop={stopPlannerStreaming}
+          classNameSend="btn btn-primary task-planner-chat-send chat-input-send"
+          classNameStop="btn btn-primary task-planner-chat-send chat-input-stop"
+          sendLabel={t("taskDetail.plannerChat.send", "Send")}
+          stopLabel={t("chat.stopGeneration", "Stop generation")}
+          showSendText
+        />
       </div>
     </section>
   );

@@ -147,39 +147,6 @@ An empty Planner Chat transcript should enter at the top of the chat surface ins
   line-height: var(--line-height-tight);
 }
 
-.task-planner-chat-message {
-  max-width: min(42rem, 92%);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-sm) var(--space-md);
-  background: var(--surface-subtle);
-}
-
-.task-planner-chat-message--user {
-  align-self: flex-end;
-  background: var(--surface-hover);
-}
-
-.task-planner-chat-message--assistant,
-.task-planner-chat-message--system {
-  align-self: flex-start;
-}
-
-.task-planner-chat-message-role {
-  margin-bottom: var(--space-xs);
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-}
-
-.task-planner-chat-message-content > :first-child {
-  margin-top: 0;
-}
-
-.task-planner-chat-message-content > :last-child {
-  margin-bottom: 0;
-}
-
 .task-planner-chat-steering-confirmation {
   margin-top: var(--space-sm);
   border: var(--btn-border-width) solid var(--color-success);
@@ -208,7 +175,7 @@ An empty Planner Chat transcript should enter at the top of the chat surface ins
   color: var(--text-muted);
 }
 
-.task-planner-chat-message .chat-question-response {
+.task-planner-chat .chat-question-response {
   max-width: 100%;
   overflow-wrap: anywhere;
 }
@@ -308,11 +275,11 @@ Mobile Planner Chat should match regular task chat: keep the composer as a singl
     border: 0;
   }
 
-  .task-planner-chat-message {
+  .task-planner-chat .chat-message {
     max-width: 100%;
   }
 
-  .task-planner-chat-message .chat-question-response {
+  .task-planner-chat .chat-question-response {
     margin-inline: 0;
   }
 }

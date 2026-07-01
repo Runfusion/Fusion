@@ -148,10 +148,10 @@ describe("TaskDetailModal", () => {
       expect(mobileSendBlock).toContain("inline-size: calc(var(--space-2xl) + var(--space-lg));");
       expect(mobileSendBlock).toContain("min-block-size: calc(var(--space-2xl) + var(--space-lg));");
       expectBaseRule(css, ".task-planner-chat-starters", "grid-template-columns: repeat(2, minmax(0, 1fr));");
-      expectBaseRule(css, ".task-planner-chat-message .chat-question-response", "overflow-wrap: anywhere;");
+      expectBaseRule(css, ".task-planner-chat .chat-question-response", "overflow-wrap: anywhere;");
       expect(mobileBlock).toContain(".task-planner-chat-starters");
       expect(mobileBlock).toContain("grid-template-columns: 1fr;");
-      expect(mobileBlock).toContain(".task-planner-chat-message .chat-question-response");
+      expect(mobileBlock).toContain(".task-planner-chat .chat-question-response");
       expect(mobileBlock).toContain("margin-inline: 0;");
 
       const detailCss = readDashboardStylesSource();
