@@ -12,6 +12,7 @@ import express from "express";
 import { createServer, setupTerminalWebSocket } from "../server.js";
 import { toSessionTag } from "../terminal-websocket-diagnostics.js";
 import { RATE_LIMITS } from "../rate-limit.js";
+import { AiSessionStore } from "../ai-session-store.js";
 import { Database, TaskStore, getRunningAgentCountSource, setRunningAgentCountSource, type CentralCore } from "@fusion/core";
 import { get as performGet, request as performRequest } from "../test-request.js";
 
@@ -1237,6 +1238,45 @@ describe("createServer health and headless mode", () => {
     expect(Object.keys(dashStatusBody).sort()).toEqual(["cloudflaredAvailable", "externalTunnel", "lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
     expect(Object.keys(headlessStatusBody).sort()).toEqual(["cloudflaredAvailable", "externalTunnel", "lastError", "lastErrorCode", "provider", "restore", "state", "url"]);
     expect(headlessRoot.status).toBe(404);
+  });
+
+  it("returns health OK independently of persisted AI session error rows", async () => {
+    const rootDir = makeTmpDir();
+    const db = new Database(join(rootDir, ".fusion"));
+    db.init();
+    const aiSessionStore = new AiSessionStore(db);
+
+    try {
+      aiSessionStore.upsert({
+        id: "planning-error",
+        type: "planning",
+        status: "error",
+        title: "Planning parse failure",
+        inputPayload: JSON.stringify({ initialPlan: "broken planning response" }),
+        conversationHistory: JSON.stringify([]),
+        currentQuestion: null,
+        result: null,
+        thinkingOutput: "",
+        error: "AI response could not be parsed",
+        projectId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lockedByTab: null,
+        lockedAt: null,
+      });
+
+      const store = createMockStore();
+      const app = createServer(store, { aiSessionStore });
+
+      const res = await GET(app, "/api/health");
+      expect(res.status).toBe(200);
+      expect((res.body as any).status).toBe("ok");
+      expect(aiSessionStore.get("planning-error")?.status).toBe("error");
+    } finally {
+      aiSessionStore.stopScheduledCleanup();
+      db.close();
+      await rm(rootDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
   });
 });
 

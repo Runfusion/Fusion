@@ -58,6 +58,7 @@ vi.mock("@fusion/engine", () => ({
   createChatTaskDocumentTools: vi.fn(() => []),
   createChatArtifactTools: vi.fn(() => []),
   // FNXC:DashboardSessionTests 2026-06-17-19:33: planning and mission-interview sessions now request skills through the shared helper; focused engine mocks must return the shaped helper result so lifecycle tests do not crash before createFnAgent is captured.
+  resolveMcpServersForStore: vi.fn(() => ({ servers: [] })),
   buildSessionSkillContextSync: vi.fn(() => ({
     skillSelectionContext: undefined,
     resolvedSkillNames: [],
@@ -104,6 +105,10 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function flushUnhandledRejectionTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 describe("session error recovery", () => {
@@ -699,5 +704,63 @@ The actual planning response is:
     expect(getMissionInterviewSession(sessionId)?.currentQuestion?.id).toBe("q-m-retry");
 
     unsubscribe();
+  });
+
+  it("does not leak unhandled rejections when non-streaming parse fails", async () => {
+    const unhandledRejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandledRejections.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      __setCreateFnAgent(
+        async () =>
+          createMockAgent([
+            "Prose only response for unhandled rejection check.",
+            "Still prose after reformat attempt.",
+          ]),
+      );
+
+      await expect(
+        createSession("127.0.0.130", "Unhandled rejection test", taskStore, "/tmp/project"),
+      ).rejects.toThrow("Failed to get first question from AI");
+
+      await flushUnhandledRejectionTurn();
+
+      expect(unhandledRejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("does not leak unhandled rejections when streaming parse fails", async () => {
+    const unhandledRejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandledRejections.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      __setCreateFnAgent(
+        async () =>
+          createMockAgent([
+            "Streaming prose only — no valid JSON.",
+            "Still prose after reformat.",
+          ]),
+      );
+
+      const sessionId = await createSessionWithAgent(
+        "127.0.0.131",
+        "Streaming unhandled rejection test",
+        "/tmp/project",
+        taskStore,
+      );
+
+      planningStreamManager.consumeInitialTurn(sessionId)?.();
+
+      await waitFor(() => aiSessionStore.get(sessionId)?.status === "error");
+      await flushUnhandledRejectionTurn();
+
+      expect(unhandledRejections).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });

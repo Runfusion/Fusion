@@ -67,6 +67,27 @@ Public `@fusion/core` exports consumed by runtime tools should include a literal
 <!-- FNXC:EngineProcessRules 2026-06-26-03:58: FN-7056 adds a focused static guard for user-configured command paths. Keep the protected-path registry in the test file, not as a whole-file execSync ban, because engine git plumbing still has legitimate deterministic execSync uses. -->
 `packages/engine/src/__tests__/user-configured-command-no-execsync.test.ts` guards user-configured command execution helpers against accidental `execSync` usage or dropped async bounds. Its registry covers verification helpers, `fn_run_verification`, executor configured-command execution, merger post-merge script execution, routine command execution, and the native/bubblewrap/sandbox-exec sandbox backends. Each protected slice must keep the appropriate bounded async safeguard (`timeout`/`timeoutMs`, `maxBuffer`, or `maxLifetimeMs`). The test intentionally slices named function bodies instead of scanning whole files; deterministic git-plumbing `execSync` in merger/self-healing/already-merged/integration/worktree-prune paths and the executor git ancestry check are explicitly out of scope.
 
+
+## Dashboard Availability & Supervised Mode
+
+<!-- FNXC:DashboardAvailability 2026-06-30-23:20: The dashboard needs a supervised restart mode for long-lived remote access sessions. Planning parse failures now surface as retryable session errors instead of causing process-level exits. -->
+
+When running the dashboard for extended UX review sessions (e.g., Atlas Notes Jony pass via Tailscale Serve), use the `--supervise` flag to prevent unexpected dashboard exits from leaving the Tailscale endpoint returning 502:
+
+```bash
+fn dashboard --project atlas-notes --port 4040 --supervise
+```
+
+The supervisor runs the dashboard as a child process with **bounded restart attempts** (one initial run plus up to 3 restarts with exponential backoff: 2s → 4s → 8s). Clean exits (SIGINT, SIGTERM, exit 0) propagate without restart. If the child crashes repeatedly, the supervisor gives up after the retry budget and prints actionable diagnostics including the actual restart command and health-check curl.
+
+**Key invariants:**
+- Planning sessions that receive non-JSON AI output persist as retryable error state (not process exit)
+- `/api/health` remains available during planning session errors
+- Remote Tailscale 502 means the local listener on `127.0.0.1:4040` is absent — restart the dashboard
+- Check local health: `curl http://127.0.0.1:4040/api/health`
+
+**Process management guardrails still apply:** The supervisor does NOT use `nohup`, shell kill loops, or unbounded retries. It never kills existing processes on port 4040.
+
 ## Dashboard Test Lanes
 
 ```bash

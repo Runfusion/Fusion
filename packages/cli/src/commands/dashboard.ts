@@ -25,6 +25,8 @@ import {
   registerBuiltInZaiProvider,
   type WorkflowIrColumn,
   type TraitFlags,
+  superviseSpawn,
+  type SupervisedChild,
 } from "@fusion/core";
 import {
   createServer,
@@ -3058,4 +3060,116 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   });
 
   return { dispose };
+}
+
+// ── Supervised Dashboard Mode ────────────────────────────────────────────────
+
+const SUPERVISE_MAX_RESTARTS = 3;
+const SUPERVISE_BASE_DELAY_MS = 2_000;
+const SUPERVISE_MAX_DELAY_MS = 16_000;
+const SUPERVISE_STALE_RESET_MS = 60_000;
+
+/**
+ * Run the dashboard under foreground process supervision with bounded restart
+ * attempts and exponential backoff.
+ *
+ * FNXC:DashboardAvailability 2026-06-30-23:20:
+ * Long-lived remote dashboard sessions need bounded crash recovery without
+ * detaching from the operator terminal or terminating unrelated port listeners.
+ *
+ * Spawns the current CLI entry point as a child process (minus the --supervise
+ * flag) and monitors for unexpected exits. If the child exits non-zero, the
+ * supervisor restarts up to SUPERVISE_MAX_RESTARTS times with exponential
+ * backoff. Clean exits (SIGINT/SIGTERM/exit 0) propagate without restart.
+ *
+ * This does NOT use shell detachment wrappers, shell kill loops, or unbounded retries.
+ * Port 4040 processes are never killed — the child binds its own port.
+ */
+export async function runDashboardSupervised(
+  port: number,
+  _opts: Parameters<typeof runDashboard>[1] = {},
+): Promise<void> {
+  // Reconstruct child args: same entry point, same flags, minus --supervise
+  const childArgs = process.argv.slice(2).filter((a) => a !== "--supervise");
+  // Ensure "dashboard" is present without duplicating it after global flags.
+  if (!childArgs.includes("dashboard")) {
+    const firstOptionIndex = childArgs.findIndex((arg) => arg.startsWith("-"));
+    childArgs.splice(firstOptionIndex === -1 ? 0 : firstOptionIndex, 0, "dashboard");
+  }
+
+  const entryPoint = process.argv[1];
+  if (!entryPoint) {
+    console.error("[dashboard:supervisor] cannot determine entry point for child process");
+    process.exit(1);
+  }
+
+  let restartCount = 0;
+  let lastExitTime = 0;
+  const restartCommand = formatSupervisorRestartCommand(process.execPath, entryPoint, childArgs);
+
+  while (true) {
+    const attemptLabel = `${restartCount + 1}/${SUPERVISE_MAX_RESTARTS + 1}`;
+    console.log(`[dashboard:supervisor] starting dashboard (attempt ${attemptLabel})`);
+
+    let child: SupervisedChild;
+    try {
+      child = superviseSpawn(process.execPath, [entryPoint, ...childArgs], {
+        stdio: "inherit",
+        maxLifetimeMs: Number.POSITIVE_INFINITY,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[dashboard:supervisor] failed to spawn child: ${message}`);
+      process.exit(1);
+    }
+
+    const exitResult = await child.waitExit();
+    const exitCode = exitResult.code ?? 1;
+    const exitSignal = exitResult.signal;
+
+    // Clean exit — propagate without restart
+    if (exitSignal === "SIGINT" || exitSignal === "SIGTERM" || exitCode === 0) {
+      return;
+    }
+
+    // Reset restart counter if the child ran for a long time
+    const now = Date.now();
+    if (now - lastExitTime > SUPERVISE_STALE_RESET_MS) {
+      restartCount = 0;
+    }
+    lastExitTime = now;
+
+    restartCount++;
+    if (restartCount > SUPERVISE_MAX_RESTARTS) {
+      console.error(
+        `\n[dashboard:supervisor] dashboard exited unexpectedly ${SUPERVISE_MAX_RESTARTS + 1} times.\n` +
+        `Giving up. If using Tailscale Serve, the remote URL will return 502\n` +
+        `until the dashboard is restarted manually:\n\n` +
+        `  ${restartCommand}\n\n` +
+        `To check if a listener is still active:\n` +
+        `  curl http://127.0.0.1:${port}/api/health\n`,
+      );
+      process.exit(1);
+    }
+
+    const delay = Math.min(
+      SUPERVISE_BASE_DELAY_MS * Math.pow(2, restartCount - 1),
+      SUPERVISE_MAX_DELAY_MS,
+    );
+    console.log(
+      `[dashboard:supervisor] restarting in ${Math.round(delay / 1000)}s (attempt ${restartCount}/${SUPERVISE_MAX_RESTARTS})`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+}
+
+function formatSupervisorRestartCommand(nodePath: string, entryPoint: string, childArgs: readonly string[]): string {
+  return [nodePath, entryPoint, ...childArgs].map(quoteShellArg).join(" ");
+}
+
+function quoteShellArg(value: string): string {
+  if (/^[A-Za-z0-9_/:=.,+-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }

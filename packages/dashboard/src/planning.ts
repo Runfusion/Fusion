@@ -1094,6 +1094,7 @@ async function getFirstQuestionFromAgent(
   if (!parsed) {
     const errorMessage = buildRetryableParseErrorMessage(lastError);
     setSessionError(session, errorMessage);
+    // Keep the session and persisted error state so retry can reuse the original project context.
     try {
       await session.agent.session.dispose?.();
     } catch (disposeErr) {

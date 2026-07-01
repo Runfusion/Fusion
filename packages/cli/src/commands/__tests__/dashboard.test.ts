@@ -31,6 +31,16 @@ const { mockSyncStartupModels, mockShouldUseHybridExecutor, mockHybridExecutorCt
     };
   }),
 }));
+
+const { mockSuperviseSpawn } = vi.hoisted(() => ({
+  mockSuperviseSpawn: vi.fn(() => ({
+    pid: 12345,
+    pgid: 12345,
+    child: {},
+    kill: vi.fn(),
+    waitExit: vi.fn().mockResolvedValue({ code: 0, signal: null }),
+  })),
+}));
 vi.mock("../startup-model-sync.js", () => ({
   syncStartupModels: mockSyncStartupModels,
 }));
@@ -243,6 +253,7 @@ vi.mock("@fusion/core", async (importOriginal) => {
     getToken: vi.fn().mockResolvedValue(undefined),
     generateToken: vi.fn().mockResolvedValue("fn_test_dashboard_token"),
   })),
+  superviseSpawn: mockSuperviseSpawn,
   getTaskMergeBlocker: vi.fn((task: any) => {
     if (task.column !== "in-review") return `task is in '${task.column}', must be in 'in-review'`;
     if (task.paused) return "task is paused";
@@ -3490,5 +3501,71 @@ describe("runDashboard update check wiring", () => {
       setUpdateStatusSpy.mockRestore();
       delete process.env.FUSION_DASHBOARD_TOKEN;
     }
+  });
+});
+
+describe("runDashboardSupervised — bounded restart behavior", () => {
+  beforeEach(() => {
+    mockSuperviseSpawn.mockClear();
+  });
+
+  it("spawns the dashboard without inheriting the supervisor flag or a lifetime cap", async () => {
+    const mod = await import("../dashboard.js");
+    const originalArgv = process.argv;
+    process.argv = [
+      originalArgv[0] ?? process.execPath,
+      "/tmp/fn-entry.mjs",
+      "dashboard",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "4040",
+      "--supervise",
+    ];
+
+    try {
+      await mod.runDashboardSupervised(4040);
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    expect(mockSuperviseSpawn).toHaveBeenCalledWith(
+      process.execPath,
+      ["/tmp/fn-entry.mjs", "dashboard", "--host", "127.0.0.1", "--port", "4040"],
+      expect.objectContaining({
+        stdio: "inherit",
+        maxLifetimeMs: Number.POSITIVE_INFINITY,
+      }),
+    );
+  });
+
+  it("preserves global flags before the dashboard subcommand without duplicating dashboard", async () => {
+    const mod = await import("../dashboard.js");
+    const originalArgv = process.argv;
+    process.argv = [
+      originalArgv[0] ?? process.execPath,
+      "/tmp/fn-entry.mjs",
+      "--project",
+      "atlas-notes",
+      "dashboard",
+      "--port",
+      "4040",
+      "--supervise",
+    ];
+
+    try {
+      await mod.runDashboardSupervised(4040);
+    } finally {
+      process.argv = originalArgv;
+    }
+
+    expect(mockSuperviseSpawn).toHaveBeenCalledWith(
+      process.execPath,
+      ["/tmp/fn-entry.mjs", "--project", "atlas-notes", "dashboard", "--port", "4040"],
+      expect.objectContaining({
+        stdio: "inherit",
+        maxLifetimeMs: Number.POSITIVE_INFINITY,
+      }),
+    );
   });
 });

@@ -475,6 +475,7 @@ Options:
   --paused                   Start with engine paused (automation disabled)
   --dev                      Start dashboard in development mode
   --no-engine                Start dashboard only (no AI engine)
+  --supervise                Run with auto-restart on crash (bounded retries)
   --lang <locale>            Terminal-UI locale for this run (en, zh-CN, zh-TW, fr, es, ko); the browser dashboard resolves its own language
   --attach <file>            Attach file(s) on task create (repeatable)
   --depends <id>             Declare dependency on task create (repeatable)
@@ -828,6 +829,7 @@ async function main() {
         const noAuth = args.includes("--no-auth");
         const dashTokenIdx = args.indexOf("--token");
         const token = dashTokenIdx !== -1 && dashTokenIdx + 1 < args.length ? args[dashTokenIdx + 1] : undefined;
+        const supervise = args.includes("--supervise");
         const dashLangIdx = args.indexOf("--lang");
         const lang = dashLangIdx !== -1 && dashLangIdx + 1 < args.length ? args[dashLangIdx + 1] : undefined;
         if (lang !== undefined) {
@@ -839,7 +841,12 @@ async function main() {
             process.exit(1);
           }
         }
-        await runDashboard(port, { paused, dev, noEngine, interactive, host, noAuth, token, lang });
+        if (supervise) {
+          const { runDashboardSupervised } = await import("./commands/dashboard.js");
+          await runDashboardSupervised(port);
+        } else {
+          await runDashboard(port, { paused, dev, noEngine, interactive, host, noAuth, token, lang });
+        }
         break;
       }
 
