@@ -16,11 +16,13 @@ describe("TaskDetailModal CSS contract", () => {
     expect(css).toMatch(/\.detail-tab\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
   });
 
-  it("FN-7344 keeps the Activity dropdown reachable on narrow task-detail surfaces", async () => {
+  it("FN-7351 keeps the Activity tab dropdown reachable on narrow task-detail surfaces", async () => {
     const css = await loadAllAppCssBaseOnly();
 
-    expect(css).toMatch(/\.activity-view-select\s*\{[^}]*min-inline-size\s*:\s*calc\(var\(--space-2xl\) \+ var\(--space-xl\) \+ var\(--space-lg\)\)\s*;/);
-    expect(css).toMatch(/\.activity-view-select\s*\{[^}]*min-block-size\s*:\s*var\(--space-2xl\)\s*;/);
+    expect(css).toMatch(/\.detail-tab-dropdown\s*\{[^}]*flex-shrink\s*:\s*0\s*;/);
+    expect(css).toMatch(/\.detail-tab--activity\s*\{[^}]*display\s*:\s*inline-flex\s*;/);
+    expect(css).toMatch(/\.activity-view-menu\s*\{[^}]*min-inline-size\s*:\s*100%\s*;/);
+    expect(css).not.toContain(".activity-view-select");
     expect(css).not.toContain(".activity-segmented-control");
     expect(css).not.toContain(".activity-segment");
     expect(css).not.toContain(".log-subview-toggle");

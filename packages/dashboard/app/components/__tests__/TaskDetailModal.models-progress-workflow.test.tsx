@@ -23,8 +23,19 @@ import { TaskDetailModal, TaskDetailContent } from "../TaskDetailModal";
 
 setupTaskDetailModalHooks();
 
-function selectActivityView(value: "current" | "feed" | "raw-logs") {
-  fireEvent.change(screen.getByRole("combobox", { name: "Activity view" }), { target: { value } });
+type ActivitySegmentTestValue = "current" | "feed" | "raw-logs";
+
+const ACTIVITY_VIEW_LABELS: Record<ActivitySegmentTestValue, string> = {
+  current: "Live",
+  feed: "Feed",
+  "raw-logs": "Raw",
+};
+
+function selectActivityView(value: ActivitySegmentTestValue) {
+  if (!screen.queryByRole("menu", { name: "Activity views" })) {
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+  }
+  fireEvent.click(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] }));
 }
 
 describe("TaskDetailModal", () => {

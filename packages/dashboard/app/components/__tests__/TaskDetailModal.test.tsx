@@ -35,8 +35,28 @@ vi.mock("../BranchGroupCard", () => ({
 
 setupTaskDetailModalHooks();
 
-async function selectActivityView(user: ReturnType<typeof userEvent.setup>, value: "current" | "feed" | "raw-logs") {
-  await user.selectOptions(screen.getByRole("combobox", { name: "Activity view" }), value);
+type ActivitySegmentTestValue = "current" | "feed" | "raw-logs";
+
+const ACTIVITY_VIEW_LABELS: Record<ActivitySegmentTestValue, string> = {
+  current: "Live",
+  feed: "Feed",
+  "raw-logs": "Raw",
+};
+
+function openActivityViewMenu() {
+  if (!screen.queryByRole("menu", { name: "Activity views" })) {
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+  }
+}
+
+async function selectActivityView(user: ReturnType<typeof userEvent.setup>, value: ActivitySegmentTestValue) {
+  openActivityViewMenu();
+  await user.click(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] }));
+}
+
+function expectActivityView(value: ActivitySegmentTestValue) {
+  openActivityViewMenu();
+  expect(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] })).toHaveAttribute("aria-current", "true");
 }
 
 function renderSummarizeTitleModal(overrides: Parameters<typeof makeTask>[0] = {}, props: Partial<ComponentProps<typeof TaskDetailModal>> = {}) {
@@ -127,7 +147,7 @@ describe("TaskDetailModal planner Chat tab", () => {
     renderTask("in-progress", "chat");
 
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-    expect(screen.getByRole("combobox", { name: "Activity view" })).toHaveValue("current");
+    expectActivityView("current");
   });
 
   it("routes explicit planner-chat requests to the new Chat tab", () => {
@@ -546,7 +566,7 @@ describe("TaskDetailModal Chat task merge", () => {
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "Activity view" })).toHaveValue("current");
+    expectActivityView("current");
     expect(screen.getAllByRole("form", { name: "Task activity composer" })).toHaveLength(1);
     expect(screen.queryByText(/^Steering comment$/)).not.toBeInTheDocument();
     expect(screen.queryByText("Send operational guidance to the active task through steering comments.")).not.toBeInTheDocument();
@@ -978,7 +998,7 @@ describe("TaskDetailModal in-review stall diagnostics", () => {
 
     await user.click(screen.getByRole("button", { name: "View activity log" }));
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-    expect(screen.getByRole("combobox", { name: "Activity view" })).toHaveValue("feed");
+    expectActivityView("feed");
     const highlighted = document.querySelector(".detail-log-entry--stall-highlight .detail-log-action");
     expect(highlighted?.textContent).toContain("In-review stall surfaced [merge-blocker]");
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React, { type ComponentProps } from "react";
 import type { AgentLogEntry } from "@fusion/core";
@@ -49,12 +49,35 @@ function topLevelTabLabels(): string[] {
     .map((button) => button.textContent?.trim() ?? "");
 }
 
-function activitySelector(): HTMLSelectElement {
-  return screen.getByRole("combobox", { name: "Activity view" }) as HTMLSelectElement;
+type ActivitySegmentTestValue = "current" | "feed" | "raw-logs";
+
+const ACTIVITY_VIEW_LABELS: Record<ActivitySegmentTestValue, string> = {
+  current: "Live",
+  feed: "Feed",
+  "raw-logs": "Raw",
+};
+
+function openActivityViewMenu() {
+  const existingMenu = screen.queryByRole("menu", { name: "Activity views" });
+  if (!existingMenu) {
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+  }
+  return screen.getByRole("menu", { name: "Activity views" });
 }
 
-function activitySelectorLabels(): string[] {
-  return Array.from(activitySelector().options).map((option) => option.textContent?.trim() ?? "");
+function activityViewLabels(): string[] {
+  openActivityViewMenu();
+  return screen.getAllByRole("menuitem").map((option) => option.textContent?.trim() ?? "");
+}
+
+function expectActivityView(value: ActivitySegmentTestValue) {
+  openActivityViewMenu();
+  expect(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] })).toHaveAttribute("aria-current", "true");
+}
+
+function selectActivityView(value: ActivitySegmentTestValue) {
+  openActivityViewMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] }));
 }
 
 function mockRawLogs(entries: AgentLogEntry[]) {
@@ -82,8 +105,10 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.getAllByRole("button", { name: "Chat" })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
     expect(screen.queryByTestId("task-planner-chat-panel")).not.toBeInTheDocument();
-    expect(activitySelectorLabels()).toEqual(["Live", "Feed", "Raw"]);
-    expect(activitySelector().value).toBe("current");
+    expect(activityViewLabels()).toEqual(["Live", "Feed", "Raw"]);
+    expectActivityView("current");
+    expect(document.querySelector(".activity-view-select")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Activity view" })).not.toBeInTheDocument();
     expect(document.querySelector(".activity-segmented-control")).toBeNull();
     expect(document.querySelector(".activity-segment")).toBeNull();
     expect(screen.queryByRole("tablist", { name: "Activity views" })).not.toBeInTheDocument();
@@ -94,18 +119,18 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     expect(screen.queryByRole("heading", { name: "Feed" })).not.toBeInTheDocument();
     expect(screen.queryByTestId("agent-log-viewer")).not.toBeInTheDocument();
 
-    await user.selectOptions(activitySelector(), "feed");
+    selectActivityView("feed");
 
-    expect(activitySelector().value).toBe("feed");
+    expectActivityView("feed");
     expect(screen.queryByRole("form", { name: "Task activity composer" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
     expect(screen.getByText("Posted update")).toBeInTheDocument();
     expect(screen.queryByText("Existing steering guidance")).not.toBeInTheDocument();
     expect(screen.queryByTestId("agent-log-viewer")).not.toBeInTheDocument();
 
-    await user.selectOptions(activitySelector(), "raw-logs");
+    selectActivityView("raw-logs");
 
-    expect(activitySelector().value).toBe("raw-logs");
+    expectActivityView("raw-logs");
     expect(screen.queryByRole("form", { name: "Task activity composer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Feed" })).not.toBeInTheDocument();
     expect(screen.getByTestId("agent-log-viewer")).toBeInTheDocument();
@@ -130,7 +155,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
 
     expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-    expect(activitySelector().value).toBe("current");
+    expectActivityView("current");
     expect(screen.queryByTestId("task-planner-chat-panel")).not.toBeInTheDocument();
 
     rerender(
@@ -167,7 +192,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
 
     expect(topLevelTabLabels().slice(0, 2)).toEqual(["Chat", "Activity"]);
     expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-    expect(activitySelector().value).toBe("feed");
+    expectActivityView("feed");
     expect(screen.getByRole("heading", { name: "Feed" })).toBeInTheDocument();
   });
 
@@ -197,7 +222,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       expect(screen.queryByRole("combobox", { name: "Activity view" })).not.toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Activity" }));
-      expect(activitySelectorLabels()).toEqual(["Live", "Feed", "Raw"]);
+      expect(activityViewLabels()).toEqual(["Live", "Feed", "Raw"]);
       expect(screen.queryByRole("tablist", { name: "Activity views" })).not.toBeInTheDocument();
       expect(screen.getByText("No agent output yet. Live messages from Planner, Executor, Reviewer, and Merger agents will appear here.")).toBeInTheDocument();
       expect(screen.getAllByRole("form", { name: "Task refinement composer" })).toHaveLength(1);

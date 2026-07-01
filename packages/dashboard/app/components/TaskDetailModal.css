@@ -836,7 +836,8 @@ The same expanded-mode chrome collapse now applies to all Activity segments: Liv
 }
 
 .task-detail-content--chat-expanded .detail-tabs {
-  display: none;
+  /* FNXC:TaskDetailActivity 2026-06-30-23:59: Expanded Activity still needs the top-level Activity tab dropdown because the in-panel view selector was removed. Keep the tab strip visible so Live, Feed, and Raw remain switchable while the footer and metadata chrome stay collapsed. */
+  display: flex;
 }
 
 .task-detail-content--chat-expanded .modal-actions {
@@ -1204,7 +1205,7 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
   }
 
   .task-detail-content--chat-expanded .detail-tabs {
-    display: none;
+    display: flex;
   }
 
   .task-detail-content--chat-expanded .modal-actions {
@@ -2500,24 +2501,74 @@ FNXC:TaskDetailTabs 2026-06-26-00:35:
 
 /* === Activity View Selector === */
 /*
-FNXC:TaskDetailActivity 2026-06-30-15:50:
-The Activity top-level tab owns Live (internal `current`), Feed, and Raw as one dropdown rather than in-content subtabs. Keep the selector compact and token-styled on desktop/mobile, with the Activity-wide expand control beside it on every view.
+FNXC:TaskDetailActivity 2026-06-30-23:59:
+The Activity tab itself is the Live/Feed/Raw dropdown trigger. Keep it in the `.detail-tabs` scroller with the same tab sizing and active underline, and keep the Activity panel toolbar only for the expand affordance so no duplicate in-content selector or empty mobile shell remains.
 */
+.detail-tab-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.detail-tab--activity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.detail-tab-chevron {
+  inline-size: var(--icon-size-sm);
+  block-size: var(--icon-size-sm);
+  flex: 0 0 auto;
+}
+
+.activity-view-menu {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline-start: 0;
+  z-index: 20;
+  min-inline-size: 100%;
+  margin-block-start: var(--space-xs);
+  padding: var(--space-xs);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--space-xs) / 2);
+  background: var(--card);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.activity-view-menu-item {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+  padding: var(--space-xs) var(--space-sm);
+  white-space: nowrap;
+}
+
+.activity-view-menu-item:hover,
+.activity-view-menu-item:focus-visible,
+.activity-view-menu-item[aria-current="true"] {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.activity-view-menu-item[aria-current="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .activity-toolbar {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
-}
-
-.activity-view-select {
-  min-inline-size: calc(var(--space-2xl) + var(--space-xl) + var(--space-lg));
-  min-block-size: var(--space-2xl);
-  padding-block: calc(var(--space-xs) / 2);
-  padding-inline: var(--space-sm) var(--space-xl);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-tight);
 }
 
 .activity-expand-toggle {
@@ -2544,9 +2595,8 @@ The Activity top-level tab owns Live (internal `current`), Feed, and Raw as one 
     align-items: stretch;
   }
 
-  .activity-view-select {
-    flex: 1 1 auto;
-    min-inline-size: 0;
+  .activity-view-menu {
+    min-inline-size: calc(100% + var(--space-xl));
   }
 
   .activity-expand-toggle {

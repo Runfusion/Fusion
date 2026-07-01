@@ -1,5 +1,5 @@
 import "./TaskDetailModal.css";
-import React, { Suspense, lazy, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pencil, Bot, X, ChevronDown, ChevronRight, GitBranch, ArrowLeft, Zap, Loader2, AlertTriangle, Sparkles, Maximize2, Minimize2 } from "lucide-react";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
@@ -215,8 +215,8 @@ The first Activity segment keeps the stable internal `current` id for legacy seg
 FNXC:TaskDetailActivity 2026-06-30-23:55:
 The first Activity segment is user-facing Live while legacy internals remain `current` and explicit `initialTab="chat"` continues landing there for compatibility.
 
-FNXC:TaskDetailActivity 2026-06-30-15:50:
-Activity view switching uses one dropdown labeled for Live, Feed, and Raw while retaining the internal `current`, `feed`, and `raw-logs` segment ids. Legacy `chat` and `logs` initial-tab routing remains compatible so older links still open Activity → Live or Activity → Feed.
+FNXC:TaskDetailActivity 2026-06-30-23:59:
+Activity view switching lives in the top-level Activity tab dropdown for Live, Feed, and Raw while retaining the internal `current`, `feed`, and `raw-logs` segment ids. Legacy `chat` and `logs` initial-tab routing remains compatible so older links still open Activity → Live or Activity → Feed.
 */
 function resolveDefaultTab(initialTab: TabId | undefined, column: ColumnId, taskDetailChatFirst = false): TabId {
   if (initialTab === "retries") {
@@ -555,7 +555,6 @@ export function TaskDetailContent({
   workflowFieldDefs: workflowFieldDefsProp,
 }: TaskDetailContentProps) {
   const { t } = useTranslation("app");
-  const activitySelectorId = useId();
   const columnLabel = useColumnLabel();
   const fileBrowser = useFileBrowser();
   const [activeTab, setActiveTab] = useState<TabId>(() => resolveDefaultTab(initialTab, task.column, taskDetailChatFirst));
@@ -922,6 +921,7 @@ export function TaskDetailContent({
   // Split-menu dropdown state for footer actions
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showActivityViewMenu, setShowActivityViewMenu] = useState(false);
   const [sourceIssueExpanded, setSourceIssueExpanded] = useState(false);
   const [retriesExpanded, setRetriesExpanded] = useState(initialTab === "retries");
   const [githubTrackingExpanded, setGithubTrackingExpanded] = useState(false);
@@ -934,6 +934,8 @@ export function TaskDetailContent({
   const activityListRef = useRef<HTMLDivElement>(null);
   const moveButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
+  const activityViewMenuRef = useRef<HTMLDivElement>(null);
+  const activityViewButtonRef = useRef<HTMLButtonElement>(null);
 
   // Plugin UI slots for task-detail-tab
   const { getSlotsForId: getPluginSlots } = usePluginUiSlots(projectId);
@@ -1267,15 +1269,16 @@ export function TaskDetailContent({
     setShowAgentPicker(false);
   }, [task.id]);
 
-  // Close footer dropdown menus on outside click
+  // Close task-detail dropdown menus on outside click
   useEffect(() => {
-    const hasOpenMenu = showMoveMenu || showActionsMenu;
+    const hasOpenMenu = showMoveMenu || showActionsMenu || showActivityViewMenu;
     if (!hasOpenMenu) return;
 
     const handleClick = (e: MouseEvent) => {
       const target = e.target as Node;
       const inMoveMenu = moveMenuRef.current?.contains(target);
       const inActionsMenu = actionsMenuRef.current?.contains(target);
+      const inActivityViewMenu = activityViewMenuRef.current?.contains(target);
 
       if (!inMoveMenu && showMoveMenu) {
         setShowMoveMenu(false);
@@ -1283,15 +1286,18 @@ export function TaskDetailContent({
       if (!inActionsMenu && showActionsMenu) {
         setShowActionsMenu(false);
       }
+      if (!inActivityViewMenu && showActivityViewMenu) {
+        setShowActivityViewMenu(false);
+      }
     };
 
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [showMoveMenu, showActionsMenu]);
+  }, [showMoveMenu, showActionsMenu, showActivityViewMenu]);
 
-  // Close footer dropdown menus on Escape key (before modal Escape handler)
+  // Close task-detail dropdown menus on Escape key (before modal Escape handler)
   useEffect(() => {
-    const hasOpenMenu = showMoveMenu || showActionsMenu;
+    const hasOpenMenu = showMoveMenu || showActionsMenu || showActivityViewMenu;
     if (!hasOpenMenu) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1299,12 +1305,13 @@ export function TaskDetailContent({
         e.stopPropagation(); // Prevent modal from closing
         if (showMoveMenu) setShowMoveMenu(false);
         if (showActionsMenu) setShowActionsMenu(false);
+        if (showActivityViewMenu) setShowActivityViewMenu(false);
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [showMoveMenu, showActionsMenu]);
+  }, [showMoveMenu, showActionsMenu, showActivityViewMenu]);
 
   // Reset spec edit state when task changes
   useEffect(() => {
@@ -2812,6 +2819,41 @@ export function TaskDetailContent({
     closeMoveMenuAndFocusTrigger();
   }, [closeMoveMenuAndFocusTrigger]);
 
+  const activityViewOptions = useMemo<Array<{ value: ActivitySegment; label: string }>>(() => [
+    { value: "current", label: t("taskDetail.activity.current", "Live") },
+    { value: "feed", label: t("taskDetail.activity.feed", "Feed") },
+    { value: "raw-logs", label: t("taskDetail.activity.raw", "Raw") },
+  ], [t]);
+  const selectedActivityViewLabel = activityViewOptions.find((option) => option.value === activitySegment)?.label ?? activityViewOptions[0]?.label ?? "Live";
+
+  const selectActivityView = useCallback((value: ActivitySegment) => {
+    setActiveTab("chat");
+    setActivitySegment(value);
+    setShowActivityViewMenu(false);
+  }, []);
+
+  const handleActivityTabKeyDown = useCallback((event: React.KeyboardEvent<HTMLButtonElement>) => {
+    const shouldOpenMenu = event.key === "ArrowDown" || (event.altKey && event.key === "ArrowDown");
+    if (!shouldOpenMenu) {
+      return;
+    }
+
+    event.preventDefault();
+    setActiveTab("chat");
+    setShowActivityViewMenu(true);
+  }, []);
+
+  const handleActivityViewMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setShowActivityViewMenu(false);
+    activityViewButtonRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!showMoveMenu) {
       return;
@@ -2820,6 +2862,58 @@ export function TaskDetailContent({
     const firstMenuItem = moveMenuRef.current?.querySelector<HTMLButtonElement>(".detail-move-menu-item");
     firstMenuItem?.focus();
   }, [showMoveMenu]);
+
+  useEffect(() => {
+    if (!showActivityViewMenu) {
+      return;
+    }
+
+    const selectedMenuItem = activityViewMenuRef.current?.querySelector<HTMLButtonElement>(".activity-view-menu-item[aria-current='true']");
+    const firstMenuItem = activityViewMenuRef.current?.querySelector<HTMLButtonElement>(".activity-view-menu-item");
+    (selectedMenuItem ?? firstMenuItem)?.focus();
+  }, [showActivityViewMenu]);
+
+  const renderActivityTab = () => (
+    <div className="detail-tab-dropdown" ref={activityViewMenuRef}>
+      {/*
+        FNXC:TaskDetailActivity 2026-06-30-23:59:
+        The top-level Activity tab is the only Activity view dropdown trigger. Keep the stable internal `chat` tab id and `current`/`feed`/`raw-logs` segment ids, but remove the in-panel Activity view select so desktop, embedded, and mobile tab strips have one canonical view switcher.
+      */}
+      <button
+        ref={activityViewButtonRef}
+        type="button"
+        className={`detail-tab detail-tab--activity${activeTab === "chat" ? " detail-tab-active" : ""}`}
+        onClick={() => {
+          setActiveTab("chat");
+          setShowActivityViewMenu((value) => !value);
+        }}
+        onKeyDown={handleActivityTabKeyDown}
+        aria-haspopup="menu"
+        aria-expanded={showActivityViewMenu}
+        aria-label={t("taskDetail.tabs.activity", "Activity")}
+        title={t("taskDetail.activity.tabDropdownLabel", "Activity view: {{view}}", { view: selectedActivityViewLabel })}
+      >
+        <span>{t("taskDetail.tabs.activity", "Activity")}</span>
+        <ChevronDown className="detail-tab-chevron" aria-hidden="true" />
+      </button>
+      {showActivityViewMenu && (
+        <div className="activity-view-menu" role="menu" aria-label={t("taskDetail.activity.menuLabel", "Activity views")} onKeyDown={handleActivityViewMenuKeyDown}>
+          {activityViewOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className="activity-view-menu-item"
+              role="menuitem"
+              aria-current={activitySegment === option.value ? "true" : undefined}
+              onClick={() => selectActivityView(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div
@@ -3259,21 +3353,11 @@ export function TaskDetailContent({
                 >
                   {t("taskDetail.tabs.chat", "Chat")}
                 </button>
-                <button
-                  className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
-                  onClick={() => setActiveTab("chat")}
-                >
-                  {t("taskDetail.tabs.activity", "Activity")}
-                </button>
+                {renderActivityTab()}
               </>
             ) : (
               <>
-                <button
-                  className={`detail-tab${activeTab === "chat" ? " detail-tab-active" : ""}`}
-                  onClick={() => setActiveTab("chat")}
-                >
-                  {t("taskDetail.tabs.activity", "Activity")}
-                </button>
+                {renderActivityTab()}
                 <button
                   className={`detail-tab${activeTab === "planner-chat" ? " detail-tab-active" : ""}`}
                   onClick={() => setActiveTab("planner-chat")}
@@ -3434,24 +3518,10 @@ export function TaskDetailContent({
                 FNXC:TaskDetailActivity 2026-06-30-23:55:
                 The first Activity segment is user-facing Live but keeps the legacy `current` segment id. Activity expansion is segment-wide, so the same reachable toggle must remain present on Live, Feed, and Raw without fetching Raw outside the Raw segment.
 
-                FNXC:TaskDetailActivity 2026-06-30-15:50:
-                Replacing the in-content subtabs with a native dropdown removes the horizontal tab shell on mobile while preserving keyboard operation and the legacy Activity segment ids (`current`, `feed`, `raw-logs`).
+                FNXC:TaskDetailActivity 2026-06-30-23:59:
+                The Activity tab in the top-level tab strip is now the view dropdown for Live, Feed, and Raw. The in-panel Activity view select was removed so Activity expansion remains the only toolbar affordance inside the panel while legacy routing and Raw-only fetching keep their stable ids (`chat`, `current`, `feed`, `raw-logs`).
               */}
-              <div className="activity-toolbar">
-                <label className="visually-hidden" htmlFor={activitySelectorId}>
-                  {t("taskDetail.activity.selectorLabel", "Activity view")}
-                </label>
-                <select
-                  id={activitySelectorId}
-                  className="select activity-view-select"
-                  value={activitySegment}
-                  onChange={(event) => setActivitySegment(event.target.value as ActivitySegment)}
-                  aria-label={t("taskDetail.activity.selectorLabel", "Activity view")}
-                >
-                  <option value="current">{t("taskDetail.activity.current", "Live")}</option>
-                  <option value="feed">{t("taskDetail.activity.feed", "Feed")}</option>
-                  <option value="raw-logs">{t("taskDetail.activity.raw", "Raw")}</option>
-                </select>
+              <div className="activity-toolbar activity-toolbar--expand-only">
                 <button
                   type="button"
                   className="btn btn-icon btn-sm activity-expand-toggle"

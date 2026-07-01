@@ -361,23 +361,24 @@ describe("TaskDetailModal", () => {
       expect(detailBodyBlock).not.toContain("overflow: hidden;");
     });
 
-    it("keeps the Activity dropdown compact and reachable on mobile", () => {
+    it("keeps the Activity tab dropdown compact and reachable on mobile", () => {
       const css = readDashboardStylesSource();
-      const selectorBlock = getExactCssRuleBlock(css, ".activity-view-select");
-      const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".activity-view-select");
-      const mobileSelectorBlock = getExactCssRuleBlock(mobileBlock, ".activity-view-select");
+      const tabDropdownBlock = getExactCssRuleBlock(css, ".detail-tab-dropdown");
+      const activityTabBlock = getExactCssRuleBlock(css, ".detail-tab--activity");
+      const menuBlock = getExactCssRuleBlock(css, ".activity-view-menu");
+      const mobileBlock = getCssAtRuleBlockContainingExactRule(css, "@media (max-width: 768px)", ".activity-view-menu");
+      const mobileMenuBlock = getExactCssRuleBlock(mobileBlock, ".activity-view-menu");
 
-      expect(selectorBlock).toContain("min-inline-size: calc(var(--space-2xl) + var(--space-xl) + var(--space-lg));");
-      expect(selectorBlock).toContain("min-block-size: var(--space-2xl);");
-      expect(selectorBlock).toContain("padding-block: calc(var(--space-xs) / 2);");
-      expect(selectorBlock).toContain("padding-inline: var(--space-sm) var(--space-xl);");
-      expect(selectorBlock).toContain("font-size: var(--font-size-sm);");
-      expect(selectorBlock).toContain("line-height: var(--line-height-tight);");
-      expect(mobileSelectorBlock).toContain("flex: 1 1 auto;");
-      expect(mobileSelectorBlock).toContain("min-inline-size: 0;");
+      expect(tabDropdownBlock).toContain("position: relative;");
+      expect(tabDropdownBlock).toContain("flex-shrink: 0;");
+      expect(activityTabBlock).toContain("display: inline-flex;");
+      expect(activityTabBlock).toContain("gap: var(--space-xs);");
+      expect(menuBlock).toContain("min-inline-size: 100%;");
+      expect(menuBlock).toContain("padding: var(--space-xs);");
+      expect(mobileMenuBlock).toContain("min-inline-size: calc(100% + var(--space-xl));");
+      expect(css).not.toContain(".activity-view-select");
       expect(css).not.toContain(".activity-segmented-control");
       expect(css).not.toContain(".activity-segment");
-      expect(css).not.toMatch(/\.task-detail-content--embedded\s+\.activity-view-select\s*\{/);
     });
 
     it("renders responsive structural classes (modal-lg, overlay, spacer, tabs, detail-body)", () => {

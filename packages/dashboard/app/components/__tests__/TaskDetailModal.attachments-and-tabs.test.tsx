@@ -34,12 +34,35 @@ Omitted non-done TaskDetailModal renders open the top-level planner Chat first/d
 */
 setupTaskDetailModalHooks();
 
-function activitySelector(): HTMLSelectElement {
-  return screen.getByRole("combobox", { name: "Activity view" }) as HTMLSelectElement;
+type ActivitySegmentTestValue = "current" | "feed" | "raw-logs";
+
+const ACTIVITY_VIEW_LABELS: Record<ActivitySegmentTestValue, string> = {
+  current: "Live",
+  feed: "Feed",
+  "raw-logs": "Raw",
+};
+
+function openActivityViewMenu() {
+  const existingMenu = screen.queryByRole("menu", { name: "Activity views" });
+  if (!existingMenu) {
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+  }
+  return screen.getByRole("menu", { name: "Activity views" });
 }
 
-function selectActivityView(value: "current" | "feed" | "raw-logs") {
-  fireEvent.change(activitySelector(), { target: { value } });
+function activityViewLabels(): string[] {
+  openActivityViewMenu();
+  return screen.getAllByRole("menuitem").map((option) => option.textContent?.trim() ?? "");
+}
+
+function expectActivityView(value: ActivitySegmentTestValue) {
+  openActivityViewMenu();
+  expect(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] })).toHaveAttribute("aria-current", "true");
+}
+
+function selectActivityView(value: ActivitySegmentTestValue) {
+  openActivityViewMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: ACTIVITY_VIEW_LABELS[value] }));
 }
 
 describe("TaskDetailModal", () => {
@@ -492,11 +515,11 @@ describe("TaskDetailModal", () => {
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
       expect(container.querySelector(".activity-segmented-control")).toBeNull();
       expect(container.querySelector(".activity-segment")).toBeNull();
-      expect(Array.from(activitySelector().options).map((option) => option.textContent?.trim())).toEqual(["Live", "Feed", "Raw"]);
-      expect(activitySelector().value).toBe("current");
+      expect(activityViewLabels()).toEqual(["Live", "Feed", "Raw"]);
+      expectActivityView("current");
       selectActivityView("feed");
       expect(container.querySelector(".detail-activity")).toBeTruthy();
-      expect(activitySelector().value).toBe("feed");
+      expectActivityView("feed");
     });
 
     it("switches to Feed segment via Activity tab and shows activity feed", () => {
@@ -863,7 +886,7 @@ describe("TaskDetailModal", () => {
       expect(mobileSectionRule).toContain("min-height: 0");
     });
 
-    it("FN-6370/FN-6517 defines expanded chat chrome CSS for desktop and mobile", () => {
+    it("FN-6370/FN-7351 defines expanded Activity chrome CSS for desktop and mobile", () => {
       const css = readDashboardStylesSource();
       const expandedTitleRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-title-row");
       const expandedMetaRule = getCssRuleBlock(css, ".task-detail-content--chat-expanded .detail-meta");
@@ -879,14 +902,14 @@ describe("TaskDetailModal", () => {
 
       expect(expandedTitleRule).not.toContain("display: none");
       expect(expandedMetaRule).toContain("display: none");
-      expect(expandedTabsRule).toContain("display: none");
+      expect(expandedTabsRule).toContain("display: flex");
       expect(expandedActionsRule).toContain("display: none");
       expect(expandedHeaderRule).toContain("justify-content: space-between");
       expect(expandedBodyRule).toContain("flex: 1");
       expect(expandedBodyRule).toContain("min-height: 0");
       expect(expandedSectionRule).toContain("margin-top: 0");
       expect(mobileTitleRule).not.toContain("display: none");
-      expect(mobileTabsRule).toContain("display: none");
+      expect(mobileTabsRule).toContain("display: flex");
       expect(mobileActionsRule).toContain("display: none");
     });
 
@@ -951,7 +974,7 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByTestId("task-chat-expand-toggle")).toBeNull();
 
       fireEvent.click(screen.getByRole("button", { name: "Activity" }));
-      expect(activitySelector().value).toBe("current");
+      expectActivityView("current");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Expand activity to full modal");
 
       fireEvent.click(screen.getByTestId("task-chat-expand-toggle"));
@@ -999,7 +1022,7 @@ describe("TaskDetailModal", () => {
       );
 
       expect(container.querySelector(".task-detail-content")).not.toHaveClass("task-detail-content--chat-expanded");
-      expect(activitySelector().value).toBe("feed");
+      expectActivityView("feed");
       expect(screen.getByTestId("task-chat-expand-toggle")).toHaveAttribute("aria-label", "Expand activity to full modal");
     });
 
@@ -1187,7 +1210,7 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.getByRole("button", { name: "Activity" })).toHaveClass("detail-tab-active");
-      expect(activitySelector().value).toBe("feed");
+      expectActivityView("feed");
       expect(container.querySelector(".detail-tabs .detail-tab:first-child")).toHaveTextContent("Chat");
       expect(container.querySelector(".detail-section--chat")).toBeNull();
       expect(container.querySelector(".detail-activity")).toBeTruthy();
