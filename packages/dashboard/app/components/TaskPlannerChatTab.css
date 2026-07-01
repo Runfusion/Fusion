@@ -152,15 +152,57 @@
   margin-bottom: 0;
 }
 
+.task-planner-chat-steering-confirmation {
+  margin-top: var(--space-sm);
+  border: var(--btn-border-width) solid var(--color-success);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm);
+  color: var(--text);
+  background: var(--surface);
+}
+
+.task-planner-chat-steering-confirmation--pending {
+  border-color: var(--color-warning);
+}
+
+.task-planner-chat-steering-confirmation--error {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.task-planner-chat-steering-confirmation strong,
+.task-planner-chat-steering-confirmation p {
+  margin: 0;
+}
+
+.task-planner-chat-steering-confirmation p {
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+}
+
+.task-planner-chat-message .chat-question-response {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/*
+FNXC:TaskDetailPlannerChat 2026-06-30-00:00:
+The Planner Chat composer should behave like a compact input/button row on desktop: match the textarea's default height to the Send button and let flex wrapping, not a forced column, decide when the controls no longer fit inline.
+*/
 .task-planner-chat-composer {
   display: flex;
-  align-items: flex-end;
+  flex-wrap: wrap;
+  align-items: stretch;
   gap: var(--space-sm);
 }
 
 .task-planner-chat-input {
-  flex: 1 1 auto;
-  min-height: 5rem;
+  box-sizing: border-box;
+  flex: 1 1 calc(var(--space-2xl) * 8);
+  min-width: min(100%, calc(var(--space-2xl) * 8));
+  height: calc(var(--space-lg) + (var(--space-sm) * 2) + (var(--btn-border-width) * 2));
+  min-height: calc(var(--space-lg) + (var(--space-sm) * 2) + (var(--btn-border-width) * 2));
+  padding: var(--btn-padding);
   resize: vertical;
 }
 
@@ -190,5 +232,9 @@
 
   .task-planner-chat-message {
     max-width: 100%;
+  }
+
+  .task-planner-chat-message .chat-question-response {
+    margin-inline: 0;
   }
 }

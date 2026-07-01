@@ -3311,6 +3311,7 @@ export function TaskDetailContent({
                 active={activeTab === "planner-chat"}
                 planningModel={resolveEffectivePlanning(workingTask, agentLogEntries, settings)}
                 addToast={addToast}
+                onTaskUpdated={onTaskUpdated}
               />
             </div>
           ) : activeTab === "chat" ? (

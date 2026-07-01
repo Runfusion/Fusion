@@ -1285,6 +1285,7 @@ describe("ChatManager.sendMessage", () => {
         prompt: "# PROMPT.md\n\nImplement the planner-model Chat tab from the detailed task plan.",
         column: "todo",
         status: "planning",
+        currentStep: 0,
         dependencies: ["FN-7309"],
         steps: [{ title: "Polish", status: "in-progress" }],
         comments: [{ text: "User wants planner chat", author: "user" }],
@@ -1313,13 +1314,143 @@ describe("ChatManager.sendMessage", () => {
     expect(createOptions.systemPrompt).toContain("Title: Add planner chat");
     expect(createOptions.systemPrompt).toContain("Prompt:\n# PROMPT.md");
     expect(createOptions.systemPrompt).toContain("Implement the planner-model Chat tab from the detailed task plan.");
-    expect(createOptions.systemPrompt).toContain("Dependencies: FN-7309");
+    expect(createOptions.systemPrompt).toContain("Dependencies:\n- FN-7309:");
+    expect(createOptions.systemPrompt).toContain("Progress: step 1 of 1");
+    expect(createOptions.systemPrompt).toContain("Current step: Polish: in-progress");
     expect(createOptions.systemPrompt).toContain("Polish: in-progress");
     expect(createOptions.systemPrompt).toContain("Activity transcript loaded");
-    expect(createOptions.systemPrompt).toContain("fn_task_planner_add_steering");
     expect(createOptions.systemPrompt).toContain("fn_ask_question");
+    expect(createOptions.systemPrompt).toContain("Do not create steering for ordinary questions");
+    expect(createOptions.systemPrompt).toContain("Ask a clarifying question");
+    expect(createOptions.systemPrompt).toContain("credential/secrets");
+    expect(createOptions.systemPrompt).toContain("destructive removals");
     expect(createOptions.customTools.map((tool: { name: string }) => tool.name)).toContain("fn_task_planner_add_steering");
-    expect(taskStore.getTask).toHaveBeenCalledWith("FN-7310", { activityLogLimit: 20 });
+    expect(mockChatStore.addMessage).toHaveBeenCalledWith("chat-001", expect.objectContaining({
+      role: "user",
+      content: "How should I plan this?",
+    }));
+    expect(mockChatStore.addMessage).not.toHaveBeenCalledWith("chat-001", expect.objectContaining({
+      role: "user",
+      content: expect.stringContaining("Task Planner Chat Context"),
+    }));
+    expect(taskStore.getTask).toHaveBeenNthCalledWith(1, "FN-7310", { activityLogLimit: 20 });
+    expect(taskStore.getTask).toHaveBeenCalledWith("FN-7309");
+  });
+
+  it("adds steering through the task-scoped planner tool without accepting a caller task id", async () => {
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "task-planner:FN-7310",
+      status: "active",
+      modelProvider: "anthropic",
+      modelId: "claude-plan",
+    });
+
+    const createResolvedSession = vi.fn(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        state: { messages: [{ role: "assistant", content: "Done" }] },
+      },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+
+    const persistedComment = {
+      id: "steer-7310",
+      text: "Keep the new Chat tab separate from Activity.",
+      author: "user",
+      createdAt: "2026-06-30T23:59:00.000Z",
+    };
+    const taskStore = {
+      getTask: vi.fn().mockResolvedValue({ id: "FN-7310", title: "Add planner chat", column: "todo" }),
+      addSteeringComment: vi.fn().mockResolvedValue({
+        id: "FN-7310",
+        updatedAt: "2026-06-30T23:59:01.000Z",
+        steeringComments: [persistedComment],
+      }),
+      getSettings: vi.fn().mockResolvedValue({}),
+    };
+    const chatManager = new ChatManager(
+      mockChatStore as any,
+      "/tmp/test",
+      mockAgentStore as any,
+      undefined,
+      undefined,
+      undefined,
+      taskStore as any,
+    );
+
+    await chatManager.sendMessage("chat-001", "Tell the executor to keep Chat separate from Activity");
+
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    const steeringTool = createOptions.customTools.find((tool: { name: string }) => tool.name === "fn_task_planner_add_steering");
+    const result = await steeringTool.execute("call-1", {
+      taskId: "FN-OTHER",
+      text: "  Keep the new Chat tab separate from Activity.  ",
+    });
+
+    expect(taskStore.addSteeringComment).toHaveBeenCalledWith(
+      "FN-7310",
+      "Keep the new Chat tab separate from Activity.",
+      "user",
+    );
+    expect(result.isError).toBeUndefined();
+    expect(result.details).toEqual({
+      taskId: "FN-7310",
+      text: "Keep the new Chat tab separate from Activity.",
+      taskUpdatedAt: "2026-06-30T23:59:01.000Z",
+      steeringComment: persistedComment,
+    });
+  });
+
+  it("persists duplicate clear planner steering requests only when the tool is called again", async () => {
+    mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "task-planner:FN-7310", status: "active" });
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+    const taskStore = {
+      getTask: vi.fn().mockResolvedValue({ id: "FN-7310", column: "todo" }),
+      addSteeringComment: vi.fn()
+        .mockResolvedValueOnce({ id: "FN-7310", steeringComments: [{ id: "steer-1", text: "Keep the narrow approach", author: "user" }] })
+        .mockResolvedValueOnce({ id: "FN-7310", steeringComments: [{ id: "steer-2", text: "Keep the narrow approach", author: "user" }] }),
+      getSettings: vi.fn().mockResolvedValue({}),
+    };
+    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+
+    await chatManager.sendMessage("chat-001", "Tell the executor to keep the narrow approach");
+
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    const steeringTool = createOptions.customTools.find((tool: { name: string }) => tool.name === "fn_task_planner_add_steering");
+    await steeringTool.execute("call-1", { text: "Keep the narrow approach" });
+    await steeringTool.execute("call-2", { text: "Keep the narrow approach" });
+
+    expect(taskStore.addSteeringComment).toHaveBeenCalledTimes(2);
+    expect(taskStore.addSteeringComment).toHaveBeenNthCalledWith(1, "FN-7310", "Keep the narrow approach", "user");
+    expect(taskStore.addSteeringComment).toHaveBeenNthCalledWith(2, "FN-7310", "Keep the narrow approach", "user");
+  });
+
+  it("rejects empty planner steering tool text without mutating the task", async () => {
+    mockChatStore.getSession.mockReturnValue({ id: "chat-001", agentId: "task-planner:FN-7310", status: "active" });
+    const createResolvedSession = vi.fn(async () => ({
+      session: { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn(), state: { messages: [] } },
+    }));
+    __setCreateResolvedAgentSession(createResolvedSession as any);
+    const taskStore = {
+      getTask: vi.fn().mockResolvedValue({ id: "FN-7310", column: "todo" }),
+      addSteeringComment: vi.fn(),
+      getSettings: vi.fn().mockResolvedValue({}),
+    };
+    const chatManager = new ChatManager(mockChatStore as any, "/tmp/test", mockAgentStore as any, undefined, undefined, undefined, taskStore as any);
+
+    await chatManager.sendMessage("chat-001", "Tell the executor something");
+
+    const createOptions = createResolvedSession.mock.calls[0]?.[0];
+    const steeringTool = createOptions.customTools.find((tool: { name: string }) => tool.name === "fn_task_planner_add_steering");
+    const result = await steeringTool.execute("call-1", { text: "   " });
+
+    expect(result.isError).toBe(true);
+    expect(taskStore.addSteeringComment).not.toHaveBeenCalled();
   });
 
   it("guides chat agents to use ask-question cards for option sets", () => {

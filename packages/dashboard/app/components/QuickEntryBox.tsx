@@ -1946,6 +1946,22 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               {t("tasks.save", "Save")}
             </button>
 
+            {/* FNXC:QuickAddAttachments 2026-06-30-00:00: Keep the Quick Add attachment affordance immediately to the right of Save while preserving the icon-only label, hidden file input trigger, and pending-count badge. */}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              className="btn btn-icon btn-sm quick-entry-attach-button"
+              data-testid="quick-entry-attach"
+              onClick={() => fileInputRef.current?.click()}
+              aria-label={attachLabel}
+              title={attachLabel}
+            >
+              <Paperclip size={12} aria-hidden="true" />
+              {pendingImages.length > 0 && (
+                <span className="quick-entry-attach-count" aria-hidden="true">{pendingImages.length}</span>
+              )}
+            </button>
+
             <button
               type="button"
               className={`btn btn-sm ${isFastMode ? "btn-primary" : ""}`}
@@ -2227,21 +2243,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 portalRoot,
               );
             })()}
-
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              className="btn btn-icon btn-sm quick-entry-attach-button"
-              data-testid="quick-entry-attach"
-              onClick={() => fileInputRef.current?.click()}
-              aria-label={attachLabel}
-              title={attachLabel}
-            >
-              <Paperclip size={12} aria-hidden="true" />
-              {pendingImages.length > 0 && (
-                <span className="quick-entry-attach-count" aria-hidden="true">{pendingImages.length}</span>
-              )}
-            </button>
 
             <button
               ref={modelTriggerRef}

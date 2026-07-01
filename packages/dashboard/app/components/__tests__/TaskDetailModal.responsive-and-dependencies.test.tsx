@@ -92,16 +92,31 @@ describe("TaskDetailModal", () => {
   describe("mobile responsive structure", () => {
     it("keeps planner chat composer usable on narrow task-detail layouts", () => {
       const css = readDashboardStylesSource();
+      const composerBlock = getExactCssRuleBlock(css, ".task-planner-chat-composer");
+      const inputBlock = getExactCssRuleBlock(css, ".task-planner-chat-input");
       const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".task-planner-chat-composer");
+      const mobileComposerBlock = getCssRuleBlock(mobileBlock, ".task-planner-chat-composer");
+      const mobileSendBlock = getCssRuleBlock(mobileBlock, ".task-planner-chat-send");
 
       expectBaseRule(css, ".task-planner-chat", "display: flex;");
       expectBaseRule(css, ".task-planner-chat-transcript", "overflow: auto;");
-      expect(mobileBlock).toContain(".task-planner-chat-composer");
-      expect(mobileBlock).toContain("flex-direction: column;");
-      expect(mobileBlock).toContain("align-items: stretch;");
+      expect(composerBlock).toContain("display: flex;");
+      expect(composerBlock).toContain("flex-wrap: wrap;");
+      expect(composerBlock).toContain("align-items: stretch;");
+      expect(composerBlock).not.toContain("flex-direction: column;");
+      expect(inputBlock).toContain("height: calc(var(--space-lg) + (var(--space-sm) * 2) + (var(--btn-border-width) * 2));");
+      expect(inputBlock).toContain("min-height: calc(var(--space-lg) + (var(--space-sm) * 2) + (var(--btn-border-width) * 2));");
+      expect(inputBlock).not.toContain("min-height: 5rem;");
+      expect(mobileComposerBlock).toContain("flex-direction: column;");
+      expect(mobileComposerBlock).toContain("align-items: stretch;");
+      expect(mobileSendBlock).toContain("justify-content: center;");
+      expect(mobileSendBlock).toContain("width: 100%;");
       expectBaseRule(css, ".task-planner-chat-starters", "grid-template-columns: repeat(2, minmax(0, 1fr));");
+      expectBaseRule(css, ".task-planner-chat-message .chat-question-response", "overflow-wrap: anywhere;");
       expect(mobileBlock).toContain(".task-planner-chat-starters");
       expect(mobileBlock).toContain("grid-template-columns: 1fr;");
+      expect(mobileBlock).toContain(".task-planner-chat-message .chat-question-response");
+      expect(mobileBlock).toContain("margin-inline: 0;");
     });
 
     it("keeps detail metadata as a single wrapping flex row without mobile column fallbacks", () => {

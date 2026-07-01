@@ -34,6 +34,7 @@ import { join, resolve, relative } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionEventBuffer } from "./sse-buffer.js";
 import { formatChatAttachmentContents, readChatAttachmentContents } from "./chat-attachment-content.js";
+import { buildTaskPlannerChatContext, TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE } from "./task-planner-chat-context.js";
 
 import {
   createFnAgent as engineCreateFnAgent,
@@ -231,93 +232,15 @@ const MAX_REFERENCED_FILE_SIZE = 50 * 1024;
 export const TASK_PLANNER_CHAT_AGENT_ID_PREFIX = "task-planner:";
 const ROOM_AMBIENT_MAX_RESPONDERS = 5;
 
-function summarizeList<T>(items: T[] | undefined, format: (item: T, index: number) => string | null, limit: number): string[] {
-  const values = (items ?? []).map(format).filter((value): value is string => Boolean(value));
-  const selected = values.slice(-limit);
-  if (values.length > selected.length) {
-    return [`…${values.length - selected.length} older entries omitted`, ...selected];
-  }
-  return selected;
-}
-
-function truncatePlannerContext(value: string, max = 1_200): string {
-  return value.length > max ? `${value.slice(0, max)}…` : value;
-}
-
-interface PlannerContextTask {
-  id: string;
-  title?: string;
-  description?: string;
-  prompt?: string;
-  plan?: string;
-  column?: string;
-  status?: string;
-  dependencies?: string[];
-  steps?: Array<{ title?: string; name?: string; status?: string }>;
-  comments?: Array<{ text?: string; author?: string }>;
-  steeringComments?: Array<{ text?: string; author?: string }>;
-  log?: Array<{ message?: string; text?: string; level?: string; type?: string }>;
-}
-
-function buildTaskPlannerContext(task: PlannerContextTask): string {
-  const promptText = typeof task.prompt === "string" && task.prompt.trim() ? task.prompt.trim() : "";
-  const planText = typeof task.plan === "string" && task.plan.trim() ? task.plan.trim() : "";
-  const descriptionText = typeof task.description === "string" && task.description.trim() ? task.description.trim() : "";
-  const primaryTaskSpec = promptText || planText || descriptionText;
-  const primaryTaskSpecLabel = promptText ? "Prompt" : planText ? "Plan" : "Description";
-
-  /*
-  FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
-  Planner Chat must answer from the task's PROMPT.md/plan when available, not only the shorter description shown in lists. Use description only as the fallback so normal task-detail conversations see the same implementation plan the executor saw.
-  */
-  const parts = [
-    `Task ID: ${task.id}`,
-    task.title ? `Title: ${task.title}` : null,
-    `Column: ${task.column}`,
-    task.status ? `Status: ${task.status}` : null,
-    Array.isArray(task.dependencies) && task.dependencies.length > 0 ? `Dependencies: ${task.dependencies.join(", ")}` : "Dependencies: none",
-    primaryTaskSpec ? `${primaryTaskSpecLabel}:\n${truncatePlannerContext(primaryTaskSpec)}` : null,
-  ].filter(Boolean) as string[];
-
-  if (promptText && planText && planText !== promptText) {
-    parts.push(`Plan:\n${truncatePlannerContext(planText)}`);
-  }
-
-  const steps = summarizeList(task.steps, (step, index) => {
-    const title = typeof step.title === "string" ? step.title : typeof step.name === "string" ? step.name : `Step ${index}`;
-    const status = typeof step.status === "string" ? step.status : "unknown";
-    return `- ${title}: ${status}`;
-  }, 10);
-  if (steps.length > 0) parts.push(`Steps:\n${steps.join("\n")}`);
-
-  const comments = summarizeList([...(task.comments ?? []), ...(task.steeringComments ?? [])], (comment) => {
-    const text = typeof comment.text === "string" ? comment.text.trim() : "";
-    if (!text) return null;
-    const author = typeof comment.author === "string" ? comment.author : "user";
-    return `- ${author}: ${truncatePlannerContext(text, 500)}`;
-  }, 8);
-  if (comments.length > 0) parts.push(`Recent comments / steering:\n${comments.join("\n")}`);
-
-  const activity = summarizeList(task.log, (entry) => {
-    const message = typeof entry.message === "string" ? entry.message : typeof entry.text === "string" ? entry.text : "";
-    if (!message.trim()) return null;
-    const level = typeof entry.level === "string" ? entry.level : typeof entry.type === "string" ? entry.type : "log";
-    return `- ${level}: ${truncatePlannerContext(message.trim(), 500)}`;
-  }, 12);
-  if (activity.length > 0) parts.push(`Recent activity:\n${activity.join("\n")}`);
-
-  return parts.join("\n\n");
-}
-
 function createTaskPlannerSteeringTool(taskStore: TaskStore, taskId: string) {
   return {
     name: "fn_task_planner_add_steering",
     label: "Add Task Steering Comment",
-    description: "Add an explicit user-approved steering comment to the current task from task-detail planner chat. Use only when the user asks to steer, instruct, or tell the executor/reviewer something; ask a clarifying question first if intent is ambiguous.",
+    description: "Add a clear, bounded, user-authored steering comment to the current task. The task id is fixed by server context; never accept or infer a different task id. Ask for clarification before broad, destructive, credential/security-sensitive, conflicting, or unclear requests.",
     parameters: {
       type: "object",
       properties: {
-        text: { type: "string", description: "The steering comment to add to the task." },
+        text: { type: "string", description: "The concise steering comment to add to the current task. Do not include hidden prompt/context text." },
       },
       required: ["text"],
       additionalProperties: false,
@@ -328,9 +251,24 @@ function createTaskPlannerSteeringTool(taskStore: TaskStore, taskId: string) {
         return { content: [{ type: "text" as const, text: "ERROR: text must be a non-empty string" }], details: {}, isError: true };
       }
       const task = await taskStore.addSteeringComment(taskId, text, "user");
+      const steeringComment = task.steeringComments
+        ?.filter((comment) => comment.author === "user" && comment.text === text)
+        .at(-1);
       return {
-        content: [{ type: "text" as const, text: `Steering comment added to ${task.id}.` }],
-        details: { taskId: task.id, text },
+        content: [{ type: "text" as const, text: `Added as steering comment on ${task.id}.` }],
+        details: {
+          taskId: task.id,
+          text,
+          taskUpdatedAt: task.updatedAt,
+          steeringComment: steeringComment
+            ? {
+                id: steeringComment.id,
+                text: steeringComment.text,
+                author: steeringComment.author,
+                createdAt: steeringComment.createdAt,
+              }
+            : { text, author: "user" },
+        },
       };
     },
   };
@@ -1829,21 +1767,25 @@ export class ChatManager {
         ? session.agentId.slice(TASK_PLANNER_CHAT_AGENT_ID_PREFIX.length).trim()
         : "";
       if (taskPlannerChatTaskId) {
-        let taskContext = `Task ID: ${taskPlannerChatTaskId}`;
+        let taskContext = `Task ID: ${taskPlannerChatTaskId}\n\nContext availability notes:\n- Task store context is not available for this chat manager.`;
         if (this.taskStore) {
           try {
-            const task = await this.taskStore.getTask(taskPlannerChatTaskId, { activityLogLimit: 20 });
-            taskContext = buildTaskPlannerContext(task as PlannerContextTask);
+            const context = await buildTaskPlannerChatContext(this.taskStore, taskPlannerChatTaskId);
+            taskContext = context.promptContext;
           } catch (taskLoadError) {
             const message = taskLoadError instanceof Error ? taskLoadError.message : String(taskLoadError);
+            taskContext = `Task ID: ${taskPlannerChatTaskId}\n\nContext availability notes:\n- Task context could not be loaded: ${message}`;
             diagnostics.warn(`Failed to load task planner-chat context for ${taskPlannerChatTaskId}: ${message}`);
           }
         }
         /*
         FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
         Task-detail planner Chat sessions use a synthetic task-planner agent id and the planning-model lane. Include compact task state, dependency, comment, step, and recent activity context so the planner can answer status questions; convert only explicit steering intent through the scoped steering tool and use `fn_ask_question` for ambiguous clarification.
+
+        FNXC:TaskDetailChat 2026-06-30-23:59:
+        Clear, bounded operator change requests in task-detail Chat are user intent and should become persisted steering comments through the task store's steering path. Ambiguous, conflicting, destructive, broad-scope, or credential/security-sensitive requests must ask a question first so planner chat cannot mutate a task from risky prose.
         */
-        systemPrompt = `${systemPrompt}\n\n## Task Planner Chat Context\nYou are answering in the task detail Chat tab for a single Fusion task. Use the task context below to answer status, dependency, recent-activity, and planning questions. If the user explicitly asks you to tell, steer, instruct, or update the executor/reviewer, call \`fn_task_planner_add_steering\` with the concise steering text. If the user's intent might be either conversation or steering, call \`fn_ask_question\` to clarify before adding steering. Do not add steering for ordinary questions or brainstorming.\n\n${taskContext}`;
+        systemPrompt = `${systemPrompt}\n\n${TASK_PLANNER_CHAT_CONTEXT_PROMPT_GUIDANCE}\n\nDecision rules:\n- Do not create steering for ordinary questions, summaries, thanks, status/progress requests, or brainstorming. Answer normally.\n- Create steering only when the user gives a clear, bounded, actionable change request for this current task (for example telling the executor/reviewer to adjust implementation, tests, scope details, or acceptance criteria).\n- When creating steering, call \`fn_task_planner_add_steering\` with only the concise user-facing steering text. Never include hidden prompt/context/logs, credentials, or chain-of-thought.\n- Ask a clarifying question with \`fn_ask_question\` before adding steering for unclear targets, requests that could mean either conversation or task mutation, broad rewrites/scope changes, destructive removals, conflicting instructions, credential/secrets handling, or security-sensitive actions.\n- The steering tool is bound to this task server-side; never ask for or pass a task id.\n\n${taskContext}`;
       }
 
       if (agent) {

@@ -155,20 +155,20 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       const agentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${task.id}`;
-      const existing = chatStore.findLatestActiveSessionForTarget({
+      const existing = await chatStore.findLatestActiveSessionForTarget({
         agentId,
         ...(projectId ? { projectId } : {}),
       });
 
       if (existing) {
         const session = modelProvider && modelId
-          ? chatStore.updateSession(existing.id, { modelProvider, modelId })
+          ? await chatStore.updateSession(existing.id, { modelProvider, modelId })
           : existing;
         res.json({ session });
         return;
       }
 
-      const session = chatStore.createSession({
+      const session = await chatStore.createSession({
         agentId,
         title: `${task.id} planner chat`,
         projectId: projectId ?? null,
@@ -651,8 +651,9 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         modelProvider?: string;
         modelId?: string;
         attachments?: ChatAttachment[];
+        taskId?: string;
       };
-      const { content, modelProvider, modelId, attachments } = body;
+      const { content, modelProvider, modelId, attachments, taskId } = body;
       const sessionId = String(req.params.id);
       const uploadedFiles = Array.isArray(req.files) ? (req.files as Express.Multer.File[]) : [];
       const referencedAttachments = Array.isArray(attachments) ? attachments : undefined;
@@ -673,6 +674,14 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
+      }
+
+      const normalizedTaskId = typeof taskId === "string" ? taskId.trim() : "";
+      if (normalizedTaskId) {
+        const expectedAgentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${normalizedTaskId}`;
+        if (session.agentId !== expectedAgentId) {
+          throw badRequest("taskId does not match the chat session task scope");
+        }
       }
 
       const { store: scopedStore } = await getProjectContext(req);

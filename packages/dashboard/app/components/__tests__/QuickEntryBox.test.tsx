@@ -386,13 +386,13 @@ function mockMobileViewport() {
 
 const QUICK_ENTRY_ACTION_BUTTONS = [
   ["Save", "quick-entry-save"],
+  ["Attach", "quick-entry-attach"],
   ["Fast", "quick-entry-fast-toggle"],
   ["GitHub", "quick-entry-github-toggle"],
   ["Priority", "quick-entry-priority-button"],
   ["Subtask", "subtask-button"],
   ["Refine", "refine-button"],
   ["Deps", "quick-entry-deps"],
-  ["Attach", "quick-entry-attach"],
   ["Models", "quick-entry-models"],
   ["Node", "quick-entry-node-button"],
   ["Agent", "quick-entry-agent-button"],
@@ -823,11 +823,13 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("Save button is the first action button in DOM order", () => {
+    it("places Attach immediately after Save in DOM order", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
-      expect(getActionButtonTestIdsInDomOrder()[0]).toBe("quick-entry-save");
+      const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
+      expect(actionButtonTestIds.slice(0, 2)).toEqual(["quick-entry-save", "quick-entry-attach"]);
+      expect(actionButtonTestIds.indexOf("quick-entry-attach")).toBe(actionButtonTestIds.indexOf("quick-entry-save") + 1);
     });
 
     it("action buttons appear in correct DOM order after reorder", () => {

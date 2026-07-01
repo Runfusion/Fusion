@@ -79,8 +79,16 @@ describe("parseQuestionToolCall", () => {
   it("falls back for malformed, empty option select, and non-question tools", () => {
     expect(parseQuestionToolCall(toolCall("ask_user"))).toBeNull();
     expect(parseQuestionToolCall(toolCall("ask_user", { question: "" }))).toBeNull();
-    expect(parseQuestionToolCall(toolCall("ask_user", { question: "Pick", type: "single_select", options: [] }))).toBeNull();
     expect(parseQuestionToolCall(toolCall("read", { question: "No" }))).toBeNull();
+  });
+
+  it("degrades explicit select questions with missing options to answerable text prompts", () => {
+    expect(parseQuestionToolCall(toolCall("fn_ask_question", { question: "Pick", type: "single_select" }))?.questions[0]).toEqual(
+      expect.objectContaining({ id: "q-0", type: "text", question: "Pick", options: undefined }),
+    );
+    expect(parseQuestionToolCall(toolCall("fn_ask_question", { question: "Pick many", type: "multi_select", options: [] }))?.questions[0]).toEqual(
+      expect.objectContaining({ id: "q-0", type: "text", question: "Pick many", options: undefined }),
+    );
   });
 
   it("formats selected labels, text, and confirm answers", () => {

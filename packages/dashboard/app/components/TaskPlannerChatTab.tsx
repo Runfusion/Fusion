@@ -7,8 +7,8 @@ import { Loader2, Send } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ToastType } from "../hooks/useToast";
 import type { ToolCallInfo } from "../hooks/chatTypes";
-import { ensureTaskPlannerChatSession, fetchChatMessages, streamChatResponse } from "../api";
-import { parseQuestionToolCall } from "../utils/parseQuestionToolCall";
+import { ensureTaskPlannerChatSession, fetchChatMessages, fetchTaskDetail, streamChatResponse } from "../api";
+import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/parseQuestionToolCall";
 import { markdownComponents } from "./AgentLogViewer";
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import "./TaskPlannerChatTab.css";
@@ -19,9 +19,17 @@ interface TaskPlannerChatTabProps {
   active: boolean;
   planningModel: ResolvedModelSelection;
   addToast: (msg: string, type?: ToastType) => void;
+  onTaskUpdated?: (task: Task) => void;
 }
 
 type ComposerState = "idle" | "sending";
+
+type PlannerQuestionRenderState = {
+  parsed: ParsedQuestionToolCall;
+  answered: boolean;
+  submittedAnswer?: string;
+  hiddenDuplicate: boolean;
+};
 
 interface StarterPromptDefinition {
   id: string;
@@ -104,6 +112,50 @@ function makeStreamingAssistantMessage(sessionId: string, content: string, toolC
   };
 }
 
+const TASK_PLANNER_STEERING_TOOL_NAME = "fn_task_planner_add_steering";
+
+interface PlannerSteeringResult {
+  text: string;
+  id?: string;
+  createdAt?: string;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
+}
+
+function extractPlannerSteeringResult(toolCall: ToolCallInfo): PlannerSteeringResult | null {
+  if (toolCall.toolName !== TASK_PLANNER_STEERING_TOOL_NAME || toolCall.isError) return null;
+  const resultRecord = readRecord(toolCall.result);
+  const detailsRecord = readRecord(resultRecord?.details) ?? resultRecord;
+  const commentRecord = readRecord(detailsRecord?.steeringComment);
+  const text = typeof commentRecord?.text === "string" && commentRecord.text.trim()
+    ? commentRecord.text.trim()
+    : typeof detailsRecord?.text === "string" && detailsRecord.text.trim()
+      ? detailsRecord.text.trim()
+      : typeof toolCall.args?.text === "string" && toolCall.args.text.trim()
+        ? toolCall.args.text.trim()
+        : "";
+  if (!text) return null;
+  return {
+    text,
+    ...(typeof commentRecord?.id === "string" && commentRecord.id.trim() ? { id: commentRecord.id.trim() } : {}),
+    ...(typeof commentRecord?.createdAt === "string" && commentRecord.createdAt.trim() ? { createdAt: commentRecord.createdAt.trim() } : {}),
+  };
+}
+
+function extractPlannerSteeringTextFromResult(result: unknown): string | null {
+  const resultRecord = readRecord(result);
+  const detailsRecord = readRecord(resultRecord?.details) ?? resultRecord;
+  const commentRecord = readRecord(detailsRecord?.steeringComment);
+  const text = typeof commentRecord?.text === "string" && commentRecord.text.trim()
+    ? commentRecord.text.trim()
+    : typeof detailsRecord?.text === "string" && detailsRecord.text.trim()
+      ? detailsRecord.text.trim()
+      : "";
+  return text || null;
+}
+
 function extractToolCalls(message: ChatMessage): ToolCallInfo[] {
   const rawToolCalls = message.metadata?.toolCalls;
   if (!Array.isArray(rawToolCalls)) return [];
@@ -125,7 +177,58 @@ function extractToolCalls(message: ChatMessage): ToolCallInfo[] {
     .filter((toolCall): toolCall is ToolCallInfo => toolCall !== null);
 }
 
-export function TaskPlannerChatTab({ task, projectId, active, planningModel, addToast }: TaskPlannerChatTabProps) {
+function getPlannerQuestionKey(parsed: ParsedQuestionToolCall): string {
+  return JSON.stringify(parsed.questions.map((question) => ({
+    id: question.id,
+    type: question.type,
+    question: question.question,
+    options: question.options?.map((option) => [option.id, option.label]),
+  })));
+}
+
+function isQuestionAnswerFor(message: ChatMessage, parsed: ParsedQuestionToolCall): boolean {
+  if (message.role !== "user") return false;
+  const trimmed = message.content.trim();
+  if (!trimmed) return false;
+  return parsed.questions.some((question) => trimmed.includes(`> Q: ${question.question}`));
+}
+
+function buildPlannerQuestionRenderStates(messages: readonly ChatMessage[]): Map<string, PlannerQuestionRenderState> {
+  const states = new Map<string, PlannerQuestionRenderState>();
+  const latestUnansweredByQuestion = new Map<string, string>();
+
+  messages.forEach((message, messageIndex) => {
+    if (message.role !== "assistant") return;
+    extractToolCalls(message).forEach((toolCall, toolCallIndex) => {
+      const parsed = parseQuestionToolCall(toolCall);
+      if (!parsed) return;
+      const stateKey = `${message.id}:${toolCallIndex}`;
+      const questionKey = getPlannerQuestionKey(parsed);
+      const nextUserAnswer = messages.slice(messageIndex + 1).find((candidate) => isQuestionAnswerFor(candidate, parsed));
+      const answered = Boolean(nextUserAnswer);
+      if (!answered) {
+        const previousPendingKey = latestUnansweredByQuestion.get(questionKey);
+        if (previousPendingKey) {
+          const previous = states.get(previousPendingKey);
+          if (previous) {
+            states.set(previousPendingKey, { ...previous, hiddenDuplicate: true });
+          }
+        }
+        latestUnansweredByQuestion.set(questionKey, stateKey);
+      }
+      states.set(stateKey, {
+        parsed,
+        answered,
+        submittedAnswer: nextUserAnswer?.content,
+        hiddenDuplicate: false,
+      });
+    });
+  });
+
+  return states;
+}
+
+export function TaskPlannerChatTab({ task, projectId, active, planningModel, addToast, onTaskUpdated }: TaskPlannerChatTabProps) {
   const { t } = useTranslation("app");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -209,6 +312,18 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
     transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
   }, [messages, composerState]);
 
+  const refreshTaskAfterSteering = useCallback(async () => {
+    try {
+      const refreshedTask = await fetchTaskDetail(task.id, projectId);
+      onTaskUpdated?.(refreshedTask);
+      addToast(t("taskDetail.plannerChat.steeringAddedToast", "Added as steering comment"), "success");
+    } catch (refreshError) {
+      const message = getErrorMessage(refreshError) || t("taskDetail.plannerChat.refreshTaskFailed", "Steering was added, but task details could not refresh");
+      setError(message);
+      addToast(message, "error");
+    }
+  }, [addToast, onTaskUpdated, projectId, task.id, t]);
+
   const sendMessageContent = useCallback(async (messageContent: string) => {
     const content = messageContent.trim();
     if (!content || composerState === "sending") return;
@@ -264,6 +379,12 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
             } else {
               streamingToolCalls.push({ toolName, isError, result, status: "completed" });
             }
+            const steeringText = toolName === TASK_PLANNER_STEERING_TOOL_NAME && !isError
+              ? extractPlannerSteeringTextFromResult(result)
+              : null;
+            if (steeringText) {
+              void refreshTaskAfterSteering();
+            }
             setMessages((current) => {
               const withoutStreaming = current.filter((message) => message.id !== "streaming-assistant");
               return [...withoutStreaming, makeStreamingAssistantMessage(resolvedSessionId, accumulated, streamingToolCalls)];
@@ -302,6 +423,7 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
         },
         undefined,
         projectId,
+        { taskId: task.id },
       );
     } catch (err) {
       if (!isCurrentStreamRequest()) return;
@@ -310,7 +432,7 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
       addToast(message, "error");
       setComposerState("idle");
     }
-  }, [addToast, composerState, modelPayload, projectId, sessionId, task.id, t]);
+  }, [addToast, composerState, modelPayload, projectId, refreshTaskAfterSteering, sessionId, task.id, t]);
 
   const sendMessage = useCallback(() => sendMessageContent(draft), [draft, sendMessageContent]);
 
@@ -322,6 +444,7 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
 
   const canSend = draft.trim().length > 0 && composerState !== "sending";
   const showEmptyState = historyLoaded && !loading && !error && messages.length === 0;
+  const questionRenderStates = useMemo(() => buildPlannerQuestionRenderStates(messages), [messages]);
   const starterPrompts = useMemo(() => {
     const seenLabels = new Set<string>();
     return TASK_PLANNER_CHAT_STARTER_PROMPTS.flatMap((prompt) => {
@@ -344,21 +467,27 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
   FNXC:TaskDetailPlannerChat 2026-06-30-23:58:
   Planner Chat is a separate task-detail surface from Activity steering. It can answer from task context, offer starter prompts, ask structured follow-up questions, and convert explicit operator intent into steering through the server-side planner-chat tool instead of posting every chat message as steering by default.
 
+  FNXC:TaskDetailChat 2026-06-30-23:59:
+  When the planner steering tool succeeds, the Chat transcript must show an explicit confirmation and refresh task detail data immediately so Activity/current steering reflects the persisted comment without closing the modal. Clarification tool calls stay as questions and never insert optimistic steering bubbles.
+
   FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
-  The empty Chat tab starts with guided task-state prompts that submit ordinary user messages through the same planner-chat stream as the composer. Context enrichment, steering conversion, and structured question rendering remain owned by later planner-chat subtasks, so starter prompts are only message text plus accessible affordances here.
+  The empty Chat tab starts with guided task-state prompts that submit ordinary user messages through the same task-context-aware planner-chat stream as the composer. Steering conversion and structured question-modal rendering remain owned by later planner-chat subtasks, so starter prompts are only message text plus accessible affordances here.
 
   FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
   Session loads are scoped to the current task/project/model and stale responses are ignored so a delayed previous task load cannot attach starter-prompt sends to the wrong planner-chat session.
 
   FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
   Stream callbacks are guarded by a per-send token because closing an EventSource/stream is not enough to prevent queued text, tool, done, error, or fallback refresh callbacks from mutating the newly selected task's Chat tab.
+
+  FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
+  Planner-generated clarification questions in the task-detail Chat transcript must reuse ChatQuestionResponse instead of bespoke chat text. Submitted answers stay in the planner-chat lane as ordinary follow-up user messages, render the prior question read-only, and duplicate refetched pending tool calls hide older live forms so users never see competing submit affordances.
   */
   return (
     <section className="task-planner-chat" aria-label={t("taskDetail.plannerChat.label", "Planner chat")} data-testid="task-planner-chat-panel">
       <div className="task-planner-chat-header">
         <div>
           <h4>{t("taskDetail.plannerChat.heading", "Planner Chat")}</h4>
-          <p>{t("taskDetail.plannerChat.description", "Ask planning questions about this task, clarify next steps, or request steering for the executor.")}</p>
+          <p>{t("taskDetail.plannerChat.description", "Ask planning questions about this task's current status, recent activity, blockers, next steps, or definition.")}</p>
         </div>
         {isUsableModel(planningModel) && (
           <span className="task-planner-chat-model" data-testid="task-planner-chat-model">
@@ -413,15 +542,39 @@ export function TaskPlannerChatTab({ task, projectId, active, planningModel, add
                   </div>
                 )}
                 {toolCalls.map((toolCall, index) => {
-                  const parsedQuestion = parseQuestionToolCall(toolCall);
-                  if (!parsedQuestion) return null;
-                  const answered = message.id !== "streaming-assistant" && message !== messages[messages.length - 1];
+                  const steeringResult = extractPlannerSteeringResult(toolCall);
+                  if (steeringResult) {
+                    return (
+                      <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation" data-testid="task-planner-chat-steering-confirmation">
+                        <strong>{t("taskDetail.plannerChat.steeringAdded", "Added as steering comment")}</strong>
+                        <p>{steeringResult.text}</p>
+                      </div>
+                    );
+                  }
+                  const isRunningSteering = toolCall.toolName === TASK_PLANNER_STEERING_TOOL_NAME && toolCall.status === "running";
+                  if (isRunningSteering) {
+                    return (
+                      <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation task-planner-chat-steering-confirmation--pending" data-testid="task-planner-chat-steering-pending">
+                        <strong>{t("taskDetail.plannerChat.steeringAdding", "Adding steering comment…")}</strong>
+                      </div>
+                    );
+                  }
+                  if (toolCall.toolName === TASK_PLANNER_STEERING_TOOL_NAME && toolCall.isError) {
+                    return (
+                      <div key={`${toolCall.toolName}-${index}`} className="task-planner-chat-steering-confirmation task-planner-chat-steering-confirmation--error" role="alert" data-testid="task-planner-chat-steering-error">
+                        <strong>{t("taskDetail.plannerChat.steeringFailed", "Steering comment was not added")}</strong>
+                      </div>
+                    );
+                  }
+                  const questionState = questionRenderStates.get(`${message.id}:${index}`);
+                  if (!questionState || questionState.hiddenDuplicate) return null;
                   return (
                     <ChatQuestionResponse
                       key={`${toolCall.toolName}-${index}`}
-                      parsed={parsedQuestion}
-                      answered={answered}
-                      disabled={composerState === "sending" || answered}
+                      parsed={questionState.parsed}
+                      answered={questionState.answered}
+                      submittedAnswer={questionState.submittedAnswer}
+                      disabled={composerState === "sending" || questionState.answered}
                       compact
                       onSubmit={(answerText) => void sendMessageContent(answerText)}
                     />

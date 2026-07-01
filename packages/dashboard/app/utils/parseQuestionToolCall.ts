@@ -40,6 +40,9 @@ export type ChatQuestionAnswers = Record<string, ChatQuestionAnswerValue>;
  * FNXC:ChatQuestionResponse 2026-06-16-19:18:
  * Chat question tools from multiple agent CLIs and Fusion's native `fn_ask_question` tool must render as structured response controls in ChatView instead of exposing raw JSON in generic tool-call details.
  * Keep schema normalization centralized so both chat surfaces recognize the same question tools, synthesize stable ids, and fall back safely when args are malformed.
+ *
+ * FNXC:TaskDetailPlannerChat 2026-06-30-23:59:
+ * Task-detail planner Chat reuses this normalizer so clarification prompts share the established question UI contract with regular Chat and Planning Mode. Explicit select prompts with missing options degrade to text input instead of disappearing, keeping the conversation answerable after partial tool payloads or stale refetches.
  */
 export function isQuestionToolName(name: string): boolean {
   return QUESTION_TOOL_NAME_SET.has(name.toLowerCase());
@@ -86,9 +89,6 @@ function normalizeQuestion(rawValue: unknown, index: number): ChatQuestion | nul
   const options = normalizeOptions(firstArray(raw.options, raw.choices, raw.enum, raw.values));
   const explicitType = normalizeQuestionType(firstString(raw.type, raw.questionType, raw.inputType, raw.responseType));
   const multiSelect = Boolean(raw.multiSelect ?? raw.multiselect ?? raw.multiple ?? raw.allowMultiple ?? raw.multiple_choice);
-  if ((explicitType === "single_select" || explicitType === "multi_select") && options.length === 0) {
-    return null;
-  }
 
   const type = inferQuestionType(raw, options, explicitType, multiSelect);
 

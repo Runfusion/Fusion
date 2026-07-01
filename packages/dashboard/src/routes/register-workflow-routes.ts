@@ -920,7 +920,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
           );
         }
         if (Object.keys(importedPromptOverrides).length > 0) {
-          restoredPromptOverrides = store.updateWorkflowPromptOverrides(
+          restoredPromptOverrides = await store.updateWorkflowPromptOverrides(
             workflow.id,
             workflowProjectId,
             importedPromptOverrides,

@@ -10275,7 +10275,7 @@ export function streamChatResponse(
   handlers: ChatStreamHandlers,
   attachments?: File[],
   projectId?: string,
-  options?: { maxReconnectAttempts?: number; firstEventTimeoutMs?: number },
+  options?: { maxReconnectAttempts?: number; firstEventTimeoutMs?: number; taskId?: string },
 ): { close: () => void; isConnected: () => boolean } {
   const url = buildApiUrl(withProjectId(`/chat/sessions/${encodeURIComponent(sessionId)}/messages`, projectId));
 
@@ -10371,10 +10371,11 @@ export function streamChatResponse(
         ? (() => {
             const formData = new FormData();
             formData.append("content", content);
+            if (options?.taskId) formData.append("taskId", options.taskId);
             attachments.forEach((file) => formData.append("attachments", file));
             return formData;
           })()
-        : JSON.stringify({ content });
+        : JSON.stringify({ content, ...(options?.taskId ? { taskId: options.taskId } : {}) });
 
       const res = await fetch(url, {
         method: "POST",
