@@ -373,7 +373,10 @@ describe("SignalsArea", () => {
         open: 3,
         resolved: 5,
         mttr: { value: 42, unavailable: false },
-        bySource: [{ source: "sentry", count: 8 }],
+        bySource: [
+          { source: "gitlab", count: 3 },
+          { source: "sentry", count: 5 },
+        ],
         bySeverity: [{ severity: "error", count: 8 }],
       },
       { connectors: [] },
@@ -384,6 +387,7 @@ describe("SignalsArea", () => {
     expect(screen.getByTestId("cc-signals-mttr").textContent).toContain("42");
     expect(screen.getByTestId("cc-signals-pie")).toBeTruthy();
     expect(screen.getByRole("img", { name: "Signal status share" })).toBeTruthy();
+    expect(screen.getByTestId("cc-area-signals").textContent).toContain("gitlab");
   });
 
   it("keeps signals pie safe for single-item and non-finite source/severity data", async () => {
@@ -421,6 +425,7 @@ describe("SignalsArea", () => {
     render(<SignalsArea range={range7d} />);
     const empty = await screen.findByTestId("cc-area-signals-empty");
     expect(empty.textContent).toContain("No signal connector configured");
+    expect(empty.textContent).toContain("GitLab");
     expect(screen.queryByTestId("cc-signals-pie")).toBeNull();
   });
 
@@ -454,10 +459,11 @@ describe("SignalsArea", () => {
           mttr: { value: null, unavailable: true },
           bySource: [],
           bySeverity: [],
-          connectors: { configured: ["sentry", "pagerduty"], anyConfigured: true },
+          connectors: { configured: ["gitlab", "sentry", "pagerduty"], anyConfigured: true },
         },
         {
           connectors: [
+            { provider: "gitlab", configured: true },
             { provider: "sentry", configured: true },
             { provider: "pagerduty", configured: true },
           ],
@@ -466,7 +472,7 @@ describe("SignalsArea", () => {
       const rendered = render(<SignalsArea range={range7d} />);
       const empty = await screen.findByTestId("cc-area-signals-empty");
       expect(empty.textContent).toContain("Connector configured, awaiting signals in this range");
-      expect(empty.textContent).toContain("sentry, pagerduty");
+      expect(empty.textContent).toContain("gitlab, sentry, pagerduty");
       expect(screen.queryByTestId("cc-signals-pie")).toBeNull();
       rendered.unmount();
     }

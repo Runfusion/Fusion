@@ -20,7 +20,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export type SignalSeverity = "critical" | "error" | "warning" | "info";
 
 /** Supported external signal providers. */
-export type SignalProvider = "sentry" | "datadog" | "pagerduty" | "webhook";
+export type SignalProvider = "sentry" | "datadog" | "pagerduty" | "webhook" | "gitlab";
 
 /** Normalized lifecycle intent for an ingested signal. */
 export type SignalResolution = "open" | "resolved";
@@ -119,7 +119,7 @@ export interface SignalSource {
    * source-controlled; they come from the environment (or encrypted settings).
    */
   readonly secretEnvVar: string;
-  /** Mandatory HMAC signature verification against a per-provider secret. */
+    /** Mandatory provider verification against a per-provider secret. */
   verify(ctx: SignalVerifyContext): SignalVerifyResult;
   /**
    * Normalize a parsed payload into a {@link Signal}. Throws (or returns null)
@@ -145,6 +145,25 @@ export function verifyHmacSignature(
   if (signatureHex.length !== expected.length) return false;
   try {
     return timingSafeEqual(Buffer.from(signatureHex), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Constant-time comparison for providers whose webhook auth is a shared token
+ * header rather than a body HMAC.
+ *
+ * FNXC:CommandCenterSignals 2026-07-02-00:00:
+ * GitLab secret-token webhooks authenticate with `X-Gitlab-Token` instead of a local CLI or downloaded binary. Keep HMAC verification unchanged for existing providers while using the same timing-safe comparison discipline for GitLab.com and self-managed GitLab inbound webhooks.
+ */
+export function verifySharedSecretToken(token: string | undefined, secret: string): boolean {
+  if (!token) return false;
+  const tokenBuffer = Buffer.from(token);
+  const secretBuffer = Buffer.from(secret);
+  if (tokenBuffer.byteLength !== secretBuffer.byteLength) return false;
+  try {
+    return timingSafeEqual(tokenBuffer, secretBuffer);
   } catch {
     return false;
   }

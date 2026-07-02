@@ -267,6 +267,7 @@ const SIGNAL_SECRET_ENV_KEYS = [
   "FUSION_SIGNAL_SENTRY_SECRET",
   "FUSION_SIGNAL_DATADOG_SECRET",
   "FUSION_SIGNAL_PAGERDUTY_SECRET",
+  "FUSION_SIGNAL_GITLAB_SECRET",
 ] as const;
 
 describe("register-command-center-routes", () => {
@@ -611,6 +612,7 @@ describe("register-command-center-routes", () => {
 
     process.env.FUSION_SIGNAL_SENTRY_SECRET = "configured-sentry";
     process.env.FUSION_SIGNAL_WEBHOOK_SECRET = "configured-webhook";
+    process.env.FUSION_SIGNAL_GITLAB_SECRET = "configured-gitlab";
     seedSignalMetrics(dbA, { prefix: "SIG-A", source: "sentry", open: 1, resolved: 1 });
     const signals = await request(app, "GET", `/api/command-center/signals?${range}&projectId=proj-a`);
     expect(signals.status).toBe(200);
@@ -618,7 +620,7 @@ describe("register-command-center-routes", () => {
       totalSignals: 2,
       open: 1,
       resolved: 1,
-      connectors: { configured: ["webhook", "sentry"], anyConfigured: true },
+      connectors: { configured: ["webhook", "sentry", "gitlab"], anyConfigured: true },
     });
     expect(signals.body).toHaveProperty("mttr");
     expect(signals.body).toHaveProperty("bySource");
@@ -876,6 +878,7 @@ describe("register-command-center-routes", () => {
   it("signals connectors endpoint reports env-backed configuration without leaking secrets", async () => {
     process.env.FUSION_SIGNAL_WEBHOOK_SECRET = "webhook-secret-value";
     process.env.FUSION_SIGNAL_DATADOG_SECRET = "datadog-secret-value";
+    process.env.FUSION_SIGNAL_GITLAB_SECRET = "gitlab-secret-value";
 
     const a = await request(app, "GET", "/api/command-center/signals/connectors?projectId=proj-a");
     const b = await request(app, "GET", "/api/command-center/signals/connectors?projectId=proj-b");
@@ -889,11 +892,13 @@ describe("register-command-center-routes", () => {
         { provider: "sentry", configured: false },
         { provider: "datadog", configured: true },
         { provider: "pagerduty", configured: false },
+        { provider: "gitlab", configured: true },
       ],
     });
     const serialized = JSON.stringify(a.body);
     expect(serialized).not.toContain("webhook-secret-value");
     expect(serialized).not.toContain("datadog-secret-value");
+    expect(serialized).not.toContain("gitlab-secret-value");
   });
 
   it("signals endpoint defaults invalid ranges and stays project scoped", async () => {

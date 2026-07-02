@@ -31,6 +31,9 @@ Signals area of the Command Center (PR #1683). Surfaces external-signal volume/s
 FNXC:CommandCenter 2026-06-19-00:00:
 Signals now reads a real `/api/command-center/signals` route backed by incidents instead of swallowing a missing endpoint. Empty still means no incident source has recorded data, and MTTR remains `—` until at least one incident is resolved. FN-6706 owns building external Sentry/Datadog/PagerDuty/webhook connectors into that incidents table.
 
+FNXC:CommandCenterSignals 2026-07-02-00:00:
+GitLab is a first-class Signals connector beside Sentry, Datadog, PagerDuty, and generic webhooks. Empty/setup copy must include GitLab while preserving the existing no-new-affordance Signals layout across desktop and mobile.
+
 FNXC:CommandCenterSignals 2026-06-25-22:40:
 Empty Signals copy is driven by the connectors-status endpoint, not fabricated metrics. Operators must see "no connector configured" when no HMAC secret exists and "configured, awaiting signals" when ingestion is ready but quiet; loading the status should keep the normal loading-before-empty behavior.
 */
@@ -78,7 +81,7 @@ export function SignalsArea({ range }: { range: DateRange }) {
     )
     : t(
       "commandCenter.signals.emptyNoConnectorConfigured",
-      "No signal connector configured. Connect Sentry, Datadog, PagerDuty, or a generic webhook to see incident metrics here.",
+      "No signal connector configured. Connect GitLab, Sentry, Datadog, PagerDuty, or a generic webhook to see incident metrics here.",
     );
   const hasStatusPie = !isEmpty && statusPieData.some((datum) => datum.value > 0);
 

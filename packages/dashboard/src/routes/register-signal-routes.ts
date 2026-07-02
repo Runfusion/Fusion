@@ -14,6 +14,7 @@ import { webhookSource } from "../signal-sources/webhook.js";
 import { sentrySource } from "../signal-sources/sentry.js";
 import { datadogSource } from "../signal-sources/datadog.js";
 import { pagerdutySource } from "../signal-sources/pagerduty.js";
+import { gitlabSource } from "../signal-sources/gitlab.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 /**
@@ -42,6 +43,7 @@ const SIGNAL_SOURCES: Record<SignalProvider, SignalSource> = {
   sentry: sentrySource,
   datadog: datadogSource,
   pagerduty: pagerdutySource,
+  gitlab: gitlabSource,
 };
 
 export function getSignalSource(provider: string): SignalSource | undefined {
@@ -49,9 +51,9 @@ export function getSignalSource(provider: string): SignalSource | undefined {
 }
 
 /**
- * Resolve a provider's HMAC secret. Env var is the canonical, never
- * source-controlled source. An optional resolver (e.g. encrypted settings) can
- * be supplied for deployments that store secrets there.
+ * Resolve a provider's webhook verification secret. Env var is the canonical,
+ * never source-controlled source. An optional resolver (e.g. encrypted settings)
+ * can be supplied for deployments that store secrets there.
  */
 export function resolveSignalSecret(
   source: SignalSource,

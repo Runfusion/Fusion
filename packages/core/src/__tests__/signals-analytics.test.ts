@@ -71,6 +71,19 @@ describe("signals-analytics", () => {
       severity: "warning",
     });
     insertIncident(db, {
+      status: "open",
+      openedAt: "2026-03-04T10:00:00.000Z",
+      source: "gitlab",
+      severity: "error",
+    });
+    insertIncident(db, {
+      status: "resolved",
+      openedAt: "2026-03-05T10:00:00.000Z",
+      resolvedAt: "2026-03-05T10:15:00.000Z",
+      source: "gitlab",
+      severity: "info",
+    });
+    insertIncident(db, {
       status: "resolved",
       openedAt: "2026-02-01T10:00:00.000Z",
       resolvedAt: "2026-02-01T10:30:00.000Z",
@@ -80,21 +93,24 @@ describe("signals-analytics", () => {
 
     const result = aggregateSignalsAnalytics(db, RANGE);
 
-    expect(result.totalSignals).toBe(2);
-    expect(result.open).toBe(1);
-    expect(result.resolved).toBe(1);
-    expect(result.mttr).toEqual({ value: 45, unavailable: false, sampleCount: 1 });
+    expect(result.totalSignals).toBe(4);
+    expect(result.open).toBe(2);
+    expect(result.resolved).toBe(2);
+    expect(result.mttr).toEqual({ value: 30, unavailable: false, sampleCount: 2 });
     expect(result.bySource).toEqual([
+      { source: "gitlab", count: 2 },
       { source: "pagerduty", count: 1 },
       { source: "sentry", count: 1 },
     ]);
     expect(result.bySeverity).toEqual([
       { severity: "critical", count: 1 },
+      { severity: "error", count: 1 },
+      { severity: "info", count: 1 },
       { severity: "warning", count: 1 },
     ]);
     expect(result.byStatus).toEqual([
-      { status: "open", count: 1 },
-      { status: "resolved", count: 1 },
+      { status: "open", count: 2 },
+      { status: "resolved", count: 2 },
     ]);
   });
 

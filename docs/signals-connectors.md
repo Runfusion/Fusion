@@ -1,14 +1,12 @@
 # Signals Connectors
 
-Fusion can receive signed external signals from Sentry, Datadog, PagerDuty, or a generic webhook at:
+Fusion can receive signed external signals from GitLab, Sentry, Datadog, PagerDuty, or a generic webhook at:
 
 ```text
 POST /api/signals/:provider
 ```
 
-Supported providers are `webhook`, `sentry`, `datadog`, and `pagerduty`. Every connector requires an HMAC signing secret configured in the Fusion dashboard process environment. Verified signals still create triage tasks, and they also write to the project-scoped `incidents` table so Command Center → Signals can show source, severity, and open/resolved status breakdowns.
-
-Forward-looking GitLab webhook/system-hook signal planning is mapped in [GitLab Parity Inventory](./gitlab-parity-inventory.md); GitLab is not a Signals connector until a later implementation task defines signed verification and payload normalization.
+Supported providers are `webhook`, `gitlab`, `sentry`, `datadog`, and `pagerduty`. Every connector requires a verification secret configured in the Fusion dashboard process environment. Generic webhook, Sentry, Datadog, and PagerDuty use HMAC signatures; GitLab uses GitLab's `X-Gitlab-Token` secret-token header. Verified signals still create triage tasks, and they also write to the project-scoped `incidents` table so Command Center → Signals can show source, severity, and open/resolved status breakdowns.
 
 ## Runtime behavior
 
@@ -21,7 +19,7 @@ Forward-looking GitLab webhook/system-hook signal planning is mapped in [GitLab 
 ## Security model
 
 - Secrets are environment variables; do not commit them to source control.
-- HMAC verification uses the raw request body and constant-time comparison.
+- HMAC verification uses the raw request body and constant-time comparison where the provider supplies an HMAC signature. GitLab secret-token verification compares `X-Gitlab-Token` to `FUSION_SIGNAL_GITLAB_SECRET` with constant-time comparison.
 - Requests are capped at about 1 MB.
 - Replay protection rejects stale timestamps where the provider supplies one and rejects repeated delivery ids within the replay window.
 - Normalized `title`, `body`, `groupingKey`, `link`, and `meta` fields are capped by `signal-source.ts` before storage.
@@ -128,13 +126,55 @@ Normalization:
 - `severity`: explicit `data.severity` when it is one of Fusion's normalized severities; otherwise high urgency maps to `critical` and other events map to `warning`.
 - Resolution: `event.event_type === "incident.resolved"` or `data.status === "resolved"` resolves the grouped incident; other incident events open/absorb it.
 
+## GitLab
+
+Set:
+
+```bash
+export FUSION_SIGNAL_GITLAB_SECRET="gitlab-webhook-secret-token"
+```
+
+Configure a GitLab project or group webhook with:
+
+- **URL**: `https://<your-fusion-host>/api/signals/gitlab`
+- **Secret token**: the same value as `FUSION_SIGNAL_GITLAB_SECRET`
+- **Triggers**: Issue events and/or Merge request events
+
+Fusion verifies GitLab's `X-Gitlab-Token` header. GitLab's webhook docs now recommend signing tokens for new webhooks, but this connector intentionally supports the documented secret-token compatibility path required by existing GitLab.com and self-managed GitLab installations. This task introduces no GitLab binary, CLI, download, or checksum-managed artifact.
+
+Supported GitLab events:
+
+- Project and group **Issue Hook** payloads with `object_kind`/`event_type` of `issue`.
+- Project and group **Merge Request Hook** payloads with `object_kind`/`event_type` of `merge_request`.
+- Work item issue payloads (`object_kind: "work_item"`) are treated as issue signals when they provide issue-shaped `object_attributes`.
+
+Normalization:
+
+- `source`: `gitlab`.
+- `groupingKey`: `gitlab:<project-or-group>:<issue|merge_request>:<iid>` using `project.path_with_namespace`, project id, group full path, or group id when available.
+- `externalId`: GitLab delivery headers such as `X-Gitlab-Event-UUID`, `Idempotency-Key`, `webhook-id`, or `X-Request-Id` when present; otherwise a stable fallback that includes grouping key, action, state, and timestamp so open and recovery events for the same IID are not deduped together.
+- `title`: `GitLab issue #<iid>: <title>` or `GitLab merge request !<iid>: <title>`.
+- `link`: `object_attributes.url` when safe, otherwise a project URL fallback. Fusion supports both GitLab.com and self-managed instance URLs and never fetches these links server-side.
+- `severity`: GitLab issue severity values such as `critical`, `high`, `medium`, and `low` map to Fusion's normalized severities; merge requests default to `info`.
+- Resolution: issue `action`/`state` of `close`/`closed` resolves the grouped signal; merge request `merge`/`merged` or `close`/`closed` resolves it; `open`, `update`, and `reopen` open/absorb it.
+
+Non-actionable or unsupported GitLab events, including push/test/ping/system-hook-style payloads, are accepted as non-actionable and do not create tasks. Malformed actionable issue/MR payloads, such as missing `object_attributes.iid` or `object_attributes.title`, return a 4xx response and do not create tasks.
+
+Relevant upstream evidence:
+
+- GitLab upstream project: <https://gitlab.com/gitlab-org/gitlab>
+- GitLab webhook docs: <https://docs.gitlab.com/user/project/integrations/webhooks/>
+- GitLab webhook event reference: <https://docs.gitlab.com/user/project/integrations/webhook_events/>
+- GitLab group webhooks: <https://docs.gitlab.com/user/group/webhooks/>
+- GitLab releases: <https://gitlab.com/gitlab-org/gitlab/-/releases>
+
 ## Command Center Signals
 
 Command Center → Signals reads aggregated incidents through `GET /api/command-center/signals`. Once a connector secret is configured and signed events arrive, the area displays total, open, resolved, MTTR, by-source, by-severity, and by-status metrics from local incident rows.
 
 The empty state is intentionally explicit:
 
-- no configured connector secret: prompt operators to connect Sentry, Datadog, PagerDuty, or the generic webhook;
+- no configured connector secret: prompt operators to connect GitLab, Sentry, Datadog, PagerDuty, or the generic webhook;
 - at least one configured connector secret but no rows in the selected range: report that Fusion is configured and awaiting signals.
 
 ## Separate monitor ingest path

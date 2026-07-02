@@ -185,7 +185,10 @@ function populatedSignalsFixture() {
     open: 2,
     resolved: 1,
     mttr: { value: 30, unavailable: false },
-    bySource: [{ source: "sentry", count: 2 }],
+    bySource: [
+      { source: "gitlab", count: 1 },
+      { source: "sentry", count: 2 },
+    ],
     bySeverity: [{ severity: "high", count: 1 }],
   };
 }

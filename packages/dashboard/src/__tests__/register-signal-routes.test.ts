@@ -18,6 +18,7 @@ import { webhookSource } from "../signal-sources/webhook.js";
 import { sentrySource } from "../signal-sources/sentry.js";
 import { datadogSource } from "../signal-sources/datadog.js";
 import { pagerdutySource } from "../signal-sources/pagerduty.js";
+import { gitlabSource } from "../signal-sources/gitlab.js";
 
 function sign(body: string, secret: string): string {
   return createHmac("sha256", secret).update(Buffer.from(body)).digest("hex");
@@ -75,6 +76,7 @@ const SECRETS: Record<string, string> = {
   FUSION_SIGNAL_SENTRY_SECRET: "sentry-secret",
   FUSION_SIGNAL_DATADOG_SECRET: "datadog-secret",
   FUSION_SIGNAL_PAGERDUTY_SECRET: "pd-secret",
+  FUSION_SIGNAL_GITLAB_SECRET: "gitlab-secret",
 };
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -118,15 +120,18 @@ function signedSignalContext(source: SignalSource, payload: object) {
       return ctxFor(source, payload, { "x-datadog-signature": sign(raw, SECRETS.FUSION_SIGNAL_DATADOG_SECRET) });
     case "pagerduty":
       return ctxFor(source, payload, { "x-pagerduty-signature": `v1=${sign(raw, SECRETS.FUSION_SIGNAL_PAGERDUTY_SECRET)}` });
+    case "gitlab":
+      return ctxFor(source, payload, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET });
   }
 }
 
 describe("getSignalSource registry", () => {
-  it("resolves all four providers and rejects unknown", () => {
+  it("resolves all five providers and rejects unknown", () => {
     expect(getSignalSource("webhook")).toBe(webhookSource);
     expect(getSignalSource("sentry")).toBe(sentrySource);
     expect(getSignalSource("datadog")).toBe(datadogSource);
     expect(getSignalSource("pagerduty")).toBe(pagerdutySource);
+    expect(getSignalSource("gitlab")).toBe(gitlabSource);
     expect(getSignalSource("bogus")).toBeUndefined();
   });
 });
@@ -369,6 +374,208 @@ describe("ingestSignal — Datadog & PagerDuty adapters (groupingKey from native
   });
 });
 
+function gitlabIssuePayload(overrides: Record<string, unknown> = {}) {
+  const { object_attributes: objectAttributeOverrides, ...topLevelOverrides } = overrides;
+  const object_attributes = {
+    id: 301,
+    iid: 23,
+    title: "New API: create/update/delete file",
+    description: "Create new API for repository file edits",
+    state: "opened",
+    action: "open",
+    severity: "high",
+    url: "https://gitlab.example.com/gitlabhq/gitlab-test/-/issues/23",
+    updated_at: new Date().toISOString(),
+    ...(asRecord(objectAttributeOverrides)),
+  };
+  return {
+    object_kind: "issue",
+    event_type: "issue",
+    user: { username: "root" },
+    project: {
+      id: 14,
+      name: "Gitlab Test",
+      path_with_namespace: "gitlabhq/gitlab-test",
+      web_url: "https://gitlab.example.com/gitlabhq/gitlab-test",
+    },
+    object_attributes,
+    ...topLevelOverrides,
+  };
+}
+
+function gitlabMergeRequestPayload(overrides: Record<string, unknown> = {}) {
+  const { object_attributes: objectAttributeOverrides, ...topLevelOverrides } = overrides;
+  const object_attributes = {
+    id: 701,
+    iid: 7,
+    title: "Improve alerts",
+    description: "MR description",
+    state: "opened",
+    action: "open",
+    url: "https://gitlab.com/acme/ops/-/merge_requests/7",
+    updated_at: new Date().toISOString(),
+    ...(asRecord(objectAttributeOverrides)),
+  };
+  return {
+    object_kind: "merge_request",
+    event_type: "merge_request",
+    project: {
+      id: 99,
+      name: "ops",
+      path_with_namespace: "acme/ops",
+      web_url: "https://gitlab.com/acme/ops",
+    },
+    object_attributes,
+    ...topLevelOverrides,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+describe("ingestSignal — GitLab adapter", () => {
+  it("creates a triage task for a valid project issue webhook from a self-managed URL", async () => {
+    const store = makeStore();
+    const payload = gitlabIssuePayload();
+    const res = await ingestSignal({
+      source: gitlabSource,
+      store,
+      ...ctxFor(gitlabSource, payload, {
+        "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET,
+        "x-gitlab-event": "Issue Hook",
+        "x-gitlab-event-uuid": "gl-delivery-issue-open",
+      }),
+      nonceCache: new DeliveryNonceCache(),
+    });
+
+    expect(res.status).toBe(201);
+    expect(store._tasks).toHaveLength(1);
+    expect(store._tasks[0].title).toBe("GitLab issue #23: New API: create/update/delete file");
+    expect(store._tasks[0].description).toContain("https://gitlab.example.com/gitlabhq/gitlab-test/-/issues/23");
+    const meta = store._tasks[0].source?.sourceMetadata as Record<string, unknown>;
+    expect(meta.signalSource).toBe("gitlab");
+    expect(meta.signalDeliveryId).toBe("delivery:gl-delivery-issue-open");
+    expect(meta.signalGroupingKey).toBe("gitlab:gitlabhq/gitlab-test:issue:23");
+    expect(meta.signalSeverity).toBe("error");
+  });
+
+  it("normalizes group issue hooks and GitLab.com merge request hooks", async () => {
+    const issue = gitlabIssuePayload({
+      project: undefined,
+      group: { id: 5, name: "Platform", full_path: "platform" },
+      object_attributes: { iid: 44, title: "Group issue", action: "reopen", state: "opened", url: "https://gitlab.example.net/groups/platform/-/work_items/44" },
+    });
+    const mr = gitlabMergeRequestPayload({ object_attributes: { action: "merge", state: "merged" } });
+
+    const issueSignal = gitlabSource.normalize(issue, ctxFor(gitlabSource, issue, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
+    const mrSignal = gitlabSource.normalize(mr, ctxFor(gitlabSource, mr, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
+
+    expect(issueSignal).toMatchObject({
+      source: "gitlab",
+      groupingKey: "gitlab:platform:issue:44",
+      resolution: "open",
+      link: "https://gitlab.example.net/groups/platform/-/work_items/44",
+    });
+    expect(mrSignal).toMatchObject({
+      source: "gitlab",
+      groupingKey: "gitlab:acme/ops:merge_request:7",
+      resolution: "resolved",
+      link: "https://gitlab.com/acme/ops/-/merge_requests/7",
+    });
+  });
+
+  it("maps issue and merge-request lifecycle actions without suppressing recovery events", async () => {
+    const { db, store } = makeDbStore();
+    const open = gitlabIssuePayload({ object_attributes: { action: "open", state: "opened", updated_at: "2026-03-04T00:00:00.000Z" } });
+    const close = gitlabIssuePayload({ object_attributes: { action: "close", state: "closed", updated_at: "2026-03-04T00:05:00.000Z" } });
+
+    expect((await ingestSignal({
+      source: gitlabSource,
+      store,
+      ...ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET, "x-gitlab-event-uuid": "gl-issue-open" }),
+      nonceCache: new DeliveryNonceCache(),
+    })).status).toBe(201);
+    expect((await ingestSignal({
+      source: gitlabSource,
+      store,
+      ...ctxFor(gitlabSource, close, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET, "x-gitlab-event-uuid": "gl-issue-close" }),
+      nonceCache: new DeliveryNonceCache(),
+    })).status).toBe(201);
+
+    expect(store._tasks).toHaveLength(2);
+    expect(incidents(db)).toMatchObject([{ groupingKey: "gitlab:gitlabhq/gitlab-test:issue:23", source: "gitlab", status: "resolved" }]);
+    const updateSignal = gitlabSource.normalize(gitlabIssuePayload({ object_attributes: { action: "update", state: "opened" } }), ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
+    const reopenSignal = gitlabSource.normalize(gitlabIssuePayload({ object_attributes: { action: "reopen", state: "opened" } }), ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
+    const mergedSignal = gitlabSource.normalize(gitlabMergeRequestPayload({ object_attributes: { action: "merge", state: "merged" } }), ctxFor(gitlabSource, open, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
+    expect(updateSignal?.resolution).toBe("open");
+    expect(reopenSignal?.resolution).toBe("open");
+    expect(mergedSignal?.resolution).toBe("resolved");
+  });
+
+  it("rejects missing secret, missing token, and invalid token without creating tasks", async () => {
+    const payload = gitlabIssuePayload();
+    const rawBody = Buffer.from(JSON.stringify(payload));
+    const body = payload;
+
+    delete process.env.FUSION_SIGNAL_GITLAB_SECRET;
+    const missingSecretStore = makeStore();
+    expect((await ingestSignal({ source: gitlabSource, store: missingSecretStore, rawBody, headers: { "x-gitlab-token": "x" }, body, nonceCache: new DeliveryNonceCache() })).status).toBe(401);
+    process.env.FUSION_SIGNAL_GITLAB_SECRET = SECRETS.FUSION_SIGNAL_GITLAB_SECRET;
+
+    const missingTokenStore = makeStore();
+    expect((await ingestSignal({ source: gitlabSource, store: missingTokenStore, rawBody, headers: {}, body, nonceCache: new DeliveryNonceCache() })).status).toBe(401);
+    const invalidTokenStore = makeStore();
+    expect((await ingestSignal({ source: gitlabSource, store: invalidTokenStore, rawBody, headers: { "x-gitlab-token": "wrong" }, body, nonceCache: new DeliveryNonceCache() })).status).toBe(401);
+    expect(missingSecretStore._tasks).toHaveLength(0);
+    expect(missingTokenStore._tasks).toHaveLength(0);
+    expect(invalidTokenStore._tasks).toHaveLength(0);
+  });
+
+  it("accepts unsupported GitLab ping events as non-actionable and rejects malformed actionable payloads", async () => {
+    const pingStore = makeStore();
+    const ping = { object_kind: "push", event_name: "push" };
+    expect((await ingestSignal({
+      source: gitlabSource,
+      store: pingStore,
+      ...ctxFor(gitlabSource, ping, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET, "x-gitlab-event": "Push Hook" }),
+      nonceCache: new DeliveryNonceCache(),
+    })).status).toBe(200);
+    expect(pingStore._tasks).toHaveLength(0);
+
+    const malformedStore = makeStore();
+    const malformed = { object_kind: "issue", object_attributes: { title: "Missing IID" } };
+    expect((await ingestSignal({
+      source: gitlabSource,
+      store: malformedStore,
+      ...ctxFor(gitlabSource, malformed, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET, "x-gitlab-event": "Issue Hook" }),
+      nonceCache: new DeliveryNonceCache(),
+    })).status).toBe(400);
+    expect(malformedStore._tasks).toHaveLength(0);
+  });
+
+  it("drops unsafe links, applies field caps, and keeps fallback external ids action-distinct", () => {
+    const longTitle = "x".repeat(400);
+    const payload = gitlabIssuePayload({
+      project: { id: 10, path_with_namespace: "internal/project", web_url: "https://gitlab.example.com/internal/project" },
+      object_attributes: {
+        iid: 88,
+        title: longTitle,
+        description: "y".repeat(9000),
+        action: "close",
+        state: "closed",
+        url: "http://127.0.0.1/internal",
+        updated_at: "2026-03-04T00:05:00.000Z",
+      },
+    });
+    const signal = gitlabSource.normalize(payload, ctxFor(gitlabSource, payload, { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET }));
+    expect(signal?.title.length).toBeLessThanOrEqual(300);
+    expect(signal?.body?.length).toBeLessThanOrEqual(8000);
+    expect(signal?.link).toBeUndefined();
+    expect(signal?.externalId).toContain(":close:closed:");
+  });
+});
+
 describe("ingestSignal — incident capture", () => {
   it("writes source and normalized severity for all configured providers", async () => {
     const cases = [
@@ -413,6 +620,14 @@ describe("ingestSignal — incident capture", () => {
           return { "x-pagerduty-signature": `v1=${sign(raw, SECRETS.FUSION_SIGNAL_PAGERDUTY_SECRET)}` };
         },
         expected: { source: "pagerduty", severity: "critical", groupingKey: "pd-1" },
+      },
+      {
+        source: gitlabSource,
+        payload: gitlabIssuePayload({ object_attributes: { iid: 77, title: "GitLab incident", severity: "critical" } }),
+        headers() {
+          return { "x-gitlab-token": SECRETS.FUSION_SIGNAL_GITLAB_SECRET, "x-gitlab-event-uuid": "gl-incident-capture" };
+        },
+        expected: { source: "gitlab", severity: "critical", groupingKey: "gitlab:gitlabhq/gitlab-test:issue:77" },
       },
     ] as const;
 
@@ -517,6 +732,13 @@ describe("ingestSignal — incident capture", () => {
           },
         },
         expectedSource: "pagerduty",
+      },
+      {
+        source: gitlabSource,
+        groupingKey: "gitlab:gitlabhq/gitlab-test:issue:23",
+        openPayload: gitlabIssuePayload({ object_attributes: { action: "open", state: "opened", updated_at: new Date(now).toISOString() } }),
+        resolvePayload: gitlabIssuePayload({ object_attributes: { action: "close", state: "closed", updated_at: new Date(now + 1_000).toISOString() } }),
+        expectedSource: "gitlab",
       },
     ] as const;
 
@@ -687,7 +909,8 @@ describe("helpers", () => {
     expect(resolveConfiguredSignalProviders({
       FUSION_SIGNAL_WEBHOOK_SECRET: "wh",
       FUSION_SIGNAL_PAGERDUTY_SECRET: "pd",
-    })).toEqual(["webhook", "pagerduty"]);
+      FUSION_SIGNAL_GITLAB_SECRET: "gl",
+    })).toEqual(["webhook", "pagerduty", "gitlab"]);
   });
 
   it("signalToTaskInput maps to a triage task with provenance metadata", () => {
