@@ -2,15 +2,17 @@
  * U5 — Permanent settings-regime consistency guard (registration-drift lesson).
  *
  * Every settings key must live in EXACTLY ONE regime: either a project/global
- * SCHEMA key, or a MOVED (tombstoned) workflow-setting key. This test fails fast
- * if the schema key lists, the tombstone list, and the built-in workflow setting
- * declarations ever drift apart — the exact class of bug the U4/U5 work exists to
- * prevent (a moved key re-materializing in project settings, or a tombstone with
- * no backing declaration).
+ * SCHEMA key, a MOVED (tombstoned) workflow-setting key, or an explicitly
+ * workflow-native declaration catalog. This test fails fast if the schema key
+ * lists, the tombstone list, and the built-in workflow setting declarations ever
+ * drift apart — the exact class of bug the U4/U5 work exists to prevent (a moved
+ * key re-materializing in project settings, a tombstone with no backing
+ * declaration, or a workflow-native declaration outside all recognized catalogs).
  */
 import { describe, it, expect } from "vitest";
 import { MOVED_SETTINGS_KEYS } from "../moved-settings.js";
 import {
+  BUILTIN_REVIEW_REVISION_SETTINGS,
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_WORKFLOW_SETTINGS,
 } from "../builtin-workflow-settings.js";
@@ -42,27 +44,44 @@ describe("settings consistency (U5)", () => {
     }
   });
 
-  it("(b) every built-in declaration is either moved or workflow-native triage policy", () => {
+  it("(b) every built-in declaration is either moved or workflow-native", () => {
     const declIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((s) => s.id));
     const moved = new Set(movedKeys);
-    const native = new Set(BUILTIN_TRIAGE_POLICY_SETTINGS.map((s) => s.id));
+    const nativeCatalogs = [
+      { name: "BUILTIN_TRIAGE_POLICY_SETTINGS", ids: BUILTIN_TRIAGE_POLICY_SETTINGS.map((s) => s.id) },
+      { name: "BUILTIN_REVIEW_REVISION_SETTINGS", ids: BUILTIN_REVIEW_REVISION_SETTINGS.map((s) => s.id) },
+    ];
+    const native = new Set(nativeCatalogs.flatMap((catalog) => catalog.ids));
+    /*
+     * FNXC:SettingsRegimes 2026-07-02-08:20:
+     * Workflow-native settings include triage policy and review/revision policy. They must be recognized by the consistency guard without being tombstoned in MOVED_SETTINGS_KEYS or reintroduced into project/global schemas.
+     */
+
     // Every moved key has a declaration.
     for (const key of moved) {
       expect(declIds.has(key), `moved key '${key}' has no BUILTIN_WORKFLOW_SETTINGS declaration`).toBe(true);
     }
-    // Every declaration is either a moved key or an explicitly workflow-native triage setting.
+    // Native catalogs must remain disjoint from each other and the moved-key tombstone catalog.
+    for (const catalog of nativeCatalogs) {
+      for (const id of catalog.ids) {
+        const memberships = nativeCatalogs.filter((candidate) => candidate.ids.includes(id)).map((candidate) => candidate.name);
+        expect(memberships, `native setting '${id}' must belong to exactly one workflow-native catalog`).toHaveLength(1);
+        expect(moved.has(id), `native setting '${id}' from ${catalog.name} must not be in MOVED_SETTINGS_KEYS`).toBe(false);
+      }
+    }
+    // Every declaration is either a moved key or an explicitly workflow-native setting.
     for (const id of declIds) {
+      const regimeCount = Number(moved.has(id)) + Number(native.has(id));
       expect(
-        moved.has(id) || native.has(id),
-        `declaration '${id}' must be in MOVED_SETTINGS_KEYS or BUILTIN_TRIAGE_POLICY_SETTINGS`,
-      ).toBe(true);
+        regimeCount,
+        `declaration '${id}' must belong to exactly one settings regime: MOVED_SETTINGS_KEYS or a workflow-native catalog`,
+      ).toBe(1);
     }
     for (const id of native) {
-      expect(moved.has(id), `native triage setting '${id}' must not be in MOVED_SETTINGS_KEYS`).toBe(false);
-      expect(PROJECT_SETTINGS_KEYS as readonly string[], `native triage setting '${id}' must not be project schema key`).not.toContain(id);
-      expect(GLOBAL_SETTINGS_KEYS as readonly string[], `native triage setting '${id}' must not be global schema key`).not.toContain(id);
-      expect(Object.keys(DEFAULT_PROJECT_SETTINGS), `native triage setting '${id}' must not be project default`).not.toContain(id);
-      expect(Object.keys(DEFAULT_GLOBAL_SETTINGS), `native triage setting '${id}' must not be global default`).not.toContain(id);
+      expect(PROJECT_SETTINGS_KEYS as readonly string[], `native workflow setting '${id}' must not be project schema key`).not.toContain(id);
+      expect(GLOBAL_SETTINGS_KEYS as readonly string[], `native workflow setting '${id}' must not be global schema key`).not.toContain(id);
+      expect(Object.keys(DEFAULT_PROJECT_SETTINGS), `native workflow setting '${id}' must not be project default`).not.toContain(id);
+      expect(Object.keys(DEFAULT_GLOBAL_SETTINGS), `native workflow setting '${id}' must not be global default`).not.toContain(id);
     }
     expect(declIds.size).toBe(moved.size + native.size);
   });
