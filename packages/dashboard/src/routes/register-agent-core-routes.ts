@@ -5,6 +5,7 @@ import type { Agent, AgentCapability, AgentUpdateInput, TaskStore, AgentPermissi
 import {
   ApprovalRequestStore,
   AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
+  AGENT_PERMISSIONS,
   aggregateTaskTokenTotalsByAgentLink,
   getDefaultHeartbeatProcedurePath,
   isAgentPermissionPolicyPresetId,
@@ -29,6 +30,26 @@ const AVATAR_MIME_TO_EXT: Record<string, string> = {
 };
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const VALID_POLICY_DISPOSITIONS: readonly AgentPermissionPolicyDisposition[] = ["allow", "block", "require-approval"] as const;
+const VALID_AGENT_PERMISSION_KEYS = new Set<string>(AGENT_PERMISSIONS);
+
+function parsePermissionsInput(input: unknown): Record<string, boolean> {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw badRequest("permissions must be an object");
+  }
+  const normalized: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!VALID_AGENT_PERMISSION_KEYS.has(key)) {
+      throw badRequest(`permissions contains unknown key: ${key}`);
+    }
+    if (typeof value !== "boolean") {
+      throw badRequest(`permissions.${key} must be a boolean`);
+    }
+    if (value) {
+      normalized[key] = true;
+    }
+  }
+  return normalized;
+}
 
 function parsePermissionPolicyInput(input: unknown) {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -230,9 +251,7 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
       if (runtimeConfig !== undefined && (typeof runtimeConfig !== "object" || runtimeConfig === null || Array.isArray(runtimeConfig))) {
         throw badRequest("runtimeConfig must be an object");
       }
-      if (permissions !== undefined && (typeof permissions !== "object" || permissions === null || Array.isArray(permissions))) {
-        throw badRequest("permissions must be an object");
-      }
+      const normalizedPermissions = permissions !== undefined && permissions !== null ? parsePermissionsInput(permissions) : undefined;
       let normalizedPermissionPolicy;
       if (permissionPolicy !== undefined && permissionPolicy !== null) {
         normalizedPermissionPolicy = parsePermissionPolicyInput(permissionPolicy);
@@ -291,7 +310,7 @@ export function registerAgentCoreListCreateRoutes(ctx: ApiRoutesContext, deps: A
           icon: icon ?? undefined,
           reportsTo: reportsTo ?? undefined,
           runtimeConfig,
-          permissions,
+          permissions: normalizedPermissions,
           permissionPolicy: normalizedPermissionPolicy,
           instructionsPath: instructionsPath ?? undefined,
           instructionsText: instructionsText ?? undefined,
@@ -671,10 +690,7 @@ export function registerAgentCoreRoutes(ctx: ApiRoutesContext, deps: AgentCoreRo
       }
 
       if ("permissions" in body) {
-        if (body.permissions !== null && (typeof body.permissions !== "object" || Array.isArray(body.permissions))) {
-          throw badRequest("permissions must be an object");
-        }
-        updates.permissions = body.permissions ?? undefined;
+        updates.permissions = body.permissions !== null ? parsePermissionsInput(body.permissions) : undefined;
       }
 
       if ("permissionPolicy" in body) {

@@ -788,7 +788,7 @@ describe("executeHeartbeat", () => {
     expect((store.updateAgent as any)).toHaveBeenCalledWith("agent-001", { pauseReason: "awaiting-approval" });
   });
 
-  it("omits permanent-agent gating context for ephemeral heartbeat agents", async () => {
+  it("passes permission gating context for ephemeral heartbeat agents", async () => {
     const store = createStoreWithAgentForExec({
       taskId: "FN-001",
       metadata: { agentKind: "task-worker" },
@@ -805,8 +805,16 @@ describe("executeHeartbeat", () => {
       permanentAgentGating?: unknown;
       actionGateContext?: unknown;
     };
-    expect(args.permanentAgentGating).toBeUndefined();
-    expect(args.actionGateContext).toBeUndefined();
+    expect(args.permanentAgentGating).toMatchObject({
+      permissionPolicy: { presetId: "unrestricted" },
+      requester: { actorId: "agent-001", actorName: "executor-ephemeral" },
+    });
+    expect(args.actionGateContext).toMatchObject({
+      agentId: "agent-001",
+      agentName: "executor-ephemeral",
+      isEphemeral: true,
+      permissionPolicy: { presetId: "unrestricted" },
+    });
   });
 
   describe("dependency validation", () => {

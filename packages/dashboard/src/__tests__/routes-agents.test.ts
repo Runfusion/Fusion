@@ -648,7 +648,7 @@ describe("Agent create/update routes", () => {
         icon: "🧪",
         reportsTo: agentId,
         runtimeConfig: { heartbeatIntervalMs: 60000 },
-        permissions: { read: true },
+        permissions: { "tasks:assign": true },
         permissionPolicy: { presetId: "approval-required" },
         instructionsPath: "docs/reviewer.md",
         instructionsText: "Check test quality.",
@@ -666,7 +666,7 @@ describe("Agent create/update routes", () => {
       icon: "🧪",
       reportsTo: agentId,
       runtimeConfig: { heartbeatIntervalMs: 60000 },
-      permissions: { read: true },
+      permissions: { "tasks:assign": true },
       permissionPolicy: {
         presetId: "approval-required",
         rules: {
@@ -697,7 +697,7 @@ describe("Agent create/update routes", () => {
         reportsTo: "agent-parent",
         runtimeConfig: { heartbeatTimeoutMs: 120000 },
         pauseReason: "manual",
-        permissions: { deploy: true },
+        permissions: { "agents:create": true },
         permissionPolicy: { presetId: "locked-down" },
         totalInputTokens: 42,
         totalOutputTokens: 21,
@@ -719,7 +719,7 @@ describe("Agent create/update routes", () => {
       reportsTo: "agent-parent",
       runtimeConfig: { heartbeatTimeoutMs: 120000 },
       pauseReason: "manual",
-      permissions: { deploy: true },
+      permissions: { "agents:create": true },
       permissionPolicy: {
         presetId: "locked-down",
         rules: {

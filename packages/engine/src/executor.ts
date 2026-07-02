@@ -2174,23 +2174,27 @@ export class TaskExecutor {
     return this._approvalRequestStore;
   }
 
-  private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]> }): AgentActionGateContext | undefined {
-    if (!agent || isEphemeralAgent(agent)) {
-      return undefined;
-    }
-    const policy = resolveEffectiveAgentPermissionPolicy(agent.permissionPolicy, projectDefaultPolicy);
+  private buildActionGateContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): AgentActionGateContext | undefined {
+    /*
+    FNXC:AgentPermissions 2026-07-02-00:00:
+    FN-7413 requires task-scoped runtime gates for permanent identity agents, stored ephemeral agents, and fallback executor-FN task workers. Use a stable synthetic actor for fallback workers so category/exact-tool rules and approval dedupe keys apply even when no agent row exists.
+    */
+    const actorId = agent?.id ?? `executor-${taskId ?? "unknown"}`;
+    const actorName = agent?.name ?? `Task worker ${taskId ?? "unknown"}`;
+    const isEphemeral = !agent || isEphemeralAgent(agent);
+    const policy = resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy);
     return {
-      agentId: agent.id,
-      agentName: agent.name,
-      isEphemeral: false,
+      agentId: actorId,
+      agentName: actorName,
+      isEphemeral,
       taskId,
       runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
       permissionPolicy: policy,
       createApprovalRequest: async (decision, args) => this.approvalRequestStore.create({
         requester: {
-          actorId: agent.id,
+          actorId,
           actorType: "agent",
-          actorName: agent.name,
+          actorName,
         },
         taskId,
         runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
@@ -2209,16 +2213,16 @@ export class TaskExecutor {
         },
       }),
       findApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
+        const latest = this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
         return latest ? { id: latest.id, status: latest.status } : null;
       },
       findPendingApprovalByDedupeKey: async (dedupeKey) => {
-        const latest = this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
+        const latest = this.approvalRequestStore.findLatestByDedupeKey({ requesterActorId: actorId, taskId, dedupeKey });
         return latest?.status === "pending" ? { id: latest.id } : null;
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
         if (taskId) {
-          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: agent.id });
+          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId });
           await this.store.logEntry(
             taskId,
             `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
@@ -2226,57 +2230,56 @@ export class TaskExecutor {
             this.getRunContextFor(taskId),
           );
         }
-        if (this.options.agentStore) {
+        if (agent && this.options.agentStore) {
           await this.options.agentStore.updateAgentState(agent.id, "paused");
           await this.options.agentStore.updateAgent(agent.id, { pauseReason: "awaiting-approval" });
         }
       },
       markApprovalCompleted: async (approvalRequestId) => {
         await this.approvalRequestStore.markCompleted(approvalRequestId, {
-          actor: { actorId: agent.id, actorType: "agent", actorName: agent.name },
+          actor: { actorId, actorType: "agent", actorName },
           note: "Tool executed after approval",
         });
       },
     };
   }
 
-  private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]> }): import("@fusion/core").PermanentAgentGatingContext | undefined {
-    if (!agent || isEphemeralAgent(agent)) {
-      return undefined;
-    }
+  private buildPermanentAgentGatingContext(taskId: string | undefined, agent: Agent | null | undefined, projectDefaultPolicy?: { rules?: Partial<import("@fusion/core").AgentPermissionPolicy["rules"]>; toolRules?: import("@fusion/core").AgentPermissionPolicyToolRules }): import("@fusion/core").PermanentAgentGatingContext | undefined {
+    const actorId = agent?.id ?? `executor-${taskId ?? "unknown"}`;
+    const actorName = agent?.name ?? `Task worker ${taskId ?? "unknown"}`;
 
     return {
-      permissionPolicy: resolveEffectiveAgentPermissionPolicy(agent.permissionPolicy, projectDefaultPolicy),
+      permissionPolicy: resolveEffectiveAgentPermissionPolicy(agent?.permissionPolicy, projectDefaultPolicy),
       requester: {
-        actorId: agent.id,
+        actorId,
         actorType: "agent",
-        actorName: agent.name,
+        actorName,
       },
       taskId,
       runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
       createApprovalRequest: async ({ category, toolName, args }) => this.approvalRequestStore.create({
         requester: {
-          actorId: agent.id,
+          actorId,
           actorType: "agent",
-          actorName: agent.name,
+          actorName,
         },
         taskId,
         runId: taskId ? this.getRunContextFor(taskId)?.runId : undefined,
         targetAction: {
           category,
           action: toolName,
-          summary: `Permanent-agent gated action for ${toolName}`,
+          summary: `Agent gated action for ${toolName}`,
           resourceType: "tool",
           resourceId: toolName,
           context: {
             toolName,
             toolArgs: args,
-            source: "permanent-agent-gating",
+            source: "agent-gating",
           },
         },
       }),
       findPendingApprovalRequest: async (dedupeKey) => {
-        const pending = this.approvalRequestStore.list({ status: "pending", requesterActorId: agent.id, taskId, limit: 100 });
+        const pending = this.approvalRequestStore.list({ status: "pending", requesterActorId: actorId, taskId, limit: 100 });
         return pending.find((request) => request.targetAction.context?.approvalDedupeKey === dedupeKey) ?? null;
       },
     };

@@ -1116,7 +1116,15 @@
     "weekly": "Hebdomadaire",
     "workingOn": "En cours :",
     "zoomIn": "Zoomer",
-    "zoomOut": "Dézoomer"
+    "zoomOut": "Dézoomer",
+    "capabilityGrantsTitle": "Capability grants",
+    "capabilityGrantsDescription": "Explicit grants add to this agent's role defaults and apply to both permanent and ephemeral agents.",
+    "roleDefaultGrant": "Role default grant",
+    "explicitGrant": "Explicit grant",
+    "notGranted": "Not granted",
+    "toggleCapabilityGrant": "Toggle explicit grant for {{permission}}",
+    "capabilityPermissionsUpdated": "Capability grants updated",
+    "capabilityPermissionsFailed": "Failed to update capability grants: {{error}}"
   },
   "app": {
     "backendError": {
@@ -5632,7 +5640,7 @@
       "agentPermissions": "",
       "agentProvisioningApprovals": "",
       "configureProjectLevelApprovalBehaviorForDurableProvisioning": "",
-      "perAgentSettingsOverrideProjectDefaultsEachCategory": ""
+      "perAgentSettingsOverrideProjectDefaultsEachCategory": "Project defaults apply to permanent agents, ephemeral task workers, and fallback executor workers unless a per-agent override is set. Exact tool rules compose with the legacy ephemeral create-task toggle."
     },
     "appearance": {
       "hideAISessionNotificationBanners": "",

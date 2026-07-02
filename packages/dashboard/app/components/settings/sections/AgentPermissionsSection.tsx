@@ -20,7 +20,7 @@ export function AgentPermissionsSection({ scopeBanner, form, setForm }: AgentPer
       {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.agentPermissions.agentPermissions", "Agent Permissions")}</h4>
       <div className="form-group">
-        <small className="settings-muted">{t("settings.agentPermissions.perAgentSettingsOverrideProjectDefaultsEachCategory", "Per-agent settings override project defaults. Each category controls a separate approval gate.")}</small>
+        <small className="settings-muted">{t("settings.agentPermissions.perAgentSettingsOverrideProjectDefaultsEachCategory", "Project defaults apply to permanent agents, ephemeral task workers, and fallback executor workers unless a per-agent override is set. Exact tool rules compose with the legacy ephemeral create-task toggle.")}</small>
       </div>
       <AgentPermissionPolicyEditor mode="project-default" value={form.defaultAgentPermissionPolicy ? { presetId: "custom", rules: toCompleteAgentPermissionRules(form.defaultAgentPermissionPolicy.rules), ...(form.defaultAgentPermissionPolicy.toolRules ? { toolRules: form.defaultAgentPermissionPolicy.toolRules } : {}) } as AgentPermissionPolicy : { presetId: "custom", rules: toCompleteAgentPermissionRules() }} onChange={(next) => setForm((f) => ({
             ...f,

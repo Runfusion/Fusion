@@ -15,8 +15,8 @@ import remarkGfm from "remark-gfm";
 import type { AgentDetail, AgentState, AgentHeartbeatRun, AgentBudgetStatus, ModelInfo, MemoryFileInfo, AgentCapability, PluginRuntimeInfo, SkillContent, AgentOnboardingSummary, AgentMailboxResponse, AgentPromptSizePoint } from "../api";
 import { fetchAgent, updateAgent, updateAgentState, deleteAgent, fetchAgentLogsWithMeta, fetchAgentRunLogs, fetchAgentChildren, fetchAgentRuns, fetchAgentRunDetail, startAgentRun, stopAgentRun, updateAgentInstructions, updateAgentSoul, updateAgentMemory, fetchAgentMemoryFiles, fetchAgentMemoryFile, saveAgentMemoryFile, fetchAgentTasks, fetchChainOfCommand, fetchAgentBudgetStatus, resetAgentBudget, fetchWorkspaceFileContent, saveWorkspaceFileContent, fetchModels, fetchPluginRuntimes, fetchAgents, fetchSettingsByScope, upgradeAgentHeartbeatProcedure, fetchSkillContent, uploadAgentAvatar, deleteAgentAvatar, fetchAgentMailbox, markMessageRead, fetchAgentPromptSizes } from "../api";
 import type { Agent } from "../api";
-import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules } from "@fusion/core";
-import { getErrorMessage, isEphemeralAgent } from "@fusion/core";
+import type { AgentLogEntry, Task, Message, ParticipantType, AgentPermissionPolicy, AgentPermissionPolicyRules, AgentPermission } from "@fusion/core";
+import { AGENT_PERMISSIONS, getErrorMessage, isEphemeralAgent } from "@fusion/core";
 import { AgentLogViewer } from "./AgentLogViewer";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { AgentReflectionsTab } from "./AgentReflectionsTab";
@@ -42,6 +42,20 @@ import { useFavorites } from "../hooks/useFavorites";
 function cn(...classes: (string | boolean | undefined | null)[]): string {
   return classes.filter(Boolean).join(" ");
 }
+
+/*
+FNXC:AgentPermissions 2026-07-02-00:00:
+Agent Detail must show explicit capability grants next to role-default grants for both permanent and ephemeral agents. Keep this UI map aligned with core ROLE_DEFAULT_PERMISSIONS while the dashboard source build imports constants through the core types surface.
+*/
+const AGENT_ROLE_DEFAULT_PERMISSION_MAP: Record<AgentCapability, AgentPermission[]> = {
+  triage: ["tasks:create", "agents:view", "messages:read"],
+  executor: ["tasks:execute", "agents:view", "messages:read", "messages:send"],
+  reviewer: ["tasks:review", "agents:view", "messages:read", "messages:send"],
+  merger: ["tasks:merge", "agents:view", "messages:read"],
+  scheduler: ["tasks:assign", "tasks:create", "tasks:archive", "agents:view", "automations:manage", "missions:manage", "messages:read"],
+  engineer: ["tasks:execute", "tasks:review", "agents:view", "messages:read", "messages:send"],
+  custom: [],
+};
 
 /**
  * Format an ISO timestamp to a relative time string.
@@ -3759,6 +3773,7 @@ function ConfigTab({
   const [modelValue, setModelValue] = useState(initialModelValue);
   const [selectedRuntimeId, setSelectedRuntimeId] = useState(initialRuntimeHint);
   const [permissionPolicyValue, setPermissionPolicyValue] = useState<AgentPermissionPolicy | undefined>(agent.permissionPolicy);
+  const [permissionsValue, setPermissionsValue] = useState<Record<string, boolean>>(agent.permissions ?? {});
   const [projectDefaultPermissionPolicy, setProjectDefaultPermissionPolicy] = useState<{ rules?: Partial<AgentPermissionPolicyRules>; toolRules?: AgentPermissionPolicy["toolRules"] } | undefined>(undefined);
 
   const managerSelection = reportsToValue.trim();
@@ -3857,6 +3872,10 @@ function ConfigTab({
   }, [agent.permissionPolicy]);
 
   useEffect(() => {
+    setPermissionsValue(agent.permissions ?? {});
+  }, [agent.permissions]);
+
+  useEffect(() => {
     fetchSettingsByScope(projectId)
       .then((scoped) => setProjectDefaultPermissionPolicy(scoped.project?.defaultAgentPermissionPolicy))
       .catch(() => setProjectDefaultPermissionPolicy(undefined));
@@ -3870,6 +3889,29 @@ function ConfigTab({
       addToast(t("agents.permissionPolicyUpdated", "Permission policy updated"), "success");
     } catch (err) {
       addToast(t("agents.permissionPolicyFailed", "Failed to update permission policy: {{error}}", { error: getErrorMessage(err) }), "error");
+    }
+  };
+
+  const roleDefaultPermissions = useMemo(() => new Set<AgentPermission>(AGENT_ROLE_DEFAULT_PERMISSION_MAP[roleValue] ?? []), [roleValue]);
+  const explicitPermissionSet = useMemo(() => new Set<AgentPermission>(
+    AGENT_PERMISSIONS.filter((permission) => permissionsValue[permission] === true),
+  ), [permissionsValue]);
+
+  const handleCapabilityPermissionChange = async (permission: AgentPermission, granted: boolean) => {
+    const next = { ...permissionsValue };
+    if (granted) {
+      next[permission] = true;
+    } else {
+      delete next[permission];
+    }
+    setPermissionsValue(next);
+    try {
+      await updateAgent(agent.id, { permissions: next }, projectId);
+      await onSaved();
+      addToast(t("agents.capabilityPermissionsUpdated", "Capability grants updated"), "success");
+    } catch (err) {
+      setPermissionsValue(agent.permissions ?? {});
+      addToast(t("agents.capabilityPermissionsFailed", "Failed to update capability grants: {{error}}", { error: getErrorMessage(err) }), "error");
     }
   };
 
@@ -4715,6 +4757,41 @@ function ConfigTab({
         <p className="config-description">
           {t("agents.permissionsDescription", "Per-agent settings override project defaults. Each category controls a separate approval gate.")}
         </p>
+        <div className="agent-capability-grants" data-testid="agent-capability-grants">
+          <h4>{t("agents.capabilityGrantsTitle", "Capability grants")}</h4>
+          <p className="config-hint">
+            {t("agents.capabilityGrantsDescription", "Explicit grants add to this agent's role defaults and apply to both permanent and ephemeral agents.")}
+          </p>
+          <div className="agent-capability-grants-grid">
+            {AGENT_PERMISSIONS.map((permission) => {
+              const roleDefault = roleDefaultPermissions.has(permission);
+              const explicitGrant = explicitPermissionSet.has(permission);
+              const inputId = `agent-capability-${agent.id}-${permission.replace(/[^a-z0-9]+/gi, "-")}`;
+              return (
+                <label key={permission} className="agent-capability-grant-row" htmlFor={inputId}>
+                  <span>
+                    <span className="agent-capability-grant-name">{permission}</span>
+                    <span className="config-hint">
+                      {roleDefault
+                        ? t("agents.roleDefaultGrant", "Role default grant")
+                        : explicitGrant
+                          ? t("agents.explicitGrant", "Explicit grant")
+                          : t("agents.notGranted", "Not granted")}
+                    </span>
+                  </span>
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    checked={explicitGrant}
+                    aria-label={t("agents.toggleCapabilityGrant", "Toggle explicit grant for {{permission}}", { permission })}
+                    onChange={(event) => { void handleCapabilityPermissionChange(permission, event.target.checked); }}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
         {permissionPolicyValue === undefined ? (
           <div className="agent-permission-inherit-banner">
             <span>{t("agents.inheritingProjectDefault", "Inheriting project default — no per-agent override set")}</span>

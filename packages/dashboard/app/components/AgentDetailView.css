@@ -2163,3 +2163,51 @@ FNXC:AgentDetailView 2026-06-26-01:00:
   background: var(--surface);
   margin-bottom: var(--space-sm);
 }
+
+.agent-capability-grants {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.agent-capability-grants h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+
+.agent-capability-grants-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--size-card-min, 16rem)), 1fr));
+  gap: var(--space-sm);
+}
+
+.agent-capability-grant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.agent-capability-grant-name {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .agent-capability-grants-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-capability-grant-row,
+  .agent-permission-inherit-banner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -1519,7 +1519,7 @@ Fusion supports scoped automations and routines:
 
 ### `defaultAgentPermissionPolicy`
 
-Project-scoped default permission policy for permanent-agent action gates.
+Project-scoped default permission policy for agent runtime action gates. It applies to permanent agents, stored ephemeral/task-worker agents that do not have an explicit per-agent policy, and fallback `executor-FN-*` task workers that have no stored agent row.
 
 ```json
 {
@@ -1544,6 +1544,15 @@ Project-scoped default permission policy for permanent-agent action gates.
 - Missing categories default to `allow` via the built-in `unrestricted` seed; missing or empty `toolRules` preserve legacy category-only behavior.
 - Runtime precedence is per-agent exact tool rule → per-agent category rule → project default exact tool rule → project default category rule → unrestricted fallback.
 - Heartbeat-critical coordination/exempt tools remain non-configurable and allowed to prevent deadlocks.
+- Legacy ephemeral agents without `permissionPolicy` are not rewritten on disk; they inherit this setting when a runtime session is built.
+
+### `ephemeralAgentsCanCreateTasks`
+
+Project-scoped backward-compatibility guard for ephemeral/runtime-managed task workers calling `fn_task_create`.
+
+- Default: `true`, preserving the historical behavior that task workers can create follow-up tasks.
+- When `false`, ephemeral callers are rejected before task creation even if their unified `permissionPolicy` would otherwise allow `fn_task_create`.
+- When `true`, the unified runtime policy still applies: `defaultAgentPermissionPolicy.toolRules.fn_task_create = "block"` blocks ephemeral and permanent agents, and `"require-approval"` creates an approval request before the tool can run.
 
 ## Model selection hierarchy
 

@@ -101,7 +101,7 @@ Every first-class editable agent field has a defined create/edit/import/template
 | `reportsTo` | ✓ | ✓ | ✓ (from manifest) | Parent agent ID |
 | `runtimeConfig` | ✓ | ✓ | ✗ | Heartbeat/budget config |
 | `permissions` | ✓ | ✓ | ✗ | Capability flags |
-| `permissionPolicy` | ✓ | ✓ | ✗ | Runtime action-gating policy for permanent agents (default/fallback: `unrestricted`) |
+| `permissionPolicy` | ✓ | ✓ | ✗ | Runtime action-gating policy for permanent and ephemeral agents (project default/fallback: `unrestricted`) |
 | `instructionsPath` | ✓ | ✓ | ✗ | File-backed instructions path |
 | `instructionsText` | ✓ | ✓ | ✓ (from manifest `instructionBody`) | Inline instructions |
 | `soul` | ✓ | ✓ | ✗ | Personality/identity description |
@@ -121,7 +121,7 @@ Every first-class editable agent field has a defined create/edit/import/template
 | `memory` | `memory` | — |
 | `skills` | `metadata.skills` | — |
 
-## Permission Policy Presets (Permanent Agents)
+## Permission Policy Presets (Permanent and Ephemeral Agents)
 
 `permissionPolicy` is a first-class persisted policy contract for **runtime action gating**, separate from role/capability authorization and separate from dashboard persona presets.
 
@@ -148,7 +148,7 @@ V1 runtime action categories:
 
 Exact tool overrides are stored as `toolRules: { [toolName]: disposition }` on either a per-agent `permissionPolicy` or the project `defaultAgentPermissionPolicy`. They apply before category rules, so a policy can block one governed tool such as `fn_task_create` while leaving the broader `task_agent_mutation` category set to `allow` for `fn_task_update` or workflow tools.
 
-### Runtime gate v1 mapping (per tool invocation, permanent agents only)
+### Runtime gate v1 mapping (per tool invocation, all agent lifetimes)
 
 The engine classifies tool calls by behavior (not namespace alone):
 
@@ -212,13 +212,15 @@ FN-3973 follow-through: `spawn_agent` evaluation is complete; governance remains
 Default and legacy fallback behavior:
 
 - New **non-ephemeral/permanent** agents persist a normalized `permissionPolicy` using preset `unrestricted` when not explicitly provided.
+- New and existing ephemeral/runtime task-worker agents may store an explicit `permissionPolicy` and canonical `permissions` grants.
 - Legacy permanent-agent rows missing `permissionPolicy` resolve to the same effective `unrestricted` policy at read time (no eager migration required).
-- Ephemeral/runtime task-worker agents are intentionally left unchanged and are not backfilled with a default `permissionPolicy`.
+- Legacy ephemeral/runtime task-worker rows missing `permissionPolicy` are not backfilled on disk; runtime sessions inherit the project `defaultAgentPermissionPolicy` (or `unrestricted` when no project default is configured).
+- Fallback `executor-FN-*` task workers without a stored agent row use a stable synthetic actor and the same project-default policy, so exact `toolRules` such as `fn_task_create: block` apply consistently.
 
 Separation of concerns:
 
 - `permissions` capability flags (plus role defaults) determine what an agent is conceptually authorized to do (for example, `tasks:assign`, `agents:create`).
-- `permissionPolicy` determines how sensitive runtime actions are gated (`allow`, `block`, `require-approval`) once the capability path is in play.
+- `permissionPolicy` determines how sensitive runtime actions are gated (`allow`, `block`, `require-approval`) once the capability path is in play. `require-approval` creates an approval request with the permanent or ephemeral actor identity, pauses the associated task safely, and resumes through the existing approval lifecycle.
 - Dashboard persona presets (`packages/dashboard/app/components/agent-presets/`) are UI templates for identity/behavior and are **not** the source of truth for permission-policy enforcement.
 
 ### CLI agent permission prompts and notifications

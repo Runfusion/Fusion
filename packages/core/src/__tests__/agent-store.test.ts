@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } 
 import { AgentStore } from "../agent-store.js";
 import { installInMemoryDbSnapshot, clearInMemoryDbSnapshot } from "./store-test-helpers.js";
 import { TaskStore } from "../store.js";
+import { resolveEffectiveAgentPermissionPolicy } from "../agent-permission-policy.js";
 import { validateSnapshotEnvelope } from "../shared-mesh-state.js";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -21,7 +22,6 @@ import { mkdtempSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import {
-  AGENT_PERMISSION_POLICY_ACTION_CATEGORIES,
   CheckoutConflictError,
   getCanonicalAgentAssetDirectoryName,
   type AgentCapability,
@@ -352,16 +352,19 @@ describe("AgentStore", () => {
       expect(runtimeConfig.runMissedHeartbeatOnStartup).toBe(true);
     });
 
-    it("stores default unrestricted permission policy for durable agents", async () => {
+    it("leaves durable agents without explicit permission policy to inherit project defaults", async () => {
       const agent = await store.createAgent({
         name: "Policy Default",
         role: "executor",
       });
 
-      expect(agent.permissionPolicy?.presetId).toBe("unrestricted");
-      for (const category of AGENT_PERMISSION_POLICY_ACTION_CATEGORIES) {
-        expect(agent.permissionPolicy?.rules[category]).toBe("allow");
-      }
+      expect(agent.permissionPolicy).toBeUndefined();
+      const effective = resolveEffectiveAgentPermissionPolicy(agent.permissionPolicy, {
+        rules: { task_agent_mutation: "block" },
+        toolRules: { fn_task_create: "block" },
+      });
+      expect(effective.rules.task_agent_mutation).toBe("block");
+      expect(effective.toolRules?.fn_task_create).toBe("block");
     });
 
     it("does not backfill permission policy for ephemeral task workers", async () => {
@@ -372,6 +375,45 @@ describe("AgentStore", () => {
       });
 
       expect(agent.permissionPolicy).toBeUndefined();
+    });
+
+    it("stores explicit permission policy for ephemeral task workers", async () => {
+      const agent = await store.createAgent({
+        name: "executor-FN-101",
+        role: "executor",
+        metadata: { agentKind: "task-worker", taskWorker: true },
+        permissionPolicy: { presetId: "custom", rules: { task_agent_mutation: "block" } },
+      });
+
+      expect(agent.permissionPolicy?.presetId).toBe("custom");
+      expect(agent.permissionPolicy?.rules.task_agent_mutation).toBe("block");
+      expect(agent.permissionPolicy?.rules.git_write).toBe("allow");
+    });
+
+    it("normalizes canonical permission grants for ephemeral and durable agents", async () => {
+      const durable = await store.createAgent({
+        name: "Durable Grants",
+        role: "executor",
+        permissions: { "tasks:assign": true, "agents:create": false, nope: true },
+      });
+      const ephemeral = await store.createAgent({
+        name: "executor-FN-102",
+        role: "executor",
+        metadata: { agentKind: "task-worker", taskWorker: true },
+        permissions: { "tasks:assign": true, "agents:create": false, nope: true },
+      });
+
+      expect(durable.permissions).toEqual({ "tasks:assign": true });
+      expect(ephemeral.permissions).toEqual({ "tasks:assign": true });
+    });
+
+    it("rejects invalid explicit policy payloads for ephemeral task workers", async () => {
+      await expect(store.createAgent({
+        name: "executor-FN-103",
+        role: "executor",
+        metadata: { agentKind: "task-worker", taskWorker: true },
+        permissionPolicy: { presetId: "custom", rules: { task_agent_mutation: "nope" as never } },
+      })).rejects.toThrow(/Invalid permission policy disposition/);
     });
 
     it("preserves custom metadata", async () => {
@@ -454,16 +496,13 @@ describe("AgentStore", () => {
       expect(result).toBeNull();
     });
 
-    it("resolves legacy durable agents without permissionPolicy to unrestricted", async () => {
+    it("leaves legacy durable agents without permissionPolicy to inherit project defaults at runtime", async () => {
       const created = await store.createAgent({ name: "Legacy Policy", role: "executor" });
       const testDb = (store as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
       testDb.prepare("UPDATE agents SET data = json_remove(data, '$.permissionPolicy') WHERE id = ?").run(created.id);
 
       const hydrated = await store.getAgent(created.id);
-      expect(hydrated?.permissionPolicy?.presetId).toBe("unrestricted");
-      for (const category of AGENT_PERMISSION_POLICY_ACTION_CATEGORIES) {
-        expect(hydrated?.permissionPolicy?.rules[category]).toBe("allow");
-      }
+      expect(hydrated?.permissionPolicy).toBeUndefined();
     });
   });
 
@@ -1011,11 +1050,11 @@ describe("AgentStore", () => {
         name: "Configurable",
         role: "executor",
         runtimeConfig: { heartbeatIntervalMs: 30000 },
-        permissions: { canReview: false },
+        permissions: { "tasks:assign": false },
       });
 
       await store.updateAgent(created.id, { runtimeConfig: { heartbeatIntervalMs: 10000 } });
-      await store.updateAgent(created.id, { permissions: { canReview: true, canExecute: true } });
+      await store.updateAgent(created.id, { permissions: { "tasks:assign": true, "agents:create": true } });
       await store.updateAgent(created.id, { permissionPolicy: { presetId: "locked-down", rules: {
         "git-write": "block",
         "file-write-delete": "block",

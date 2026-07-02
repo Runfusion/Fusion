@@ -4033,10 +4033,10 @@ export interface ProjectSettings {
     /** Backend ids that may bootstrap without approval. Default: ["native"]. */
     autoApproveBackendIds?: string[];
   };
-  /** Project default runtime permission-policy overrides for permanent agents.
+  /** Project default runtime permission-policy overrides for all agent lifetimes.
    *  Rules are a partial map of category -> disposition (`allow` | `block` | `require-approval`).
    *  Tool rules are exact tool-name overrides that take precedence over category rules.
-   *  Missing categories and tools inherit the built-in `unrestricted` seed (`allow`). */
+   *  Missing categories and tools inherit the built-in `unrestricted` seed (`allow`). Agents without an explicit policy, including legacy ephemeral task workers, inherit this project default at runtime. */
   defaultAgentPermissionPolicy?: {
     rules?: Partial<AgentPermissionPolicyRules>;
     toolRules?: AgentPermissionPolicyToolRules;
@@ -6388,7 +6388,7 @@ export type AgentPermissionPolicyDisposition = "allow" | "block" | "require-appr
 /** Exact tool-name permission overrides layered above category rules. */
 export type AgentPermissionPolicyToolRules = Record<string, AgentPermissionPolicyDisposition>;
 
-/** Minimum portable permanent-agent gating context consumed by engine runtime wrappers. */
+/** Minimum portable agent gating context consumed by engine runtime wrappers. The legacy name is retained for API compatibility, but the context applies to permanent identity agents and ephemeral task-worker agents. */
 export interface PermanentAgentGatingContext {
   permissionPolicy?: {
     presetId: string;
@@ -6407,7 +6407,7 @@ export interface PermanentAgentGatingContext {
   findPendingApprovalRequest?: (dedupeKey: string) => Promise<ApprovalRequest | null>;
 }
 
-/** Built-in permission policy preset identifiers for permanent agents. */
+/** Built-in permission policy preset identifiers for agent runtime policies. */
 export const AGENT_PERMISSION_POLICY_PRESET_IDS = ["unrestricted", "approval-required", "locked-down", "custom"] as const;
 
 /** A single built-in permission policy preset identifier. */
@@ -6420,7 +6420,7 @@ export type AgentPermissionPolicyRules = Record<
 >;
 
 /**
- * First-class persisted permission policy contract for permanent agents.
+ * First-class persisted permission policy contract for permanent and ephemeral agents.
  *
  * FNXC:ToolPermissions 2026-07-01-00:00:
  * Operators must be able to block a single governed tool such as `fn_task_create` without blocking every task-agent mutation. `toolRules` stores exact tool-name overrides and the engine resolves them before category rules while leaving heartbeat-critical exempt tools non-configurable.

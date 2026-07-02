@@ -54,9 +54,9 @@ import {
 } from "./types.js";
 import type { CentralClaimStore, CheckoutClaimContext, RunMutationContext } from "./types.js";
 import type { TaskStore } from "./store.js";
-import { computeAccessState } from "./agent-permissions.js";
+import { computeAccessState, normalizePermissions } from "./agent-permissions.js";
 import { canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, formatRoleMismatchReason } from "./agent-role-policy.js";
-import { normalizeAgentPermissionPolicy, resolveEffectiveAgentPermissionPolicy } from "./agent-permission-policy.js";
+import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { Database } from "./db.js";
 import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
 
@@ -195,6 +195,13 @@ export function formatCurrentTaskLine(taskId: string, linkedTask: Pick<Task, "co
  * Returns `undefined` when there's nothing to persist (only possible for
  * ephemeral agents with no incoming config).
  */
+function normalizeStoredPermissions(raw: Record<string, boolean> | undefined): Record<string, boolean> | undefined {
+  if (!raw) return undefined;
+  const normalized = normalizePermissions(raw);
+  if (normalized.size === 0) return undefined;
+  return Object.fromEntries([...normalized].map((permission) => [permission, true]));
+}
+
 function resolveCreationRuntimeConfig(
   incoming: Record<string, unknown> | undefined,
   metadata: Record<string, unknown>,
@@ -639,9 +646,13 @@ export class AgentStore extends EventEmitter {
     const resolvedHeartbeatProcedurePath = input.heartbeatProcedurePath
       ?? (ephemeral ? undefined : getDefaultHeartbeatProcedurePath(agentId, input.name));
 
-    const normalizedPermissionPolicy = ephemeral
-      ? input.permissionPolicy
-      : resolveEffectiveAgentPermissionPolicy(input.permissionPolicy);
+    /*
+    FNXC:AgentPermissions 2026-07-02-00:00:
+    FN-7413 makes permission configuration lifetime-agnostic: durable identity agents and ephemeral task-worker agents may both store explicit capability grants and runtime permission policies. Missing policies stay absent for every lifetime so legacy rows and newly created agents inherit the project default at runtime instead of being materialized as explicit unrestricted overrides.
+    */
+    const normalizedPermissionPolicy = input.permissionPolicy
+      ? normalizeAgentPermissionPolicy(input.permissionPolicy)
+      : undefined;
 
     const agent: Agent = {
       id: agentId,
@@ -659,7 +670,7 @@ export class AgentStore extends EventEmitter {
       ...(input.imageUrl && { imageUrl: input.imageUrl }),
       ...(input.reportsTo && { reportsTo: input.reportsTo }),
       ...(runtimeConfig && { runtimeConfig }),
-      ...(input.permissions && { permissions: input.permissions }),
+      ...(normalizeStoredPermissions(input.permissions) && { permissions: normalizeStoredPermissions(input.permissions) }),
       ...(normalizedPermissionPolicy && { permissionPolicy: normalizedPermissionPolicy }),
       ...(input.instructionsPath && { instructionsPath: input.instructionsPath }),
       ...(input.instructionsText && { instructionsText: input.instructionsText }),
@@ -1117,7 +1128,7 @@ export class AgentStore extends EventEmitter {
         ...("reportsTo" in updates && { reportsTo: updates.reportsTo }),
         ...("runtimeConfig" in updates && { runtimeConfig: updates.runtimeConfig }),
         ...("pauseReason" in updates && { pauseReason: updates.pauseReason }),
-        ...("permissions" in updates && { permissions: updates.permissions }),
+        ...("permissions" in updates && { permissions: normalizeStoredPermissions(updates.permissions) }),
         ...("permissionPolicy" in updates && { permissionPolicy: normalizedUpdatedPermissionPolicy }),
         ...("lastError" in updates && { lastError: updates.lastError }),
         ...("totalInputTokens" in updates && { totalInputTokens: updates.totalInputTokens }),
@@ -2860,10 +2871,8 @@ export class AgentStore extends EventEmitter {
       reportsTo: data.reportsTo,
       runtimeConfig: data.runtimeConfig,
       pauseReason: data.pauseReason,
-      permissions: data.permissions,
-      permissionPolicy: isEphemeralAgent(data)
-        ? data.permissionPolicy
-        : resolveEffectiveAgentPermissionPolicy(data.permissionPolicy),
+      permissions: normalizeStoredPermissions(data.permissions),
+      permissionPolicy: data.permissionPolicy ? normalizeAgentPermissionPolicy(data.permissionPolicy) : undefined,
       totalInputTokens: data.totalInputTokens,
       totalOutputTokens: data.totalOutputTokens,
       lastError: data.lastError,
