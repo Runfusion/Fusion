@@ -66,8 +66,8 @@ export function createEngineMock(overrides: AnyModule = {}): AnyModule {
     */
     createChatTaskDocumentTools: vi.fn(() => []),
     createChatArtifactTools: vi.fn(() => []),
-    // FNXC:McpConfig 2026-07-02-00:00: Planning/mission route tests share this engine mock; MCP resolution must return a shaped empty server set so readonly session creation can proceed without importing real engine stores.
-    resolveMcpServersForStore: vi.fn(async () => ({ servers: [] })),
+    // FNXC:McpConfig 2026-07-02-13:45: Planning/mission route tests share this engine mock; MCP resolution must return the full shaped empty result so readonly session creation can proceed without importing real engine stores.
+    resolveMcpServersForStore: vi.fn(async () => ({ servers: [], errors: [] })),
     ...overrides,
   });
 }

@@ -56,7 +56,7 @@ vi.mock("../planning-board-tools.js", () => ({
   createPlanningBoardTools: vi.fn(() => []),
 }));
 
-import { __resetPlanningState, createSession } from "../planning.js";
+import { __resetPlanningState, createSession, createSessionWithAgent, planningStreamManager } from "../planning.js";
 import { resolveManualAiPromptMcpServers } from "../routes.js";
 import { createMissionInterviewAgent } from "../mission-interview.js";
 import { createTargetInterviewAgent } from "../milestone-slice-interview.js";
@@ -80,6 +80,39 @@ describe("dashboard MCP lane forwarding", () => {
       allowMcpToolsInReadonly: true,
       mcpServers: [expect.objectContaining({ name: "docs", env: { TOKEN: "materialized-secret" } })],
     }));
+  });
+
+  it("defaults an undefined MCP resolver result to empty servers for non-streaming planning", async () => {
+    resolveMcpServersForStoreMock.mockResolvedValueOnce(undefined as never);
+
+    await createSession("127.0.0.1", "Build without MCP", {} as never, "/tmp/fusion-dashboard-test");
+
+    expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      tools: "readonly",
+      allowMcpToolsInReadonly: true,
+      mcpServers: [],
+    }));
+  });
+
+  it("defaults an undefined MCP resolver result to empty servers for streaming planning", async () => {
+    resolveMcpServersForStoreMock.mockResolvedValueOnce(undefined as never);
+
+    const sessionId = await createSessionWithAgent(
+      "127.0.0.1",
+      "Stream without MCP",
+      "/tmp/fusion-dashboard-test",
+      {} as never,
+    );
+
+    const startInitialTurn = planningStreamManager.consumeInitialTurn(sessionId);
+    expect(startInitialTurn).toBeTypeOf("function");
+    startInitialTurn?.();
+
+    await vi.waitFor(() => expect(createFnAgentMock).toHaveBeenCalledWith(expect.objectContaining({
+      tools: "readonly",
+      allowMcpToolsInReadonly: true,
+      mcpServers: [],
+    })));
   });
 
   it("resolves materialized MCP servers for manual AI-prompt workflow steps", async () => {
