@@ -69,6 +69,19 @@ const STRIP_ENV_VARS = [
   "FUSION_API_KEY",
 ];
 
+let platformOverrideForTests: NodeJS.Platform | null = null;
+
+function getTerminalPlatform(): NodeJS.Platform {
+  return platformOverrideForTests ?? os.platform();
+}
+
+export function __setTerminalPlatformForTests(platform: NodeJS.Platform | null): void {
+  platformOverrideForTests = platform;
+}
+
+export const WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR =
+  "Fusion could not start an embedded terminal shell on Windows. Use Command Prompt or PowerShell for the embedded terminal, or install/repair Windows Terminal separately with `winget install Microsoft.WindowsTerminal` if you want Windows Terminal outside Fusion.";
+
 export interface TerminalSession {
   id: string;
   pty: IPty;
@@ -139,8 +152,7 @@ export class TerminalService extends EventEmitter {
   private sessions: Map<string, TerminalSession> = new Map();
   private dataCallbacks: Set<DataCallback> = new Set();
   private exitCallbacks: Set<ExitCallback> = new Set();
-  private isWindows = os.platform() === "win32";
-  private projectRoot: string;
+  private isWindows = getTerminalPlatform() === "win32";  private projectRoot: string;
   private maxSessions: number;
   private registeredWorktreeCache: Map<string, string[]> = new Map();
 
@@ -166,7 +178,7 @@ export class TerminalService extends EventEmitter {
    * Get the default allowed shells for the current platform
    */
   private getAllowedShells(): string[] {
-    const platform = os.platform();
+    const platform = getTerminalPlatform();
     return ALLOWED_SHELL_PATHS[platform] || ALLOWED_SHELL_PATHS.linux;
   }
 
@@ -183,7 +195,7 @@ export class TerminalService extends EventEmitter {
    * Detect the best shell for the current platform
    */
   detectShell(): { shell: string; args: string[] } {
-    const platform = os.platform();
+    const platform = getTerminalPlatform();
     const allowedShells = this.getAllowedShells();
 
     // Helper to get basename handling both path separators
@@ -207,7 +219,11 @@ export class TerminalService extends EventEmitter {
       return ["--login"];
     };
 
-    // First try user's shell from env if it's allowed
+    /*
+    FNXC:WindowsTerminalStartup 2026-07-02-07:45:
+    Fusion's embedded terminal must not invoke or probe Windows Terminal (`wt.exe`) because it is an external terminal host, not a PTY shell; the Windows startup path stays on supported shells and reports actionable Fusion-owned errors instead of recurring native Windows Terminal help/version dialogs.
+    */
+    // First try user's shell from env if it's allowed. Windows intentionally ignores SHELL because values such as wt.exe are terminal hosts, not embedded shells.
     const userShell = process.env.SHELL;
     if (userShell && platform !== "win32") {
       const normalizedUserShell = this.isWindows ? userShell.toLowerCase() : userShell;
@@ -243,7 +259,7 @@ export class TerminalService extends EventEmitter {
     cwd: string,
   ): Record<string, unknown> {
     return {
-      platform: os.platform(),
+      platform: getTerminalPlatform(),
       projectRoot: this.projectRoot,
       cwd,
       requestedShell: requestedShell ?? null,
@@ -580,7 +596,9 @@ export class TerminalService extends EventEmitter {
       return {
         success: false,
         code: "pty_spawn_failed",
-        error: "Failed to start terminal shell process.",
+        error: this.isWindows
+          ? WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR
+          : "Failed to start terminal shell process.",
       };
     }
 

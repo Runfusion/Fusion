@@ -664,6 +664,37 @@ describe("TerminalModal", () => {
     expect(refreshBtn.textContent).toContain("Refresh page");
   });
 
+  it("shows Windows Terminal startup guidance inline on desktop and mobile without native dialog hooks", async () => {
+    const mockRetryBootstrap = vi.fn();
+    const windowsTerminalMessage =
+      "Fusion could not start an embedded terminal shell on Windows. Use Command Prompt or PowerShell for the embedded terminal, or install/repair Windows Terminal separately with `winget install Microsoft.WindowsTerminal` if you want Windows Terminal outside Fusion.";
+    mockUseTerminalSessions.mockReturnValue({
+      ...defaultSessionState,
+      tabs: [],
+      activeTab: null,
+      bootstrapError: windowsTerminalMessage,
+      retryBootstrap: mockRetryBootstrap,
+    });
+
+    const { rerender } = render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    expect(screen.getByTestId("terminal-bootstrap-error")).toHaveTextContent("Command Prompt or PowerShell");
+    expect(screen.getByTestId("terminal-bootstrap-error")).toHaveTextContent("winget install Microsoft.WindowsTerminal");
+    expect(screen.getByTestId("terminal-bootstrap-error")).not.toHaveTextContent("1.24.11321.0");
+    expect(screen.getByTestId("terminal-retry-btn")).toBeTruthy();
+
+    const previousInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    try {
+      rerender(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+      expect(screen.getByTestId("terminal-bootstrap-error")).toHaveTextContent("Command Prompt or PowerShell");
+      fireEvent.click(screen.getByTestId("terminal-retry-btn"));
+      expect(mockRetryBootstrap).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+    }
+  });
+
   it("retry button calls retryBootstrap from the hook", async () => {
     const mockRetryBootstrap = vi.fn();
     mockUseTerminalSessions.mockReturnValue({

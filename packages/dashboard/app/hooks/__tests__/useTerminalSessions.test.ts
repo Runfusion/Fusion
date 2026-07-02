@@ -882,9 +882,33 @@ describe("useTerminalSessions", () => {
         expect(result.current.bootstrapError).toBe("Server unreachable");
       });
 
-      // No tabs should be created
+      // No tabs should be created, and the failed generation must not auto-loop.
       expect(result.current.tabs.length).toBe(0);
       expect(result.current.activeTab).toBeNull();
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the Windows Terminal version-only failure once until explicit retry", async () => {
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockResolvedValue([]);
+      const windowsTerminalMessage =
+        "Fusion could not start an embedded terminal shell on Windows. Use Command Prompt or PowerShell for the embedded terminal, or install/repair Windows Terminal separately with `winget install Microsoft.WindowsTerminal` if you want Windows Terminal outside Fusion.";
+      mockCreateTerminalSession.mockRejectedValue(new Error(windowsTerminalMessage));
+
+      const { result, rerender } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      await waitFor(() => {
+        expect(result.current.bootstrapError).toBe(windowsTerminalMessage);
+      });
+
+      rerender();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(result.current.tabs).toHaveLength(0);
+      expect(result.current.activeTab).toBeNull();
+      expect(result.current.bootstrapError).toBe(windowsTerminalMessage);
+      expect(result.current.bootstrapError).not.toContain("1.24.11321.0");
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
     });
 
     it("sets bootstrapError with fallback message for non-Error throws", async () => {

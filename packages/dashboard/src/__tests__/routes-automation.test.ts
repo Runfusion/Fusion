@@ -369,7 +369,7 @@ describe("Terminal session routes", () => {
       ["invalid_shell", 400, "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell)."],
       ["invalid_cwd", 400, "Terminal working directory is not an authorized project or task worktree."],
       ["pty_load_failed", 503, "Terminal service unavailable. The PTY module could not be loaded."],
-      ["pty_spawn_failed", 500, "Failed to start terminal shell process."],
+      ["pty_spawn_failed", 500, terminalServiceModule.WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR],
     ] as const)("returns %s errors with the correct status and body", async (code, status, error) => {
       const mockService = {
         createSession: vi.fn().mockResolvedValue({
@@ -390,6 +390,35 @@ describe("Terminal session routes", () => {
 
       expect(res.status).toBe(status);
       expect(res.body).toEqual({ error, details: { code } });
+
+      terminalServiceSpy.mockRestore();
+    });
+
+    it("returns an actionable structured error instead of raw Windows Terminal version text", async () => {
+      const mockService = {
+        createSession: vi.fn().mockResolvedValue({
+          success: false,
+          code: "pty_spawn_failed",
+          error: terminalServiceModule.WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR,
+        }),
+      };
+      const terminalServiceSpy = vi.spyOn(terminalServiceModule, "getTerminalService").mockReturnValue(mockService as any);
+
+      const res = await REQUEST(
+        buildApp(),
+        "POST",
+        "/api/terminal/sessions",
+        JSON.stringify({}),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({
+        error: terminalServiceModule.WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR,
+        details: { code: "pty_spawn_failed" },
+      });
+      expect(JSON.stringify(res.body)).not.toContain("Windows Terminal\\n1.24.11321.0");
+      expect(mockService.createSession).toHaveBeenCalledTimes(1);
 
       terminalServiceSpy.mockRestore();
     });

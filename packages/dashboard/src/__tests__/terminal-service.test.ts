@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import * as fs from "node:fs";
+import * as nodePty from "node-pty";
 import {
   READY_QUIET_WINDOW_MS,
   READY_TIMEOUT_MS,
   TerminalService,
   STALE_SESSION_THRESHOLD_MS,
+  WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR,
+  __setTerminalPlatformForTests,
 } from "../terminal-service.js";
 import { runGitCommand } from "../routes/resolve-diff-base.js";
 
@@ -53,6 +57,8 @@ vi.mock("../routes/resolve-diff-base.js", () => ({
   runGitCommand: vi.fn(),
 }));
 
+const ORIGINAL_SHELL = process.env.SHELL;
+
 describe("TerminalService", () => {
   let service: TerminalService;
   const projectRoot = "/test/project";
@@ -60,6 +66,7 @@ describe("TerminalService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     service = new TerminalService(projectRoot, 10);
+    vi.mocked(nodePty.spawn).mockImplementation(() => mockPtyProcess as never);
     mockPtyProcess._onDataCallback = null;
     mockPtyProcess._onExitCallback = null;
     mockStat.mockResolvedValue({ isDirectory: () => true });
@@ -68,6 +75,13 @@ describe("TerminalService", () => {
 
   afterEach(() => {
     service.cleanup();
+    __setTerminalPlatformForTests(null);
+    vi.restoreAllMocks();
+    if (ORIGINAL_SHELL === undefined) {
+      delete process.env.SHELL;
+    } else {
+      process.env.SHELL = ORIGINAL_SHELL;
+    }
   });
 
   describe("createSession", () => {
@@ -105,6 +119,78 @@ describe("TerminalService", () => {
         code: "invalid_shell",
         error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
       });
+    });
+
+    it("does not select or probe Windows Terminal when wt.exe is present on Windows", async () => {
+      __setTerminalPlatformForTests("win32");
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => {
+        const value = String(candidate).toLowerCase();
+        return value === "wt.exe" || value.endsWith("\\cmd.exe") || value === "cmd.exe";
+      });
+      process.env.SHELL = "wt.exe";
+      const windowsService = new TerminalService(projectRoot, 10);
+
+      const result = await windowsService.createSession();
+
+      expect(result.success).toBe(true);
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "C:\\Windows\\System32\\cmd.exe",
+        [],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      expect(nodePty.spawn).not.toHaveBeenCalledWith("wt.exe", expect.anything(), expect.anything());
+      windowsService.cleanup();
+    });
+
+    it("rejects explicit Windows Terminal shells before spawning an embedded PTY", async () => {
+      __setTerminalPlatformForTests("win32");
+      const windowsService = new TerminalService(projectRoot, 10);
+
+      const result = await windowsService.createSession({ shell: "wt.exe" });
+
+      expect(result).toEqual({
+        success: false,
+        code: "invalid_shell",
+        error: "Shell not allowed. Please use a supported shell (bash, zsh, sh, cmd, powershell).",
+      });
+      expect(nodePty.spawn).not.toHaveBeenCalled();
+      windowsService.cleanup();
+    });
+
+    it("maps Windows Terminal version-only spawn output to an actionable inline startup error", async () => {
+      __setTerminalPlatformForTests("win32");
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => String(candidate).toLowerCase().endsWith("cmd.exe"));
+      vi.mocked(nodePty.spawn).mockImplementation(() => {
+        throw new Error("Windows Terminal\n1.24.11321.0");
+      });
+      const windowsService = new TerminalService(projectRoot, 10);
+
+      const result = await windowsService.createSession();
+
+      expect(result).toEqual({
+        success: false,
+        code: "pty_spawn_failed",
+        error: WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR,
+      });
+      expect(result.success ? result.session.shell : result.error).not.toContain("1.24.11321.0");
+      windowsService.cleanup();
+    });
+
+    it("preserves non-Windows shell detection when wt.exe is present in the environment", async () => {
+      __setTerminalPlatformForTests("linux");
+      process.env.SHELL = "/bin/bash";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => ["/bin/bash", "/bin/sh"].includes(String(candidate)));
+      const linuxService = new TerminalService(projectRoot, 10);
+
+      const result = await linuxService.createSession();
+
+      expect(result.success).toBe(true);
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "/bin/bash",
+        ["--login"],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      linuxService.cleanup();
     });
 
     it("allows an explicit project-root cwd", async () => {
