@@ -98,6 +98,32 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
             return;
           }
           setPhase({ kind: "starting-local", message: t("desktop.startingLocalRuntime", "Starting local Fusion runtime…") });
+          /*
+           * FNXC:DesktopLaunchGate 2026-07-02-14:35:
+           * Self-healing start. Do NOT assume main already started the embedded runtime.
+           * The gate decides to WAIT from shell `desktopMode:"local"`, but main decides to
+           * START from a separate launch-mode file; when those desync (a first local
+           * selection whose runtime start failed/was interrupted), main never starts the
+           * runtime and this branch would poll a permanently "stopped" runtime until the 30s
+           * timeout — the "hangs at Starting local runtime" bug. If the runtime is not already
+           * running or starting, actively (re)start it via setDesktopMode("local") — idempotent
+           * and awaits startup — before polling, so the gate can never wait for a runtime nobody
+           * launched.
+           */
+          const rt = state.localRuntime;
+          if (rt?.state !== "running" && rt?.state !== "starting") {
+            try {
+              await shell.setDesktopMode("local");
+            } catch (startError) {
+              if (cancelled) return;
+              setPhase({
+                kind: "local-error",
+                message: startError instanceof Error ? startError.message : String(startError),
+              });
+              return;
+            }
+            if (cancelled) return;
+          }
           const { baseUrl } = await waitForLocalRuntime(shell);
           if (cancelled) return;
           applyServerBaseUrl(baseUrl);

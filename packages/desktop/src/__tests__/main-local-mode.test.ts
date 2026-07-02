@@ -49,7 +49,19 @@ const mocks = vi.hoisted(() => {
     return localRuntimeManager;
   });
 
-  return { app, appHandlers, BrowserWindow, Tray, browserWindow, localRuntimeManager, LocalRuntimeManager, screen };
+  const DEFAULT_SHELL_SETTINGS = {
+    desktopMode: null as "local" | "remote" | null,
+    hasCompletedModeSelection: false,
+    activeProfileId: null,
+    profiles: [],
+  };
+  const readShellSettings = vi.fn(async () => ({ ...DEFAULT_SHELL_SETTINGS }));
+  const writeShellSettings = vi.fn(async () => undefined);
+
+  const loadDesktopLaunchMode = vi.fn(async () => "choose" as "choose" | "local" | "remote");
+  const saveDesktopLaunchMode = vi.fn(async () => undefined);
+
+  return { app, appHandlers, BrowserWindow, Tray, browserWindow, localRuntimeManager, LocalRuntimeManager, screen, readShellSettings, writeShellSettings, DEFAULT_SHELL_SETTINGS, loadDesktopLaunchMode, saveDesktopLaunchMode };
 });
 
 vi.mock("electron", () => ({
@@ -67,8 +79,8 @@ vi.mock("../ipc.js", () => ({ registerIpcHandlers: vi.fn() }));
 vi.mock("../native.js", () => ({
   DEFAULT_WINDOW_STATE: { width: 1000, height: 800 },
   loadWindowState: vi.fn(async () => null),
-  loadDesktopLaunchMode: vi.fn(async () => "choose"),
-  saveDesktopLaunchMode: vi.fn(async () => undefined),
+  loadDesktopLaunchMode: mocks.loadDesktopLaunchMode,
+  saveDesktopLaunchMode: mocks.saveDesktopLaunchMode,
   saveWindowState: vi.fn(),
   setupAutoUpdater: vi.fn(),
   startUpdateCheckInterval: vi.fn(() => vi.fn()),
@@ -76,12 +88,18 @@ vi.mock("../native.js", () => ({
 }));
 vi.mock("../deep-link.js", () => ({ registerDeepLinkProtocol: vi.fn(), setupDeepLinkHandler: vi.fn() }));
 vi.mock("../local-runtime.js", () => ({ LocalRuntimeManager: mocks.LocalRuntimeManager }));
+vi.mock("../shell-settings.js", () => ({
+  readShellSettings: mocks.readShellSettings,
+  writeShellSettings: mocks.writeShellSettings,
+}));
 
 describe("main local mode", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
     mocks.appHandlers.clear();
+    mocks.readShellSettings.mockResolvedValue({ ...mocks.DEFAULT_SHELL_SETTINGS });
+    mocks.loadDesktopLaunchMode.mockResolvedValue("choose");
     delete process.env.FUSION_DESKTOP_MODE;
   });
 
@@ -94,5 +112,42 @@ describe("main local mode", () => {
     expect(mocks.app.getPath).toHaveBeenCalledWith("home");
     expect(mocks.localRuntimeManager.startLocal).toHaveBeenCalled();
     delete process.env.FUSION_DESKTOP_MODE;
+  });
+
+  /*
+   * FNXC:DesktopRuntimeMode 2026-07-02-14:35 — regression for the "hangs at Starting
+   * local Fusion runtime" bug. Split-brain persisted state: the launch-mode file says
+   * "choose" (so main would not start the runtime) while shell-connections.json records a
+   * completed "local" selection (so the renderer gate waits for the runtime). Before the
+   * fix the runtime was never started and the gate polled until a 30s timeout on EVERY
+   * launch. initializeApp must reconcile: treat the completed shell "local" as authoritative,
+   * heal the launch-mode file, and start the runtime.
+   */
+  it("reconciles a launch-mode/shell split-brain and starts the runtime (no FUSION_DESKTOP_MODE)", async () => {
+    mocks.loadDesktopLaunchMode.mockResolvedValue("choose");
+    mocks.readShellSettings.mockResolvedValue({
+      desktopMode: "local",
+      hasCompletedModeSelection: true,
+      activeProfileId: null,
+      profiles: [],
+    });
+
+    const { initializeApp } = await import("../main.ts");
+    await initializeApp();
+
+    // Runtime is started despite launch-mode being "choose" ...
+    expect(mocks.localRuntimeManager.startLocal).toHaveBeenCalled();
+    // ... and the launch-mode file is healed to "local" so both sources agree next launch.
+    expect(mocks.saveDesktopLaunchMode).toHaveBeenCalledWith("local");
+  });
+
+  it("does NOT start the runtime when both sources agree on choose (first run / no selection)", async () => {
+    mocks.loadDesktopLaunchMode.mockResolvedValue("choose");
+    mocks.readShellSettings.mockResolvedValue({ ...mocks.DEFAULT_SHELL_SETTINGS });
+
+    const { initializeApp } = await import("../main.ts");
+    await initializeApp();
+
+    expect(mocks.localRuntimeManager.startLocal).not.toHaveBeenCalled();
   });
 });

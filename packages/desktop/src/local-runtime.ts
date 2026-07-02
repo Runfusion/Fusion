@@ -1,8 +1,29 @@
 import { once } from "node:events";
+import { appendFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { ensureDesktopRuntimeProject } from "./engine-runtime.js";
+
+/*
+ * FNXC:DesktopRuntime 2026-07-02-14:35:
+ * Env-gated startup trace. Packaged desktop builds have no file logging, so a stalled
+ * or failed embedded-runtime start is invisible to operators (the symptom is only a
+ * spinner that times out). Setting FUSION_STARTUP_TRACE=<path> appends a timestamped
+ * step-by-step trace of startLocal()/startEmbedded()/createDashboardServer() to that
+ * file — the diagnostic that pinpointed the launch-mode split-brain hang. Zero cost
+ * when unset; keep it so this class of hang is diagnosable in the field.
+ */
+const STARTUP_TRACE_FILE = process.env.FUSION_STARTUP_TRACE;
+const __traceStart = Date.now();
+function strace(msg: string): void {
+  if (!STARTUP_TRACE_FILE) return;
+  try {
+    appendFileSync(STARTUP_TRACE_FILE, `[+${((Date.now() - __traceStart) / 1000).toFixed(2)}s] ${msg}\n`);
+  } catch {
+    // best-effort
+  }
+}
 
 export type RuntimeSource = "embedded-local" | "external-cli" | "none";
 export type RuntimeState = "stopped" | "starting" | "running" | "error";
@@ -60,11 +81,17 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
   };
 
   try {
+    strace("createDashboardServer: centralCore.init");
     await centralCore.init();
+    strace("createDashboardServer: ensureDesktopRuntimeProject");
     const rootProject = await ensureDesktopRuntimeProject(centralCore, rootDir);
+    strace(`createDashboardServer: startAll (rootProject=${rootProject.id})`);
     await engineManager.startAll();
+    strace("createDashboardServer: startAll DONE; startReconciliation");
     engineManager.startReconciliation();
+    strace("createDashboardServer: ensureEngine(rootProject)");
     const primaryEngine = await engineManager.ensureEngine(rootProject.id);
+    strace("createDashboardServer: createServer");
     const app = createServer(store as never, {
       engine: primaryEngine,
       engineManager,
@@ -72,11 +99,15 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     });
 
+    strace("createDashboardServer: app.listen(0)");
+    const server = app.listen(0);
+    strace("createDashboardServer: returning server object");
     return {
-      server: app.listen(0),
+      server,
       cleanup,
     };
   } catch (error) {
+    strace(`createDashboardServer: THREW ${error instanceof Error ? error.stack : String(error)}`);
     await cleanup();
     throw error;
   }
@@ -148,8 +179,10 @@ export class LocalRuntimeManager {
   }
 
   async startLocal(): Promise<DesktopRuntimeStatus> {
+    strace("startLocal: ENTER");
     const externalPort = this.getExternalPort();
     if (externalPort) {
+      strace(`startLocal: external-cli branch (FUSION_SERVER_PORT=${externalPort}) — NOT starting embedded`);
       this.status = {
         source: "external-cli",
         state: "running",
@@ -183,13 +216,18 @@ export class LocalRuntimeManager {
     let cleanup: RuntimeCleanup | undefined;
 
     try {
+      strace(`startEmbedded: BEGIN rootDir=${this.options.rootDir}`);
       store = await this.createStore(this.options.rootDir);
+      strace("startEmbedded: store.init");
       await store.init();
+      strace("startEmbedded: store.watch");
       await store.watch();
+      strace("startEmbedded: createDashboardServer()");
 
       const dashboardServer = await this.createDashboardServer(store, this.options.rootDir);
       cleanup = "server" in dashboardServer ? dashboardServer.cleanup : undefined;
       server = "server" in dashboardServer ? dashboardServer.server : dashboardServer;
+      strace("startEmbedded: awaiting server 'listening' | 'error'");
       await Promise.race([
         once(server, "listening"),
         once(server, "error").then(([error]) => {
@@ -201,6 +239,7 @@ export class LocalRuntimeManager {
       const baseUrl = `http://127.0.0.1:${port}`;
       this.runtime = { store, server, port, baseUrl, cleanup };
       this.status = { source: "embedded-local", state: "running", port, baseUrl };
+      strace(`startEmbedded: RUNNING port=${port}`);
       return this.status;
     } catch (error) {
       if (server) {
@@ -218,6 +257,7 @@ export class LocalRuntimeManager {
         state: "error",
         error: error instanceof Error ? error.message : String(error),
       };
+      strace(`startEmbedded: CATCH/ERROR ${error instanceof Error ? error.stack : String(error)}`);
       throw error;
     }
   }

@@ -181,7 +181,33 @@ export function resolveLocalRuntimeRoot(): string {
 
 export async function initializeApp(): Promise<void> {
   const state = await loadWindowState();
-  const rememberedLaunchMode = await loadDesktopLaunchMode();
+  let rememberedLaunchMode = await loadDesktopLaunchMode();
+
+  /*
+   * FNXC:DesktopRuntimeMode 2026-07-02-14:35:
+   * Split-brain reconciliation. Desktop startup has TWO persisted sources of truth
+   * that must agree: `desktop-launch-mode.json` (loadDesktopLaunchMode) decides whether
+   * THIS function STARTS the embedded local runtime, while `shell-connections.json`
+   * (readShellSettings().desktopMode) decides whether the renderer launch gate WAITS
+   * for it. They desync because shell:setDesktopMode persists shell settings BEFORE the
+   * fallible startLocalRuntimeOnce()/saveDesktopLaunchMode() — so a first local selection
+   * whose runtime start throws or is interrupted leaves shell=`local` but launch-mode=`choose`.
+   * The gate then shows "Starting local Fusion runtime…" and polls forever for a runtime
+   * nobody started, timing out after 30s on EVERY launch. Treat a completed shell "local"
+   * selection as authoritative and heal the launch-mode file so both halves agree.
+   */
+  const reconcileShellSettings = await readShellSettings();
+  if (
+    rememberedLaunchMode !== "local" &&
+    reconcileShellSettings.desktopMode === "local" &&
+    reconcileShellSettings.hasCompletedModeSelection === true
+  ) {
+    console.warn(
+      `[desktop/main] Healing launch-mode split-brain: shell desktopMode="local" but launch-mode="${rememberedLaunchMode}"; adopting "local"`,
+    );
+    rememberedLaunchMode = "local";
+    await saveDesktopLaunchMode("local");
+  }
 
   localRuntimeManager = new LocalRuntimeManager({ rootDir: resolveLocalRuntimeRoot() });
   currentDesktopLaunchMode = rememberedLaunchMode;
@@ -274,13 +300,23 @@ export async function initializeApp(): Promise<void> {
       if (mode === "local") {
         currentRemoteLaunch = null;
         localRuntimeStartupAttempted = false;
+        /*
+         * FNXC:DesktopRuntimeMode 2026-07-02-14:35:
+         * Persist launch-mode BEFORE the fallible startLocalRuntimeOnce(). shell:setDesktopMode
+         * already wrote shell-connections.json `desktopMode:"local"` before invoking this callback;
+         * if the runtime start throws/is interrupted and we saved launch-mode only afterward, the two
+         * files desync (shell=local, launch-mode=choose) and every future launch hangs at "Starting
+         * local runtime". Saving first keeps both sources in agreement so a failed start simply retries
+         * on next launch instead of deadlocking.
+         */
+        await saveDesktopLaunchMode(mode);
         await startLocalRuntimeOnce();
-      } else {
-        localRuntimeStartupAttempted = false;
-        await localRuntimeManager.stopLocal();
-        const shellSettings = await readShellSettings();
-        currentRemoteLaunch = normalizeDesktopRemoteLaunch({ ...shellSettings, desktopMode: "remote" });
+        return;
       }
+      localRuntimeStartupAttempted = false;
+      await localRuntimeManager.stopLocal();
+      const shellSettings = await readShellSettings();
+      currentRemoteLaunch = normalizeDesktopRemoteLaunch({ ...shellSettings, desktopMode: "remote" });
       await saveDesktopLaunchMode(mode);
     },
     onDesktopLaunchModeChange: async (mode) => {
@@ -291,12 +327,14 @@ export async function initializeApp(): Promise<void> {
       localRuntimeStartupAttempted = false;
       if (mode === "local") {
         currentRemoteLaunch = null;
+        // FNXC:DesktopRuntimeMode 2026-07-02-14:35: persist before the fallible start (see onDesktopModeChange).
+        await saveDesktopLaunchMode(mode);
         await startLocalRuntimeOnce();
-      } else {
-        await localRuntimeManager.stopLocal();
-        const shellSettings = await readShellSettings();
-        currentRemoteLaunch = normalizeDesktopRemoteLaunch({ ...shellSettings, desktopMode: "remote" });
+        return;
       }
+      await localRuntimeManager.stopLocal();
+      const shellSettings = await readShellSettings();
+      currentRemoteLaunch = normalizeDesktopRemoteLaunch({ ...shellSettings, desktopMode: "remote" });
       await saveDesktopLaunchMode(mode);
     },
     getRuntimeStatus: () => localRuntimeManager?.getStatus() ?? { source: "none", state: "stopped" },
