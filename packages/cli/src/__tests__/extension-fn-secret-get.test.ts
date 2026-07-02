@@ -13,6 +13,16 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   fetchWebContent: vi.fn(),
   assertNoSecretPlaintext: assertNoSecretPlaintextMock,
+  emitGoalRetrievalAudit: vi.fn(),
+  createWorkflowAuthoringTools: vi.fn(() => ({})),
+  workflowListParams: {},
+  workflowGetParams: {},
+  workflowSelectParams: {},
+  workflowCreateParams: {},
+  workflowUpdateParams: {},
+  workflowDeleteParams: {},
+  workflowSettingsParams: {},
+  traitListParams: {},
 }));
 
 vi.mock("@fusion/core", async () => {

@@ -31,6 +31,16 @@ vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   fetchWebContent: vi.fn(),
   assertNoSecretPlaintext: vi.fn(),
+  emitGoalRetrievalAudit: vi.fn(),
+  createWorkflowAuthoringTools: vi.fn(() => ({})),
+  workflowListParams: {},
+  workflowGetParams: {},
+  workflowSelectParams: {},
+  workflowCreateParams: {},
+  workflowUpdateParams: {},
+  workflowDeleteParams: {},
+  workflowSettingsParams: {},
+  traitListParams: {},
 }));
 
 async function loadExtension() {

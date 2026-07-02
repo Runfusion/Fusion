@@ -24,7 +24,7 @@ import {
 import { WorkflowGraphTaskRunner, type WorkflowGraphTaskRunResult } from "./workflow-graph-task-runner.js";
 import { ensureWorkflowCompletionSummary } from "./workflow-completion-summary.js";
 import { createCodeNodeRunner } from "./code-node-runner.js";
-import { resolveReviewCheckoutCwd } from "./review-checkout.js";
+import { getTaskReviewCheckoutPath, resolveReviewCheckoutCwd } from "./review-checkout.js";
 import { getActiveNotificationService } from "./notifier.js";
 import type { ParseStepsHandlerDeps, CodeNodeRunner } from "./workflow-node-handlers.js";
 import type { WorkflowBranchPersistence, WorkflowBranchRunState } from "./workflow-graph-branches.js";
@@ -1733,6 +1733,26 @@ export class TaskExecutor {
       ).catch((error) => {
         executorLog.warn(`${taskId}: failed to log pause-abort marker: ${error instanceof Error ? error.message : String(error)}`);
       });
+    }
+  }
+
+  /**
+   * FNXC:ReviewRouting 2026-07-01-16:36:
+   * Review routing must expose whether the reviewer is using an explicit external checkout or the task worktree, but the invalid-sourceMetadata warning is only valid when sourceMetadata supplied the selected candidate. Higher-priority metadata can fail closed before sourceMetadata is considered, so centralize the logging to keep both review seams consistent and avoid false invalid-path warnings.
+   */
+  private logReviewCheckoutRouting(taskId: string, task: unknown, reviewCwd: string, worktreePath: string): void {
+    if (reviewCwd !== worktreePath) {
+      reviewerLog.log(`${taskId}: review routed to external checkout ${reviewCwd} (task worktree: ${worktreePath})`);
+      return;
+    }
+
+    const selectedCandidate = getTaskReviewCheckoutPath(task);
+    const sourceMetadata = task && typeof task === "object" ? (task as Record<string, unknown>).sourceMetadata : undefined;
+    const sourceRecord = sourceMetadata && typeof sourceMetadata === "object" ? sourceMetadata as Record<string, unknown> : undefined;
+    const sourceExternalReviewCheckout = sourceRecord?.externalReviewCheckout;
+    const sourceExternalReviewCheckoutPath = typeof sourceExternalReviewCheckout === "string" ? sourceExternalReviewCheckout.trim() : undefined;
+    if (sourceExternalReviewCheckoutPath && selectedCandidate === sourceExternalReviewCheckoutPath) {
+      reviewerLog.warn(`${taskId}: external review checkout metadata present (${sourceExternalReviewCheckoutPath}) but invalid — reviewing task worktree ${worktreePath}`);
     }
   }
 
@@ -6363,6 +6383,7 @@ export class TaskExecutor {
         // Worktree isolation (KTD-11): review the instance's OWN worktree when set.
         const worktreePath = active.worktreePath || detail.worktree || this.rootDir;
         const reviewCwd = resolveReviewCheckoutCwd(detail, worktreePath);
+        this.logReviewCheckoutRouting(seamTask.id, detail, reviewCwd, worktreePath);
         const stepName = detail.steps[stepIndex]?.name ?? `Step ${stepIndex}`;
         const promptContent = detail.prompt ?? "";
         const userComments = selectUserCommentsForAgentContext(detail, { limit: null });
@@ -12979,6 +13000,7 @@ export class TaskExecutor {
           const userComments = selectUserCommentsForAgentContext(latestDetailForReview, { limit: null });
           const settings = await mergeEffectiveSettings(store, latestDetailForReview, await store.getSettings());
           const reviewCwd = resolveReviewCheckoutCwd(latestDetailForReview, worktreePath);
+          this.logReviewCheckoutRouting(taskId, latestDetailForReview, reviewCwd, worktreePath);
           // Run the reviewer via semaphore.runNested so its slot accounting
           // is honest: activeCount transiently bumps to reflect the second
           // agent session, but the reviewer doesn't enter the wait queue

@@ -9,6 +9,16 @@ vi.mock("@fusion/dashboard", () => ({
 vi.mock("@fusion/engine", () => ({
   createFnAgent: vi.fn(),
   fetchWebContent: fetchWebContentMock,
+  emitGoalRetrievalAudit: vi.fn(),
+  createWorkflowAuthoringTools: vi.fn(() => ({})),
+  workflowListParams: {},
+  workflowGetParams: {},
+  workflowSelectParams: {},
+  workflowCreateParams: {},
+  workflowUpdateParams: {},
+  workflowDeleteParams: {},
+  workflowSettingsParams: {},
+  traitListParams: {},
 }));
 
 import kbExtension from "../extension.js";
