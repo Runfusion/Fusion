@@ -26,6 +26,23 @@ Date: 2026-05-07
 3. Persist the resolved path and executable name in probe results.
 4. Report explicit failure reason when neither exists.
 
+### Windows PATH shim invocation
+
+<!--
+FNXC:CursorCli 2026-07-02-00:00:
+Windows Cursor installs may publish `cursor-agent.cmd`, `cursor.cmd`, or equivalent `.bat` shims on PATH; Fusion must invoke Cursor probe and discovery commands through the Windows shell so Node can execute those wrappers.
+Unix and macOS stay direct-spawned to avoid broadening shell semantics beyond the platform that requires it.
+-->
+
+On Windows, `cursor-agent` and `cursor` can resolve to `.cmd` / `.bat` wrappers rather than native executables. Node.js direct `spawn(binary, args)` does not execute those wrappers reliably; Fusion's Cursor command runner therefore sets shell execution only when `process.platform === "win32"`.
+
+The Windows shell-backed path applies to every Cursor CLI command Fusion currently runs through the shared runner:
+
+- `cursor-agent --version` / `cursor --version` probe attempts.
+- Model discovery attempts: `models --json`, `model list --json`, and `models`.
+
+Non-Windows probes and discovery continue to use direct spawn. Spawn errors such as `ENOENT` are included in the unavailable probe reason in bounded diagnostic form so a working terminal command is distinguishable from known Cursor runtime/auth states.
+
 ## Confirmed error/auth/runtime signals
 
 Observed command behavior in this environment:
