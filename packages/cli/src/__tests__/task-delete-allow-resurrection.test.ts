@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { TaskStore } from "@fusion/core";
-import kbExtension from "../extension.js";
+import kbExtension, { closeCachedStores } from "../extension.js";
 
 type RegisteredTool = {
   name: string;
-  execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: { cwd: string }) => Promise<any>;
+  execute: (toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: { cwd: string; taskId?: string; agentId?: string; runId?: string }) => Promise<any>;
 };
 
 function createMockAPI() {
@@ -36,6 +36,7 @@ describe("task delete allowResurrection plumbing", () => {
   });
 
   afterEach(async () => {
+    await closeCachedStores();
     await rm(rootDir, { recursive: true, force: true });
   });
 
@@ -67,5 +68,48 @@ describe("task delete allowResurrection plumbing", () => {
     const deleted = (store as any).readTaskFromDb(task.id, { includeDeleted: true }) as { allowResurrection?: boolean; deletedAt?: string };
     expect(deleted.deletedAt).toBeTruthy();
     expect(deleted.allowResurrection).toBeUndefined();
+  });
+
+  it("fn_task_delete rejects deleting the caller task and leaves it live", async () => {
+    const store = new TaskStore(rootDir);
+    await store.init();
+    const task = await store.createTask({ title: "self", description: "current task", column: "in-progress" });
+
+    const api = createMockAPI();
+    kbExtension(api);
+    const tool = api.tools.get("fn_task_delete") as RegisteredTool;
+
+    await expect(
+      tool.execute("call-self", { id: task.id }, undefined, undefined, {
+        cwd: rootDir,
+        taskId: task.id,
+        agentId: "agent-test",
+        runId: "run-test",
+      }),
+    ).rejects.toThrow(`Task ${task.id} cannot delete itself`);
+
+    const row = (store as any).readTaskFromDb(task.id, { includeDeleted: true }) as { deletedAt?: string };
+    expect(row.deletedAt).toBeUndefined();
+  });
+
+  it("fn_task_delete lets a task-bound caller delete a different task", async () => {
+    const store = new TaskStore(rootDir);
+    await store.init();
+    const caller = await store.createTask({ title: "caller", description: "current task", column: "in-progress" });
+    const target = await store.createTask({ title: "target", description: "cleanup target", column: "todo" });
+
+    const api = createMockAPI();
+    kbExtension(api);
+    const tool = api.tools.get("fn_task_delete") as RegisteredTool;
+    const result = await tool.execute("call-other", { id: target.id }, undefined, undefined, {
+      cwd: rootDir,
+      taskId: caller.id,
+      agentId: "agent-test",
+      runId: "run-test",
+    });
+
+    expect(result.content[0]?.text).toBe(`Deleted ${target.id}`);
+    const deleted = (store as any).readTaskFromDb(target.id, { includeDeleted: true }) as { deletedAt?: string };
+    expect(deleted.deletedAt).toBeTruthy();
   });
 });

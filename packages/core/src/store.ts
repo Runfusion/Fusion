@@ -1085,6 +1085,17 @@ export class TaskHasDependentsError extends Error {
   }
 }
 
+export class TaskSelfDeleteError extends Error {
+  readonly taskId: string;
+  readonly code = "TASK_SELF_DELETE";
+
+  constructor(taskId: string) {
+    super(`Task ${taskId} cannot delete itself`);
+    this.name = "TaskSelfDeleteError";
+    this.taskId = taskId;
+  }
+}
+
 export class TaskDeletedError extends Error {
   constructor(
     public readonly taskId: string,
@@ -11364,10 +11375,19 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       removeLineageReferences?: boolean;
       allowResurrection?: boolean;
       githubIssueAction?: GithubIssueAction;
-      auditContext?: { agentId: string; runId: string; sessionId?: string };
+      auditContext?: { agentId: string; runId: string; sessionId?: string; taskId?: string };
     },
   ): Promise<Task> {
     const deletedTask = await this.withTaskLock(id, async () => {
+      /*
+      FNXC:TaskDeletion 2026-07-01-00:00:
+      Task-bound runtime callers may clean up other tasks, but the executing task must never soft-delete itself because that hides active work before the executor can finish or report failure.
+      Enforce this at the store boundary so future task-delete bridges inherit the same invariant before any mutation, branch cleanup, or task:deleted audit emission.
+      */
+      if (options?.auditContext?.taskId === id) {
+        throw new TaskSelfDeleteError(id);
+      }
+
       // Flush buffered agent logs inside the lock so no new appends for this
       // task can sneak in between flush and soft-delete mutation.
       this.flushAgentLogBuffer();
