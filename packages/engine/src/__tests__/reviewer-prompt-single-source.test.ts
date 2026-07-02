@@ -9,18 +9,25 @@ import {
   type WorkflowIr,
 } from "@fusion/core";
 
-vi.mock("../pi.js", () => ({
-  createFnAgent: vi.fn(),
-  describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
-  formatModelMarkerDetails: vi.fn((model: string) => model),
-  promptWithFallback: vi.fn(async (session, prompt, options) => {
-    if (options === undefined) {
-      await session.prompt(prompt);
-    } else {
-      await session.prompt(prompt, options);
-    }
-  }),
-}));
+// FNXC:EngineTests 2026-07-02-11:28:
+// The describeModel + formatModelMarkerDetails pi.js mock entries are shared
+// across engine suites via createPiMockBase (test/piMock.ts). The factory
+// dynamic-imports the helper to remain compatible with vitest mock hoisting;
+// file-specific entries (createFnAgent, promptWithFallback) are layered on top.
+vi.mock("../pi.js", async () => {
+  const { createPiMockBase } = await import("../test/piMock.js");
+  return {
+    ...createPiMockBase(),
+    createFnAgent: vi.fn(),
+    promptWithFallback: vi.fn(async (session, prompt, options) => {
+      if (options === undefined) {
+        await session.prompt(prompt);
+      } else {
+        await session.prompt(prompt, options);
+      }
+    }),
+  };
+});
 
 import { reviewStep } from "../reviewer.js";
 import { createFnAgent } from "../pi.js";

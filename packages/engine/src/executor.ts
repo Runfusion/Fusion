@@ -1727,11 +1727,14 @@ export class TaskExecutor {
   /*
   FNXC:WorkflowLifecycle 2026-07-01-16:20:
   Breadcrumb task-log writes on the abort/pause/finalize paths are best-effort diagnostics and must NEVER break control flow. FN-7335 wired store.logEntry() straight into the SYNCHRONOUS markPausedAborted() as `void this.store.logEntry(...).catch(...)`; when store.logEntry is absent/throws synchronously (undefined method, store closed mid-abort, corrupted pager) the call throws a TypeError BEFORE the promise exists, so the trailing .catch() never runs and the exception unwinds out of markPausedAborted — aborting hard-cancel/pause and stranding the in-review handoff. Route every breadcrumb write through safeLogEntry() so both synchronous throws and async rejections are swallowed into a warn.
+
+  FNXC:WorkflowLifecycle 2026-07-02-09:42:
+  safeLogEntry returns Promise<void> so callers can choose to await it. Two call sites that previously used `await this.store.logEntry(...).catch(...)` (the awaitAbortInFlightTaskWork cleanup breadcrumb and the handleGraphFailure classification breadcrumb) regressed to fire-and-forget when they were converted to safeLogEntry, which let a following task move/update or pause-abort state change land before the breadcrumb was persisted. Those two sites must `await this.safeLogEntry(...)` to preserve the original ordering semantics. The markPausedAborted site stays fire-and-forget because the original code there was already `void ... .catch(...)`.
   */
-  private safeLogEntry(taskId: string, message: string): void {
+  private async safeLogEntry(taskId: string, message: string): Promise<void> {
     try {
       const result = this.store.logEntry(taskId, message, undefined, this.getRunContextFor(taskId));
-      void Promise.resolve(result).catch((error) => {
+      await Promise.resolve(result).catch((error) => {
         executorLog.warn(`${taskId}: failed to write task-log breadcrumb: ${error instanceof Error ? error.message : String(error)}`);
       });
     } catch (error) {
@@ -2575,7 +2578,11 @@ export class TaskExecutor {
 
     if (hadActiveSurface) {
       executorLog.log(`${taskId}: awaited abort of in-flight work — ${reason}`);
-      this.safeLogEntry(
+      /*
+      FNXC:WorkflowLifecycle 2026-07-02-09:42:
+      PR #1874 review: await this cleanup breadcrumb so the task log/audit timeline shows the abort-cleanup record before any following task move/update completes. The original code was `await this.store.logEntry(...).catch(...)`; dropping the await when migrating to safeLogEntry made it fire-and-forget and let the terminal state land without the cleanup record.
+      */
+      await this.safeLogEntry(
         taskId,
         `Pause abort cleanup completed: reason=${reason}; surfaces=${abortedSurfaces.join(", ") || "none"}`,
       );
@@ -8228,7 +8235,11 @@ export class TaskExecutor {
       if (pausedAborted || live.paused || live.userPaused || abortProvenance) {
         const failedNodeForLog = result.visitedNodeIds[result.visitedNodeIds.length - 1] ?? "unknown";
         const failureValueForLog = this.graphFailureValue(result) ?? "none";
-        this.safeLogEntry(
+        /*
+        FNXC:WorkflowLifecycle 2026-07-02-09:42:
+        PR #1874 review: await this classification breadcrumb before the handler continues into pause-abort state changes (clearPausedAborted, reclassification, parking). The original code was `await this.store.logEntry(...)`; dropping the await when migrating to safeLogEntry let a benign pause abort be cleared/reclassified before the log write landed, so operators could see the classification after the state it described had already changed.
+        */
+        await this.safeLogEntry(
           task.id,
           `Pause abort classified: provenance=${abortProvenance ?? "unknown"}; node=${failedNodeForLog}; interrupted=${result.interruptedNodeId ?? "none"}; abortKind=${result.interruptedAbortKind ?? "none"}; column=${live.column}; status=${live.status ?? "none"}; paused=${live.paused === true}; userPaused=${live.userPaused === true}; value=${failureValueForLog}; genuine=${genuinePauseAbort}; mergeSeam=${mergeSeamAborted}; completionSuppressed=${suppressFinalizedCompletionAbort}`,
         );

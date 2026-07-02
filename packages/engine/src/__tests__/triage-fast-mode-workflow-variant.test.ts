@@ -21,17 +21,22 @@ vi.mock("../reviewer.js", () => ({
   reviewStep: mockReviewStep,
 }));
 
-vi.mock("../pi.js", () => ({
-  createFnAgent: mockCreateFnAgent,
-  describeModel: vi.fn().mockReturnValue("mock-model"),
-  promptWithFallback: mockPromptWithFallback,
-  // FNXC:TriageTests 2026-07-02-07:40:
-  // triage.ts specifyTask now calls formatModelMarkerDetails (from pi.js) to
-  // build the model-marker log line after the agent session resolves. The mock
-  // must expose the export so the planning path can reach finalization
-  // (moveTask todo) instead of throwing on a missing mock member.
-  formatModelMarkerDetails: vi.fn((model: string) => model),
-}));
+// FNXC:EngineTests 2026-07-02-11:28:
+// The describeModel + formatModelMarkerDetails pi.js mock entries are shared
+// across engine suites via createPiMockBase (test/piMock.ts). The factory
+// dynamic-imports the helper to remain compatible with vitest mock hoisting;
+// file-specific entries (createFnAgent, promptWithFallback) come from the
+// vi.hoisted block above so tests can reference them after the mock installs.
+// This suite asserts on the bare "mock-model" marker form, so override the
+// default "mock-provider/mock-model".
+vi.mock("../pi.js", async () => {
+  const { createPiMockBase } = await import("../test/piMock.js");
+  return {
+    ...createPiMockBase("mock-model"),
+    createFnAgent: mockCreateFnAgent,
+    promptWithFallback: mockPromptWithFallback,
+  };
+});
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");

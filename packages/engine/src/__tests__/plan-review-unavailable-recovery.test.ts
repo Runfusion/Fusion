@@ -1,13 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../pi.js", () => ({
-  describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
-  formatModelMarkerDetails: vi.fn((model: string) => model),
-  promptWithFallback: vi.fn(async (session: any, prompt: string, options?: any) => {
-    if (options == null) await session.prompt(prompt);
-    else await session.prompt(prompt, options);
-  }),
-}));
+// FNXC:EngineTests 2026-07-02-11:28:
+// The describeModel + formatModelMarkerDetails pi.js mock entries are shared
+// across engine suites via createPiMockBase (test/piMock.ts). The factory
+// dynamic-imports the helper to remain compatible with vitest mock hoisting;
+// file-specific entries (promptWithFallback) are layered on top.
+vi.mock("../pi.js", async () => {
+  const { createPiMockBase } = await import("../test/piMock.js");
+  return {
+    ...createPiMockBase(),
+    promptWithFallback: vi.fn(async (session: any, prompt: string, options?: any) => {
+      if (options == null) await session.prompt(prompt);
+      else await session.prompt(prompt, options);
+    }),
+  };
+});
 
 vi.mock("../agent-session-helpers.js", () => ({
   createResolvedAgentSession: vi.fn(),

@@ -27,23 +27,25 @@ async function waitForAsyncExpectation(assertion: () => void | Promise<void>) {
 
 // ── Module-level mocks (matching existing test patterns) ──────────────────
 
-vi.mock("../pi.js", () => ({
-  createFnAgent: vi.fn(),
-  describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
-  promptWithFallback: vi.fn(async (session, prompt, options) => {
-    if (options === undefined) {
-      await session.prompt(prompt);
-    } else {
-      await session.prompt(prompt, options);
-    }
-  }),
-  // FNXC:EngineTests 2026-07-02-07:40:
-  // Both triage.ts and executor.ts now call formatModelMarkerDetails (from
-  // pi.js) to build the model-marker log line after resolving an agent
-  // session. The mock must expose the export so the resume/triage paths can
-  // reach finalization instead of throwing on a missing mock member.
-  formatModelMarkerDetails: vi.fn((model: string) => model),
-}));
+// FNXC:EngineTests 2026-07-02-11:28:
+// The describeModel + formatModelMarkerDetails pi.js mock entries are shared
+// across engine suites via createPiMockBase (test/piMock.ts). The factory
+// dynamic-imports the helper to remain compatible with vitest mock hoisting;
+// file-specific entries (createFnAgent, promptWithFallback) are layered on top.
+vi.mock("../pi.js", async () => {
+  const { createPiMockBase } = await import("../test/piMock.js");
+  return {
+    ...createPiMockBase(),
+    createFnAgent: vi.fn(),
+    promptWithFallback: vi.fn(async (session, prompt, options) => {
+      if (options === undefined) {
+        await session.prompt(prompt);
+      } else {
+        await session.prompt(prompt, options);
+      }
+    }),
+  };
+});
 vi.mock("../reviewer.js", () => ({
   reviewStep: vi.fn(),
 }));

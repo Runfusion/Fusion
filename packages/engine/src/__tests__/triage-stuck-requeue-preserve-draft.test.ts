@@ -17,17 +17,20 @@ vi.mock("../agent-session-helpers.js", () => ({
   resolvePlanningSessionModel: vi.fn().mockReturnValue({ provider: "mock", modelId: "mock-model" }),
 }));
 
-vi.mock("../pi.js", () => ({
-  describeModel: vi.fn().mockReturnValue("mock-model"),
-  promptWithFallback: mockPromptWithFallback,
-  // FNXC:TriageTests 2026-07-02-07:40:
-  // triage.ts specifyTask now calls formatModelMarkerDetails (from pi.js) to
-  // build the model-marker log line after the agent session resolves. The mock
-  // must expose the export so the stuck-requeue planning path can reach
-  // finalization (moveTask todo / needs-replan) instead of throwing on a
-  // missing mock member.
-  formatModelMarkerDetails: vi.fn((model: string) => model),
-}));
+// FNXC:EngineTests 2026-07-02-11:28:
+// The describeModel + formatModelMarkerDetails pi.js mock entries are shared
+// across engine suites via createPiMockBase (test/piMock.ts). The factory
+// dynamic-imports the helper to remain compatible with vitest mock hoisting;
+// the file-specific promptWithFallback comes from the vi.hoisted block above
+// so tests can reference it after the mock installs. This suite asserts on
+// the bare "mock-model" marker form, so override the default.
+vi.mock("../pi.js", async () => {
+  const { createPiMockBase } = await import("../test/piMock.js");
+  return {
+    ...createPiMockBase("mock-model"),
+    promptWithFallback: mockPromptWithFallback,
+  };
+});
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
