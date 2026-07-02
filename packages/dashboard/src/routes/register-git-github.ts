@@ -43,6 +43,10 @@ import { GitHubTrackingCommentService } from "../github-tracking-comments.js";
 import { GitHubTrackingStateService } from "../github-tracking-state.js";
 import { GitHubTrackingReconciler, RECONCILE_SCAN_LIMIT } from "../github-tracking-reconciler.js";
 import { GitHubSourceIssueCloseService } from "../github-source-issue-close.js";
+import { GitLabIssueCommentService } from "../gitlab-issue-comment.js";
+import { GitLabTrackingCommentService } from "../gitlab-tracking-comments.js";
+import { GitLabTrackingStateService } from "../gitlab-tracking-state.js";
+import { GitLabSourceIssueCloseService } from "../gitlab-source-issue-close.js";
 import { KnowledgeIndexRefreshService } from "../knowledge-index-refresh.js";
 import { githubRateLimiter } from "../github-poll.js";
 import * as projectStoreResolver from "../project-store-resolver.js";
@@ -2534,6 +2538,18 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     githubSourceIssueCloseService.start();
     ctx.registerDispose(() => githubSourceIssueCloseService.stop());
 
+    const gitlabIssueCommentService = new GitLabIssueCommentService(store);
+    gitlabIssueCommentService.start();
+    ctx.registerDispose(() => gitlabIssueCommentService.stop());
+
+    const gitlabTrackingCommentService = new GitLabTrackingCommentService(store);
+    gitlabTrackingCommentService.start();
+    ctx.registerDispose(() => gitlabTrackingCommentService.stop());
+
+    const gitlabSourceIssueCloseService = new GitLabSourceIssueCloseService(store);
+    gitlabSourceIssueCloseService.start();
+    ctx.registerDispose(() => gitlabSourceIssueCloseService.stop());
+
     // U14 — incremental knowledge-index refresh on task completion. Listens for
     // task:moved → done and re-indexes just that task as a knowledge page.
     const knowledgeIndexRefreshService = new KnowledgeIndexRefreshService(store);
@@ -2541,11 +2557,13 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
     ctx.registerDispose(() => knowledgeIndexRefreshService.stop());
 
     const githubTrackingStateService = new GitHubTrackingStateService(store);
+    const gitlabTrackingStateService = new GitLabTrackingStateService(store);
     const githubTrackingReconciler = new GitHubTrackingReconciler();
     const reconcileScheduledStores = new WeakSet<TaskStore>();
     const reconcileSweepOffsetByStore = new WeakMap<TaskStore, number>();
     const reconcileSweepInFlightByStore = new WeakMap<TaskStore, boolean>();
     githubTrackingStateService.start();
+    gitlabTrackingStateService.start();
 
     const runReconcileSweep = async (projectStore: TaskStore, options?: { startup?: boolean }) => {
       if (typeof (projectStore as Partial<TaskStore>).listTasks !== "function"
@@ -2590,6 +2608,8 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       attachedStateStores.add(projectStore);
       githubTrackingStateService.attach(projectStore);
       githubSourceIssueCloseService.attach(projectStore);
+      gitlabTrackingStateService.attach(projectStore);
+      gitlabSourceIssueCloseService.attach(projectStore);
       // FNXC:Knowledge 2026-06-16-14:32:
       // Knowledge index refresh on task:moved→done must run for every registered project store, not just the primary.
       // Mirror the GitHubTrackingStateService/GitHubSourceIssueCloseService attach/detach lifecycle so non-primary
@@ -2652,9 +2672,12 @@ export function registerGitGitHubRoutes(ctx: ApiRoutesContext): void {
       for (const projectStore of attachedStateStores) {
         githubTrackingStateService.detach(projectStore);
         githubSourceIssueCloseService.detach(projectStore);
+        gitlabTrackingStateService.detach(projectStore);
+        gitlabSourceIssueCloseService.detach(projectStore);
         knowledgeIndexRefreshService.detach(projectStore);
       }
       githubTrackingStateService.stop();
+      gitlabTrackingStateService.stop();
     });
   }
 

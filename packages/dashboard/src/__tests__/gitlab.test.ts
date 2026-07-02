@@ -31,6 +31,24 @@ describe("GitLabClient", () => {
     await expect(client.listProjectIssues("g/p", { limit: 1 })).rejects.toThrow("GitLab authentication failed");
   });
 
+  it("posts notes and state events for issues and merge requests", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 1 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 2 }))
+      .mockResolvedValueOnce(jsonResponse({ iid: 2, project_id: 7, title: "Issue", web_url: "https://gitlab.example.com/g/p/-/issues/2", state: "closed", labels: [] }))
+      .mockResolvedValueOnce(jsonResponse({ iid: 4, project_id: 7, title: "MR", web_url: "https://gitlab.example.com/g/p/-/merge_requests/4", state: "closed", labels: [] }));
+    const client = new GitLabClient(auth, fetchImpl as any);
+    await client.commentOnProjectIssue("g/p", 2, "done");
+    await client.commentOnMergeRequest(7, 4, "done");
+    await client.setProjectIssueState("g/p", 2, "closed");
+    await client.setMergeRequestState(7, 4, "closed");
+    expect(fetchImpl.mock.calls[0][0]).toBe("https://gitlab.example.com/api/v4/projects/g%2Fp/issues/2/notes");
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({ method: "POST", body: JSON.stringify({ body: "done" }) });
+    expect(fetchImpl.mock.calls[1][0]).toBe("https://gitlab.example.com/api/v4/projects/7/merge_requests/4/notes");
+    expect(fetchImpl.mock.calls[2][0]).toBe("https://gitlab.example.com/api/v4/projects/g%2Fp/issues/2?state_event=close");
+    expect(fetchImpl.mock.calls[3][0]).toBe("https://gitlab.example.com/api/v4/projects/7/merge_requests/4?state_event=close");
+  });
+
   it("normalizes project issues, group issues, and merge requests", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 10, iid: 2, project_id: 7, title: "Issue", description: "Body", web_url: "https://gitlab.example.com/g/p/-/issues/2", state: "opened", labels: ["bug"], author: { username: "ana" }, user_notes_count: 3 }]))

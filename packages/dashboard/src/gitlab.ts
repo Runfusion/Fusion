@@ -191,12 +191,14 @@ export class GitLabClient {
       headers: {
         Accept: "application/json",
         [this.auth.headerName]: this.auth.token,
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
         ...(init?.headers ?? {}),
       },
     });
     if (!response.ok) {
       throw new GitLabApiError(response.status, mapGitLabError(response.status));
     }
+    if (response.status === 204) return undefined as T;
     return await response.json() as T;
   }
 
@@ -239,6 +241,34 @@ export class GitLabClient {
 
   async getMergeRequest(project: string | number, iid: number): Promise<GitLabMergeRequest> {
     return normalizeMergeRequest(await this.request(`projects/${encodeGitLabPathId(project)}/merge_requests/${iid}`));
+  }
+
+  /*
+  FNXC:GitLabLifecycle 2026-07-02-00:00:
+  GitLab lifecycle side effects must use REST notes and state_event APIs for GitLab.com and self-managed instances. Keep project identifiers URL-encoded, token auth header-based, and never introduce a local GitLab CLI dependency.
+  */
+  async commentOnProjectIssue(project: string | number, iid: number, body: string): Promise<void> {
+    await this.request(`projects/${encodeGitLabPathId(project)}/issues/${iid}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  async commentOnMergeRequest(project: string | number, iid: number, body: string): Promise<void> {
+    await this.request(`projects/${encodeGitLabPathId(project)}/merge_requests/${iid}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    });
+  }
+
+  async setProjectIssueState(project: string | number, iid: number, state: "opened" | "closed"): Promise<GitLabIssue> {
+    const params = new URLSearchParams({ state_event: state === "closed" ? "close" : "reopen" });
+    return normalizeIssue(await this.request(`projects/${encodeGitLabPathId(project)}/issues/${iid}?${params.toString()}`, { method: "PUT" }), "project_issue");
+  }
+
+  async setMergeRequestState(project: string | number, iid: number, state: "opened" | "closed"): Promise<GitLabMergeRequest> {
+    const params = new URLSearchParams({ state_event: state === "closed" ? "close" : "reopen" });
+    return normalizeMergeRequest(await this.request(`projects/${encodeGitLabPathId(project)}/merge_requests/${iid}?${params.toString()}`, { method: "PUT" }));
   }
 }
 

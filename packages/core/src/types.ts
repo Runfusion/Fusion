@@ -4347,6 +4347,16 @@ export interface ProjectSettings {
   gitlabAuthToken?: string;
   /** Project GitLab token type label. Defaults effectively to "personal" when a token exists and this is unset. */
   gitlabAuthTokenType?: GitlabAuthTokenType;
+  /**
+   * FNXC:GitLabLifecycle 2026-07-02-00:00:
+   * GitLab comment and auto-close settings mirror GitHub lifecycle side effects but remain disabled by default and use the configured GitLab instance/API URL so GitLab.com and self-managed hosts behave consistently.
+   */
+  /** When true, automatically post a comment to the originating GitLab issue or merge request when an imported task is moved to done. Default: false. */
+  gitlabCommentOnDone?: boolean;
+  /** Optional template used for GitLab source comments posted on task completion. Supports `{taskId}` and `{taskTitle}` placeholders. */
+  gitlabCommentTemplate?: string;
+  /** When true, automatically close/reopen linked source-imported GitLab issues or merge requests on task done/undone lifecycle moves. Default: false. */
+  gitlabCloseSourceIssueOnDone?: boolean;
   /** When true, tracking issue creation searches open/closed repo issues for likely duplicates before opening a new issue.
    *  Default: true (set false to opt out). */
   githubTrackingDedupEnabled?: boolean;

@@ -649,7 +649,7 @@ Default behavior: PR title/body are AI-generated unless both `--title` and `--bo
 
 `fn task import` creates Fusion tasks from GitHub issues. If project or global GitHub tracking defaults are enabled, imported issue tasks are marked as tracked and the tracking hook links the source issue itself instead of opening a duplicate Fusion tracking issue.
 
-`fn task import-gitlab` creates Fusion tasks from GitLab project issues, group issues, or project merge requests using the configured GitLab instance/API URL and access token (`read_api` or `api` scope). It uses the GitLab HTTP API only (no `glab` dependency), supports GitLab.com and self-managed instances, stores `gitlab_import` provenance plus `gitlabTracking` task metadata for dashboard badges/details, and skips duplicates by source URL/provenance. GitLab comment posting and remote auto-close are not part of this command yet.
+`fn task import-gitlab` creates Fusion tasks from GitLab project issues, group issues, or project merge requests using the configured GitLab instance/API URL and access token (`read_api` or `api` scope for import; `api` for later comments/close actions). It uses the GitLab HTTP API only (no `glab` dependency), supports GitLab.com and self-managed instances, stores `gitlab_import` provenance plus `gitlabTracking` task metadata for dashboard badges/details, and skips duplicates by source URL/provenance. Imported GitLab tasks can post lifecycle comments and close/reopen source or tracking targets when project settings enable those side effects; group issues require backing project identity, and Fusion never merges GitLab merge requests.
 
 ```bash
 fn pr create FN-001
