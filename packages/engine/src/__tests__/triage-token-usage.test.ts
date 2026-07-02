@@ -141,13 +141,13 @@ describe("triage session token usage recording", () => {
     db.init();
     insertUsageTask(db, store._task);
 
-    const byModel = aggregateTokenAnalytics(db, { groupBy: "model" });
+    const byModel = await aggregateTokenAnalytics(db, { groupBy: "model" });
     expect(byModel.totals).toMatchObject({ totalTokens: 165, nTasks: 1 });
     expect(byModel.groups).toEqual([
       expect.objectContaining({ key: "claude-sonnet-4-5", totalTokens: 165, nTasks: 1 }),
     ]);
 
-    const byProvider = aggregateTokenAnalytics(db, { groupBy: "provider" });
+    const byProvider = await aggregateTokenAnalytics(db, { groupBy: "provider" });
     expect(byProvider.groups).toEqual([
       expect.objectContaining({ key: "anthropic", totalTokens: 165, nTasks: 1 }),
     ]);

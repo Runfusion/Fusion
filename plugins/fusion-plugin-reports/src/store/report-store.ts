@@ -56,9 +56,19 @@ export class ReportStoreError extends Error {
 }
 
 export class ReportStore extends EventEmitter<ReportStoreEvents> {
-  constructor(private readonly db: Database) {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:25:
+  // db is null in backend mode (PostgreSQL). Plugin store methods that use
+  // sync SQLite will throw when called in backend mode until the async path
+  // is implemented.
+  constructor(private readonly db: Database | null) {
     super();
     this.setMaxListeners(50);
+  }
+
+  /** Asserts sync db is available (throws in backend mode). */
+  private syncDb(): Database {
+    if (!this.db) throw new Error("ReportStore: sync Database is null (backend mode)");
+    return this.db;
   }
 
   createReport(input: ReportCreateInput): Report {
@@ -91,8 +101,8 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       updatedAt: now,
     };
 
-    this.db.transaction(() => {
-      this.db.prepare(`
+    this.syncDb().transaction(() => {
+      this.syncDb().prepare(`
         INSERT INTO reports (
           id, cadence, periodStart, periodEnd, title, status,
           generationStartedAt, generationCompletedAt, reviewStartedAt, reviewCompletedAt,
@@ -109,13 +119,13 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       `).run(this.toDbParams(report, true));
     });
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("report:created", report);
     return report;
   }
 
   getReport(id: string): Report | null {
-    const row = this.db.prepare("SELECT * FROM reports WHERE id = ?").get(id) as ReportRow | undefined;
+    const row = this.syncDb().prepare("SELECT * FROM reports WHERE id = ?").get(id) as ReportRow | undefined;
     return row ? this.rowToReport(row) : null;
   }
 
@@ -156,7 +166,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     `;
     params.push(limit, offset);
 
-    const rows = this.db.prepare(sql).all(...params) as ReportRow[];
+    const rows = this.syncDb().prepare(sql).all(...params) as ReportRow[];
     return rows.map((row) => this.rowToReport(row));
   }
 
@@ -181,8 +191,8 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       updatedAt: new Date().toISOString(),
     };
 
-    this.db.transaction(() => this.persistExisting(next));
-    this.db.bumpLastModified();
+    this.syncDb().transaction(() => this.persistExisting(next));
+    this.syncDb().bumpLastModified();
     this.emit("report:updated", next);
     return next;
   }
@@ -212,8 +222,8 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     if (next === "published") updated.publishedAt = now;
     if (next === "archived") updated.archivedAt = now;
 
-    this.db.transaction(() => this.persistExisting(updated));
-    this.db.bumpLastModified();
+    this.syncDb().transaction(() => this.persistExisting(updated));
+    this.syncDb().bumpLastModified();
     this.emit("report:status-changed", updated);
     return updated;
   }
@@ -233,8 +243,8 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
       updatedAt: now,
     };
 
-    this.db.transaction(() => this.persistExisting(updated));
-    this.db.bumpLastModified();
+    this.syncDb().transaction(() => this.persistExisting(updated));
+    this.syncDb().bumpLastModified();
     this.emit("report:review-attached", updated);
     this.emit("report:status-changed", updated);
     return updated;
@@ -253,10 +263,10 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
 
   deleteReport(id: string): void {
     this.requireReport(id);
-    this.db.transaction(() => {
-      this.db.prepare("DELETE FROM reports WHERE id = ?").run(id);
+    this.syncDb().transaction(() => {
+      this.syncDb().prepare("DELETE FROM reports WHERE id = ?").run(id);
     });
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("report:deleted", id);
   }
 
@@ -297,7 +307,7 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
   }
 
   private persistExisting(report: Report): void {
-    const result = this.db.prepare(`
+    const result = this.syncDb().prepare(`
       UPDATE reports
       SET cadence = @cadence,
           periodStart = @periodStart,

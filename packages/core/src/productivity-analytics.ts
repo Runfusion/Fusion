@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 
 /**
  * Productivity analytics: files modified (count + language distribution) from
@@ -155,10 +157,23 @@ function nearestRankPercentile(sortedValues: readonly number[], percentile: numb
  * structures (not nulls); LOC and task duration remain unavailable sentinels
  * unless at least one in-range row carries real source data.
  */
-export function aggregateProductivityAnalytics(
-  db: Database,
+export async function aggregateProductivityAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ProductivityAnalyticsQuery = {},
-): ProductivityAnalytics {
+): Promise<ProductivityAnalytics> {
+  // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+  // Backend (PostgreSQL) path. The async connection does not put `project` on
+  // the search_path, so every table is schema-qualified (project.*) and uses
+  // snake_case columns. `modified_files` is jsonb (postgres-js returns it
+  // already parsed), so the language/file count runs over the parsed array
+  // rather than JSON.parse. pull_requests.created_at is a bigint epoch-ms
+  // column (mirrors the SQLite INTEGER column), so ISO bounds are converted to
+  // epoch ms. Semantics (range columns, COALESCE/SUM/COUNT, statsRows gate, LOC
+  // unavailable sentinel, duration percentiles) mirror the sync branch exactly.
+  if ("ping" in dbOrLayer) {
+    return aggregateProductivityAnalyticsAsync(dbOrLayer, query);
+  }
+  const db = dbOrLayer as Database;
   // Modified files: read the JSON array off tasks updated in range.
   const taskClauses: string[] = [
     "modifiedFiles IS NOT NULL",
@@ -309,6 +324,139 @@ export function aggregateProductivityAnalytics(
       .prepare(`SELECT COUNT(*) AS count FROM pull_requests ${prWhere}`)
       .get(...prParams) as CountRow
   ).count;
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    modifiedFiles,
+    byLanguage,
+    commits,
+    pullRequests,
+    loc,
+    hoursSaved,
+    taskDuration,
+    taskDurationTrend,
+  };
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+ * PostgreSQL implementation of {@link aggregateProductivityAnalytics}. Mirrors
+ * the sync SQLite aggregation one-for-one against the real `project.*` tables.
+ */
+async function aggregateProductivityAnalyticsAsync(
+  layer: AsyncDataLayer,
+  query: ProductivityAnalyticsQuery,
+): Promise<ProductivityAnalytics> {
+  // Modified files: tasks updated in range whose modified_files is a non-empty
+  // jsonb array. postgres-js returns jsonb already parsed.
+  const mfFrom = query.from !== undefined ? sql`AND updated_at >= ${query.from}` : sql``;
+  const mfTo = query.to !== undefined ? sql`AND updated_at <= ${query.to}` : sql``;
+  const taskRows = (await layer.db.execute(
+    sql`SELECT modified_files AS "modifiedFiles" FROM project.tasks
+        WHERE modified_files IS NOT NULL
+          AND jsonb_typeof(modified_files) = 'array'
+          AND jsonb_array_length(modified_files) > 0
+          ${mfFrom} ${mfTo}`,
+  )) as Array<{ modifiedFiles: unknown }>;
+
+  let modifiedFiles = 0;
+  const langMap = new Map<string, number>();
+  for (const row of taskRows) {
+    const files = row.modifiedFiles;
+    if (!Array.isArray(files)) continue;
+    for (const f of files) {
+      if (typeof f !== "string" || f.length === 0) continue;
+      modifiedFiles += 1;
+      const lang = languageOf(f);
+      langMap.set(lang, (langMap.get(lang) ?? 0) + 1);
+    }
+  }
+  const byLanguage: LanguageCount[] = [...langMap.entries()]
+    .map(([language, count]) => ({ language, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Commits + LOC from task_commit_associations (by authored_at).
+  const cFrom = query.from !== undefined ? sql`AND authored_at >= ${query.from}` : sql``;
+  const cTo = query.to !== undefined ? sql`AND authored_at <= ${query.to}` : sql``;
+  const commitStatsRows = (await layer.db.execute(
+    sql`SELECT
+          count(*)::int AS count,
+          COALESCE(SUM(additions), 0)::int AS additions,
+          COALESCE(SUM(deletions), 0)::int AS deletions,
+          COUNT(CASE WHEN additions IS NOT NULL OR deletions IS NOT NULL THEN 1 END)::int AS "statsRows"
+        FROM project.task_commit_associations
+        WHERE 1=1 ${cFrom} ${cTo}`,
+  )) as Array<{ count: number; additions: number; deletions: number; statsRows: number }>;
+  const commitStats = commitStatsRows[0] ?? { count: 0, additions: 0, deletions: 0, statsRows: 0 };
+  const commits = commitStats.count;
+  const loc: LocSummary = commitStats.statsRows > 0
+    ? { value: (commitStats.additions ?? 0) + (commitStats.deletions ?? 0), unavailable: false }
+    : { value: null, unavailable: true };
+  const hoursSaved: HoursSavedSummary = loc.unavailable || loc.value === null
+    ? { value: null, unavailable: true }
+    : { value: Math.round((loc.value / HUMAN_LINES_PER_HOUR) * 10) / 10, unavailable: false };
+
+  // Active-execution duration for done tasks completed in range.
+  const dFrom = query.from !== undefined ? sql`AND execution_completed_at >= ${query.from}` : sql``;
+  const dTo = query.to !== undefined ? sql`AND execution_completed_at <= ${query.to}` : sql``;
+  const durationRows = (await layer.db.execute(
+    sql`SELECT cumulative_active_ms AS "cumulativeActiveMs", execution_completed_at AS "executionCompletedAt"
+        FROM project.tasks
+        WHERE "column" = 'done'
+          AND execution_completed_at IS NOT NULL
+          AND cumulative_active_ms IS NOT NULL
+          AND cumulative_active_ms > 0
+          ${dFrom} ${dTo}
+        ORDER BY cumulative_active_ms ASC`,
+  )) as Array<{ cumulativeActiveMs: number; executionCompletedAt: string }>;
+  const durations = durationRows.map((row) => Number(row.cumulativeActiveMs));
+  const totalDurationMs = durations.reduce((sum, durationMs) => sum + durationMs, 0);
+  const taskDuration: TaskDurationSummary = durations.length > 0
+    ? {
+      completedTasks: durations.length,
+      averageMs: totalDurationMs / durations.length,
+      medianMs: median(durations),
+      p90Ms: nearestRankPercentile(durations, 0.9),
+      totalMs: totalDurationMs,
+      unavailable: false,
+    }
+    : {
+      completedTasks: 0,
+      averageMs: null,
+      medianMs: null,
+      p90Ms: null,
+      totalMs: null,
+      unavailable: true,
+    };
+
+  const durationBuckets = new Map<string, number[]>();
+  for (const row of durationRows) {
+    const bucket = row.executionCompletedAt.slice(0, 10);
+    const bucketDurations = durationBuckets.get(bucket) ?? [];
+    bucketDurations.push(Number(row.cumulativeActiveMs));
+    durationBuckets.set(bucket, bucketDurations);
+  }
+  const taskDurationTrend: TaskDurationTrendBucket[] = [...durationBuckets.entries()].map(([bucket, bucketDurations]) => {
+    const sortedBucketDurations = [...bucketDurations].sort((a, b) => a - b);
+    const bucketTotalMs = sortedBucketDurations.reduce((sum, durationMs) => sum + durationMs, 0);
+    return {
+      bucket,
+      completedTasks: sortedBucketDurations.length,
+      averageMs: sortedBucketDurations.length > 0 ? bucketTotalMs / sortedBucketDurations.length : null,
+      medianMs: sortedBucketDurations.length > 0 ? median(sortedBucketDurations) : null,
+      unavailable: false,
+    };
+  });
+
+  // Pull requests. pull_requests.created_at is a bigint epoch-ms column, so the
+  // ISO bounds are converted to epoch ms for comparison (mirrors sync branch).
+  const prFrom = query.from !== undefined ? sql`AND created_at >= ${Date.parse(query.from)}` : sql``;
+  const prTo = query.to !== undefined ? sql`AND created_at <= ${Date.parse(query.to)}` : sql``;
+  const prRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.pull_requests WHERE 1=1 ${prFrom} ${prTo}`,
+  )) as Array<{ count: number }>;
+  const pullRequests = prRows[0]?.count ?? 0;
 
   return {
     from: query.from ?? null,

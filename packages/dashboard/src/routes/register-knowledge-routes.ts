@@ -52,6 +52,12 @@ export const registerKnowledgeRoutes: ApiRouteRegistrar = (ctx) => {
   router.get("/knowledge/query", async (req, res) => {
     try {
       const store = await getScopedStore(req);
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-22:15:
+      // Knowledge index uses sync SQLite FTS; skip in backend mode.
+      if (store.isBackendMode()) {
+        res.json({ query: typeof req.query.q === "string" ? req.query.q : "", pages: [], total: 0 });
+        return;
+      }
       const q = typeof req.query.q === "string" ? req.query.q : "";
       const pages = queryKnowledgePages(store.getDatabase(), {
         query: q,

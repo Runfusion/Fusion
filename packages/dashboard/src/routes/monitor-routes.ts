@@ -88,7 +88,7 @@ export const registerMonitorRoutes: ApiRouteRegistrar = (ctx) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const store: TaskStore = await getScopedStore(req);
     try {
-      const deployment = recordDeployment(store.getDatabase(), {
+      const deployment = await recordDeployment(store.getAsyncLayer() ?? store.getDatabase(), {
         deploymentId: typeof body.deploymentId === "string" ? body.deploymentId : undefined,
         service: typeof body.service === "string" ? body.service : undefined,
         environment: typeof body.environment === "string" ? body.environment : undefined,
@@ -122,7 +122,7 @@ export const registerMonitorRoutes: ApiRouteRegistrar = (ctx) => {
 
     try {
       if (action === "resolve") {
-        const incident = resolveIncident(store.getDatabase(), groupingKey,
+        const incident = await resolveIncident(store.getAsyncLayer() ?? store.getDatabase(), groupingKey,
           typeof body.at === "string" ? body.at : undefined);
         res.status(200).json({
           ok: true,
@@ -161,7 +161,7 @@ export const registerMonitorRoutes: ApiRouteRegistrar = (ctx) => {
     const from = typeof req.query.from === "string" ? req.query.from : undefined;
     const to = typeof req.query.to === "string" ? req.query.to : undefined;
     try {
-      const metrics = aggregateMonitorMetrics(store.getDatabase(), { from, to });
+      const metrics = await aggregateMonitorMetrics(store.getAsyncLayer() ?? store.getDatabase(), { from, to });
       res.json(metrics);
     } catch (err) {
       rethrowAsApiError(err, "Failed to read monitor metrics");

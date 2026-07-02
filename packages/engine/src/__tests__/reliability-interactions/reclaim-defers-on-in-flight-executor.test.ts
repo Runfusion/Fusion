@@ -85,6 +85,14 @@ function makeStore(task: Task): TaskStore & EventEmitter & { auditEvents: any[] 
     archiveTaskAndCleanup: vi.fn(async () => ({})),
     mergeTask: vi.fn(async () => undefined),
     getRootDir: vi.fn(() => "/tmp/test"),
+    /*
+    FNXC:SqliteFinalRemoval 2026-06-25-16:30:
+    TaskStore contract now exposes isBackendMode()/getAsyncLayer(). Mock must
+    implement these so backend-mode guards take the SQLite path. See
+    scripts/lib/test-quarantine.md mock-drift rescue path.
+    */
+    isBackendMode: vi.fn(() => false),
+    getAsyncLayer: vi.fn(() => null),
   }) as unknown as TaskStore & EventEmitter & { auditEvents: any[] };
 }
 

@@ -1,12 +1,22 @@
-import type { InsightRun, InsightStore } from "@fusion/core";
+import type { AsyncInsightStore, InsightRun, InsightStore } from "@fusion/core";
 
 export const ORPHAN_GRACE_MS = 30_000;
 export const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60_000;
 
+/*
+ * FNXC:InsightStore 2026-06-28-10:05:
+ * The stale-run sweeper drives either backend: the sync SQLite `InsightStore` or
+ * the PostgreSQL-backed `AsyncInsightStore`. Both expose the same method names,
+ * so the sweeper types the store as the union and `await`s every call; a sync
+ * method's awaited return equals its direct return, preserving recovery
+ * semantics across both backends.
+ */
+type SweeperInsightStore = InsightStore | AsyncInsightStore;
+
 type RecoverySource = "startup" | "periodic" | "drive_by" | "manual";
 
 type RecoverParams = {
-  insightStore: InsightStore;
+  insightStore: SweeperInsightStore;
   run: InsightRun | null | undefined;
   now: Date;
   activeRunControllers: Map<string, AbortController>;
@@ -21,7 +31,7 @@ function getRunAgeMs(run: Pick<InsightRun, "startedAt" | "createdAt">, nowMs: nu
   return Math.max(0, nowMs - anchorMs);
 }
 
-export function recoverOrphanedInsightRun(params: RecoverParams): { recovered: boolean; reason?: string } {
+export async function recoverOrphanedInsightRun(params: RecoverParams): Promise<{ recovered: boolean; reason?: string }> {
   const {
     insightStore,
     run,
@@ -45,7 +55,7 @@ export function recoverOrphanedInsightRun(params: RecoverParams): { recovered: b
   }
 
   const nowIso = now.toISOString();
-  insightStore.appendRunEvent(run.id, {
+  await insightStore.appendRunEvent(run.id, {
     type: "warning",
     status: run.status,
     classification: "non_retryable",
@@ -60,7 +70,7 @@ export function recoverOrphanedInsightRun(params: RecoverParams): { recovered: b
     },
   });
 
-  const failed = insightStore.updateRun(run.id, {
+  const failed = await insightStore.updateRun(run.id, {
     status: "failed",
     summary: "Recovered orphaned run",
     error: "Run was marked active but had no live controller after grace period",
@@ -78,7 +88,7 @@ export function recoverOrphanedInsightRun(params: RecoverParams): { recovered: b
     return { recovered: false, reason: "update_failed" };
   }
 
-  insightStore.appendRunEvent(run.id, {
+  await insightStore.appendRunEvent(run.id, {
     type: "status_changed",
     status: "failed",
     classification: "non_retryable",
@@ -92,13 +102,13 @@ export function recoverOrphanedInsightRun(params: RecoverParams): { recovered: b
   return { recovered: true };
 }
 
-export function sweepStaleInsightRuns(params: {
-  insightStore: InsightStore;
+export async function sweepStaleInsightRuns(params: {
+  insightStore: SweeperInsightStore;
   activeRunControllers: Map<string, AbortController>;
   now?: Date;
   graceMs?: number;
   source: RecoverySource;
-}): { scanned: number; recovered: number; skipped: number } {
+}): Promise<{ scanned: number; recovered: number; skipped: number }> {
   const {
     insightStore,
     activeRunControllers,
@@ -108,7 +118,7 @@ export function sweepStaleInsightRuns(params: {
   } = params;
 
   const thresholdIso = new Date(now.getTime() - graceMs).toISOString();
-  const staleRuns = insightStore.listStalePendingRuns(thresholdIso);
+  const staleRuns = await insightStore.listStalePendingRuns(thresholdIso);
 
   let recovered = 0;
   let skipped = 0;
@@ -119,7 +129,7 @@ export function sweepStaleInsightRuns(params: {
       continue;
     }
 
-    const result = recoverOrphanedInsightRun({
+    const result = await recoverOrphanedInsightRun({
       insightStore,
       run,
       now,
@@ -143,7 +153,7 @@ export function sweepStaleInsightRuns(params: {
 }
 
 export function startInsightRunSweeper(params: {
-  insightStore: InsightStore;
+  insightStore: SweeperInsightStore;
   activeRunControllers: Map<string, AbortController>;
   intervalMs?: number;
   graceMs?: number;
@@ -158,16 +168,16 @@ export function startInsightRunSweeper(params: {
   } = params;
 
   const timer = setInterval(() => {
-    try {
-      sweepStaleInsightRuns({
-        insightStore,
-        activeRunControllers,
-        graceMs,
-        source: "periodic",
-      });
-    } catch (error) {
+    // FNXC:InsightStore 2026-06-28-10:05: sweep is async now; swallow rejections
+    // so a backend hiccup never crashes the interval-driven background sweeper.
+    void sweepStaleInsightRuns({
+      insightStore,
+      activeRunControllers,
+      graceMs,
+      source: "periodic",
+    }).catch((error) => {
       logger?.warn?.("[insight-sweeper] periodic sweep failed", error);
-    }
+    });
   }, intervalMs);
 
   timer.unref?.();

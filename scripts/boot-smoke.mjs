@@ -38,7 +38,21 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliBin = path.join(repoRoot, "packages/cli/bin.mjs");
 
-const HEALTH_TIMEOUT_MS = 60_000;
+// FNXC:BackendFlip 2026-06-26-14:50:
+// The boot smoke exercises the embedded PostgreSQL backend by default. This
+// is the zero-config production path post default-flip: with DATABASE_URL
+// unset and no FUSION_NO_EMBEDDED_PG opt-out, the startup factory boots the
+// bundled embedded PG. The first run pays a one-time initdb cost (writing the
+// cluster data directory), which can take well over a minute on a cold
+// filesystem/CI runner. The health-check timeout is therefore generous so
+// the merge gate does not flake on the embedded initdb cost.
+//
+// DATABASE_URL is explicitly unset in the child env so a developer's real
+// external DB connection string can never leak into the smoke and change the
+// backend under test. FUSION_NO_EMBEDDED_PG is also explicitly unset so the
+// smoke always exercises the embedded default (it cannot be opted out by an
+// inherited env var).
+const HEALTH_TIMEOUT_MS = 180_000;
 const SHUTDOWN_TIMEOUT_MS = 15_000;
 // Ephemeral-port TOCTOU: retry the whole boot with a fresh port when the
 // child loses the bind race (EADDRINUSE).
@@ -166,6 +180,14 @@ async function bootAndVerify(attempt, registerCleanup) {
         ...process.env,
         HOME: isolatedHome,
         FUSION_SKIP_ONBOARDING: "1",
+        // FNXC:BackendFlip 2026-06-26-14:55:
+        // Force the smoke to exercise the embedded PostgreSQL backend. Unset
+        // DATABASE_URL so a developer's external DB connection never leaks in
+        // (the smoke must prove the zero-config embedded path boots). Unset
+        // FUSION_NO_EMBEDDED_PG so the smoke cannot be opted out by an
+        // inherited env var — the embedded default is what the gate must prove.
+        DATABASE_URL: undefined,
+        FUSION_NO_EMBEDDED_PG: undefined,
         // Make sure nothing inherits a PORT that fights the explicit flag.
         PORT: undefined,
       },

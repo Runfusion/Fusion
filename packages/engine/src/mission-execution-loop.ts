@@ -183,7 +183,7 @@ export class MissionExecutionLoop extends EventEmitter {
           const milestone = this.missionStore.getMilestone(reapedRun.milestoneId);
           const missionId = milestone ? this.missionStore.getMission(milestone.missionId)?.id : undefined;
           const elapsedMs = Math.max(0, Date.now() - new Date(run.startedAt).getTime());
-          this.taskStore.recordRunAuditEvent({
+          void this.taskStore.recordRunAuditEvent({
             agentId: "store",
             runId: "validator-run-reaper",
             domain: "database",

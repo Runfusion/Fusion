@@ -1,18 +1,21 @@
-import type { ResearchRun, ResearchStore } from "@fusion/core";
+import type { ResearchRun } from "@fusion/core";
 import { createLogger, formatError } from "./logger.js";
-import type { ResearchOrchestrator } from "./research-orchestrator.js";
+import type { ResearchExecutorStore, ResearchOrchestrator } from "./research-orchestrator.js";
 
 const log = createLogger("research-dispatcher");
 
 export interface ResearchRunDispatcherOptions {
-  store: ResearchStore;
+  store: ResearchExecutorStore;
   orchestrator: ResearchOrchestrator;
   tickIntervalMs?: number;
   shutdownTimeoutMs?: number;
 }
 
 export class ResearchRunDispatcher {
-  private readonly store: ResearchStore;
+  // FNXC:ResearchStore 2026-06-28-11:30: store is the sync ResearchStore or the
+  // PG-backed AsyncResearchStore union; listRuns is awaited so queued-run polling
+  // works in both backends.
+  private readonly store: ResearchExecutorStore;
   private readonly orchestrator: ResearchOrchestrator;
   private readonly tickIntervalMs: number;
   private readonly shutdownTimeoutMs: number;
@@ -59,7 +62,7 @@ export class ResearchRunDispatcher {
 
     let queuedRuns: ResearchRun[] = [];
     try {
-      queuedRuns = this.store.listRuns({ status: "queued" });
+      queuedRuns = await this.store.listRuns({ status: "queued" });
     } catch (error) {
       const { message, detail } = formatError(error);
       log.warn(`Failed to list queued research runs: ${message}\n${detail}`);

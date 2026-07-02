@@ -22,12 +22,32 @@
 import type {
   TaskStore,
   MissionStore,
+  AsyncMissionStore,
   AutopilotState,
   AutopilotStatus,
   MissionWithHierarchy,
   Slice,
   MissionEventType,
 } from "@fusion/core";
+
+/*
+ * FNXC:MissionStore 2026-06-28-12:30:
+ * MissionAutopilot must drive BOTH backends: the sync SQLite EventEmitter
+ * `MissionStore` and the PostgreSQL-backed `AsyncMissionStore` (async, also an
+ * EventEmitter emitting the same mission/milestone/slice/feature events). Both
+ * expose the same store method names/shapes, so the autopilot types its store
+ * field as the union and `await`s every store call — a sync method's awaited
+ * return is identical to its direct return, so the loop semantics (watch missions,
+ * advance slice/feature statuses, recompute/recover, persist state) are preserved
+ * across both backends. Mirrors the ResearchOrchestrator union+await port (U4).
+ *
+ * Scope: this ports the autopilot's STORE-access path only. Slice EXECUTION
+ * (creating tasks for the next slice) is delegated to `scheduler.activateNextPendingSlice`,
+ * which requires runtime providers and stays gated to the sync store in PG mode —
+ * out of scope here. The validator-loop sub-capability lives in MissionExecutionLoop,
+ * not this file, and is not touched by this port.
+ */
+type AutopilotMissionStore = MissionStore | AsyncMissionStore;
 import { autopilotLog } from "./logger.js";
 import { reconcileMissionFeatureState } from "./mission-feature-sync.js";
 import { isOperatorActionableAgentError } from "./transient-error-detector.js";
@@ -81,7 +101,7 @@ export class MissionAutopilot {
 
   constructor(
     private taskStore: TaskStore,
-    private missionStore: MissionStore,
+    private missionStore: AutopilotMissionStore,
     options: MissionAutopilotOptions = {},
   ) {
     this.scheduler = options.scheduler;
@@ -128,13 +148,12 @@ export class MissionAutopilot {
     }
     this.stopHealthCheck();
 
-    // Unwatch all missions
+    // Unwatch all missions. setAutopilotState is async (it persists through the
+    // store); stop() is a sync lifecycle hook, so fire-and-forget here.
     for (const [missionId] of this.watchedMissions) {
-      try {
-        this.setAutopilotState(missionId, "inactive");
-      } catch {
+      void this.setAutopilotState(missionId, "inactive").catch(() => {
         // Best effort — mission may have been deleted
-      }
+      });
     }
     this.watchedMissions.clear();
     this.perMissionTaskRetries.clear();
@@ -149,13 +168,13 @@ export class MissionAutopilot {
    *
    * @param missionId - Mission ID to watch
    */
-  watchMission(missionId: string): void {
+  async watchMission(missionId: string): Promise<void> {
     if (this.watchedMissions.has(missionId)) {
       autopilotLog.log(`Already watching mission ${missionId}`);
       return;
     }
 
-    const mission = this.missionStore.getMission(missionId);
+    const mission = await this.missionStore.getMission(missionId);
     if (!mission) {
       autopilotLog.warn(`Mission ${missionId} not found — cannot watch`);
       return;
@@ -167,8 +186,8 @@ export class MissionAutopilot {
     }
 
     this.watchedMissions.set(missionId, { missionId, retryCount: 0 });
-    this.setAutopilotState(missionId, "watching");
-    this.logMissionEventSafe(
+    await this.setAutopilotState(missionId, "watching");
+    await this.logMissionEventSafe(
       missionId,
       "autopilot_enabled",
       `Autopilot enabled for mission ${mission.title}`,
@@ -186,19 +205,17 @@ export class MissionAutopilot {
    *
    * @param missionId - Mission ID to unwatch
    */
-  unwatchMission(missionId: string): void {
+  async unwatchMission(missionId: string): Promise<void> {
     if (!this.watchedMissions.has(missionId)) {
       return;
     }
 
     this.watchedMissions.delete(missionId);
     this.perMissionTaskRetries.delete(missionId);
-    try {
-      this.setAutopilotState(missionId, "inactive");
-    } catch {
+    await this.setAutopilotState(missionId, "inactive").catch(() => {
       // Mission may have been deleted
-    }
-    this.logMissionEventSafe(
+    });
+    await this.logMissionEventSafe(
       missionId,
       "autopilot_disabled",
       `Autopilot disabled for mission ${missionId}`,
@@ -224,8 +241,8 @@ export class MissionAutopilot {
   /**
    * Get the current autopilot status for a mission.
    */
-  getAutopilotStatus(missionId: string): AutopilotStatus {
-    const mission = this.missionStore.getMission(missionId);
+  async getAutopilotStatus(missionId: string): Promise<AutopilotStatus> {
+    const mission = await this.missionStore.getMission(missionId);
     const watched = this.watchedMissions.has(missionId);
 
     return {
@@ -249,20 +266,20 @@ export class MissionAutopilot {
    */
   async handleTaskCompletion(taskId: string): Promise<void> {
     try {
-      const feature = this.missionStore.getFeatureByTaskId(taskId);
+      const feature = await this.missionStore.getFeatureByTaskId(taskId);
       if (!feature) {
         // Task is not linked to any feature — not a mission task
         return;
       }
 
-      const slice = this.missionStore.getSlice(feature.sliceId);
+      const slice = await this.missionStore.getSlice(feature.sliceId);
       if (!slice) {
         autopilotLog.warn(`Slice ${feature.sliceId} not found for feature ${feature.id}`);
         return;
       }
 
       // Resolve mission ID for this slice
-      const milestone = this.missionStore.getMilestone(slice.milestoneId);
+      const milestone = await this.missionStore.getMilestone(slice.milestoneId);
       if (!milestone) return;
       const missionId = milestone.missionId;
 
@@ -273,7 +290,7 @@ export class MissionAutopilot {
       this.perMissionTaskRetries.get(missionId)?.delete(taskId);
 
       // Check if all features in the slice are done
-      const features = this.missionStore.listFeatures(slice.id);
+      const features = await this.missionStore.listFeatures(slice.id);
       const allDone = features.length > 0 && features.every((f) => f.status === "done");
 
       if (allDone) {
@@ -291,18 +308,18 @@ export class MissionAutopilot {
    */
   async handleTaskFailure(taskId: string): Promise<void> {
     try {
-      const feature = this.missionStore.getFeatureByTaskId(taskId);
+      const feature = await this.missionStore.getFeatureByTaskId(taskId);
       if (!feature) {
         return;
       }
 
-      const slice = this.missionStore.getSlice(feature.sliceId);
+      const slice = await this.missionStore.getSlice(feature.sliceId);
       if (!slice) {
         autopilotLog.warn(`Task failure ${taskId}: slice ${feature.sliceId} not found`);
         return;
       }
 
-      const milestone = this.missionStore.getMilestone(slice.milestoneId);
+      const milestone = await this.missionStore.getMilestone(slice.milestoneId);
       if (!milestone) {
         autopilotLog.warn(`Task failure ${taskId}: milestone ${slice.milestoneId} not found`);
         return;
@@ -321,9 +338,9 @@ export class MissionAutopilot {
       // the retry budget.
       const failedTask = await this.taskStore.getTask(taskId).catch(() => null);
       if (failedTask?.error && isOperatorActionableAgentError(failedTask.error)) {
-        this.missionStore.updateFeatureStatus(feature.id, "blocked");
+        await this.missionStore.updateFeatureStatus(feature.id, "blocked");
         await this.taskStore.updateTask(taskId, { status: "failed", paused: true });
-        this.logMissionEventSafe(
+        await this.logMissionEventSafe(
           missionId,
           "error",
           `Feature ${feature.id} blocked: task ${taskId} hit an operator-actionable error that will not resolve on retry. ${failedTask.error}`,
@@ -341,9 +358,9 @@ export class MissionAutopilot {
       missionRetries.set(taskId, retryCount);
 
       if (retryCount > maxRetries) {
-        this.missionStore.updateFeatureStatus(feature.id, "blocked");
+        await this.missionStore.updateFeatureStatus(feature.id, "blocked");
         await this.taskStore.updateTask(taskId, { status: "failed", paused: true });
-        this.logMissionEventSafe(
+        await this.logMissionEventSafe(
           missionId,
           "error",
           `Feature ${feature.id} blocked after max retries (${retryCount}/${maxRetries})`,
@@ -352,7 +369,7 @@ export class MissionAutopilot {
         return;
       }
 
-      this.logMissionEventSafe(
+      await this.logMissionEventSafe(
         missionId,
         "autopilot_retry",
         `Retrying failed mission task ${taskId} (${retryCount}/${maxRetries})`,
@@ -381,13 +398,13 @@ export class MissionAutopilot {
     if (!state) return;
 
     try {
-      this.setAutopilotState(missionId, "activating");
+      await this.setAutopilotState(missionId, "activating");
 
       if (this.scheduler) {
         const activated = await this.scheduler.activateNextPendingSlice(missionId);
         if (activated) {
           autopilotLog.log(`Activated slice ${activated.id} for mission ${missionId}`);
-          this.updateActivity(missionId);
+          await this.updateActivity(missionId);
           // Reset retry count on success
           state.retryCount = 0;
         } else {
@@ -399,7 +416,7 @@ export class MissionAutopilot {
         }
       }
 
-      this.setAutopilotState(missionId, "watching");
+      await this.setAutopilotState(missionId, "watching");
     } catch (err) {
       autopilotLog.error(`Error advancing slice for mission ${missionId}:`, err);
 
@@ -407,7 +424,7 @@ export class MissionAutopilot {
       state.retryCount++;
       if (state.retryCount <= MAX_RETRY_ATTEMPTS) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(3, state.retryCount - 1);
-        this.logMissionEventSafe(
+        await this.logMissionEventSafe(
           missionId,
           "autopilot_retry",
           `Retrying slice activation after error (attempt ${state.retryCount}/${MAX_RETRY_ATTEMPTS})`,
@@ -420,14 +437,14 @@ export class MissionAutopilot {
           }
         }, delay);
       } else {
-        this.logMissionEventSafe(
+        await this.logMissionEventSafe(
           missionId,
           "error",
           `Autopilot exceeded max slice-activation retries (${MAX_RETRY_ATTEMPTS})`,
           { retryCount: state.retryCount, maxRetries: MAX_RETRY_ATTEMPTS },
         );
         autopilotLog.error(`Max retries exceeded for mission ${missionId} — pausing autopilot`);
-        this.setAutopilotState(missionId, "watching");
+        await this.setAutopilotState(missionId, "watching");
         state.retryCount = 0;
       }
     }
@@ -441,20 +458,20 @@ export class MissionAutopilot {
    * @param missionId - Mission ID to check and start
    */
   async checkAndStartMission(missionId: string): Promise<void> {
-    const mission = this.missionStore.getMission(missionId);
+    const mission = await this.missionStore.getMission(missionId);
     if (!mission) return;
 
     if (mission.status === "planning" && mission.autopilotEnabled) {
       autopilotLog.log(`Starting mission ${missionId} (transitioning from planning to active)`);
 
-      this.missionStore.updateMission(missionId, { status: "active" });
-      this.logMissionEventSafe(
+      await this.missionStore.updateMission(missionId, { status: "active" });
+      await this.logMissionEventSafe(
         missionId,
         "mission_started",
         `Mission ${mission.title} started by autopilot`,
         { source: "checkAndStartMission" },
       );
-      this.updateActivity(missionId);
+      await this.updateActivity(missionId);
 
       // Activate first pending slice
       if (this.scheduler) {
@@ -481,10 +498,10 @@ export class MissionAutopilot {
    * @returns true if mission is complete, false otherwise
    */
   async checkMissionCompletion(missionId: string): Promise<boolean> {
-    const mission = this.missionStore.getMission(missionId);
+    const mission = await this.missionStore.getMission(missionId);
     if (!mission) return false;
 
-    const milestones = this.missionStore.listMilestones(missionId);
+    const milestones = await this.missionStore.listMilestones(missionId);
     if (milestones.length === 0) return false;
 
     const allComplete = milestones.every((m) => m.status === "complete");
@@ -492,7 +509,7 @@ export class MissionAutopilot {
       // Secondary check: verify all features are actually done.
       // This guards against stale milestone statuses caused by the addFeature
       // gap (where features were added after milestones appeared complete).
-      const hierarchy = this.missionStore.getMissionWithHierarchy(missionId);
+      const hierarchy = await this.missionStore.getMissionWithHierarchy(missionId);
       if (hierarchy) {
         const allFeaturesDone = hierarchy.milestones.every((milestone) =>
           milestone.slices.every((slice) => {
@@ -508,7 +525,7 @@ export class MissionAutopilot {
           autopilotLog.warn(
             `Mission ${missionId} milestones appear complete but some features are not done; recomputing status chain`,
           );
-          this.logMissionEventSafe(
+          await this.logMissionEventSafe(
             missionId,
             "error",
             `Mission ${missionId} has stale milestone/slice status; status chain recomputed`,
@@ -519,16 +536,16 @@ export class MissionAutopilot {
       }
 
       autopilotLog.log(`Mission ${missionId} is complete!`);
-      this.setAutopilotState(missionId, "completing");
-      this.missionStore.updateMission(missionId, { status: "complete" });
-      this.logMissionEventSafe(
+      await this.setAutopilotState(missionId, "completing");
+      await this.missionStore.updateMission(missionId, { status: "complete" });
+      await this.logMissionEventSafe(
         missionId,
         "mission_completed",
         `Mission ${mission.title} marked complete`,
         { milestoneCount: milestones.length },
       );
-      this.updateActivity(missionId);
-      this.setAutopilotState(missionId, "inactive");
+      await this.updateActivity(missionId);
+      await this.setAutopilotState(missionId, "inactive");
       this.watchedMissions.delete(missionId);
       this.perMissionTaskRetries.delete(missionId);
       return true;
@@ -550,16 +567,16 @@ export class MissionAutopilot {
    * @param missionId - Mission ID whose slices should be recomputed
    */
   private async recomputeMissionStatusChain(missionId: string): Promise<void> {
-    const hierarchy = this.missionStore.getMissionWithHierarchy(missionId);
+    const hierarchy = await this.missionStore.getMissionWithHierarchy(missionId);
     if (!hierarchy) return;
 
     for (const milestone of hierarchy.milestones) {
       for (const slice of milestone.slices) {
         // recomputeSliceStatus is private on missionStore; use the public updateSlice
         // with the computed status to trigger the cascade.
-        const computed = this.missionStore.computeSliceStatus(slice.id);
+        const computed = await this.missionStore.computeSliceStatus(slice.id);
         if (slice.status !== computed) {
-          this.missionStore.updateSlice(slice.id, { status: computed });
+          await this.missionStore.updateSlice(slice.id, { status: computed });
         }
       }
     }
@@ -577,13 +594,13 @@ export class MissionAutopilot {
     if (!this.running) return;
 
     try {
-      const missions = this.missionStore.listMissions();
+      const missions = await this.missionStore.listMissions();
 
       for (const mission of missions) {
         // Auto-watch missions with autopilot enabled that aren't being watched
         if (mission.autopilotEnabled && !this.isWatching(mission.id) && mission.status !== "complete" && mission.status !== "archived") {
           autopilotLog.log(`Poll: auto-watching mission ${mission.id}`);
-          this.watchMission(mission.id);
+          await this.watchMission(mission.id);
         }
 
         // Start planning missions with autopilot
@@ -598,7 +615,7 @@ export class MissionAutopilot {
       // Check for stale missions
       const now = Date.now();
       for (const [missionId, state] of this.watchedMissions) {
-        const mission = this.missionStore.getMission(missionId);
+        const mission = await this.missionStore.getMission(missionId);
         if (!mission) {
           // Mission deleted — unwatch
           this.watchedMissions.delete(missionId);
@@ -616,7 +633,7 @@ export class MissionAutopilot {
         }
 
         const staleMinutes = Math.round((now - lastActivity) / 60_000);
-        this.logMissionEventSafe(
+        await this.logMissionEventSafe(
           missionId,
           "autopilot_stale",
           `Mission autopilot is stale and will be recovered (${staleMinutes} minutes inactive)` ,
@@ -630,10 +647,10 @@ export class MissionAutopilot {
         );
         autopilotLog.warn(`Mission ${missionId} stale while activating (inactive ${staleMinutes}m) — recovering`);
 
-        this.setAutopilotState(missionId, "watching");
+        await this.setAutopilotState(missionId, "watching");
         state.retryCount = 0;
         await this.recoverStaleMission(missionId);
-        this.updateActivity(missionId);
+        await this.updateActivity(missionId);
       }
     } catch (err) {
       autopilotLog.error("Error during autopilot poll:", err);
@@ -647,7 +664,7 @@ export class MissionAutopilot {
    */
   async recoverStaleMission(missionId: string): Promise<void> {
     try {
-      const mission = this.missionStore.getMissionWithHierarchy(missionId);
+      const mission = await this.missionStore.getMissionWithHierarchy(missionId);
       if (!mission) {
         autopilotLog.warn(`recoverStaleMission: mission ${missionId} not found`);
         return;
@@ -659,7 +676,7 @@ export class MissionAutopilot {
       await this.reconcileMissionConsistency(mission);
 
       // Re-fetch hierarchy after reconciliation to get accurate slice statuses
-      const refreshedMission = this.missionStore.getMissionWithHierarchy(missionId);
+      const refreshedMission = await this.missionStore.getMissionWithHierarchy(missionId);
       if (!refreshedMission) {
         return;
       }
@@ -689,7 +706,7 @@ export class MissionAutopilot {
         }
       }
 
-      this.logMissionEventSafe(
+      await this.logMissionEventSafe(
         missionId,
         "autopilot_stale",
         advanced
@@ -750,7 +767,7 @@ export class MissionAutopilot {
       let fixedCount = 0;
 
       for (const missionId of this.watchedMissions.keys()) {
-        const mission = this.missionStore.getMissionWithHierarchy(missionId);
+        const mission = await this.missionStore.getMissionWithHierarchy(missionId);
         if (!mission) {
           continue;
         }
@@ -768,9 +785,9 @@ export class MissionAutopilot {
    * Recover autopilot state after process restart.
    * Watches active missions and performs a one-time consistency sweep.
    */
-  async recoverMissions(missionStore: MissionStore): Promise<void> {
+  async recoverMissions(missionStore: AutopilotMissionStore): Promise<void> {
     try {
-      const missions = missionStore.listMissions();
+      const missions = await missionStore.listMissions();
       let watchedCount = 0;
       let recoveredActivatingCount = 0;
       let inconsistencyFixes = 0;
@@ -781,7 +798,7 @@ export class MissionAutopilot {
         }
 
         if (!this.isWatching(mission.id)) {
-          this.watchMission(mission.id);
+          await this.watchMission(mission.id);
           watchedCount++;
         }
 
@@ -790,14 +807,14 @@ export class MissionAutopilot {
           recoveredActivatingCount++;
         }
 
-        const hierarchy = missionStore.getMissionWithHierarchy(mission.id);
+        const hierarchy = await missionStore.getMissionWithHierarchy(mission.id);
         if (!hierarchy) {
           continue;
         }
 
         inconsistencyFixes += await this.reconcileMissionConsistency(hierarchy);
 
-        const refreshedHierarchy = missionStore.getMissionWithHierarchy(mission.id);
+        const refreshedHierarchy = await missionStore.getMissionWithHierarchy(mission.id);
         if (!refreshedHierarchy) {
           continue;
         }
@@ -850,7 +867,7 @@ export class MissionAutopilot {
               definedFeatureIds: definedFeatures.map((f) => f.id),
             },
           );
-          this.logMissionEventSafe(
+          await this.logMissionEventSafe(
             mission.id,
             "error",
             `Slice ${slice.id} has stale "complete" status (${definedFeatures.length} feature(s) not done); recomputing status chain`,
@@ -881,7 +898,7 @@ export class MissionAutopilot {
         }
 
         const hasLinkedAssertions = typeof this.missionStore.listAssertionsForFeature === "function"
-          ? this.missionStore.listAssertionsForFeature(feature.id).length > 0
+          ? (await this.missionStore.listAssertionsForFeature(feature.id)).length > 0
           : false;
         const reconciliation = await reconcileMissionFeatureState(this.taskStore, task, feature, {
           hasLinkedAssertions,
@@ -899,7 +916,7 @@ export class MissionAutopilot {
         }
 
         if (reconciliation.kind === "update") {
-          this.missionStore.updateFeatureStatus(feature.id, reconciliation.status);
+          await this.missionStore.updateFeatureStatus(feature.id, reconciliation.status);
           fixedCount++;
         }
       }
@@ -913,13 +930,13 @@ export class MissionAutopilot {
   /**
    * Best-effort mission event logging that must never break autopilot control flow.
    */
-  private logMissionEventSafe(
+  private async logMissionEventSafe(
     missionId: string,
     eventType: MissionEventType,
     description: string,
     metadata?: Record<string, unknown>,
-  ): void {
-    const missionStoreWithEvents = this.missionStore as MissionStore & {
+  ): Promise<void> {
+    const missionStoreWithEvents = this.missionStore as AutopilotMissionStore & {
       logMissionEvent?: (
         missionId: string,
         eventType: MissionEventType,
@@ -937,7 +954,7 @@ export class MissionAutopilot {
     }
 
     try {
-      missionStoreWithEvents.logMissionEvent(missionId, eventType, description, metadata);
+      await missionStoreWithEvents.logMissionEvent(missionId, eventType, description, metadata);
     } catch (err) {
       autopilotLog.error(
         `Failed to persist mission event (${eventType}) for ${missionId}:`,
@@ -949,17 +966,17 @@ export class MissionAutopilot {
   /**
    * Update the `autopilotState` on a mission in the store.
    */
-  private setAutopilotState(missionId: string, state: AutopilotState): void {
+  private async setAutopilotState(missionId: string, state: AutopilotState): Promise<void> {
     try {
-      const mission = this.missionStore.getMission(missionId);
+      const mission = await this.missionStore.getMission(missionId);
       if (!mission) {
         return;
       }
 
       const previousState = mission.autopilotState ?? "inactive";
       if (previousState !== state) {
-        this.missionStore.updateMission(missionId, { autopilotState: state });
-        this.logMissionEventSafe(
+        await this.missionStore.updateMission(missionId, { autopilotState: state });
+        await this.logMissionEventSafe(
           missionId,
           "autopilot_state_changed",
           `Autopilot state changed from ${previousState} to ${state}`,
@@ -974,9 +991,9 @@ export class MissionAutopilot {
   /**
    * Update the `lastAutopilotActivityAt` timestamp on a mission.
    */
-  private updateActivity(missionId: string): void {
+  private async updateActivity(missionId: string): Promise<void> {
     try {
-      this.missionStore.updateMission(missionId, {
+      await this.missionStore.updateMission(missionId, {
         lastAutopilotActivityAt: new Date().toISOString(),
       });
     } catch (err) {

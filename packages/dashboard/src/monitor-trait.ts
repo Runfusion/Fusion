@@ -4,7 +4,14 @@ import type {
   TaskStore,
   TraitDefinition,
 } from "@fusion/core";
-import { getTraitRegistry, registerTraitHookImpl } from "@fusion/core";
+import {
+  getTraitRegistry,
+  registerTraitHookImpl,
+  countRecentAutoFixTasksAsync,
+  claimIncidentForFixTaskAsync,
+  attachFixTaskAsync,
+  releaseIncidentFixTaskClaimAsync,
+} from "@fusion/core";
 import { createSessionDiagnostics } from "./ai-session-diagnostics.js";
 import {
   attachFixTask,
@@ -136,14 +143,34 @@ export async function runMonitorOnRegression(
   deps: MonitorDeps,
 ): Promise<MonitorRegressionOutcome> {
   const { store, config, nowMs } = deps;
-  const db = store.getDatabase();
+  // FNXC:PostgresCutover 2026-06-28-10:10:
+  // Storm guard runs in BOTH backends. In PG backend mode the sync SQLite
+  // helpers (getDatabase + countRecentAutoFixTasks/claimIncidentForFixTask/
+  // attachFixTask/releaseIncidentFixTaskClaim) throw, so route through the async
+  // equivalents in @fusion/core (async-monitor.ts) passing the AsyncDataLayer's
+  // Drizzle handle. ingestIncidentSignal is already dual-path: in backend mode it
+  // is handed the AsyncDataLayer directly (discriminated by `"ping" in db`); in
+  // legacy mode it receives the sync `Database`. The storm-guard semantics — the
+  // recent-auto-fix-count gate, the claim→createTask→attach→(release-on-failure)
+  // sequence, and the returned outcome shapes — are identical across both paths.
+  const backend = store.backendMode;
+  const layer = backend ? store.getAsyncLayer() : null;
+  if (backend && !layer) {
+    return { kind: "error", reason: "backend mode without an AsyncDataLayer" };
+  }
+  // In backend mode hand the AsyncDataLayer to the dual-path ingest; the async
+  // storm-guard helpers take the layer's Drizzle `db` handle.
+  const ingestDb = backend ? layer! : store.getDatabase();
+  const asyncDb = layer ? layer.db : null;
 
   let incidentId: string;
   try {
-    const { incident } = ingestIncidentSignal(db, signal);
+    const { incident } = await ingestIncidentSignal(ingestDb, signal);
     incidentId = incident.incidentId;
 
-    const recent = countRecentAutoFixTasks(db, config, nowMs);
+    const recent = backend
+      ? await countRecentAutoFixTasksAsync(asyncDb!, config, nowMs)
+      : countRecentAutoFixTasks(store.getDatabase(), config, nowMs);
     const decision = decideStormGuard(incident, recent, config, nowMs);
 
     if (decision.action === "absorb") {
@@ -165,7 +192,10 @@ export async function runMonitorOnRegression(
     // — without this, two callers could both pass decideStormGuard (fixTaskId
     // still null), both await store.createTask, and both attach, opening two
     // tasks where only the last link wins.
-    if (!claimIncidentForFixTask(db, incidentId)) {
+    const claimed = backend
+      ? await claimIncidentForFixTaskAsync(asyncDb!, incidentId)
+      : claimIncidentForFixTask(store.getDatabase(), incidentId);
+    if (!claimed) {
       const linked = decision.incident.fixTaskId ?? null;
       return {
         kind: "absorbed",
@@ -185,7 +215,11 @@ export async function runMonitorOnRegression(
     try {
       task = await store.createTask(buildFixTaskInput(signal, incidentId));
     } catch (createErr) {
-      releaseIncidentFixTaskClaim(db, incidentId);
+      if (backend) {
+        await releaseIncidentFixTaskClaimAsync(asyncDb!, incidentId);
+      } else {
+        releaseIncidentFixTaskClaim(store.getDatabase(), incidentId);
+      }
       diagnostics.errorFromException("Monitor fix-task creation failed; released claim", createErr, {
         groupingKey: signal.groupingKey,
         incidentId,
@@ -195,7 +229,11 @@ export async function runMonitorOnRegression(
         reason: createErr instanceof Error ? createErr.message : String(createErr),
       };
     }
-    attachFixTask(db, incidentId, task.id);
+    if (backend) {
+      await attachFixTaskAsync(asyncDb!, incidentId, task.id);
+    } else {
+      attachFixTask(store.getDatabase(), incidentId, task.id);
+    }
     return { kind: "fix-task-opened", taskId: task.id, incidentId };
   } catch (err) {
     diagnostics.errorFromException("Monitor regression handling failed", err, {

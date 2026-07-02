@@ -625,7 +625,7 @@ describe("ingestSignal — incident capture", () => {
       nonceCache: new DeliveryNonceCache(),
     })).status).toBe(201);
 
-    const analytics = aggregateSignalsAnalytics(db, {
+    const analytics = await aggregateSignalsAnalytics(db, {
       from: "2026-03-01T00:00:00.000Z",
       to: "2026-03-31T00:00:00.000Z",
     });

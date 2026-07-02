@@ -42,6 +42,9 @@ export interface EngineManagerOptions {
   prReconcileGithubOps?: ProjectEngineOptions["prReconcileGithubOps"];
   getTaskMergeBlocker?: ProjectEngineOptions["getTaskMergeBlocker"];
   onInsightRunProcessed?: ProjectEngineOptions["onInsightRunProcessed"];
+  // FNXC:SqliteFinalRemoval 2026-06-26-11:20: shared TaskStore from the central
+  // backend boot so all engines reuse one connection pool (no second embedded PG).
+  externalTaskStore?: ProjectEngineOptions["externalTaskStore"];
 }
 
 /** Default interval for background reconciliation (30 seconds). */
@@ -541,6 +544,10 @@ export class ProjectEngineManager {
       prReconcileGithubOps: this.options.prReconcileGithubOps,
       getTaskMergeBlocker: this.options.getTaskMergeBlocker,
       onInsightRunProcessed: this.options.onInsightRunProcessed,
+      // FNXC:SqliteFinalRemoval 2026-06-26-11:20: forward the shared external
+      // TaskStore so engines reuse the central boot's connection pool instead
+      // of starting a second embedded PostgreSQL on the same data dir.
+      ...(this.options.externalTaskStore ? { externalTaskStore: this.options.externalTaskStore } : {}),
       ...overrides,
     };
   }

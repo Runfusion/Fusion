@@ -17,6 +17,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = join(__dirname, "..", "..");
 const dashboardClientSrc = join(__dirname, "..", "dashboard", "dist", "client");
 const dashboardClientDest = join(__dirname, "dist", "client");
+// FNXC:RuntimeStartupWiring 2026-06-24-11:15:
+// The PostgreSQL schema baseline (0000_initial.sql) is read at runtime by the
+// schema applier relative to the compiled module location. When @fusion/core
+// is bundled into dist/bin.js, the applier's __dirname resolves to dist/, so
+// the migration SQL must be staged into dist/migrations to remain resolvable.
+const pgMigrationsSrc = join(__dirname, "..", "core", "src", "postgres", "migrations");
+const pgMigrationsDest = join(__dirname, "dist", "migrations");
 const piClaudeCliSrc = join(__dirname, "..", "pi-claude-cli");
 const piClaudeCliDest = join(__dirname, "dist", "pi-claude-cli");
 const droidCliSrc = join(__dirname, "..", "droid-cli");
@@ -274,12 +281,23 @@ const cliBuildConfig = {
   // Native module: leave node-pty (aliased to @homebridge fork) out of the
   // bundle. esbuild can't statically resolve its conditional native require()s
   // (build/Release/pty.node, build/Debug/conpty.node, ...).
+  //
+  // FNXC:RuntimeStartupWiring 2026-06-24-11:00:
+  // embedded-postgres ships platform-specific optional packages
+  // (@embedded-postgres/darwin-arm64, linux-x64, windows-x64, ...) that it
+  // loads via dynamic import() at runtime based on process.platform/arch.
+  // esbuild tries to resolve those dynamic imports at bundle time and fails
+  // because only the current platform's binary is installed. Externalize the
+  // whole family (plus the umbrella package) so the native binaries are
+  // resolved at runtime from node_modules, exactly like node-pty above.
   external: [
     "node-pty",
     "@homebridge/node-pty-prebuilt-multiarch",
     "dockerode",
     "ssh2",
     "cpu-features",
+    "embedded-postgres",
+    /^@embedded-postgres\//,
   ],
   splitting: false,
   // Keep clean disabled so the dedicated plugin-sdk tsup config can emit into
@@ -290,6 +308,23 @@ const cliBuildConfig = {
     js: 'import { createRequire as __createRequire } from "node:module"; const require = __createRequire(import.meta.url);',
   },
   onSuccess: async () => {
+    // FNXC:RuntimeStartupWiring 2026-06-24-11:15:
+    // Stage the PostgreSQL schema baseline (0000_initial.sql + meta) into
+    // dist/migrations so the schema applier can read it at runtime after
+    // @fusion/core is bundled into dist/bin.js. Without this, the PG boot
+    // path fails with ENOENT for dist/migrations/0000_initial.sql.
+    if (existsSync(pgMigrationsSrc)) {
+      if (existsSync(pgMigrationsDest)) {
+        rmSync(pgMigrationsDest, { recursive: true, force: true });
+      }
+      mkdirSync(pgMigrationsDest, { recursive: true });
+      cpSync(pgMigrationsSrc, pgMigrationsDest, { recursive: true });
+      console.log("Copied PostgreSQL migrations to dist/migrations/");
+    } else {
+      console.warn(
+        `WARNING: PostgreSQL migrations source not found at ${pgMigrationsSrc}; DATABASE_URL boot will fail to apply the schema baseline.`,
+      );
+    }
     if (existsSync(desktopRuntimeDest)) {
       rmSync(desktopRuntimeDest, { recursive: true, force: true });
     }

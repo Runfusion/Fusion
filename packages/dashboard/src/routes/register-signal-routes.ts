@@ -206,10 +206,26 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
 
     FNXC:CommandCenterSignals 2026-06-25-22:25:
     Resolution signals are recorded before resolveIncident runs. This preserves cold-resolve events (for example Datadog recovery after Fusion missed the firing alert) as resolved metrics rows instead of silently dropping provider/status visibility.
+
+    FNXC:SignalRoutePromiseLeak 2026-06-26-10:35:
+    P1 fix (review #16): resolveIncident became async but its caller here was not
+    updated, so the returned Promise floated and resolution errors were silently
+    dropped. Now resolveIncident receives the async layer in backend mode
+    (getAsyncLayer() ?? getDatabase(), matching monitor-routes.ts) and the call
+    is awaited so errors surface in the catch below.
+
+    FNXC:PostgresCutover 2026-06-28-09:05:
+    ingestIncidentSignal is now backend-dual-path (FN-6706 PG cutover): it accepts
+    the AsyncDataLayer and writes project.incidents via Drizzle in backend mode.
+    The earlier backend-mode skip+warn (signals were dropped, recorded only via
+    the resolveIncident path) is removed; we now pass getAsyncLayer() ?? getDatabase()
+    (matching the resolveIncident call below) and await it, so incident open/absorb
+    works end-to-end in both SQLite and PostgreSQL backends. Incident storage stays
+    best-effort: a local write failure is logged in the catch below but never
+    rejects the upstream webhook after Fusion accepted the triage task.
     */
-    const db = store.getDatabase();
     const at = signalTimestampToIso(signal.timestamp) ?? new Date().toISOString();
-    ingestIncidentSignal(db, {
+    await ingestIncidentSignal(store.getAsyncLayer() ?? store.getDatabase(), {
       groupingKey: signal.groupingKey,
       title: signal.title,
       severity: signal.severity,
@@ -219,7 +235,7 @@ export async function ingestSignal(deps: SignalIngestDeps): Promise<SignalIngest
       at,
     });
     if (signal.resolution === "resolved") {
-      resolveIncident(db, signal.groupingKey, at);
+      await resolveIncident(store.getAsyncLayer() ?? store.getDatabase(), signal.groupingKey, at);
     }
   } catch (err) {
     console.error("[signal-incident-bridge] Failed to record connector signal", err);

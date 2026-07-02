@@ -151,13 +151,17 @@ export function createResearchRouter(store: TaskStore): Router {
       .catch((error) => rethrowAsApiError(error, "Failed to resolve project store"));
   });
 
+  // FNXC:ResearchStore 2026-06-27-12:20:
+  // Returns the active ResearchStore (sync SQLite) or AsyncResearchStore (PG backend).
+  // Both expose the same method names; handlers `await` every call so either backend
+  // works — the interim PG 503 guard is removed now that the store is ported.
   const getStore = () => {
     const scoped = requestContext.getStore();
     if (!scoped) throw new ApiError(500, "Store context not available");
     return scoped.getResearchStore();
   };
 
-  router.get("/runs", (req, res) => {
+  router.get("/runs", async (req, res) => {
     try {
       const options: ResearchRunListOptions = {};
       if (typeof req.query.status === "string") {
@@ -169,20 +173,20 @@ export function createResearchRouter(store: TaskStore): Router {
       if (typeof req.query.q === "string") options.search = req.query.q;
       if (typeof req.query.limit === "string") options.limit = Number.parseInt(req.query.limit, 10);
 
-      const runs = getStore().listRuns(options);
+      const runs = await getStore().listRuns(options);
       res.json({ runs: runs.map(toRunListItem), availability: DEFAULT_AVAILABILITY });
     } catch (error) {
       rethrowAsApiError(error, "Failed to list research runs");
     }
   });
 
-  router.post("/runs", (req, res) => {
+  router.post("/runs", async (req, res) => {
     try {
       if (typeof req.body?.query !== "string" || !req.body.query.trim()) {
         throw badRequest("query is required");
       }
 
-      const run = getStore().createRun({
+      const run = await getStore().createRun({
         query: req.body.query,
         topic: req.body.query,
         providerConfig: {
@@ -201,9 +205,9 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.get("/runs/:id", (req, res) => {
+  router.get("/runs/:id", async (req, res) => {
     try {
-      const run = getStore().getRun(req.params.id);
+      const run = await getStore().getRun(req.params.id);
       if (!run) throw notFound(`Run not found: ${req.params.id}`);
       res.json({ run: toRunDetail(run), availability: DEFAULT_AVAILABILITY });
     } catch (error) {
@@ -211,9 +215,9 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.post("/runs/:id/cancel", (req, res) => {
+  router.post("/runs/:id/cancel", async (req, res) => {
     try {
-      const existing = getStore().getRun(req.params.id);
+      const existing = await getStore().getRun(req.params.id);
       if (!existing) throw notFound(`Run not found: ${req.params.id}`);
       if (["completed", "failed", "cancelled", "timed_out", "retry_exhausted"].includes(existing.status)) {
         res.status(409).json({
@@ -223,22 +227,22 @@ export function createResearchRouter(store: TaskStore): Router {
         });
         return;
       }
-      const run = getStore().requestCancellation(req.params.id);
+      const run = await getStore().requestCancellation(req.params.id);
       res.json({ run: toRunDetail(run) });
     } catch (error) {
       rethrowAsApiError(error, "Failed to cancel research run");
     }
   });
 
-  router.post("/runs/:id/retry", (req, res) => {
+  router.post("/runs/:id/retry", async (req, res) => {
     try {
-      const existing = getStore().getRun(req.params.id);
+      const existing = await getStore().getRun(req.params.id);
       if (!existing) throw notFound(`Run not found: ${req.params.id}`);
-      const retryRun = getStore().createRetryRun(req.params.id);
+      const retryRun = await getStore().createRetryRun(req.params.id);
       res.json({ run: toRunDetail(retryRun) });
     } catch (error) {
       if (error instanceof ResearchLifecycleError && error.code === "not_retryable") {
-        const run = getStore().getRun(req.params.id);
+        const run = await getStore().getRun(req.params.id);
         const exhausted = run?.status === "retry_exhausted" || run?.lifecycle?.errorCode === "RETRY_EXHAUSTED";
         const code = exhausted ? "RETRY_EXHAUSTED" : "NON_RETRYABLE_PROVIDER_ERROR";
         res.status(409).json({
@@ -263,9 +267,9 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.get("/runs/:id/export", (req, res) => {
+  router.get("/runs/:id/export", async (req, res) => {
     try {
-      const run = getStore().getRun(req.params.id);
+      const run = await getStore().getRun(req.params.id);
       if (!run) throw notFound(`Run not found: ${req.params.id}`);
 
       const format = String(req.query.format ?? "markdown");
@@ -292,7 +296,7 @@ export function createResearchRouter(store: TaskStore): Router {
       const scopedStore = requestContext.getStore();
       if (!scopedStore) throw new ApiError(500, "Task store context unavailable");
 
-      const run = getStore().getRun(req.params.runId);
+      const run = await getStore().getRun(req.params.runId);
       if (!run) throw notFound(`Run not found: ${req.params.runId}`);
       const found = getFindingById(run, req.params.findingId);
       if (!found) throw notFound(`Finding not found: ${req.params.findingId}`);
@@ -380,7 +384,7 @@ export function createResearchRouter(store: TaskStore): Router {
       const scopedStore = requestContext.getStore();
       if (!scopedStore) throw new ApiError(500, "Task store context unavailable");
 
-      const run = getStore().getRun(req.params.runId);
+      const run = await getStore().getRun(req.params.runId);
       if (!run) throw notFound(`Run not found: ${req.params.runId}`);
       const found = getFindingById(run, req.params.findingId);
       if (!found) throw notFound(`Finding not found: ${req.params.findingId}`);
@@ -437,21 +441,21 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.post("/runs/:id/events", (req, res) => {
+  router.post("/runs/:id/events", async (req, res) => {
     try {
       const { type, message, metadata } = req.body ?? {};
       if (!RESEARCH_EVENT_TYPES.includes(type)) throw badRequest(`Invalid event type: ${String(type)}`);
       if (typeof message !== "string" || !message.trim()) throw badRequest("message is required");
-      const event = getStore().appendEvent(req.params.id, { type, message, metadata });
+      const event = await getStore().appendEvent(req.params.id, { type, message, metadata });
       res.status(201).json(event);
     } catch (error) {
       rethrowAsApiError(error, "Failed to append research event");
     }
   });
 
-  router.patch("/runs/:id", (req, res) => {
+  router.patch("/runs/:id", async (req, res) => {
     try {
-      const updated = getStore().updateRun(req.params.id, req.body ?? {});
+      const updated = await getStore().updateRun(req.params.id, req.body ?? {});
       if (!updated) throw notFound(`Run not found: ${req.params.id}`);
       res.json(updated);
     } catch (error) {
@@ -459,9 +463,9 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.delete("/runs/:id", (req, res) => {
+  router.delete("/runs/:id", async (req, res) => {
     try {
-      const deleted = getStore().deleteRun(req.params.id);
+      const deleted = await getStore().deleteRun(req.params.id);
       if (!deleted) throw notFound(`Run not found: ${req.params.id}`);
       res.status(204).send();
     } catch (error) {
@@ -469,42 +473,42 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.post("/runs/:id/sources", (req, res) => {
+  router.post("/runs/:id/sources", async (req, res) => {
     try {
       const { type, status } = req.body ?? {};
       if (!RESEARCH_SOURCE_TYPES.includes(type)) throw badRequest(`Invalid source type: ${String(type)}`);
       if (!RESEARCH_SOURCE_STATUSES.includes(status)) throw badRequest(`Invalid source status: ${String(status)}`);
-      const source = getStore().addSource(req.params.id, req.body);
+      const source = await getStore().addSource(req.params.id, req.body);
       res.status(201).json(source);
     } catch (error) {
       rethrowAsApiError(error, "Failed to add research source");
     }
   });
 
-  router.patch("/runs/:id/sources/:sourceId", (req, res) => {
+  router.patch("/runs/:id/sources/:sourceId", async (req, res) => {
     try {
-      getStore().updateSource(req.params.id, req.params.sourceId, req.body ?? {});
+      await getStore().updateSource(req.params.id, req.params.sourceId, req.body ?? {});
       res.status(204).send();
     } catch (error) {
       rethrowAsApiError(error, "Failed to update research source");
     }
   });
 
-  router.put("/runs/:id/results", (req, res) => {
+  router.put("/runs/:id/results", async (req, res) => {
     try {
-      getStore().setResults(req.params.id, req.body);
+      await getStore().setResults(req.params.id, req.body);
       res.status(204).send();
     } catch (error) {
       rethrowAsApiError(error, "Failed to set research results");
     }
   });
 
-  router.patch("/runs/:id/status", (req, res) => {
+  router.patch("/runs/:id/status", async (req, res) => {
     try {
       const status = req.body?.status as ResearchRunStatus | undefined;
       if (!status || !RESEARCH_RUN_STATUSES.includes(status)) throw badRequest(`Invalid status: ${String(status)}`);
-      getStore().updateStatus(req.params.id, status, req.body?.extra);
-      const run = getStore().getRun(req.params.id);
+      await getStore().updateStatus(req.params.id, status, req.body?.extra);
+      const run = await getStore().getRun(req.params.id);
       if (!run) throw notFound(`Run not found: ${req.params.id}`);
       res.json(run);
     } catch (error) {
@@ -512,29 +516,29 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.post("/runs/:id/exports", (req, res) => {
+  router.post("/runs/:id/exports", async (req, res) => {
     try {
       const format = req.body?.format;
       const content = req.body?.content;
       if (typeof content !== "string") throw badRequest("content is required");
-      const exportRow = getStore().createExport(req.params.id, format, content);
+      const exportRow = await getStore().createExport(req.params.id, format, content);
       res.status(201).json(exportRow);
     } catch (error) {
       rethrowAsApiError(error, "Failed to create research export");
     }
   });
 
-  router.get("/runs/:id/exports", (req, res) => {
+  router.get("/runs/:id/exports", async (req, res) => {
     try {
-      res.json({ exports: getStore().getExports(req.params.id) });
+      res.json({ exports: await getStore().getExports(req.params.id) });
     } catch (error) {
       rethrowAsApiError(error, "Failed to list research exports");
     }
   });
 
-  router.get("/exports/:exportId", (req, res) => {
+  router.get("/exports/:exportId", async (req, res) => {
     try {
-      const exportRow = getStore().getExport(req.params.exportId);
+      const exportRow = await getStore().getExport(req.params.exportId);
       if (!exportRow) throw notFound(`Export not found: ${req.params.exportId}`);
       res.json(exportRow);
     } catch (error) {
@@ -542,19 +546,19 @@ export function createResearchRouter(store: TaskStore): Router {
     }
   });
 
-  router.get("/stats", (_req, res) => {
+  router.get("/stats", async (_req, res) => {
     try {
-      res.json(getStore().getStats());
+      res.json(await getStore().getStats());
     } catch (error) {
       rethrowAsApiError(error, "Failed to get research stats");
     }
   });
 
-  router.get("/search", (req, res) => {
+  router.get("/search", async (req, res) => {
     try {
       const q = String(req.query.q ?? "").trim();
       if (!q) throw badRequest("q is required");
-      res.json({ runs: getStore().searchRuns(q) });
+      res.json({ runs: await getStore().searchRuns(q) });
     } catch (error) {
       rethrowAsApiError(error, "Failed to search research runs");
     }

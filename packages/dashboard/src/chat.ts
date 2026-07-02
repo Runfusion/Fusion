@@ -1188,7 +1188,7 @@ export class ChatManager {
    * `--session-id`. Pinning both via SessionManager.open is the only way to
    * keep the CLI session stable across user messages.
    */
-  private resolveCliSessionManager(session: ChatSession): SessionManager {
+  private async resolveCliSessionManager(session: ChatSession): Promise<SessionManager> {
     if (session.cliSessionFile && existsSync(session.cliSessionFile)) {
       try {
         return SessionManager.open(session.cliSessionFile);
@@ -1204,7 +1204,7 @@ export class ChatManager {
     const sessionFile = manager.getSessionFile();
     if (sessionFile) {
       try {
-        this.chatStore.setCliSessionFile(session.id, sessionFile);
+        await this.chatStore.setCliSessionFile(session.id, sessionFile);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         diagnostics.warn(
@@ -1332,16 +1332,16 @@ export class ChatManager {
     ].join("\n");
   }
 
-  private resolveRoomResponders(
+  private async resolveRoomResponders(
     session: ChatSession,
     mentions: ChatMention[],
     availableAgents: Agent[],
-  ): { direct: Agent[]; ambient: Agent[]; nonMemberMentions: ChatMention[] } {
+  ): Promise<{ direct: Agent[]; ambient: Agent[]; nonMemberMentions: ChatMention[] }> {
     if (session.kind !== "room" || !session.roomId) {
       return { direct: [], ambient: [], nonMemberMentions: [] };
     }
 
-    const roomMembers = this.chatStore.listRoomMembers(session.roomId);
+    const roomMembers = await this.chatStore.listRoomMembers(session.roomId);
     const memberIds = new Set(roomMembers.map((member) => member.agentId));
     const agentsById = new Map(availableAgents.map((agent) => [agent.id, agent]));
 
@@ -1383,7 +1383,7 @@ export class ChatManager {
   /**
    * Create a new chat session.
    */
-  createSession(input: ChatSessionCreateInput): ChatSession {
+  async createSession(input: ChatSessionCreateInput): Promise<ChatSession> {
     return this.chatStore.createSession(input);
   }
 
@@ -1394,7 +1394,7 @@ export class ChatManager {
     modelProvider?: string,
     modelId?: string,
   ) {
-    const room = this.chatStore.getRoom(roomId);
+    const room = await this.chatStore.getRoom(roomId);
     if (!room) {
       throw new Error(`Chat room ${roomId} not found`);
     }
@@ -1404,7 +1404,7 @@ export class ChatManager {
     const availableAgents = await this.listAgentsForMentions();
     const availableAgentsById = new Map(availableAgents.map((agent) => [agent.id, agent]));
 
-    for (const member of this.chatStore.listRoomMembers(roomId)) {
+    for (const member of await this.chatStore.listRoomMembers(roomId)) {
       if (availableAgentsById.has(member.agentId)) {
         continue;
       }
@@ -1418,13 +1418,13 @@ export class ChatManager {
 
     const mentions = hasMentionCandidates ? await this.parseMentions(trimmedContent, availableAgents) : [];
 
-    const responderPlan = this.resolveRoomResponders(
+    const responderPlan = await this.resolveRoomResponders(
       { id: `room-${roomId}`, kind: "room", roomId, agentId: "room", status: "active" } as ChatSession,
       mentions,
       availableAgents,
     );
 
-    const userMessage = this.chatStore.addRoomMessage(roomId, {
+    const userMessage = await this.chatStore.addRoomMessage(roomId, {
       role: "user",
       content: trimmedContent,
       senderAgentId: null,
@@ -1437,14 +1437,14 @@ export class ChatManager {
       ...(Array.isArray(attachments) ? { attachments } : {}),
     });
 
-    const roomMembers = this.chatStore.listRoomMembers(roomId);
+    const roomMembers = await this.chatStore.listRoomMembers(roomId);
     const responders = [...responderPlan.direct, ...responderPlan.ambient];
     if (responders.length === 0) {
       if (responderPlan.nonMemberMentions.length > 0) {
         const labels = responderPlan.nonMemberMentions
           .map((mention) => `@${mention.agentName.replace(/\s+/g, "_")}`)
           .join(", ");
-        this.chatStore.addRoomMessage(roomId, {
+        await this.chatStore.addRoomMessage(roomId, {
           role: "assistant",
           senderAgentId: null,
           content: `I couldn't route ${labels} because they are not members of this room.`,
@@ -1482,7 +1482,7 @@ export class ChatManager {
           continue;
         }
 
-        this.chatStore.addRoomMessage(roomId, {
+        await this.chatStore.addRoomMessage(roomId, {
           role: "assistant",
           content: response.content,
           thinkingOutput: response.thinkingOutput,
@@ -1509,7 +1509,7 @@ export class ChatManager {
       const labels = responderPlan.nonMemberMentions
         .map((mention) => `@${mention.agentName.replace(/\s+/g, "_")}`)
         .join(", ");
-      this.chatStore.addRoomMessage(roomId, {
+      await this.chatStore.addRoomMessage(roomId, {
         role: "assistant",
         senderAgentId: null,
         content: `Note: ${labels} are not members of this room, so they did not respond.`,
@@ -1558,7 +1558,7 @@ export class ChatManager {
     systemPrompt = `${systemPrompt}\n\n${CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE}`;
 
     const roomCompactionSettings = await this.getRoomCompactionSettings();
-    const roomMessages = this.chatStore.getRoomMessages(input.roomId, { limit: roomCompactionSettings.fetchLimit });
+    const roomMessages = await this.chatStore.getRoomMessages(input.roomId, { limit: roomCompactionSettings.fetchLimit });
     const { attachmentContents, imageContents } = await readChatAttachmentContents(
       this.rootDir,
       { kind: "room", roomId: input.roomId },
@@ -1741,7 +1741,7 @@ export class ChatManager {
     }
     const broadcastOptions = { generationId };
 
-    const session = this.chatStore.getSession(sessionId);
+    const session = await this.chatStore.getSession(sessionId);
 
     // CLI-agent-backed chat: a session that selected a cli-agent executor brokers
     // its composer sends to the live PTY (via the runner) rather than running the
@@ -1841,7 +1841,7 @@ export class ChatManager {
 
       // Persist user message
       try {
-        this.chatStore.addMessage(sessionId, {
+        await this.chatStore.addMessage(sessionId, {
           role: "user",
           content,
           metadata: mentions.length > 0 ? { mentions } : undefined,
@@ -2000,7 +2000,7 @@ export class ChatManager {
       // the Claude CLI --resume session it owns) is keyed off the chat. On the
       // first user message we create a fresh, file-backed session and persist
       // its path; subsequent messages reopen the same file.
-      const sessionManager = this.resolveCliSessionManager(session);
+      const sessionManager = await this.resolveCliSessionManager(session);
       const chatModelSettings = await this.getChatModelSettings();
       const usesConfiguredDefaultModel =
         requestedModelProvider === chatModelSettings.defaultProvider
@@ -2186,7 +2186,7 @@ export class ChatManager {
           effectiveModelProvider,
           effectiveModelId,
         );
-        persistFailureMessage(this.chatStore, sessionId, failureInfo);
+        await persistFailureMessage(this.chatStore, sessionId, failureInfo);
         this.flushInFlightGenerationPersist(sessionId, null);
         chatStreamManager.broadcast(sessionId, {
           type: "error",
@@ -2227,7 +2227,7 @@ export class ChatManager {
       if (fallbackInfo) {
         assistantMetadata.fallback = fallbackInfo;
       }
-      const assistantMessage = this.chatStore.addMessage(sessionId, {
+      const assistantMessage = await this.chatStore.addMessage(sessionId, {
         role: "assistant",
         content: finalResponseText,
         thinkingOutput: accumulatedThinking || undefined,
@@ -2273,7 +2273,7 @@ export class ChatManager {
 
       if (accumulatedText || accumulatedThinking || toolCallsAccum.length > 0) {
         try {
-          this.chatStore.addMessage(sessionId, {
+          await this.chatStore.addMessage(sessionId, {
             role: "assistant",
             content: accumulatedText || "(response interrupted before text generation)",
             thinkingOutput: accumulatedThinking || undefined,
@@ -2289,7 +2289,7 @@ export class ChatManager {
       }
 
       try {
-        persistFailureMessage(this.chatStore, sessionId, failureInfo, fallbackInfo ? { fallback: fallbackInfo } : undefined);
+        await persistFailureMessage(this.chatStore, sessionId, failureInfo, fallbackInfo ? { fallback: fallbackInfo } : undefined);
       } catch (persistErr) {
         diagnostics.error(`Failed to persist failure message for session ${sessionId}:`, persistErr);
       }

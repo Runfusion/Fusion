@@ -29,14 +29,14 @@ export class ExperimentFinalizeService {
 
   async previewPlan(input: { sessionId: string; integrationBranch?: string }): Promise<FinalizePlan> {
     const integrationBranch = input.integrationBranch ?? "main";
-    const session = this.options.store.getSession(input.sessionId);
+    const session = await this.options.store.getSession(input.sessionId);
     if (!session) throw new ExperimentFinalizeStateError(`Experiment session not found: ${input.sessionId}`);
     if (session.status !== "active") {
       throw new ExperimentFinalizeStateError(`Session ${input.sessionId} is not active (status: ${session.status})`);
     }
     if (!session.keptRunIds.length) throw new ExperimentFinalizeNoKeptRunsError(`Session ${input.sessionId} has no kept runs`);
 
-    const records = this.options.store.listRecords(input.sessionId);
+    const records = await this.options.store.listRecords(input.sessionId);
     const baselineRef = this.resolveBaselineRef(session.baselineRunId, session.metadata?.baselineCommit, records, integrationBranch);
     const mergeBaseCommit = await this.options.git.mergeBase(baselineRef, integrationBranch);
 
@@ -66,7 +66,7 @@ export class ExperimentFinalizeService {
     let originalRef = "";
     let createdBranches: string[] = [];
     try {
-      const session = this.options.store.getSession(input.sessionId);
+      const session = await this.options.store.getSession(input.sessionId);
       if (!session) throw new ExperimentFinalizeStateError(`Experiment session not found: ${input.sessionId}`);
       if (session.status !== "active") {
         throw new ExperimentFinalizeStateError(`Session ${input.sessionId} is not active (status: ${session.status})`);
@@ -75,12 +75,12 @@ export class ExperimentFinalizeService {
         throw new ExperimentFinalizeNoKeptRunsError(`Session ${input.sessionId} has no kept runs`);
       }
 
-      this.options.store.updateSession(input.sessionId, { status: "finalizing" });
+      await this.options.store.updateSession(input.sessionId, { status: "finalizing" });
 
       const branch = await this.options.git.currentBranch();
       originalRef = branch ?? await this.options.git.head();
 
-      const records = this.options.store.listRecords(input.sessionId);
+      const records = await this.options.store.listRecords(input.sessionId);
       const baselineRef = this.resolveBaselineRef(session.baselineRunId, session.metadata?.baselineCommit, records, integrationBranch);
       const mergeBaseCommit = await this.options.git.mergeBase(baselineRef, integrationBranch);
       const defaultPlan = buildDefaultPlan({ session, records, integrationBranch, mergeBaseCommit });
@@ -113,12 +113,12 @@ export class ExperimentFinalizeService {
       }
 
       await this.options.git.checkout(originalRef);
-      const discardedRunIds = this.options.store
-        .listRecords(input.sessionId)
+      const discardedRunIds = (await this.options.store
+        .listRecords(input.sessionId))
         .filter((record) => record.type === "run" && record.payload.status !== "keep")
         .map((record) => record.id);
 
-      const finalizeRecord = this.options.store.appendRecord(input.sessionId, {
+      const finalizeRecord = await this.options.store.appendRecord(input.sessionId, {
         type: "finalize",
         payload: {
           keptRunIds: session.keptRunIds,
@@ -132,7 +132,7 @@ export class ExperimentFinalizeService {
         },
       });
 
-      this.options.store.updateSession(input.sessionId, { status: "finalized" });
+      await this.options.store.updateSession(input.sessionId, { status: "finalized" });
       this.logger.log(`finalize complete: ${input.sessionId}`);
       return {
         sessionId: input.sessionId,

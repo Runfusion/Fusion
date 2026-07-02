@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { Database as ProjectDatabase } from "./db.js";
 import type { CentralDatabase } from "./central-db.js";
 import { createSecretCipher, SecretCryptoError, type MasterKeyProvider } from "./secrets-crypto.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import * as asyncSecretsStore from "./async-secrets-store.js";
 
 export type SecretScope = "project" | "global";
 export function isSecretScope(value: unknown): value is SecretScope {
@@ -63,6 +65,15 @@ type SecretsStoreAuditEvent = {
 export interface SecretsStoreOptions {
   /** Optional non-blocking audit emitter. Errors are swallowed/warned so CRUD paths continue. */
   auditEmitter?: (event: SecretsStoreAuditEvent) => void;
+  /**
+   * FNXC:SecretsStore 2026-06-24-21:00:
+   * When provided, the store enters backend (PostgreSQL) mode and delegates all
+   * data access to the async helpers in async-secrets-store.ts. The sync SQLite
+   * databases (projectDb/centralDb) are ignored in this mode. This is the
+   * dual-path pattern: the same class serves both SQLite (CLI/desktop) and
+   * PostgreSQL (backend) deployments.
+   */
+  asyncLayer?: AsyncDataLayer | null;
 }
 
 export class SecretsStoreError extends Error {
@@ -92,6 +103,13 @@ function isAccessPolicy(value: string): value is SecretAccessPolicy {
 
 export class SecretsStore {
   private readonly cipher: ReturnType<typeof createSecretCipher>;
+  /**
+   * FNXC:SecretsStore 2026-06-24-21:05:
+   * When non-null, the store is in backend (PostgreSQL) mode and all data
+   * access delegates to the async helpers. The sync projectDb/centralDb are
+   * not used in this mode.
+   */
+  private readonly asyncLayer: AsyncDataLayer | null;
 
   constructor(
     private readonly projectDb: Pick<ProjectDatabase, "prepare" | "bumpLastModified">,
@@ -100,6 +118,12 @@ export class SecretsStore {
     private readonly options: SecretsStoreOptions = {},
   ) {
     this.cipher = createSecretCipher(masterKeyProvider);
+    this.asyncLayer = options.asyncLayer ?? null;
+  }
+
+  /** True when the store is backed by PostgreSQL (AsyncDataLayer present). */
+  private get backendMode(): boolean {
+    return this.asyncLayer !== null;
   }
 
   private emitAudit(event: SecretsStoreAuditEvent): void {
@@ -131,7 +155,10 @@ export class SecretsStore {
     };
   }
 
-  listSecrets(scope?: SecretScope): SecretRecord[] {
+  async listSecrets(scope?: SecretScope): Promise<SecretRecord[]> {
+    if (this.backendMode) {
+      return asyncSecretsStore.listSecrets(this.asyncLayer!.db, scope);
+    }
     if (scope) {
       const db = this.dbForScope(scope);
       const table = tableForScope(scope);
@@ -139,13 +166,17 @@ export class SecretsStore {
       return rows.map((row) => this.rowToRecord(row, scope));
     }
 
-    return [...this.listSecrets("project"), ...this.listSecrets("global")];
+    const [project, global] = await Promise.all([
+      this.listSecrets("project"),
+      this.listSecrets("global"),
+    ]);
+    return [...project, ...global];
   }
 
   async listEnvExportable(opts?: { keyPrefix?: string }): Promise<EnvExportableSecret[]> {
     const keyPrefix = opts?.keyPrefix;
-    const projectRows = this.listSecrets("project");
-    const globalRows = this.listSecrets("global");
+    const projectRows = await this.listSecrets("project");
+    const globalRows = await this.listSecrets("global");
     const exported = new Map<string, EnvExportableSecret>();
 
     const collect = async (row: SecretRecord): Promise<void> => {
@@ -186,7 +217,10 @@ export class SecretsStore {
     return [...exported.values()];
   }
 
-  getSecretMetadata(id: string, scope: SecretScope): SecretRecord | null {
+  async getSecretMetadata(id: string, scope: SecretScope): Promise<SecretRecord | null> {
+    if (this.backendMode) {
+      return asyncSecretsStore.getSecretMetadata(this.asyncLayer!.db, id, scope);
+    }
     const db = this.dbForScope(scope);
     const table = tableForScope(scope);
     const row = db.prepare(`SELECT id, key, description, access_policy, env_exportable, env_export_key, created_at, updated_at, last_read_at, last_read_by FROM ${table} WHERE id = ?`).get(id) as SecretRow | undefined;
@@ -208,6 +242,12 @@ export class SecretsStore {
     }
     if (input.accessPolicy && !isAccessPolicy(input.accessPolicy)) {
       throw new SecretsStoreError({ code: "invalid-policy", message: "Invalid access policy" });
+    }
+
+    if (this.backendMode) {
+      const created = await asyncSecretsStore.createSecret(this.asyncLayer!.db, this.cipher, input);
+      this.emitAudit({ mutationType: "secret:create", scope: input.scope, secretId: created.id, key: created.key });
+      return created;
     }
 
     const now = new Date().toISOString();
@@ -239,7 +279,7 @@ export class SecretsStore {
       throw error;
     }
 
-    const created = this.getSecretMetadata(id, scope)!;
+    const created = (await this.getSecretMetadata(id, scope))!;
     this.emitAudit({ mutationType: "secret:create", scope, secretId: created.id, key: created.key });
     return created;
   }
@@ -252,7 +292,13 @@ export class SecretsStore {
     envExportable?: boolean;
     envExportKey?: string | null;
   }): Promise<SecretRecord> {
-    const existing = this.getSecretMetadata(id, scope);
+    if (this.backendMode) {
+      const updated = await asyncSecretsStore.updateSecret(this.asyncLayer!.db, this.cipher, id, scope, patch);
+      this.emitAudit({ mutationType: "secret:update", scope, secretId: updated.id, key: updated.key });
+      return updated;
+    }
+
+    const existing = await this.getSecretMetadata(id, scope);
     if (!existing) {
       throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
     }
@@ -312,13 +358,23 @@ export class SecretsStore {
       throw error;
     }
 
-    const updated = this.getSecretMetadata(id, scope)!;
+    const updated = (await this.getSecretMetadata(id, scope))!;
     this.emitAudit({ mutationType: "secret:update", scope, secretId: updated.id, key: updated.key });
     return updated;
   }
 
-  deleteSecret(id: string, scope: SecretScope): void {
-    const existing = this.getSecretMetadata(id, scope);
+  async deleteSecret(id: string, scope: SecretScope): Promise<void> {
+    if (this.backendMode) {
+      const existing = await this.getSecretMetadata(id, scope);
+      if (!existing) {
+        throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
+      }
+      await asyncSecretsStore.deleteSecret(this.asyncLayer!.db, id, scope);
+      this.emitAudit({ mutationType: "secret:delete", scope, secretId: id, key: existing.key });
+      return;
+    }
+
+    const existing = await this.getSecretMetadata(id, scope);
     if (!existing) {
       throw new SecretsStoreError({ code: "not-found", message: "Secret not found" });
     }
@@ -335,6 +391,12 @@ export class SecretsStore {
     scope: SecretScope,
     reader: { agentId?: string | null; userId?: string | null },
   ): Promise<{ key: string; plaintextValue: string }> {
+    if (this.backendMode) {
+      const revealed = await asyncSecretsStore.revealSecret(this.asyncLayer!.db, this.cipher, id, scope, reader);
+      this.emitAudit({ mutationType: "secret:read", scope, secretId: id, key: revealed.key, actor: reader });
+      return revealed;
+    }
+
     const db = this.dbForScope(scope);
     const table = tableForScope(scope);
     const row = db.prepare(`SELECT id, key, value_ciphertext, nonce, description, access_policy, env_exportable, env_export_key, created_at, updated_at, last_read_at, last_read_by FROM ${table} WHERE id = ?`).get(id) as SecretCipherRow | undefined;

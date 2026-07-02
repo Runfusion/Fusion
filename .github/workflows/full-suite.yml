@@ -33,6 +33,27 @@ jobs:
   test-shards:
     name: Test shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
+    # FNXC:FixPgTestsAndCi 2026-06-26-09:10:
+    # Provision a PostgreSQL service container so the postgres/*.pg.test.ts
+    # suites run in the non-blocking full suite too (parity with the gate).
+    # The pg-test-harness probe skips gracefully if unreachable.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -p 5432 -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      FUSION_PG_TEST_URL_BASE: "postgresql://postgres:postgres@localhost:5432"
+      PGPASSWORD: "postgres"
     # Backstop for a wedged shard. The per-invocation watchdog (L2,
     # scripts/lib/run-vitest-watchdog.mjs) kills any single hung invocation at
     # its budget ceiling (<=30min), so this job budget only fires if L2 itself

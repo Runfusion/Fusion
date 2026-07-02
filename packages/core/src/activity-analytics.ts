@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 import type { WorkflowIrColumn } from "./workflow-ir-types.js";
 
@@ -205,10 +207,45 @@ function rangeClauses(
  * stickiness) over a date range. Empty range yields zeroed structures and an
  * empty `daily` array — never nulls. `mttr` is the U13 unavailable seam.
  */
-export function aggregateActivityAnalytics(
-  db: Database,
+export async function aggregateActivityAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ActivityAnalyticsQuery = {},
-): ActivityAnalytics {
+): Promise<ActivityAnalytics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:45:
+  // The activity analytics queries (sessions, messages, nodes, agents, daily
+  // breakdown) are not yet ported to async. In backend mode, return a degraded
+  // result (empty daily, zero sessions/messages) with the monitor metrics from
+  // the async path. The SQLite path runs all queries synchronously.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"transactionImmediate" in dbOrLayer`.
+  if ("ping" in dbOrLayer) {
+    const monitor = await aggregateMonitorMetrics(dbOrLayer, query);
+    return {
+      from: query.from ?? null,
+      to: query.to ?? null,
+      sessions: 0,
+      messages: 0,
+      activeNodes: 0,
+      activeAgents: 0,
+      agentRuns: { total: 0, active: 0, completed: 0, failed: 0 },
+      stickiness: 0,
+      daily: [],
+      mttr: monitor.mttr,
+      monitor,
+      funnel: {
+        from: query.from ?? null,
+        to: query.to ?? null,
+        stages: [],
+        enteredInRange: 0,
+        doneInRange: 0,
+        completionRate: null,
+        rangeDays: 0,
+        throughputPerDay: 0,
+      },
+    };
+  }
+  const db = dbOrLayer as Database;
   // Sessions from cli_sessions (by createdAt).
   const sessionRange = rangeClauses("createdAt", query);
   const sessions = (
@@ -298,7 +335,7 @@ export function aggregateActivityAnalytics(
   const stickiness = mau > 0 ? dau / mau : 0;
 
   // U13: real monitor metrics over the incidents/deployments tables.
-  const monitor = aggregateMonitorMetrics(db, query);
+  const monitor = await aggregateMonitorMetrics(db, query);
 
   return {
     from: query.from ?? null,
@@ -724,10 +761,85 @@ interface ResolvedIncidentRow {
  * predating migration 120), every metric degrades to its empty value rather than
  * throwing, so the aggregator is safe to call on any schema.
  */
-export function aggregateMonitorMetrics(
-  db: Database,
+export async function aggregateMonitorMetrics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ActivityAnalyticsQuery = {},
-): MonitorMetrics {
+): Promise<MonitorMetrics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:40:
+  // Backend mode: query incidents + deployments via the async layer.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"transactionImmediate" in dbOrLayer`.
+  if ("ping" in dbOrLayer) {
+    const layer = dbOrLayer as AsyncDataLayer;
+    const { sql } = await import("drizzle-orm");
+    // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+    // Raw async SQL must schema-qualify project tables (project.deployments,
+    // project.incidents) and use the real snake_case columns (deployed_at,
+    // opened_at, resolved_at). The async connection does not put `project` on
+    // the search_path (see data-layer.ts:353), so unqualified `FROM deployments`
+    // raised `relation "deployments" does not exist`; and quoted camelCase
+    // identifiers like `"openedAt"` do not match the snake_case columns. The
+    // deployments read previously sat OUTSIDE the try/catch, so this error 500'd
+    // the whole /command-center/activity route instead of degrading. Deployment
+    // frequency filters on deployed_at (deploy time), not the incident openedAt.
+    let deployments = 0;
+    try {
+      const depFrom = query.from ? sql`AND deployed_at >= ${query.from}` : sql``;
+      const depTo = query.to ? sql`AND deployed_at <= ${query.to}` : sql``;
+      const deploymentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.deployments WHERE 1=1 ${depFrom} ${depTo}`);
+      deployments = (deploymentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+    } catch (err) {
+      // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+      // Degrade to 0 so the deployments read never 500s /command-center/activity
+      // (it previously sat outside any try/catch), but log: a real failure here
+      // (permissions, schema drift, bad bind) must not masquerade as "0 deploys".
+      deployments = 0;
+      console.warn("[fusion] monitor metrics: deployments count failed in PG mode, reporting 0:", err);
+    }
+    try {
+      const openedFrom = query.from ? sql`AND opened_at >= ${query.from}` : sql``;
+      const openedTo = query.to ? sql`AND opened_at <= ${query.to}` : sql``;
+      const resolvedFrom = query.from ? sql`AND resolved_at >= ${query.from}` : sql``;
+      const resolvedTo = query.to ? sql`AND resolved_at <= ${query.to}` : sql``;
+      const incidentsOpenedRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`);
+      const incidentsOpened = (incidentsOpenedRows[0] as { count?: number } | undefined)?.count ?? 0;
+      const openIncidentsRows = await layer.db.execute(sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open'`);
+      const openIncidents = (openIncidentsRows[0] as { count?: number } | undefined)?.count ?? 0;
+      // FNXC:PostgresMonitorMetrics 2026-06-27-00:40:
+      // resolvedDetailRows already returns every resolved-in-range incident, so
+      // incidentsResolved is its row count — drop the separate COUNT query that
+      // had an identical WHERE clause (one fewer round-trip per activity load).
+      const resolvedDetailRows = await layer.db.execute(sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt" FROM project.incidents WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`) as Array<{ openedAt: string; resolvedAt: string }>;
+      const incidentsResolved = resolvedDetailRows.length;
+      let totalMs = 0;
+      let sampleCount = 0;
+      for (const row of resolvedDetailRows) {
+        const duration = new Date(row.resolvedAt).getTime() - new Date(row.openedAt).getTime();
+        if (Number.isFinite(duration) && duration >= 0) {
+          totalMs += duration;
+          sampleCount++;
+        }
+      }
+      const mttrValue = sampleCount > 0 ? totalMs / sampleCount / 60000 : null;
+      return {
+        mttr: { value: mttrValue, unavailable: sampleCount === 0, sampleCount },
+        incidentsOpened,
+        incidentsResolved,
+        openIncidents,
+        deployments,
+      };
+    } catch {
+      return {
+        mttr: { value: null, unavailable: true, sampleCount: 0 },
+        incidentsOpened: 0,
+        incidentsResolved: 0,
+        openIncidents: 0,
+        deployments,
+      };
+    }
+  }
+  const db = dbOrLayer as Database;
   if (!tableExists(db, "incidents")) {
     return {
       mttr: { value: null, unavailable: true, sampleCount: 0 },
@@ -867,10 +979,20 @@ function signalsBreakdown(
  * FNXC:CommandCenterSignals 2026-06-25-23:35:
  * Connector resolution events must surface as a status breakdown, not only top-line open/resolved counts, so the UI and API can prove provider recovery signals changed incident state.
  */
-export function aggregateSignalsAnalytics(
-  db: Database,
+export async function aggregateSignalsAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: ActivityAnalyticsQuery = {},
-): SignalsAnalytics {
+): Promise<SignalsAnalytics> {
+  // FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+  // Backend (PostgreSQL) path. The async connection has no `project` on the
+  // search_path, so project.incidents is schema-qualified and columns are
+  // snake_case (opened_at, resolved_at, status, source, severity). Semantics
+  // (openedAt for total/open/breakdowns, resolvedAt for resolved/MTTR, unknown
+  // bucketing, MTTR sentinel) mirror the sync branch exactly.
+  if ("ping" in dbOrLayer) {
+    return aggregateSignalsAnalyticsAsync(dbOrLayer, query);
+  }
+  const db = dbOrLayer as Database;
   if (!tableExists(db, "incidents")) return emptySignalsAnalytics(query);
 
   const openedRange = rangeClauses("openedAt", query);
@@ -921,5 +1043,70 @@ export function aggregateSignalsAnalytics(
       status: row.key,
       count: row.count,
     })),
+  };
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-28-09:30:
+ * PostgreSQL fetch path for {@link aggregateSignalsAnalytics}. project.incidents
+ * is schema-managed (always present), so no tableExists guard is needed — an
+ * empty project simply yields zero counts and the unavailable-MTTR sentinel.
+ * Breakdowns bucket NULL/blank source/severity/status as `unknown`, matching
+ * the sync `COALESCE(NULLIF(TRIM(col), ''), 'unknown')` shape.
+ */
+async function aggregateSignalsAnalyticsAsync(
+  layer: AsyncDataLayer,
+  query: ActivityAnalyticsQuery,
+): Promise<SignalsAnalytics> {
+  const openedFrom = query.from !== undefined ? sql`AND opened_at >= ${query.from}` : sql``;
+  const openedTo = query.to !== undefined ? sql`AND opened_at <= ${query.to}` : sql``;
+  const resolvedFrom = query.from !== undefined ? sql`AND resolved_at >= ${query.from}` : sql``;
+  const resolvedTo = query.to !== undefined ? sql`AND resolved_at <= ${query.to}` : sql``;
+
+  const totalRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE 1=1 ${openedFrom} ${openedTo}`,
+  )) as Array<{ count: number }>;
+  const totalSignals = Number(totalRows[0]?.count ?? 0);
+
+  const openRows = (await layer.db.execute(
+    sql`SELECT count(*)::int AS count FROM project.incidents WHERE status = 'open' ${openedFrom} ${openedTo}`,
+  )) as Array<{ count: number }>;
+  const open = Number(openRows[0]?.count ?? 0);
+
+  const resolvedRows = (await layer.db.execute(
+    sql`SELECT opened_at AS "openedAt", resolved_at AS "resolvedAt"
+        FROM project.incidents
+        WHERE resolved_at IS NOT NULL ${resolvedFrom} ${resolvedTo}`,
+  )) as Array<{ openedAt: string; resolvedAt: string }>;
+  const resolved = resolvedRows.length;
+
+  const breakdown = async (column: "source" | "severity" | "status"): Promise<Array<{ key: string; count: number }>> => {
+    const col = sql.raw(column);
+    const rows = (await layer.db.execute(
+      sql`SELECT COALESCE(NULLIF(TRIM(${col}), ''), 'unknown') AS key, count(*)::int AS count
+          FROM project.incidents
+          WHERE 1=1 ${openedFrom} ${openedTo}
+          GROUP BY 1
+          ORDER BY count DESC, key ASC`,
+    )) as Array<{ key: string | null; count: number }>;
+    return rows.map((r) => ({ key: r.key ?? "unknown", count: Number(r.count) }));
+  };
+
+  const [bySource, bySeverity, byStatus] = await Promise.all([
+    breakdown("source"),
+    breakdown("severity"),
+    breakdown("status"),
+  ]);
+
+  return {
+    from: query.from ?? null,
+    to: query.to ?? null,
+    totalSignals,
+    open,
+    resolved,
+    mttr: mttrFromResolvedRows(resolvedRows),
+    bySource: bySource.map((row) => ({ source: row.key, count: row.count })),
+    bySeverity: bySeverity.map((row) => ({ severity: row.key, count: row.count })),
+    byStatus: byStatus.map((row) => ({ status: row.key, count: row.count })),
   };
 }

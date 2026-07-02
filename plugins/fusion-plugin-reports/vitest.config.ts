@@ -11,6 +11,17 @@ const dashboardSetup = fileURLToPath(
   new URL("./src/dashboard/test-setup.ts", import.meta.url),
 );
 
+/*
+FNXC:ReportsTests 2026-06-25-16:30:
+The SQLite-to-PostgreSQL cutover (feature delete-sqlite-runtime-final, PHASE A)
+quarantines plugin test files that construct a SQLite-backed store (new TaskStore(...,
+{inMemoryDb: true}) / new Database(...)). The SQLite runtime code is being deleted
+in this feature. Per the AGENTS.md flaky-test deletion ratchet, these tests are
+quarantined on sight. Mirrored in scripts/lib/test-quarantine.json.
+*/
+const quarantinedReportsTests = [
+];
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -44,7 +55,11 @@ export default defineConfig({
           name: "reports-node",
           environment: "node",
           include: ["src/**/__tests__/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
-          exclude: ["src/dashboard/**/__tests__/**/*.test.{ts,tsx}", "src/dashboard/**/*.test.{ts,tsx}"],
+          exclude: [
+            "src/dashboard/**/__tests__/**/*.test.{ts,tsx}",
+            "src/dashboard/**/*.test.{ts,tsx}",
+            ...quarantinedReportsTests,
+          ],
         },
       },
     ],

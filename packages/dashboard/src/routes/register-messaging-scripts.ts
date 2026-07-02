@@ -188,8 +188,15 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
 
     let msgStore = messageStoreCache.get(rootDir);
     if (!msgStore) {
-      const db = scopedStore.getDatabase();
-      msgStore = new MessageStore(db);
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-12:50:
+      // In backend mode, pass the AsyncDataLayer so MessageStore delegates to
+      // the async helpers; otherwise pass the sync SQLite Database (legacy path).
+      const layer = scopedStore.getAsyncLayer();
+      if (layer) {
+        msgStore = new MessageStore(null, { asyncLayer: layer });
+      } else {
+        msgStore = new MessageStore(scopedStore.getDatabase());
+      }
       messageStoreCache.set(rootDir, msgStore);
     }
     return msgStore;
@@ -272,8 +279,9 @@ export function registerMessagingScriptRoutes(ctx: ApiRoutesContext): void {
       const mailbox = await msgStore.getMailbox(DASHBOARD_USER_ID, "user");
       let pendingApprovalCount = 0;
       try {
-        const approvalStore = new ApprovalRequestStore(scopedStore.getDatabase());
-        pendingApprovalCount = approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 }).length;
+        const layer = scopedStore.getAsyncLayer();
+        const approvalStore = new ApprovalRequestStore(layer ? null : scopedStore.getDatabase(), { asyncLayer: layer });
+        pendingApprovalCount = (await approvalStore.list({ status: "pending", limit: Number.MAX_SAFE_INTEGER, offset: 0 })).length;
       } catch {
         pendingApprovalCount = 0;
       }

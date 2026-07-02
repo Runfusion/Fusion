@@ -70,7 +70,7 @@ async function stageSharedMember(
   git(rootDir, `git add ${JSON.stringify(`packages/engine/src/${input.fileName}.ts`)}`);
   git(rootDir, `git commit -m ${JSON.stringify(`feat: add ${input.fileName}`)}`);
   git(rootDir, "git checkout main");
-  store.enqueueMergeQueue(input.taskId);
+  await store.enqueueMergeQueue(input.taskId);
 
   return { taskId: input.taskId, branch, worktreePath, fileName: input.fileName };
 }

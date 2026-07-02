@@ -189,6 +189,17 @@ function createMockStore(overrides: Record<string, unknown> = {}): TaskStore & E
     getBootstrappedAt: vi.fn().mockReturnValue(null),
     getRootDir: vi.fn().mockReturnValue("/tmp/test-project"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
+    /*
+    FNXC:SqliteFinalRemoval 2026-06-25-16:30:
+    The TaskStore contract now exposes isBackendMode() and getAsyncLayer() (added
+    during the SQLite-to-PostgreSQL cutover). Mock stores must implement these so
+    the backend-mode guards in SelfHealingManager (WAL checkpoint, FTS maintenance,
+    pruneOperationalLogs) take the SQLite path when the mock represents a SQLite
+    store. This is not appeasement — it is keeping the mock in sync with the store
+    interface contract.
+    */
+    isBackendMode: vi.fn().mockReturnValue(false),
+    getAsyncLayer: vi.fn().mockReturnValue(null),
     ...overrides,
   }) as unknown as TaskStore & EventEmitter;
   return store;

@@ -42,9 +42,10 @@ import type {
 
 /** The slice of ChatStore this runner needs. */
 export interface ChatStoreLike {
-  getSession(id: string): ChatSession | undefined;
-  addMessage(sessionId: string, input: ChatMessageCreateInput): ChatMessage;
-  setCliExecutorAdapterId(id: string, adapterId: string | null): ChatSession | undefined;
+  getSession(id: string): Promise<ChatSession | undefined> | ChatSession | undefined;
+  addMessage(sessionId: string, input: ChatMessageCreateInput): Promise<ChatMessage> | ChatMessage;
+  setCliExecutorAdapterId(id: string, adapterId: string | null): Promise<ChatSession | undefined> | ChatSession | undefined;
+  setCliSessionFile?(id: string, cliSessionFile: string | null): Promise<void> | void;
 }
 
 /** A durable cli_sessions record (subset used here). */
@@ -130,7 +131,7 @@ export class CliChatSessionRunner {
     const existing = this.cliSessionByChat.get(chatSessionId);
     if (existing) return existing;
 
-    const chat = this.store.getSession(chatSessionId);
+    const chat = await this.store.getSession(chatSessionId);
     if (!chat) throw new Error(`Unknown chat session: ${chatSessionId}`);
     const adapterId = chat.cliExecutorAdapterId;
     if (!adapterId) {
@@ -169,7 +170,7 @@ export class CliChatSessionRunner {
     if (!cliSessionId) throw new Error(`No live CLI session for chat ${chatSessionId}`);
 
     // Persist the user's message immediately (redacted — users can paste tokens too).
-    this.store.addMessage(chatSessionId, {
+    await this.store.addMessage(chatSessionId, {
       role: "user",
       content: redactSecrets(text),
       metadata: { source: "cli-agent", origin: "composer" },
@@ -250,13 +251,13 @@ export class CliChatSessionRunner {
 
     // Persist the native session id for resume the first time we learn it.
     if (event.nativeSessionId) {
-      const chat = this.store.getSession(chatSessionId);
+      const chat = await this.store.getSession(chatSessionId);
       if (chat && chat.cliSessionFile !== event.nativeSessionId) {
         // Reuse cliSessionFile column as the native-session linkage (KTD:
         // cliSessionFile-style column or session metadata). setCliSessionFile is
         // internal plumbing; we route through the public setter on the runner's
         // store slice when available, else fall through.
-        (this.store as { setCliSessionFile?: (id: string, v: string) => void }).setCliSessionFile?.(
+        await (this.store as { setCliSessionFile?: (id: string, v: string) => Promise<void> | void }).setCliSessionFile?.(
           chatSessionId,
           event.nativeSessionId,
         );
@@ -266,14 +267,14 @@ export class CliChatSessionRunner {
     switch (event.kind) {
       case "busy": {
         // New assistant turn begins — flush any stale buffer defensively.
-        this.flushAssistantBuffer(chatSessionId, created);
+        await this.flushAssistantBuffer(chatSessionId, created);
         this.assistantBuffer.set(chatSessionId, "");
         break;
       }
       case "transcript": {
         if (event.toolSummary) {
           // One readable tool-summary row. Raw per-call tool noise never reaches here.
-          const row = this.store.addMessage(chatSessionId, {
+          const row = await this.store.addMessage(chatSessionId, {
             role: "assistant",
             content: redactSecrets(event.toolSummary),
             metadata: { source: "cli-agent", kind: "tool-summary" },
@@ -284,7 +285,7 @@ export class CliChatSessionRunner {
         const text = event.text ?? "";
         if (event.role === "user") {
           // Adapter-surfaced user echo — persist as a user row (deduped by caller).
-          const row = this.store.addMessage(chatSessionId, {
+          const row = await this.store.addMessage(chatSessionId, {
             role: "user",
             content: redactSecrets(text),
             metadata: { source: "cli-agent", origin: "transcript" },
@@ -298,7 +299,7 @@ export class CliChatSessionRunner {
         break;
       }
       case "done": {
-        this.flushAssistantBuffer(chatSessionId, created);
+        await this.flushAssistantBuffer(chatSessionId, created);
         // Session idle → attempt to flush one queued composer message.
         await this.flushNext(chatSessionId);
         break;
@@ -316,13 +317,13 @@ export class CliChatSessionRunner {
   }
 
   /** Persist the accumulated assistant turn as one row, if non-empty. */
-  private flushAssistantBuffer(chatSessionId: string, into: ChatMessage[]): void {
+  private async flushAssistantBuffer(chatSessionId: string, into: ChatMessage[]): Promise<void> {
     const buf = this.assistantBuffer.get(chatSessionId);
     if (buf == null) return;
     this.assistantBuffer.delete(chatSessionId);
     const trimmed = buf.trim();
     if (trimmed.length === 0) return;
-    const row = this.store.addMessage(chatSessionId, {
+    const row = await this.store.addMessage(chatSessionId, {
       role: "assistant",
       content: redactSecrets(trimmed),
       metadata: { source: "cli-agent" },

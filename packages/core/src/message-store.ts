@@ -13,9 +13,11 @@
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import type { Database } from "./db.js";
-import { fromJson, isSqliteCorruptionError, toJsonNullable } from "./db.js";
+import { fromJson, toJsonNullable } from "./db.js";
 import { createLogger } from "./logger.js";
 import { DASHBOARD_USER_ID, normalizeMessageParticipant, validateMessageMetadata, type Message, type MessageCreateInput, type MessageFilter, type MessageType, type Mailbox, type ParticipantType } from "./types.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import * as asyncMessageStore from "./async-message-store.js";
 
 const messageStoreLog = createLogger("message-store");
 
@@ -54,8 +56,14 @@ interface MessageRow {
 
 /** Options for MessageStore constructor */
 export interface MessageStoreOptions {
-  /** Optional hook invoked when a message is addressed to an agent */
-  onMessageToAgent?: (message: Message) => void;
+  /**
+   * Optional hook invoked when a message is addressed to an agent.
+   * FNXC:PostgresBackend 2026-06-28-10:20: widened to allow an async hook so the
+   * agent wake-on-message delivery (agent-heartbeat.handleMessageToAgent) can read
+   * the AgentStore via its async PG-capable path. The hook is awaited inside a
+   * try/catch — a rejected wake hook is logged and degraded, never failing the send.
+   */
+  onMessageToAgent?: (message: Message) => void | Promise<void>;
 }
 
 // ── MessageStore Class ───────────────────────────────────────────────
@@ -63,41 +71,59 @@ export interface MessageStoreOptions {
 /**
  * MessageStore manages messages between agents, users, and the system.
  * Uses SQLite for persistent storage with efficient indexed queries.
+ *
+ * FNXC:MessageStore 2026-06-24-12:30:
+ * Backend dual-path: when an `AsyncDataLayer` is provided (PostgreSQL backend
+ * active), every method delegates to the async-message-store helpers against
+ * PostgreSQL. When absent, the legacy sync SQLite path runs byte-identically.
  */
 export class MessageStore extends EventEmitter<MessageStoreEvents> {
-  private onMessageToAgent?: (message: Message) => void;
+  private onMessageToAgent?: (message: Message) => void | Promise<void>;
+  private readonly asyncLayer: AsyncDataLayer | null;
 
-  // Prepared statements for frequently-run queries
+  // Prepared statements for frequently-run queries (SQLite path only)
   private stmtInsert!: ReturnType<Database["prepare"]>;
   private stmtGetById!: ReturnType<Database["prepare"]>;
   private stmtUpdateRead!: ReturnType<Database["prepare"]>;
   private stmtDelete!: ReturnType<Database["prepare"]>;
 
   constructor(
-    private db: Database,
-    options?: MessageStoreOptions,
+    private db: Database | null,
+    options?: MessageStoreOptions & { asyncLayer?: AsyncDataLayer | null },
   ) {
     super();
     this.setMaxListeners(100);
     this.onMessageToAgent = options?.onMessageToAgent;
+    this.asyncLayer = options?.asyncLayer ?? null;
 
-    // Prepare frequently-run statements
-    this.stmtInsert = this.db.prepare(`
+    if (this.asyncLayer) {
+      // Backend mode: no prepared statements needed; data access is async.
+      return;
+    }
+
+    // Prepare frequently-run statements (SQLite path)
+    const sqliteDb = this.db!;
+    this.stmtInsert = sqliteDb.prepare(`
       INSERT INTO messages (id, fromId, fromType, toId, toType, content, type, read, metadata, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    this.stmtGetById = this.db.prepare(`
+    this.stmtGetById = sqliteDb.prepare(`
       SELECT * FROM messages WHERE id = ?
     `);
 
-    this.stmtUpdateRead = this.db.prepare(`
+    this.stmtUpdateRead = sqliteDb.prepare(`
       UPDATE messages SET read = 1, updatedAt = ? WHERE id = ?
     `);
 
-    this.stmtDelete = this.db.prepare(`
+    this.stmtDelete = sqliteDb.prepare(`
       DELETE FROM messages WHERE id = ?
     `);
+  }
+
+  /** True when the store is backed by PostgreSQL (AsyncDataLayer present). */
+  isBackendMode(): boolean {
+    return this.asyncLayer !== null;
   }
 
   // ── Row-to-Object Converters ───────────────────────────────────────
@@ -128,7 +154,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param input - Message creation parameters
    * @returns The created message
    */
-  sendMessage(input: MessageCreateInput): Message {
+  async sendMessage(input: MessageCreateInput): Promise<Message> {
     validateMessageMetadata(input.metadata);
 
     const now = new Date().toISOString();
@@ -151,86 +177,62 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       updatedAt: now,
     };
 
-    this.runInsertWithMessagesIndexRecovery(message);
+    if (this.asyncLayer) {
+      const layer = this.asyncLayer;
+      await asyncMessageStore.sendMessage(layer.db, {
+        id: message.id,
+        fromId: message.fromId,
+        fromType: message.fromType,
+        toId: message.toId,
+        toType: message.toType,
+        content: message.content,
+        type: message.type,
+        read: message.read,
+        metadata: message.metadata ?? null,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+      });
+    } else {
+      this.stmtInsert.run(
+        message.id,
+        message.fromId,
+        message.fromType,
+        message.toId,
+        message.toType,
+        message.content,
+        message.type,
+        message.read ? 1 : 0,
+        toJsonNullable(message.metadata),
+        message.createdAt,
+        message.updatedAt,
+      );
+      this.db!.bumpLastModified();
+    }
 
-    this.db.bumpLastModified();
     messageStoreLog.log(`MessageStore emitting message:sent id=${message.id} type=${message.type} fromId=${message.fromId} toId=${message.toId}`);
     this.emit("message:sent", message);
     this.emit("message:received", message);
 
     if (message.toType === "agent" && this.onMessageToAgent) {
-      this.onMessageToAgent(message);
+      // FNXC:PostgresBackend 2026-06-28-10:20:
+      // The agent-delivery hook (agent-heartbeat.handleMessageToAgent) is now async
+      // and PG-capable: it reads the AgentStore via its async getAgent path, so
+      // wake-on-message works in PG backend mode. The message is already persisted
+      // at this point, so a wake-hook failure (sync throw OR rejected promise) must
+      // NOT fail the send — await inside try/catch, then log and degrade rather
+      // than 500.
+      try {
+        await this.onMessageToAgent(message);
+      } catch (err) {
+        messageStoreLog.warn(
+          `MessageStore onMessageToAgent hook failed for id=${message.id} (send still succeeded): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
     return message;
-  }
-
-  /**
-   * Insert a message, repairing messages-table indexes once when SQLite reports corruption.
-   *
-   * FNXC:Messaging 2026-06-26-00:00:
-   * Sending a message must not leak a bare `database disk image is malformed` when only the `messages` lookup indexes are corrupt. The send path runs one scoped `REINDEX messages` repair and one retry, then distinguishes repair failure from post-repair table/database corruption so operator remediation targets the right store and database path.
-   */
-  private runInsertWithMessagesIndexRecovery(message: Message): void {
-    try {
-      this.runInsert(message);
-      return;
-    } catch (error) {
-      if (!isSqliteCorruptionError(error)) {
-        throw error;
-      }
-
-      try {
-        this.db.reindexMessages();
-      } catch (reindexError) {
-        if (isSqliteCorruptionError(reindexError)) {
-          throw this.createMessagesReindexFailureError(reindexError, error);
-        }
-        throw reindexError;
-      }
-
-      try {
-        this.runInsert(message);
-        return;
-      } catch (retryError) {
-        if (isSqliteCorruptionError(retryError)) {
-          throw this.createMessagesPostReindexCorruptionError(retryError, error);
-        }
-        throw retryError;
-      }
-    }
-  }
-
-  private runInsert(message: Message): void {
-    this.stmtInsert.run(
-      message.id,
-      message.fromId,
-      message.fromType,
-      message.toId,
-      message.toType,
-      message.content,
-      message.type,
-      message.read ? 1 : 0,
-      toJsonNullable(message.metadata),
-      message.createdAt,
-      message.updatedAt,
-    );
-  }
-
-  private createMessagesReindexFailureError(error: unknown, originalError: unknown): Error {
-    const detail = error instanceof Error ? error.message : String(error);
-    const original = originalError instanceof Error ? originalError.message : String(originalError);
-    return new Error(
-      `Messages store index repair failed (table=messages, db=${this.db.getPath()}) — REINDEX messages could not complete; run "fn db --vacuum" and inspect with "PRAGMA integrity_check" before retrying (original insert: ${original}; reindex: ${detail})`,
-    );
-  }
-
-  private createMessagesPostReindexCorruptionError(error: unknown, originalError: unknown): Error {
-    const detail = error instanceof Error ? error.message : String(error);
-    const original = originalError instanceof Error ? originalError.message : String(originalError);
-    return new Error(
-      `Messages store table/database corruption after REINDEX (table=messages, db=${this.db.getPath()}) — REINDEX messages completed but sending still failed; run "fn db --vacuum" and inspect with "PRAGMA integrity_check" for messages table or database-file damage (original insert: ${original}; retry: ${detail})`,
-    );
   }
 
   /**
@@ -238,7 +240,10 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param id - The message ID
    * @returns The message, or null if not found
    */
-  getMessage(id: string): Message | null {
+  async getMessage(id: string): Promise<Message | null> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.getMessage(this.asyncLayer.db, id);
+    }
     const row = this.stmtGetById.get(id) as unknown as MessageRow | undefined;
     if (!row) return null;
     return this.rowToMessage(row);
@@ -251,11 +256,14 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param filter - Optional filter criteria
    * @returns Array of messages (newest first)
    */
-  getInbox(
+  async getInbox(
     ownerId: string,
     ownerType: ParticipantType,
     filter?: MessageFilter,
-  ): Message[] {
+  ): Promise<Message[]> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.queryMessagesByParticipant(this.asyncLayer.db, "to", ownerId, ownerType, filter);
+    }
     return this.queryMessagesByParticipant("to", ownerId, ownerType, filter);
   }
 
@@ -266,11 +274,14 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param filter - Optional filter criteria
    * @returns Array of messages (newest first)
    */
-  getOutbox(
+  async getOutbox(
     ownerId: string,
     ownerType: ParticipantType,
     filter?: MessageFilter,
-  ): Message[] {
+  ): Promise<Message[]> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.queryMessagesByParticipant(this.asyncLayer.db, "from", ownerId, ownerType, filter);
+    }
     return this.queryMessagesByParticipant("from", ownerId, ownerType, filter);
   }
 
@@ -310,7 +321,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     const limit = filter?.limit ?? 100;
     const offset = filter?.offset ?? 0;
 
-    const rows = this.db.prepare(`
+    const rows = this.db!.prepare(`
       SELECT * FROM messages
       WHERE ${whereSql}
       ORDER BY createdAt DESC, rowid DESC
@@ -326,9 +337,15 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @returns The updated message
    * @throws Error if message not found
    */
-  markAsRead(messageId: string): Message {
+  async markAsRead(messageId: string): Promise<Message> {
+    if (this.asyncLayer) {
+      const updated = await asyncMessageStore.markMessageAsRead(this.asyncLayer.db, messageId);
+      if (!updated) throw new Error(`Message ${messageId} not found`);
+      this.emit("message:read", updated);
+      return updated;
+    }
     // First check if the message exists
-    const existing = this.getMessage(messageId);
+    const existing = await this.getMessage(messageId);
     if (!existing) {
       throw new Error(`Message ${messageId} not found`);
     }
@@ -336,11 +353,10 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
     if (existing.read) return existing;
 
     const now = new Date().toISOString();
-    // Deferral: markAsRead updates idxMessagesTo but is not the reported fn_send_message failure path; the reusable recovery helper keeps this path ready for a follow-up without expanding this focused fix.
     this.stmtUpdateRead.run(now, messageId);
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
 
-    const updated = this.getMessage(messageId);
+    const updated = await this.getMessage(messageId);
     this.emit("message:read", updated!);
     return updated!;
   }
@@ -351,10 +367,13 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param ownerType - The participant type
    * @returns Number of messages marked as read
    */
-  markAllAsRead(
+  async markAllAsRead(
     ownerId: string,
     ownerType: ParticipantType,
-  ): number {
+  ): Promise<number> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.markAllMessagesAsRead(this.asyncLayer.db, ownerId, ownerType);
+    }
     const now = new Date().toISOString();
     const participantIds = this.getParticipantIdsForLookup(ownerId, ownerType);
     const toIdPredicate = participantIds.length === 1
@@ -362,17 +381,17 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       : `toId IN (${participantIds.map(() => "?").join(", ")})`;
 
     // Get count of unread messages before updating
-    const unreadRow = this.db.prepare(`
+    const unreadRow = this.db!.prepare(`
       SELECT COUNT(*) as count FROM messages WHERE ${toIdPredicate} AND toType = ? AND read = 0
     `).get(...participantIds, ownerType) as { count: number } | undefined;
     const count = unreadRow?.count ?? 0;
 
-    // Deferral: markAllAsRead updates idxMessagesTo, but sendMessage is the operator-blocking repro; leave bulk read-state recovery for a dedicated follow-up if observed.
-    this.db.prepare(`
+    // Mark all as read
+    this.db!.prepare(`
       UPDATE messages SET read = 1, updatedAt = ? WHERE ${toIdPredicate} AND toType = ? AND read = 0
     `).run(now, ...participantIds, ownerType);
 
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
     return count;
   }
 
@@ -381,16 +400,24 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param id - The message ID
    * @throws Error if message not found
    */
-  deleteMessage(id: string): void {
+  async deleteMessage(id: string): Promise<void> {
+    if (this.asyncLayer) {
+      const existing = await this.getMessage(id);
+      if (!existing) {
+        throw new Error(`Message ${id} not found`);
+      }
+      await asyncMessageStore.deleteMessage(this.asyncLayer.db, id);
+      this.emit("message:deleted", id);
+      return;
+    }
     // First check if the message exists
-    const existing = this.getMessage(id);
+    const existing = await this.getMessage(id);
     if (!existing) {
       throw new Error(`Message ${id} not found`);
     }
 
-    // Deferral: deleteMessage mutates messages indexes but is not on the fn_send_message delivery path; avoid adding extra retry semantics outside the scoped send repair.
     this.stmtDelete.run(id);
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
     this.emit("message:deleted", id);
   }
 
@@ -399,16 +426,24 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param maxAgeMs - Inactivity threshold in milliseconds
    * @returns Number of deleted messages
    */
-  cleanupOldMessages(maxAgeMs: number): { messagesDeleted: number } {
+  async cleanupOldMessages(maxAgeMs: number): Promise<{ messagesDeleted: number }> {
+    if (this.asyncLayer) {
+      const layer = this.asyncLayer;
+      const deletedIds = await asyncMessageStore.cleanupOldMessages(layer, maxAgeMs);
+      for (const id of deletedIds) {
+        this.emit("message:deleted", id);
+      }
+      messageStoreLog.log(`cleanupOldMessages deleted=${deletedIds.length}`);
+      return { messagesDeleted: deletedIds.length };
+    }
     if (!Number.isFinite(maxAgeMs) || maxAgeMs <= 0) {
       return { messagesDeleted: 0 };
     }
 
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
 
-    const deletedIds = this.db.transaction(() => {
-      // Deferral: cleanupOldMessages deletes through messages indexes in retention maintenance, not interactive messaging send; keep recovery limited to the reported INSERT path.
-      const rows = this.db.prepare(`
+    const deletedIds = this.db!.transaction(() => {
+      const rows = this.db!.prepare(`
         DELETE FROM messages
         WHERE updatedAt < ?
         RETURNING id
@@ -425,7 +460,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       this.emit("message:deleted", id);
     }
 
-    this.db.bumpLastModified();
+    this.db!.bumpLastModified();
     messageStoreLog.log(`cleanupOldMessages deleted=${deletedIds.length} cutoff=${cutoff}`);
     return { messagesDeleted: deletedIds.length };
   }
@@ -436,10 +471,13 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param participantB - Second participant
    * @returns Array of messages (oldest first for conversation ordering)
    */
-  getConversation(
+  async getConversation(
     participantA: { id: string; type: ParticipantType },
     participantB: { id: string; type: ParticipantType },
-  ): Message[] {
+  ): Promise<Message[]> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.getConversation(this.asyncLayer.db, participantA, participantB);
+    }
     const participantAIds = this.getParticipantIdsForLookup(participantA.id, participantA.type);
     const participantBIds = this.getParticipantIdsForLookup(participantB.id, participantB.type);
     const participantAFromPredicate = participantAIds.length === 1
@@ -456,7 +494,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
       : `toId IN (${participantBIds.map(() => "?").join(", ")})`;
 
     // Find messages where either participant is sender or receiver
-    const rows = this.db.prepare(`
+    const rows = this.db!.prepare(`
       SELECT * FROM messages
       WHERE (
         (${participantAFromPredicate} AND fromType = ? AND ${participantBToPredicate} AND toType = ?)
@@ -484,21 +522,30 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * @param ownerType - The participant type
    * @returns Mailbox summary with unread count and last message
    */
-  getMailbox(
+  async getMailbox(
     ownerId: string,
     ownerType: ParticipantType,
-  ): Mailbox {
+  ): Promise<Mailbox> {
+    if (this.asyncLayer) {
+      const summary = await asyncMessageStore.getMailbox(this.asyncLayer.db, ownerId, ownerType);
+      return {
+        ownerId: summary.ownerId,
+        ownerType: summary.ownerType,
+        unreadCount: summary.unreadCount,
+        lastMessage: summary.lastMessage,
+      };
+    }
     const participantIds = this.getParticipantIdsForLookup(ownerId, ownerType);
     const toIdPredicate = participantIds.length === 1
       ? "toId = ?"
       : `toId IN (${participantIds.map(() => "?").join(", ")})`;
 
-    const unreadRow = this.db.prepare(`
+    const unreadRow = this.db!.prepare(`
       SELECT COUNT(*) as count FROM messages WHERE ${toIdPredicate} AND toType = ? AND read = 0
     `).get(...participantIds, ownerType) as { count: number } | undefined;
     const unreadCount = unreadRow?.count ?? 0;
 
-    const lastRow = this.db.prepare(`
+    const lastRow = this.db!.prepare(`
       SELECT * FROM messages WHERE ${toIdPredicate} AND toType = ? ORDER BY createdAt DESC, rowid DESC LIMIT 1
     `).get(...participantIds, ownerType) as unknown as MessageRow | undefined;
     const lastMessage = lastRow ? this.rowToMessage(lastRow) : undefined;
@@ -515,8 +562,11 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
    * Get all agent-to-agent messages across all agents.
    * @returns Array of messages (newest first)
    */
-  getAllAgentToAgentMessages(): Message[] {
-    const rows = this.db.prepare(`
+  async getAllAgentToAgentMessages(): Promise<Message[]> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.getAllAgentToAgentMessages(this.asyncLayer.db);
+    }
+    const rows = this.db!.prepare(`
       SELECT * FROM messages
       WHERE type = ?
       ORDER BY createdAt DESC, rowid DESC
@@ -528,8 +578,11 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
   /**
    * Get unread count across all agent-to-agent messages.
    */
-  getUnreadAgentToAgentCount(): number {
-    const row = this.db.prepare(`
+  async getUnreadAgentToAgentCount(): Promise<number> {
+    if (this.asyncLayer) {
+      return asyncMessageStore.getUnreadAgentToAgentCount(this.asyncLayer.db);
+    }
+    const row = this.db!.prepare(`
       SELECT COUNT(*) as count FROM messages
       WHERE type = ? AND read = 0
     `).get("agent-to-agent") as { count: number } | undefined;
@@ -540,7 +593,7 @@ export class MessageStore extends EventEmitter<MessageStoreEvents> {
   /**
    * Set or update the hook used when messages are sent to agents.
    */
-  setMessageToAgentHook(hook: (message: Message) => void): void {
+  setMessageToAgentHook(hook: (message: Message) => void | Promise<void>): void {
     this.onMessageToAgent = hook;
   }
 }

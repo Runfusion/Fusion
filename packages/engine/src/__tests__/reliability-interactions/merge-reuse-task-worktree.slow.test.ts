@@ -98,7 +98,7 @@ async function setupReuseHandoff(opts: {
     await store.updateTask(task.id, { worktree: path, branch } as any);
   }
   if (!opts.skipEnqueue) {
-    store.enqueueMergeQueue(task.id);
+    await store.enqueueMergeQueue(task.id);
   }
 
   return { fixture, rootDir, store, task, branch, worktreeRoot, worktreePath };
@@ -223,7 +223,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
       commitMessage: "feat: add no-lease merge content",
       skipEnqueue: true,
     });
-    store.enqueueMergeQueue(task.id, { now: "2026-05-19T00:00:00.000Z" });
+    await store.enqueueMergeQueue(task.id, { now: "2026-05-19T00:00:00.000Z" });
     store.getDatabase().prepare("UPDATE mergeQueue SET leasedBy = ?, leasedAt = ?, leaseExpiresAt = ? WHERE taskId = ?").run(
       "worker-other",
       "2026-05-19T00:01:00.000Z",
@@ -284,7 +284,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
         ownerAgentId: "agent-1",
         evidence: { reason: "fn_task_done", runId: "run-1", agentId: "agent-1" },
       });
-      store.enqueueMergeQueue(other.id, { now: "2026-05-19T00:00:00.000Z" });
+      await store.enqueueMergeQueue(other.id, { now: "2026-05-19T00:00:00.000Z" });
       store.getDatabase().prepare("DELETE FROM mergeQueue WHERE taskId = ?").run(task.id);
 
       const result = await aiMergeTask(store, rootDir, task.id);
@@ -360,7 +360,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
       skipEnqueue: true,
       extraSettings: { worktreeRebaseRemote: "origin" } as Partial<Settings>,
     });
-    store.enqueueMergeQueue(task.id, { now: "2026-05-19T00:00:02.000Z" });
+    await store.enqueueMergeQueue(task.id, { now: "2026-05-19T00:00:02.000Z" });
 
     const todoTask = await store.createTask({ description: "polluter todo", priority: "normal" });
     await store.moveTask(todoTask.id, "todo");
@@ -437,7 +437,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
     });
 
     try {
-      const lease = store.acquireMergeQueueLease("merger-reuse-handoff", {
+      const lease = await store.acquireMergeQueueLease("merger-reuse-handoff", {
         targetTaskId: task.id,
         leaseDurationMs: 60_000,
         now: "2099-05-19T00:00:10.000Z",
@@ -445,7 +445,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
       expect(lease?.taskId).toBe(task.id);
 
       await store.moveTask(task.id, "todo");
-      expect(store.peekMergeQueue().some((entry) => entry.taskId === task.id)).toBe(true);
+      expect((await store.peekMergeQueue()).some((entry) => entry.taskId === task.id)).toBe(true);
 
       const staleLeaseAudit = store.getRunAuditEvents({ taskId: task.id, mutationType: "mergeQueue:stale-lease-on-column-exit" });
       expect(staleLeaseAudit).toHaveLength(1);
@@ -457,8 +457,8 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
       });
       expect(typeof staleLeaseAudit[0].metadata?.leaseExpiresAt).toBe("string");
 
-      store.releaseMergeQueueLease(task.id, "merger-reuse-handoff", { kind: "success" });
-      expect(store.peekMergeQueue().some((entry) => entry.taskId === task.id)).toBe(false);
+      await store.releaseMergeQueueLease(task.id, "merger-reuse-handoff", { kind: "success" });
+      expect((await store.peekMergeQueue()).some((entry) => entry.taskId === task.id)).toBe(false);
     } finally {
       await fixture.cleanup();
     }
@@ -482,7 +482,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
     await mkdir(worktreeRoot, { recursive: true });
     git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
     await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
-    store.enqueueMergeQueue(task.id);
+    await store.enqueueMergeQueue(task.id);
 
     try {
       const result = await aiMergeTask(store, rootDir, task.id);
@@ -521,7 +521,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
     await mkdir(worktreeRoot, { recursive: true });
     git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
     await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
-    store.enqueueMergeQueue(task.id);
+    await store.enqueueMergeQueue(task.id);
 
     try {
       await aiMergeTask(store, rootDir, task.id);
@@ -758,7 +758,7 @@ describe("FN-5279 reliability interactions: merge reuse task worktree", () => {
       git(rootDir, `git worktree add -f ${JSON.stringify(pathB)} ${JSON.stringify(branch)}`);
 
       await store.updateTask(task.id, { worktree: pathA, branch } as any);
-      store.enqueueMergeQueue(task.id);
+      await store.enqueueMergeQueue(task.id);
 
       try {
         const result = await aiMergeTask(store, rootDir, task.id);

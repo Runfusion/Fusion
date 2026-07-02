@@ -190,11 +190,11 @@ function toPublicSubtaskSession(session: SubtaskInternalSession): SubtaskSession
   };
 }
 
-export function rehydrateFromStore(store: AiSessionStore): number {
+export async function rehydrateFromStore(store: AiSessionStore): Promise<number> {
   let rows: AiSessionRow[] = [];
 
   try {
-    rows = store.listRecoverable().filter((row) => row.type === "subtask");
+    rows = (await store.listRecoverable()).filter((row) => row.type === "subtask");
   } catch (error) {
     diagnostics.errorFromException("Failed to list recoverable sessions", error, { operation: "list-recoverable" });
     return 0;
@@ -254,7 +254,7 @@ function persistSubtaskSession(session: SubtaskInternalSession, status: "generat
     lockedByTab: null,
     lockedAt: null,
   };
-  _aiSessionStore.upsert(row);
+  _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
 }
 
 function persistSubtaskThinking(sessionId: string, thinkingOutput: string): void {
@@ -264,7 +264,7 @@ function persistSubtaskThinking(sessionId: string, thinkingOutput: string): void
 
 function unpersistSubtaskSession(sessionId: string): void {
   if (!_aiSessionStore) return;
-  _aiSessionStore.delete(sessionId);
+  void _aiSessionStore.delete(sessionId);
 }
 
 export const SUBTASK_BREAKDOWN_PROMPT = `You are a task decomposition assistant for the fn task board system.
@@ -708,12 +708,12 @@ export async function retrySubtaskSession(
   promptOverrides?: PromptOverrideMap,
   store?: TaskStore,
 ): Promise<void> {
-  const visibleSession = getSubtaskSession(sessionId);
+  const visibleSession = await getSubtaskSession(sessionId);
   if (!visibleSession) {
     throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
   }
 
-  const persisted = _aiSessionStore?.get(sessionId);
+  const persisted = _aiSessionStore ? await _aiSessionStore.get(sessionId) : null;
   if (persisted && persisted.type !== "subtask") {
     throw new SessionNotFoundError(`Subtask session ${sessionId} not found or expired`);
   }
@@ -740,7 +740,7 @@ export async function retrySubtaskSession(
   await startSubtaskGeneration(sessionId, rootDir, promptOverrides, store);
 }
 
-export function getSubtaskSession(sessionId: string): SubtaskSession | undefined {
+export async function getSubtaskSession(sessionId: string): Promise<SubtaskSession | undefined> {
   const inMemory = sessions.get(sessionId);
   if (inMemory) {
     return toPublicSubtaskSession(inMemory);
@@ -750,7 +750,7 @@ export function getSubtaskSession(sessionId: string): SubtaskSession | undefined
     return undefined;
   }
 
-  const row = _aiSessionStore.get(sessionId);
+  const row = await _aiSessionStore.get(sessionId);
   if (!row || row.type !== "subtask") {
     return undefined;
   }

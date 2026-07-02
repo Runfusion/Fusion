@@ -2,6 +2,9 @@ import type { Request, Response } from "express";
 import type {
   TaskStore,
   MissionStore,
+  AsyncMissionStore,
+  ResearchStore,
+  AsyncResearchStore,
   PluginStore,
   PluginInstallation,
   PluginState,
@@ -13,6 +16,16 @@ import type {
   AutomationStore,
   AgentLogEntry,
 } from "@fusion/core";
+
+// FNXC:DashboardSSE 2026-06-28-13:10:
+// Both the sync stores AND their PG-backend async wrappers now extend EventEmitter
+// and emit the SAME mission/research events, so SSE subscribes to whichever backend
+// getMissionStore()/getResearchStore() resolves — live push works in both backends.
+// Previously these were instanceof-narrowed to the sync EventEmitter only, leaving PG
+// mode without live refresh. The union members share an identical event map, so a single
+// subscribe/unsubscribe set is type-safe across both.
+type SseMissionStore = MissionStore | AsyncMissionStore;
+type SseResearchStore = ResearchStore | AsyncResearchStore;
 import type { AiSessionStore } from "./ai-session-store.js";
 
 let activeConnections = 0;
@@ -216,7 +229,7 @@ async function enrichChatMessageSsePayload<T>(message: T, store: TaskStore, chat
   const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
   if (!sessionId) return message;
 
-  const session = chatStore.getSession(sessionId);
+  const session = await chatStore.getSession(sessionId);
   if (!session) return message;
 
   const agentId = typeof payload.agentId === "string" ? payload.agentId : session.agentId;
@@ -479,7 +492,7 @@ export interface CreateSSEOptions {
 
 export function createSSE(
   store: TaskStore,
-  missionStore?: MissionStore,
+  missionStore?: SseMissionStore,
   aiSessionStore?: AiSessionStore,
   pluginStore?: PluginStore,
   options?: CreateSSEOptions,
@@ -494,7 +507,17 @@ export function createSSE(
     const connectionId = nextConnectionId++;
     const clientId = normalizeSSEClientId(_req.query?.clientId);
     const socket = res.socket ?? _req.socket;
-    const researchStore = store.getResearchStore();
+    // FNXC:ResearchStore 2026-06-28-13:10:
+    // Both ResearchStore and AsyncResearchStore (PG backend) now emit run:* events, so
+    // SSE subscribes to whichever getResearchStore() resolves. The optional-chained
+    // subscribe/unsubscribe below is kept so a getResearchStore() that throws (no research
+    // store wired) degrades gracefully to research-less streaming.
+    let researchStore: SseResearchStore | null;
+    try {
+      researchStore = store.getResearchStore();
+    } catch {
+      researchStore = null;
+    }
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -949,12 +972,12 @@ export function createSSE(
         automationStore.off("schedule:deleted", onScheduleDeleted);
         automationStore.off("schedule:run", onScheduleRun);
       }
-      researchStore.off("run:created", onResearchRunCreated);
-      researchStore.off("run:updated", onResearchRunUpdated);
-      researchStore.off("run:completed", onResearchRunCompleted);
-      researchStore.off("run:failed", onResearchRunFailed);
-      researchStore.off("run:cancelled", onResearchRunCancelled);
-      researchStore.off("run:timed_out", onResearchRunTimedOut);
+      researchStore?.off("run:created", onResearchRunCreated);
+      researchStore?.off("run:updated", onResearchRunUpdated);
+      researchStore?.off("run:completed", onResearchRunCompleted);
+      researchStore?.off("run:failed", onResearchRunFailed);
+      researchStore?.off("run:cancelled", onResearchRunCancelled);
+      researchStore?.off("run:timed_out", onResearchRunTimedOut);
     }
 
     function closeConnection(reason: SSECloseReason): void {
@@ -1068,12 +1091,12 @@ export function createSSE(
       automationStore.on("schedule:run", onScheduleRun);
     }
 
-    researchStore.on("run:created", onResearchRunCreated);
-    researchStore.on("run:updated", onResearchRunUpdated);
-    researchStore.on("run:completed", onResearchRunCompleted);
-    researchStore.on("run:failed", onResearchRunFailed);
-    researchStore.on("run:cancelled", onResearchRunCancelled);
-    researchStore.on("run:timed_out", onResearchRunTimedOut);
+    researchStore?.on("run:created", onResearchRunCreated);
+    researchStore?.on("run:updated", onResearchRunUpdated);
+    researchStore?.on("run:completed", onResearchRunCompleted);
+    researchStore?.on("run:failed", onResearchRunFailed);
+    researchStore?.on("run:cancelled", onResearchRunCancelled);
+    researchStore?.on("run:timed_out", onResearchRunTimedOut);
 
     // Heartbeat every 30s to keep connection alive.
     // Sent as a named event so the client's EventSource can detect it

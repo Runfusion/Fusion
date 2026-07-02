@@ -15,12 +15,17 @@ const desktopClientDistDir = join(desktopDistDir, "client");
 // `import("@fusion/engine")` and tried to bundle engine's transitive node-pty
 // (@homebridge/node-pty-prebuilt-multiarch) native binaries, failing with
 // "No loader is configured for .node files" and breaking every desktop release build.
+/*
+ * FNXC:SqliteFinalRemoval 2026-06-24-16:10:
+ * Removed better-sqlite3 from externals — the data path no longer uses
+ * better-sqlite3 (SQLite is accessed via node:sqlite/bun:sqlite in the adapter,
+ * and PostgreSQL is the production backend).
+ */
 const sharedExternals = [
   "electron",
   "@fusion/core",
   "@fusion/dashboard",
   "@fusion/engine",
-  "better-sqlite3",
 ];
 const mainExternals = sharedExternals;
 const preloadExternals = sharedExternals;

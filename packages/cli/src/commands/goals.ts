@@ -62,14 +62,14 @@ export async function runGoalsList(projectName?: string, opts: RunGoalsListOptio
   const goalStore = store.getGoalStore();
 
   const status = opts.status ?? "active";
-  const goals = status === "all" ? goalStore.listGoals() : goalStore.listGoals({ status });
+  const goals = status === "all" ? await goalStore.listGoals() : await goalStore.listGoals({ status });
 
   if (goals.length === 0) {
     console.log("\n  No goals yet. Create one with: fn goals create\n");
     process.exit(0);
   }
 
-  const activeCount = goalStore.listGoals({ status: "active" }).length;
+  const activeCount = (await goalStore.listGoals({ status: "active" })).length;
 
   console.log();
   for (const goal of goals) {
@@ -100,8 +100,8 @@ export async function runGoalsCreate(
     : await promptForTitleAndDescription(titleArg);
 
   try {
-    const goal = goalStore.createGoal({ title, description });
-    const activeCount = goalStore.listGoals({ status: "active" }).length;
+    const goal = await goalStore.createGoal({ title, description });
+    const activeCount = (await goalStore.listGoals({ status: "active" })).length;
 
     console.log();
     console.log(`  ✓ Created ${goal.id}: ${goal.title}`);
@@ -132,7 +132,7 @@ export async function runGoalsCitations(
 ): Promise<void> {
   const store = await getStore({ project: projectName });
 
-  const rows = store.listGoalCitations({
+  const rows = await store.listGoalCitations({
     goalId: opts.goalId,
     agentId: opts.agentId,
     surface: opts.surface,
@@ -166,7 +166,7 @@ export async function runGoalsArchive(idArg: string | undefined, projectName?: s
 
   const store = await getStore({ project: projectName });
   const goalStore = store.getGoalStore();
-  const existing = goalStore.getGoal(idArg);
+  const existing = await goalStore.getGoal(idArg);
 
   if (!existing) {
     console.error(`Goal ${idArg} not found`);
@@ -178,7 +178,7 @@ export async function runGoalsArchive(idArg: string | undefined, projectName?: s
     process.exit(0);
   }
 
-  const archived = goalStore.archiveGoal(idArg);
+  const archived = await goalStore.archiveGoal(idArg);
 
   console.log();
   console.log(`  ✓ Archived ${archived.id}: ${archived.title}`);

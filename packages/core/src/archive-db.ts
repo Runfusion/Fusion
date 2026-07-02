@@ -1,321 +1,94 @@
-import { DatabaseSync } from "./sqlite-adapter.js";
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+/**
+ * FNXC:SqliteFinalRemoval 2026-06-26-09:50:
+ * SQLite ArchiveDatabase class body DELETED (VAL-REMOVAL-005).
+ *
+ * The legacy sync `ArchiveDatabase` class (archive schema SQL, FTS5 virtual
+ * table + triggers — already no-op'd in session 6, LIKE-based search, PRAGMA
+ * busy_timeout/journal_mode/synchronous/wal_autocheckpoint) was the archived-
+ * task data layer. The runtime TaskStore now delegates ALL archive data
+ * access to PostgreSQL via the async `AsyncDataLayer` (Drizzle, archive
+ * schema) — see `async-archive-lineage.ts`. The SQLite path is only reachable
+ * in the sync else-branch of `TaskStore.archiveDb` (remaining-ops-5.ts),
+ * which throws in backend mode and is never constructed in production.
+ *
+ * This module provides a stub `ArchiveDatabase` class whose methods throw.
+ * The stub preserves the public type shape so the sync else-branches and
+ * quarantined test files continue to type-check under `tsc --noEmit`.
+ */
+
 import type { ArchivedTaskEntry } from "./types.js";
-import { isFts5CorruptionError, probeFts5 } from "./db.js";
-import { hasTitleIdDrift, normalizeTitleForTaskId } from "./task-title-id-drift.js";
 
-const ARCHIVED_TASKS_FTS_MERGE_PAGES = 16;
+const SQLITE_REMOVED_MESSAGE =
+  "SQLite ArchiveDatabase class body has been removed (VAL-REMOVAL-005). " +
+  "TaskStore now uses PostgreSQL via AsyncDataLayer for archive access. " +
+  "This sync SQLite path is unreachable in backend mode.";
 
-const BASE_SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS archived_tasks (
-  id TEXT PRIMARY KEY,
-  taskJson TEXT NOT NULL,
-  prompt TEXT,
-  archivedAt TEXT NOT NULL,
-  title TEXT,
-  description TEXT NOT NULL,
-  comments TEXT DEFAULT '[]',
-  createdAt TEXT NOT NULL,
-  updatedAt TEXT NOT NULL,
-  columnMovedAt TEXT
-);
+function throwSqliteRemoved(): never {
+  throw new Error(SQLITE_REMOVED_MESSAGE);
+}
 
-CREATE INDEX IF NOT EXISTS idxArchivedTasksArchivedAt ON archived_tasks(archivedAt);
-CREATE INDEX IF NOT EXISTS idxArchivedTasksCreatedAt ON archived_tasks(createdAt);
-`;
-
-const FTS5_SCHEMA_SQL = `
-CREATE VIRTUAL TABLE IF NOT EXISTS archived_tasks_fts USING fts5(
-  id,
-  title,
-  description,
-  comments,
-  content='archived_tasks',
-  content_rowid='rowid'
-);
-
-CREATE TRIGGER IF NOT EXISTS archived_tasks_fts_ai AFTER INSERT ON archived_tasks BEGIN
-  INSERT INTO archived_tasks_fts(rowid, id, title, description, comments)
-  VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
-END;
-
-CREATE TRIGGER IF NOT EXISTS archived_tasks_fts_au AFTER UPDATE OF id, title, description, comments ON archived_tasks
-WHEN (
-  old.id IS NOT new.id OR old.title IS NOT new.title
-  OR old.description IS NOT new.description OR old.comments IS NOT new.comments
-) BEGIN
-  INSERT INTO archived_tasks_fts(archived_tasks_fts, rowid, id, title, description, comments)
-    VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
-  INSERT INTO archived_tasks_fts(rowid, id, title, description, comments)
-    VALUES (new.rowid, new.id, COALESCE(new.title, ''), new.description, COALESCE(new.comments, '[]'));
-END;
-
-CREATE TRIGGER IF NOT EXISTS archived_tasks_fts_ad AFTER DELETE ON archived_tasks BEGIN
-  INSERT INTO archived_tasks_fts(archived_tasks_fts, rowid, id, title, description, comments)
-    VALUES('delete', old.rowid, old.id, COALESCE(old.title, ''), old.description, COALESCE(old.comments, '[]'));
-END;
-`;
-
+/**
+ * Stub `ArchiveDatabase` class.
+ *
+ * FNXC:SqliteFinalRemoval 2026-06-26-09:50:
+ * The SQLite ArchiveDatabase body is DELETED. This stub preserves the public
+ * method signatures so consumers (remaining-ops-5.ts sync else-branch,
+ * self-healing archive FTS calls — all gated behind backend-mode early
+ * returns, and quarantined tests) continue to type-check. Every data method
+ * throws because the SQLite runtime is gone.
+ */
 export class ArchiveDatabase {
-  private db: DatabaseSync;
-  private readonly _fts5Available: boolean;
-
-  constructor(fusionDir: string, options?: { inMemory?: boolean }) {
-    // See Database constructor in db.ts for the in-memory rationale —
-    // mirrors the same pattern so TaskStore can flip both DBs in lockstep
-    // for tests that don't exercise cross-instance persistence.
-    const inMemory = options?.inMemory === true;
-    if (!inMemory && !existsSync(fusionDir)) {
-      mkdirSync(fusionDir, { recursive: true });
-    }
-    this.db = new DatabaseSync(inMemory ? ":memory:" : join(fusionDir, "archive.db"));
-    this.db.exec("PRAGMA busy_timeout = 5000");
-    if (!inMemory) {
-      this.db.exec("PRAGMA journal_mode = WAL");
-      // FNXC:Database 2026-06-20-12:30:
-      // Mirror the per-project DB durability/maintenance PRAGMAs (db.ts). Without
-      // journal_size_limit the archive WAL defaults to -1 (unbounded) and never
-      // truncates back down after a checkpoint, so every reader pays an
-      // ever-growing WAL-index scan — the same read-contention source bounded in
-      // db.ts/central-db.ts. synchronous=FULL/wal_autocheckpoint=1000 are already
-      // SQLite's defaults; set explicitly so the durability posture is intentional.
-      this.db.exec("PRAGMA synchronous = FULL");
-      this.db.exec("PRAGMA wal_autocheckpoint = 1000");
-      this.db.exec("PRAGMA journal_size_limit = 4194304");
-    }
-    this._fts5Available = probeFts5(this.db);
-  }
-
-  /** True when this SQLite build has FTS5. See db.ts#probeFts5. */
-  get fts5Available(): boolean {
-    return this._fts5Available;
-  }
+  constructor(_fusionDir: string, _options?: { inMemory?: boolean }) {}
 
   init(): void {
-    this.db.exec(BASE_SCHEMA_SQL);
-    if (this._fts5Available) {
-      this.db.exec(FTS5_SCHEMA_SQL);
-    }
-    this.addColumnIfMissing("archived_tasks", "prompt", "TEXT");
-    this.normalizeDriftedTitlesOnce();
+    throwSqliteRemoved();
   }
 
-  upsert(entry: ArchivedTaskEntry): void {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO archived_tasks
-        (id, taskJson, prompt, archivedAt, title, description, comments, createdAt, updatedAt, columnMovedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      entry.id,
-      JSON.stringify(entry),
-      entry.prompt ?? null,
-      entry.archivedAt,
-      entry.title ?? null,
-      entry.description,
-      JSON.stringify(entry.comments ?? []),
-      entry.createdAt,
-      entry.updatedAt,
-      entry.columnMovedAt ?? null,
-    );
-  }
-
-  private addColumnIfMissing(table: string, column: string, definition: string): void {
-    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (!rows.some((row) => row.name === column)) {
-      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
+  upsert(_entry: ArchivedTaskEntry): void {
+    throwSqliteRemoved();
   }
 
   list(): ArchivedTaskEntry[] {
-    const rows = this.db.prepare(`
-      SELECT taskJson FROM archived_tasks
-      ORDER BY archivedAt DESC
-    `).all() as Array<{ taskJson: string }>;
-    return rows.map((row) => JSON.parse(row.taskJson) as ArchivedTaskEntry);
+    throwSqliteRemoved();
   }
 
-  get(id: string): ArchivedTaskEntry | undefined {
-    const row = this.db.prepare("SELECT taskJson FROM archived_tasks WHERE id = ?").get(id) as
-      | { taskJson: string }
-      | undefined;
-    return row ? JSON.parse(row.taskJson) as ArchivedTaskEntry : undefined;
+  get(_id: string): ArchivedTaskEntry | undefined {
+    throwSqliteRemoved();
   }
 
-  /**
-   * Return the subset of `ids` that are present in archived_tasks.
-   * Used by TaskStore.checkForChanges to distinguish a real deletion from
-   * an archive (both look like "row gone from tasks table" to the polling
-   * loop). Single-shot query — much cheaper than N `get()` calls when many
-   * tasks are archived in a batch.
-   */
-  filterArchived(ids: readonly string[]): Set<string> {
-    if (ids.length === 0) return new Set();
-    // SQLite parameter limit defaults to 32766; chunk to be safe.
-    const result = new Set<string>();
-    const CHUNK = 500;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const chunk = ids.slice(i, i + CHUNK);
-      const placeholders = chunk.map(() => "?").join(",");
-      const rows = this.db
-        .prepare(`SELECT id FROM archived_tasks WHERE id IN (${placeholders})`)
-        .all(...chunk) as Array<{ id: string }>;
-      for (const row of rows) result.add(row.id);
-    }
-    return result;
+  filterArchived(_ids: readonly string[]): Set<string> {
+    throwSqliteRemoved();
   }
 
-  delete(id: string): void {
-    this.db.prepare("DELETE FROM archived_tasks WHERE id = ?").run(id);
+  delete(_id: string): void {
+    throwSqliteRemoved();
+  }
+
+  get fts5Available(): boolean {
+    return false;
   }
 
   rebuildFts5Index(): boolean {
-    if (!this._fts5Available) {
-      return false;
-    }
-
-    try {
-      this.db.exec("INSERT INTO archived_tasks_fts(archived_tasks_fts) VALUES('rebuild')");
-      return true;
-    } catch (error) {
-      console.warn("[fusion:archive-db] Failed to rebuild archive FTS5 index", error);
-      throw error;
-    }
+    return false;
   }
 
-  optimizeFts5(mode: "optimize" | "merge" = "optimize"): boolean {
-    if (!this._fts5Available) {
-      return false;
-    }
-
-    try {
-      if (mode === "merge") {
-        this.db.exec(
-          `INSERT INTO archived_tasks_fts(archived_tasks_fts, rank) VALUES('merge', ${ARCHIVED_TASKS_FTS_MERGE_PAGES})`,
-        );
-      } else {
-        this.db.exec("INSERT INTO archived_tasks_fts(archived_tasks_fts) VALUES('optimize')");
-      }
-      return true;
-    } catch (error) {
-      if (isFts5CorruptionError(error)) {
-        return this.rebuildFts5Index();
-      }
-      throw error;
-    }
+  optimizeFts5(_mode?: "optimize" | "merge"): boolean {
+    return false;
   }
 
-  /**
-   * Estimate archive FTS index bytes using the shadow-table block payload.
-   * Prefer this over `dbstat` because node:sqlite builds do not guarantee
-   * `SQLITE_ENABLE_DBSTAT_VTAB`, while `archived_tasks_fts_data` exists anywhere FTS5 does.
-   */
   getFtsIndexBytes(): number | null {
-    if (!this._fts5Available) {
-      return null;
-    }
-
-    const row = this.db.prepare("SELECT COALESCE(SUM(LENGTH(block)), 0) AS bytes FROM archived_tasks_fts_data").get() as
-      | { bytes?: number }
-      | undefined;
-    return typeof row?.bytes === "number" ? row.bytes : 0;
+    return null;
   }
 
   getArchivedRowCount(): number {
-    const row = this.db.prepare("SELECT COUNT(*) AS count FROM archived_tasks").get() as { count?: number } | undefined;
-    return typeof row?.count === "number" ? row.count : 0;
+    throwSqliteRemoved();
   }
 
-  /**
-   * Full-text search over archived tasks. Accepts a raw user query and routes
-   * through FTS5 when available, or a LIKE-based scan when not.
-   */
-  search(query: string, limit: number): ArchivedTaskEntry[] {
-    const trimmed = query?.trim();
-    if (!trimmed) return [];
-
-    const tokens = trimmed
-      .split(/\s+/)
-      .filter((t) => t.length > 0)
-      .map((t) => t.replace(/["{}:*^+()]/g, ""))
-      .filter((t) => t.length > 0);
-    if (tokens.length === 0) return [];
-
-    if (this._fts5Available) {
-      const ftsQuery = tokens
-        .map((token) => {
-          if (/[":(){}*^+-]/.test(token)) {
-            return `"${token.replace(/"/g, '\\"')}"`;
-          }
-          return token;
-        })
-        .join(" OR ");
-      const rows = this.db.prepare(`
-        SELECT a.taskJson
-        FROM archived_tasks a
-        JOIN archived_tasks_fts fts ON a.rowid = fts.rowid
-        WHERE archived_tasks_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?
-      `).all(ftsQuery, limit) as Array<{ taskJson: string }>;
-      return rows.map((row) => JSON.parse(row.taskJson) as ArchivedTaskEntry);
-    }
-
-    // LIKE fallback
-    const searchColumns = ["id", "title", "description", "comments"];
-    const perTokenClause = `(${searchColumns
-      .map((c) => `"${c}" LIKE ? ESCAPE '\\'`)
-      .join(" OR ")})`;
-    const whereTokens = tokens.map(() => perTokenClause).join(" OR ");
-    const params: (string | number)[] = [];
-    for (const token of tokens) {
-      const pattern = `%${token.replace(/[\\%_]/g, "\\$&")}%`;
-      for (let i = 0; i < searchColumns.length; i++) params.push(pattern);
-    }
-    params.push(limit);
-    const rows = this.db.prepare(`
-      SELECT taskJson
-      FROM archived_tasks
-      WHERE ${whereTokens}
-      ORDER BY archivedAt DESC
-      LIMIT ?
-    `).all(...params) as Array<{ taskJson: string }>;
-    return rows.map((row) => JSON.parse(row.taskJson) as ArchivedTaskEntry);
-  }
-
-  private normalizeDriftedTitlesOnce(): void {
-    const rows = this.db.prepare(`
-      SELECT id, title, taskJson
-      FROM archived_tasks
-      WHERE title LIKE '%FN-%'
-    `).all() as Array<{ id: string; title: string | null; taskJson: string }>;
-
-    const updateStmt = this.db.prepare("UPDATE archived_tasks SET title = ?, taskJson = ? WHERE id = ?");
-    let normalizedCount = 0;
-
-    for (const row of rows) {
-      if (!row.title || !hasTitleIdDrift(row.title, row.id)) {
-        continue;
-      }
-      const normalized = normalizeTitleForTaskId(row.title, row.id);
-      if (!normalized.changed) {
-        continue;
-      }
-      let parsed: ArchivedTaskEntry;
-      try {
-        parsed = JSON.parse(row.taskJson) as ArchivedTaskEntry;
-      } catch {
-        continue;
-      }
-      parsed.title = normalized.title ?? undefined;
-      updateStmt.run(normalized.title, JSON.stringify(parsed), row.id);
-      normalizedCount += 1;
-    }
-
-    console.log(`[title-id-drift] archive-db normalized ${normalizedCount} archived titles`);
+  search(_query: string, _limit: number): ArchivedTaskEntry[] {
+    throwSqliteRemoved();
   }
 
   close(): void {
-    this.db.close();
+    // No-op: nothing to close (no SQLite handle was ever opened).
   }
 }

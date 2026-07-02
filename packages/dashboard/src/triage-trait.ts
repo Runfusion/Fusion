@@ -176,7 +176,7 @@ export interface TriageSubject {
  * PrEntity already owns it (a Fusion-opened PR is owned by a `task`-sourced
  * entity → self-loop, skip).
  */
-export function resolveTriageSubject(task: Task, store?: TaskStore): TriageSubject {
+export async function resolveTriageSubject(task: Task, store?: TaskStore): Promise<TriageSubject> {
   const meta = (task.source?.sourceMetadata ?? {}) as Record<string, unknown>;
   const signalSource = meta.signalSource;
   const isPr =
@@ -196,8 +196,8 @@ export function resolveTriageSubject(task: Task, store?: TaskStore): TriageSubje
     if (store) {
       try {
         const entity = prEntityId
-          ? store.getPrEntity(prEntityId)
-          : store.getActivePrEntityBySource("task", task.id);
+          ? await store.getPrEntity(prEntityId)
+          : await store.getActivePrEntityBySource("task", task.id);
         if (entity && entity.sourceType === "task" && entity.state !== "closed" && entity.state !== "merged") {
           fusionOwned = true;
         }
@@ -281,7 +281,7 @@ export async function runTriageOnEnter(task: Task, deps: TriageDeps): Promise<Tr
     return { kind: "skipped", reason: "already-triaged" };
   }
 
-  const subject = resolveTriageSubject(task, store);
+  const subject = await resolveTriageSubject(task, store);
 
   // ── PR path ───────────────────────────────────────────────────────────────
   if (subject.kind === "pull_request") {

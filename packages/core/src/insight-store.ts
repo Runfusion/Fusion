@@ -72,8 +72,14 @@ function generateRunEventId(): string {
   return `INSEVT-${randomUUID()}`;
 }
 
-const TERMINAL_RUN_STATUSES = new Set<InsightRunStatus>(["completed", "failed", "cancelled"]);
-const VALID_RUN_STATUS_TRANSITIONS: Record<InsightRunStatus, InsightRunStatus[]> = {
+/*
+ * FNXC:InsightStore 2026-06-27-09:00:
+ * Exported so the AsyncDataLayer port (async-insight-store.ts `updateInsightRun`)
+ * replicates the same terminal-immutability and transition-validation semantics
+ * as the sync SQLite `updateRun` rather than redefining a drifting copy.
+ */
+export const TERMINAL_RUN_STATUSES = new Set<InsightRunStatus>(["completed", "failed", "cancelled"]);
+export const VALID_RUN_STATUS_TRANSITIONS: Record<InsightRunStatus, InsightRunStatus[]> = {
   pending: ["running", "completed", "failed", "cancelled"],
   running: ["completed", "failed", "cancelled"],
   completed: [],

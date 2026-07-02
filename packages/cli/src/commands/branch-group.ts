@@ -72,7 +72,7 @@ async function serializeCompletion(store: TaskStore, group: BranchGroup, allTask
 
 export async function runBranchGroupList(projectName?: string) {
   const { store } = await getBranchGroupContext(projectName);
-  const groups = store.listBranchGroups();
+  const groups = await store.listBranchGroups();
 
   if (groups.length === 0) {
     console.log("\n  No branch groups yet.\n");
@@ -95,7 +95,7 @@ export async function runBranchGroupList(projectName?: string) {
 
 export async function runBranchGroupShow(id: string, projectName?: string) {
   const { store } = await getBranchGroupContext(projectName);
-  const group = store.getBranchGroup(id);
+  const group = await store.getBranchGroup(id);
   if (!group) {
     console.error(`\n  ✗ Branch group ${id} not found\n`);
     process.exit(1);
@@ -124,7 +124,7 @@ export async function runBranchGroupShow(id: string, projectName?: string) {
 
 export async function runBranchGroupAbandon(id: string, projectName?: string) {
   const { store } = await getBranchGroupContext(projectName);
-  const group = store.getBranchGroup(id);
+  const group = await store.getBranchGroup(id);
   if (!group) {
     console.error(`\n  ✗ Branch group ${id} not found\n`);
     process.exit(1);
@@ -157,7 +157,7 @@ export async function runBranchGroupAbandon(id: string, projectName?: string) {
     }
   }
 
-  const updated = store.updateBranchGroup(id, {
+  const updated = await store.updateBranchGroup(id, {
     status: "abandoned",
     prState,
     prNumber: prNumber ?? null,
@@ -169,7 +169,7 @@ export async function runBranchGroupAbandon(id: string, projectName?: string) {
 
 export async function runBranchGroupPromote(id: string, projectName?: string) {
   const { store, projectPath } = await getBranchGroupContext(projectName);
-  const group = store.getBranchGroup(id);
+  const group = await store.getBranchGroup(id);
   if (!group) {
     console.error(`\n  ✗ Branch group ${id} not found\n`);
     process.exit(1);
@@ -204,7 +204,7 @@ export async function runBranchGroupPromote(id: string, projectName?: string) {
       },
       createGroupPr: createGroupPrCallback(githubClient),
       recordAudit: (event) => {
-        store.recordRunAuditEvent({
+        void store.recordRunAuditEvent({
           agentId: "cli:branch-group-promote",
           runId: `cli-promote-${group.id}`,
           domain: event.domain as Parameters<TaskStore["recordRunAuditEvent"]>[0]["domain"],

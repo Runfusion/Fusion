@@ -1,4 +1,7 @@
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import { and, gte, lte, sql } from "drizzle-orm";
+import * as schema from "./postgres/schema/index.js";
 
 /**
  * Plugin activation analytics over the project-scoped `plugin_activations` table.
@@ -72,11 +75,55 @@ function rangeWhere(query: PluginActivationAnalyticsQuery): { where: string; par
  * Empty range yields `{ activations: 0, byPlugin: [], unavailable: true }` so
  * callers can preserve the Command Center unavailable sentinel rather than
  * fabricating a zero-valued metric.
+ *
+ * FNXC:CommandCenterEcosystem 2026-06-24-13:10:
+ * Backend dual-path: when an `AsyncDataLayer` is provided, queries run against
+ * PostgreSQL via Drizzle. When absent, the legacy sync SQLite path runs.
  */
-export function aggregatePluginActivations(
-  db: Database,
+export async function aggregatePluginActivations(
+  dbOrLayer: Database | AsyncDataLayer,
   query: PluginActivationAnalyticsQuery = {},
-): PluginActivationAnalytics {
+): Promise<PluginActivationAnalytics> {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-13:10:
+  // Backend mode: query the PostgreSQL plugin_activations table via Drizzle.
+  // FNXC:MonitorStoreDiscriminator 2026-06-26-10:30:
+  // P1 fix (review #17): use `"ping" in dbOrLayer` (unique to AsyncDataLayer)
+  // instead of the broken `"execute" in dbOrLayer || ("transactionImmediate" in dbOrLayer)`.
+  if ("ping" in dbOrLayer) {
+    const layer = dbOrLayer as AsyncDataLayer;
+    const conditions = [];
+    if (query.from !== undefined) conditions.push(gte(schema.project.pluginActivations.activatedAt, query.from));
+    if (query.to !== undefined) conditions.push(lte(schema.project.pluginActivations.activatedAt, query.to));
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const countRows = await layer.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.project.pluginActivations)
+      .where(where);
+    const activations = countRows[0]?.count ?? 0;
+
+    const byPluginRows = await layer.db
+      .select({
+        pluginId: schema.project.pluginActivations.pluginId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(schema.project.pluginActivations)
+      .where(where)
+      .groupBy(schema.project.pluginActivations.pluginId)
+      .orderBy(sql`count(*) DESC`, schema.project.pluginActivations.pluginId);
+    const byPlugin = byPluginRows.map((row) => ({ pluginId: row.pluginId, count: row.count }));
+
+    return {
+      from: query.from ?? null,
+      to: query.to ?? null,
+      activations,
+      byPlugin,
+      unavailable: activations === 0,
+    };
+  }
+
+  // Legacy sync SQLite path
+  const db = dbOrLayer as Database;
   const { where, params } = rangeWhere(query);
 
   const activations = (

@@ -550,7 +550,7 @@ export class PluginRunner {
     const degraded = degradePluginWorkflowExtensions(registry, ids);
     if (degraded.length > 0) {
       try {
-        this.options.taskStore.recordRunAuditEvent({
+        void this.options.taskStore.recordRunAuditEvent({
           agentId: "system",
           runId: `plugin-workflow-extension-degrade-${pluginId}-${Date.now()}`,
           domain: "database",
@@ -653,7 +653,7 @@ export class PluginRunner {
     const degraded = degradePluginTraits(registry, ids);
     if (degraded.length > 0) {
       try {
-        this.options.taskStore.recordRunAuditEvent({
+        void this.options.taskStore.recordRunAuditEvent({
           agentId: "system",
           runId: `plugin-trait-degrade-${pluginId}-${Date.now()}`,
           domain: "database",

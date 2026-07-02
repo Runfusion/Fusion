@@ -9,9 +9,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 
+/*
+ * FNXC:SqliteFinalRemoval 2026-06-24-16:15:
+ * Removed better-sqlite3 from decidedDeps — the dependency has been removed
+ * from the workspace (no longer in any package.json). drizzle-orm lists it as
+ * an optional peer dep, but it is never installed or built.
+ */
 const decidedDeps = [
   "@google/genai",
-  "better-sqlite3",
   "cpu-features",
   "electron-winstaller",
   "keytar",

@@ -53,7 +53,7 @@ export function DbCorruptionBanner({
       </div>
 
       <p className="db-corruption-banner__body">
-        {t("dbBanner.body", "Fusion's background SQLite integrity check reported corruption. Review the failing objects below before continuing critical operations.")}
+        {t("dbBanner.body", "Fusion's database health check reported the backend is unreachable or corrupt. Review the failing objects below before continuing critical operations.")}
       </p>
 
       <ul className="db-corruption-banner__list">
@@ -68,7 +68,7 @@ export function DbCorruptionBanner({
         <strong className="db-corruption-banner__footer-label">{t("dbBanner.whatToDo", "What to do:")}</strong>{" "}
         <Trans
           i18nKey="app:dbBanner.instructions"
-          defaults="Back up the project, try <cmd>fn db --vacuum</cmd> if the database still opens cleanly, and restore from a known-good backup if corruption persists. See <docsLink>docs/storage.md</docsLink> for the storage layout and recovery guidance."
+          defaults="Back up the project, run <cmd>fn db vacuum</cmd> to compact and verify the database, and restore from a known-good backup if corruption persists. See <docsLink>docs/storage.md</docsLink> for the storage layout and recovery guidance."
           components={{
             cmd: <code />,
             docsLink: <a href="docs/storage.md" />,

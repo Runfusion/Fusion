@@ -32,7 +32,7 @@ async function stageMergeBranch(store: TaskStore, rootDir: string, taskId: strin
   git(rootDir, `git add ${JSON.stringify(`packages/engine/src/${fileName}.ts`)}`);
   git(rootDir, `git commit -m ${JSON.stringify(`feat: add ${fileName}`)}`);
   git(rootDir, "git checkout main");
-  store.enqueueMergeQueue(taskId);
+  await store.enqueueMergeQueue(taskId);
 }
 
 describe("U6: group PR sync on member landing", () => {

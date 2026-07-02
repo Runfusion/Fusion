@@ -1,4 +1,4 @@
-import { computeInsightFingerprint, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
+import { computeInsightFingerprint, InsightStore, type Task, type TaskPriority, type TaskStore } from "@fusion/core";
 import { createLogger } from "./logger.js";
 
 const reporterLog = createLogger("backlog-pressure");
@@ -111,7 +111,15 @@ export class BacklogPressureReporter {
         if (!this.projectId) {
           throw new Error("empty projectId");
         }
-        insightStore = this.store.getInsightStore();
+        // FNXC:InsightStore 2026-06-27-09:25:
+        // getInsightStore() now returns InsightStore | AsyncInsightStore. This
+        // reporter calls the store synchronously and stays on graceful fallback
+        // in PG backend mode (not ported this unit) — route async into the catch.
+        const resolved = this.store.getInsightStore();
+        if (!(resolved instanceof InsightStore)) {
+          throw new Error("InsightStore not available in PG backend mode");
+        }
+        insightStore = resolved;
       } catch (error) {
         await this.store.logEntry(candidates[0].id, `[backlog-pressure] ${content}`);
         this.logger.warn("[backlog-pressure] insight store unavailable; logged fallback payload", error);

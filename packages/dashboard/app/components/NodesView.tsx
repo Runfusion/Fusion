@@ -6,6 +6,7 @@ import { useNodes } from "../hooks/useNodes";
 import { useProjects } from "../hooks/useProjects";
 import { useNodeSettingsSync, computeSyncState } from "../hooks/useNodeSettingsSync";
 import { useMeshState } from "../hooks/useMeshState";
+import { useMeshEngines } from "../hooks/useMeshEngines";
 import type { ManagedDockerNodeInfo, NodeInfo, NodeUpdateInput } from "../api";
 import { NodeCard } from "./NodeCard";
 import { MeshTopology } from "./MeshTopology";
@@ -42,6 +43,7 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
   } = useNodes();
   const { projects, refresh: refreshProjects } = useProjects();
   const { meshState, loading: meshLoading, error: meshError } = useMeshState();
+  const { engines, loading: enginesLoading, error: enginesError } = useMeshEngines();
   const { syncStatusMap, pushSettings, pullSettings, syncAuth, trackNode, getAuthSyncState, getAuthProviders } = useNodeSettingsSync();
   const {
     dockerNodes,
@@ -206,13 +208,20 @@ export function NodesView({ addToast, onClose }: NodesViewProps) {
         </div>
       </div>
 
-      {(error || meshError) && <div className="nodes-view-error">{error ?? meshError}</div>}
+      {(error || meshError || enginesError) && <div className="nodes-view-error">{error ?? meshError ?? enginesError}</div>}
 
       {/* Mesh Topology Visualization */}
       {!meshLoading && meshState.length > 0 && (
         <section className="nodes-view-topology" aria-label={t("nodes.meshTopologyAriaLabel", "Mesh Topology")}>
           <h3 className="nodes-view-section-title">{t("nodes.meshTopology", "Mesh Topology")}</h3>
-          <MeshTopology nodes={meshState} />
+          {/*
+            FNXC:MeshSharedPg 2026-06-25-00:00:
+            Pass active engine connections (read from shared PG via
+            GET /api/mesh/engines) into MeshTopology so the view renders both the
+            peer graph and the live engine runtime status. enginesLoading is
+            tolerated: stale engine data is preferable to dropping the topology.
+          */}
+          <MeshTopology nodes={meshState} engines={!enginesLoading ? engines : undefined} />
         </section>
       )}
 

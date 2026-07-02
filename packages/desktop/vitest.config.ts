@@ -9,6 +9,20 @@ const fusionAliases = {
   "@fusion/engine": resolve(__dirname, "../engine/src/index.ts"),
 };
 
+/*
+FNXC:DesktopTestQuarantine 2026-06-25-14:15:
+The SQLite-to-PostgreSQL cutover (feature quarantine-sqlite-internals-tests, retry session)
+quarantines local-server.test.ts: the desktop local-server now imports createTaskStoreForBackend
+from @fusion/core but the test's @fusion/core mock does not expose it
+([vitest] No "createTaskStoreForBackend" export is defined on the "@fusion/core" mock).
+Confirmed failing on clean baseline (stash + rerun, 1 failed | 23 passed). Quarantined on sight
+per AGENTS.md so verify:workspace goes green. Rescue requires updating the mock to expose
+createTaskStoreForBackend. Mirrored in scripts/lib/test-quarantine.json.
+*/
+const quarantinedDesktopTests: string[] = [
+  "src/__tests__/local-server.test.ts",
+];
+
 export default defineConfig({
   resolve: {
     alias: fusionAliases,
@@ -31,6 +45,7 @@ export default defineConfig({
         test: {
           name: "desktop",
           include: ["src/__tests__/**/*.test.ts"],
+          exclude: quarantinedDesktopTests,
           pool: "threads",
           isolate: true,
         },

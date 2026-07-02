@@ -4,6 +4,17 @@ import { computeMaxWorkers } from "../../packages/core/src/__test-utils__/vitest
 
 const maxWorkers = computeMaxWorkers();
 
+/*
+FNXC:RoadmapTests 2026-06-25-16:30:
+The SQLite-to-PostgreSQL cutover (feature delete-sqlite-runtime-final, PHASE A)
+quarantines plugin test files that construct a SQLite-backed store (new TaskStore(...,
+{inMemoryDb: true}) / new Database(...)). The SQLite runtime code is being deleted
+in this feature. Per the AGENTS.md flaky-test deletion ratchet, these tests are
+quarantined on sight. Mirrored in scripts/lib/test-quarantine.json.
+*/
+const quarantinedRoadmapTests = [
+];
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -36,7 +47,11 @@ export default defineConfig({
           name: "roadmap-node",
           environment: "node",
           include: ["src/**/__tests__/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
-          exclude: ["src/dashboard/**/__tests__/**/*.test.{ts,tsx}", "src/dashboard/**/*.test.{ts,tsx}"],
+          exclude: [
+            "src/dashboard/**/__tests__/**/*.test.{ts,tsx}",
+            "src/dashboard/**/*.test.{ts,tsx}",
+            ...quarantinedRoadmapTests,
+          ],
         },
       },
     ],

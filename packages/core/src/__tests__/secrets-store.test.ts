@@ -28,7 +28,7 @@ describe("SecretsStore audit emitter", () => {
       const created = await store.createSecret({ scope: "project", key: "API_KEY", plaintextValue: "secret-a" });
       await store.updateSecret(created.id, "project", { plaintextValue: "secret-b", key: "API_KEY_2" });
       await store.revealSecret(created.id, "project", { agentId: "agent-1" });
-      store.deleteSecret(created.id, "project");
+      await store.deleteSecret(created.id, "project");
 
       expect(emitter).toHaveBeenCalledTimes(4);
       for (const event of emitter.mock.calls.map((call) => call[0])) {

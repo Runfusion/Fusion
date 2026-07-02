@@ -158,14 +158,14 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       const agentId = `${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${task.id}`;
-      const existing = chatStore.findLatestActiveSessionForTarget({
+      const existing = await chatStore.findLatestActiveSessionForTarget({
         agentId,
         ...(projectId ? { projectId } : {}),
       });
 
       if (existing) {
         const session = modelProvider && modelId
-          ? chatStore.updateSession(existing.id, { modelProvider, modelId })
+          ? await chatStore.updateSession(existing.id, { modelProvider, modelId })
           : existing;
         res.json({ session });
         return;
@@ -175,7 +175,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw badRequest(`Task ${task.id} is ${task.column}; planner chat can only be started while a task is live`);
       }
 
-      const session = chatStore.createSession({
+      const session = await chatStore.createSession({
         agentId,
         title: `${task.id} planner chat`,
         projectId: projectId ?? null,
@@ -224,8 +224,8 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       let sessions = isResumeLookup
-        ? (() => {
-            const matched = chatStore.findLatestActiveSessionForTarget({
+        ? await (async () => {
+            const matched = await chatStore.findLatestActiveSessionForTarget({
               agentId: agentId!.trim(),
               ...(projectId && { projectId }),
               ...(hasModelProvider && hasModelId
@@ -238,7 +238,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
             return matched ? [matched] : [];
           })()
-        : chatStore.listSessions({
+        : await chatStore.listSessions({
             ...(projectId && { projectId }),
             ...(status && { status: status as "active" | "archived" }),
             ...(agentId && { agentId }),
@@ -247,7 +247,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       // Enrich sessions with last message preview
       if (sessions.length > 0) {
         const sessionIds = sessions.map((s) => s.id);
-        const lastMessages = chatStore.getLastMessageForSessions(sessionIds);
+        const lastMessages = await chatStore.getLastMessageForSessions(sessionIds);
 
         if (!isResumeLookup) {
           const settings = await scopedStore.getSettings();
@@ -310,7 +310,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const { store: scopedStore, projectId } = await getProjectContext(req);
       const { chatStore } = await resolveScopedChatStore(projectId);
       const { AgentStore } = await import("@fusion/core");
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const { agentId, title, modelProvider, modelId } = req.body as {
@@ -355,7 +355,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       // Create the chat session with projectId for multi-project scoping
-      const session = chatStore.createSession({
+      const session = await chatStore.createSession({
         agentId: agentId.trim(),
         title: title?.trim() || null,
         projectId: projectId ?? null,
@@ -381,7 +381,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const { chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
 
       const sessionId = String(req.params.id);
-      const session = chatStore.getSession(sessionId);
+      const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
@@ -416,7 +416,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         throw badRequest("status must be 'active' or 'archived'");
       }
 
-      const session = chatStore.updateSession(sessionId, {
+      const session = await chatStore.updateSession(sessionId, {
         ...(title !== undefined && { title: title?.trim() || null }),
         ...(status !== undefined && { status }),
       });
@@ -443,7 +443,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const { chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
       const sessionId = String(req.params.id);
 
-      const deleted = chatStore.deleteSession(sessionId);
+      const deleted = await chatStore.deleteSession(sessionId);
       if (!deleted) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
@@ -469,7 +469,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const sessionId = String(req.params.id);
 
       // Verify session exists
-      const session = chatStore.getSession(sessionId);
+      const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
@@ -498,7 +498,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
 
       const effectiveLimit = Math.min(limit, 200);
 
-      const messages = chatStore.getMessages(sessionId, {
+      const messages = await chatStore.getMessages(sessionId, {
         limit: effectiveLimit,
         offset,
         ...(before && { before }),
@@ -519,7 +519,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const { chatStore } = await resolveScopedChatStore(req.query.projectId as string | undefined);
 
       const sessionId = String(req.params.id);
-      const session = chatStore.getSession(sessionId);
+      const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
@@ -586,7 +586,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const chatManager = await resolveScopedChatManager(req.query.projectId as string | undefined);
 
       const sessionId = String(req.params.id);
-      const session = chatStore.getSession(sessionId);
+      const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
@@ -695,7 +695,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       }
 
       // Verify session exists
-      const session = chatStore.getSession(sessionId);
+      const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
@@ -864,19 +864,19 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const messageId = String(req.params.messageId);
 
       // Verify session exists
-      const session = chatStore.getSession(sessionId);
+      const session = await chatStore.getSession(sessionId);
       if (!session) {
         throw notFound(`Chat session ${sessionId} not found`);
       }
 
       // Check if message exists
-      const message = chatStore.getMessage(messageId);
+      const message = await chatStore.getMessage(messageId);
       if (!message) {
         throw notFound(`Message ${messageId} not found`);
       }
 
       // Delete the message
-      const deleted = chatStore.deleteMessage(messageId);
+      const deleted = await chatStore.deleteMessage(messageId);
       if (!deleted) {
         throw notFound(`Message ${messageId} not found`);
       }

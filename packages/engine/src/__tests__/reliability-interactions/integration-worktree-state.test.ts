@@ -47,7 +47,7 @@ async function setupReuseTask(taskId: string, baseBranch: "main" | "master") {
   await mkdir(worktreeRoot, { recursive: true });
   git(rootDir, `git worktree add ${JSON.stringify(worktreePath)} ${JSON.stringify(branch)}`);
   await store.updateTask(task.id, { worktree: worktreePath, branch } as any);
-  store.enqueueMergeQueue(task.id);
+  await store.enqueueMergeQueue(task.id);
 
   return { fixture, worktreePath, branch };
 }

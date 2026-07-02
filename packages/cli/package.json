@@ -62,6 +62,7 @@
     "@earendil-works/pi-ai": "^0.80.3",
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "dockerode": "^4.0.12",
+    "embedded-postgres": "15.18.0-beta.17",
     "express": "^5.1.0",
     "i18next": "^26.3.1",
     "ink": "^7.0.5",

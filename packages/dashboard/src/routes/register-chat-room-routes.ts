@@ -114,8 +114,8 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
 
       const statusFilter = status as ChatRoomStatus | undefined;
       const rooms = agentId
-        ? chatStore.listRoomsForAgent(agentId, { projectId, status: statusFilter })
-        : chatStore.listRooms({ projectId, status: statusFilter });
+        ? await chatStore.listRoomsForAgent(agentId, { projectId, status: statusFilter })
+        : await chatStore.listRooms({ projectId, status: statusFilter });
 
       res.json({ rooms });
     } catch (err: unknown) {
@@ -149,7 +149,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
 
       let room;
       try {
-        room = chatStore.createRoom(roomInput);
+        room = await chatStore.createRoom(roomInput);
       } catch (err) {
         if (isSlugCollisionError(err)) {
           throw new ApiError(409, err instanceof Error ? err.message : "Room slug already exists");
@@ -157,7 +157,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         throw err;
       }
 
-      const members = chatStore.listRoomMembers(room.id);
+      const members = await chatStore.listRoomMembers(room.id);
       res.status(201).json({ room, members });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -169,10 +169,10 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      const members = chatStore.listRoomMembers(roomId);
+      const members = await chatStore.listRoomMembers(roomId);
       res.json({ room, members });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -198,7 +198,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
 
       let room;
       try {
-        room = chatStore.updateRoom(roomId, input);
+        room = await chatStore.updateRoom(roomId, input);
       } catch (err) {
         if (isSlugCollisionError(err)) {
           throw new ApiError(409, err instanceof Error ? err.message : "Room slug already exists");
@@ -218,10 +218,10 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      chatStore.deleteRoom(roomId);
+      await chatStore.deleteRoom(roomId);
       res.json({ success: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -233,10 +233,10 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      const members = chatStore.listRoomMembers(roomId);
+      const members = await chatStore.listRoomMembers(roomId);
       res.json({ members });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -248,7 +248,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
       const { agentId, role } = req.body as { agentId?: string; role?: "owner" | "member" };
@@ -259,7 +259,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         throw badRequest("role must be 'owner' or 'member'");
       }
 
-      const member = chatStore.addRoomMember(roomId, agentId.trim(), role ?? "member");
+      const member = await chatStore.addRoomMember(roomId, agentId.trim(), role ?? "member");
       res.status(201).json({ member });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -272,7 +272,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
       const agentId = String(req.params.agentId);
-      const removed = chatStore.removeRoomMember(roomId, agentId);
+      const removed = await chatStore.removeRoomMember(roomId, agentId);
       if (!removed) throw notFound(`Room member ${agentId} not found in room ${roomId}`);
 
       res.json({ success: true });
@@ -286,7 +286,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
       const { limit: limitStr, offset: offsetStr, before, order: orderStr } = req.query as {
@@ -302,7 +302,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       if (!Number.isFinite(offset) || offset < 0) throw badRequest("offset must be a non-negative integer");
       if (order !== "asc" && order !== "desc") throw badRequest("order must be either asc or desc");
 
-      const messages = chatStore.getRoomMessages(roomId, {
+      const messages = await chatStore.getRoomMessages(roomId, {
         limit,
         offset,
         order,
@@ -321,7 +321,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       const roomId = String(req.params.id);
       const hintedProjectId = getRequestedProjectId(req);
       const services = await resolveRoomScopedServices(req, hintedProjectId);
-      const room = services.chatStore.getRoom(roomId);
+      const room = await services.chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
       const { content, senderAgentId, attachments } = req.body as {
@@ -363,15 +363,15 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
       const messageId = String(req.params.messageId);
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      const message = chatStore.getRoomMessage(messageId);
+      const message = await chatStore.getRoomMessage(messageId);
       if (!message || message.roomId !== roomId) {
         throw notFound(`Message ${messageId} not found`);
       }
 
-      chatStore.deleteRoomMessage(messageId);
+      await chatStore.deleteRoomMessage(messageId);
       res.json({ success: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -383,10 +383,10 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      const deletedCount = chatStore.clearRoomMessages(roomId);
+      const deletedCount = await chatStore.clearRoomMessages(roomId);
       res.json({ success: true, deletedCount });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;
@@ -398,7 +398,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
       const file = req.file;
@@ -407,7 +407,6 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       if (file.size > CHAT_MAX_ATTACHMENT_SIZE) {
         throw badRequest(`File too large (${file.size} bytes). Maximum: ${CHAT_MAX_ATTACHMENT_SIZE} bytes (5MB)`);
       }
-
       const { store: scopedStore } = await getProjectContext(req);
       const roomDir = resolve(scopedStore.getRootDir(), ".fusion", "chat-room-attachments", roomId);
       await mkdir(roomDir, { recursive: true });
@@ -437,7 +436,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
     try {
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
       const { store: scopedStore } = await getProjectContext(req);
@@ -463,10 +462,10 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
       const roomId = String(req.params.id);
       const { chatStore } = await resolveRoomScopedServices(req, getRequestedProjectId(req));
       const messageId = String(req.params.messageId);
-      const room = chatStore.getRoom(roomId);
+      const room = await chatStore.getRoom(roomId);
       if (!room) throw notFound(`Chat room ${roomId} not found`);
 
-      const message = chatStore.getRoomMessage(messageId);
+      const message = await chatStore.getRoomMessage(messageId);
       if (!message || message.roomId !== roomId) {
         throw notFound(`Message ${messageId} not found`);
       }
@@ -476,7 +475,7 @@ export function registerChatRoomRoutes(ctx: ApiRoutesContext, deps: ChatRoomRout
         throw badRequest("attachment payload is required");
       }
 
-      const updatedMessage = chatStore.addRoomMessageAttachment(roomId, messageId, attachment);
+      const updatedMessage = await chatStore.addRoomMessageAttachment(roomId, messageId, attachment);
       res.json({ message: updatedMessage });
     } catch (err: unknown) {
       if (err instanceof ApiError) throw err;

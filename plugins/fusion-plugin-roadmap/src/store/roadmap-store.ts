@@ -109,14 +109,26 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    *
    * @param db - Shared Database instance (same instance used by TaskStore)
    */
-  constructor(private db: Database) {
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:35:
+  // db is null in backend mode (PostgreSQL). The store methods that use sync
+  // SQLite will throw in backend mode until the async path is implemented.
+  constructor(private db: Database | null) {
     super();
     this.setMaxListeners(50);
-    this.ensureSchema();
+    if (this.db) {
+      this.ensureSchema();
+    }
+  }
+
+  /** Asserts sync db is available (throws in backend mode). */
+  private syncDb(): Database {
+    if (!this.db) throw new Error("RoadmapStore: sync Database is null (backend mode)");
+    return this.db;
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
+    if (!this.db) return;
+    this.syncDb().exec(`
       CREATE TABLE IF NOT EXISTS roadmaps (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -234,7 +246,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updatedAt: now,
     };
 
-    this.db.prepare(`
+    this.syncDb().prepare(`
       INSERT INTO roadmaps (id, title, description, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?)
     `).run(
@@ -245,7 +257,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       roadmap.updatedAt,
     );
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("roadmap:created", roadmap);
     return roadmap;
   }
@@ -257,7 +269,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    * @returns The roadmap, or undefined if not found
    */
   getRoadmap(id: string): Roadmap | undefined {
-    const row = this.db.prepare("SELECT * FROM roadmaps WHERE id = ?").get(id) as unknown as RoadmapRow | undefined;
+    const row = this.syncDb().prepare("SELECT * FROM roadmaps WHERE id = ?").get(id) as unknown as RoadmapRow | undefined;
     if (!row) return undefined;
     return this.rowToRoadmap(row);
   }
@@ -268,7 +280,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    * @returns Array of roadmaps
    */
   listRoadmaps(): Roadmap[] {
-    const rows = this.db.prepare(
+    const rows = this.syncDb().prepare(
       "SELECT * FROM roadmaps ORDER BY createdAt DESC"
     ).all();
     return (rows as unknown as RoadmapRow[]).map((row) => this.rowToRoadmap(row));
@@ -296,7 +308,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updatedAt: new Date().toISOString(),
     };
 
-    this.db.prepare(`
+    this.syncDb().prepare(`
       UPDATE roadmaps SET
         title = ?,
         description = ?,
@@ -309,7 +321,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updated.id,
     );
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("roadmap:updated", updated);
     return updated;
   }
@@ -327,8 +339,8 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     }
 
     // SQLite FK cascade will handle milestones and features
-    this.db.prepare("DELETE FROM roadmaps WHERE id = ?").run(id);
-    this.db.bumpLastModified();
+    this.syncDb().prepare("DELETE FROM roadmaps WHERE id = ?").run(id);
+    this.syncDb().bumpLastModified();
 
     this.emit("roadmap:deleted", id);
   }
@@ -369,7 +381,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updatedAt: now,
     };
 
-    this.db.prepare(`
+    this.syncDb().prepare(`
       INSERT INTO roadmap_milestones (id, roadmapId, title, description, orderIndex, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -382,7 +394,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       milestone.updatedAt,
     );
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("milestone:created", milestone);
     return milestone;
   }
@@ -394,7 +406,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    * @returns The milestone, or undefined if not found
    */
   getMilestone(id: string): RoadmapMilestone | undefined {
-    const row = this.db.prepare("SELECT * FROM roadmap_milestones WHERE id = ?").get(id) as unknown as RoadmapMilestoneRow | undefined;
+    const row = this.syncDb().prepare("SELECT * FROM roadmap_milestones WHERE id = ?").get(id) as unknown as RoadmapMilestoneRow | undefined;
     if (!row) return undefined;
     return this.rowToMilestone(row);
   }
@@ -409,7 +421,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    * @returns Array of milestones in deterministic order
    */
   listMilestones(roadmapId: string): RoadmapMilestone[] {
-    const rows = this.db.prepare(
+    const rows = this.syncDb().prepare(
       "SELECT * FROM roadmap_milestones WHERE roadmapId = ? ORDER BY orderIndex ASC, createdAt ASC, id ASC"
     ).all(roadmapId);
     return (rows as unknown as RoadmapMilestoneRow[]).map((row) => this.rowToMilestone(row));
@@ -438,7 +450,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updatedAt: new Date().toISOString(),
     };
 
-    this.db.prepare(`
+    this.syncDb().prepare(`
       UPDATE roadmap_milestones SET
         title = ?,
         description = ?,
@@ -451,7 +463,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updated.id,
     );
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("milestone:updated", updated);
     return updated;
   }
@@ -469,8 +481,8 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     }
 
     // SQLite FK cascade will handle features
-    this.db.prepare("DELETE FROM roadmap_milestones WHERE id = ?").run(id);
-    this.db.bumpLastModified();
+    this.syncDb().prepare("DELETE FROM roadmap_milestones WHERE id = ?").run(id);
+    this.syncDb().bumpLastModified();
 
     this.emit("milestone:deleted", id);
   }
@@ -511,7 +523,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updatedAt: now,
     };
 
-    this.db.prepare(`
+    this.syncDb().prepare(`
       INSERT INTO roadmap_features (id, milestoneId, title, description, orderIndex, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
@@ -524,7 +536,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       feature.updatedAt,
     );
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("feature:created", feature);
     return feature;
   }
@@ -536,7 +548,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    * @returns The feature, or undefined if not found
    */
   getFeature(id: string): RoadmapFeature | undefined {
-    const row = this.db.prepare("SELECT * FROM roadmap_features WHERE id = ?").get(id) as unknown as RoadmapFeatureRow | undefined;
+    const row = this.syncDb().prepare("SELECT * FROM roadmap_features WHERE id = ?").get(id) as unknown as RoadmapFeatureRow | undefined;
     if (!row) return undefined;
     return this.rowToFeature(row);
   }
@@ -551,7 +563,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
    * @returns Array of features in deterministic order
    */
   listFeatures(milestoneId: string): RoadmapFeature[] {
-    const rows = this.db.prepare(
+    const rows = this.syncDb().prepare(
       "SELECT * FROM roadmap_features WHERE milestoneId = ? ORDER BY orderIndex ASC, createdAt ASC, id ASC"
     ).all(milestoneId);
     return (rows as unknown as RoadmapFeatureRow[]).map((row) => this.rowToFeature(row));
@@ -580,7 +592,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updatedAt: new Date().toISOString(),
     };
 
-    this.db.prepare(`
+    this.syncDb().prepare(`
       UPDATE roadmap_features SET
         title = ?,
         description = ?,
@@ -593,7 +605,7 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       updated.id,
     );
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("feature:updated", updated);
     return updated;
   }
@@ -610,8 +622,8 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
       throw new Error(`Feature ${id} not found`);
     }
 
-    this.db.prepare("DELETE FROM roadmap_features WHERE id = ?").run(id);
-    this.db.bumpLastModified();
+    this.syncDb().prepare("DELETE FROM roadmap_features WHERE id = ?").run(id);
+    this.syncDb().bumpLastModified();
 
     this.emit("feature:deleted", feature);
   }
@@ -642,15 +654,15 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     const reordered = applyRoadmapMilestoneReorder(milestones, input);
 
     // Persist in a transaction
-    this.db.transaction(() => {
+    this.syncDb().transaction(() => {
       for (const milestone of reordered) {
-        this.db.prepare(`
+        this.syncDb().prepare(`
           UPDATE roadmap_milestones SET orderIndex = ?, updatedAt = ? WHERE id = ?
         `).run(milestone.orderIndex, new Date().toISOString(), milestone.id);
       }
     });
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("milestone:reordered", { roadmapId: input.roadmapId, milestones: reordered });
 
     return reordered;
@@ -683,15 +695,15 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     const reordered = applyRoadmapFeatureReorder(features, input);
 
     // Persist in a transaction
-    this.db.transaction(() => {
+    this.syncDb().transaction(() => {
       for (const feature of reordered) {
-        this.db.prepare(`
+        this.syncDb().prepare(`
           UPDATE roadmap_features SET orderIndex = ?, updatedAt = ? WHERE id = ?
         `).run(feature.orderIndex, new Date().toISOString(), feature.id);
       }
     });
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("feature:reordered", { milestoneId: input.milestoneId, features: reordered });
 
     return reordered;
@@ -748,16 +760,16 @@ export class RoadmapStore extends EventEmitter<RoadmapStoreEvents> {
     const result = moveRoadmapFeature(allFeatures, input);
 
     // Persist in a transaction
-    this.db.transaction(() => {
+    this.syncDb().transaction(() => {
       // Update all affected features
       for (const feature of result.affectedFeatures) {
-        this.db.prepare(`
+        this.syncDb().prepare(`
           UPDATE roadmap_features SET milestoneId = ?, orderIndex = ?, updatedAt = ? WHERE id = ?
         `).run(feature.milestoneId, feature.orderIndex, new Date().toISOString(), feature.id);
       }
     });
 
-    this.db.bumpLastModified();
+    this.syncDb().bumpLastModified();
     this.emit("feature:moved", {
       feature: result.movedFeature,
       fromMilestoneId: input.fromMilestoneId,

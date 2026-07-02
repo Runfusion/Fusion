@@ -64,7 +64,7 @@ describe("TaskStore handoffToReview", () => {
     });
 
     expect(handedOff.column).toBe("in-review");
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id, priority: "high" }),
     ]);
 
@@ -106,7 +106,7 @@ describe("TaskStore handoffToReview", () => {
     });
 
     expect(second.column).toBe("in-review");
-    expect(store.peekMergeQueue()).toHaveLength(1);
+    expect(await store.peekMergeQueue()).toHaveLength(1);
 
     const handoffEvents = getAuditEventsByInsertion(task.id).filter((event) => event.mutationType === "task:handoff");
     expect(handoffEvents).toHaveLength(2);
@@ -121,9 +121,9 @@ describe("TaskStore handoffToReview", () => {
   it("rolls back the column move and audit trail when enqueueMergeQueue throws", async () => {
     const task = await createInProgressTask();
     const beforeEvents = getAuditEventsByInsertion(task.id).length;
-    vi.spyOn(store, "enqueueMergeQueue").mockImplementationOnce(() => {
+    vi.spyOn(store as never, "enqueueMergeQueueSyncInternal").mockImplementationOnce((() => {
       throw new Error("boom");
-    });
+    }) as never);
 
     await expect(store.handoffToReview(task.id, {
       ownerAgentId: "agent-1",
@@ -132,7 +132,7 @@ describe("TaskStore handoffToReview", () => {
     })).rejects.toThrow("boom");
 
     expect((await store.getTask(task.id))?.column).toBe("in-progress");
-    expect(store.peekMergeQueue()).toHaveLength(0);
+    expect(await store.peekMergeQueue()).toHaveLength(0);
     const newEvents = getAuditEventsByInsertion(task.id).slice(beforeEvents);
     expect(newEvents.filter((event) => event.mutationType === "task:move")).toHaveLength(0);
     expect(newEvents.filter((event) => event.mutationType === "task:handoff")).toHaveLength(0);
@@ -163,7 +163,7 @@ describe("TaskStore handoffToReview", () => {
     })).rejects.toBeInstanceOf(HandoffInvariantViolationError);
 
     expect((await store.getTask(archived.id))?.column).toBe("archived");
-    expect(store.peekMergeQueue()).toHaveLength(0);
+    expect(await store.peekMergeQueue()).toHaveLength(0);
     expect(getAuditEventsByInsertion(archived.id).filter((event) => event.mutationType === "task:handoff")).toHaveLength(0);
     expect(getAuditEventsByInsertion(deleted.id).filter((event) => event.mutationType === "task:handoff")).toHaveLength(0);
   });
@@ -233,7 +233,7 @@ describe("TaskStore handoffToReview", () => {
     expect(handedOff.column).toBe("in-review");
     expect(handedOff.status).toBe("failed");
     expect(handedOff.error).toBe("step session failed");
-    expect(store.peekMergeQueue()).toEqual([
+    expect(await store.peekMergeQueue()).toEqual([
       expect.objectContaining({ taskId: task.id }),
     ]);
   });

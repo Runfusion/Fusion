@@ -337,6 +337,11 @@ export async function refreshKnowledgeForTask(
   options?: { now?: string },
 ): Promise<KnowledgePage | null> {
   try {
+    // FNXC:RuntimeSatelliteAsync 2026-06-24-22:10:
+    // In backend mode, the sync SQLite database is not available. Knowledge
+    // indexing uses direct SQL against the sync DB; skip in backend mode
+    // until the async knowledge index path is implemented.
+    if (store.isBackendMode()) return null;
     const detail = await store.getTask(taskId);
     if (!detail) return null;
 
@@ -366,6 +371,11 @@ export async function refreshKnowledgeForTask(
     });
     if (options?.now) input.now = options.now;
 
+    // FNXC:PostgresCutover 2026-06-27-09:50:
+    // Knowledge index uses sync SQLite; skip in backend mode.
+    if (store.isBackendMode?.() ?? store.backendMode) {
+      return null;
+    }
     const { page } = upsertKnowledgePage(store.getDatabase(), input);
     return page;
   } catch (err) {

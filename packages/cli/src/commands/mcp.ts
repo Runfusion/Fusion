@@ -155,9 +155,9 @@ async function getSecretsStore(context: McpContext) {
 
 async function resolveExistingSecret(context: McpContext, secretRef: string, scope: SecretScope): Promise<McpSecretRef> {
   const secrets = await getSecretsStore(context);
-  const byId = secrets.getSecretMetadata(secretRef, scope);
+  const byId = await secrets.getSecretMetadata(secretRef, scope);
   if (byId) return { secretRef: byId.id, scope };
-  const byKey = secrets.listSecrets(scope).find((secret) => secret.key === secretRef);
+  const byKey = (await secrets.listSecrets(scope)).find((secret) => secret.key === secretRef);
   if (!byKey) {
     throw new Error(`Secret "${secretRef}" not found in ${scope} scope. Create it first or use --create-secret-env/--create-secret-header.`);
   }

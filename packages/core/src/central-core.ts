@@ -97,6 +97,17 @@ import {
   ensureGitRepositoryForProjectPath,
   type GitRepositoryEnsureOutcome,
 } from "./git-repository.js";
+/*
+ * FNXC:CentralCore 2026-06-26-12:30:
+ * Async Drizzle helpers + the AsyncDataLayer type for backend-mode (PostgreSQL)
+ * CentralCore operations. When an AsyncDataLayer is injected, CentralCore
+ * delegates to these helpers against the central schema via the SHARED
+ * connection pool (the same one TaskStore and the satellite stores use — NOT
+ * a separate connection). The SQLite CentralDatabase path is preserved as the
+ * legacy fallback for FUSION_NO_EMBEDDED_PG mode.
+ */
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+import * as asyncCentralCore from "./async-central-core.js";
 import {
   deriveRunningAgentCounts,
   getRunningAgentCountSource,
@@ -176,6 +187,15 @@ export interface EnsureProjectForPathResult {
 
 export interface CentralCoreOptions {
   ensureGitRepositoryForProjectPath?: typeof ensureGitRepositoryForProjectPath;
+  /**
+   * FNXC:CentralCore 2026-06-26-12:30:
+   * When an AsyncDataLayer is injected, CentralCore operates in "backend mode":
+   * all data access delegates to PostgreSQL via Drizzle against the central
+   * schema and no SQLite CentralDatabase is constructed. When absent, the
+   * legacy SQLite path is byte-identical to pre-migration. This mirrors the
+   * TaskStore/PluginStore/AgentStore dual-path pattern.
+   */
+  asyncLayer?: AsyncDataLayer;
 }
 
 export class CentralCore extends EventEmitter<CentralCoreEvents> {
@@ -186,6 +206,51 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   private discoveryConfig: DiscoveryConfig | null = null;
   private readonly discoveredNodes = new Map<string, DiscoveredNode>();
   private readonly ensureGitRepositoryForProjectPath: typeof ensureGitRepositoryForProjectPath;
+
+  /**
+   * FNXC:CentralCore 2026-06-26-12:30:
+   * When set, CentralCore operates in backend mode (PostgreSQL via Drizzle).
+   * All data access delegates to the async-central-core helpers via the SHARED
+   * connection pool. No SQLite CentralDatabase is constructed. This mirrors the
+   * TaskStore/PluginStore/AgentStore dual-path pattern.
+   */
+  public readonly asyncLayer: AsyncDataLayer | null = null;
+
+  /** True when an AsyncDataLayer was injected. Gates all SQLite construction. */
+  public get backendMode(): boolean {
+    return this.asyncLayer !== null;
+  }
+
+  /**
+   * FNXC:CentralCore 2026-06-26-13:30:
+   * Attach a backend AsyncDataLayer post-construction and (re)bootstrap against
+   * PostgreSQL. Used by the runtime startup path: the shared CentralCore is
+   * constructed before the backend connection is resolved, so once the
+   * TaskStore's AsyncDataLayer is available the runtime attaches it here so
+   * CentralCore shares the SAME connection pool as everything else (instead of
+   * a separate SQLite CentralDatabase). Safe to call before or after init();
+   * closes any open SQLite handle and re-runs the backend bootstrap. After this
+   * call, backendMode is true and all methods delegate to PostgreSQL.
+   */
+  async attachBackendLayer(layer: AsyncDataLayer): Promise<void> {
+    if (!layer) {
+      throw new Error("attachBackendLayer requires a non-null AsyncDataLayer");
+    }
+    // Close any open SQLite handle from a prior legacy init().
+    if (this.db) {
+      try {
+        this.db.close();
+      } catch {
+        /* best-effort */
+      }
+      this.db = null;
+    }
+    // `asyncLayer` is readonly; assign via the cast since this is the sanctioned
+    // post-construction injection point.
+    (this as { asyncLayer: AsyncDataLayer | null }).asyncLayer = layer;
+    this.initialized = false;
+    await this.init();
+  }
 
   private readonly onDiscoveryNodeDiscovered = (node: DiscoveredNode): void => {
     void this.handleDiscoveryNodeDiscovered(node).catch((error) => {
@@ -216,44 +281,47 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     this.globalDir = resolveGlobalDir(globalDir);
     this.ensureGitRepositoryForProjectPath =
       options.ensureGitRepositoryForProjectPath ?? ensureGitRepositoryForProjectPath;
+    this.asyncLayer = options.asyncLayer ?? null;
   }
 
   /**
    * Initialize the central infrastructure.
-   * Ensures the directory and database exist with proper schema.
+   *
+   * FNXC:CentralCore 2026-06-26-12:30:
+   * In backend mode (asyncLayer injected), this skips SQLite construction
+   * entirely and seeds the runtime singletons (globalConcurrency row, local
+   * node) via the shared PostgreSQL connection. The PostgreSQL schema baseline
+   * already created the tables. In legacy mode, the SQLite CentralDatabase is
+   * constructed and migrated as before.
+   *
    * Idempotent — safe to call multiple times.
    */
   async init(): Promise<void> {
     if (this.initialized) return;
 
-    // Ensure directory exists
+    if (this.backendMode) {
+      await asyncCentralCore.ensureBackendBootstrap(this.asyncLayer!);
+      this.initialized = true;
+      return;
+    }
+
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:55:
+     * The legacy non-backend (SQLite) CentralDatabase path is removed
+     * (VAL-REMOVAL-005). The CentralDatabase class body is deleted; constructing
+     * it would throw. In the runtime serve path, CentralCore is constructed
+     * before the backend is resolved, then attachBackendLayer() is called once
+     * the TaskStore's AsyncDataLayer is available (InProcessRuntime.start).
+     *
+     * Non-backend init() is now a graceful no-op: it creates the global dir but
+     * leaves this.db = null and marks the instance initialized. Data methods
+     * check `this.db` before use and return empty/degrade when null (see
+     * readPathsUseDb guard). The serve command and reconciliation loop proceed
+     * with empty results; once attachBackendLayer injects the AsyncDataLayer,
+     * init() re-runs in backend mode and bootstraps against PostgreSQL.
+     */
     await mkdir(this.globalDir, { recursive: true });
-
-    // Initialize database
-    if (!this.db) {
-      this.db = new CentralDatabase(this.globalDir);
-      this.db.init();
-    }
-
     this.initialized = true;
-
-    const existingLocal = this.db
-      .prepare("SELECT id FROM nodes WHERE type = 'local' LIMIT 1")
-      .get() as { id: string } | undefined;
-
-    if (!existingLocal) {
-      const concurrency = this.db
-        .prepare("SELECT globalMaxConcurrent FROM globalConcurrency WHERE id = 1")
-        .get() as { globalMaxConcurrent: number } | undefined;
-      const maxConcurrent = concurrency?.globalMaxConcurrent ?? 2;
-
-      const localNode = await this.registerNode({
-        name: "local",
-        type: "local",
-        maxConcurrent,
-      });
-      await this.updateNode(localNode.id, { status: "online" });
-    }
   }
 
   /**
@@ -265,7 +333,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       this.stopDiscovery();
     }
 
-    if (this.db) {
+    // FNXC:CentralCore 2026-06-26-12:30: In backend mode there is no SQLite
+    // CentralDatabase to close; the shared connection pool is owned by the
+    // TaskStore/startup factory. CentralCore does not close the pool.
+    if (!this.backendMode && this.db) {
       this.db.close();
       this.db = null;
     }
@@ -295,6 +366,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   private insertProjectRow(project: RegisteredProject, now: string): void {
+    if (this.backendMode) {
+      // FNXC:CentralCore 2026-06-26-12:30: Backend mode delegates to the async
+      // helper. Callers route through the backend-mode branches of
+      // registerProject/reattachProject which await this via insertProjectRowAsync.
+      throw new Error("insertProjectRow(sync) must not be called in backend mode");
+    }
     this.db!.transaction(() => {
       this.db!.prepare(
         `INSERT INTO projects (id, name, path, status, isolationMode, createdAt, updatedAt, lastActivityAt, nodeId, settings)
@@ -371,6 +448,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       settings: input.settings,
     };
 
+    if (this.backendMode) {
+      // FNXC:CentralCore 2026-06-26-12:30: Backend mode delegates to PostgreSQL.
+      await asyncCentralCore.insertProjectRow(this.asyncLayer!, project, now);
+      this.emit("project:registered", project);
+      return project;
+    }
+
     this.insertProjectRow(project, now);
     this.db!.bumpLastModified();
     this.emit("project:registered", project);
@@ -421,6 +505,16 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       lastActivityAt: now,
       settings: input.settings,
     };
+
+    if (this.backendMode) {
+      // FNXC:CentralCore 2026-06-26-12:30: Backend mode delegates to PostgreSQL.
+      await asyncCentralCore.insertProjectRow(this.asyncLayer!, project, now);
+      console.log(
+        `[central] reattached project ${project.id} at ${project.path} using stored identity (createdAt=${now})`,
+      );
+      this.emit("project:reattached", project, "identity-recovered");
+      return project;
+    }
 
     this.insertProjectRow(project, now);
     this.db!.bumpLastModified();
@@ -473,7 +567,15 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   /**
    * Unregister a project from the central database.
-   * Cascades to delete health records and activity log entries.
+   *
+   * FNXC:ProjectLifecycle 2026-06-28-12:00:
+   * Removing a project from the central registry does NOT delete task data.
+   * The central.projects row is removed (cascading to project_health,
+   * central_activity_log, and project_node_path_mappings via FK onDelete
+   * cascade), but project.tasks has no FK to central.projects — tasks survive
+   * unregister so the project can be re-added with the same ID and its task
+   * history is immediately visible. This is a deliberate data-preservation
+   * contract, not an oversight.
    *
    * @param id — Project ID to unregister
    */
@@ -484,6 +586,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     const project = await this.getProject(id);
     if (!project) {
       return; // Idempotent
+    }
+
+    if (this.backendMode) {
+      await asyncCentralCore.deleteProject(this.backendHandle, id);
+      this.emit("project:unregistered", id);
+      return;
     }
 
     // Delete will cascade to health and activity log
@@ -501,6 +609,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async getProject(id: string): Promise<RegisteredProject | undefined> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getProject(this.backendHandle, id);
+    }
+
+    if (!this.syncDbAvailable) return undefined;
 
     const row = this.db!.prepare("SELECT * FROM projects WHERE id = ?").get(id) as
       | {
@@ -531,6 +645,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async getProjectByPath(path: string): Promise<RegisteredProject | undefined> {
     this.ensureInitialized();
 
+    if (this.backendMode) {
+      return asyncCentralCore.getProjectByPath(this.backendHandle, path);
+    }
+
+    if (!this.syncDbAvailable) return undefined;
+
     const row = this.db!.prepare("SELECT * FROM projects WHERE path = ?").get(path) as
       | {
           id: string;
@@ -558,6 +678,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async listProjects(): Promise<RegisteredProject[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.listProjects(this.backendHandle);
+    }
+
+    if (!this.syncDbAvailable) return [];
 
     const rows = this.db!.prepare("SELECT * FROM projects ORDER BY name").all() as Array<{
       id: string;
@@ -602,6 +728,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       createdAt: project.createdAt, // Ensure createdAt doesn't change
       updatedAt: now,
     };
+
+    if (this.backendMode) {
+      await asyncCentralCore.updateProject(this.asyncLayer!, id, updated, project.path);
+      this.emit("project:updated", updated);
+      return updated;
+    }
 
     this.db!.transaction(() => {
       this.db!.prepare(
@@ -702,6 +834,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async reconcileProjectStatuses(): Promise<Array<{ projectId: string; previousStatus: string }>> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.reconcileStaleProjectStatuses(this.asyncLayer!);
+    }
 
     const staleProjects = this.db!.prepare(
       "SELECT id, status FROM projects WHERE status = ?"
@@ -807,6 +943,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       updatedAt: now,
     };
 
+    if (this.backendMode) {
+      await asyncCentralCore.insertNode(this.backendHandle, node);
+      this.emit("node:registered", node);
+      return node;
+    }
+
     this.db!.prepare(
       `INSERT INTO nodes (id, name, type, url, apiKey, status, capabilities, dockerConfig, maxConcurrent, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -870,6 +1012,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       updatedAt: now,
     };
 
+    if (this.backendMode) {
+      await asyncCentralCore.insertGossipPeer(this.backendHandle, node);
+      this.emit("node:registered", node);
+      return node;
+    }
+
     this.db!.prepare(
       `INSERT INTO nodes (id, name, type, url, status, capabilities, systemMetrics, maxConcurrent, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -907,6 +1055,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
+
+    if (this.backendMode) {
+      await asyncCentralCore.clearProjectNodeAssignments(this.backendHandle, id, now);
+      await asyncCentralCore.deleteNode(this.backendHandle, id);
+      this.emit("node:unregistered", id);
+      return;
+    }
+
     this.db!.transaction(() => {
       this.db!.prepare("UPDATE projects SET nodeId = NULL, updatedAt = ? WHERE nodeId = ?").run(now, id);
       this.db!.prepare("DELETE FROM nodes WHERE id = ?").run(id);
@@ -921,6 +1077,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async getNode(id: string): Promise<NodeConfig | undefined> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getNode(this.backendHandle, id);
+    }
 
     const row = this.db!.prepare("SELECT * FROM nodes WHERE id = ?").get(id) as
       | {
@@ -952,6 +1112,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async getNodeByName(name: string): Promise<NodeConfig | undefined> {
     this.ensureInitialized();
 
+    if (this.backendMode) {
+      return asyncCentralCore.getNodeByName(this.backendHandle, name);
+    }
+
     const row = this.db!.prepare("SELECT * FROM nodes WHERE name = ?").get(name) as
       | {
           id: string;
@@ -981,6 +1145,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async listNodes(): Promise<NodeConfig[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.listNodes(this.backendHandle);
+    }
+
+    if (!this.syncDbAvailable) return [];
 
     const rows = this.db!.prepare("SELECT * FROM nodes ORDER BY name").all() as Array<{
       id: string;
@@ -1053,6 +1223,26 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
     if (updated.type === "local" && (updated.url || updated.apiKey)) {
       throw new Error("Local nodes must not include url or apiKey");
+    }
+
+    if (this.backendMode) {
+      await asyncCentralCore.updateNodeColumns(this.backendHandle, id, {
+        name: updated.name,
+        type: updated.type,
+        url: updated.url ?? null,
+        apiKey: updated.apiKey ?? null,
+        status: updated.status,
+        capabilities: updated.capabilities ?? null,
+        systemMetrics: updated.systemMetrics ?? null,
+        knownPeers: updated.knownPeers ?? null,
+        versionInfo: updated.versionInfo ?? null,
+        pluginVersions: updated.pluginVersions ?? null,
+        dockerConfig: updated.dockerConfig ?? null,
+        maxConcurrent: updated.maxConcurrent,
+        updatedAt: updated.updatedAt,
+      });
+      this.emit("node:updated", updated);
+      return updated;
     }
 
     this.db!.prepare(
@@ -1131,6 +1321,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       updatedAt: now,
     };
 
+    if (this.backendMode) {
+      await asyncCentralCore.insertManagedDockerNode(this.backendHandle, node);
+      return node;
+    }
+
     this.db!.prepare(
       `INSERT INTO managedDockerNodes (
         id, nodeId, name, imageName, imageTag, containerId, status,
@@ -1168,6 +1363,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async getManagedDockerNode(id: string): Promise<ManagedDockerNode | undefined> {
     this.ensureInitialized();
 
+    if (this.backendMode) {
+      return asyncCentralCore.getManagedDockerNode(this.backendHandle, id);
+    }
+
     const row = this.db!.prepare("SELECT * FROM managedDockerNodes WHERE id = ?").get(id) as
       | Parameters<CentralCore["rowToManagedDockerNode"]>[0]
       | undefined;
@@ -1181,6 +1380,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async getManagedDockerNodeByName(name: string): Promise<ManagedDockerNode | undefined> {
     this.ensureInitialized();
 
+    if (this.backendMode) {
+      return asyncCentralCore.getManagedDockerNodeByName(this.backendHandle, name);
+    }
+
     const row = this.db!.prepare("SELECT * FROM managedDockerNodes WHERE name = ?").get(name) as
       | Parameters<CentralCore["rowToManagedDockerNode"]>[0]
       | undefined;
@@ -1193,6 +1396,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async listManagedDockerNodes(): Promise<ManagedDockerNode[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.listManagedDockerNodes(this.backendHandle);
+    }
 
     const rows = this.db!.prepare("SELECT * FROM managedDockerNodes ORDER BY name").all() as Array<
       Parameters<CentralCore["rowToManagedDockerNode"]>[0]
@@ -1231,6 +1438,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       if (existingByName && existingByName.id !== id) {
         throw new Error(`Managed Docker node already exists with name: ${updated.name}`);
       }
+    }
+
+    if (this.backendMode) {
+      await asyncCentralCore.updateManagedDockerNodeRow(this.backendHandle, id, updated);
+      return updated;
     }
 
     this.db!.prepare(
@@ -1281,6 +1493,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async deleteManagedDockerNode(id: string): Promise<void> {
     this.ensureInitialized();
+    if (this.backendMode) {
+      await asyncCentralCore.deleteManagedDockerNode(this.backendHandle, id);
+      return;
+    }
     this.db!.prepare("DELETE FROM managedDockerNodes WHERE id = ?").run(id);
     this.db!.bumpLastModified();
   }
@@ -1343,10 +1559,17 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
         updatedAt: now,
       };
 
-      this.db!
-        .prepare("UPDATE nodes SET status = ?, updatedAt = ? WHERE id = ?")
-        .run(nextStatus, now, id);
-      this.db!.bumpLastModified();
+      if (this.backendMode) {
+        await asyncCentralCore.updateNodeColumns(this.backendHandle, id, {
+          status: nextStatus,
+          updatedAt: now,
+        });
+      } else {
+        this.db!
+          .prepare("UPDATE nodes SET status = ?, updatedAt = ? WHERE id = ?")
+          .run(nextStatus, now, id);
+        this.db!.bumpLastModified();
+      }
       this.emit("node:health:changed", updated);
     }
 
@@ -1365,11 +1588,18 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
-    this.db!
-      .prepare("UPDATE nodes SET systemMetrics = ?, updatedAt = ? WHERE id = ?")
-      .run(toJsonNullable(metrics), now, id);
+    if (this.backendMode) {
+      await asyncCentralCore.updateNodeColumns(this.backendHandle, id, {
+        systemMetrics: metrics,
+        updatedAt: now,
+      });
+    } else {
+      this.db!
+        .prepare("UPDATE nodes SET systemMetrics = ?, updatedAt = ? WHERE id = ?")
+        .run(toJsonNullable(metrics), now, id);
 
-    this.db!.bumpLastModified();
+      this.db!.bumpLastModified();
+    }
 
     const updated = await this.getNode(id);
     if (!updated) {
@@ -1390,6 +1620,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async listPeers(nodeId: string): Promise<PeerNode[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.listPeers(this.backendHandle, nodeId);
+    }
 
     const rows = this.db!
       .prepare("SELECT * FROM peerNodes WHERE nodeId = ? ORDER BY name")
@@ -1424,6 +1658,35 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
+
+    if (this.backendMode) {
+      await asyncCentralCore.upsertPeerNode(this.asyncLayer!, {
+        nodeId: input.nodeId,
+        peerNodeId: input.peerNodeId,
+        name: input.name,
+        url: input.url,
+        now,
+        existingKnownPeers: node.knownPeers ?? [],
+      });
+
+      const peer = await asyncCentralCore.getPeer(this.backendHandle, input.nodeId, input.peerNodeId);
+      if (!peer) {
+        throw new Error(
+          `Failed to load peer node after registration: ${input.nodeId}/${input.peerNodeId}`,
+        );
+      }
+      this.emit("mesh:peer:added", { nodeId: input.nodeId, peer });
+
+      const updatedNode = await this.getNode(input.nodeId);
+      if (updatedNode) {
+        this.emit("node:updated", updatedNode);
+      }
+
+      const state = await this.getMeshState(input.nodeId);
+      this.emit("mesh:state:changed", { nodeId: input.nodeId, state });
+
+      return peer;
+    }
 
     this.db!.transaction(() => {
       this.db!
@@ -1505,6 +1768,26 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
     const now = new Date().toISOString();
 
+    if (this.backendMode) {
+      await asyncCentralCore.deletePeerNode(
+        this.asyncLayer!,
+        nodeId,
+        peerNodeId,
+        node.knownPeers ?? [],
+        now,
+      );
+      this.emit("mesh:peer:removed", { nodeId, peerNodeId });
+
+      const updatedNode = await this.getNode(nodeId);
+      if (updatedNode) {
+        this.emit("node:updated", updatedNode);
+      }
+
+      const state = await this.getMeshState(nodeId);
+      this.emit("mesh:state:changed", { nodeId, state });
+      return;
+    }
+
     this.db!.transaction(() => {
       this.db!.prepare("DELETE FROM peerNodes WHERE nodeId = ? AND peerNodeId = ?").run(nodeId, peerNodeId);
 
@@ -1585,6 +1868,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async recordMeshSnapshot(input: MeshSnapshotRecordInput): Promise<MeshSnapshotRecord> {
     this.ensureInitialized();
     const now = new Date().toISOString();
+    if (this.backendMode) {
+      return asyncCentralCore.recordMeshSnapshotRow(this.backendHandle, input, now);
+    }
     this.db!.prepare(
       `INSERT INTO meshSharedSnapshots (nodeId, projectId, scope, payload, snapshotVersion, capturedAt, sourceNodeId, sourceRunId, staleAfter, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1614,6 +1900,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   async getLatestMeshSnapshot(query: MeshSnapshotQuery): Promise<MeshSnapshotRecord | null> {
     this.ensureInitialized();
+    if (this.backendMode) {
+      return asyncCentralCore.getLatestMeshSnapshotRow(this.backendHandle, query);
+    }
     const row = this.db!.prepare(
       `SELECT * FROM meshSharedSnapshots WHERE nodeId = ? AND projectId IS ? AND scope = ?`
     ).get(query.nodeId, query.projectId ?? null, query.scope) as {
@@ -1638,6 +1927,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     this.ensureInitialized();
     const now = new Date().toISOString();
     const id = `mq_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+    if (this.backendMode) {
+      await asyncCentralCore.enqueueMeshWriteRow(this.backendHandle, id, input, now);
+      return (await this.listPendingMeshWrites({ targetNodeId: input.targetNodeId })).find((entry) => entry.id === id)!;
+    }
     this.db!.prepare(
       `INSERT INTO meshWriteQueue (id, originNodeId, targetNodeId, projectId, scope, entityType, entityId, operation, payload, intentVersion, status, attemptCount, createdAt, updatedAt)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)`
@@ -1661,6 +1954,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   async listPendingMeshWrites(filter: MeshWriteQueueFilter = {}): Promise<MeshWriteQueueEntry[]> {
     this.ensureInitialized();
+    if (this.backendMode) {
+      return asyncCentralCore.listPendingMeshWritesRow(this.backendHandle, filter);
+    }
     const conditions: string[] = [];
     const values: Array<string> = [];
     if (filter.originNodeId) { conditions.push("originNodeId = ?"); values.push(filter.originNodeId); }
@@ -1676,6 +1972,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async markMeshWriteReplayStarted(id: string): Promise<MeshWriteQueueEntry> {
     this.ensureInitialized();
     const now = new Date().toISOString();
+    if (this.backendMode) {
+      await asyncCentralCore.markMeshWriteReplayStartedRow(this.backendHandle, id, now);
+      return asyncCentralCore.getMeshWriteQueueEntryById(this.backendHandle, id);
+    }
     this.db!.prepare(
       `UPDATE meshWriteQueue SET status = 'replaying', attemptCount = attemptCount + 1, lastAttemptAt = ?, updatedAt = ? WHERE id = ?`
     ).run(now, now, id);
@@ -1686,6 +1986,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async markMeshWriteApplied(id: string, result: MeshWriteApplyResult): Promise<MeshWriteQueueEntry> {
     this.ensureInitialized();
     const now = new Date().toISOString();
+    if (this.backendMode) {
+      await asyncCentralCore.markMeshWriteAppliedRow(this.backendHandle, id, result.appliedAt ?? null, now);
+      return asyncCentralCore.getMeshWriteQueueEntryById(this.backendHandle, id);
+    }
     this.db!.prepare(
       `UPDATE meshWriteQueue SET status = 'applied', appliedAt = ?, updatedAt = ? WHERE id = ?`
     ).run(result.appliedAt ?? now, now, id);
@@ -1696,6 +2000,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async markMeshWriteFailed(id: string, result: MeshWriteFailureResult): Promise<MeshWriteQueueEntry> {
     this.ensureInitialized();
     const now = new Date().toISOString();
+    if (this.backendMode) {
+      await asyncCentralCore.markMeshWriteFailedRow(this.backendHandle, id, result.lastError, now);
+      return asyncCentralCore.getMeshWriteQueueEntryById(this.backendHandle, id);
+    }
     this.db!.prepare(
       `UPDATE meshWriteQueue SET status = 'failed', lastError = ?, updatedAt = ? WHERE id = ?`
     ).run(result.lastError, now, id);
@@ -1707,6 +2015,20 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     this.ensureInitialized();
     const snapshot = await this.getLatestMeshSnapshot(query);
     const now = Date.now();
+    if (this.backendMode) {
+      const counts = await asyncCentralCore.getMeshDegradedReadCounts(this.backendHandle);
+      const asOf = snapshot?.capturedAt ?? new Date(now).toISOString();
+      return {
+        mode: snapshot ? "degraded" : "fresh",
+        asOf,
+        sourceNodeId: snapshot?.sourceNodeId ?? null,
+        snapshotVersion: snapshot?.snapshotVersion ?? null,
+        stalenessMs: Math.max(0, now - Date.parse(asOf)),
+        queueDepth: counts.queueDepth,
+        pendingWriteCount: counts.pendingWriteCount,
+        failedWriteCount: counts.failedWriteCount,
+      };
+    }
     const counts = this.db!.prepare(
       `SELECT
         SUM(CASE WHEN status IN ('pending','replaying','failed') THEN 1 ELSE 0 END) AS queueDepth,
@@ -1735,6 +2057,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   private getMeshWriteQueueEntryById(id: string): MeshWriteQueueEntry {
+    if (this.backendMode) {
+      throw new Error("getMeshWriteQueueEntryById(sync) must not be called in backend mode");
+    }
     const row = this.db!.prepare(`SELECT * FROM meshWriteQueue WHERE id = ?`).get(id) as
       | { id: string; originNodeId: string; targetNodeId: string; projectId: string | null; scope: string; entityType: string; entityId: string; operation: string; payload: string; intentVersion: string; status: MeshWriteQueueEntry["status"]; attemptCount: number; lastAttemptAt: string | null; lastError: string | null; createdAt: string; updatedAt: string; appliedAt: string | null }
       | undefined;
@@ -1755,7 +2080,7 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       throw new Error("Local node not found");
     }
 
-    const metrics = await collectSystemMetrics(this.db!.getPath());
+    const metrics = await collectSystemMetrics(this.getDatabasePath());
     await this.updateNodeMetrics(localNode.id, metrics);
 
     return this.getMeshState(localNode.id);
@@ -2032,8 +2357,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
-    this.db!.prepare("UPDATE projects SET nodeId = ?, updatedAt = ? WHERE id = ?").run(node.id, now, projectId);
-    this.db!.bumpLastModified();
+    if (this.backendMode) {
+      await asyncCentralCore.assignProjectToNode(this.backendHandle, projectId, node.id, now);
+    } else {
+      this.db!.prepare("UPDATE projects SET nodeId = ?, updatedAt = ? WHERE id = ?").run(node.id, now, projectId);
+      this.db!.bumpLastModified();
+    }
 
     const updated: RegisteredProject = {
       ...project,
@@ -2056,8 +2385,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
-    this.db!.prepare("UPDATE projects SET nodeId = NULL, updatedAt = ? WHERE id = ?").run(now, projectId);
-    this.db!.bumpLastModified();
+    if (this.backendMode) {
+      await asyncCentralCore.unassignProjectFromNode(this.backendHandle, projectId, now);
+    } else {
+      this.db!.prepare("UPDATE projects SET nodeId = NULL, updatedAt = ? WHERE id = ?").run(now, projectId);
+      this.db!.bumpLastModified();
+    }
 
     const updated: RegisteredProject = {
       ...project,
@@ -2079,13 +2412,22 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
-    this.db!
-      .prepare(
-        `INSERT INTO projectNodePathMappings (projectId, nodeId, path, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(input.projectId, input.nodeId, input.path, now, now);
-    this.db!.bumpLastModified();
+    if (this.backendMode) {
+      await asyncCentralCore.insertProjectNodePathMapping(this.backendHandle, {
+        projectId: input.projectId,
+        nodeId: input.nodeId,
+        path: input.path,
+        now,
+      });
+    } else {
+      this.db!
+        .prepare(
+          `INSERT INTO projectNodePathMappings (projectId, nodeId, path, createdAt, updatedAt)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(input.projectId, input.nodeId, input.path, now, now);
+      this.db!.bumpLastModified();
+    }
 
     return {
       projectId: input.projectId,
@@ -2107,14 +2449,23 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     const now = new Date().toISOString();
-    this.db!
-      .prepare(
-        `UPDATE projectNodePathMappings
-         SET path = ?, updatedAt = ?
-         WHERE projectId = ? AND nodeId = ?`
-      )
-      .run(input.path, now, input.projectId, input.nodeId);
-    this.db!.bumpLastModified();
+    if (this.backendMode) {
+      await asyncCentralCore.updateProjectNodePathMappingRow(this.backendHandle, {
+        projectId: input.projectId,
+        nodeId: input.nodeId,
+        path: input.path,
+        now,
+      });
+    } else {
+      this.db!
+        .prepare(
+          `UPDATE projectNodePathMappings
+           SET path = ?, updatedAt = ?
+           WHERE projectId = ? AND nodeId = ?`
+        )
+        .run(input.path, now, input.projectId, input.nodeId);
+      this.db!.bumpLastModified();
+    }
 
     return {
       ...existing,
@@ -2128,6 +2479,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     nodeId: string,
   ): Promise<ProjectNodePathMapping | undefined> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getProjectNodePathMapping(this.backendHandle, projectId, nodeId);
+    }
 
     const row = this.db!
       .prepare("SELECT * FROM projectNodePathMappings WHERE projectId = ? AND nodeId = ?")
@@ -2146,6 +2501,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   async getProjectNodePath(projectId: string, nodeId: string): Promise<string | undefined> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getProjectNodePath(this.backendHandle, projectId, nodeId);
+    }
 
     const row = this.db!
       .prepare("SELECT path FROM projectNodePathMappings WHERE projectId = ? AND nodeId = ?")
@@ -2193,6 +2552,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     nodeId?: string;
   }): Promise<ProjectNodePathMapping[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.listProjectNodePathMappings(this.backendHandle, filters);
+    }
 
     if (filters?.projectId && filters?.nodeId) {
       const row = await this.getProjectNodePathMapping(filters.projectId, filters.nodeId);
@@ -2284,6 +2647,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       throw new Error("Node ID is required");
     }
 
+    if (this.backendMode) {
+      await asyncCentralCore.deleteProjectNodePathMapping(this.backendHandle, projectId, nodeId);
+      return;
+    }
+
     const result = this.db!
       .prepare("DELETE FROM projectNodePathMappings WHERE projectId = ? AND nodeId = ?")
       .run(projectId, nodeId) as { changes?: number };
@@ -2320,6 +2688,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       projectId, // Ensure projectId doesn't change
       updatedAt: now,
     };
+
+    if (this.backendMode) {
+      await asyncCentralCore.updateProjectHealthRow(this.backendHandle, projectId, updated);
+      this.emit("project:health:changed", updated);
+      return updated;
+    }
 
     this.db!.prepare(
       `UPDATE projectHealth SET
@@ -2361,6 +2735,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async getProjectHealth(projectId: string): Promise<ProjectHealth | undefined> {
     this.ensureInitialized();
 
+    if (this.backendMode) {
+      return asyncCentralCore.getProjectHealth(this.backendHandle, projectId);
+    }
+
     const row = this.db!.prepare("SELECT * FROM projectHealth WHERE projectId = ?").get(projectId) as
       | {
           projectId: string;
@@ -2389,6 +2767,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async listAllHealth(): Promise<ProjectHealth[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.listAllHealth(this.backendHandle);
+    }
 
     const rows = this.db!.prepare("SELECT * FROM projectHealth").all() as Array<{
       projectId: string;
@@ -2438,6 +2820,21 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       averageDuration = health.averageTaskDurationMs;
     }
 
+    if (this.backendMode) {
+      await asyncCentralCore.recordTaskCompletionRow(this.backendHandle, projectId, {
+        totalTasksCompleted: totalCompleted,
+        totalTasksFailed: totalFailed,
+        averageTaskDurationMs: averageDuration ?? null,
+        lastActivityAt: now,
+        updatedAt: now,
+      });
+      const updated = await this.getProjectHealth(projectId);
+      if (updated) {
+        this.emit("project:health:changed", updated);
+      }
+      return;
+    }
+
     this.db!.prepare(
       `UPDATE projectHealth SET
         totalTasksCompleted = ?,
@@ -2472,6 +2869,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       ...entry,
       id: randomUUID(),
     };
+
+    if (this.backendMode) {
+      await asyncCentralCore.logActivityRow(this.asyncLayer!, fullEntry);
+      this.emit("activity:logged", fullEntry);
+      return fullEntry;
+    }
 
     this.db!.transaction(() => {
       // Insert activity log entry
@@ -2514,6 +2917,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     types?: ActivityEventType[];
   }): Promise<CentralActivityLogEntry[]> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getRecentActivity(this.backendHandle, options);
+    }
 
     const limit = options?.limit ?? 100;
     const conditions: string[] = [];
@@ -2561,6 +2968,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   async getActivityCount(projectId?: string): Promise<number> {
     this.ensureInitialized();
 
+    if (this.backendMode) {
+      return asyncCentralCore.getActivityCount(this.backendHandle, projectId);
+    }
+
     let sql = "SELECT COUNT(*) as count FROM centralActivityLog";
     const params: string[] = [];
 
@@ -2586,6 +2997,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
     const cutoff = cutoffDate.toISOString();
 
+    if (this.backendMode) {
+      return asyncCentralCore.cleanupOldActivity(this.backendHandle, cutoff);
+    }
+
     const result = this.db!.prepare("DELETE FROM centralActivityLog WHERE timestamp < ?").run(cutoff);
     const deletedCount = typeof result.changes === "bigint" ? Number(result.changes) : (result.changes ?? 0);
 
@@ -2598,6 +3013,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
 
   async getDefaultProjectId(): Promise<string | undefined> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getDefaultProjectId(this.backendHandle);
+    }
+
+    if (!this.syncDbAvailable) return undefined;
 
     const row = this.db!.prepare("SELECT defaultProjectId FROM centralSettings WHERE id = 1").get() as
       | { defaultProjectId: string | null }
@@ -2616,6 +3037,11 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       }
     }
 
+    if (this.backendMode) {
+      await asyncCentralCore.setDefaultProjectId(this.backendHandle, projectId, new Date().toISOString());
+      return;
+    }
+
     this.db!
       .prepare("UPDATE centralSettings SET defaultProjectId = ?, updatedAt = ? WHERE id = 1")
       .run(projectId, new Date().toISOString());
@@ -2630,6 +3056,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async getGlobalConcurrencyState(): Promise<GlobalConcurrencyState> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      return asyncCentralCore.getGlobalConcurrencyState(this.backendHandle);
+    }
 
     const row = this.db!.prepare("SELECT * FROM globalConcurrency WHERE id = 1").get() as {
       globalMaxConcurrent: number;
@@ -2656,7 +3086,8 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   /**
-   * Read live running-agent counts through the side-effect-safe host seam.
+   * FNXC:GlobalConcurrencyControls 2026-06-26-17:22:
+   * Live running-agent counts from the registered side-effect-safe source.
    * Falls back to persisted concurrency/health bookkeeping when no host source
    * is registered so headless core callers keep their previous semantics.
    */
@@ -2702,6 +3133,16 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       ...updates,
     };
 
+    if (this.backendMode) {
+      await asyncCentralCore.updateGlobalConcurrencyRow(
+        this.backendHandle,
+        updated,
+        new Date().toISOString(),
+      );
+      this.emit("concurrency:changed", updated);
+      return updated;
+    }
+
     this.db!.prepare(
       `UPDATE globalConcurrency SET
         globalMaxConcurrent = ?,
@@ -2737,6 +3178,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     }
 
     let acquired = false;
+
+    if (this.backendMode) {
+      acquired = await asyncCentralCore.acquireGlobalSlotAtomic(this.asyncLayer!, projectId);
+      const state = await this.getGlobalConcurrencyState();
+      this.emit("concurrency:changed", state);
+      return acquired;
+    }
 
     this.db!.transaction(() => {
       const row = this.db!.prepare("SELECT * FROM globalConcurrency WHERE id = 1").get() as {
@@ -2787,6 +3235,13 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       throw new Error(`Project not found: ${projectId}`);
     }
 
+    if (this.backendMode) {
+      await asyncCentralCore.releaseGlobalSlotAtomic(this.asyncLayer!, projectId);
+      const state = await this.getGlobalConcurrencyState();
+      this.emit("concurrency:changed", state);
+      return;
+    }
+
     this.db!.transaction(() => {
       // Decrement global active count (don't go below 0)
       this.db!.prepare(
@@ -2817,6 +3272,12 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    * @returns Absolute path to fusion-central.db
    */
   getDatabasePath(): string {
+    // FNXC:CentralCore 2026-06-26-12:30: In backend mode there is no SQLite
+    // file; return the logical global dir path. Callers that need the actual
+    // backend should use the async layer.
+    if (this.backendMode) {
+      return this.globalDir;
+    }
     return this.db?.getPath() ?? join(this.globalDir, "fusion-central.db");
   }
 
@@ -2836,6 +3297,14 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
    */
   async getStats(): Promise<{ projectCount: number; totalTasksCompleted: number; dbSizeBytes: number }> {
     this.ensureInitialized();
+
+    if (this.backendMode) {
+      const { projectCount, totalTasksCompleted } = await asyncCentralCore.getStats(this.backendHandle);
+      // dbSizeBytes is not meaningful for a shared PostgreSQL cluster; report 0
+      // (the sync path statSync'd the SQLite file). Callers that need cluster
+      // stats should query PostgreSQL's pg_database_size.
+      return { projectCount, totalTasksCompleted, dbSizeBytes: 0 };
+    }
 
     const projectCount = (
       this.db!.prepare("SELECT COUNT(*) as count FROM projects").get() as { count: number }
@@ -2896,9 +3365,43 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   private ensureInitialized(): void {
-    if (!this.initialized || !this.db) {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:55:
+     * The legacy SQLite CentralDatabase path is removed (VAL-REMOVAL-005).
+     * In the runtime serve flow, CentralCore is init()'d before the backend
+     * AsyncDataLayer is resolved; attachBackendLayer() injects it later
+     * (InProcessRuntime.start). Between init() and attachBackendLayer(),
+     * this.initialized is true but this.db is null and backendMode is false.
+     * We no longer treat "no db && not backend" as uninitialized — data
+     * methods that need a db check this.db themselves and degrade gracefully.
+     */
+    if (!this.initialized) {
       throw new Error("CentralCore not initialized. Call init() first.");
     }
+  }
+
+  /*
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:55:
+   * True when the legacy sync SQLite CentralDatabase is available for use.
+   * After VAL-REMOVAL-005, this is false in the pre-attach window (db is null,
+   * not yet in backend mode). Read methods check this to degrade gracefully
+   * (return empty/undefined) instead of throwing a null-reference.
+   */
+  private get syncDbAvailable(): boolean {
+    return this.db !== null;
+  }
+
+  /**
+   * FNXC:CentralCore 2026-06-26-12:30:
+   * The query handle in backend mode (the runtime Drizzle instance). Throws
+   * if called outside backend mode. CentralCore methods use this to delegate
+   * to the async-central-core helpers.
+   */
+  private get backendHandle(): AsyncDataLayer["db"] {
+    if (!this.asyncLayer) {
+      throw new Error("backendHandle is only available in backend mode (asyncLayer injected)");
+    }
+    return this.asyncLayer.db;
   }
 
   private async assertProjectNodeMappingTargetsExist(projectId: string, nodeId: string): Promise<void> {
@@ -3056,6 +3559,9 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
   }
 
   private async getLocalNode(): Promise<NodeConfig | undefined> {
+    if (this.backendMode) {
+      return asyncCentralCore.getLocalNode(this.backendHandle);
+    }
     const row = this.db!
       .prepare("SELECT * FROM nodes WHERE type = 'local' ORDER BY createdAt ASC LIMIT 1")
       .get() as
@@ -3308,6 +3814,21 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       pluginVersions: versionInfo.pluginVersions,
       lastSyncedAt: versionInfo.lastSyncedAt ?? now,
     };
+
+    if (this.backendMode) {
+      await asyncCentralCore.updateNodeColumns(this.backendHandle, id, {
+        versionInfo: fullVersionInfo,
+        pluginVersions: fullVersionInfo.pluginVersions,
+        updatedAt: now,
+      });
+      const updated = await this.getNode(id);
+      if (!updated) {
+        throw new Error(`Node not found after update: ${id}`);
+      }
+      this.emit("node:version:updated", { nodeId: id, versionInfo: fullVersionInfo });
+      this.emit("node:updated", updated);
+      return updated;
+    }
 
     this.db!.prepare(
       `UPDATE nodes SET
@@ -3775,6 +4296,10 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
       throw new Error("Local node not found");
     }
 
+    if (this.backendMode) {
+      return asyncCentralCore.getSettingsSyncStateRow(this.backendHandle, localNode.id, remoteNodeId);
+    }
+
     const row = this.db!.prepare(
       "SELECT * FROM settingsSyncState WHERE nodeId = ? AND remoteNodeId = ?"
     ).get(localNode.id, remoteNodeId) as
@@ -3822,6 +4347,30 @@ export class CentralCore extends EventEmitter<CentralCoreEvents> {
     const lastSyncedAt = updates.lastSyncedAt ?? existing?.lastSyncedAt ?? null;
     const localChecksum = updates.localChecksum ?? existing?.localChecksum ?? null;
     const remoteChecksum = updates.remoteChecksum ?? existing?.remoteChecksum ?? null;
+
+    if (this.backendMode) {
+      await asyncCentralCore.upsertSettingsSyncStateRow(this.backendHandle, {
+        nodeId: localNode.id,
+        remoteNodeId,
+        lastSyncedAt,
+        localChecksum,
+        remoteChecksum,
+        syncCount,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      });
+
+      const updated = await this.getSettingsSyncState(remoteNodeId);
+      if (!updated) {
+        throw new Error("Failed to retrieve updated settings sync state");
+      }
+      this.emit("settings:sync:completed", {
+        nodeId: localNode.id,
+        remoteNodeId,
+        state: updated,
+      });
+      return updated;
+    }
 
     if (existing) {
       // Update existing row

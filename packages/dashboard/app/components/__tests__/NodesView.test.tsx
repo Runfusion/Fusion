@@ -7,6 +7,7 @@ import { useProjects } from "../../hooks/useProjects";
 import { useNodeSettingsSync } from "../../hooks/useNodeSettingsSync";
 import { useManagedDockerNodes } from "../../hooks/useManagedDockerNodes";
 import { useMeshState } from "../../hooks/useMeshState";
+import { useMeshEngines } from "../../hooks/useMeshEngines";
 import type { NodeSettingsSyncStatus } from "../../api-node";
 
 vi.mock("../../hooks/useNodes", () => ({
@@ -49,11 +50,16 @@ vi.mock("../../hooks/useMeshState", () => ({
   useMeshState: vi.fn(),
 }));
 
+vi.mock("../../hooks/useMeshEngines", () => ({
+  useMeshEngines: vi.fn(),
+}));
+
 const mockUseNodes = vi.mocked(useNodes);
 const mockUseProjects = vi.mocked(useProjects);
 const mockUseNodeSettingsSync = vi.mocked(useNodeSettingsSync);
 const mockUseManagedDockerNodes = vi.mocked(useManagedDockerNodes);
 const mockUseMeshState = vi.mocked(useMeshState);
+const mockUseMeshEngines = vi.mocked(useMeshEngines);
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
   return {
@@ -143,6 +149,13 @@ beforeEach(() => {
 
   mockUseMeshState.mockReturnValue({
     meshState: [],
+    loading: false,
+    error: null,
+    refresh: vi.fn().mockResolvedValue(undefined),
+  });
+
+  mockUseMeshEngines.mockReturnValue({
+    engines: [],
     loading: false,
     error: null,
     refresh: vi.fn().mockResolvedValue(undefined),
@@ -351,6 +364,73 @@ describe("NodesView", () => {
 
     fireEvent.click(closeButton);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  /*
+   * FNXC:MeshSharedPg 2026-06-25-00:00:
+   * NodesView must pass the active engine connections (read from shared PG via
+   * GET /api/mesh/engines) into <MeshTopology engines=...> so the topology view
+   * renders both the peer graph and the live engine runtime status.
+   */
+  it("passes active engine connections from useMeshEngines into MeshTopology", () => {
+    mockUseNodes.mockReturnValue(makeUseNodesResult({
+      nodes: [makeNode({ id: "node-1", name: "Alpha", type: "local", status: "online" })],
+    }));
+    mockUseMeshState.mockReturnValue({
+      meshState: [
+        { nodeId: "node-1", nodeName: "Alpha", nodeUrl: undefined, nodeType: "local", status: "online", metrics: null, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z", knownPeers: [] },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockUseMeshEngines.mockReturnValue({
+      engines: [
+        {
+          projectId: "proj_1",
+          projectName: "Engine One",
+          runtimeStatus: "active",
+          inFlightTasks: 3,
+          activeAgents: 2,
+          lastActivityAt: "2026-06-25T00:00:00.000Z",
+        },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
+
+    // MeshTopology renders the engines panel when engines are provided.
+    const enginesPanel = document.querySelector(".mesh-topology__engines");
+    expect(enginesPanel).toBeInTheDocument();
+    expect(screen.getByText("Engine One")).toBeInTheDocument();
+    expect(screen.getByText("3 tasks")).toBeInTheDocument();
+  });
+
+  it("does not render the engines panel when no engine connections are reported", () => {
+    mockUseNodes.mockReturnValue(makeUseNodesResult({
+      nodes: [makeNode({ id: "node-1", name: "Alpha", type: "local", status: "online" })],
+    }));
+    mockUseMeshState.mockReturnValue({
+      meshState: [
+        { nodeId: "node-1", nodeName: "Alpha", nodeUrl: undefined, nodeType: "local", status: "online", metrics: null, lastSeen: "2026-01-01T00:00:00.000Z", connectedAt: "2026-01-01T00:00:00.000Z", knownPeers: [] },
+      ],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockUseMeshEngines.mockReturnValue({
+      engines: [],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<NodesView addToast={vi.fn()} onClose={vi.fn()} />);
+
+    expect(document.querySelector(".mesh-topology__engines")).toBeNull();
   });
 
   describe("multi-node dashboard scenarios", () => {

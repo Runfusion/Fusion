@@ -103,17 +103,17 @@ export class ExperimentExecutor {
       ideas: input.ideas,
     };
 
-    const existing = this.options.store
-      .listSessions({ projectId: input.projectId })
+    const existing = (await this.options.store
+      .listSessions({ projectId: input.projectId }))
       .find((session) => session.name === input.name && ["active", "finalizing"].includes(session.status));
 
     if (existing) {
-      const result = this.options.store.startNewSegment(existing.id, configPayload);
+      const result = await this.options.store.startNewSegment(existing.id, configPayload);
       this.logger.log(`initExperiment: ${existing.id} mode=new-segment`);
       return { session: result.session, configRecord: result.record };
     }
 
-    const session = this.options.store.createSession({
+    const session = await this.options.store.createSession({
       name: input.name,
       projectId: input.projectId,
       metric: input.metric,
@@ -124,7 +124,7 @@ export class ExperimentExecutor {
       currentSegment: 1,
     });
 
-    const configRecord = this.options.store.appendRecord(session.id, {
+    const configRecord = await this.options.store.appendRecord(session.id, {
       type: "config",
       payload: configPayload,
       segment: session.currentSegment,
@@ -135,11 +135,11 @@ export class ExperimentExecutor {
   }
 
   async runExperiment(input: RunExperimentInput, opts?: { abortSignal?: AbortSignal }): Promise<RunExperimentResult> {
-    const session = this.options.store.getSession(input.sessionId);
+    const session = await this.options.store.getSession(input.sessionId);
     if (!session || session.status !== "active") throw new Error("Session not active");
 
-    const runsInSegment = this.options.store
-      .listRecords(input.sessionId, { segment: session.currentSegment, type: "run" })
+    const runsInSegment = (await this.options.store
+      .listRecords(input.sessionId, { segment: session.currentSegment, type: "run" }))
       .length;
     if (session.maxIterations !== undefined && runsInSegment >= session.maxIterations) {
       throw new ExperimentMaxIterationsError(`Session ${input.sessionId} reached max iterations`);
@@ -187,7 +187,7 @@ export class ExperimentExecutor {
   }
 
   async logExperiment(input: LogExperimentInput): Promise<{ runRecord: ExperimentSessionRecord; commit?: string; revertedTo?: string }> {
-    const session = this.options.store.getSession(input.sessionId);
+    const session = await this.options.store.getSession(input.sessionId);
     if (!session) throw new Error(`Experiment session not found: ${input.sessionId}`);
     if (!EXPERIMENT_RUN_OUTCOMES.includes(input.outcome)) throw new Error(`Invalid outcome: ${input.outcome}`);
     if (input.outcome === "keep" && !input.runResult.primaryMetric) throw new Error("keep outcome requires primary metric");
@@ -209,7 +209,7 @@ export class ExperimentExecutor {
       durationMs: input.runResult.durationMs,
     };
 
-    const runRecord = this.options.store.appendRecord(input.sessionId, {
+    const runRecord = await this.options.store.appendRecord(input.sessionId, {
       type: "run",
       payload,
       segment: session.currentSegment,
@@ -227,9 +227,9 @@ export class ExperimentExecutor {
         commitMessage: input.commitMessage,
       });
       commit = result.commit;
-      this.options.store.updateRecordPayload(runRecord.id, { commit });
-      this.options.store.setBestRun(input.sessionId, runRecord.id);
-      this.options.store.recordKept(input.sessionId, runRecord.id);
+      await this.options.store.updateRecordPayload(runRecord.id, { commit });
+      await this.options.store.setBestRun(input.sessionId, runRecord.id);
+      await this.options.store.recordKept(input.sessionId, runRecord.id);
     }
 
     if (["discard", "checks_failed", "errored"].includes(input.outcome) && input.baselineCommit && this.options.git) {
@@ -240,11 +240,11 @@ export class ExperimentExecutor {
     return { runRecord, commit, revertedTo };
   }
 
-  getStatus(sessionId: string): ExperimentExecutorStatus {
-    const session = this.options.store.getSession(sessionId);
+  async getStatus(sessionId: string): Promise<ExperimentExecutorStatus> {
+    const session = await this.options.store.getSession(sessionId);
     if (!session) throw new Error(`Experiment session not found: ${sessionId}`);
-    const runsInSegment = this.options.store
-      .listRecords(sessionId, { segment: session.currentSegment, type: "run" })
+    const runsInSegment = (await this.options.store
+      .listRecords(sessionId, { segment: session.currentSegment, type: "run" }))
       .length;
     const activeHandles = [...this.activeRuns.entries()]
       .filter(([, value]) => value.sessionId === sessionId)

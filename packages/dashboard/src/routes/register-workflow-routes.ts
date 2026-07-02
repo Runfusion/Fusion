@@ -231,7 +231,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
     const columns = (ir as { columns?: unknown })?.columns;
     if (!Array.isArray(columns) || !columns.some((c) => c?.agent?.agentId)) return;
 
-    const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+    const agentStore = new AgentStore({ rootDir: store.getFusionDir(), asyncLayer: store.getAsyncLayer() ?? undefined });
     await agentStore.init();
     const settings = await store.getSettings();
     try {
@@ -553,7 +553,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
         }
       }
       const projectId = store.getWorkflowSettingsProjectId();
-      const stored = store.updateWorkflowPromptOverrides(
+      const stored = await store.updateWorkflowPromptOverrides(
         workflowId,
         projectId,
         overrides as Record<string, string | null>,
@@ -899,7 +899,7 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
           );
         }
         if (Object.keys(importedPromptOverrides).length > 0) {
-          restoredPromptOverrides = store.updateWorkflowPromptOverrides(
+          restoredPromptOverrides = await store.updateWorkflowPromptOverrides(
             workflow.id,
             workflowProjectId,
             importedPromptOverrides,

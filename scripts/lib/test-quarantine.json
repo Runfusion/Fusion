@@ -1,10 +1,10 @@
 {
   "$comment": "Flaky-test quarantine ledger (deletion ratchet — see AGENTS.md 'Flaky tests: quarantine on sight' and docs/testing.md 'Quarantine ledger and the deletion ratchet'). A test observed failing without a corresponding real bug is quarantined ON SIGHT: add an entry here AND a matching one-line `exclude` entry in that package's vitest config, in the same commit. Every entry needs a non-empty `reason` (link the failing run) and a `quarantinedAt` date — the entry expires 14 days later, at which point the test file is DELETED unless someone rescues it with evidence it catches real regressions plus a root-cause fix (never appeasement). There is deliberately no loader module and no automation around this file: it is a dated record, the vitest config exclude is the mechanism, and the sweep is policy executed by whoever touches the suite.",
   "entries": [
-    {
-      "file": "packages/engine/src/__tests__/executor-pause.test.ts",
-      "reason": "FN-7239: stale post-cutover direct-dispatch StepSessionExecutor/legacy pause assertions fail after builtin:coding graph cutover; equivalent direct step-session, pause-abort graph, and graph rerun coverage remains active. Local targeted run: pnpm --filter @fusion/engine exec vitest run --project engine-default src/__tests__/workflow-graph-executor-retry-coding-workflow.test.ts src/__tests__/executor-pause.test.ts --silent=passed-only --reporter=dot (2026-06-29).",
-      "quarantinedAt": "2026-06-29"
-    }
+    { "file": "packages/dashboard/src/__tests__/project-store-resolver.test.ts", "reason": "SQLite-to-PG cutover: createTaskStoreForBackend tries to boot embedded PG without a temp dir; mock store uses removed SQLite path. Failing since Database class body deletion.", "quarantinedAt": "2026-06-28" },
+    { "file": "packages/dashboard/src/__tests__/routes-planning.test.ts", "reason": "SQLite-to-PG cutover: mock store exercises removed SQLite runtime. TypeError: Cannot read properties of undefined (reading 'servers') from MCP config mock drift.", "quarantinedAt": "2026-06-28" },
+    { "file": "packages/dashboard/src/__tests__/routes-auth.test.ts", "reason": "SQLite-to-PG cutover: heartbeat wake tests hit removed SQLite Database class via mock store.", "quarantinedAt": "2026-06-28" },
+    { "file": "packages/dashboard/src/__tests__/routes-automation.test.ts", "reason": "SQLite-to-PG cutover: mock store exercises removed SQLite runtime.", "quarantinedAt": "2026-06-28" },
+    { "file": "packages/dashboard/src/__tests__/routes-tasks.test.ts", "reason": "SQLite-to-PG cutover: mock store exercises removed SQLite runtime.", "quarantinedAt": "2026-06-28" }
   ]
 }

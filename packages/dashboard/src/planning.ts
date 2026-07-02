@@ -539,7 +539,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
     lockedByTab: null,
     lockedAt: null,
   };
-  _aiSessionStore.upsert(row);
+  _aiSessionStore.upsert(row).catch(() => { /* best-effort persistence */ });
 }
 
 /** Persist only thinking output (debounced). */
@@ -551,7 +551,7 @@ function persistThinking(sessionId: string, thinkingOutput: string): void {
 /** Remove session from persistence. */
 function unpersistSession(sessionId: string): void {
   if (!_aiSessionStore) return;
-  _aiSessionStore.delete(sessionId);
+  void _aiSessionStore.delete(sessionId);
 }
 
 /** Release in-memory planning runtime state while keeping persisted history. */
@@ -614,11 +614,11 @@ function buildSessionFromRow(row: AiSessionRow): Session {
   };
 }
 
-export function rehydrateFromStore(store: AiSessionStore): number {
+export async function rehydrateFromStore(store: AiSessionStore): Promise<number> {
   let rows: AiSessionRow[] = [];
 
   try {
-    rows = store.listRecoverable().filter((row) => row.type === "planning");
+    rows = (await store.listRecoverable()).filter((row) => row.type === "planning");
   } catch (error) {
     diagnostics.errorFromException("Failed to list recoverable sessions", error, { operation: "list-recoverable" });
     return 0;
@@ -1201,7 +1201,7 @@ export async function summarizeDraftTitle(
 ): Promise<string | null> {
   if (!_aiSessionStore) return null;
 
-  const row = _aiSessionStore.get(sessionId);
+  const row = await _aiSessionStore.get(sessionId);
   if (!row || row.type !== "planning" || row.status !== "draft") {
     return null;
   }
@@ -1231,12 +1231,12 @@ export async function summarizeDraftTitle(
 
   // Re-check status (not title) so a concurrent Start Planning or a later
   // edit-then-blur cycle doesn't overwrite a real generating/complete title.
-  const latest = _aiSessionStore.get(sessionId);
+  const latest = await _aiSessionStore.get(sessionId);
   if (!latest || latest.status !== "draft") {
     return latest?.title ?? null;
   }
 
-  _aiSessionStore.markDraftSummarized(sessionId, finalTitle, trimmed);
+  _aiSessionStore.markDraftSummarized(sessionId, finalTitle, trimmed).catch(() => { /* best-effort */ });
   const session = sessions.get(sessionId);
   if (session) {
     session.title = finalTitle;
@@ -1261,7 +1261,7 @@ export async function startExistingSession(
   // map entirely. Rebuild lazily from SQLite so persisted drafts can still be
   // started after a restart, and so updateDraft-only state survives.
   if (!session && _aiSessionStore) {
-    const row = _aiSessionStore.get(sessionId);
+    const row = await _aiSessionStore.get(sessionId);
     if (row && row.type === "planning") {
       try {
         session = buildSessionFromRow(row);
@@ -1291,7 +1291,7 @@ export async function startExistingSession(
   let persistedSummarizedFor: string | undefined;
   let cameFromDraft = false;
   if (_aiSessionStore) {
-    const row = _aiSessionStore.get(sessionId);
+    const row = await _aiSessionStore.get(sessionId);
     if (row) {
       cameFromDraft = row.status === "draft";
       const payload = safeParseJson<DraftInputPayload>(row.inputPayload, {});
@@ -2233,7 +2233,7 @@ export async function submitResponse(
   promptOverrides?: PromptOverrideMap,
   store?: TaskStore,
 ): Promise<PlanningResponse> {
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
@@ -2304,7 +2304,7 @@ export async function retrySession(
   promptOverrides?: PromptOverrideMap,
   store?: TaskStore,
 ): Promise<void> {
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
@@ -2312,7 +2312,7 @@ export async function retrySession(
   if (store && !session.store) session.store = store;
   if (rootDir && !session.rootDir) session.rootDir = rootDir;
 
-  const persisted = _aiSessionStore?.get(sessionId);
+  const persisted = _aiSessionStore ? await _aiSessionStore.get(sessionId) : null;
   if (persisted && persisted.type !== "planning") {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
@@ -2357,7 +2357,7 @@ export async function rewindSession(
   promptOverrides?: PromptOverrideMap,
   store?: TaskStore,
 ): Promise<PlanningRewindResult> {
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }
@@ -2598,7 +2598,7 @@ export async function cancelSession(sessionId: string): Promise<void> {
 /**
  * Get session details.
  */
-export function getSession(sessionId: string): Session | undefined {
+export async function getSession(sessionId: string): Promise<Session | undefined> {
   const inMemory = sessions.get(sessionId);
   if (inMemory) {
     return inMemory;
@@ -2608,7 +2608,7 @@ export function getSession(sessionId: string): Session | undefined {
     return undefined;
   }
 
-  const row = _aiSessionStore.get(sessionId);
+  const row = await _aiSessionStore.get(sessionId);
   if (!row || row.type !== "planning") {
     return undefined;
   }
@@ -2865,7 +2865,7 @@ export async function __runGenerationWithTimeoutForTests<T>(
   sessionId: string,
   operation: (abortSignal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     throw new SessionNotFoundError(`Planning session ${sessionId} not found or expired`);
   }

@@ -59,10 +59,14 @@ export function createEvalsRouter(store: TaskStore): Router {
     return scopedStore.getEvalStore();
   }
 
-  router.get("/runs", (req: Request, res: Response) => {
+  // FNXC:Evals 2026-06-27-12:35:
+  // getEvalStore() returns EvalStore | AsyncEvalStore (PG backend mode), so the
+  // handlers await the store calls — await resolves both the sync arrays and the
+  // AsyncEvalStore promises. Previously the sync-only path 500'd in PG mode.
+  router.get("/runs", async (req: Request, res: Response) => {
     try {
       const evalStore = getEvalStore();
-      const runs = evalStore.listRuns().map((run: EvalRun) => ({
+      const runs = (await evalStore.listRuns()).map((run: EvalRun) => ({
         id: run.id,
         createdAt: run.createdAt,
         completedAt: run.completedAt,
@@ -77,11 +81,11 @@ export function createEvalsRouter(store: TaskStore): Router {
     }
   });
 
-  router.get("/:id", (req: Request, res: Response) => {
+  router.get("/:id", async (req: Request, res: Response) => {
     try {
       const evalStore = getEvalStore();
       const evalId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const result = evalStore.getTaskResult(evalId);
+      const result = await evalStore.getTaskResult(evalId);
       if (!result) throw notFound(`Eval result not found: ${evalId}`);
       res.json({ result });
     } catch (error) {
@@ -89,7 +93,7 @@ export function createEvalsRouter(store: TaskStore): Router {
     }
   });
 
-  router.get("/", (req: Request, res: Response) => {
+  router.get("/", async (req: Request, res: Response) => {
     try {
       const evalStore = getEvalStore();
       const q = typeof req.query.q === "string" ? req.query.q.trim().toLowerCase() : "";
@@ -105,7 +109,7 @@ export function createEvalsRouter(store: TaskStore): Router {
       if (limit < 1) throw badRequest("Invalid limit");
       if (offset < 0) throw badRequest("Invalid offset");
 
-      let results = evalStore.listTaskResults({ runId });
+      let results = await evalStore.listTaskResults({ runId });
       results = results.filter((result) => {
         if (scoreMin !== undefined && (result.overallScore ?? -1) < scoreMin) return false;
         if (scoreMax !== undefined && (result.overallScore ?? 101) > scoreMax) return false;

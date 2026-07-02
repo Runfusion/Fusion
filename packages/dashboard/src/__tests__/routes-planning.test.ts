@@ -314,26 +314,26 @@ async function REQUEST(
 class MockAiSessionStore extends EventEmitter {
   rows = new Map<string, AiSessionRow>();
 
-  upsert(row: AiSessionRow): void {
+  async upsert(row: AiSessionRow): Promise<void> {
     this.rows.set(row.id, row);
   }
 
-  updateThinking(id: string, thinkingOutput: string): void {
+  async updateThinking(id: string, thinkingOutput: string): Promise<void> {
     const row = this.rows.get(id);
     if (!row) return;
     this.rows.set(id, { ...row, thinkingOutput, updatedAt: new Date().toISOString() });
   }
 
-  delete(id: string): void {
+  async delete(id: string): Promise<void> {
     this.rows.delete(id);
     this.emit("ai_session:deleted", id);
   }
 
-  get(id: string): AiSessionRow | null {
+  async get(id: string): Promise<AiSessionRow | null> {
     return this.rows.get(id) ?? null;
   }
 
-  listRecoverable(): AiSessionRow[] {
+  async listRecoverable(): Promise<AiSessionRow[]> {
     return [...this.rows.values()].filter(
       (row) => row.status === "awaiting_input" || row.status === "generating" || row.status === "error",
     );
@@ -511,9 +511,9 @@ describe("Planning Mode Routes", () => {
 
     async function rehydratePlanningSessionRow(row: AiSessionRow): Promise<string> {
       const mockStore = new MockAiSessionStore();
-      mockStore.upsert(row);
+      await mockStore.upsert(row);
       setAiSessionStore(mockStore as unknown as Parameters<typeof setAiSessionStore>[0]);
-      const recoveredCount = rehydrateFromStore(mockStore as unknown as Parameters<typeof rehydrateFromStore>[0]);
+      const recoveredCount = await rehydrateFromStore(mockStore as unknown as Parameters<typeof rehydrateFromStore>[0]);
       expect(recoveredCount).toBe(1);
       return row.id;
     }
@@ -1237,7 +1237,7 @@ describe("Planning Mode Routes", () => {
         const sessionId = startRes.body.sessionId as string;
 
         const { planningStreamManager, getSession } = await import("../planning.js");
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         expect(session).toBeDefined();
 
         planningStreamManager.broadcast(sessionId, { type: "thinking", data: "first buffered thought" });
@@ -1288,7 +1288,7 @@ describe("Planning Mode Routes", () => {
         // Manually simulate an awaiting_input session by updating the session state
         // In the real app, this happens via respondToPlanning which sets currentQuestion
         const { planningStreamManager, getSession } = await import("../planning.js");
-        const session = getSession(sessionId);
+        const session = await getSession(sessionId);
         expect(session).toBeDefined();
 
         // Simulate the session being in awaiting_input state with a question
@@ -2999,7 +2999,7 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
 
-        const session = planningModule.getSession(planningSessionId);
+        const session = await planningModule.getSession(planningSessionId);
         if (!session) {
           throw new Error("Expected planning session to exist");
         }

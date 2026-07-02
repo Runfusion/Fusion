@@ -8,6 +8,17 @@ import type {
   InsightRunUpdateInput,
 } from "./insight-types.js";
 import { InsightLifecycleError, InsightStore } from "./insight-store.js";
+import type { AsyncInsightStore } from "./async-insight-store.js";
+
+/*
+ * FNXC:InsightStore 2026-06-28-10:00:
+ * The run executor must drive both backends: the sync SQLite `InsightStore` and
+ * the PostgreSQL-backed `AsyncInsightStore` (async). Both expose the SAME method
+ * names returning the SAME shapes, so the executor types `store` as the union and
+ * `await`s every store call — a sync method's awaited return is identical to its
+ * direct return, so lifecycle semantics are preserved across both backends.
+ */
+type InsightRunExecutorStore = InsightStore | AsyncInsightStore;
 
 export interface InsightRunAttemptResult {
   summary?: string | null;
@@ -24,7 +35,7 @@ export interface InsightRunAttemptContext {
 }
 
 export interface InsightRunExecutorOptions {
-  store: InsightStore;
+  store: InsightRunExecutorStore;
   projectId: string;
   input: InsightRunCreateInput;
   executeAttempt: (ctx: InsightRunAttemptContext) => Promise<InsightRunAttemptResult>;
@@ -121,11 +132,11 @@ function patchForStatus(status: "completed" | "failed" | "cancelled", patch: Ins
 }
 
 async function executeExistingRun(
-  store: InsightStore,
+  store: InsightRunExecutorStore,
   run: InsightRun,
   options: Omit<InsightRunExecutorOptions, "input" | "projectId"> & { maxAttempts: number; retryDelayMs: number },
 ): Promise<InsightRun> {
-  const started = store.updateRun(run.id, {
+  const started = await store.updateRun(run.id, {
     status: "running",
     startedAt: run.startedAt ?? new Date().toISOString(),
     lifecycle: {
@@ -135,7 +146,7 @@ async function executeExistingRun(
     },
   });
   let active = started ?? run;
-  store.appendRunEvent(active.id, { type: "status_changed", status: "running", message: "Run started" });
+  await store.appendRunEvent(active.id, { type: "status_changed", status: "running", message: "Run started" });
 
   for (let attempt = active.lifecycle.attempt ?? 1; attempt <= options.maxAttempts; attempt += 1) {
     const { signal, clear } = composeSignal(options.timeoutMs, options.signal);
@@ -144,14 +155,14 @@ async function executeExistingRun(
         throw signal.reason instanceof Error ? signal.reason : new DOMException("Aborted", "AbortError");
       }
 
-      store.appendRunEvent(active.id, {
+      await store.appendRunEvent(active.id, {
         type: "info",
         message: `Attempt ${attempt}/${options.maxAttempts}`,
         metadata: { attempt, maxAttempts: options.maxAttempts },
       });
 
       const result = await options.executeAttempt({ run: active, attempt, maxAttempts: options.maxAttempts, signal });
-      const completed = store.updateRun(active.id, {
+      const completed = await store.updateRun(active.id, {
         status: "completed",
         summary: result.summary ?? null,
         insightsCreated: result.insightsCreated,
@@ -166,12 +177,12 @@ async function executeExistingRun(
         },
       });
       if (!completed) throw new Error(`Run disappeared while completing: ${active.id}`);
-      store.appendRunEvent(completed.id, { type: "status_changed", status: "completed", message: "Run completed" });
+      await store.appendRunEvent(completed.id, { type: "status_changed", status: "completed", message: "Run completed" });
       return completed;
     } catch (error) {
       const classification = classifyInsightRunError(error);
       const canRetry = classification.retryable && attempt < options.maxAttempts;
-      store.appendRunEvent(active.id, {
+      await store.appendRunEvent(active.id, {
         type: canRetry ? "retry_scheduled" : "error",
         status: canRetry ? "running" : classification.terminalReason === "cancelled" ? "cancelled" : "failed",
         classification: classification.failureClass,
@@ -182,7 +193,7 @@ async function executeExistingRun(
       });
 
       if (canRetry) {
-        active = store.updateRun(active.id, {
+        active = await store.updateRun(active.id, {
           lifecycle: {
             ...active.lifecycle,
             attempt: attempt + 1,
@@ -198,7 +209,7 @@ async function executeExistingRun(
       }
 
       const terminalStatus = classification.terminalReason === "cancelled" ? "cancelled" : "failed";
-      const terminal = store.updateRun(active.id, patchForStatus(terminalStatus, {
+      const terminal = await store.updateRun(active.id, patchForStatus(terminalStatus, {
         status: terminalStatus,
         error: asErrorMessage(error),
         lifecycle: {
@@ -219,7 +230,7 @@ async function executeExistingRun(
     }
   }
 
-  const failed = store.updateRun(active.id, {
+  const failed = await store.updateRun(active.id, {
     status: "failed",
     error: "Run exhausted attempts",
     lifecycle: {
@@ -242,7 +253,7 @@ export async function executeInsightRunLifecycle(options: InsightRunExecutorOpti
 
   let run: InsightRun;
   try {
-    run = options.store.createRunOrThrowConflict(options.projectId, {
+    run = await options.store.createRunOrThrowConflict(options.projectId, {
       ...options.input,
       lifecycle: {
         ...options.input.lifecycle,
@@ -258,7 +269,7 @@ export async function executeInsightRunLifecycle(options: InsightRunExecutorOpti
     throw error;
   }
 
-  options.store.appendRunEvent(run.id, {
+  await options.store.appendRunEvent(run.id, {
     type: "status_changed",
     status: "pending",
     message: "Run created",
@@ -274,7 +285,7 @@ export async function executeInsightRunLifecycle(options: InsightRunExecutorOpti
 export async function retryInsightRunLifecycle(
   options: Omit<InsightRunExecutorOptions, "input" | "projectId"> & { runId: string; trigger?: InsightRunTrigger; inputMetadata?: InsightRunCreateInput["inputMetadata"] },
 ): Promise<{ run: InsightRun; retryOf: InsightRun }> {
-  const original = options.store.getRun(options.runId);
+  const original = await options.store.getRun(options.runId);
   if (!original) {
     throw new Error(`Insight run not found: ${options.runId}`);
   }

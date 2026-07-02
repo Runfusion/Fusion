@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus } from "@fusion/core";
-import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon } from "@fusion/core";
+import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, ResearchStore, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon } from "@fusion/core";
 import { promoteHeldTask } from "./hold-release.js";
 import { DASHBOARD_USER_ID, canAgentTakeImplementationTaskForExplicitRouting, dailyMemoryPath, ensureOpenClawMemoryFiles, extractAgentProvisioningRequest, formatRoleMismatchReason, getMemoryBackendCapabilities, getProjectMemory, isEphemeralAgent, memoryLongTermPath, normalizeMessageParticipant, reconcileDeterministicDuplicate, resolveAgentProvisioningPolicy, resolveMemoryBackend, resolveResearchSettings, resolveTaskGithubTracking, runDeterministicDuplicateGuard, scheduleQmdProjectMemoryRefresh, searchProjectMemory, shouldSkipBackgroundQmdRefresh } from "@fusion/core";
 import { ResearchOrchestrator } from "./research-orchestrator.js";
@@ -1497,7 +1497,7 @@ async function registerArtifactForAgent(
     };
 
     const artifact: Artifact = await store.registerArtifact(input);
-    notifyArtifactRegistered(messageStore, artifact, authorId);
+    void notifyArtifactRegistered(messageStore, artifact, authorId);
     return {
       content: [{
         type: "text" as const,
@@ -1516,7 +1516,6 @@ async function registerArtifactForAgent(
     };
   }
 }
-
 /**
  * FNXC:ArtifactRegistry 2026-06-29-00:00:
  * Agents need a portable way to create task-scoped image artifacts without reading arbitrary local files. `dataBase64` decodes inside the tool and then uses TaskStore's existing binary persistence path so registry rows continue to store only managed artifact URIs.
@@ -1584,11 +1583,11 @@ function hasImageSignature(data: Buffer, mimeType: string): boolean {
   return false;
 }
 
-function notifyArtifactRegistered(messageStore: MessageStore | undefined, artifact: Artifact, authorId: string): void {
+async function notifyArtifactRegistered(messageStore: MessageStore | undefined, artifact: Artifact, authorId: string): Promise<void> {
   if (!messageStore) return;
 
   try {
-    messageStore.sendMessage({
+    await messageStore.sendMessage({
       fromType: "system",
       toType: "user",
       toId: DASHBOARD_USER_ID,
@@ -1960,7 +1959,13 @@ async function assertWorkflowColumnAgentBindings(
 ): Promise<void> {
   const columns = (ir as { columns?: unknown })?.columns;
   if (!Array.isArray(columns) || !columns.some((c) => c?.agent?.agentId)) return;
-  const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
+  // FNXC:SqliteFinalRemoval 2026-06-26-11:05:
+  // In backend mode, pass the AsyncDataLayer so AgentStore delegates to async helpers.
+  const agentLayer = store.getAsyncLayer();
+  const agentStore = new AgentStore({
+    rootDir: store.getFusionDir(),
+    ...(agentLayer ? { asyncLayer: agentLayer } : {}),
+  });
   await agentStore.init();
   const settings = await store.getSettings();
   await validateColumnAgentBindings({ ir, agentStore, settings, confirmPolicyEscalation });
@@ -2673,8 +2678,8 @@ export function createGoalListTool(
     execute: async (_id: string, params: Static<typeof goalListParams>, _signal, _onUpdate, ctx) => {
       const goalStore = store.getGoalStore();
       const status = params.status ?? "active";
-      const goals = status === "all" ? goalStore.listGoals() : goalStore.listGoals({ status });
-      const activeCount = goalStore.listGoals({ status: "active" }).length;
+      const goals = status === "all" ? await goalStore.listGoals() : await goalStore.listGoals({ status });
+      const activeCount = (await goalStore.listGoals({ status: "active" })).length;
       const softWarning = activeCount >= GOAL_LIST_SOFT_WARNING_THRESHOLD;
       const goalEntries = goals.map(buildGoalListDetailsEntry);
 
@@ -2726,7 +2731,7 @@ export function createGoalShowTool(
     parameters: goalShowParams,
     execute: async (_id: string, params: Static<typeof goalShowParams>, _signal, _onUpdate, ctx) => {
       const goalStore = store.getGoalStore();
-      const goal = goalStore.getGoal(params.id);
+      const goal = await goalStore.getGoal(params.id);
       const auditContext = resolveGoalAuditContext(ctx, options?.runContext, options?.taskId);
 
       if (!goal) {
@@ -3279,7 +3284,7 @@ export function createAgentCreateTool(
           operation: `create:${params.name}:${params.role}:${reportsTo}`,
         });
 
-        const request = options.approvalRequestStore.create({
+        const request = await options.approvalRequestStore.create({
           requester: { actorId: callingAgentId, actorType: "agent", actorName: caller?.name ?? callingAgentId },
           targetAction: {
             category: "agent_provisioning",
@@ -3399,7 +3404,7 @@ export function createAgentDeleteTool(
           operation: `delete:${target.id}:${params.force === true ? "force" : "normal"}:${params.reassign_to ?? ""}`,
         });
 
-        const request = options.approvalRequestStore.create({
+        const request = await options.approvalRequestStore.create({
           requester: { actorId: callingAgentId, actorType: "agent", actorName: caller?.name ?? callingAgentId },
           targetAction: {
             category: "agent_provisioning",
@@ -3675,7 +3680,7 @@ export function createSendMessageTool(
         }
 
         const result = await deliveryHandler.runWithBoundedRetry({
-          run: async () => Promise.resolve(messageStore.sendMessage({
+          run: async () => messageStore.sendMessage({
             fromId: fromAgentId,
             fromType: "agent",
             toId: recipient.id,
@@ -3683,7 +3688,7 @@ export function createSendMessageTool(
             content,
             type: messageType,
             ...(replyToMessageId ? { metadata: { replyTo: { messageId: replyToMessageId } } } : {}),
-          })),
+          }),
           correlation: { kind: "direct", fromAgentId, toId: recipient.id },
         }, options?.autoRecovery ?? { mode: "deterministic-only", maxRetries: 3 }, async () => {
           const taskId = _ctx?.taskId as string | undefined;
@@ -3777,6 +3782,17 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     inFlight: new Map(),
   };
 
+  // FNXC:ResearchStore 2026-06-27-12:35:
+  // The ResearchOrchestrator + the research tools' direct reads require the sync
+  // EventEmitter ResearchStore. In PG backend mode getResearchStore() returns the
+  // AsyncResearchStore (CRUD-only), so resolve to the sync store or null and degrade
+  // the research tools — AI research EXECUTION stays unavailable in PG mode (the
+  // dashboard CRUD/lifecycle surface is the ported boundary).
+  const resolveSyncResearchStore = (): ResearchStore | null => {
+    const resolved = options.store.getResearchStore();
+    return resolved instanceof ResearchStore ? resolved : null;
+  };
+
   const ensureOrchestrator = async (): Promise<ResearchOrchestrator | null> => {
     const settings = await options.getSettings();
     const resolved = resolveResearchSettings(settings);
@@ -3796,6 +3812,11 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       return null;
     }
 
+    const syncResearchStore = resolveSyncResearchStore();
+    if (!syncResearchStore) {
+      return null;
+    }
+
     if (!orchestratorState.orchestrator) {
       const stepRunner = new ResearchStepRunner({
         providers: availableProviders
@@ -3803,7 +3824,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
           .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider)),
       });
       orchestratorState.orchestrator = new ResearchOrchestrator({
-        store: options.store.getResearchStore(),
+        store: syncResearchStore,
         stepRunner,
         maxConcurrentRuns: resolved.limits.maxConcurrentRuns,
       });
@@ -3830,7 +3851,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
 
       const registry = orchestratorState.providerRegistry;
       const availableProviderTypes = registry?.getAvailableProviders() ?? [];
-      const runId = orchestrator.createRun({
+      const runId = await orchestrator.createRun({
         providers: availableProviderTypes
           .filter((type) => type !== "llm-synthesis")
           .map((type) => ({ type, config: { maxResults: resolved.limits.maxSourcesPerRun, timeoutMs: resolved.limits.requestTimeoutMs } })),
@@ -3845,7 +3866,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       void runPromise.finally(() => orchestratorState.inFlight.delete(runId));
 
       if (!params.wait_for_completion) {
-        const started = options.store.getResearchStore().getRun(runId);
+        const started = resolveSyncResearchStore()?.getRun(runId);
         if (!started) {
           return {
             content: [{ type: "text" as const, text: `Started research run ${runId} for: ${params.query}` }],
@@ -3862,7 +3883,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       const completed = await Promise.race([
         runPromise,
         new Promise<ResearchRun>((resolve) => setTimeout(() => {
-          const latest = options.store.getResearchStore().getRun(runId);
+          const latest = resolveSyncResearchStore()?.getRun(runId);
           resolve(latest ?? ({
             id: runId,
             query: params.query,
@@ -3890,10 +3911,10 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     parameters: researchListParams,
     execute: async (_id: string, params: Static<typeof researchListParams>) => {
       const limit = Math.max(1, Math.min(params.limit ?? 10, 50));
-      const runs = options.store.getResearchStore().listRuns({
+      const runs = resolveSyncResearchStore()?.listRuns({
         status: params.status as ResearchRunStatus | undefined,
         limit,
-      });
+      }) ?? [];
       const text = runs.length
         ? runs.map((run) => `- ${run.id} [${run.status}] ${run.query}`).join("\n")
         : "No research runs found.";
@@ -3910,7 +3931,7 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
     description: "Get one research run with structured findings and citations.",
     parameters: researchGetParams,
     execute: async (_id: string, params: Static<typeof researchGetParams>) => {
-      const run = options.store.getResearchStore().getRun(params.id);
+      const run = resolveSyncResearchStore()?.getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
@@ -3935,8 +3956,8 @@ export function createResearchTools(options: ResearchToolsOptions): ToolDefiniti
       if (!orchestrator) {
         return researchUnavailable("provider-unavailable", "Research orchestrator is unavailable because research providers are not configured.");
       }
-      const cancelled = orchestrator.cancelRun(params.id);
-      const run = options.store.getResearchStore().getRun(params.id);
+      const cancelled = await orchestrator.cancelRun(params.id);
+      const run = resolveSyncResearchStore()?.getRun(params.id);
       if (!run) {
         return {
           content: [{ type: "text" as const, text: `Research run ${params.id} not found.` }],
@@ -3994,7 +4015,7 @@ export function createPostRoomMessageTool(
       }
 
       try {
-        const isMember = chatStore.listRoomMembers(params.roomId).some((member) => member.agentId === fromAgentId);
+        const isMember = (await chatStore.listRoomMembers(params.roomId)).some((member) => member.agentId === fromAgentId);
         if (!isMember) {
           return {
             content: [{ type: "text" as const, text: `ERROR: Agent ${fromAgentId} is not a member of room ${params.roomId}` }],
@@ -4058,11 +4079,11 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
     return `${value.slice(0, REPLY_CONTEXT_CONTENT_MAX_CHARS - 1)}…`;
   };
 
-  const resolveReplyContext = (msg: Message): {
+  const resolveReplyContext = async (msg: Message): Promise<{
     parentMessageId: string;
     parentMessage: Message | null;
     missingParent: boolean;
-  } | null => {
+  } | null> => {
     const metadata = msg.metadata;
     const parentMessageId = typeof metadata === "object"
       && metadata !== null
@@ -4078,7 +4099,7 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
       return null;
     }
 
-    const parentMessage = messageStore.getMessage(parentMessageId);
+    const parentMessage = await messageStore.getMessage(parentMessageId);
     return {
       parentMessageId,
       parentMessage,
@@ -4102,7 +4123,7 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
           limit,
         };
 
-        const messages = messageStore.getInbox(agentId, "agent", filter);
+        const messages = await messageStore.getInbox(agentId, "agent", filter);
 
         if (messages.length === 0) {
           return {
@@ -4111,13 +4132,13 @@ export function createReadMessagesTool(messageStore: MessageStore, agentId: stri
           };
         }
 
-        const messageEntries = messages.map((msg: Message) => {
-          const replyContext = resolveReplyContext(msg);
+        const messageEntries = await Promise.all(messages.map(async (msg: Message) => {
+          const replyContext = await resolveReplyContext(msg);
           return {
             message: msg,
             replyContext,
           };
-        });
+        }));
 
         const lines = messageEntries.map(({ message, replyContext }) => {
           const timestamp = new Date(message.createdAt).toLocaleString();

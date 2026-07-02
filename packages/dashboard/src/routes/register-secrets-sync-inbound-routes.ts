@@ -38,7 +38,7 @@ async function upsertRecords(
       skippedCount += 1;
       continue;
     }
-    const existing = secretsStore.listSecrets(record.scope).find((secret) => secret.key === record.key);
+    const existing = (await secretsStore.listSecrets(record.scope)).find((secret) => secret.key === record.key);
     if (existing) {
       await secretsStore.updateSecret(existing.id, record.scope, {
         plaintextValue: record.value,
@@ -68,7 +68,7 @@ async function upsertRecords(
 async function listSyncRecords(store: Parameters<ApiRouteRegistrar>[0]["store"]): Promise<SecretsSyncRecord[]> {
   const secretsStore = await store.getSecretsStore();
   const records = [] as SecretsSyncRecord[];
-  for (const record of secretsStore.listSecrets()) {
+  for (const record of await secretsStore.listSecrets()) {
     if (record.key === RESERVED_SYNC_PASSPHRASE_KEY) {
       continue;
     }

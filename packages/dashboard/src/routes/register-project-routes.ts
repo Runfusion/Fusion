@@ -11,7 +11,7 @@ import {
 import type { CentralCore as CentralCoreApi } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { execFileAsync } from "../exec-file.js";
-import { getOrCreateProjectStore } from "../project-store-resolver.js";
+import { getOrCreateProjectStore, evictProjectStore } from "../project-store-resolver.js";
 import type { ApiRouteRegistrar } from "./types.js";
 
 const {
@@ -782,12 +782,29 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
   /**
    * DELETE /api/projects/:id
    * Unregister a project.
+   *
+   * FNXC:ProjectLifecycle 2026-06-28-12:00:
+   * Unregistering a project removes ONLY the central registry row (and its
+   * cascade children: project_health, central_activity_log, path mappings).
+   * Task data in project.tasks is NEVER deleted — the table has no FK to
+   * central.projects, so tasks survive unregister and are immediately visible
+   * when the project is re-added via ensureProjectForPath with the same
+   * project ID. This is intentional: operators can remove and re-add projects
+   * without data loss.
+   *
+   * The in-memory TaskStore cache is evicted so stale connections/watchers
+   * don't linger after the project is removed from the dashboard.
    */
   router.delete("/projects/:id", async (req, res) => {
     try {
       await withCentralCore(async (central) => {
         await central.unregisterProject(req.params.id);
       });
+
+      // Evict the in-memory store (closes watchers + connection pool) so the
+      // dashboard doesn't hold stale resources for an unregistered project.
+      // When the project is re-added, getOrCreateProjectStore will re-create it.
+      evictProjectStore(req.params.id);
 
       res.json({ success: true });
     } catch (err: unknown) {

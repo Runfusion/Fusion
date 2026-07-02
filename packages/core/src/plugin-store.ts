@@ -18,6 +18,24 @@ import type {
 } from "./plugin-types.js";
 import { validatePluginManifest } from "./plugin-types.js";
 import { assertProjectRootDir } from "./project-root-guard.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
+/*
+ * FNXC:SqliteFinalRemoval 2026-06-26-10:00:
+ * Async Drizzle helpers for backend-mode (PostgreSQL) PluginStore operations.
+ * These helpers target the central-schema tables via Drizzle and are the async
+ * equivalent of the sync centralDb/localDb.prepare() call sites below.
+ */
+import {
+  registerPlugin as registerPluginAsync,
+  unregisterPlugin as unregisterPluginAsync,
+  getPlugin as getPluginAsync,
+  listPlugins as listPluginsAsync,
+  enablePlugin as enablePluginAsync,
+  disablePlugin as disablePluginAsync,
+  updatePluginState as updatePluginStateAsync,
+  updatePluginSettings as updatePluginSettingsAsync,
+  updatePluginInstall as updatePluginInstallAsync,
+} from "./async-plugin-store.js";
 
 export interface PluginStoreEvents {
   "plugin:registered": [plugin: PluginInstallation];
@@ -94,34 +112,65 @@ interface ProjectStateRow {
   updatedAt: string;
 }
 
+export interface PluginStoreOptions {
+  centralGlobalDir?: string;
+  /**
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:05:
+   * When an AsyncDataLayer is injected, PluginStore operates in "backend mode":
+   * all data access delegates to PostgreSQL via Drizzle and no SQLite
+   * Database is constructed. When absent, the legacy SQLite path is
+   * byte-identical to pre-migration. This mirrors the TaskStore/AgentStore
+   * dual-path pattern.
+   */
+  asyncLayer?: AsyncDataLayer;
+}
+
 export class PluginStore extends EventEmitter<PluginStoreEvents> {
   private _localDb: Database | null = null;
   private _centralDb: CentralDatabase | null = null;
-  private readonly inMemoryDb: boolean;
   private readonly normalizedProjectPath: string;
   private readonly centralGlobalDir?: string;
 
+  /**
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:05:
+   * When set, PluginStore operates in backend mode (PostgreSQL via Drizzle).
+   * All data access delegates to async helpers. No SQLite Database is
+   * constructed. This mirrors the TaskStore/AgentStore dual-path pattern.
+   */
+  public readonly asyncLayer: AsyncDataLayer | null = null;
+
+  /** True when AsyncDataLayer was injected. Gates all SQLite construction. */
+  public get backendMode(): boolean {
+    return this.asyncLayer !== null;
+  }
+
   constructor(
     private rootDir: string,
-    options?: { inMemoryDb?: boolean; centralGlobalDir?: string },
+    options?: PluginStoreOptions,
   ) {
     super();
     assertProjectRootDir(rootDir, "PluginStore");
-    this.inMemoryDb = options?.inMemoryDb === true;
     this.normalizedProjectPath = resolve(rootDir);
     this.centralGlobalDir = options?.centralGlobalDir;
+    this.asyncLayer = options?.asyncLayer ?? null;
   }
 
   private get localDb(): Database {
+    if (this.backendMode) {
+      throw new Error("SQLite Database is not available in backend mode (asyncLayer injected)");
+    }
     if (!this._localDb) {
       const fusionDir = join(this.rootDir, ".fusion");
-      this._localDb = new Database(fusionDir, { inMemory: this.inMemoryDb });
+      this._localDb = new Database(fusionDir);
       this._localDb.init();
     }
     return this._localDb;
   }
 
   private get centralDb(): CentralDatabase {
+    if (this.backendMode) {
+      throw new Error("CentralDatabase is not available in backend mode (asyncLayer injected)");
+    }
     if (!this._centralDb) {
       this._centralDb = new CentralDatabase(this.centralGlobalDir);
       this._centralDb.init();
@@ -141,7 +190,17 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
     this._centralDb = null;
   }
 
+  /**
+   * FNXC:SqliteFinalRemoval 2026-06-26-10:10:
+   * In backend mode (asyncLayer injected), skip all SQLite construction and
+   * the legacy migration sweep. The PostgreSQL schema baseline already covers
+   * these. The per-project plugin state rows are created on-demand by the
+   * async register/enable/disable helpers.
+   */
   async init(): Promise<void> {
+    if (this.backendMode) {
+      return;
+    }
     const _ = this.localDb;
     const __ = this.centralDb;
     this.migrateLegacyProjectRows();
@@ -379,6 +438,23 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       );
     }
 
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
+     * Backend-mode: delegate to the async Drizzle registerPlugin helper which
+     * inserts the install row + per-project state atomically via a transaction.
+     */
+    if (this.backendMode) {
+      const plugin = await registerPluginAsync(this.asyncLayer!, {
+        manifest,
+        path,
+        settings,
+        aiScanOnLoad,
+        projectPath: this.normalizedProjectPath,
+      });
+      this.emit("plugin:registered", plugin);
+      return plugin;
+    }
+
     const existing = this.centralDb
       .prepare("SELECT id FROM plugin_installs WHERE id = ?")
       .get(manifest.id);
@@ -433,6 +509,15 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
   }
 
   async unregisterPlugin(id: string): Promise<PluginInstallation> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
+     * Backend-mode: delegate to the async Drizzle unregisterPlugin helper.
+     */
+    if (this.backendMode) {
+      const plugin = await unregisterPluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
+      this.emit("plugin:unregistered", plugin);
+      return plugin;
+    }
     const plugin = await this.getPlugin(id);
     this.centralDb.prepare("DELETE FROM plugin_installs WHERE id = ?").run(id);
     this.centralDb.bumpLastModified();
@@ -441,6 +526,13 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
   }
 
   async getPlugin(id: string): Promise<PluginInstallation> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
+     * Backend-mode: delegate to the async Drizzle getPlugin helper.
+     */
+    if (this.backendMode) {
+      return getPluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
+    }
     const install = this.centralDb
       .prepare("SELECT * FROM plugin_installs WHERE id = ?")
       .get(id) as InstallRow | undefined;
@@ -451,6 +543,13 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
   }
 
   async listPlugins(filter?: { enabled?: boolean; state?: PluginState }): Promise<PluginInstallation[]> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
+     * Backend-mode: delegate to the async Drizzle listPlugins helper.
+     */
+    if (this.backendMode) {
+      return listPluginsAsync(this.asyncLayer!.db, this.normalizedProjectPath, filter);
+    }
     const installs = this.centralDb
       .prepare("SELECT * FROM plugin_installs ORDER BY createdAt ASC")
       .all() as InstallRow[];
@@ -469,6 +568,16 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
   }
 
   async enablePlugin(id: string): Promise<PluginInstallation> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
+     * Backend-mode: delegate to the async Drizzle enablePlugin helper.
+     */
+    if (this.backendMode) {
+      const updated = await enablePluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
+      this.emit("plugin:enabled", updated);
+      this.emit("plugin:updated", updated);
+      return updated;
+    }
     await this.getPlugin(id);
     this.upsertProjectState(id, { enabled: true });
     this.centralDb.bumpLastModified();
@@ -480,6 +589,16 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
   }
 
   async disablePlugin(id: string): Promise<PluginInstallation> {
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:15:
+     * Backend-mode: delegate to the async Drizzle disablePlugin helper.
+     */
+    if (this.backendMode) {
+      const updated = await disablePluginAsync(this.asyncLayer!.db, id, this.normalizedProjectPath);
+      this.emit("plugin:disabled", updated);
+      this.emit("plugin:updated", updated);
+      return updated;
+    }
     await this.getPlugin(id);
     this.upsertProjectState(id, { enabled: false });
     this.centralDb.bumpLastModified();
@@ -506,6 +625,22 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
         return plugin;
       }
 
+      /*
+       * FNXC:SqliteFinalRemoval 2026-06-26-10:20:
+       * Backend-mode: delegate state persistence to the async helper.
+       */
+      if (this.backendMode) {
+        const updated = await updatePluginStateAsync(
+          this.asyncLayer!.db,
+          id,
+          this.normalizedProjectPath,
+          state,
+          error,
+        );
+        this.emit("plugin:updated", updated);
+        return updated;
+      }
+
       this.upsertProjectState(id, { state, error });
       this.centralDb.bumpLastModified();
 
@@ -524,6 +659,23 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
       if (!validTransitions[oldState]?.includes(state)) {
         throw new Error(`Invalid state transition from "${oldState}" to "${state}"`);
       }
+    }
+
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:20:
+     * Backend-mode: delegate state persistence to the async helper.
+     */
+    if (this.backendMode) {
+      const updated = await updatePluginStateAsync(
+        this.asyncLayer!.db,
+        id,
+        this.normalizedProjectPath,
+        state,
+        error ?? null,
+      );
+      this.emit("plugin:stateChanged", updated, oldState, state);
+      this.emit("plugin:updated", updated);
+      return updated;
     }
 
     this.upsertProjectState(id, { state, error: error ?? null });
@@ -545,6 +697,17 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
 
     const mergedSettings = { ...plugin.settings, ...settings };
 
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:25:
+     * Backend-mode: delegate settings persistence to the async helper.
+     */
+    if (this.backendMode) {
+      await updatePluginSettingsAsync(this.asyncLayer!.db, id, mergedSettings);
+      const updated = await this.getPlugin(id);
+      this.emit("plugin:updated", updated);
+      return updated;
+    }
+
     this.centralDb
       .prepare("UPDATE plugin_installs SET settings = ?, updatedAt = ? WHERE id = ?")
       .run(toJson(mergedSettings), new Date().toISOString(), id);
@@ -557,6 +720,28 @@ export class PluginStore extends EventEmitter<PluginStoreEvents> {
 
   async updatePlugin(id: string, updates: PluginUpdateInput): Promise<PluginInstallation> {
     await this.getPlugin(id);
+
+    /*
+     * FNXC:SqliteFinalRemoval 2026-06-26-10:25:
+     * Backend-mode: delegate install-field persistence to the async helper.
+     */
+    if (this.backendMode) {
+      await updatePluginInstallAsync(this.asyncLayer!.db, id, {
+        name: updates.name,
+        version: updates.version,
+        description: updates.description,
+        author: updates.author,
+        homepage: updates.homepage,
+        path: updates.path,
+        dependencies: updates.dependencies,
+        aiScanOnLoad: updates.aiScanOnLoad,
+        lastSecurityScan: updates.lastSecurityScan,
+      });
+      const updated = await this.getPlugin(id);
+      this.emit("plugin:updated", updated);
+      return updated;
+    }
+
     const now = new Date().toISOString();
 
     const setClauses: string[] = ["updatedAt = ?"];

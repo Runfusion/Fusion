@@ -93,7 +93,10 @@ export async function normalizeEvalFollowUps(input: NormalizeEvalFollowUpsInput)
   const openTasks = (await store.listTasks({ slim: true, includeArchived: false })).filter((task) =>
     OPEN_COLUMNS.has(task.column)
   );
-  const priorResults = store.getEvalStore().listTaskResults({ taskId: parentTaskId });
+  // FNXC:Evals 2026-06-27-12:40:
+  // getEvalStore() returns EvalStore | AsyncEvalStore (PG backend mode); await
+  // resolves the sync array and the async promise alike.
+  const priorResults = await store.getEvalStore().listTaskResults({ taskId: parentTaskId });
   const priorKeys = new Set(
     priorResults
       .flatMap((result) => result.followUps)

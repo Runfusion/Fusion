@@ -4,6 +4,17 @@ import { computeMaxWorkers } from "../../packages/core/src/__test-utils__/vitest
 
 const maxWorkers = computeMaxWorkers();
 
+/*
+FNXC:DependencyGraphTests 2026-06-25-16:30:
+The SQLite-to-PostgreSQL cutover (feature delete-sqlite-runtime-final, PHASE A)
+quarantines plugin test files that construct a SQLite-backed store. The SQLite
+runtime code is being deleted in this feature. Per the AGENTS.md flaky-test
+deletion ratchet, these tests are quarantined on sight. Mirrored in
+scripts/lib/test-quarantine.json.
+*/
+const quarantinedDependencyGraphTests = [
+];
+
 export default defineConfig({
   resolve: {
     alias: [
@@ -29,6 +40,11 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      ...quarantinedDependencyGraphTests,
+    ],
     environment: "jsdom",
     setupFiles: [fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-setup.ts", import.meta.url))],
     globalSetup: [fileURLToPath(new URL("../../packages/core/src/__test-utils__/vitest-teardown.ts", import.meta.url))],

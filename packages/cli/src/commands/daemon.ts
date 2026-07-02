@@ -528,7 +528,16 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
     if (schemaHooks.length > 0) {
       try {
-        await store.getDatabase().runPluginSchemaInits(schemaHooks);
+        /*
+         * FNXC:SqliteFinalRemoval 2026-06-25-16:25:
+         * Skip SQLite-specific plugin schema init in backend mode (PostgreSQL
+         * uses Drizzle migrations for schema management).
+         */
+        if (store.isBackendMode()) {
+          console.log("[plugins] Schema initialization skipped — backend mode (PostgreSQL Drizzle migrations)");
+        } else {
+          await store.getDatabase().runPluginSchemaInits(schemaHooks);
+        }
       } catch (err) {
         console.error(
           `[plugins] Schema initialization failed: ${err instanceof Error ? err.message : err}`,

@@ -1,7 +1,8 @@
 import type { AutomationStore } from "./automation-store.js";
 import type { ScheduledTask, ScheduledTaskCreateInput } from "./automation.js";
 import type { EvalRun, EvalTaskResultCreateInput } from "./eval-types.js";
-import { EvalLifecycleError } from "./eval-store.js";
+import { EvalLifecycleError, EvalStore } from "./eval-store.js";
+import type { AsyncEvalStore } from "./async-eval-store.js";
 import type { ProjectSettings, Task } from "./types.js";
 
 export const TASK_EVALUATION_SCHEDULE_NAME = "Scheduled Task Evaluation";
@@ -97,7 +98,13 @@ export type CompletedTaskEvaluator = (
 
 export interface EvalBatchTaskStore {
   listTasks(options?: { column?: string }): Promise<Task[]>;
-  getEvalStore(): import("./eval-store.js").EvalStore;
+  // FNXC:Evals 2026-06-27-12:45:
+  // Widened to the TaskStore union so a backend-mode TaskStore satisfies this
+  // interface at the type level. runScheduledEvalBatch is a sync-EvalStore path
+  // (heavy lifecycle chaining); it instanceof-narrows to the sync EvalStore and
+  // fails fast under PG backend mode (scheduled eval batches are out of scope
+  // for the PG migration's dashboard-read fixes).
+  getEvalStore(): EvalStore | AsyncEvalStore;
 }
 
 export interface RunScheduledEvalBatchParams {
@@ -121,6 +128,12 @@ export async function runScheduledEvalBatch(
 ): Promise<ScheduledEvalBatchResult> {
   const startedAt = params.startedAt ?? new Date().toISOString();
   const evalStore = params.store.getEvalStore();
+  if (!(evalStore instanceof EvalStore)) {
+    // Scheduled eval batches rely on the synchronous SQLite EvalStore's
+    // lifecycle chaining; the PG-backed AsyncEvalStore path is not yet wired
+    // for this flow (out of scope for the dashboard-read PG fixes).
+    throw new Error("Scheduled eval batch requires the synchronous EvalStore (not available in PostgreSQL backend mode)");
+  }
   const priorRuns = evalStore
     .listRuns({ projectId: params.projectId, trigger: "schedule" })
     .filter((run) => run.status === "completed")

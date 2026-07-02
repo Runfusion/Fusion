@@ -56,7 +56,7 @@ export function registerAgentImportExportRoutes(ctx: ApiRoutesContext): void {
       const { store: scopedStore } = await getProjectContext(req);
       const { AgentStore, exportAgentsToDirectory } = await import("@fusion/core");
 
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const allAgents = await agentStore.listAgents();
@@ -466,7 +466,7 @@ async function persistImportedSkills(
       } = await import("@fusion/core");
 
       const { store: scopedStore } = await getProjectContext(req);
-      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir() });
+      const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
       const existingAgents = await agentStore.listAgents();

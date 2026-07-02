@@ -73,7 +73,7 @@ export function emitGoalRetrievalAudit(
   if (!ctx.runId || !ctx.agentId) return;
 
   try {
-    store.recordRunAuditEvent({
+    void store.recordRunAuditEvent({
       runId: ctx.runId,
       agentId: ctx.agentId,
       taskId: ctx.taskId,

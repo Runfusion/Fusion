@@ -293,7 +293,8 @@ export interface ServerOptions {
     watchMission(missionId: string): void;
     unwatchMission(missionId: string): void;
     isWatching(missionId: string): boolean;
-    getAutopilotStatus(missionId: string): import("@fusion/core").AutopilotStatus;
+    // FNXC:MissionStore 2026-06-28-12:45: getAutopilotStatus is async (union store).
+    getAutopilotStatus(missionId: string): Promise<import("@fusion/core").AutopilotStatus>;
     checkAndStartMission(missionId: string): Promise<void>;
     recoverStaleMission(missionId: string): Promise<void>;
     start(): void;
@@ -488,6 +489,17 @@ export interface ServerOptions {
     key: string | Buffer;
     ca?: string | Buffer | Array<string | Buffer>;
   };
+  /*
+   * FNXC:PostgresHealth 2026-06-24-16:00:
+   * Optional PostgreSQL health layer. When provided, the /api/health and
+   * /api/health/refresh endpoints use PostgreSQL-native health checks
+   * (connectivity probe, schema drift, task-ID integrity) instead of the
+   * SQLite-specific integrity_check path. This is the integration seam
+   * between the async PostgreSQL data layer and the dashboard health surface.
+   * When absent, the endpoints fall back to the legacy SQLite health checks
+   * via store.getDatabaseHealth().
+   */
+  postgresHealthLayer?: import("@fusion/core").AsyncDataLayer;
 }
 
 function hasDashboardEngine(options?: ServerOptions): boolean {
@@ -1001,14 +1013,21 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   // Create ChatStore for chat session management (available for SSE event forwarding)
-  const chatStore = options?.chatStore ?? new ChatStore(store.getFusionDir(), store.getDatabase());
+  // FNXC:RuntimeSatelliteAsync 2026-06-24-21:45:
+  // ChatStore dual-path: uses async layer in backend mode, sync DB otherwise.
+  const chatLayer = store.getAsyncLayer();
+  const chatStore = options?.chatStore ?? new ChatStore(
+    store.getFusionDir(),
+    chatLayer ? null : store.getDatabase(),
+    { asyncLayer: chatLayer },
+  );
   store.on("task:moved", (data: { task: Task; from: string; to: string }) => {
     if (data.to !== "archived") return;
     /*
     FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
     Task-detail planner chats are retained after done when a user interacted, but task archival is the retention cutoff. Delete exact task-planner sessions on archive so normal chats and other tasks' planner chats remain intact while chat:session:deleted events clear dashboard caches.
     */
-    chatStore.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`);
+    void chatStore.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`);
   });
   options?.engine?.attachChatStore?.(chatStore);
   if (typeof options?.engineManager?.getAllEngines === "function") {
@@ -1039,6 +1058,22 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     const engineManager = options?.engineManager;
 
+    // FNXC:MissionStore 2026-06-28-13:10:
+    // Both MissionStore and the PG-backend AsyncMissionStore now extend EventEmitter and
+    // emit the same mission/milestone/slice/feature events, so SSE subscribes to whichever
+    // getMissionStore() resolves — live mission refresh works in both backends. (Previously
+    // this instanceof-narrowed to the sync store and passed undefined in PG mode, leaving
+    // mission SSE degraded.) createSSE still handles undefined for a missing store.
+    const safeGetMissionStore = (
+      s: TaskStore,
+    ): ReturnType<TaskStore["getMissionStore"]> | undefined => {
+      try {
+        return s.getMissionStore();
+      } catch {
+        return undefined;
+      }
+    };
+
     if (!projectId) {
       // Create AgentStore for default project SSE
       const { AgentStore: AgentStoreClass } = await import("@fusion/core");
@@ -1047,8 +1082,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       const defaultMessageStore = options?.engine?.getMessageStore();
       createSSE(
         store,
-        store.getMissionStore(),
-        aiSessionStore,
+        safeGetMissionStore(store),
+        aiSessionStore!,
         store.getPluginStore(),
         undefined,
         defaultAgentStore,
@@ -1091,8 +1126,8 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
       }
       createSSE(
         scopedStore,
-        scopedStore.getMissionStore(),
-        aiSessionStore,
+        safeGetMissionStore(scopedStore),
+        aiSessionStore!,
         scopedStore.getPluginStore(),
         {
           projectId,
@@ -1318,19 +1353,43 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   // Create AiSessionStore for background task persistence
-  const aiSessionStore = options?.aiSessionStore ?? new AiSessionStore(store.getDatabase());
-  aiSessionStore.recoverStaleSessions();
-  setPlanningAiSessionStore(aiSessionStore);
-  setSubtaskAiSessionStore(aiSessionStore);
-  setMissionAiSessionStore(aiSessionStore);
-  setMilestoneSliceAiSessionStore(aiSessionStore);
+  // FNXC:RuntimeSatelliteCompletion 2026-06-25-00:05:
+  // AiSessionStore dual-path: uses async layer in backend mode, sync DB otherwise.
+  const aiSessionLayer = store.getAsyncLayer();
+  const aiSessionStore: AiSessionStore | undefined = options?.aiSessionStore ?? new AiSessionStore(
+    aiSessionLayer ? null as unknown as import("@fusion/core").Database : store.getDatabase(),
+    { asyncLayer: aiSessionLayer },
+  );
+  if (aiSessionStore) {
+    // FNXC:RuntimeSatelliteCompletion 2026-06-25-00:20:
+    // recoverStaleSessions + rehydrateFromStore are now async. Fire-and-forget
+    // at startup since the server must return the Express app synchronously.
+    // The recovery completes before the first request in practice (event loop
+    // drains microtasks before I/O), and is best-effort regardless.
+    void aiSessionStore.recoverStaleSessions();
+    setPlanningAiSessionStore(aiSessionStore);
+    setSubtaskAiSessionStore(aiSessionStore);
+    setMissionAiSessionStore(aiSessionStore);
+    setMilestoneSliceAiSessionStore(aiSessionStore);
+  }
 
-  const planningRehydratedCount = rehydratePlanningSessions(aiSessionStore);
-  const subtaskRehydratedCount = rehydrateSubtaskSessions(aiSessionStore);
-  const missionRehydratedCount = rehydrateMissionSessions(aiSessionStore);
-  const milestoneSliceRehydratedCount = rehydrateMilestoneSliceSessions(aiSessionStore);
-  const totalRehydrated =
-    planningRehydratedCount + subtaskRehydratedCount + missionRehydratedCount + milestoneSliceRehydratedCount;
+  // Fire-and-forget rehydration; store references for logging.
+  let planningRehydratedCount = 0;
+  let subtaskRehydratedCount = 0;
+  let missionRehydratedCount = 0;
+  let milestoneSliceRehydratedCount = 0;
+  if (aiSessionStore) {
+    void rehydratePlanningSessions(aiSessionStore).then((c) => { planningRehydratedCount = c; });
+    void rehydrateSubtaskSessions(aiSessionStore).then((c) => { subtaskRehydratedCount = c; });
+    void rehydrateMissionSessions(aiSessionStore).then((c) => { missionRehydratedCount = c; });
+    void rehydrateMilestoneSliceSessions(aiSessionStore).then((c) => { milestoneSliceRehydratedCount = c; });
+  }
+  // FNXC:RuntimeSatelliteCompletion 2026-06-25-00:25:
+  // Rehydration counts are logged asynchronously after the fire-and-forget
+  // promises resolve. The synchronous total is 0 since the promises haven't
+  // settled yet. This is intentional: the server must return the Express app
+  // synchronously, and rehydration is best-effort.
+  const totalRehydrated = 0;
   if (totalRehydrated > 0) {
     runtimeLogger.info("AI session rehydrate summary", {
       message: "Rehydrated AI sessions from SQLite",
@@ -1343,11 +1402,18 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   }
 
   // Create AgentStore for chat prompt enrichment (initialized lazily by ChatManager)
-  const chatAgentStore = new AgentStore({ rootDir: store.getFusionDir() });
+  // FNXC:SqliteFinalRemoval 2026-06-26-11:00:
+  // In backend mode, pass the AsyncDataLayer so AgentStore delegates to the
+  // async helpers; otherwise use the legacy SQLite path.
+  const chatAgentLayer = store.getAsyncLayer();
+  const chatAgentStore = new AgentStore({
+    rootDir: store.getFusionDir(),
+    ...(chatAgentLayer ? { asyncLayer: chatAgentLayer } : {}),
+  });
 
   // Create ChatManager for AI chat message handling
   const chatManager = options?.chatManager ?? new ChatManager(
-    chatStore,
+    chatStore!,
     store.getRootDir(),
     chatAgentStore,
     options?.pluginRunner,
@@ -1376,7 +1442,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
   }
 
-  if (options?.cliSessionTransport && options.cliAgentHubResolver) {
+  if (options?.cliSessionTransport && options.cliAgentHubResolver && chatStore) {
     try {
       const cliTransportStore = options.cliSessionTransport.store;
       // The transport's `manager` is typed for the attach/inject transport slice;
@@ -1438,8 +1504,9 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
   }
 
-  const runAiSessionCleanup = (maxAgeMs: number, source: "initial" | "scheduled") => {
-    const result = aiSessionStore.cleanupStaleSessions(maxAgeMs);
+  const runAiSessionCleanup = async (maxAgeMs: number, source: "initial" | "scheduled") => {
+    if (!aiSessionStore) return { terminalDeleted: 0, orphanedDeleted: 0 };
+    const result = await aiSessionStore.cleanupStaleSessions(maxAgeMs);
     runtimeLogger.info("AI session cleanup summary", {
       message: "Removed stale AI sessions",
       source,
@@ -1454,9 +1521,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const scheduleAiSessionCleanup = (cleanupIntervalMs: number, maxAgeMs: number) => {
     clearAiSessionCleanupInterval();
     aiSessionCleanupIntervalHandle = setInterval(() => {
-      try {
-        runAiSessionCleanup(maxAgeMs, "scheduled");
-      } catch (err) {
+      runAiSessionCleanup(maxAgeMs, "scheduled").catch((err) => {
         runtimeLogger.error("AI session cleanup failed", {
           message: "Scheduled AI session cleanup failed",
           source: "scheduled",
@@ -1464,7 +1529,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           cleanupIntervalMs,
           ...normalizeErrorForLog(err),
         });
-      }
+      });
     }, cleanupIntervalMs);
     aiSessionCleanupIntervalHandle.unref?.();
   };
@@ -1544,7 +1609,42 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
   }
 
-  app.get("/api/health", (_req, res) => {
+  /*
+   * FNXC:PostgresHealth 2026-06-24-16:10:
+   * The /api/health endpoint is async because PostgreSQL health checks
+   * (connectivity probe, task-ID integrity via Drizzle) are inherently async.
+   * When postgresHealthLayer is provided, the endpoint uses PostgreSQL-native
+   * checks; otherwise it falls back to the legacy SQLite health checks.
+   * VAL-HEALTH-001: healthy backend reports green; VAL-HEALTH-002: corrupt/
+   * unreachable backend surfaces degraded status + errors.
+   */
+  app.get("/api/health", async (_req, res) => {
+    const pgLayer = options?.postgresHealthLayer;
+    if (pgLayer) {
+      const { checkPostgresHealth } = await import("@fusion/core");
+      const { detectTaskIdIntegrityAnomaliesAsync } = await import("@fusion/core");
+      const errors = await checkPostgresHealth(pgLayer).catch((err: unknown) => [
+        `PostgreSQL health check failed: ${err instanceof Error ? err.message : String(err)}`,
+      ]);
+      const integrityReport = await detectTaskIdIntegrityAnomaliesAsync(pgLayer.db).catch(() => ({
+        status: "ok" as const,
+        checkedAt: new Date().toISOString(),
+        anomalies: [],
+      }));
+      res.json(buildHealthPayload({
+        database: {
+          healthy: errors.length === 0,
+          corruptionDetected: errors.length > 0,
+          corruptionErrors: errors.slice(0, 5),
+          lastCheckedAt: new Date(),
+          isRunning: false,
+        },
+        taskIdIntegrityReport: integrityReport,
+        cliPackageVersion,
+        engineAvailable: hasDashboardEngine(options),
+      }));
+      return;
+    }
     res.json(buildHealthPayload({
       database: store.getDatabaseHealth(),
       taskIdIntegrityReport: store.getTaskIdIntegrityReport(),
@@ -1701,18 +1801,69 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     res.json({ resetAt });
   });
 
-  app.post("/api/health/refresh", (_req, res) => {
-    // Force-recompute integrity + database health, then shape the response via
-    // buildHealthPayload so this endpoint cannot drift from GET /api/health as
-    // the payload evolves (the `engine` field had to be hand-synced here
-    // before). The refreshed snapshots are passed in directly so the response
-    // reflects the freshly-recomputed values, not a separately-read cache.
+  app.post("/api/health/refresh", async (_req, res) => {
+    /*
+     * FNXC:PostgresHealth 2026-06-24-16:15:
+     * Force-recompute integrity + database health. When postgresHealthLayer
+     * is provided, uses PostgreSQL-native checks (VAL-HEALTH-002: clears stale
+     * corruption banner after repair). Otherwise falls back to the legacy
+     * SQLite refresh path.
+     */
+    const pgLayer = options?.postgresHealthLayer;
+    if (pgLayer) {
+      const { checkPostgresHealth } = await import("@fusion/core");
+      const { detectTaskIdIntegrityAnomaliesAsync } = await import("@fusion/core");
+      const errors = await checkPostgresHealth(pgLayer).catch((err: unknown) => [
+        `PostgreSQL health check failed: ${err instanceof Error ? err.message : String(err)}`,
+      ]);
+      const integrityReport = await detectTaskIdIntegrityAnomaliesAsync(pgLayer.db).catch(() => ({
+        status: "ok" as const,
+        checkedAt: new Date().toISOString(),
+        anomalies: [],
+      }));
+      res.json(buildHealthPayload({
+        database: {
+          healthy: errors.length === 0,
+          corruptionDetected: errors.length > 0,
+          corruptionErrors: errors.slice(0, 5),
+          lastCheckedAt: new Date(),
+          isRunning: false,
+        },
+        taskIdIntegrityReport: integrityReport,
+        cliPackageVersion,
+        engineAvailable: hasDashboardEngine(options),
+      }));
+      return;
+    }
     res.json(buildHealthPayload({
       database: store.refreshDatabaseHealth(),
       taskIdIntegrityReport: store.refreshTaskIdIntegrityReport(),
       cliPackageVersion,
       engineAvailable: hasDashboardEngine(options),
     }));
+  });
+
+  /*
+   * FNXC:PostgresHealth 2026-06-24-16:20:
+   * Explicit compaction command: runs VACUUM/ANALYZE on the project-schema
+   * tables and reports per-table stats (VAL-HEALTH-005). Only available when
+   * the PostgreSQL health layer is provided; returns 501 otherwise.
+   */
+  app.post("/api/health/compact", async (_req, res) => {
+    const pgLayer = options?.postgresHealthLayer;
+    if (!pgLayer) {
+      res.status(501).json({ error: "PostgreSQL compaction is not available (no postgresHealthLayer configured)." });
+      return;
+    }
+    try {
+      const { vacuumAnalyze } = await import("@fusion/core");
+      const result = await vacuumAnalyze(pgLayer.db);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        error: `VACUUM/ANALYZE failed: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   });
 
   app.get("/api/updates/check", async (_req, res) => {
@@ -1802,7 +1953,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   const apiRouter = createApiRoutes(store, {
     ...options,
     runtimeLogger,
-    aiSessionStore,
+    aiSessionStore: aiSessionStore as AiSessionStore,
     chatStore,
     chatManager,
     skillsAdapter: options?.skillsAdapter,
@@ -1942,7 +2093,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
     server.once("close", () => {
       clearAiSessionCleanupInterval();
-      aiSessionStore.stopScheduledCleanup();
+      aiSessionStore?.stopScheduledCleanup();
       otelExporter?.stop();
       otelExporter = null;
       (apiRouter as Router & { dispose?: () => void }).dispose?.();

@@ -1,0 +1,950 @@
+/**
+ * task-creation operations.
+ *
+ * FNXC:StoreModularization 2026-06-25-00:00:
+ * Extracted from the monolithic packages/core/src/store.ts as a pure
+ * behavior-preserving refactor. Each function receives the TaskStore
+ * instance as its first parameter and performs byte-identical work.
+ */
+import {TaskStore, storeLog} from "../store.js";
+import {InvalidFileScopeError, SelfDefeatingDependencyError, detectSelfDefeatingDependency, TombstonedTaskResurrectionError} from "./errors.js";
+import {mkdir, writeFile} from "node:fs/promises";
+import {join} from "node:path";
+import {existsSync} from "node:fs";
+import type {Task, TaskCreateInput, Column, Settings} from "../types.js";
+import "../builtin-traits.js";
+import {normalizeTaskPriority} from "../task-priority.js";
+import {sanitizeTitle, summarizeTitle} from "../ai-summarize.js";
+import {extractTaskIdTokens, normalizeTitleForTaskId} from "../task-title-id-drift.js";
+import {resolveTitleSummarizerSettingsModel} from "../model-resolution.js";
+import {resolveEffectiveSettingsById} from "../workflow-settings-resolver.js";
+import {getErrorMessage} from "../error-message.js";
+import {generateTaskLineageId} from "../task-lineage.js";
+import {archiveAsSameAgentDuplicate, findSameAgentDuplicates} from "../duplicate-intake.js";
+import {buildBootstrapPrompt} from "../mesh-task-replication.js";
+import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
+import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
+import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
+import {softDeleteTaskRow as softDeleteTaskRowAsync, insertTaskRowInTransaction, isTaskIdConflictError} from "../task-store/async-persistence.js";
+
+export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+    if (!input.description?.trim()) {
+      throw new Error("Description is required and cannot be empty");
+    }
+
+    const selfDefeatingDep = detectSelfDefeatingDependency(input.title, input.dependencies ?? []);
+    if (selfDefeatingDep) {
+      throw new SelfDefeatingDependencyError(
+        input.title?.trim() ?? "",
+        selfDefeatingDep.matchedVerb,
+        selfDefeatingDep.operandTaskId,
+      );
+    }
+
+    // Resolve settings (same logic as the SQLite path).
+    let resolvedSettings = options?.settings;
+    if (!resolvedSettings) {
+      try {
+        resolvedSettings = await store.getSettings();
+      } catch {
+        resolvedSettings = {};
+      }
+    }
+
+    // Resolve title summarizer (same logic as the SQLite path).
+    let onSummarize = options?.onSummarize;
+    if (!onSummarize && (resolvedSettings?.autoSummarizeTitles === true || input.summarize === true)) {
+      let summarizerSettings: Partial<Settings> = resolvedSettings ?? {};
+      try {
+        const defaultWorkflowId = (await store.getDefaultWorkflowId()) ?? "builtin:coding";
+        const effective = await resolveEffectiveSettingsById(
+          store,
+          defaultWorkflowId,
+          store.getWorkflowSettingsProjectId(),
+        );
+        summarizerSettings = { ...summarizerSettings, ...(effective as Partial<Settings>) };
+      } catch {
+        // Never-throw: fall back to the base settings (global lane only).
+      }
+      const summarizerModel = resolveTitleSummarizerSettingsModel(summarizerSettings);
+      if (summarizerModel.provider && summarizerModel.modelId) {
+        onSummarize = async (description: string) => {
+          try {
+            return await summarizeTitle(
+              description,
+              store.getRootDir(),
+              summarizerModel.provider,
+              summarizerModel.modelId,
+            );
+          } catch {
+            return null;
+          }
+        };
+      }
+    }
+
+    const title = input.title?.trim() || undefined;
+    const shouldSummarize =
+      !title &&
+      input.description.length > 200 &&
+      (input.summarize === true || resolvedSettings?.autoSummarizeTitles === true);
+    const hasPendingSummarization = shouldSummarize && typeof onSummarize === "function";
+    const shouldInvokeTaskCreatedHook = options?.invokeTaskCreatedHook !== false;
+
+    // Resolve enabledWorkflowSteps (same logic as the SQLite path).
+    let resolvedWorkflowSteps: string[] | undefined = input.enabledWorkflowSteps?.length
+      ? await store.resolveEnabledWorkflowSteps(input.enabledWorkflowSteps)
+      : undefined;
+
+    let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
+    const explicitWorkflowId =
+      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    if (explicitWorkflowId !== undefined) {
+      if (explicitWorkflowId === null) {
+        resolvedWorkflowSteps = undefined;
+      } else {
+        const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
+        resolvedWorkflowSteps = selected.stepIds;
+        pendingWorkflowSelection = selected;
+      }
+    } else if (input.enabledWorkflowSteps === undefined) {
+      try {
+        const inherited = await store.materializeDefaultWorkflowSteps();
+        if (inherited) {
+          resolvedWorkflowSteps = inherited.stepIds;
+          pendingWorkflowSelection = inherited;
+        }
+      } catch (err) {
+        storeLog.warn("Failed to apply default workflow during task creation; falling back to default-on steps", {
+          phase: "createTaskBackend:default-workflow",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      if (resolvedWorkflowSteps === undefined) {
+        try {
+          const allSteps = await store.listWorkflowSteps();
+          const defaultOnSteps = allSteps
+            .filter((ws) => ws.enabled && ws.defaultOn)
+            .map((ws) => ws.id);
+          if (defaultOnSteps.length > 0) {
+            resolvedWorkflowSteps = defaultOnSteps;
+          }
+        } catch (err) {
+          storeLog.warn("Failed to auto-apply default workflow steps during task creation; auto-defaulting skipped", {
+            phase: "createTaskBackend:workflow-auto-default",
+            skippedAutoDefaulting: true,
+            error: err instanceof Error ? err.message : String(err),
+            descriptionLength: input.description.length,
+          });
+        }
+      }
+    } else if (input.enabledWorkflowSteps.length === 0) {
+      resolvedWorkflowSteps = undefined;
+    }
+
+    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:20:
+    // Allocator reservation: use the async DistributedTaskIdAllocator which
+    // is now wired for backend mode. It reserves the next task ID against
+    // PostgreSQL's distributed_task_id tables. On success it commits; on
+    // failure it aborts the reservation so the sequence is not wasted.
+    const allocator = store.getDistributedTaskIdAllocator();
+    const settings = await store.getSettingsFast();
+    const prefix = (settings.taskPrefix || "KB").trim().toUpperCase();
+    const nodeId = await store.resolveLocalNodeIdForTaskAllocation();
+    const reservation = await allocator.reserveDistributedTaskId({
+      prefix,
+      nodeId,
+    });
+
+    let task: Task;
+    try {
+      await store.assertNoDependencyCycle(reservation.taskId, input.dependencies ?? [], "createTask");
+      task = await store._createTaskInternalBackend(
+        input,
+        title,
+        resolvedWorkflowSteps,
+        reservation.taskId,
+        { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization },
+      );
+      await allocator.commitDistributedTaskIdReservation({
+        reservationId: reservation.reservationId,
+        nodeId,
+      });
+    } catch (err) {
+      await allocator.abortDistributedTaskIdReservation({
+        reservationId: reservation.reservationId,
+        nodeId,
+        reason: "failed-create",
+      }).catch(() => undefined);
+      throw err;
+    }
+
+    // Record the inherited workflow selection now that the task row exists.
+    if (pendingWorkflowSelection) {
+      try {
+        store.writeTaskWorkflowSelection(task.id, pendingWorkflowSelection.workflowId, pendingWorkflowSelection.stepIds);
+      } catch (err) {
+        storeLog.warn("Failed to record inherited workflow selection", {
+          taskId: task.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Deferred title summarization (same fire-and-forget pattern as SQLite path).
+    if (hasPendingSummarization && shouldInvokeTaskCreatedHook) {
+      const id = task.id;
+      Promise.resolve().then(async () => {
+        try {
+          const generatedTitle = await onSummarize!(input.description);
+          const sanitizedTitle = sanitizeTitle(generatedTitle);
+          if (sanitizedTitle) {
+            await store.trackDeferredTaskCreatedWork(async () => {
+              if (store.closing) return;
+              const currentTask = await store.getTask(id);
+              if (currentTask && !currentTask.title) {
+                const normalizedTitle = normalizeTitleForTaskId(sanitizedTitle, id);
+                if (normalizedTitle.title && !store.closing) {
+                  await store.updateTask(id, { title: normalizedTitle.title });
+                }
+              }
+            });
+          }
+        } catch (err) {
+          storeLog.warn(
+            `Title summarization failed for task ${id}: ${err instanceof Error ? err.message : String(err)}`,
+            { taskId: id, descriptionLength: input.description.length },
+          );
+        }
+
+        await store.trackDeferredTaskCreatedWork(async () => {
+          if (store.closing) return;
+          let latestTask = task;
+          try {
+            const refreshed = await store.getTask(id);
+            if (refreshed) latestTask = refreshed;
+          } catch {
+            // Best-effort refresh; fall back to original task snapshot.
+          }
+          if (store.closing) return;
+          try {
+            await store.invokeTaskCreatedHook(latestTask);
+          } catch (err) {
+            storeLog.warn("Deferred task-created hook failed", {
+              taskId: id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
+      }).catch((err) => {
+        storeLog.error("Unexpected title summarization promise-chain failure", {
+          taskId: id,
+          descriptionLength: input.description.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+
+    return task;
+  }
+
+export async function _createTaskInternalBackendImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+    const layer = store.asyncLayer!;
+    const now = options?.createdAt ?? new Date().toISOString();
+    const normalizedTitle = normalizeTitleForTaskId(title, id);
+    const task: Task = {
+      id,
+      lineageId: input.lineageId ?? generateTaskLineageId(),
+      title: normalizedTitle.title ?? undefined,
+      description: input.description,
+      priority: normalizeTaskPriority(input.priority),
+      tokenUsage: input.tokenUsage,
+      sourceIssue: input.sourceIssue,
+      githubTracking: input.githubTracking,
+      sourceType: input.source?.sourceType ?? "unknown",
+      sourceAgentId: input.source?.sourceAgentId,
+      sourceRunId: input.source?.sourceRunId,
+      sourceSessionId: input.source?.sourceSessionId,
+      sourceMessageId: input.source?.sourceMessageId,
+      sourceParentTaskId: input.source?.sourceParentTaskId,
+      sourceMetadata: withTaskBranchContextInSourceMetadata(input.source?.sourceMetadata, input.branchContext),
+      branchContext: input.branchContext,
+      autoMerge: input.autoMerge,
+      autoMergeProvenance: input.autoMerge === undefined ? undefined : "user",
+      column: input.column || "triage",
+      dependencies: input.dependencies || [],
+      breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
+      noCommitsExpected: input.noCommitsExpected === true ? true : undefined,
+      enabledWorkflowSteps: resolvedWorkflowSteps,
+      modelPresetId: input.modelPresetId,
+      assignedAgentId: input.assignedAgentId,
+      assigneeUserId: input.assigneeUserId,
+      scopeOverride: input.scopeOverride === true ? true : undefined,
+      scopeOverrideReason: input.scopeOverrideReason,
+      nodeId: input.nodeId,
+      modelProvider: input.modelProvider,
+      modelId: input.modelId,
+      validatorModelProvider: input.validatorModelProvider,
+      validatorModelId: input.validatorModelId,
+      planningModelProvider: input.planningModelProvider,
+      planningModelId: input.planningModelId,
+      thinkingLevel: input.thinkingLevel,
+      reviewLevel: input.reviewLevel,
+      executionMode: input.executionMode,
+      baseBranch: input.baseBranch,
+      branch: input.branch,
+      missionId: input.missionId,
+      sliceId: input.sliceId,
+      steps: [],
+      currentStep: 0,
+      log: [{ timestamp: now, action: "Task created" }],
+      columnMovedAt: now,
+      createdAt: now,
+      updatedAt: options?.updatedAt ?? now,
+    };
+
+    if (normalizedTitle.changed) {
+      task.log.push({
+        timestamp: now,
+        action: "Title normalized: stripped legacy task-id reference",
+      });
+    }
+
+    const dir = store.taskDir(id);
+
+    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:30:
+    // Insert the task row via async Drizzle insert inside a transaction.
+    // A duplicate-ID collision raises a unique_violation (23505) which we
+    // catch and surface as "Task ID already exists" (matching the SQLite path).
+    const context = store.createTaskPersistSerializationContext(task);
+    try {
+      await layer.transactionImmediate(async (tx) => {
+        await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+      });
+    } catch (error) {
+      if (isTaskIdConflictError(error)) {
+        throw new Error(`Task ID already exists: ${task.id}`);
+      }
+      throw error;
+    }
+
+    // Write task.json for backward compatibility and debugging.
+    if (store.isWatching) store.taskCache.set(id, { ...task });
+    await store.writeTaskJsonFile(dir, task);
+
+    // Write PROMPT.md (same logic as SQLite path).
+    const prompt = options?.promptOverride
+      ?? (task.column === "triage"
+        ? buildBootstrapPrompt(id, task.title, task.description)
+        : store.generateSpecifiedPrompt(task));
+    const validation = validateFileScopeInPromptContent(prompt);
+    if (validation.invalid.length > 0) {
+      // Rollback: soft-delete the inserted row and remove the directory.
+      await softDeleteTaskRowAsync(layer, id, new Date().toISOString());
+      if (store.isWatching) store.taskCache.delete(id);
+      const { rm } = await import("node:fs/promises");
+      if (existsSync(dir)) {
+        await rm(dir, { recursive: true, force: true });
+      }
+      throw new InvalidFileScopeError(id, validation.invalid);
+    }
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "PROMPT.md"), prompt);
+
+    // Auto-archive dedup (best-effort, same as SQLite path but using async reads).
+    await store._maybeAutoArchiveSameAgentDuplicateBackend(task, input);
+
+    store.emitTaskLifecycleEventSafely("task:created", [task]);
+    if (options?.invokeTaskCreatedHook !== false) {
+      await store.invokeTaskCreatedHook(task);
+    }
+    return task;
+  }
+
+export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, options?: { onSummarize?: (description: string) => Promise<string | null>; settings?: { autoSummarizeTitles?: boolean }; invokeTaskCreatedHook?: boolean; }): Promise<Task> {
+    // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:10:
+    // Backend-mode createTask: delegates to createTaskBackend which uses the
+    // async DistributedTaskIdAllocator (now wired for backend mode) and the
+    // async insert helper (insertTaskRowInTransaction) to persist the task row
+    // against PostgreSQL. The file-system operations (PROMPT.md, task.json)
+    // remain the same. The allocator reservation + commit/abort lifecycle is
+    // handled by the async allocator against the distributed_task_id tables.
+    if (store.backendMode) {
+      return store.createTaskBackend(input, options);
+    }
+    if (!input.description?.trim()) {
+      throw new Error("Description is required and cannot be empty");
+    }
+
+    const selfDefeatingDep = detectSelfDefeatingDependency(input.title, input.dependencies ?? []);
+    if (selfDefeatingDep) {
+      throw new SelfDefeatingDependencyError(
+        input.title?.trim() ?? "",
+        selfDefeatingDep.matchedVerb,
+        selfDefeatingDep.operandTaskId,
+      );
+    }
+
+    let resolvedSettings = options?.settings;
+    if (!resolvedSettings) {
+      try {
+        resolvedSettings = await store.getSettings();
+      } catch {
+        resolvedSettings = {};
+      }
+    }
+
+    let onSummarize = options?.onSummarize;
+    if (!onSummarize && (resolvedSettings?.autoSummarizeTitles === true || input.summarize === true)) {
+      // Resolve a store-managed summarizer whenever title summarization is explicitly
+      // requested on this create call (agent tools set `summarize: true`) or globally
+      // enabled via autoSummarizeTitles. The title-summarizer model lanes MOVED to
+      // workflow settings (U4/KTD-7).
+      // At task-creation time there is no task/workflow yet, so resolve the
+      // project DEFAULT workflow's effective settings (unset default normalizes to
+      // builtin:coding) and overlay them so the moved lane reads from its new home;
+      // the global `titleSummarizerGlobal*` lane in `resolvedSettings` remains the
+      // fallback below.
+      let summarizerSettings: Partial<Settings> = resolvedSettings ?? {};
+      try {
+        const defaultWorkflowId = (await store.getDefaultWorkflowId()) ?? "builtin:coding";
+        const effective = await resolveEffectiveSettingsById(
+          store,
+          defaultWorkflowId,
+          store.getWorkflowSettingsProjectId(),
+        );
+        summarizerSettings = { ...summarizerSettings, ...(effective as Partial<Settings>) };
+      } catch {
+        // Never-throw: fall back to the base settings (global lane only).
+      }
+      const summarizerModel = resolveTitleSummarizerSettingsModel(summarizerSettings);
+      if (summarizerModel.provider && summarizerModel.modelId) {
+        onSummarize = async (description: string) => {
+          try {
+            return await summarizeTitle(
+              description,
+              store.getRootDir(),
+              summarizerModel.provider,
+              summarizerModel.modelId,
+            );
+          } catch {
+            return null;
+          }
+        };
+      }
+    }
+
+    // Determine if we should try to summarize the title
+    const title = input.title?.trim() || undefined;
+    const shouldSummarize =
+      !title &&
+      input.description.length > 200 &&
+      (input.summarize === true || resolvedSettings?.autoSummarizeTitles === true);
+    const hasPendingSummarization = shouldSummarize && typeof onSummarize === "function";
+    const shouldInvokeTaskCreatedHook = options?.invokeTaskCreatedHook !== false;
+
+    // Determine enabledWorkflowSteps: explicit input takes precedence, otherwise auto-apply default-on steps
+    let resolvedWorkflowSteps: string[] | undefined = input.enabledWorkflowSteps?.length
+      ? await store.resolveEnabledWorkflowSteps(
+          input.enabledWorkflowSteps,
+          await store.optionalGroupIdSet(input.workflowId),
+        )
+      : undefined;
+
+    // When a project default workflow is configured, new tasks inherit it
+    // (compiled to steps) ahead of the legacy default-on step behavior.
+    let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
+    // U6/R3/KTD-4: an explicit create-time workflowId beats the project default.
+    // `null` is an explicit opt-out (no workflow), `string` materializes that
+    // workflow, `undefined` falls through to the default-workflow behavior below.
+    // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
+    const explicitWorkflowId =
+      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    if (explicitWorkflowId !== undefined) {
+      if (explicitWorkflowId === null) {
+        // Explicit "No workflow": skip default materialization entirely.
+        resolvedWorkflowSteps = undefined;
+      } else {
+        // Compile + materialize up front so unknown/fragment ids throw BEFORE
+        // the task row is created (no orphaned steps, no half-created task).
+        const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
+        resolvedWorkflowSteps = selected.stepIds;
+        pendingWorkflowSelection = selected;
+      }
+    } else if (input.enabledWorkflowSteps === undefined) {
+      try {
+        const inherited = await store.materializeDefaultWorkflowSteps();
+        if (inherited) {
+          resolvedWorkflowSteps = inherited.stepIds;
+          pendingWorkflowSelection = inherited;
+        }
+      } catch (err) {
+        storeLog.warn("Failed to apply default workflow during task creation; falling back to default-on steps", {
+          phase: "createTask:default-workflow",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      if (resolvedWorkflowSteps === undefined) {
+        try {
+          const allSteps = await store.listWorkflowSteps();
+          const defaultOnSteps = allSteps
+            .filter((ws) => ws.enabled && ws.defaultOn)
+            .map((ws) => ws.id);
+          if (defaultOnSteps.length > 0) {
+            resolvedWorkflowSteps = defaultOnSteps;
+          }
+        } catch (err) {
+          storeLog.warn("Failed to auto-apply default workflow steps during task creation; auto-defaulting skipped", {
+            phase: "createTask:workflow-auto-default",
+            skippedAutoDefaulting: true,
+            error: err instanceof Error ? err.message : String(err),
+            descriptionLength: input.description.length,
+          });
+        }
+      }
+    } else if (input.enabledWorkflowSteps.length === 0) {
+      resolvedWorkflowSteps = undefined;
+    }
+
+    let task: Task;
+    try {
+      task = await store.createTaskWithDistributedReservation(input, {
+        createTaskWithId: async (taskId) => {
+          await store.assertNoDependencyCycle(taskId, input.dependencies ?? [], "createTask");
+          return store._createTaskInternal(
+            input,
+            title,
+            resolvedWorkflowSteps,
+            taskId,
+            { invokeTaskCreatedHook: shouldInvokeTaskCreatedHook && !hasPendingSummarization },
+          );
+        },
+      });
+    } catch (err) {
+      // The task row was never created, so any default-workflow steps we
+      // materialized above would orphan with no task/selection pointing at them.
+      store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      throw err;
+    }
+
+    // Record the inherited workflow selection now that the task row exists.
+    if (pendingWorkflowSelection) {
+      try {
+        store.writeTaskWorkflowSelection(task.id, pendingWorkflowSelection.workflowId, pendingWorkflowSelection.stepIds);
+      } catch (err) {
+        storeLog.warn("Failed to record inherited workflow selection", {
+          taskId: task.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (hasPendingSummarization && shouldInvokeTaskCreatedHook) {
+      const id = task.id;
+      Promise.resolve().then(async () => {
+        try {
+          const generatedTitle = await onSummarize!(input.description);
+          const sanitizedTitle = sanitizeTitle(generatedTitle);
+          if (sanitizedTitle) {
+            await store.trackDeferredTaskCreatedWork(async () => {
+              if (store.closing) return;
+              const currentTask = store.readTaskFromDb(id);
+              if (currentTask && !currentTask.title) {
+                // FN-5077: normalizeTitleForTaskId may return null for dangling fragments; only persist usable titles.
+                const normalizedTitle = normalizeTitleForTaskId(sanitizedTitle, id);
+                if (normalizedTitle.title && !store.closing) {
+                  await store.updateTask(id, { title: normalizedTitle.title });
+                }
+              }
+            });
+          }
+        } catch (err) {
+          const autoEnabled = resolvedSettings?.autoSummarizeTitles === true;
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          storeLog.warn(
+            `Title summarization failed for task ${id}: ${errorMessage} (desc length: ${input.description.length}, auto-summarize: ${autoEnabled})`,
+            {
+              taskId: id,
+              descriptionLength: input.description.length,
+              autoSummarizeEnabled: autoEnabled,
+              error: errorMessage,
+            },
+          );
+        }
+
+        await store.trackDeferredTaskCreatedWork(async () => {
+          if (store.closing) return;
+          let latestTask = task;
+          try {
+            const refreshed = store.readTaskFromDb(id);
+            if (refreshed) latestTask = refreshed;
+          } catch {
+            // Best-effort refresh; fall back to original task snapshot.
+          }
+
+          if (store.closing) return;
+          try {
+            await store.invokeTaskCreatedHook(latestTask);
+          } catch (err) {
+            storeLog.warn("Deferred task-created hook failed", {
+              taskId: id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
+      }).catch((err) => {
+        const autoEnabled = resolvedSettings?.autoSummarizeTitles === true;
+        storeLog.error("Unexpected title summarization promise-chain failure", {
+          taskId: id,
+          descriptionLength: input.description.length,
+          autoSummarizeEnabled: autoEnabled,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+
+    return task;
+  }
+
+export async function createTaskWithReservedIdImpl(store: TaskStore, input: TaskCreateInput, options: { taskId: string; createdAt?: string; updatedAt?: string; prompt?: string; applyDefaultWorkflowSteps?: boolean; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+    if (!input.description?.trim()) {
+      throw new Error("Description is required and cannot be empty");
+    }
+
+    const selfDefeatingDep = detectSelfDefeatingDependency(input.title, input.dependencies ?? []);
+    if (selfDefeatingDep) {
+      throw new SelfDefeatingDependencyError(
+        input.title?.trim() ?? "",
+        selfDefeatingDep.matchedVerb,
+        selfDefeatingDep.operandTaskId,
+      );
+    }
+
+    const id = options.taskId.trim();
+    if (!id) {
+      throw new Error("taskId is required");
+    }
+
+    await store.assertNoDependencyCycle(id, input.dependencies ?? [], "createTaskWithReservedId");
+
+    await store.maybeResolveTombstonedTaskId(id, input, "createTask");
+    await store.assertTaskIdAvailable(id);
+
+    const title = input.title?.trim() || undefined;
+    let resolvedWorkflowSteps: string[] | undefined = input.enabledWorkflowSteps?.length
+      ? await store.resolveEnabledWorkflowSteps(
+          input.enabledWorkflowSteps,
+          await store.optionalGroupIdSet(input.workflowId),
+        )
+      : undefined;
+
+    let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
+    // U6/R3/KTD-4: an explicit create-time workflowId beats the project default,
+    // mirroring createTask(). `null` is an explicit opt-out, `string` materializes
+    // that workflow, `undefined` falls through to the default-workflow behavior.
+    // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
+    const explicitWorkflowId =
+      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    if (explicitWorkflowId !== undefined) {
+      if (explicitWorkflowId === null) {
+        // Explicit "No workflow": skip default materialization entirely.
+        resolvedWorkflowSteps = undefined;
+      } else {
+        // Compile + materialize up front so unknown/fragment ids throw BEFORE
+        // the task row is created (no orphaned steps, no half-created task).
+        const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
+        resolvedWorkflowSteps = selected.stepIds;
+        pendingWorkflowSelection = selected;
+      }
+    } else if (input.enabledWorkflowSteps === undefined && options.applyDefaultWorkflowSteps !== false) {
+      // Mirror createTask: a configured project default workflow takes
+      // precedence over legacy default-on steps on this creation path too.
+      try {
+        const inherited = await store.materializeDefaultWorkflowSteps();
+        if (inherited) {
+          resolvedWorkflowSteps = inherited.stepIds;
+          pendingWorkflowSelection = inherited;
+        }
+      } catch (err) {
+        storeLog.warn("Failed to apply default workflow during reserved task creation; falling back to default-on steps", {
+          phase: "createTaskWithReservedId:default-workflow",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      if (resolvedWorkflowSteps === undefined) {
+        try {
+          const allSteps = await store.listWorkflowSteps();
+          const defaultOnSteps = allSteps
+            .filter((ws) => ws.enabled && ws.defaultOn)
+            .map((ws) => ws.id);
+          if (defaultOnSteps.length > 0) {
+            resolvedWorkflowSteps = defaultOnSteps;
+          }
+        } catch (err) {
+          storeLog.warn("Failed to auto-apply default workflow steps during reserved task creation; auto-defaulting skipped", {
+            phase: "createTaskWithReservedId:workflow-auto-default",
+            skippedAutoDefaulting: true,
+            error: err instanceof Error ? err.message : String(err),
+            descriptionLength: input.description.length,
+          });
+        }
+      }
+    } else if (Array.isArray(input.enabledWorkflowSteps) && input.enabledWorkflowSteps.length === 0) {
+      resolvedWorkflowSteps = undefined;
+    }
+
+    let createdTask: Task;
+    try {
+      createdTask = await store._createTaskInternal(input, title, resolvedWorkflowSteps, id, {
+        createdAt: options.createdAt,
+        updatedAt: options.updatedAt,
+        promptOverride: options.prompt,
+        invokeTaskCreatedHook: options.invokeTaskCreatedHook,
+      });
+    } catch (err) {
+      // The task row was never created, so any default-workflow steps we
+      // materialized above would orphan with no task/selection pointing at them.
+      store.cleanupOrphanedMaterializedSteps(pendingWorkflowSelection?.stepIds);
+      throw err;
+    }
+
+    // Record the inherited workflow selection now that the task row exists.
+    if (pendingWorkflowSelection) {
+      try {
+        store.writeTaskWorkflowSelection(createdTask.id, pendingWorkflowSelection.workflowId, pendingWorkflowSelection.stepIds);
+      } catch (err) {
+        storeLog.warn("Failed to record inherited workflow selection", {
+          taskId: createdTask.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return createdTask;
+  }
+
+export async function _createTaskInternalImpl(store: TaskStore, input: TaskCreateInput, title: string | undefined, resolvedWorkflowSteps: string[] | undefined, id: string, options?: { createdAt?: string; updatedAt?: string; promptOverride?: string; invokeTaskCreatedHook?: boolean; },): Promise<Task> {
+    const now = options?.createdAt ?? new Date().toISOString();
+    // FN-5077: null normalized titles are treated as "no title" and allow standard fallback/summarization behavior.
+    const normalizedTitle = normalizeTitleForTaskId(title, id);
+    const task: Task = {
+      id,
+      lineageId: input.lineageId ?? generateTaskLineageId(),
+      title: normalizedTitle.title ?? undefined,
+      description: input.description,
+      priority: normalizeTaskPriority(input.priority),
+      tokenUsage: input.tokenUsage,
+      sourceIssue: input.sourceIssue,
+      githubTracking: input.githubTracking,
+      sourceType: input.source?.sourceType ?? "unknown",
+      sourceAgentId: input.source?.sourceAgentId,
+      sourceRunId: input.source?.sourceRunId,
+      sourceSessionId: input.source?.sourceSessionId,
+      sourceMessageId: input.source?.sourceMessageId,
+      sourceParentTaskId: input.source?.sourceParentTaskId,
+      sourceMetadata: withTaskBranchContextInSourceMetadata(input.source?.sourceMetadata, input.branchContext),
+      branchContext: input.branchContext,
+      autoMerge: input.autoMerge,
+      autoMergeProvenance: input.autoMerge === undefined ? undefined : "user",
+      column: input.column || "triage",
+      dependencies: input.dependencies || [],
+      breakIntoSubtasks: input.breakIntoSubtasks === true ? true : undefined,
+      noCommitsExpected: input.noCommitsExpected === true ? true : undefined,
+      enabledWorkflowSteps: resolvedWorkflowSteps,
+      modelPresetId: input.modelPresetId,
+      assignedAgentId: input.assignedAgentId,
+      assigneeUserId: input.assigneeUserId,
+      scopeOverride: input.scopeOverride === true ? true : undefined,
+      scopeOverrideReason: input.scopeOverrideReason,
+      nodeId: input.nodeId,
+      modelProvider: input.modelProvider,
+      modelId: input.modelId,
+      validatorModelProvider: input.validatorModelProvider,
+      validatorModelId: input.validatorModelId,
+      planningModelProvider: input.planningModelProvider,
+      planningModelId: input.planningModelId,
+      thinkingLevel: input.thinkingLevel,
+      reviewLevel: input.reviewLevel,
+      executionMode: input.executionMode,
+      baseBranch: input.baseBranch,
+      branch: input.branch,
+      missionId: input.missionId,
+      sliceId: input.sliceId,
+      steps: [],
+      currentStep: 0,
+      log: [{ timestamp: now, action: "Task created" }],
+      columnMovedAt: now,
+      createdAt: now,
+      updatedAt: options?.updatedAt ?? now,
+    };
+
+    if (normalizedTitle.changed) {
+      task.log.push({
+        timestamp: now,
+        action: "Title normalized: stripped legacy task-id reference",
+      });
+      const removed = extractTaskIdTokens(title ?? "").filter((token) => token !== id.toUpperCase());
+      storeLog.log(`[title-id-drift] normalized title for ${id}: removed=[${removed.join(",")}]`);
+    }
+
+    await store.maybeResolveTombstonedTaskId(id, input, "createTask");
+    await store.assertTaskIdAvailable(id);
+
+    const dir = store.taskDir(id);
+    await store.atomicCreateTaskJson(dir, task, "createTask");
+
+    // Update cache if watcher is active
+    if (store.isWatching) store.taskCache.set(id, { ...task });
+
+    const prompt = options?.promptOverride
+      ?? (task.column === "triage"
+        ? buildBootstrapPrompt(id, task.title, task.description)
+        : store.generateSpecifiedPrompt(task));
+    const validation = validateFileScopeInPromptContent(prompt);
+    if (validation.invalid.length > 0) {
+      if (store.isWatching) store.taskCache.delete(id);
+      store.deleteTaskById(id);
+      const { rm } = await import("node:fs/promises");
+      if (existsSync(dir)) {
+        await rm(dir, { recursive: true, force: true });
+      }
+      throw new InvalidFileScopeError(id, validation.invalid);
+    }
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "PROMPT.md"), prompt);
+
+    await store._maybeAutoArchiveSameAgentDuplicate(task, input);
+
+    store.emitTaskLifecycleEventSafely("task:created", [task]);
+    if (options?.invokeTaskCreatedHook !== false) {
+      await store.invokeTaskCreatedHook(task);
+    }
+    return task;
+  }
+
+export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, task: Task, input: TaskCreateInput): Promise<void> {
+    const sourceAgentId = task.sourceAgentId ?? null;
+    const sourceParentTaskId = task.sourceParentTaskId ?? null;
+    // Need at least one provenance handle to scope the dedup check.
+    if (!sourceAgentId && !sourceParentTaskId) return;
+
+    try {
+      const nowMs = Date.now();
+      const recent = (await store.listTasks({ slim: true, includeArchived: false })).filter((candidate) => {
+        if (candidate.id === task.id) return false;
+        const createdMs = Date.parse(candidate.createdAt);
+        if (Number.isNaN(createdMs)) return false;
+        if (createdMs < nowMs - 24 * 60 * 60 * 1000) return false;
+        const agentMatch = sourceAgentId != null && candidate.sourceAgentId === sourceAgentId;
+        const parentMatch = sourceParentTaskId != null && candidate.sourceParentTaskId === sourceParentTaskId;
+        return agentMatch || parentMatch;
+      });
+
+      const settings = await store.getSettings();
+      const stickyWindowDays = Math.max(0, settings.tombstoneStickyWindowDays ?? 7);
+      let tombstonedCandidates: Array<{
+        id: string;
+        title: string | null;
+        description: string;
+        column: Column;
+        createdAt: string;
+        sourceAgentId: string | null;
+        deletedAt: string;
+        allowResurrection: number | null;
+      }> = [];
+
+      if (stickyWindowDays > 0) {
+        try {
+          const cutoffIso = new Date(nowMs - stickyWindowDays * 24 * 60 * 60 * 1000).toISOString();
+          tombstonedCandidates = store.db.prepare(`
+            SELECT id, title, description, "column", createdAt, sourceAgentId, deletedAt, allowResurrection
+              FROM tasks
+             WHERE deletedAt IS NOT NULL
+               AND deletedAt >= ?
+               AND sourceAgentId = ?
+               AND id != ?
+          `).all(cutoffIso, sourceAgentId, task.id) as typeof tombstonedCandidates;
+        } catch (error) {
+          storeLog.warn(`FN-5233 tombstone candidate widening failed open for ${task.id}: ${getErrorMessage(error)}`);
+        }
+      }
+
+      const matches = findSameAgentDuplicates(
+        {
+          title: input.title ?? task.title,
+          description: input.description,
+          sourceParentTaskId,
+        },
+        [
+          ...recent.map((candidate) => ({
+            id: candidate.id,
+            title: candidate.title ?? "",
+            description: candidate.description,
+            column: candidate.column,
+            createdAt: Date.parse(candidate.createdAt),
+            sourceAgentId: candidate.sourceAgentId ?? null,
+            sourceParentTaskId: candidate.sourceParentTaskId ?? null,
+            tombstoned: false,
+          })),
+          ...tombstonedCandidates.map((candidate) => ({
+            id: candidate.id,
+            title: candidate.title ?? "",
+            description: candidate.description,
+            column: "todo",
+            createdAt: Date.parse(candidate.createdAt),
+            sourceAgentId: candidate.sourceAgentId,
+            sourceParentTaskId: null,
+            tombstoned: true,
+            deletedAt: candidate.deletedAt,
+            allowResurrection: candidate.allowResurrection === 1,
+          })),
+        ],
+        { nowMs, sourceAgentId },
+      );
+
+      if (matches.length === 0) return;
+
+      const tombstonedMatch = matches.find((match) => match.tombstoned && match.allowResurrection !== true);
+      if (tombstonedMatch?.deletedAt) {
+        store.insertRunAuditEventRow({
+          taskId: task.id,
+          domain: "database",
+          mutationType: "intake:resurrection-blocked",
+          target: task.id,
+          metadata: {
+            matchedTaskId: tombstonedMatch.id,
+            score: tombstonedMatch.score,
+            tombstoneDeletedAt: tombstonedMatch.deletedAt,
+            stickyWindowDays,
+          },
+        });
+        if (store.isWatching) store.taskCache.delete(task.id);
+        store.deleteTaskById(task.id);
+        const { rm } = await import("node:fs/promises");
+        const taskDir = store.taskDir(task.id);
+        if (existsSync(taskDir)) {
+          await rm(taskDir, { recursive: true, force: true });
+        }
+        throw new TombstonedTaskResurrectionError(
+          tombstonedMatch.id,
+          tombstonedMatch.deletedAt,
+          tombstonedMatch.allowResurrection === true,
+        );
+      }
+
+      const siblingTaskIds = matches.filter((match) => !match.tombstoned).map((match) => match.id);
+      if (siblingTaskIds.length === 0) return;
+      const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
+      await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
+      task.column = "archived";
+    } catch (error) {
+      if (error instanceof TombstonedTaskResurrectionError) {
+        throw error;
+      }
+      storeLog.warn(`FN-4892 same-agent duplicate intake failed open for ${task.id}: ${getErrorMessage(error)}`);
+    }
+  }
+

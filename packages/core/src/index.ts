@@ -780,6 +780,8 @@ export {
   ProjectIdentityMismatchError,
   readProjectIdentity,
   writeProjectIdentity,
+  readProjectIdentityAsync,
+  writeProjectIdentityAsync,
 } from "./project-identity.js";
 export { ProcessSupervisor, superviseSpawn } from "./process-supervisor.js";
 export type {
@@ -792,7 +794,6 @@ export type { Statement, VacuumResult } from "./db.js";
 export type { ProjectIdentity } from "./project-identity.js";
 export type { EnsureProjectForPathInput, EnsureProjectForPathResult } from "./central-core.js";
 export { ArchiveDatabase } from "./archive-db.js";
-export { detectLegacyData, migrateFromLegacy, getMigrationStatus } from "./db-migrate.js";
 export { GlobalSettingsStore, resolveGlobalDir, resolveGlobalDirForHome } from "./global-settings.js";
 export { isValidSqliteDatabaseFile } from "./sqlite-validation.js";
 export { DaemonTokenManager, DAEMON_TOKEN_PREFIX, DAEMON_TOKEN_HEX_LENGTH, isDaemonTokenFormat } from "./daemon-token.js";
@@ -1405,10 +1406,12 @@ export type {
 } from "./mission-types.js";
 export { MissionStore } from "./mission-store.js";
 export type { MissionStoreEvents, MissionSummary } from "./mission-store.js";
+export { AsyncMissionStore } from "./async-mission-store.js";
 export { ACTIVE_GOAL_LIMIT, ActiveGoalLimitExceededError } from "./goal-types.js";
 export type { Goal, GoalCreateInput, GoalListFilter, GoalStatus, GoalUpdateInput } from "./goal-types.js";
 export { GoalStore } from "./goal-store.js";
 export type { GoalStoreEvents } from "./goal-store.js";
+export { AsyncGoalStore } from "./async-goal-store.js";
 export type {
   GoalCitation,
   GoalCitationSurface,
@@ -1664,6 +1667,10 @@ export type { AgentDreamProcessorResult, DreamProcessorResult, DreamPromptExecut
 // ── Project Insights ──────────────────────────────────────────────────────
 
 export { InsightLifecycleError, InsightStore, computeInsightFingerprint } from "./insight-store.js";
+// FNXC:InsightStore 2026-06-28-10:10: export the PostgreSQL-backed AsyncInsightStore
+// so the dashboard insights routes + run sweeper can type the run-execution store
+// path as the `InsightStore | AsyncInsightStore` union (insight-run execution in PG mode).
+export { AsyncInsightStore } from "./async-insight-store.js";
 export {
   classifyInsightRunError,
   executeInsightRunLifecycle,
@@ -1702,6 +1709,10 @@ export type {
 // ── Research System ───────────────────────────────────────────────────────
 
 export { ResearchLifecycleError, ResearchStore } from "./research-store.js";
+// FNXC:ResearchStore 2026-06-28-11:30: export the PostgreSQL-backed AsyncResearchStore
+// so the engine's ResearchOrchestrator/ResearchRunDispatcher can type their store as
+// the `ResearchStore | AsyncResearchStore` union (research run execution in PG mode).
+export { AsyncResearchStore } from "./async-research-store.js";
 export {
   RESEARCH_RUN_STATUSES,
   RESEARCH_SOURCE_STATUSES,
@@ -1805,6 +1816,7 @@ export { isSandboxExperimentalEnabled } from "./sandbox-settings.js";
 export { TodoStore } from "./todo-store.js";
 export type { TodoStoreEvents } from "./todo-store.js";
 export { EvalLifecycleError, EvalStore } from "./eval-store.js";
+export { AsyncEvalStore } from "./async-eval-store.js";
 export { collectDeterministicSignals } from "./eval-signal-collector.js";
 export type { EvalRunContext } from "./eval-signal-collector.js";
 export type {
@@ -2050,3 +2062,141 @@ export {
   hasSyncPassphraseConfigured,
 } from "./secrets-sync-passphrase.js";
 export { suggestTaskPrefix } from "./task-prefix.js";
+
+// ── U1: PostgreSQL connection layer (backend resolution + connection pool) ──
+export {
+  resolveBackend,
+  resolveBackendWithOptions,
+  looksLikePoolerUrl,
+  poolerWarning,
+  describeBackendForLog,
+  DATABASE_URL_ENV,
+  DATABASE_MIGRATION_URL_ENV,
+  POOLER_PREPARED_STATEMENT_WARNING,
+  createConnectionSet,
+  createConnectionSetFromUrl,
+  verifyConnection,
+  DatabaseConnectionError,
+  redactUrlPassword,
+  redactKeywordPassword,
+  redactConnectionString,
+  redactCredentialsFromMessage,
+  REDACTED_PASSWORD_PLACEHOLDER,
+  createAsyncDataLayer,
+  recordRunAuditEvent,
+  recordRunAuditEventWithinTransaction,
+  checkPostgresHealth,
+  detectSchemaDrift,
+  healSchemaDrift,
+  validateAndHealSchema,
+  vacuumAnalyze,
+  detectTaskIdIntegrityAnomaliesAsync,
+  EXPECTED_PROJECT_COLUMNS,
+  // FNXC:SqliteRemoval 2026-06-25-00:00:
+  // SQLite migrator (U9) exports. The dual-read cutover harness (U10) has been
+  // removed — it was a transitional operator tool that should not ship to end
+  // users. The upgrade path is auto-migrate + keep the SQLite file as a backup.
+  PgBackupManager,
+  PROJECT_BACKUP_SCHEMAS,
+  CENTRAL_BACKUP_SCHEMAS,
+  migrateSqliteToPostgres,
+  defaultMigrationSources,
+  applySchemaBaseline,
+  getAppliedMigrations,
+  SCHEMA_BASELINE_VERSION,
+  // FNXC:BackendFlip 2026-06-26-14:30:
+  // Runtime startup factory (cutover milestone). Production construction sites
+  // (engine, dashboard, CLI serve/dashboard, desktop) consult this to boot
+  // against PostgreSQL. Post default-flip: embedded PG is the default when
+  // DATABASE_URL is unset; FUSION_NO_EMBEDDED_PG=1 opts back to legacy SQLite.
+  createTaskStoreForBackend,
+  shouldUsePostgresBackend,
+  isEmbeddedPgRequested,
+  isEmbeddedPgOptedOut,
+  EMBEDDED_PG_ENV,
+  NO_EMBEDDED_PG_ENV,
+} from "./postgres/index.js";
+export type {
+  BackendMode,
+  ResolvedBackend,
+  ResolveBackendOptions,
+  PostgresConnections,
+  CreateConnectionOptions,
+  AsyncDataLayer,
+  DrizzleDb,
+  DbTransaction,
+  TransactionOptions,
+  PostgresHealthSnapshot,
+  SchemaDriftFinding,
+  SchemaValidationReport,
+  VacuumAnalyzeStats,
+  VacuumAnalyzeResult,
+  PgBackupOptions,
+  PgBackupPair,
+  PgDumpResult,
+  SqliteMigrationSource,
+  SchemaName,
+  MigrationReport,
+  TableMigrationResult,
+  BackendBootResult,
+  CreateTaskStoreForBackendOptions,
+} from "./postgres/index.js";
+
+// FNXC:RuntimeSatelliteAsync 2026-06-24-13:30:
+// Async monitor helpers exported for the dashboard monitor-store dual-path.
+export {
+  recordDeploymentAsync,
+  resolveIncidentAsync,
+  ingestIncidentSignalAsync,
+  getOpenIncidentByGroupingKeyAsync,
+  getIncidentAsync,
+  // FNXC:Monitor 2026-06-28-10:10:
+  // Storm-guard async helpers exported so the dashboard monitor-trait can run
+  // the full create→link→release sequence in PG backend mode (no longer
+  // early-returns "absorbed" when store.backendMode).
+  countRecentAutoFixTasksAsync,
+  claimIncidentForFixTaskAsync,
+  attachFixTaskAsync,
+  releaseIncidentFixTaskClaimAsync,
+} from "./task-store/async-monitor.js";
+export type { Deployment as AsyncDeployment, Incident as AsyncIncident } from "./task-store/async-monitor.js";
+
+// FNXC:RuntimeSatelliteCompletion 2026-06-24-23:40:
+// Async AiSessionStore helpers exported for the dashboard AiSessionStore dual-path.
+export {
+  upsertAiSession,
+  getAiSession,
+  listActiveAiSessions,
+  listAllAiSessions,
+  listRecoverableAiSessions,
+  updateAiSessionStatus,
+  updateAiSessionTitle,
+  markDraftSummarized,
+  updateDraft,
+  pingAiSession,
+  updateThinking as updateThinkingAsync,
+  archiveAiSession,
+  unarchiveAiSession,
+  acquireAiSessionLock,
+  releaseAiSessionLock,
+  forceAcquireAiSessionLock,
+  getAiSessionLockHolder,
+  releaseStaleAiSessionLocks,
+  deleteAiSession,
+  deleteAiSessionByIdAndType,
+  recoverStaleAiSessions,
+  cleanupOldAiSessions,
+  cleanupStaleAiSessions,
+} from "./async-ai-session-store.js";
+export type {
+  AiSessionRow as AsyncAiSessionRow,
+  AiSessionStatus as AsyncAiSessionStatus,
+  AiSessionType as AsyncAiSessionType,
+  AiSessionSummary as AsyncAiSessionSummary,
+  AiSessionCleanupSummary as AsyncAiSessionCleanupSummary,
+} from "./async-ai-session-store.js";
+
+// Re-export the drizzle-orm `sql` template tag so dashboard/engine consumers
+// can build raw queries against the AsyncDataLayer without depending on
+// drizzle-orm directly.
+export { sql as drizzleSql } from "drizzle-orm";

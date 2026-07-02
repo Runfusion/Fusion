@@ -130,6 +130,7 @@ async function loadCommandHandlers() {
   const { runGitStatus, runGitFetch, runGitPull, runGitPush } = await import("./commands/git.js");
   const { runBranchGroupList, runBranchGroupShow, runBranchGroupPromote, runBranchGroupAbandon } = await import("./commands/branch-group.js");
   const { runBackupCreate, runBackupList, runBackupRestore, runBackupCleanup } = await import("./commands/backup.js");
+  const { runDbVacuum, runDbMigrate } = await import("./commands/db.js");
   const { runMemoryBackupCreate, runMemoryBackupList, runMemoryBackupRestore } = await import("./commands/memory-backup.js");
   const { runMissionCreate, runMissionList, runMissionShow, runMissionDelete, runMissionActivateSlice, runMissionLinkGoal, runMissionUnlinkGoal, runMissionGoals } = await import("./commands/mission.js");
   const { runGoalsList, runGoalsCreate, runGoalsArchive, runGoalsCitations } = await import("./commands/goals.js");
@@ -215,6 +216,8 @@ async function loadCommandHandlers() {
     runBackupList,
     runBackupRestore,
     runBackupCleanup,
+    runDbVacuum,
+    runDbMigrate,
     runMemoryBackupCreate,
     runMemoryBackupList,
     runMemoryBackupRestore,
@@ -723,6 +726,8 @@ async function main() {
     runBackupList,
     runBackupRestore,
     runBackupCleanup,
+    runDbVacuum,
+    runDbMigrate,
     runMemoryBackupCreate,
     runMemoryBackupList,
     runMemoryBackupRestore,
@@ -1834,6 +1839,29 @@ async function main() {
             console.error(`Unknown subcommand: branch-group ${subcommand || ""}`);
             console.log("Try: fn branch-group list | show <id> | promote <id> | abandon <id>");
             process.exit(1);
+        }
+        break;
+      }
+
+      /*
+      FNXC:SqliteRemoval 2026-06-25-00:00:
+      `fn db` subcommand: `vacuum` (compaction). The vacuum path branches
+      between PostgreSQL (VACUUM/ANALYZE via DATABASE_URL) and legacy SQLite.
+      The `parity` subcommand was removed with the dual-read harness — it was
+      a transitional operator tool that should not ship to end users.
+      */
+      case "db": {
+        const subcommand = args[1];
+        if (subcommand === "vacuum") {
+          await runDbVacuum(projectName);
+        } else if (subcommand === "migrate") {
+          await runDbMigrate(projectName, { dryRun: args.includes("--dry-run") });
+        } else {
+          console.error("Usage: fn db vacuum | migrate");
+          console.error("  vacuum   — run VACUUM/ANALYZE (PostgreSQL) or VACUUM (legacy SQLite)");
+          console.error("  migrate  — migrate legacy SQLite data into PostgreSQL (with pre-migration backup)");
+          console.error("             options: --dry-run (report plan only, no writes)");
+          process.exit(1);
         }
         break;
       }

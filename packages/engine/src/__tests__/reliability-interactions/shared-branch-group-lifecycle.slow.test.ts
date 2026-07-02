@@ -69,7 +69,7 @@ git commit -m "$message"
 git checkout main
 `;
   git(rootDir, `sh -c ${shellQuote(script)} sh ${[branch, filePath, content, message].map(shellQuote).join(" ")}`);
-  store.enqueueMergeQueue(input.taskId);
+  await store.enqueueMergeQueue(input.taskId);
 
   return { taskId: input.taskId, branch, worktreePath, fileName: input.fileName };
 }

@@ -198,7 +198,7 @@ export function createTaskStoreTestHarness() {
       vi.useRealTimers();
       rootDir = makeTmpDir();
       globalDir = makeTmpDir();
-      store = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+      store = new TaskStore(rootDir, globalDir);
       await store.init();
     },
     afterEach: async () => {
@@ -373,7 +373,7 @@ export function createSharedTaskStoreTestHarness() {
     beforeAll: async () => {
       rootDir = makeTmpDir();
       globalDir = makeTmpDir();
-      sharedStore = new TaskStore(rootDir, globalDir, { inMemoryDb: true });
+      sharedStore = new TaskStore(rootDir, globalDir);
       await sharedStore.init();
       currentStore = sharedStore;
 

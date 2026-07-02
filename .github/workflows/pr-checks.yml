@@ -83,6 +83,33 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-latest
+    # FNXC:FixPgTestsAndCi 2026-06-26-09:10:
+    # Provision a PostgreSQL service container so the postgres/*.pg.test.ts
+    # suites (pgDescribe) run in the merge gate. The pg-test-harness probe
+    # detects reachability via a TCP probe on localhost:5432 and skips when
+    # unavailable, so this service is what makes the 57 PG twin tests actually
+    # execute instead of being silently skipped.
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # Mark the service healthy only when pg_isready succeeds on the mapped
+        # port, so job steps don't start before Postgres accepts connections.
+        options: >-
+          --health-cmd "pg_isready -h localhost -p 5432 -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Point the PG test harness at the service container. psql admin DDL
+      # (CREATE/DROP DATABASE) runs against this URL's maintenance database.
+      FUSION_PG_TEST_URL_BASE: "postgresql://postgres:postgres@localhost:5432"
+      PGPASSWORD: "postgres"
     # The gate's value is speed; without a job timeout a hung build or
     # deadlocked vitest worker blocks every PR for GitHub's default 6 hours.
     # Expected runtime is ~3-5 min.

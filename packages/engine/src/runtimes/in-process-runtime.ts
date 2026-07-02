@@ -15,7 +15,7 @@ import type {
   CliSession,
   NotificationPayload,
 } from "@fusion/core";
-import { ChatStore, createCentralDatabase, isEphemeralAgent } from "@fusion/core";
+import { ChatStore, createCentralDatabase, isEphemeralAgent, MissionStore } from "@fusion/core";
 import { Scheduler } from "../scheduler.js";
 import type { PrMonitor, PrComment } from "../pr-monitor.js";
 import type { PrInfo } from "@fusion/core";
@@ -175,6 +175,15 @@ export class InProcessRuntime
 {
   private status: RuntimeStatus = "stopped";
   private taskStore!: TaskStore;
+  /**
+   * FNXC:RuntimeStartupWiring 2026-06-24-09:55:
+   * When the engine booted a PostgreSQL-backed TaskStore via
+   * createTaskStoreForBackend, this holds the result's shutdown() handle so
+   * the runtime's stop() path can release the connection pool and stop the
+   * embedded PostgreSQL process (if one was started). Undefined on the legacy
+   * SQLite path (the TaskStore owns its own SQLite teardown).
+   */
+  private backendShutdown?: () => Promise<void>;
   private scheduler!: Scheduler;
   private executor!: TaskExecutor;
   private worktreePool!: WorktreePool;
@@ -279,23 +288,79 @@ export class InProcessRuntime
         PluginStore: PluginStoreClass,
         PluginLoader: PluginLoaderClass,
         MessageStore: MessageStoreClass,
+        // FNXC:BackendFlip 2026-06-26-14:40:
+        // createTaskStoreForBackend is the startup factory that boots a
+        // PostgreSQL-backed TaskStore. Post default-flip: it boots embedded PG
+        // by default when DATABASE_URL is unset (the zero-config production
+        // path), external PG when DATABASE_URL is set, and returns null only
+        // when the operator opted out via FUSION_NO_EMBEDDED_PG=1 (legacy
+        // SQLite). The engine is the primary construction site for `fn serve`
+        // / dashboard: every project's TaskStore flows through
+        // InProcessRuntime.start(). When the factory returns a backend result,
+        // the engine owns the result's shutdown() for process teardown.
+        createTaskStoreForBackend,
       } = await import("@fusion/core");
       if (this.config.externalTaskStore) {
         this.taskStore = this.config.externalTaskStore;
         runtimeLog.log(`TaskStore provided externally for project ${this.config.projectId}`);
       } else {
-        this.taskStore = new TaskStore(this.config.workingDirectory);
-        await this.taskStore.init();
-        runtimeLog.log(`TaskStore initialized for project ${this.config.projectId}`);
+        const backendBoot = await createTaskStoreForBackend({
+          rootDir: this.config.workingDirectory,
+          projectId: this.config.projectId,
+        });
+        if (backendBoot) {
+          this.taskStore = backendBoot.taskStore;
+          this.backendShutdown = backendBoot.shutdown;
+          runtimeLog.log(
+            `TaskStore initialized on PostgreSQL (${backendBoot.backend.mode}) for project ${this.config.projectId}`,
+          );
+        } else {
+          this.taskStore = new TaskStore(this.config.workingDirectory);
+          await this.taskStore.init();
+          runtimeLog.log(`TaskStore initialized for project ${this.config.projectId}`);
+        }
       }
 
       // Initialize MessageStore early so TaskExecutor receives send_message capability.
-      this.messageStore = new MessageStoreClass(this.taskStore.getDatabase());
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-12:45:
+      // In backend mode, pass the AsyncDataLayer so MessageStore delegates to the
+      // async helpers; otherwise pass the sync SQLite Database (legacy path).
+      const messageLayer = this.taskStore.getAsyncLayer();
+
+      // FNXC:CentralCore 2026-06-26-13:30:
+      // In backend mode, attach the TaskStore's AsyncDataLayer to the shared
+      // CentralCore so it migrates off its SQLite CentralDatabase and shares the
+      // SAME PostgreSQL connection pool as everything else. The shared CentralCore
+      // is constructed before the backend is resolved (serve.ts/daemon.ts), so we
+      // attach the layer here once the TaskStore is available. If the CentralCore
+      // is already in backend mode (constructed with the layer) this is a no-op
+      // via the init() idempotency guard. Safe in legacy mode (messageLayer null).
+      if (messageLayer && !this.centralCore.backendMode) {
+        try {
+          await this.centralCore.attachBackendLayer(messageLayer);
+        } catch (err) {
+          runtimeLog.warn(
+            `Failed to attach backend layer to CentralCore: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      if (messageLayer) {
+        this.messageStore = new MessageStoreClass(null, { asyncLayer: messageLayer });
+      } else {
+        this.messageStore = new MessageStoreClass(this.taskStore.getDatabase());
+      }
 
       await yieldEventLoop();
 
       // 2. Initialize Plugin system (PluginStore + PluginLoader + PluginRunner)
-      this.pluginStore = new PluginStoreClass(this.config.workingDirectory);
+      // FNXC:SqliteFinalRemoval 2026-06-26-10:50:
+      // In backend mode, pass the AsyncDataLayer so PluginStore delegates to the
+      // async helpers; otherwise use the legacy SQLite path.
+      const pluginLayer = this.taskStore.getAsyncLayer();
+      this.pluginStore = pluginLayer
+        ? new PluginStoreClass(this.config.workingDirectory, { asyncLayer: pluginLayer })
+        : new PluginStoreClass(this.config.workingDirectory);
       await this.pluginStore.init();
 
       this.pluginLoader = new PluginLoaderClass({
@@ -385,10 +450,18 @@ export class InProcessRuntime
       await yieldEventLoop();
 
       // 5a. Initialize AgentStore (required for scheduler assignment, reflection service, and heartbeat monitoring)
+      // FNXC:SqliteFinalRemoval 2026-06-26-10:50:
+      // In backend mode, pass the AsyncDataLayer so AgentStore delegates to the
+      // async helpers; otherwise use the legacy SQLite path.
       let agentStoreForReflection: import("@fusion/core").AgentStore | undefined;
       try {
         const { AgentStore: AgentStoreClass } = await import("@fusion/core");
-        agentStoreForReflection = new AgentStoreClass({ rootDir: this.taskStore.getFusionDir(), taskStore: this.taskStore });
+        const agentLayer = this.taskStore.getAsyncLayer();
+        agentStoreForReflection = new AgentStoreClass({
+          rootDir: this.taskStore.getFusionDir(),
+          taskStore: this.taskStore,
+          ...(agentLayer ? { asyncLayer: agentLayer } : {}),
+        });
         await agentStoreForReflection.init();
         runtimeLog.log("AgentStore initialized for reflection service");
       } catch (agentErr) {
@@ -399,9 +472,44 @@ export class InProcessRuntime
       await yieldEventLoop();
 
       // 5. Initialize Scheduler
-      const missionStore = this.taskStore.getMissionStore();
-      this.missionAutopilot = missionStore
-        ? new MissionAutopilot(this.taskStore, missionStore)
+      /*
+       * FNXC:SqliteFinalRemoval 2026-06-24-15:55:
+       * In backend mode (PostgreSQL), getMissionStore() throws because the
+       * MissionStore has not been converted to async yet. Catch the error and
+       * degrade gracefully: mission autopilot and mission execution loop are
+       * disabled until the MissionStore is fully converted to the async path.
+       */
+      let missionStore: import("@fusion/core").MissionStore | undefined;
+      // FNXC:MissionStore 2026-06-28-12:45:
+      // MissionAutopilot's STORE-access path was ported to drive BOTH backends —
+      // it types its store as `MissionStore | AsyncMissionStore` and awaits every
+      // call (mirrors the ResearchOrchestrator union+await port). So the autopilot
+      // is constructed from `autopilotMissionStore`, resolved in BOTH backends with
+      // NO `instanceof MissionStore` gate; the autopilot LOOP (watch/recover/
+      // recompute/persist) now runs in PG mode. The sync-only `missionStore` below
+      // stays gated for the Scheduler + MissionExecutionLoop, whose slice EXECUTION
+      // and validator-loop paths are NOT yet ported to async (out of scope).
+      let autopilotMissionStore:
+        | import("@fusion/core").MissionStore
+        | import("@fusion/core").AsyncMissionStore
+        | undefined;
+      try {
+        const resolvedMissionStore = this.taskStore.getMissionStore();
+        // Union store for the autopilot — works in both SQLite and PG backends.
+        autopilotMissionStore = resolvedMissionStore;
+        // Sync-only narrowing for the Scheduler + MissionExecutionLoop, which still
+        // call the store synchronously and are skipped in PG backend mode.
+        missionStore = resolvedMissionStore instanceof MissionStore ? resolvedMissionStore : undefined;
+      } catch (msErr) {
+        runtimeLog.warn(
+          `MissionStore unavailable (${this.taskStore.isBackendMode() ? "backend mode" : "init error"}); mission autopilot disabled:`,
+          msErr instanceof Error ? msErr.message : msErr,
+        );
+        missionStore = undefined;
+        autopilotMissionStore = undefined;
+      }
+      this.missionAutopilot = autopilotMissionStore
+        ? new MissionAutopilot(this.taskStore, autopilotMissionStore)
         : undefined;
       const missionAutopilot = this.missionAutopilot;
 
@@ -439,12 +547,25 @@ export class InProcessRuntime
 
       // FN-4823/FN-4819 §2.5: central-claim-aware recovery when central DB is reachable;
       // fallback to local-only recovery remains in MeshLeaseManager for single-node contexts.
-      try {
-        this.leaseCentralClaimStore = createCentralDatabase(this.centralCore.getGlobalDir());
-        this.leaseCentralClaimStore.init();
-      } catch (error) {
-        runtimeLog.warn(`Failed to initialize central claim store for mesh lease recovery: ${error instanceof Error ? error.message : String(error)}`);
+      //
+      // FNXC:CentralCore 2026-06-26-13:00:
+      // In backend mode (PostgreSQL), do NOT construct the legacy SQLite
+      // CentralDatabase for mesh lease recovery. The sync CentralClaimStore
+      // contract cannot be satisfied by the async PostgreSQL helpers without a
+      // blocking bridge, and the single-node embedded-PG default does not need
+      // cross-node claim coordination. MeshLeaseManager falls back to its
+      // local-only recovery path (the centralClaimStore=undefined guard). The
+      // SQLite path remains for FUSION_NO_EMBEDDED_PG (legacy) mode.
+      if (this.taskStore.isBackendMode()) {
         this.leaseCentralClaimStore = undefined;
+      } else {
+        try {
+          this.leaseCentralClaimStore = createCentralDatabase(this.centralCore.getGlobalDir());
+          this.leaseCentralClaimStore.init();
+        } catch (error) {
+          runtimeLog.warn(`Failed to initialize central claim store for mesh lease recovery: ${error instanceof Error ? error.message : String(error)}`);
+          this.leaseCentralClaimStore = undefined;
+        }
       }
 
       this.leaseManager = new MeshLeaseManager({
@@ -491,7 +612,10 @@ export class InProcessRuntime
       // 5a-cli. Initialize the CLI Agent Executor runtime (behind the
       // `cliAgentExecutor` experimental flag). Reuses the project's existing core
       // Database; predicates feed the self-healing + stuck-task seams below.
-      if (isExperimentalFeatureEnabled(settings, "cliAgentExecutor")) {
+      if (isExperimentalFeatureEnabled(settings, "cliAgentExecutor") && !this.taskStore.isBackendMode()) {
+        // FNXC:RuntimeSatelliteAsync 2026-06-24-14:00:
+        // CLI Agent Executor runtime requires the sync SQLite Database; skip in
+        // backend mode (the feature is experimental and not yet ported to async).
         try {
           this.cliAgentRuntime = createCliAgentRuntime({
             fusionDir: this.taskStore.getFusionDir(),
@@ -681,7 +805,15 @@ export class InProcessRuntime
         // Already started — nothing to do
       }
       if (!this.heartbeatMonitor && this.agentStore) {
-        this.chatStore ??= new ChatStore(this.taskStore.getFusionDir(), this.taskStore.getDatabase());
+        // FNXC:RuntimeSatelliteAsync 2026-06-24-21:40:
+        // ChatStore now supports dual-path: in backend mode it uses the
+        // AsyncDataLayer; in SQLite mode it uses the sync Database.
+        const chatLayer = this.taskStore.getAsyncLayer();
+        this.chatStore ??= new ChatStore(
+          this.taskStore.getFusionDir(),
+          chatLayer ? null : this.taskStore.getDatabase(),
+          { asyncLayer: chatLayer },
+        );
         this.heartbeatMonitor = new HeartbeatMonitor({
           store: this.agentStore,
           agentStore: this.agentStore, // enables per-agent config resolution
@@ -839,7 +971,13 @@ export class InProcessRuntime
         const { RoutineStore: RoutineStoreClass } = await import("@fusion/core");
         // Verify RoutineStore actually has the expected methods (FN-1519 complete)
         if (typeof RoutineStoreClass.prototype.getDueRoutines === "function") {
-          const routineStore = new RoutineStoreClass(this.config.workingDirectory);
+          // FNXC:SqliteFinalRemoval 2026-06-26-10:55:
+          // In backend mode, pass the AsyncDataLayer so RoutineStore delegates
+          // to the async helpers; otherwise use the legacy SQLite path.
+          const routineLayer = this.taskStore.getAsyncLayer();
+          const routineStore = routineLayer
+            ? new RoutineStoreClass(this.config.workingDirectory, { asyncLayer: routineLayer })
+            : new RoutineStoreClass(this.config.workingDirectory);
           await routineStore.init();
           this.routineStore = routineStore;
 
@@ -875,7 +1013,16 @@ export class InProcessRuntime
       await yieldEventLoop();
 
       // 7. Initialize SelfHealingManager
-      this.chatStore ??= new ChatStore(this.taskStore.getFusionDir(), this.taskStore.getDatabase());
+      // FNXC:RuntimeSatelliteAsync 2026-06-24-21:42:
+      // ChatStore dual-path: use async layer in backend mode, sync DB otherwise.
+      {
+        const chatLayer2 = this.taskStore.getAsyncLayer();
+        this.chatStore ??= new ChatStore(
+          this.taskStore.getFusionDir(),
+          chatLayer2 ? null : this.taskStore.getDatabase(),
+          { asyncLayer: chatLayer2 },
+        );
+      }
       this.selfHealingManager = new SelfHealingManager(this.taskStore, {
         rootDir: this.config.workingDirectory,
         agentStore: this.agentStore,
@@ -981,10 +1128,39 @@ export class InProcessRuntime
       }
 
       // Mission crash recovery: restore autopilot state for missions that were active before crash
-      const activeMissionStore = this.taskStore.getMissionStore();
+      /*
+       * FNXC:SqliteFinalRemoval 2026-06-24-16:00:
+       * In backend mode, getMissionStore() throws (MissionStore not yet async).
+       * Wrap in try/catch to degrade gracefully — mission crash recovery is
+       * skipped, same as mission autopilot above.
+       */
+      let activeMissionStore: import("@fusion/core").MissionStore | undefined;
+      // FNXC:MissionStore 2026-06-28-12:45: autopilot crash-recovery now runs in BOTH
+      // backends. `recoverMissions` accepts the `MissionStore | AsyncMissionStore`
+      // union and awaits every store call, so resolve the store WITHOUT an instanceof
+      // gate here. The sync-only `activeMissionStore` below still gates the
+      // scheduler-driven `reconcileAllMissionFeatures` (not yet ported to async).
+      let activeAutopilotMissionStore:
+        | import("@fusion/core").MissionStore
+        | import("@fusion/core").AsyncMissionStore
+        | undefined;
+      try {
+        const resolvedActive = this.taskStore.getMissionStore();
+        activeAutopilotMissionStore = resolvedActive;
+        activeMissionStore = resolvedActive instanceof MissionStore ? resolvedActive : undefined;
+        // FNXC:MissionStore 2026-06-27-16:30 (review): log the PG-mode degrade for the
+        // scheduler-driven feature reconciliation that stays sync-only.
+        if (!activeMissionStore) {
+          runtimeLog.warn("[runtime] scheduler feature reconciliation skipped: sync MissionStore not available in PG backend mode");
+        }
+      } catch (error) {
+        activeMissionStore = undefined;
+        activeAutopilotMissionStore = undefined;
+        runtimeLog.warn(`[runtime] mission crash recovery skipped: ${error instanceof Error ? error.message : String(error)}`);
+      }
       const activeMissionAutopilot = this.scheduler.getMissionAutopilot?.();
-      if (activeMissionStore && activeMissionAutopilot) {
-        void activeMissionAutopilot.recoverMissions(activeMissionStore);
+      if (activeAutopilotMissionStore && activeMissionAutopilot) {
+        void activeMissionAutopilot.recoverMissions(activeAutopilotMissionStore);
       }
 
       // 13. Reconcile feature status for all active missions (not just autopilot)
@@ -1225,6 +1401,25 @@ export class InProcessRuntime
       if (this.leaseCentralClaimStore) {
         this.leaseCentralClaimStore.close();
         this.leaseCentralClaimStore = undefined;
+      }
+
+      // FNXC:RuntimeStartupWiring 2026-06-24-10:00:
+      // When the runtime booted a PostgreSQL-backed TaskStore via
+      // createTaskStoreForBackend, release the connection pool and stop the
+      // embedded PostgreSQL process (if one was started) now that every
+      // subsystem has drained. Best-effort: a failure is logged but does not
+      // mask the (already-clean) stop. On the legacy SQLite path this is a
+      // no-op (backendShutdown is undefined and the TaskStore closes its own
+      // SQLite database lazily).
+      if (this.backendShutdown) {
+        try {
+          await this.backendShutdown();
+        } catch (err) {
+          runtimeLog.warn(
+            `Backend shutdown failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+        this.backendShutdown = undefined;
       }
 
       this.setStatus("stopped");
@@ -1600,7 +1795,7 @@ export class InProcessRuntime
         FNXC:TaskDetailPlannerChatRetention 2026-06-30-18:45:
         In-process task archival is the retention cutoff for task-local planner chats. Keep interacted planner chats when tasks reach done, but delete exact task-planner sessions on archive through ChatStore so normal conversations and other tasks remain untouched.
         */
-        this.chatStore?.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`, { projectId: this.config.projectId });
+        void this.chatStore?.deleteSessionsForAgentId(`${TASK_PLANNER_CHAT_AGENT_ID_PREFIX}${data.task.id}`, { projectId: this.config.projectId });
       }
       this.emit("task:moved", data);
     });

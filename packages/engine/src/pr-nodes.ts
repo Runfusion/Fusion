@@ -43,10 +43,10 @@ import { makePrResponseAgentRunner, makePrResponseGitOps } from "./pr-response-r
  */
 export interface PrNodeStore extends PrResponseRunStore {
   /** Create-or-reuse the single non-terminal entity for a source (AE6 idempotency). */
-  ensurePrEntityForSource(input: PrEntityCreateInput): PrEntity;
-  getPrEntity(id: string): PrEntity | null;
-  getActivePrEntityBySource(sourceType: PrEntity["sourceType"], sourceId: string): PrEntity | null;
-  updatePrEntity(id: string, patch: PrEntityUpdate): PrEntity;
+  ensurePrEntityForSource(input: PrEntityCreateInput): Promise<PrEntity>;
+  getPrEntity(id: string): Promise<PrEntity | null>;
+  getActivePrEntityBySource(sourceType: PrEntity["sourceType"], sourceId: string): Promise<PrEntity | null>;
+  updatePrEntity(id: string, patch: PrEntityUpdate): Promise<PrEntity>;
   updatePrInfo?(id: string, prInfo: PrInfo | null): Promise<unknown>;
 }
 
@@ -58,8 +58,8 @@ export interface PrNodeStore extends PrResponseRunStore {
  * `task.id` can never match a branch-group entity, so a shared-mode task would
  * spuriously resolve to no-entity.
  */
-function resolveActivePrEntity(store: PrNodeStore, task: TaskDetail): PrEntity | null {
-  const taskEntity = store.getActivePrEntityBySource("task", task.id);
+async function resolveActivePrEntity(store: PrNodeStore, task: TaskDetail): Promise<PrEntity | null> {
+  const taskEntity = await store.getActivePrEntityBySource("task", task.id);
   if (taskEntity) return taskEntity;
   const groupId = task.branchContext?.groupId;
   if (!groupId) return null;
@@ -332,7 +332,7 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
 
     // Create-or-reuse the single live entity (the store enforces the partial
     // unique index, so re-entry never mints a second entity).
-    const entity = store.ensurePrEntityForSource({
+    const entity = await store.ensurePrEntityForSource({
       ...source,
       state: source.state ?? "creating",
     });
@@ -344,7 +344,7 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
 
     // Ensure the row is in `creating` before the side effect (so a crash mid-flight
     // leaves a recoverable state, not a stale `failed`).
-    const creating = entity.state === "creating" ? entity : store.updatePrEntity(entity.id, { state: "creating" });
+    const creating = entity.state === "creating" ? entity : await store.updatePrEntity(entity.id, { state: "creating" });
 
     let created: PrCreateCallResult;
     try {
@@ -354,11 +354,11 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
       audit("pr-create-failed", `pr-create node '${node.id}' creation failed: ${reason}`);
       // Failure is a ROUTABLE outcome — the graph routes on value:"failed". Record
       // the classified reason and the failed state; never throw.
-      store.updatePrEntity(creating.id, { state: "failed", failureReason: reason });
+      void store.updatePrEntity(creating.id, { state: "failed", failureReason: reason });
       return { outcome: "success", value: "failed" };
     }
 
-    store.updatePrEntity(creating.id, {
+    await store.updatePrEntity(creating.id, {
       state: "open",
       prNumber: created.prNumber,
       prUrl: created.prUrl,
@@ -392,7 +392,7 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
   // merge request emits value:"merged-requested".
   const prMerge: WorkflowNodeHandler = async (node, ctx) => {
     const store = deps.getStore();
-    const entity = resolveActivePrEntity(store, ctx.task);
+    const entity = await resolveActivePrEntity(store, ctx.task);
 
     if (!entity) {
       audit("pr-merge-no-entity", `pr-merge node '${node.id}' found no live PR entity for task ${ctx.task.id}`);
@@ -438,7 +438,7 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
   // responseRounds (the R8 iteration-cap counter, survives restart).
   const prRespond: WorkflowNodeHandler = async (node, ctx) => {
     const store = deps.getStore();
-    const entity = resolveActivePrEntity(store, ctx.task);
+    const entity = await resolveActivePrEntity(store, ctx.task);
 
     if (!entity) {
       audit("pr-respond-no-entity", `pr-respond node '${node.id}' found no live PR entity for task ${ctx.task.id}`);
@@ -455,7 +455,7 @@ export function createPrNodeHandlers(deps: PrNodeDeps): Record<
     // POST-update entity so runPrResponseRun's cap check (`responseRounds > cap`)
     // sees this round's count — passing the stale pre-increment entity fires the
     // cap one round too late.
-    const updatedEntity = store.updatePrEntity(entity.id, { responseRounds: entity.responseRounds + 1 });
+    const updatedEntity = await store.updatePrEntity(entity.id, { responseRounds: entity.responseRounds + 1 });
 
     if (!deps.respond) {
       // U3 default: inert but routable. U5 wires the real review-response run.
@@ -510,7 +510,7 @@ export function createAutoMergeGateHandler(deps: Pick<PrNodeDeps, "getStore" | "
   };
   return async (node, ctx) => {
     const store = deps.getStore();
-    const entity = resolveActivePrEntity(store, ctx.task);
+    const entity = await resolveActivePrEntity(store, ctx.task);
 
     if (!entity) {
       // No live entity → cannot auto-merge; park for manual handling (never block).

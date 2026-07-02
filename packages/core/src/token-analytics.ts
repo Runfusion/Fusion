@@ -1,4 +1,6 @@
+import { sql } from "drizzle-orm";
 import type { Database } from "./db.js";
+import type { AsyncDataLayer } from "./postgres/data-layer.js";
 import { costFor, type CostResult, type ModelPricingOverrides } from "./model-pricing.js";
 import type { TaskTokenUsagePerModel } from "./types.js";
 
@@ -271,10 +273,60 @@ function bucketFor(row: TaskTokenRow, granularity: TokenTimeGranularity): string
  * FNXC:CommandCenter 2026-06-18-00:00:
  * The Command Center token view needs a live, scalable, animated token-over-time chart without changing existing CSV/OTel consumers. Keep `series` opt-in via `granularity`, bucket ISO timestamps in UTC (substring for hour/day, ISO-week in JS), and reuse per-task cost accumulation so each bucket prices mixed known/unknown models correctly.
  */
-export function aggregateTokenAnalytics(
-  db: Database,
+export async function aggregateTokenAnalytics(
+  dbOrLayer: Database | AsyncDataLayer,
   query: TokenAnalyticsQuery = {},
-): TokenAnalytics {
+): Promise<TokenAnalytics> {
+  // FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+  // Backend (PostgreSQL) path. Fetch the same per-task token row shape from the
+  // schema-qualified project.tasks table with snake_case columns (the async
+  // connection has no `project` on search_path), then run the identical pure
+  // aggregation as the sync branch via computeTokenAnalytics. tokenUsagePerModel
+  // is jsonb (postgres-js returns it parsed); parsePerModelRows expects a JSON
+  // string, so it is re-stringified to preserve the legacy parse path.
+  if ("ping" in dbOrLayer) {
+    const layer = dbOrLayer as AsyncDataLayer;
+    const tFrom = query.from !== undefined ? sql`AND token_usage_last_used_at >= ${query.from}` : sql``;
+    const tTo = query.to !== undefined ? sql`AND token_usage_last_used_at <= ${query.to}` : sql``;
+    const rawRows = (await layer.db.execute(
+      sql`SELECT
+            token_usage_input_tokens        AS "inputTokens",
+            token_usage_output_tokens       AS "outputTokens",
+            token_usage_cached_tokens       AS "cachedTokens",
+            token_usage_cache_write_tokens  AS "cacheWriteTokens",
+            token_usage_total_tokens        AS "totalTokens",
+            model_provider                  AS "modelProvider",
+            model_id                        AS "modelId",
+            token_usage_model_provider      AS "tokenUsageModelProvider",
+            token_usage_model_id            AS "tokenUsageModelId",
+            token_usage_per_model           AS "tokenUsagePerModel",
+            checkout_node_id                AS "checkoutNodeId",
+            assigned_agent_id               AS "assignedAgentId",
+            token_usage_last_used_at        AS "tokenUsageLastUsedAt"
+          FROM project.tasks
+          WHERE token_usage_last_used_at IS NOT NULL ${tFrom} ${tTo}`,
+    )) as Array<Record<string, unknown>>;
+    const rows: TaskTokenRow[] = rawRows.map((r) => ({
+      inputTokens: r.inputTokens == null ? null : Number(r.inputTokens),
+      outputTokens: r.outputTokens == null ? null : Number(r.outputTokens),
+      cachedTokens: r.cachedTokens == null ? null : Number(r.cachedTokens),
+      cacheWriteTokens: r.cacheWriteTokens == null ? null : Number(r.cacheWriteTokens),
+      totalTokens: r.totalTokens == null ? null : Number(r.totalTokens),
+      modelProvider: (r.modelProvider as string | null) ?? null,
+      modelId: (r.modelId as string | null) ?? null,
+      tokenUsageModelProvider: (r.tokenUsageModelProvider as string | null) ?? null,
+      tokenUsageModelId: (r.tokenUsageModelId as string | null) ?? null,
+      // jsonb comes back already parsed; re-stringify so parsePerModelRows
+      // (which JSON.parses) keeps the exact legacy behavior.
+      tokenUsagePerModel: r.tokenUsagePerModel == null ? null : JSON.stringify(r.tokenUsagePerModel),
+      checkoutNodeId: (r.checkoutNodeId as string | null) ?? null,
+      assignedAgentId: (r.assignedAgentId as string | null) ?? null,
+      tokenUsageLastUsedAt: String(r.tokenUsageLastUsedAt),
+    }));
+    return computeTokenAnalytics(rows, query);
+  }
+
+  const db = dbOrLayer as Database;
   const clauses: string[] = ["tokenUsageLastUsedAt IS NOT NULL"];
   const params: string[] = [];
   if (query.from !== undefined) {
@@ -307,6 +359,19 @@ export function aggregateTokenAnalytics(
     )
     .all(...params) as TaskTokenRow[];
 
+  return computeTokenAnalytics(rows, query);
+}
+
+/**
+ * FNXC:PostgresCommandCenterAnalytics 2026-06-27-10:00:
+ * Pure post-fetch aggregation shared by the sync (SQLite) and async (PostgreSQL)
+ * paths of {@link aggregateTokenAnalytics}. Takes already-fetched per-task token
+ * rows and produces the totals/groups/series result — no I/O.
+ */
+function computeTokenAnalytics(
+  rows: TaskTokenRow[],
+  query: TokenAnalyticsQuery,
+): TokenAnalytics {
   const totals = emptyTotals();
   const totalCost = emptyCostAccumulator();
   const groupMap = new Map<string | null, TokenGroupSummary>();
