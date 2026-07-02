@@ -348,6 +348,10 @@ Use **Show worktree grouping on the board** in **Settings → Worktrees** when y
 
 Planning is a desktop/tablet left-sidebar main-content destination after **Command Center**. It opens the planning-session list and composer in the main content region; mobile continues to use the compact planning entry points. Planning Mode now includes branch controls on the summary screen before you create a task.
 
+<!-- FNXC:PlanningModeDeepeningCheckpoint 2026-07-02-12:18: Planning Mode must pause before every final summary at a mandatory "Would you like to go deeper?" checkpoint so users can request inferred follow-up themes, enter a custom topic, or proceed without deepening. -->
+
+Before Planning Mode shows **Planning Complete!** or the final plan summary, it first asks **Would you like to go deeper?**. Select one or more suggested themes to continue the interview, use **Other** to add a custom topic, or choose **No, continue to final summary** to reveal the pending summary and task-creation actions.
+
 - **Branch strategy** options mirror Subtask Breakdown semantics:
   - `Use project/default branch`
   - `Create auto-named branch per task`

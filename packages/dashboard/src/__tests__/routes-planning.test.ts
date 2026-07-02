@@ -18,6 +18,11 @@ import {
 import { GitHubClient } from "../github.js";
 import * as resolveDiffBaseModule from "../routes/resolve-diff-base.js";
 import { githubRateLimiter } from "../github-poll.js";
+import {
+  PLANNING_DEEPEN_CHECKPOINT_ID,
+  PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+  PLANNING_DEEPEN_PROCEED_OPTION_ID,
+} from "@fusion/core";
 import type { TaskStore, TaskAttachment, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult, ChatSession, ChatMessage } from "@fusion/core";
 import type { TaskDetail } from "@fusion/core";
 import type { AuthStorageLike, ModelRegistryLike } from "../routes.js";
@@ -434,6 +439,10 @@ describe("Planning Mode Routes", () => {
       await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
       await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
       await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+      await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+        sessionId,
+        responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+      }), { "Content-Type": "application/json" });
 
       return sessionId;
     }
@@ -1352,7 +1361,7 @@ describe("Planning Mode Routes", () => {
         expect(res.body.data).toBeDefined();
       });
 
-      it("returns summary after completing all questions", async () => {
+      it("returns checkpoint before summary, then completes only after explicit proceed", async () => {
         // Create a session
         const startRes = await REQUEST(
           buildApp(),
@@ -1380,11 +1389,27 @@ describe("Planning Mode Routes", () => {
           { "Content-Type": "application/json" }
         );
 
-        const finalRes = await REQUEST(
+        const checkpointRes = await REQUEST(
           buildApp(),
           "POST",
           "/api/planning/respond",
           JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+
+        expect(checkpointRes.status).toBe(200);
+        expect(checkpointRes.body.type).toBe("question");
+        expect(checkpointRes.body.data.id).toBe(PLANNING_DEEPEN_CHECKPOINT_ID);
+        expect(checkpointRes.body.data.question).toBe(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+
+        const finalRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          }),
           { "Content-Type": "application/json" }
         );
 
@@ -1437,7 +1462,7 @@ describe("Planning Mode Routes", () => {
         );
         const sessionId = startRes.body.sessionId;
 
-        const finalRes = await REQUEST(
+        const checkpointRes = await REQUEST(
           buildApp(),
           "POST",
           "/api/planning/respond",
@@ -1445,7 +1470,26 @@ describe("Planning Mode Routes", () => {
           { "Content-Type": "application/json" },
         );
 
-        expect(finalRes.status).toBe(200);
+        expect(checkpointRes.status).toBe(200);
+        expect(checkpointRes.body).toMatchObject({
+          type: "question",
+          data: {
+            id: PLANNING_DEEPEN_CHECKPOINT_ID,
+            question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+          },
+        });
+        expect(planningModule.getSummary(sessionId)).toBeUndefined();
+
+        const finalRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          }),
+          { "Content-Type": "application/json" },
+        );
         expect(finalRes.body).toMatchObject({
           type: "complete",
           data: {
@@ -1457,6 +1501,115 @@ describe("Planning Mode Routes", () => {
         expect(planningModule.getSummary(sessionId)).toMatchObject({
           suggestedDependencies: ["FN-100"],
           keyDeliverables: [],
+        });
+      });
+
+      it("continues agent conversation when checkpoint themes or custom topics are selected", async () => {
+        const responses = [
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-one", type: "text", question: "What should be planned?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan mobile UX",
+              description: "Improve responsive mobile UX and add tests.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Mobile UX", "Tests"],
+            },
+          }),
+          JSON.stringify({
+            type: "question",
+            data: { id: "q-deeper", type: "text", question: "Which mobile edge cases matter?" },
+          }),
+          JSON.stringify({
+            type: "complete",
+            data: {
+              title: "Plan mobile UX deeply",
+              description: "Improve responsive mobile UX after exploring custom rollout risks.",
+              suggestedSize: "M",
+              suggestedDependencies: [],
+              keyDeliverables: ["Mobile UX", "Tests", "Rollout notes"],
+            },
+          }),
+        ];
+        const messages: Array<{ role: string; content: string }> = [];
+        let callIndex = 0;
+        __setCreateFnAgent(async () => ({
+          session: {
+            state: { messages },
+            prompt: vi.fn(async (message: string) => {
+              messages.push({ role: "user", content: message });
+              messages.push({ role: "assistant", content: responses[callIndex++] ?? responses[responses.length - 1] });
+            }),
+            dispose: vi.fn(),
+          },
+        }));
+
+        const startRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/start",
+          JSON.stringify({ initialPlan: "Plan a mobile UX change" }),
+          { "Content-Type": "application/json" },
+        );
+        const sessionId = startRes.body.sessionId;
+
+        const checkpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-one": "Make it responsive and tested" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(checkpointRes.body.data.question).toBe(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+
+        const deepeningRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: {
+              [PLANNING_DEEPEN_CHECKPOINT_ID]: ["theme-ux"],
+              _other: "Explore rollout risk",
+            },
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(deepeningRes.body).toMatchObject({
+          type: "question",
+          data: { id: "q-deeper", question: "Which mobile edge cases matter?" },
+        });
+        expect(messages.some((message) => message.role === "user" && message.content.includes("Explore rollout risk"))).toBe(true);
+
+        const secondCheckpointRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({ sessionId, responses: { "q-deeper": "Keyboard and touch interactions" } }),
+          { "Content-Type": "application/json" },
+        );
+        expect(secondCheckpointRes.body).toMatchObject({
+          type: "question",
+          data: { id: PLANNING_DEEPEN_CHECKPOINT_ID, question: PLANNING_DEEPEN_CHECKPOINT_QUESTION },
+        });
+
+        const finalRes = await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          }),
+          { "Content-Type": "application/json" },
+        );
+        expect(finalRes.body).toMatchObject({
+          type: "complete",
+          data: { title: "Plan mobile UX deeply" },
         });
       });
 
@@ -1489,6 +1642,16 @@ describe("Planning Mode Routes", () => {
           "POST",
           "/api/planning/respond",
           JSON.stringify({ sessionId, responses: { confirm: true } }),
+          { "Content-Type": "application/json" }
+        );
+        await REQUEST(
+          buildApp(),
+          "POST",
+          "/api/planning/respond",
+          JSON.stringify({
+            sessionId,
+            responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          }),
           { "Content-Type": "application/json" }
         );
 
@@ -1873,6 +2036,10 @@ describe("Planning Mode Routes", () => {
           JSON.stringify({ sessionId, responses: { confirm: true } }),
           { "Content-Type": "application/json" }
         );
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         // Create task from planning
         const res = await REQUEST(
@@ -2371,6 +2538,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2440,6 +2611,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const breakdownRes = await REQUEST(
           buildApp(),
@@ -2544,6 +2719,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const breakdownRes = await REQUEST(
           buildApp(),
@@ -2633,6 +2812,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "large" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must support auth, settings, dashboards, workflows, imports, sync, audits, search, mobile, docs, QA, releases, telemetry, reliability, and security." } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const summaryOverride = {
           title: "Large planning summary",
@@ -2726,6 +2909,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2773,6 +2960,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: sessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2829,6 +3020,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const res = await REQUEST(
           buildApp(),
@@ -2998,6 +3193,10 @@ describe("Planning Mode Routes", () => {
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { scope: "medium" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { requirements: "Must have login" } }), { "Content-Type": "application/json" });
         await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({ sessionId: planningSessionId, responses: { confirm: true } }), { "Content-Type": "application/json" });
+        await REQUEST(buildApp(), "POST", "/api/planning/respond", JSON.stringify({
+          sessionId: planningSessionId,
+          responses: { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+        }), { "Content-Type": "application/json" });
 
         const session = planningModule.getSession(planningSessionId);
         if (!session) {

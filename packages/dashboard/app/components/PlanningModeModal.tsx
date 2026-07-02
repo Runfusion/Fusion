@@ -5,7 +5,13 @@ import { useState, useCallback, useEffect, useRef, useMemo, type MouseEvent } fr
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Task, PlanningQuestion, PlanningSummary, TaskPriority } from "@fusion/core";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, getErrorMessage } from "@fusion/core";
+import {
+  DEFAULT_TASK_PRIORITY,
+  PLANNING_DEEPEN_CHECKPOINT_ID,
+  PLANNING_DEEPEN_PROCEED_OPTION_ID,
+  TASK_PRIORITIES,
+  getErrorMessage,
+} from "@fusion/core";
 import {
   startPlanningStreaming,
   createPlanningDraft,
@@ -2478,6 +2484,7 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
   const { t } = useTranslation("app");
   const question = normalizeQuestionOptions(rawQuestion);
   const questionOptions = question.options ?? [];
+  const isDeepeningCheckpoint = question.id === PLANNING_DEEPEN_CHECKPOINT_ID;
   const [response, setResponse] = useState<QuestionResponse>({});
   const [textValue, setTextValue] = useState("");
   const [commentValue, setCommentValue] = useState("");
@@ -2530,6 +2537,9 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
       /*
       FNXC:PlanningInterview 2026-06-26-00:00:
       Multi-select planning questions can combine provided choices with a user-authored Other answer. Preserve selected option ids and append `_other` only while the Other checkbox is active and non-empty.
+
+      FNXC:PlanningMode 2026-07-02-00:00:
+      The mandatory deepening checkpoint reuses multi-select payloads, with the server-reserved proceed option acting as an explicit final-summary gate. Other/custom topics stay additive only for deepening choices, never hidden final-summary actions.
       */
       nextResponse = isOtherSelected && trimmedOther.length > 0
         ? { ...response, [PLANNING_OTHER_RESPONSE_KEY]: trimmedOther }
@@ -2682,6 +2692,7 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
                 <div className="planning-checkbox-group">
                   {questionOptions.map((option) => {
                     const selected = Array.isArray(response[question.id]) ? (response[question.id] as string[]) : [];
+                    const isProceedOption = isDeepeningCheckpoint && option.id === PLANNING_DEEPEN_PROCEED_OPTION_ID;
                     return (
                       <label key={option.id} className="planning-option planning-option--checkbox">
                         <input
@@ -2690,8 +2701,14 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
                           checked={selected.includes(option.id)}
                           onChange={(e) => {
                             const newSelected = e.target.checked
-                              ? [...selected, option.id]
+                              ? isProceedOption
+                                ? [option.id]
+                                : [...selected.filter((id) => id !== PLANNING_DEEPEN_PROCEED_OPTION_ID), option.id]
                               : selected.filter((id) => id !== option.id);
+                            if (isProceedOption && e.target.checked) {
+                              setIsOtherSelected(false);
+                              setOtherValue("");
+                            }
                             setResponse({ [question.id]: newSelected });
                           }}
                         />
@@ -2712,6 +2729,10 @@ function QuestionForm({ question: rawQuestion, progress, historyEntries, onSubmi
                       checked={isOtherSelected}
                       onChange={(e) => {
                         setIsOtherSelected(e.target.checked);
+                        if (e.target.checked && isDeepeningCheckpoint) {
+                          const selected = Array.isArray(response[question.id]) ? (response[question.id] as string[]) : [];
+                          setResponse({ [question.id]: selected.filter((id) => id !== PLANNING_DEEPEN_PROCEED_OPTION_ID) });
+                        }
                         if (!e.target.checked) {
                           setOtherValue("");
                         }

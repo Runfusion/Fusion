@@ -4941,6 +4941,18 @@ export interface ArchivedTaskEntry {
 /** Type of planning question presented to the user */
 export type PlanningQuestionType = "text" | "single_select" | "multi_select" | "confirm";
 
+/** Exact Planning Mode checkpoint prompt shown before a final summary can be displayed. */
+export const PLANNING_DEEPEN_CHECKPOINT_QUESTION = "Would you like to go deeper?";
+
+/** Reserved question id for the server-owned Planning Mode deepening checkpoint. */
+export const PLANNING_DEEPEN_CHECKPOINT_ID = "__planning_deepen_checkpoint__";
+
+/** Reserved checkbox option id that lets the user accept the pending final summary. */
+export const PLANNING_DEEPEN_PROCEED_OPTION_ID = "__planning_deepen_proceed_to_final__";
+
+/** Reserved response key accepted as an explicit proceed signal for the deepening checkpoint. */
+export const PLANNING_DEEPEN_PROCEED_RESPONSE_KEY = "__planning_deepen_proceed__";
+
 /** Isolation mode for project execution */
 export type IsolationMode = "in-process" | "child-process";
 

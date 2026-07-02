@@ -20,7 +20,17 @@ import type {
   TaskStore,
   NtfyNotificationEvent,
 } from "@fusion/core";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, resolvePrompt, summarizeTitle, type PromptOverrideMap } from "@fusion/core";
+import {
+  DEFAULT_TASK_PRIORITY,
+  PLANNING_DEEPEN_CHECKPOINT_ID,
+  PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+  PLANNING_DEEPEN_PROCEED_OPTION_ID,
+  PLANNING_DEEPEN_PROCEED_RESPONSE_KEY,
+  TASK_PRIORITIES,
+  resolvePrompt,
+  summarizeTitle,
+  type PromptOverrideMap,
+} from "@fusion/core";
 import type { SubtaskItem } from "./subtask-breakdown.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -247,6 +257,7 @@ export interface DraftInputPayload {
   modelProvider?: string;
   modelId?: string;
   summarizedFor?: string;
+  pendingSummary?: PlanningSummary;
 }
 
 /** Session TTL in milliseconds (7 days) */
@@ -337,6 +348,8 @@ interface Session {
   history: PlanningHistoryEntry[];
   currentQuestion?: PlanningQuestion;
   summary?: PlanningSummary;
+  /** Pending AI-completed summary held behind the mandatory user deepening checkpoint. */
+  pendingSummary?: PlanningSummary;
   /** Last terminal error for retry UX */
   error?: string;
   /** AI agent session for real-time interaction */
@@ -449,6 +462,123 @@ export function normalizePlanningSummaryPayload(
   };
 }
 
+export interface PlanningDeepeningDecision {
+  proceed: boolean;
+  selectedThemeIds: string[];
+  selectedThemeLabels: string[];
+  customTopic?: string;
+}
+
+const CHECKPOINT_THEME_CANDIDATES: Array<{ id: string; label: string; description: string; patterns: RegExp[] }> = [
+  { id: "scope", label: "Scope and non-goals", description: "Clarify boundaries, trade-offs, and what should stay out of this task.", patterns: [/\bscope\b/i, /non[- ]?goal/i, /boundary/i, /trade[- ]?off/i] },
+  { id: "edge-cases", label: "Edge cases and data states", description: "Explore empty, duplicate, malformed, missing, or unusual states before implementation.", patterns: [/edge case/i, /empty/i, /undefined/i, /duplicate/i, /malformed/i, /data state/i] },
+  { id: "ux", label: "UX and interaction details", description: "Tighten user-facing copy, responsive behavior, accessibility, and interaction flow.", patterns: [/\bux\b/i, /user/i, /mobile/i, /responsive/i, /accessibility/i, /keyboard/i, /button/i] },
+  { id: "dependencies", label: "Dependencies and integrations", description: "Identify prerequisite tasks, third-party systems, and integration constraints.", patterns: [/dependenc/i, /integration/i, /api\b/i, /external/i, /provider/i, /service/i] },
+  { id: "testing", label: "Testing and verification", description: "Deepen acceptance criteria, regression coverage, and validation commands.", patterns: [/test/i, /verify/i, /validation/i, /acceptance/i, /regression/i] },
+  { id: "rollout", label: "Rollout and operations", description: "Discuss migration, release, observability, documentation, or support considerations.", patterns: [/rollout/i, /migration/i, /release/i, /observability/i, /docs?\b/i, /operator/i] },
+];
+
+const FALLBACK_CHECKPOINT_THEME_OPTIONS = ["scope", "edge-cases", "ux", "testing"];
+
+function slugifyCheckpointTheme(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "topic";
+}
+
+function collectCheckpointThemeText(
+  history: Array<{ question: PlanningQuestion; response: unknown }>,
+  summary: PlanningSummary,
+): string {
+  return [
+    summary.title,
+    summary.description,
+    summary.keyDeliverables.join("\n"),
+    summary.suggestedDependencies.join("\n"),
+    ...history.flatMap((entry) => [
+      entry.question.question,
+      entry.question.description ?? "",
+      JSON.stringify(entry.response),
+    ]),
+  ].join("\n");
+}
+
+export function buildDeepeningCheckpointOptions(
+  history: Array<{ question: PlanningQuestion; response: unknown }>,
+  summary: PlanningSummary,
+): PlanningQuestion["options"] {
+  const text = collectCheckpointThemeText(history, summary);
+  const matched = CHECKPOINT_THEME_CANDIDATES.filter((candidate) =>
+    candidate.patterns.some((pattern) => pattern.test(text)),
+  );
+  const selected = matched.length > 0
+    ? matched
+    : CHECKPOINT_THEME_CANDIDATES.filter((candidate) => FALLBACK_CHECKPOINT_THEME_OPTIONS.includes(candidate.id));
+
+  const seen = new Set<string>();
+  const options = selected.flatMap((candidate) => {
+    const id = `theme-${slugifyCheckpointTheme(candidate.id)}`;
+    if (seen.has(id) || candidate.label === "Proceed to final plan") {
+      return [];
+    }
+    seen.add(id);
+    return [{ id, label: candidate.label, description: candidate.description }];
+  });
+
+  return [
+    { id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan", description: "The plan is detailed enough; show the final editable summary." },
+    ...options,
+  ];
+}
+
+/*
+FNXC:PlanningMode 2026-07-02-00:00:
+Planning Mode final summaries are user-gated, not AI-gated. Every AI completion becomes the exact “Would you like to go deeper?” checkpoint with a persisted pending summary; users may loop on selected themes/custom topics indefinitely, or explicitly proceed to reveal the final summary actions.
+*/
+export function buildDeepeningCheckpointQuestion(
+  history: Array<{ question: PlanningQuestion; response: unknown }>,
+  summary: PlanningSummary,
+): PlanningQuestion {
+  return {
+    id: PLANNING_DEEPEN_CHECKPOINT_ID,
+    type: "multi_select",
+    question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+    description: "Select any areas you want to explore further, write an unlisted topic, or proceed to the final plan.",
+    options: buildDeepeningCheckpointOptions(history, summary),
+  };
+}
+
+export function classifyDeepeningCheckpointResponse(
+  question: PlanningQuestion,
+  responses: Record<string, unknown>,
+): PlanningDeepeningDecision {
+  const rawSelected = responses[question.id];
+  const selectedIds = Array.isArray(rawSelected)
+    ? rawSelected.filter((id): id is string => typeof id === "string")
+    : [];
+  const customTopic = typeof responses._other === "string" && responses._other.trim().length > 0
+    ? responses._other.trim()
+    : undefined;
+  const proceed = responses[PLANNING_DEEPEN_PROCEED_RESPONSE_KEY] === true
+    || selectedIds.includes(PLANNING_DEEPEN_PROCEED_OPTION_ID);
+  const themeIds = selectedIds.filter((id) => id !== PLANNING_DEEPEN_PROCEED_OPTION_ID);
+  const selectedThemeLabels = themeIds.map((id) => question.options?.find((option) => option.id === id)?.label || id);
+
+  return {
+    proceed,
+    selectedThemeIds: themeIds,
+    selectedThemeLabels,
+    ...(customTopic ? { customTopic } : {}),
+  };
+}
+
+function isDeepeningCheckpointQuestion(question: PlanningQuestion | undefined): boolean {
+  return question?.id === PLANNING_DEEPEN_CHECKPOINT_ID
+    && question.question === PLANNING_DEEPEN_CHECKPOINT_QUESTION;
+}
+
 function safeParseJson<T>(
   text: string | null,
   fallback: T,
@@ -527,6 +657,7 @@ function persistSession(session: Session, status: "generating" | "awaiting_input
       ...(session.draftModelProvider ? { modelProvider: session.draftModelProvider } : {}),
       ...(session.draftModelId ? { modelId: session.draftModelId } : {}),
       ...(session.draftSummarizedFor ? { summarizedFor: session.draftSummarizedFor } : {}),
+      ...(session.pendingSummary ? { pendingSummary: session.pendingSummary } : {}),
     }),
     conversationHistory: JSON.stringify(session.history),
     currentQuestion: session.currentQuestion ? JSON.stringify(session.currentQuestion) : null,
@@ -604,6 +735,9 @@ function buildSessionFromRow(row: AiSessionRow): Session {
           }),
           { title: row.title, description: row.title },
         )
+      : undefined,
+    pendingSummary: payload.pendingSummary
+      ? normalizePlanningSummaryPayload(payload.pendingSummary, { title: row.title, description: row.title })
       : undefined,
     thinkingOutput: row.thinkingOutput,
     lastGeneratedThinking: row.thinkingOutput || "",
@@ -1109,20 +1243,11 @@ async function getFirstQuestionFromAgent(
   }
 
   if (parsed.type === "complete") {
-    // AI returned a summary instead of a question — return a minimal question
-    // so the caller can present the summary
     const summary = normalizePlanningSummaryPayload(parsed.data, {
       title: session.title || session.initialPlan,
       description: session.initialPlan,
     });
-    session.summary = summary;
-    persistSession(session, "complete");
-    return {
-      id: "q-direct-summary",
-      type: "confirm",
-      question: `The AI has generated a plan: "${summary.title}". Proceed with this?`,
-      description: summary.description,
-    };
+    return setPendingSummaryCheckpoint(session, summary);
   }
 
   return parsed.data;
@@ -1815,6 +1940,57 @@ async function runGenerationWithTimeout<T>(session: Session, operation: (abortSi
   }
 }
 
+function finalizePendingSummary(session: Session): PlanningSummary {
+  const summary = normalizePlanningSummaryPayload(session.pendingSummary ?? session.summary, {
+    title: session.title || session.initialPlan,
+    description: session.initialPlan,
+  });
+  session.summary = summary;
+  session.pendingSummary = undefined;
+  session.currentQuestion = undefined;
+  session.error = undefined;
+  session.updatedAt = new Date();
+  persistSession(session, "complete");
+  planningStreamManager.broadcast(session.id, {
+    type: "summary",
+    data: summary,
+  });
+  planningStreamManager.broadcast(session.id, { type: "complete" });
+  return summary;
+}
+
+function setPendingSummaryCheckpoint(session: Session, summary: PlanningSummary): PlanningQuestion {
+  const checkpoint = buildDeepeningCheckpointQuestion(session.history, summary);
+  session.pendingSummary = summary;
+  session.summary = undefined;
+  session.currentQuestion = checkpoint;
+  session.error = undefined;
+  session.lastGeneratedThinking = session.thinkingOutput;
+  session.updatedAt = new Date();
+  persistSession(session, "awaiting_input");
+  void maybeNotifyPlanningAwaitingInput(session, checkpoint);
+  planningStreamManager.broadcast(session.id, {
+    type: "question",
+    data: checkpoint,
+  });
+  return checkpoint;
+}
+
+function formatDeepeningRequestForAgent(decision: PlanningDeepeningDecision, pendingSummary: PlanningSummary): string {
+  const requestedTopics = [
+    ...decision.selectedThemeLabels,
+    ...(decision.customTopic ? [decision.customTopic] : []),
+  ];
+  return [
+    "The user chose to go deeper before accepting the final planning summary.",
+    "Continue the planning interview and explore these specific topics in more detail before producing another completion summary:",
+    requestedTopics.map((topic) => `- ${topic}`).join("\n"),
+    "Do not skip directly to the final summary unless the additional details are addressed; when you next complete, return the normal JSON complete payload.",
+    "Pending summary that was withheld from the user:",
+    JSON.stringify(pendingSummary),
+  ].join("\n\n");
+}
+
 async function continueAgentConversation(session: Session, message: string): Promise<void> {
   if (!session.agent) {
     throw new InvalidSessionStateError("AI agent not initialized");
@@ -1950,6 +2126,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
       if (parsed.type === "question") {
         session.currentQuestion = parsed.data;
         session.summary = undefined;
+        session.pendingSummary = undefined;
         session.error = undefined;
         session.lastGeneratedThinking = session.thinkingOutput;
         session.updatedAt = new Date();
@@ -1964,16 +2141,7 @@ async function continueAgentConversation(session: Session, message: string): Pro
           title: session.title || session.initialPlan,
           description: session.initialPlan,
         });
-        session.summary = summary;
-        session.currentQuestion = undefined;
-        session.error = undefined;
-        session.updatedAt = new Date();
-        persistSession(session, "complete");
-        planningStreamManager.broadcast(session.id, {
-          type: "summary",
-          data: summary,
-        });
-        planningStreamManager.broadcast(session.id, { type: "complete" });
+        setPendingSummaryCheckpoint(session, summary);
       }
     });
   } catch (err) {
@@ -2257,6 +2425,7 @@ export async function submitResponse(
     }
 
     session.error = undefined;
+    session.pendingSummary = undefined;
     persistSession(session, "generating");
 
     await ensureSessionAgent(session, rootDir, session.history, promptOverrides, store);
@@ -2276,14 +2445,38 @@ export async function submitResponse(
     Persist the user's answered planning turn before the agent generates the next question or errors. AiSessionStore snapshots happen inside continueAgentConversation, so history must already include the submitted answer for retry replay and SQLite round-trip tests to observe durable state.
     */
     session.history.push(historyEntry);
-    persistSession(session, "generating");
 
-    if (!session.agent) {
-      await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
+    if (isDeepeningCheckpointQuestion(currentQuestion)) {
+      const pendingSummary = session.pendingSummary;
+      if (!pendingSummary) {
+        throw new InvalidSessionStateError("Planning checkpoint is missing its pending summary");
+      }
+      const decision = classifyDeepeningCheckpointResponse(currentQuestion, responses);
+      if (decision.proceed) {
+        finalizePendingSummary(session);
+      } else {
+        const hasDeepeningTopic = decision.selectedThemeLabels.length > 0 || Boolean(decision.customTopic);
+        if (!hasDeepeningTopic) {
+          session.history.pop();
+          throw new InvalidSessionStateError("Select a topic to explore or proceed to the final plan");
+        }
+        session.pendingSummary = undefined;
+        persistSession(session, "generating");
+        if (!session.agent) {
+          await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
+        }
+        await continueAgentConversation(session, formatDeepeningRequestForAgent(decision, pendingSummary));
+      }
+    } else {
+      persistSession(session, "generating");
+
+      if (!session.agent) {
+        await ensureSessionAgent(session, rootDir, session.history.slice(0, -1), promptOverrides, store);
+      }
+
+      const message = formatResponseForAgent(currentQuestion, responses);
+      await continueAgentConversation(session, message);
     }
-
-    const message = formatResponseForAgent(currentQuestion, responses);
-    await continueAgentConversation(session, message);
   }
 
   // Return the current state (will be updated via SSE)
@@ -2326,6 +2519,7 @@ export async function retrySession(
 
   session.error = undefined;
   session.summary = undefined;
+  session.pendingSummary = undefined;
   session.updatedAt = new Date();
   persistSession(session, "generating");
 
@@ -2378,6 +2572,7 @@ export async function rewindSession(
 
   session.currentQuestion = rewindEntry.question;
   session.summary = undefined;
+  session.pendingSummary = undefined;
   session.error = undefined;
   session.lastGeneratedThinking = session.history[session.history.length - 1]?.thinkingOutput ?? "";
   session.thinkingOutput = "";

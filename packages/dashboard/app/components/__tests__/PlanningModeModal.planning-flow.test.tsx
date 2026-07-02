@@ -13,6 +13,11 @@ import { PlanningModeModal, dedupeSessionsById } from "../PlanningModeModal";
 import { TaskDetailModal } from "../TaskDetailModal";
 import { useSessionLock } from "../../hooks/useSessionLock";
 import { getSessionTabId } from "../../utils/getSessionTabId";
+import {
+  PLANNING_DEEPEN_CHECKPOINT_ID,
+  PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+  PLANNING_DEEPEN_PROCEED_OPTION_ID,
+} from "@fusion/core";
 import type { MergeResult } from "@fusion/core";
 const mockUseAiSessionSync = vi.fn();
 
@@ -226,6 +231,146 @@ describe("PlanningModeModal", () => {
   });
 
   describe("Planning flow", () => {
+    it.each(["desktop", "mobile"] as const)("renders the mandatory deepening checkpoint before summary actions on %s", async (viewportMode) => {
+      mockViewport(viewportMode);
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        setTimeout(() => {
+          handlers.onQuestion?.({
+            id: PLANNING_DEEPEN_CHECKPOINT_ID,
+            type: "multi_select",
+            question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+            description: "Select areas to explore or proceed.",
+            options: [
+              { id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan" },
+              { id: "theme-ux", label: "UX and interaction details" },
+              { id: "theme-testing", label: "Testing and verification" },
+            ],
+          });
+        }, 0);
+        return { close: vi.fn() };
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Plan a checkpoint flow" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+
+      expect(await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION)).toBeInTheDocument();
+      expect(screen.queryByText("Planning Complete!")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create Single Task" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Break into Tasks" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Refine Further" })).toBeNull();
+      expect(screen.getByText("Proceed to final plan")).toBeInTheDocument();
+      expect(screen.getByTestId("planning-option-other")).toBeInTheDocument();
+    });
+
+    it("submits selected checkpoint themes with a custom topic and can proceed to the final summary", async () => {
+      let streamHandlers: any;
+      mockConnectPlanningStream.mockImplementationOnce((_sessionId: string, _projectId: string | undefined, handlers: any) => {
+        streamHandlers = handlers;
+        setTimeout(() => {
+          handlers.onQuestion?.({
+            id: PLANNING_DEEPEN_CHECKPOINT_ID,
+            type: "multi_select",
+            question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+            options: [
+              { id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan" },
+              { id: "theme-ux", label: "UX and interaction details" },
+            ],
+          });
+        }, 0);
+        return { close: vi.fn() };
+      });
+      mockRespondToPlanning.mockResolvedValue({ type: "question", data: null });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+        />,
+      );
+
+      fireEvent.change(screen.getByPlaceholderText(/e.g., Build a user authentication/), {
+        target: { value: "Plan iterative deepening" },
+      });
+      fireEvent.click(screen.getByText("Start Planning"));
+      await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION);
+
+      fireEvent.click(screen.getByText("UX and interaction details"));
+      fireEvent.click(screen.getByTestId("planning-option-other"));
+      fireEvent.change(screen.getByTestId("planning-other-input"), { target: { value: "  Explore rollout risk  " } });
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+      await waitFor(() => {
+        expect(mockRespondToPlanning).toHaveBeenCalledWith(
+          "session-123",
+          {
+            [PLANNING_DEEPEN_CHECKPOINT_ID]: ["theme-ux"],
+            _other: "Explore rollout risk",
+          },
+          undefined,
+          expect.any(String),
+        );
+      });
+
+      act(() => {
+        streamHandlers.onQuestion?.({
+          id: "q-follow-up",
+          type: "text",
+          question: "What rollout risk matters?",
+        });
+      });
+      fireEvent.change(screen.getByPlaceholderText("Type your answer here..."), { target: { value: "Operator docs" } });
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+      act(() => {
+        streamHandlers.onQuestion?.({
+          id: PLANNING_DEEPEN_CHECKPOINT_ID,
+          type: "multi_select",
+          question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+          options: [
+            { id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan" },
+            { id: "theme-testing", label: "Testing and verification" },
+          ],
+        });
+      });
+      await waitFor(() => {
+        expect(screen.getAllByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION).length).toBeGreaterThan(0);
+      });
+      fireEvent.click(screen.getByText("Proceed to final plan"));
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+      await waitFor(() => {
+        expect(mockRespondToPlanning).toHaveBeenLastCalledWith(
+          "session-123",
+          { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+          undefined,
+          expect.any(String),
+        );
+      });
+
+      act(() => {
+        streamHandlers.onSummary?.(mockSummary);
+        streamHandlers.onComplete?.();
+      });
+      expect(await screen.findByText("Planning Complete!")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Create Single Task" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Break into Tasks" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Refine Further" })).toBeEnabled();
+    });
     it.each(["desktop", "mobile"] as const)("FN-6977 renders malformed live summary without generic error on %s", async (viewportMode) => {
       mockViewport(viewportMode);
       mockStartPlanningStreaming.mockResolvedValueOnce({ sessionId: `session-fn-6977-live-${viewportMode}` });
@@ -548,7 +693,7 @@ describe("PlanningModeModal", () => {
       });
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
-      fireEvent.click(screen.getByTestId("planning-option-other"));
+      fireEvent.click(within(screen.getByTestId("planning-option-other")).getByRole("checkbox"));
       expect(continueButton).toBeDisabled();
 
       const otherInput = screen.getByTestId("planning-other-input");
@@ -608,7 +753,7 @@ describe("PlanningModeModal", () => {
 
       const continueButton = screen.getByRole("button", { name: "Continue" });
       fireEvent.click(screen.getByText("Speed"));
-      fireEvent.click(screen.getByTestId("planning-option-other"));
+      fireEvent.click(within(screen.getByTestId("planning-option-other")).getByRole("checkbox"));
       const otherInput = screen.getByTestId("planning-other-input");
       fireEvent.change(otherInput, { target: { value: "  Preserve operator control  " } });
       expect(continueButton).toBeEnabled();
@@ -1525,6 +1670,50 @@ describe("PlanningModeModal", () => {
         expect(onTasksCreated).toHaveBeenCalledWith([]);
       });
       expect(screen.queryByText(/Something went wrong/i)).toBeNull();
+    });
+
+    it("resumes awaiting deepening checkpoint sessions without showing summary actions", async () => {
+      mockFetchAiSession.mockResolvedValueOnce({
+        id: "session-awaiting-checkpoint",
+        type: "planning",
+        status: "awaiting_input",
+        title: "Awaiting checkpoint",
+        inputPayload: JSON.stringify({ initialPlan: "Resume pending checkpoint" }),
+        conversationHistory: "[]",
+        currentQuestion: JSON.stringify({
+          id: PLANNING_DEEPEN_CHECKPOINT_ID,
+          type: "multi_select",
+          question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+          options: [
+            { id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan" },
+            { id: "theme-testing", label: "Testing and verification" },
+          ],
+        }),
+        result: null,
+        thinkingOutput: "",
+        error: null,
+        projectId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      render(
+        <PlanningModeModal
+          isOpen={true}
+          onClose={mockOnClose}
+          onTaskCreated={mockOnTaskCreated}
+          onTasksCreated={vi.fn()}
+          tasks={mockTasks}
+          resumeSessionId="session-awaiting-checkpoint"
+        />
+      );
+
+      expect(await screen.findByText(PLANNING_DEEPEN_CHECKPOINT_QUESTION)).toBeInTheDocument();
+      expect(screen.getByText("Proceed to final plan")).toBeInTheDocument();
+      expect(screen.queryByText("Planning Complete!")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Create Single Task" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Break into Tasks" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Refine Further" })).toBeNull();
     });
 
     it("shows summary view when resuming a complete persisted session", async () => {

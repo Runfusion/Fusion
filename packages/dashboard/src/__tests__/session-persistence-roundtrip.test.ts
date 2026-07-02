@@ -10,13 +10,21 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database, TaskStore } from "@fusion/core";
+import {
+  Database,
+  PLANNING_DEEPEN_CHECKPOINT_ID,
+  PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+  PLANNING_DEEPEN_PROCEED_OPTION_ID,
+  TaskStore,
+} from "@fusion/core";
 import { AiSessionStore, type AiSessionRow } from "../ai-session-store.js";
 import {
   __resetPlanningState,
   __setCreateFnAgent,
   cancelSession,
   createSession,
+  getCurrentQuestion,
+  rehydrateFromStore,
   setAiSessionStore as setPlanningAiSessionStore,
   submitResponse,
 } from "../planning.js";
@@ -50,6 +58,7 @@ vi.mock("@fusion/engine", () => ({
     resolvedSkillNames: [],
     skillSource: "none" as const,
   })),
+  resolveMcpServersForStore: vi.fn(async () => ({ servers: [] })),
   createFnAgent: mockCreateFnAgent,
 }));
 
@@ -127,7 +136,7 @@ describe("session persistence round-trip", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("persists planning session transitions across generating → awaiting_input → complete", async () => {
+  it("persists planning session transitions across generating → awaiting checkpoint → complete", async () => {
     __setCreateFnAgent(
       async () =>
         createMockAgent([
@@ -166,11 +175,70 @@ describe("session persistence round-trip", () => {
     expect(JSON.parse(afterFirstResponse?.conversationHistory ?? "[]")).toHaveLength(1);
 
     await submitResponse(sessionId, { "q-2": "Answer two" }, "/tmp/project");
+    const afterCheckpoint = aiSessionStore.get(sessionId);
+    expect(afterCheckpoint?.status).toBe("awaiting_input");
+    expect(JSON.parse(afterCheckpoint?.currentQuestion ?? "null")).toMatchObject({
+      id: PLANNING_DEEPEN_CHECKPOINT_ID,
+      question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+    });
+    expect(JSON.parse(afterCheckpoint?.conversationHistory ?? "[]")).toHaveLength(2);
+    expect(afterCheckpoint?.result).toBeNull();
+    expect(JSON.parse(afterCheckpoint?.inputPayload ?? "{}").pendingSummary.title).toBe("Planned");
+
+    await submitResponse(
+      sessionId,
+      { [PLANNING_DEEPEN_CHECKPOINT_ID]: [PLANNING_DEEPEN_PROCEED_OPTION_ID] },
+      "/tmp/project",
+    );
     const afterComplete = aiSessionStore.get(sessionId);
     expect(afterComplete?.status).toBe("complete");
     expect(afterComplete?.currentQuestion).toBeNull();
-    expect(JSON.parse(afterComplete?.conversationHistory ?? "[]")).toHaveLength(2);
+    expect(JSON.parse(afterComplete?.conversationHistory ?? "[]")).toHaveLength(3);
+    expect(JSON.parse(afterComplete?.inputPayload ?? "{}").pendingSummary).toBeUndefined();
     expect(JSON.parse(afterComplete?.result ?? "null")?.title).toBe("Planned");
+  });
+
+  it("rehydrates awaiting deepening checkpoint sessions without exposing pending summary as complete", () => {
+    const now = new Date().toISOString();
+    aiSessionStore.upsert({
+      id: "planning-checkpoint-recover",
+      type: "planning",
+      status: "awaiting_input",
+      title: "Planning checkpoint recover",
+      inputPayload: JSON.stringify({
+        ip: "127.0.0.1",
+        initialPlan: "Plan",
+        pendingSummary: {
+          title: "Recovered pending summary",
+          description: "Summary is waiting behind checkpoint",
+          suggestedSize: "M",
+          suggestedDependencies: ["FN-1", "FN-1"],
+          keyDeliverables: ["One"],
+        },
+      }),
+      conversationHistory: JSON.stringify([{ question: { id: "q-1", type: "text", question: "First?" }, response: { "q-1": "a" } }]),
+      currentQuestion: JSON.stringify({
+        id: PLANNING_DEEPEN_CHECKPOINT_ID,
+        type: "multi_select",
+        question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+        options: [{ id: PLANNING_DEEPEN_PROCEED_OPTION_ID, label: "Proceed to final plan" }],
+      }),
+      result: null,
+      thinkingOutput: "",
+      error: null,
+      projectId: null,
+      createdAt: now,
+      updatedAt: now,
+      lockedByTab: null,
+      lockedAt: null,
+    });
+
+    expect(rehydrateFromStore(aiSessionStore)).toBe(1);
+    expect(getCurrentQuestion("planning-checkpoint-recover")).toMatchObject({
+      id: PLANNING_DEEPEN_CHECKPOINT_ID,
+      question: PLANNING_DEEPEN_CHECKPOINT_QUESTION,
+    });
+    expect(aiSessionStore.get("planning-checkpoint-recover")?.result).toBeNull();
   });
 
   it("recovers generating sessions from SQLite while preserving history and currentQuestion", () => {
