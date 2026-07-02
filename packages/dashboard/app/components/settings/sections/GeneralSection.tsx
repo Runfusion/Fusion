@@ -4,6 +4,7 @@ import { ProjectDefaultWorkflowField } from "../../WorkflowSelector";
 import { WorkflowIcon } from "../../WorkflowIcon";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { fetchWorkflows } from "../../../api";
+import { clearAllLocalCache } from "../../../utils/swrCache";
 import type { ToastType } from "../../../hooks/useToast";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
@@ -57,6 +58,22 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
                 enabledBuiltinWorkflowIds: nextIds.length === allIds.length ? undefined : nextIds,
             };
         });
+    };
+    /*
+    FNXC:SettingsGeneral 2026-07-02-00:00:
+    User-facing escape hatch for localStorage quota exhaustion. The dashboard accumulates per-project
+    SWR hydration caches (chat sessions, rooms, tasks, board snapshots) whose stale entries linger
+    indefinitely. clearAllLocalCache wipes all Fusion-owned browser data (caches + UI prefs) while
+    preserving the auth token so the session survives the reload. Tasks and project settings live
+    server-side and are unaffected.
+    */
+    const handleClearLocalData = () => {
+        const confirmed = window.confirm(t("settings.general.clearLocalDataConfirm", "Clear all cached data and UI preferences stored in this browser? This frees space used by stale chat, task, and board caches. Your tasks and project settings are safe (stored server-side). The dashboard will reload."));
+        if (!confirmed) {
+            return;
+        }
+        clearAllLocalCache();
+        window.location.reload();
     };
     return (<>
       {scopeBanner}
@@ -308,6 +325,20 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
           </div>
         </div>
       </details>
+      {/*
+        FNXC:SettingsGeneral 2026-07-02-00:00:
+        "Clear local data" panel — the user-facing escape hatch when the dashboard runs out of
+        browser localStorage quota. Frees stale SWR hydration caches (chat sessions, rooms, tasks,
+        board snapshots) plus UI prefs. The auth token is preserved so the reload keeps the session.
+      */}
+      <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.browserData", "Browser Data")}</h4>
+      <div className="form-group">
+        <label>{t("settings.general.clearLocalData", "Clear local data")}</label>
+        <small>{t("settings.general.clearLocalDataHint", "Remove cached board snapshots, chat threads, and UI preferences stored in this browser. Frees space when the dashboard runs low on browser storage. Your tasks and project settings are stored server-side and are not affected.")}</small>
+        <div style={{ marginTop: "var(--space-sm)" }}>
+          <button type="button" className="btn btn-sm" onClick={handleClearLocalData}>{t("settings.general.clearLocalDataButton", "Clear local data")}</button>
+        </div>
+      </div>
     </>);
 }
 export default GeneralSection;
