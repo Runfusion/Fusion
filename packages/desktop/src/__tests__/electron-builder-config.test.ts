@@ -62,9 +62,12 @@ describe("electron-builder desktop config", () => {
     const packageJsonRaw = await readDesktopFile("package.json");
     const packageJson = JSON.parse(packageJsonRaw) as { scripts?: Record<string, string> };
 
-    expect(packageJson.scripts?.["dist:win"]).toBe("electron-builder --win");
-    expect(packageJson.scripts?.["dist:mac"]).toBe("electron-builder --mac");
-    expect(packageJson.scripts?.["dist:linux"]).toBe("electron-builder --linux");
+    // Scripts package the staged production closure via `--projectDir deploy`
+    // (see scripts/workspace-tools.ts stageDesktopDeploy), so assert both the
+    // deploy projectDir and the platform flag rather than a bare invocation.
+    expect(packageJson.scripts?.["dist:win"]).toBe("electron-builder --projectDir deploy --win");
+    expect(packageJson.scripts?.["dist:mac"]).toBe("electron-builder --projectDir deploy --mac");
+    expect(packageJson.scripts?.["dist:linux"]).toBe("electron-builder --projectDir deploy --linux");
   });
 
   it("keeps required mac and linux targets", async () => {

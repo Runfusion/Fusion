@@ -89,6 +89,34 @@ jobs:
           if ($nsis.Count -eq 0) { Write-Error "No NSIS installer artifact produced"; exit 1 }
           if ($portable.Count -eq 0) { Write-Error "No portable EXE artifact produced"; exit 1 }
 
+      - name: Verify packaged app.asar assets
+        shell: pwsh
+        run: |
+          # FNXC:WindowsDesktopPackaging 2026-07-03-15:40:
+          # Field report Issue 5: the packaged desktop shipped without preload.js and
+          # dead-ended on "can't reach the Fusion backend" (preload absence is silent —
+          # the contextBridge never installs window.fusionShell/fusionAPI). scripts/build.ts
+          # verifies the pre-package staging tree; this asserts the SHIPPED app.asar itself
+          # contains the Electron main/preload/renderer entrypoints, since only the packed
+          # asar reflects what a user installs.
+          $required = @('dist/main.js', 'dist/preload.js', 'dist/client/index.html')
+          $unpackedRoots = Get-ChildItem packages/desktop/dist-electron -Directory -Filter 'win*-unpacked'
+          if ($unpackedRoots.Count -eq 0) { Write-Error "No win-unpacked directory produced"; exit 1 }
+          foreach ($root in $unpackedRoots) {
+            $asar = Join-Path $root.FullName 'resources/app.asar'
+            if (!(Test-Path $asar)) { Write-Error "Missing packaged app.asar: $asar"; exit 1 }
+            $entries = npx --yes @electron/asar list $asar
+            if ($LASTEXITCODE -ne 0) { Write-Error "Failed to list app.asar: $asar"; exit 1 }
+            $normalized = $entries | ForEach-Object { $_.TrimStart('/','\').Replace('\','/') }
+            foreach ($asset in $required) {
+              if ($normalized -notcontains $asset) {
+                Write-Error "app.asar is missing required Electron asset '$asset' in $($root.Name); refusing to ship an incomplete package"
+                exit 1
+              }
+            }
+            Write-Host "$($root.Name)/resources/app.asar contains all required Electron assets"
+          }
+
       # Automated publish is intentionally deferred to FN-5593.
       # Keep a single artifact; filenames include -x64 / -arm64 so both arches are captured.
       - name: Upload Windows artifacts

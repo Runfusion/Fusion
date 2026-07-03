@@ -139,6 +139,23 @@ const fusionShell = {
   },
 };
 
+/*
+FNXC:DesktopShell 2026-07-03-12:10:
+Bridge the main-process "open connection manager" request into a window DOM event. The header
+"Switch server" / "Manage connections" button (ShellConnectionStatus) calls
+`fusionShell.openConnectionManager()`, which invokes the `shell:openConnectionManager` IPC; main then
+round-trips back via `webContents.send("shell:open-connection-manager")` (ipc.ts). The renderer's
+ShellContext listens with `window.addEventListener("shell:open-connection-manager")` to raise
+`openConnectionManagerSignal` and open NativeShellConnectionManager. Without this forwarder the IPC
+event was dropped, so clicking "Switch server" in Desktop local mode did nothing. DOM events dispatched
+on the shared window cross the isolated-preload → page-world boundary, so the page listener fires.
+Re-registered on every navigation (including the handoff to the http runtime origin) because the
+preload re-runs per page load.
+*/
+ipcRenderer.on("shell:open-connection-manager", () => {
+  window.dispatchEvent(new Event("shell:open-connection-manager"));
+});
+
 contextBridge.exposeInMainWorld("electronAPI", electronApi);
 contextBridge.exposeInMainWorld("fusionAPI", electronApi);
 contextBridge.exposeInMainWorld("fusionShell", fusionShell);

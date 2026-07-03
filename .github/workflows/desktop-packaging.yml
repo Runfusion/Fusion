@@ -1,0 +1,79 @@
+name: Desktop packaging
+
+# FNXC:CI 2026-07-03-18:20:
+# Advisory desktop-packaging validation, kept in its OWN workflow so the thin merge gate
+# (pr-checks.yml) stays exactly [Lint, Typecheck, Build, Gate] — that file's job set maps
+# 1:1 to the branch-protection required checks, and the CI-shape test enforces the invariant.
+# electron-builder's production-dependency walk is the ONLY thing that validates the packageable
+# dependency closure, and it historically ran only in workflow_dispatch / release workflows. So a
+# lockfile version skew — e.g. a stale `pnpm.overrides` entry force-holding `@aws-sdk/core` at a
+# version its consumers no longer accepted — sailed through the gate and only detonated at release /
+# local installer build time (the exact incident this job prevents). Reproduce that walk on PRs that
+# touch the dependency closure so any future skew fails HERE, for ANY dependency.
+#
+# ADVISORY, not in the required set: branch protection is untouched. Promote to merge-blocking by
+# adding "Desktop packaging" to the repo's required checks. Path-gated + electron-builder --dir
+# (skips NSIS/signing) keeps it cheap; the dependency walk that catches skew runs regardless of
+# target platform, so ubuntu suffices.
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: desktop-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token: only reads the repo (checkout + cache).
+permissions:
+  contents: read
+
+# FN-4863: Opt JavaScript actions into Node 24 ahead of GitHub's forced cutover on 2026-06-02.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  desktop-pack:
+    name: Desktop packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Need history to diff against the PR base for the path gate below.
+          fetch-depth: 0
+
+      - name: Detect dependency / desktop-closure changes
+        id: changes
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if git diff --name-only "$base"...HEAD \
+             | grep -qE '^(pnpm-lock\.yaml|package\.json|pnpm-workspace\.yaml|packages/(desktop|dashboard|engine|core)/|plugins/)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No dependency/desktop-closure changes; skipping the packaging walk."
+          fi
+
+      - name: Setup Node.js and pnpm
+        if: steps.changes.outputs.relevant == 'true'
+        uses: ./.github/actions/setup-node-pnpm
+
+      # Early-warning (item 3): a lockfile that can still be deduped often signals the version drift that
+      # later breaks packaging. Non-fatal — surfaces as a warning so it informs without failing on benign
+      # dedupe opportunities.
+      - name: Lockfile dedupe check (early warning)
+        if: steps.changes.outputs.relevant == 'true'
+        run: pnpm dedupe --check || echo "::warning::pnpm dedupe --check found dedupable/inconsistent dependencies; run 'pnpm dedupe' and review."
+
+      - name: Build desktop package (stages the production deploy closure)
+        if: steps.changes.outputs.relevant == 'true'
+        run: pnpm --filter @fusion/desktop build
+
+      # Authoritative check: electron-builder's production-dependency walk over the staged closure.
+      # --dir skips installer/signing but still FAILS if any production dependency's declared version
+      # range is unsatisfied in the closure — which is exactly the aws-sdk skew that broke the release.
+      - name: Validate packageable closure (electron-builder --dir)
+        if: steps.changes.outputs.relevant == 'true'
+        run: pnpm --filter @fusion/desktop exec electron-builder --projectDir deploy --dir --publish never

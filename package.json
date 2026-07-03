@@ -1,6 +1,6 @@
 {
   "name": "fusion-workspace",
-  "version": "0.54.0",
+  "version": "0.55.0",
   "private": true,
   "license": "MIT",
   "homepage": "https://github.com/Runfusion/Fusion#readme",
@@ -94,7 +94,6 @@
       "protobufjs"
     ],
     "overrides": {
-      "@aws-sdk/core": "3.974.26",
       "@types/node": "^25.5.2",
       "protobufjs": "^7.5.8"
     }

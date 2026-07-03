@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import { cp, mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { buildCore, buildDashboard, buildDashboardClient, buildEngine, packageRoot, stageDesktopDeploy, workspaceRoot } from "./workspace-tools";
+import { buildCore, buildDashboard, buildDashboardClient, buildEngine, desktopDeployDir, packageRoot, stageDesktopDeploy, workspaceRoot } from "./workspace-tools";
 const dashboardRoot = join(workspaceRoot, "packages", "dashboard");
 const dashboardClientDir = join(dashboardRoot, "dist", "client");
 const dashboardRegistryManifestSource = join(dashboardRoot, "src", "registry-manifest.json");
@@ -113,6 +113,42 @@ async function ensureEmbeddedRuntimeBuild(): Promise<void> {
   await buildEngine();
 }
 
+// FNXC:DesktopPackaging 2026-07-03-15:25:
+// Guard the packaged Electron closure so a missing preload/main/renderer asset
+// fails the build instead of shipping and crashing on a user's machine (field
+// report Issue 5: preload was missing from the packaged unpacked layout).
+// `preload.js` in particular is silent when absent — the contextBridge never
+// installs window.fusionShell/fusionAPI and the app dead-ends on "can't reach
+// the Fusion backend". Assert the required files in BOTH the source `dist/`
+// (esbuild output) and the staged `deploy/dist/` (what electron-builder packs
+// into app.asar), since only the latter reflects what ships.
+const REQUIRED_PACKAGED_ASSETS = ["main.js", "preload.js", join("client", "index.html")];
+
+async function verifyPackagedArtifacts(): Promise<void> {
+  console.log("[desktop:build] Verifying required packaged assets are present...");
+  const stagedDistDir = join(desktopDeployDir, "dist");
+  const roots: Array<{ label: string; dir: string }> = [
+    { label: "dist", dir: desktopDistDir },
+    { label: "deploy/dist", dir: stagedDistDir },
+  ];
+  const missing: string[] = [];
+  for (const { label, dir } of roots) {
+    for (const asset of REQUIRED_PACKAGED_ASSETS) {
+      try {
+        await stat(join(dir, asset));
+      } catch {
+        missing.push(`${label}/${asset}`);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Desktop packaging is missing required Electron assets: ${missing.join(", ")}. ` +
+        `Refusing to ship an incomplete app.asar.`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   await rm(desktopDistDir, { recursive: true, force: true });
   await mkdir(desktopDistDir, { recursive: true });
@@ -127,6 +163,8 @@ async function main(): Promise<void> {
   // electron-builder can package it via --projectDir instead of its pnpm collector,
   // which drops `deduped` subtrees and left the embedded runtime missing deps.
   await stageDesktopDeploy();
+
+  await verifyPackagedArtifacts();
 
   console.log("[desktop:build] Desktop build complete");
 }

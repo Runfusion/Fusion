@@ -78,6 +78,18 @@ export default defineConfig({
         find: /^@fusion-plugin-examples\/paperclip-runtime$/,
         replacement: resolve(__dirname, "../../plugins/fusion-plugin-paperclip-runtime/src/index.ts"),
       },
+      /*
+      FNXC:PluginTests 2026-07-03-12:30:
+      runtime-provider-probes.ts (transitively imported by dashboard) imports probeCursorBinary from @fusion-plugin-examples/cursor-runtime. Without these source aliases, Vite tries to resolve the package's dist/ exports which don't exist in a source checkout.
+      */
+      {
+        find: /^@fusion-plugin-examples\/cursor-runtime\/probe$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-cursor-runtime/src/probe.ts"),
+      },
+      {
+        find: /^@fusion-plugin-examples\/cursor-runtime$/,
+        replacement: resolve(__dirname, "../../plugins/fusion-plugin-cursor-runtime/src/index.ts"),
+      },
       { find: /^@fusion\/test-utils$/, replacement: resolve(__dirname, "../core/src/__test-utils__/workspace.ts") },
     ],
   },

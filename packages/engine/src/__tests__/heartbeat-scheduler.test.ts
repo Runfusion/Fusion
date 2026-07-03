@@ -83,6 +83,153 @@ describe("HeartbeatTriggerScheduler", () => {
     });
   });
 
+  describe("agent lifecycle seam registration", () => {
+    type LifecycleStore = EventEmitter & Pick<AgentStore, "getAgent" | "getActiveHeartbeatRun" | "getBudgetStatus" | "listAgents" | "getRecentRuns" | "updateAgent"> & {
+      agents: Map<string, Agent>;
+    };
+
+    const baseAgent = (id: string, patch: Partial<Agent> = {}): Agent => ({
+      id,
+      name: patch.name ?? id,
+      role: patch.role ?? "executor",
+      state: patch.state ?? "active",
+      createdAt: patch.createdAt ?? "2026-01-01T00:00:00.000Z",
+      updatedAt: patch.updatedAt ?? "2026-01-01T00:00:00.000Z",
+      metadata: patch.metadata ?? {},
+      runtimeConfig: patch.runtimeConfig,
+      lastHeartbeatAt: patch.lastHeartbeatAt,
+      taskId: patch.taskId,
+    }) as Agent;
+
+    function createLifecycleStore(initialAgents: Agent[] = []): LifecycleStore {
+      const eventStore = Object.assign(new EventEmitter(), {
+        agents: new Map(initialAgents.map((agent) => [agent.id, agent])),
+        getAgent: vi.fn(async function(this: LifecycleStore, agentId: string) {
+          return this.agents.get(agentId) ?? null;
+        }),
+        getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+        getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+        listAgents: vi.fn(async function(this: LifecycleStore) {
+          return Array.from(this.agents.values());
+        }),
+        getRecentRuns: vi.fn().mockResolvedValue([]),
+        updateAgent: vi.fn().mockImplementation(async function(this: LifecycleStore, agentId: string, patch: Partial<Agent>) {
+          const before = this.agents.get(agentId) ?? baseAgent(agentId);
+          const after = { ...before, ...patch, runtimeConfig: patch.runtimeConfig ?? before.runtimeConfig } as Agent;
+          this.agents.set(agentId, after);
+          this.emit("agent:configRevision", agentId, { before, after });
+          this.emit("agent:updated", after);
+          return after;
+        }),
+      }) as LifecycleStore;
+      return eventStore;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      scheduler?.stop();
+      vi.useRealTimers();
+    });
+
+    it("registers created heartbeat agents and excludes disabled or internal workers", async () => {
+      /*
+      FNXC:TestInfrastructure 2026-07-03-11:06:
+      Scheduler lifecycle behavior should be exercised at the EventEmitter seam instead of paying InProcessRuntime startup cost for created/default/explicit/disabled registration variants.
+      */
+      const eventStore = createLifecycleStore();
+      scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+      scheduler.start();
+
+      const defaultAgent = baseAgent("agent-default");
+      const explicitAgent = baseAgent("agent-explicit", { runtimeConfig: { enabled: true, heartbeatIntervalMs: 15_000 } });
+      const disabledAgent = baseAgent("agent-disabled", { runtimeConfig: { enabled: false } });
+      const internalWorker = baseAgent("agent-worker", { metadata: { agentKind: "task-worker" }, runtimeConfig: { enabled: true, heartbeatIntervalMs: 1_000 } });
+      for (const agent of [defaultAgent, explicitAgent, disabledAgent, internalWorker]) {
+        eventStore.agents.set(agent.id, agent);
+        eventStore.emit("agent:created", agent);
+      }
+
+      expect(scheduler.getRegisteredAgents()).toContain(defaultAgent.id);
+      expect(scheduler.getRegisteredAgents()).toContain(explicitAgent.id);
+      expect(scheduler.getRegisteredAgents()).not.toContain(disabledAgent.id);
+      expect(scheduler.getRegisteredAgents()).not.toContain(internalWorker.id);
+
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(callback).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledWith(explicitAgent.id, "timer", expect.objectContaining({ intervalMs: 15_000 }));
+    });
+
+    it("keeps unrelated updates stable, re-arms interval changes, and clears paused timers", async () => {
+      const agent = baseAgent("agent-lifecycle", { runtimeConfig: { enabled: true, heartbeatIntervalMs: 1_000 } });
+      const eventStore = createLifecycleStore([agent]);
+      scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+      scheduler.start();
+      eventStore.emit("agent:created", agent);
+
+      await vi.advanceTimersByTimeAsync(400);
+      const renamed = { ...agent, name: "renamed" } as Agent;
+      eventStore.agents.set(agent.id, renamed);
+      eventStore.emit("agent:updated", renamed);
+      await vi.advanceTimersByTimeAsync(599);
+      expect(callback).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+
+      callback.mockClear();
+      await eventStore.updateAgent(agent.id, { runtimeConfig: { enabled: true, heartbeatIntervalMs: 2_000 } });
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(callback).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledWith(agent.id, "timer", expect.objectContaining({ intervalMs: 2_000 }));
+
+      callback.mockClear();
+      const paused = { ...eventStore.agents.get(agent.id)!, state: "paused" as const };
+      eventStore.agents.set(agent.id, paused);
+      eventStore.emit("agent:updated", paused);
+      expect(scheduler.getRegisteredAgents()).not.toContain(agent.id);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(callback).not.toHaveBeenCalled();
+
+      const resumed = { ...paused, state: "active" as const };
+      eventStore.agents.set(agent.id, resumed);
+      eventStore.emit("agent:updated", resumed);
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(callback).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    it("unregisters deleted agents and removes lifecycle listeners on stop", async () => {
+      const agent = baseAgent("agent-cleanup", { runtimeConfig: { enabled: true, heartbeatIntervalMs: 1_000 } });
+      const eventStore = createLifecycleStore([agent]);
+      scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+      scheduler.start();
+      eventStore.emit("agent:created", agent);
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+      eventStore.emit("agent:deleted", agent.id);
+      expect(scheduler.getRegisteredAgents()).not.toContain(agent.id);
+
+      eventStore.emit("agent:created", agent);
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+      scheduler.stop();
+      expect(eventStore.listenerCount("agent:created")).toBe(0);
+      expect(eventStore.listenerCount("agent:updated")).toBe(0);
+      expect(eventStore.listenerCount("agent:configRevision")).toBe(0);
+      expect(eventStore.listenerCount("agent:deleted")).toBe(0);
+
+      const afterStop = baseAgent("agent-after-stop", { runtimeConfig: { enabled: true, heartbeatIntervalMs: 1_000 } });
+      eventStore.emit("agent:created", afterStop);
+      expect(scheduler.getRegisteredAgents()).not.toContain(afterStop.id);
+    });
+  });
+
   describe("scheduler timer audit", () => {
     it("re-arms a tickable durable agent when timer entry is missing and no lifecycle event fires", async () => {
       vi.useFakeTimers();

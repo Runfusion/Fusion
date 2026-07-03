@@ -5,7 +5,6 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@aws-sdk/core': 3.974.26
   '@types/node': ^25.5.2
   protobufjs: ^7.5.8
 

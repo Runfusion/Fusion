@@ -1,5 +1,58 @@
 # runfusion.ai
 
+## 0.55.0
+
+### Patch Changes
+
+- Updated dependencies [306e516]
+- Updated dependencies [9df13c7]
+- Updated dependencies [c7641f9]
+- Updated dependencies [da662c4]
+- Updated dependencies [377eee6]
+- Updated dependencies [9ee33f9]
+- Updated dependencies [8580910]
+- Updated dependencies [3453d16]
+- Updated dependencies [777f647]
+- Updated dependencies [abb1917]
+- Updated dependencies [5738766]
+- Updated dependencies [fafe4c9]
+- Updated dependencies [865dec2]
+- Updated dependencies [b8e126e]
+- Updated dependencies [34be333]
+- Updated dependencies [1f6befc]
+- Updated dependencies [c49a933]
+- Updated dependencies [53d5bb1]
+- Updated dependencies [91737b1]
+- Updated dependencies [b493a1e]
+- Updated dependencies [e5be924]
+- Updated dependencies [326c72b]
+- Updated dependencies [1d6bb08]
+- Updated dependencies [aa8f1f3]
+- Updated dependencies [91fb53f]
+- Updated dependencies [72adb52]
+- Updated dependencies [25fecd7]
+- Updated dependencies [dfb6e52]
+- Updated dependencies [ec0256f]
+- Updated dependencies [5984f32]
+- Updated dependencies [ffcb54b]
+- Updated dependencies [8d7abb8]
+- Updated dependencies [22fd0da]
+- Updated dependencies [765218f]
+- Updated dependencies [1d6011c]
+- Updated dependencies [2050323]
+- Updated dependencies [3fac409]
+- Updated dependencies [f973334]
+- Updated dependencies [78ebeaf]
+- Updated dependencies [1430a42]
+- Updated dependencies [7a4b0bf]
+- Updated dependencies [00afb22]
+- Updated dependencies [9532520]
+- Updated dependencies [7300bf5]
+- Updated dependencies [30a11ac]
+- Updated dependencies [d9ef514]
+- Updated dependencies [e4349ee]
+  - @runfusion/fusion@0.55.0
+
 ## 0.54.0
 
 ### Patch Changes

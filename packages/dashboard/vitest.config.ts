@@ -518,6 +518,18 @@ export default defineConfig({
         __dirname,
         "../../plugins/fusion-plugin-linear-import/src/index.ts",
       ),
+      /*
+      FNXC:PluginTests 2026-07-03-12:30:
+      runtime-provider-probes.ts imports probeCursorBinary from @fusion-plugin-examples/cursor-runtime. Without these source aliases, Vite tries to resolve the package's dist/ exports which don't exist in a source checkout, causing every dashboard test that transitively imports the runtime provider to fail with "Failed to resolve entry for package".
+      */
+      "@fusion-plugin-examples/cursor-runtime/probe": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-cursor-runtime/src/probe.ts",
+      ),
+      "@fusion-plugin-examples/cursor-runtime": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-cursor-runtime/src/index.ts",
+      ),
     },
   },
   test: {

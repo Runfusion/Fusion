@@ -308,6 +308,22 @@ export function SetupWizardModal({
         agentOutcome: "created",
       }));
     } catch (err) {
+      /*
+       * FNXC:Onboarding 2026-07-03-12:10:
+       * A same-named first agent ("CEO") may already exist — created via another first-run surface
+       * (the unified ModelOnboarding agent step) or a prior attempt; agent names are unique per store.
+       * The desired end state (a first agent exists) already holds, so treat a name collision as success
+       * and complete setup rather than blocking with "Agent with this name already exists".
+       */
+      if (err instanceof Error && /already exists/i.test(err.message)) {
+        setState((prev) => ({
+          ...prev,
+          step: "complete",
+          isCreatingAgent: false,
+          agentOutcome: "created",
+        }));
+        return;
+      }
       setState((prev) => ({
         ...prev,
         isCreatingAgent: false,

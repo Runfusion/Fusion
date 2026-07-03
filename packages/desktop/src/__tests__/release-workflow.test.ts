@@ -19,19 +19,19 @@ describe("desktop release workflow wiring", () => {
     for (const workflow of [release, testRelease]) {
       expect(workflow).toContain("build-desktop-windows:");
       expect(workflow).toContain("runs-on: windows-latest");
-      expect(workflow).toMatch(/pnpm --filter @fusion\/desktop dist:win|electron-builder --win/);
+      expect(workflow).toMatch(/pnpm --filter @fusion\/desktop dist:win|electron-builder[^\n]*--win/);
       expect(workflow).toContain("name: fusion-desktop-windows");
       expect(workflow).toContain("packages/desktop/dist-electron/latest.yml");
 
       expect(workflow).toContain("build-desktop-macos:");
       expect(workflow).toContain("runs-on: macos-latest");
-      expect(workflow).toMatch(/pnpm --filter @fusion\/desktop dist:mac|electron-builder --mac/);
+      expect(workflow).toMatch(/pnpm --filter @fusion\/desktop dist:mac|electron-builder[^\n]*--mac/);
       expect(workflow).toContain("name: fusion-desktop-macos");
       expect(workflow).toContain("packages/desktop/dist-electron/latest-mac.yml");
 
       expect(workflow).toContain("build-desktop-linux:");
       expect(workflow).toContain("runs-on: ubuntu-latest");
-      expect(workflow).toMatch(/pnpm --filter @fusion\/desktop dist:linux|electron-builder --linux/);
+      expect(workflow).toMatch(/pnpm --filter @fusion\/desktop dist:linux|electron-builder[^\n]*--linux/);
       expect(workflow).toContain("--x64");
       expect(workflow).toContain("--arm64");
       expect(workflow).toContain("Fusion-*-linux-arm64.AppImage");

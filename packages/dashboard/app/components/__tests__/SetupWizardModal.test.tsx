@@ -721,6 +721,36 @@ describe("SetupWizardModal", () => {
     expect(await screen.findByText("You can create agents later from the Agents view.")).toBeDefined();
   });
 
+  it("treats an already-exists agent as success instead of blocking setup", async () => {
+    // FNXC:Onboarding 2026-07-03: the default "CEO" can already exist when this step runs — reached via
+    // the unified ModelOnboarding agent step or a prior attempt; agent names are unique per store, so a
+    // redundant create returns 409 "already exists". That must NOT block first-run: the desired end
+    // state (a first agent exists) already holds, so the wizard advances to completion.
+    const mockProject = buildMockProject();
+    const onProjectRegistered = vi.fn();
+    mockRegisterProject.mockResolvedValueOnce(mockProject);
+    mockCreateAgent.mockRejectedValueOnce(
+      new Error('Agent with name "CEO" already exists (agentId: agent_ceo)'),
+    );
+
+    render(
+      <SetupWizardModal
+        onProjectRegistered={onProjectRegistered}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(await registerProjectFromWizard()).toBeDefined();
+    fireEvent.click(screen.getByText("Create Agent"));
+
+    // Advances to the completion step; no blocking error alert.
+    expect(await screen.findByText("Your project is registered and your first agent is ready.")).toBeDefined();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.click(screen.getByText("Get Started"));
+    expect(onProjectRegistered).toHaveBeenCalledWith(mockProject);
+  });
+
   it("applies an AI interview draft and waits for explicit creation", async () => {
     const mockProject = buildMockProject();
     mockRegisterProject.mockResolvedValueOnce(mockProject);

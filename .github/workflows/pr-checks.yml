@@ -130,3 +130,7 @@ jobs:
 
       - name: Gate tests (curated engine-core + CI-shape)
         run: pnpm test:gate
+
+  # Advisory desktop-packaging validation lives in its OWN workflow (desktop-packaging.yml) so this
+  # thin gate stays exactly [Lint, Typecheck, Build, Gate] — the job set here maps 1:1 to the
+  # branch-protection required checks (CI-shape test enforces the invariant).

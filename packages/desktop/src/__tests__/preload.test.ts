@@ -70,6 +70,34 @@ describe("preload", () => {
     expect(mocks.ipcRenderer.invoke).toHaveBeenCalledWith("shell:openConnectionManager");
   });
 
+  it("bridges the shell:open-connection-manager IPC into a window DOM event", async () => {
+    // Regression: main sends `shell:open-connection-manager` via webContents.send when the header
+    // "Switch server" button is clicked; the renderer's ShellContext listens via
+    // window.addEventListener. Without the preload forwarding it, clicking did nothing.
+    await importPreloadModule();
+
+    const bridge = mocks.ipcRenderer.on.mock.calls.find(
+      ([channel]) => channel === "shell:open-connection-manager",
+    )?.[1] as (() => void) | undefined;
+    expect(bridge).toBeTruthy();
+
+    const dispatched: string[] = [];
+    const priorWindow = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = {
+      dispatchEvent: (event: Event) => {
+        dispatched.push(event.type);
+        return true;
+      },
+    };
+    try {
+      bridge?.();
+    } finally {
+      (globalThis as { window?: unknown }).window = priorWindow;
+    }
+
+    expect(dispatched).toContain("shell:open-connection-manager");
+  });
+
   it("electronAPI exposes update-not-available and update-error listeners", async () => {
     await importPreloadModule();
     const api = getExposed<{

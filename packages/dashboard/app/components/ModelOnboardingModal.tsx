@@ -1201,6 +1201,19 @@ export function ModelOnboardingModal({
       await createAgent(buildAgentCreatePayload(agentDraft), targetProjectId);
       handleNext();
     } catch (err) {
+      /*
+       * FNXC:Onboarding 2026-07-03-12:10:
+       * The default first agent ("CEO") can already exist by the time this step runs — the operator can
+       * reach agent creation from more than one first-run surface (the project-setup SetupWizard sub-flow
+       * also offers to create the first agent), and agent names are unique per store, so a redundant
+       * create returns 409 "Agent with this name already exists". The step's goal — a first agent exists —
+       * is already satisfied, so treat a name collision as success and advance instead of blocking first
+       * run. The user still creates the agent; they just aren't punished for the flow offering it twice.
+       */
+      if (err instanceof Error && /already exists/i.test(err.message)) {
+        handleNext();
+        return;
+      }
       setAgentCreationError(err instanceof Error ? err.message : t("setup.firstAgentCreateError", "Failed to create agent"));
     } finally {
       setIsCreatingAgent(false);

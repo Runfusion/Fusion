@@ -328,7 +328,10 @@ describe("main process", () => {
     const { resolveLocalRuntimeRoot } = await importMainModule();
 
     expect(resolveLocalRuntimeRoot()).toBe("/custom/fusion-home");
-    expect(mocks.app.getPath).not.toHaveBeenCalled();
+    // FUSION_HOME must satisfy the root without falling back to getPath("home").
+    // (Module load calls getPath("userData") for the profile-relocation guard, so
+    // assert the specific "home" lookup is skipped rather than getPath overall.)
+    expect(mocks.app.getPath).not.toHaveBeenCalledWith("home");
   });
 
   it("initializeApp does not start local runtime for remembered choose mode", async () => {

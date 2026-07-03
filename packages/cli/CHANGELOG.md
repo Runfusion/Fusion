@@ -1,5 +1,154 @@
 # @runfusion/fusion
 
+## 0.55.0
+
+### Minor Changes
+
+- 8580910: summary: Allow configuring permissions for ephemeral and permanent agents.
+  category: feature
+  dev: Applies capability grants and runtime permission policies consistently across agent lifetimes.
+- 5738766: summary: Add GitLab instance URL settings for GitLab.com and self-managed servers.
+  category: feature
+  dev: Adds typed GitLab web/API URL configuration and dashboard controls for later GitLab integration subtasks.
+- fafe4c9: summary: Add GitLab access-token settings for personal, project, and group tokens.
+  category: feature
+  dev: Documents required GitLab API scopes and adds token auth resolution for later GitLab integration tasks.
+- 865dec2: summary: Add GitLab project issue, group issue, and merge request imports.
+  category: feature
+  dev: Adds HTTP API GitLab import routes, dashboard affordances, CLI commands, and extension tools.
+- 34be333: summary: Add GitLab comment and auto-close lifecycle actions for linked work items.
+  category: feature
+  dev: Uses GitLab REST notes and state-event APIs with configured self-managed instance URLs.
+- 1f6befc: summary: Add GitLab as a Command Center Signals connector.
+  category: feature
+  dev: Adds GitLab webhook token verification and issue/MR signal normalization for Command Center incidents.
+- 91737b1: summary: Add explicit onboarding choices to use, initialize, or clone a git repository.
+  category: feature
+  dev: Setup wizard now sends gitSetupMode while preserving cloneUrl-only project registration clients.
+- 91fb53f: summary: Let chat update existing agents without delete/recreate.
+  category: feature
+  dev: Adds the fn_agent_update Pi extension tool for scoped AgentStore.updateAgent config edits.
+- dfb6e52: summary: Add a bundled Linear import plugin for creating tasks from Linear issues.
+  category: feature
+  dev: Ships fusion-plugin-linear-import with plugin settings, routes, tools, dashboard view, and bundled-plugin packaging.
+- ec0256f: summary: Add a mandatory Planning Mode deepening checkpoint before final summaries.
+  category: feature
+  dev: Planning sessions now persist pending summaries behind a "Would you like to go deeper?" checkpoint.
+- 5984f32: summary: Add visible create buttons and recursive search to Project Files.
+  category: feature
+  dev: Files — Project uses the existing workspace-safe create and /files/search APIs with settings pickers left compact.
+- f973334: summary: Add a GitLab enable toggle and collapsible Settings controls.
+  category: feature
+  dev: Adds gitlabEnabled gating for GitLab API operations while preserving saved configuration.
+
+### Patch Changes
+
+- 306e516: summary: Stop recurring Windows Terminal warning popups during terminal startup.
+  category: fix
+  dev: Keeps embedded terminal bootstrap on supported shells and surfaces actionable inline errors.
+- 9df13c7: summary: Fix dashboard localStorage quota exhaustion from stale SWR caches and add a Clear local data escape hatch.
+  category: fix
+  dev: Stale SWR hydration entries (per-chat-session/per-room message caches) were never garbage-collected; readCache now lazily deletes stale entries, a boot sweep prunes anything older than 24h, and Settings → General exposes a user-facing "Clear local data" button that preserves the auth token.
+- c7641f9: summary: Fix `fusion desktop` on Windows and published npm installs (Electron dependency, GPU/sandbox flags, dashboard reuse).
+  category: fix
+  dev: `packages/cli/package.json` now depends on `electron` at runtime; previously the desktop launcher called `require("electron")`, which is only available inside the source checkout (via `pnpm-workspace.yaml` `onlyBuiltDependencies`) and is missing for npm consumers, causing `fusion desktop` to hang or fail silently. The launcher now applies GPU/sandbox-disabling Electron flags only on Windows (`os.platform() === "win32"`), keeps hardware acceleration and the Chromium sandbox on macOS/Linux, exports `FUSION_SERVER_PORT` so the desktop reuses the CLI-started dashboard instead of double-binding ports, and isolates desktop user-data under `~/.fusion/desktop-user-data`. Relocating the profile performs a one-time copy of the previous default Electron profile (`user-data-migration.ts`) so upgrading operators keep window geometry/session. `packages/desktop/scripts/build.ts` now fails the build if `main.js`/`preload.js`/`client/index.html` are missing from `dist/` or the staged `deploy/dist/`, preventing shipping an incomplete `app.asar`.
+- da662c4: summary: First-run agent setup no longer errors on a duplicate CEO; desktop Switch-server button now opens the connection menu.
+  category: fix
+  dev: Onboarding agent creation (ModelOnboardingModal + SetupWizardModal) treats a 409 "Agent with this name already exists" as success and advances, since the default CEO can be created from more than one first-run surface. The desktop preload now bridges the `shell:open-connection-manager` IPC (sent by main when the header Switch-server button is clicked) into the `window` DOM event ShellContext listens for, so NativeShellConnectionManager (Local/Remote toggle + remote profiles) actually opens.
+- 377eee6: summary: Allow operators to delete archived tasks.
+  category: fix
+  dev: Extends task deletion to archive-db snapshots while preserving soft-delete tombstones and ID reservation.
+- 9ee33f9: summary: Show workflow template block boundary connectors in the graph editor.
+  category: fix
+  dev: Adds visual-only foreach/loop/optional-group template boundary edges that are filtered from persisted IR.
+- 3453d16: summary: Preserve the selected dashboard project across browser refreshes.
+  category: fix
+  dev: Project selection now updates and hydrates from the existing `?project=` dashboard URL contract.
+- 777f647: summary: Detect Cursor CLI installations that expose Windows cmd or bat shims.
+  category: fix
+  dev: Cursor runtime probes and model discovery now shell-spawn only on Windows and preserve spawn diagnostics.
+- abb1917: summary: Add a Settings override for the local Cursor CLI binary path.
+  category: feature
+  dev: Adds global `cursorCliBinaryPath` and threads it through Cursor CLI probes, auth status, enable validation, and model discovery.
+- b8e126e: summary: Display linked GitLab tracking metadata and stale badges on tasks.
+  category: feature
+  dev: Persists GitLab tracking metadata separately from GitHub tracking fields.
+- c49a933: summary: Preserve GitLab tracking metadata for CLI and extension imports.
+  category: fix
+  dev: GitLab project, group, and merge-request imports now carry gitlabTracking metadata alongside sourceIssue provenance.
+- 53d5bb1: summary: Keep Planning Mode Refine Further from getting stuck on duplicate generation.
+  category: fix
+  dev: Guards completed-summary refinement as a single-flight UI turn and preserves the active planning stream on same-refine in-progress responses.
+- b493a1e: summary: Show task status badges on Documents task groups.
+  category: fix
+  dev: DocumentsView now renders taskColumn metadata in task document group headers and covers collapsed done/non-done states.
+- e5be924: summary: Suppress misleading Anthropic Subscription re-login banners when another Anthropic auth method is active.
+  category: fix
+  dev: Keeps subscription OAuth expired in Settings while hiding only the global urgent banner entry when API key or Claude CLI auth is active.
+- 326c72b: summary: Keep Anthropic authentication cards grouped near the top in Settings.
+  category: fix
+  dev: Sorts Claude CLI, Anthropic Subscription, and Anthropic API Key before other auth cards within each auth group.
+- 1d6bb08: summary: Stop planner model fallback loops with a clear terminal triage error.
+  category: fix
+  dev: Bounds prompt-time/session-creation model fallback exhaustion and persists failed triage state.
+- aa8f1f3: summary: Recover stale task branch-group references from Task Detail after server restarts.
+  category: fix
+  dev: Adds branch_group restart regression coverage and non-origin integration-branch diagnostics.
+- 72adb52: summary: Add sidebar rename buttons to direct Chat conversations.
+  category: feature
+  dev: Reuses ChatView's existing rename dialog and useChat renameSession path.
+- 25fecd7: summary: Return GitHub issue import actions to the main issue list.
+  category: fix
+  dev: Updates Import Tasks issue import/close navigation and regression coverage.
+- ffcb54b: summary: Prevent Planning Mode sessions from failing when MCP resolution returns no shaped result.
+  category: fix
+  dev: Dashboard planning lanes now default malformed MCP resolver output to an empty server set while preserving MCP forwarding.
+- 8d7abb8: summary: Fix Android mobile terminal spacing while the keyboard is open.
+  category: fix
+  dev: Terminal mobile sizing now tracks visualViewport width for keyboard-open xterm fits.
+- 22fd0da: summary: Fix Last 30 days token usage to include every model in Command Center.
+  category: fix
+  dev: Corrects Command Center token analytics range attribution for durable multi-model task usage.
+- 765218f: summary: Include supported chat interactions in Command Center token usage totals.
+  category: fix
+  dev: Records chat-session and room-responder token usage separately from task execution tokens and aggregates both sources in token analytics.
+- 1d6011c: summary: Collapse mobile Chat thread controls into one compact header row.
+  category: feature
+  dev: Mobile direct-chat moves back/session controls into ViewHeader and floats the Markdown/plain toggle.
+- 2050323: summary: Preserve workflow setting edits made while a values save is still in flight.
+  category: fix
+  dev: WorkflowSettingsPanel and Project Models workflow lane saves now clear only snapshot-matching pending keys.
+- 3fac409: summary: Preserve migrated workflow settings when project identity is assigned later.
+  category: fix
+  dev: Backfills rootDir-keyed workflow_settings rows into the durable project identity row, keeping identity values on conflicts.
+- 78ebeaf: summary: Show the bundled Linear Import plugin in Plugin Manager and dashboard plugin surfaces.
+  category: fix
+  dev: Keeps fusion-plugin-linear-import registered across the built-in Plugin Manager catalog while reusing existing registry, dashboard view, and bundled packaging paths.
+- 1430a42: summary: Fix the mobile Chat header so back navigation and session selection stay on one row.
+  category: fix
+  dev: Keeps the direct-chat mobile header collapsed while preserving desktop and room-chat layouts.
+- 7a4b0bf: summary: Fix iOS mobile terminal spacing when opening terminals with the keyboard already visible.
+  category: fix
+  dev: Seeds iOS keyboard-open viewport baselines for TerminalModal and SessionTerminal before xterm fit/resize.
+- 00afb22: summary: Default fresh startup and theme reset to System mode.
+  category: fix
+  dev: Fresh global settings, pre-hydration scripts, and Appearance reset now keep Shadcn Ember while following OS light/dark preference.
+- 9532520: summary: Remember task popup size and position when switching between tasks.
+  category: fix
+  dev: Task-detail FloatingWindow instances share the `floating-window:task-detail` geometry key.
+- 7300bf5: summary: Fix iPhone Safari terminal text spacing with the keyboard open.
+  category: fix
+  dev: Disables WebKit text-size adjustment inside dashboard xterm measurement subtrees.
+- 30a11ac: summary: Count planning tasks correctly in the dashboard footer queue metric.
+  category: fix
+  dev: Footer counter tests now cover queued, running, stuck, blocked, review, overlap, background AI, and Done absence.
+- d9ef514: summary: Show conversation titles in the mobile Chat dropdown.
+  category: fix
+  dev: Keeps the provider logo while removing model-name text from the mobile direct-chat trigger.
+- e4349ee: summary: Merges no longer fail when a task adds a dependency without updating the lockfile.
+  category: fix
+  dev: In merge-dependency-sync.ts, an inferred frozen install (pnpm/yarn/bun) that fails with an outdated-lockfile error now retries once non-frozen (pnpm gets explicit --no-frozen-lockfile) to regenerate the lockfile in the clean-room worktree, recomputing the install marker. Configured worktreeInitCommand keeps its authoritative frozen intent and still hard-fails. Surfaced via the merge:ai-deps-sync run-audit event (healed/healedCommand).
+
 ## 0.54.0
 
 ### Minor Changes

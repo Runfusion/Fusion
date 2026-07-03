@@ -32,6 +32,19 @@ vi.mock("../logger.js", () => ({
   },
 }));
 
+/*
+FNXC:PluginRunnerTests 2026-07-02-17:20:
+Task lifecycle handlers are fire-and-forget (`void this.invokeHookSafe(...)`), but the mock
+`invokeHook` seam resolves through awaited microtasks, never real timers. Flush a bounded number
+of microtask turns deterministically instead of paying real `setTimeout` wall-clock sleeps
+(FN-5048: prefer fake timers/deterministic seams over real time waits — no slow tests).
+*/
+async function flushMicrotasks(turns = 4): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    await Promise.resolve();
+  }
+}
+
 describe("PluginRunner", () => {
   let mockPluginLoader: {
     loadAllPlugins: ReturnType<typeof vi.fn>;
@@ -1453,9 +1466,10 @@ describe("PluginRunner", () => {
       if (createdHandler) {
         createdHandler(mockTask);
       }
-      
+
+      // Let the fire-and-forget hook chain settle via microtasks (no real sleep).
       await flushMicrotasks();
-      
+
       expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith(
         "onTaskCreated",
         mockTask
@@ -1476,9 +1490,10 @@ describe("PluginRunner", () => {
       if (movedHandler) {
         movedHandler({ task: mockTask, from: "todo", to: "in-progress" });
       }
-      
+
+      // Let the fire-and-forget hook chain settle via microtasks (no real sleep).
       await flushMicrotasks();
-      
+
       expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith(
         "onTaskMoved",
         mockTask,
@@ -1513,9 +1528,10 @@ describe("PluginRunner", () => {
       if (movedHandler) {
         movedHandler({ task: mockTask, from: "in-progress", to: "done" });
       }
-      
+
+      // Let the fire-and-forget hook chain settle via microtasks (no real sleep).
       await flushMicrotasks();
-      
+
       expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith(
         "onTaskCompleted",
         mockTask
@@ -1545,9 +1561,10 @@ describe("PluginRunner", () => {
       if (movedHandler) {
         movedHandler({ task: mockTask, from: "todo", to: "in-progress" });
       }
-      
+
+      // Let the fire-and-forget hook chain settle via microtasks (no real sleep).
       await flushMicrotasks();
-      
+
       expect(mockPluginLoader.invokeHook).not.toHaveBeenCalledWith(
         "onTaskCompleted",
         expect.anything()

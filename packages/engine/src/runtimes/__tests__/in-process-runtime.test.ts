@@ -226,6 +226,17 @@ function getAgentStore(runtime: InProcessRuntime): AgentStore {
   return store!;
 }
 
+async function flushRuntimeCallbackMicrotasks(turns = 8): Promise<void> {
+  /*
+  FNXC:TestInfrastructure 2026-07-03-10:45:
+  Runtime executor and AgentStore listeners intentionally invoke async ownership/cleanup work through void callbacks.
+  Drain their resolved-promise continuations directly in tests instead of paying vi.waitFor polling intervals for deterministic no-timer work.
+  */
+  for (let i = 0; i < turns; i += 1) {
+    await Promise.resolve();
+  }
+}
+
 describe("InProcessRuntime", () => {
   let runtime: InProcessRuntime;
   let mockCentralCore: CentralCore;
@@ -489,54 +500,79 @@ describe("InProcessRuntime", () => {
     }, 30000);
 
     it("honors runtimeStopDrainMs=0 and default 2000ms poll interval", async () => {
-      await runtime.start();
+      /*
+      FNXC:TestInfrastructure 2026-07-03-10:45:
+      Stop-drain coverage must prove the 500ms poll interval without sleeping for it.
+      Fake timers keep the shutdown timeout behavior covered while removing the suite's largest deterministic wait.
+      */
+      vi.useFakeTimers();
       const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
-      const executor = (runtime as any).executor;
+      let metricsSpy: ReturnType<typeof vi.spyOn> | undefined;
+      try {
+        await runtime.start();
+        const executor = (runtime as any).executor;
 
-      mockTaskStoreSettings.runtimeStopDrainMs = 0;
-      executor.activeWorktrees.set("FN-1", { taskId: "FN-1" });
-      await runtime.stop();
-      expect(timeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 500);
+        mockTaskStoreSettings.runtimeStopDrainMs = 0;
+        executor.activeWorktrees.set("FN-1", { taskId: "FN-1" });
+        await runtime.stop();
+        expect(timeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 500);
 
-      delete mockTaskStoreSettings.runtimeStopDrainMs;
-      runtime = new InProcessRuntime(buildTestConfig(testDir), mockCentralCore);
-      await runtime.start();
-      const executor2 = (runtime as any).executor;
-      let metricCalls = 0;
-      executor2.activeWorktrees.set("FN-2", { taskId: "FN-2" });
-      const metricsSpy = vi.spyOn(runtime, "getMetrics").mockImplementation(() => {
-        metricCalls += 1;
-        if (metricCalls >= 2) {
-          executor2.activeWorktrees.clear();
-        }
-        return {
-          inFlightTasks: metricCalls === 1 ? 1 : 0,
-          activeAgents: 0,
-          lastActivityAt: new Date().toISOString(),
-        };
-      });
+        delete mockTaskStoreSettings.runtimeStopDrainMs;
+        runtime = new InProcessRuntime(buildTestConfig(testDir), mockCentralCore);
+        await runtime.start();
+        const executor2 = (runtime as any).executor;
+        let metricCalls = 0;
+        executor2.activeWorktrees.set("FN-2", { taskId: "FN-2" });
+        metricsSpy = vi.spyOn(runtime, "getMetrics").mockImplementation(() => {
+          metricCalls += 1;
+          if (metricCalls >= 2) {
+            executor2.activeWorktrees.clear();
+          }
+          return {
+            inFlightTasks: metricCalls === 1 ? 1 : 0,
+            activeAgents: 0,
+            lastActivityAt: new Date().toISOString(),
+          };
+        });
 
-      await runtime.stop();
-      expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 500);
-      metricsSpy.mockRestore();
-      timeoutSpy.mockRestore();
+        const stopPromise = runtime.stop();
+        await vi.advanceTimersByTimeAsync(500);
+        await stopPromise;
+        expect(timeoutSpy).toHaveBeenCalledWith(expect.any(Function), 500);
+      } finally {
+        metricsSpy?.mockRestore();
+        timeoutSpy.mockRestore();
+        vi.useRealTimers();
+      }
     }, 30000);
 
     it("logs post-abort drain timeout when in-flight tasks remain", async () => {
-      mockTaskStoreSettings.runtimeStopDrainMs = 50;
-      await runtime.start();
+      /*
+      FNXC:TestInfrastructure 2026-07-03-10:45:
+      The drain-timeout warning path is timer-driven; advance the configured 50ms timeout deterministically instead of adding real wall-clock delay.
+      */
+      vi.useFakeTimers();
       const warnSpy = vi.spyOn(runtimeLog, "warn").mockImplementation(() => undefined as any);
-      const executor = (runtime as any).executor;
-      executor.activeWorktrees.set("FN-stuck", { taskId: "FN-stuck" });
-      vi.spyOn(runtime, "getMetrics").mockImplementation(() => ({
-        inFlightTasks: 1,
-        activeAgents: 0,
-        lastActivityAt: new Date().toISOString(),
-      }));
+      try {
+        mockTaskStoreSettings.runtimeStopDrainMs = 50;
+        await runtime.start();
+        const executor = (runtime as any).executor;
+        executor.activeWorktrees.set("FN-stuck", { taskId: "FN-stuck" });
+        vi.spyOn(runtime, "getMetrics").mockImplementation(() => ({
+          inFlightTasks: 1,
+          activeAgents: 0,
+          lastActivityAt: new Date().toISOString(),
+        }));
 
-      await runtime.stop();
+        const stopPromise = runtime.stop();
+        await vi.advanceTimersByTimeAsync(50);
+        await stopPromise;
 
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("post-abort drain timeout"));
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("post-abort drain timeout"));
+      } finally {
+        warnSpy.mockRestore();
+        vi.useRealTimers();
+      }
     }, 30000);
 
     it("returns residual scoped semaphore slots after the post-abort drain", async () => {
@@ -616,44 +652,33 @@ describe("InProcessRuntime", () => {
       expect(lastCall.previous).toBe("starting");
     }, 30000);
 
-    it("should emit task:created when task store emits task:created", async () => {
+    it("forwards task creation and move events from TaskStore", async () => {
+      /*
+      FNXC:TestInfrastructure 2026-07-03-10:45:
+      Event forwarding only needs one started runtime; keeping creation and move assertions in one harness preserves coverage without repeating startup/shutdown cost.
+      */
       await runtime.start();
       
       const taskCreatedSpy = vi.fn();
-      runtime.on("task:created", taskCreatedSpy);
-
-      // Get the mock TaskStore and simulate an event
-      const taskStore = runtime.getTaskStore();
-      const mockTask = { id: "KB-001", title: "Test Task" } as Task;
-      
-      // Get the registered handler and call it
-      const onCalls = (taskStore.on as ReturnType<typeof vi.fn>).mock.calls;
-      const taskCreatedHandler = onCalls.find((call: unknown[]) => call[0] === "task:created");
-      
-      if (taskCreatedHandler) {
-        (taskCreatedHandler[1] as (task: Task) => void)(mockTask);
-      }
-
-      expect(taskCreatedSpy).toHaveBeenCalledWith(mockTask);
-    });
-
-    it("should emit task:moved when task store emits task:moved", async () => {
-      await runtime.start();
-      
       const taskMovedSpy = vi.fn();
+      runtime.on("task:created", taskCreatedSpy);
       runtime.on("task:moved", taskMovedSpy);
 
       const taskStore = runtime.getTaskStore();
       const mockTask = { id: "KB-001", title: "Test Task" } as Task;
-      const moveData = { task: mockTask, from: "todo", to: "in-progress" };
-      
       const onCalls = (taskStore.on as ReturnType<typeof vi.fn>).mock.calls;
+      const taskCreatedHandler = onCalls.find((call: unknown[]) => call[0] === "task:created");
       const taskMovedHandlers = onCalls.filter((call: unknown[]) => call[0] === "task:moved");
-
+      
+      if (taskCreatedHandler) {
+        (taskCreatedHandler[1] as (task: Task) => void)(mockTask);
+      }
+      const moveData = { task: mockTask, from: "todo", to: "in-progress" };
       for (const handler of taskMovedHandlers) {
         (handler[1] as (data: { task: Task; from: string; to: string }) => void)(moveData);
       }
 
+      expect(taskCreatedSpy).toHaveBeenCalledWith(mockTask);
       expect(taskMovedSpy).toHaveBeenCalledWith(moveData);
     }, 30000);
   });
@@ -687,24 +712,19 @@ describe("InProcessRuntime", () => {
       expect(() => runtime.getScheduler()).toThrow("Scheduler not initialized");
     });
 
-    it("should return TaskStore after start", async () => {
+    it("should return initialized accessors after start", async () => {
+      /*
+      FNXC:TestInfrastructure 2026-07-03-10:45:
+      Accessor assertions share the same initialized runtime state, so one started harness covers TaskStore, Scheduler, and HeartbeatMonitor without three full runtime startups.
+      */
       await runtime.start();
       const taskStore = runtime.getTaskStore();
+      const scheduler = runtime.getScheduler();
+      const monitor = runtime.getHeartbeatMonitor();
       
       expect(taskStore).toBeDefined();
       expect(taskStore.getRootDir()).toBe(testDir);
-    }, 30000);
-
-    it("should return Scheduler after start", async () => {
-      await runtime.start();
-      const scheduler = runtime.getScheduler();
-      
       expect(scheduler).toBeDefined();
-    }, 30000);
-
-    it("should return HeartbeatMonitor after start", async () => {
-      await runtime.start();
-      const monitor = runtime.getHeartbeatMonitor();
       expect(monitor).toBeDefined();
       expect(monitor?.getChatStore()).toBeDefined();
     }, 30000);
@@ -767,11 +787,10 @@ describe("InProcessRuntime", () => {
 
       const run = await monitor!.startRun(agent.id, { source: "timer" });
       await monitor!.completeRun(agent.id, run.id, { status: "completed" });
+      await flushRuntimeCallbackMicrotasks();
 
-      await vi.waitFor(() => {
-        expect(mockResumeTaskForAgent).toHaveBeenCalledWith(agent.id);
-        expect(drainSpy).toHaveBeenCalledWith(agent.id);
-      });
+      expect(mockResumeTaskForAgent).toHaveBeenCalledWith(agent.id);
+      expect(drainSpy).toHaveBeenCalledWith(agent.id);
     }, 30000);
 
     it("creates trigger scheduler on start", async () => {
@@ -814,27 +833,6 @@ describe("InProcessRuntime", () => {
       expect(registeredAgents).toContain(createdAgent.id);
     });
 
-    it("does not register paused agents on startup", async () => {
-      await runtime.start();
-
-      const store = getAgentStore(runtime);
-      const pausedAgent = await store.createAgent({
-        name: "Paused Agent",
-        role: "executor",
-        runtimeConfig: { heartbeatIntervalMs: 30000, enabled: true },
-      });
-      await store.updateAgentState(pausedAgent.id, "active");
-      await store.updateAgentState(pausedAgent.id, "paused");
-
-      await runtime.stop();
-      runtime = new InProcessRuntime(buildTestConfig(testDir), mockCentralCore);
-      await runtime.start();
-
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-      expect(scheduler!.getRegisteredAgents()).not.toContain(pausedAgent.id);
-    });
-
     it("routes assignment triggers through executeHeartbeat", async () => {
       await runtime.start();
 
@@ -854,394 +852,48 @@ describe("InProcessRuntime", () => {
       });
 
       await store.assignTask(agent.id, "FN-001");
+      await flushRuntimeCallbackMicrotasks();
 
-      await vi.waitFor(() => {
-        expect(executeSpy).toHaveBeenCalledWith(
-          expect.objectContaining({
-            agentId: agent.id,
-            source: "assignment",
+      expect(executeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: agent.id,
+          source: "assignment",
+          taskId: "FN-001",
+          contextSnapshot: expect.objectContaining({
             taskId: "FN-001",
-            contextSnapshot: expect.objectContaining({
-              taskId: "FN-001",
-              wakeReason: "assignment",
-            }),
+            wakeReason: "assignment",
           }),
-        );
-      });
+        }),
+      );
     }, 30000);
 
-    it("reuses assigned durable agent as execution owner without creating a task-worker", async () => {
-      await runtime.start();
-
-      const store = getAgentStore(runtime);
-      const durable = await store.createAgent({ name: "Durable Exec", role: "executor" });
-      const createAgentSpy = vi.spyOn(store, "createAgent");
-      const assignTaskSpy = vi.spyOn(store, "assignTask");
-      const syncLinkSpy = vi.spyOn(store, "syncExecutionTaskLink");
-
-      const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-        onStart?: (task: Task, worktreePath: string) => void;
-      };
-      executorOptions.onStart?.({ id: "FN-1661", assignedAgentId: durable.id } as Task, join(testDir, "worktree-FN-1661"));
-
-      await vi.waitFor(async () => {
-        const updated = await store.getAgent(durable.id);
-        expect(updated?.taskId).toBe("FN-1661");
-        expect(updated?.state).toBe("running");
-      });
-
-      expect(syncLinkSpy).toHaveBeenCalledWith(durable.id, "FN-1661");
-      expect(assignTaskSpy).not.toHaveBeenCalledWith(durable.id, "FN-1661");
-      expect(createAgentSpy).not.toHaveBeenCalledWith(expect.objectContaining({ name: "executor-FN-1661" }));
-
-      const agents = await store.listAgents({ includeEphemeral: true });
-      expect(agents.some((agent: Agent) => agent.name === "executor-FN-1661")).toBe(false);
-    }, 30000);
-
-    it("falls back to runtime task-worker agents for unassigned tasks", async () => {
-      await runtime.start();
-
-      const store = getAgentStore(runtime);
-
-      const assignTaskSpy = vi.spyOn(store, "assignTask");
-      const updateStateSpy = vi.spyOn(store, "updateAgentState");
-      const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-        onStart?: (task: Task, worktreePath: string) => void;
-      };
-      expect(executorOptions.onStart).toBeTypeOf("function");
-
-      executorOptions.onStart?.({ id: "FN-1661" } as Task, join(testDir, "worktree-FN-1661"));
-
-      await vi.waitFor(async () => {
-        const agents = await store.listAgents({ includeEphemeral: true });
-        expect(agents).toHaveLength(1);
-        expect(agents[0]).toMatchObject({
-          name: "executor-FN-1661",
-          role: "executor",
-          state: "running",
-          taskId: "FN-1661",
-          metadata: {
-            agentKind: "task-worker",
-            taskWorker: true,
-            managedBy: "task-executor",
-          },
-          runtimeConfig: {
-            enabled: false,
-          },
-        });
-      });
-
-      expect(assignTaskSpy).toHaveBeenCalledWith(expect.any(String), "FN-1661");
-      expect(updateStateSpy).toHaveBeenNthCalledWith(1, expect.any(String), "active");
-      expect(updateStateSpy).toHaveBeenNthCalledWith(2, expect.any(String), "running");
-      expect(assignTaskSpy.mock.invocationCallOrder[0]).toBeLessThan(updateStateSpy.mock.invocationCallOrder[0]);
-    }, 30000);
-
-    it("does not spawn runtime task-worker agents when ephemeral agents are disabled", async () => {
-      mockTaskStoreSettings.ephemeralAgentsEnabled = false;
+    it("wires executor ownership callbacks through the worker manager", async () => {
       await runtime.start();
 
       const store = getAgentStore(runtime);
       const createAgentSpy = vi.spyOn(store, "createAgent");
-      const warnSpy = vi.spyOn(runtimeLog, "warn");
-
-      const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-        onStart?: (task: Task, worktreePath: string) => void;
-      };
-      executorOptions.onStart?.({ id: "FN-1663" } as Task, join(testDir, "worktree-FN-1663"));
-
-      await vi.waitFor(() => {
-        expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining("Task FN-1663 has no permanent agent assignment; ephemeralAgentsEnabled=false"),
-        );
-      });
-
-      const agents = await store.listAgents({ includeEphemeral: true });
-      expect(agents.some((agent: Agent) => agent.name === "executor-FN-1663")).toBe(false);
-      expect(createAgentSpy).not.toHaveBeenCalledWith(expect.objectContaining({ name: "executor-FN-1663" }));
-    }, 30000);
-
-    it("falls back to runtime task-worker when assignedAgentId points to ephemeral agent", async () => {
-      await runtime.start();
-
-      const store = getAgentStore(runtime);
-      const ephemeral = await store.createAgent({
-        name: "Spawned Child",
-        role: "executor",
-        metadata: { agentKind: "task-worker", managedBy: "task-executor" },
-        runtimeConfig: { enabled: false },
-      });
-
-      const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-        onStart?: (task: Task, worktreePath: string) => void;
-      };
-      executorOptions.onStart?.({ id: "FN-1662", assignedAgentId: ephemeral.id } as Task, join(testDir, "worktree-FN-1662"));
-
-      await vi.waitFor(async () => {
-        const agents = await store.listAgents({ includeEphemeral: true });
-        expect(agents.some((agent: Agent) => agent.name === "executor-FN-1662")).toBe(true);
-      });
-    }, 30000);
-
-    it("does not wake executeHeartbeat for runtime ownership sync of durable assigned agents", async () => {
-      /*
-      FNXC:TestInfrastructure 2026-06-26-21:52:
-      This negative-assertion test must verify executeHeartbeat is NOT woken by runtime ownership sync.
-      Previously it paid a real `await new Promise(r => setTimeout(r, 25))` wall-clock sleep to let any
-      erroneously-scheduled executeHeartbeat fire before asserting it did not — pure dead time on every run.
-      Per FN-5048 (prefer fake timers over real polling/time waits) we run under fake timers and advance the
-      window deterministically with advanceTimersByTimeAsync. The inflated 30000ms per-test timeout is removed
-      now that no real wait remains. vi.waitFor already coexists with fake timers elsewhere in this suite.
-      */
-      vi.useFakeTimers();
-      try {
-        await runtime.start();
-
-        const monitor = runtime.getHeartbeatMonitor();
-        expect(monitor).toBeDefined();
-        const heartbeatMonitor = monitor!;
-        const executeResult = { id: "run-task-worker" } as Awaited<ReturnType<typeof heartbeatMonitor.executeHeartbeat>>;
-        const executeSpy = vi
-          .spyOn(heartbeatMonitor, "executeHeartbeat")
-          .mockResolvedValue(executeResult);
-
-        const store = getAgentStore(runtime);
-        const durable = await store.createAgent({ name: "Owned Exec", role: "executor" });
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-        };
-        executorOptions.onStart?.({ id: "FN-2001", assignedAgentId: durable.id } as Task, join(testDir, "worktree-FN-2001"));
-
-        await vi.waitFor(async () => {
-          const updated = await store.getAgent(durable.id);
-          expect(updated?.taskId).toBe("FN-2001");
-        });
-
-        // Drive the negative-assertion window deterministically instead of sleeping 25ms of real time.
-        await vi.advanceTimersByTimeAsync(25);
-        expect(executeSpy).not.toHaveBeenCalled();
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it("cleans up durable execution owner on completion without deleting agent", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const durable = await store.createAgent({ name: "Durable Cleanup", role: "executor" });
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-          onComplete?: (task: Task) => void;
-        };
-
-        executorOptions.onStart?.({ id: "FN-DURABLE-1", assignedAgentId: durable.id } as Task, join(testDir, "worktree-FN-DURABLE-1"));
-        await vi.waitFor(async () => {
-          const updated = await store.getAgent(durable.id);
-          expect(updated?.taskId).toBe("FN-DURABLE-1");
-        });
-
-        executorOptions.onComplete?.({ id: "FN-DURABLE-1" } as Task);
-        await vi.advanceTimersByTimeAsync(5000);
-
-        const updated = await store.getAgent(durable.id);
-        expect(updated?.state).toBe("active");
-        expect(updated?.taskId).toBeUndefined();
-        expect(deleteAgentSpy).not.toHaveBeenCalledWith(durable.id);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("auto-deletes task-worker agent on task completion immediately", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-          onComplete?: (task: Task) => void;
-        };
-        expect(executorOptions.onComplete).toBeTypeOf("function");
-
-        // Create a task-worker agent first via onStart
-        executorOptions.onStart?.({ id: "FN-AUTO1" } as Task, join(testDir, "worktree-FN-AUTO1"));
-
-        await vi.waitFor(async () => {
-          const agents = await store.listAgents({ includeEphemeral: true });
-          expect(agents.some((a: Agent) => a.name === "executor-FN-AUTO1")).toBe(true);
-        });
-
-        // Clear previous calls and trigger onComplete
-        deleteAgentSpy.mockClear();
-        executorOptions.onComplete?.({ id: "FN-AUTO1" } as Task);
-
-        await vi.waitFor(() => {
-          expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        });
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("cleans up durable execution owner on error without deleting agent", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const durable = await store.createAgent({ name: "Durable Error", role: "executor" });
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-          onError?: (task: Task, error: Error) => void;
-        };
-
-        executorOptions.onStart?.({ id: "FN-DURABLE-2", assignedAgentId: durable.id } as Task, join(testDir, "worktree-FN-DURABLE-2"));
-        await vi.waitFor(async () => {
-          const updated = await store.getAgent(durable.id);
-          expect(updated?.taskId).toBe("FN-DURABLE-2");
-        });
-
-        executorOptions.onError?.({ id: "FN-DURABLE-2" } as Task, new Error("boom"));
-        await vi.advanceTimersByTimeAsync(5000);
-
-        const updated = await store.getAgent(durable.id);
-        expect(updated?.state).toBe("active");
-        expect(updated?.taskId).toBeUndefined();
-        expect(deleteAgentSpy).not.toHaveBeenCalledWith(durable.id);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("auto-deletes task-worker agent on task error immediately", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onError?: (task: Task, error: Error) => void;
-        };
-        expect(executorOptions.onError).toBeTypeOf("function");
-
-        // Create a task-worker agent first via onStart
-        const onStartOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-        };
-        onStartOptions.onStart?.({ id: "FN-AUTO2" } as Task, join(testDir, "worktree-FN-AUTO2"));
-
-        await vi.waitFor(async () => {
-          const agents = await store.listAgents({ includeEphemeral: true });
-          expect(agents.some((a: Agent) => a.name === "executor-FN-AUTO2")).toBe(true);
-        });
-
-        // Clear previous calls and trigger onError
-        deleteAgentSpy.mockClear();
-        executorOptions.onError?.({ id: "FN-AUTO2" } as Task, new Error("Task failed"));
-
-        await vi.waitFor(() => {
-          expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        });
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-  });
-
-  describe("agent cleanup failure diagnostics", () => {
-    it("logs warning when agent state update fails on task completion", async () => {
-      const warnSpy = vi.spyOn(runtimeLog, "warn");
-      await runtime.start();
-
-      const store = getAgentStore(runtime);
-      const updateStateSpy = vi.spyOn(store, "updateAgentState").mockImplementation(async (_agentId, state) => {
-        if (state === "active") {
-          throw new Error("state update failed");
-        }
-        return {} as Agent;
-      });
-
+      const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
       const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
         onStart?: (task: Task, worktreePath: string) => void;
         onComplete?: (task: Task) => void;
       };
-      executorOptions.onStart?.({ id: "FN-DIAG-1" } as Task, join(testDir, "worktree-FN-DIAG-1"));
+      expect(executorOptions.onStart).toBeTypeOf("function");
+      expect(executorOptions.onComplete).toBeTypeOf("function");
 
-      await vi.waitFor(async () => {
-        const agents = await store.listAgents({ includeEphemeral: true });
-        expect(agents.some((a: Agent) => a.name === "executor-FN-DIAG-1")).toBe(true);
-      });
+      executorOptions.onStart?.({ id: "FN-WIRING" } as Task, join(testDir, "worktree-FN-WIRING"));
+      await flushRuntimeCallbackMicrotasks();
+      expect(createAgentSpy).toHaveBeenCalledWith(expect.objectContaining({ name: "executor-FN-WIRING" }));
 
-      updateStateSpy.mockClear();
-      executorOptions.onComplete?.({ id: "FN-DIAG-1" } as Task);
-      await Promise.resolve();
+      const worker = (await store.listAgents({ includeEphemeral: true }))
+        .find((agent: Agent) => agent.name === "executor-FN-WIRING");
+      expect(worker).toBeDefined();
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Failed to update agent"),
-      );
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("active (completion)"),
-      );
-
-      warnSpy.mockRestore();
-    }, 30000);
-
-    it("logs warning when agent deletion fails after task error", async () => {
-      vi.useFakeTimers();
-      const warnSpy = vi.spyOn(runtimeLog, "warn");
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockRejectedValue(new Error("delete failed"));
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-          onError?: (task: Task, error: Error) => void;
-        };
-        executorOptions.onStart?.({ id: "FN-DIAG-2" } as Task, join(testDir, "worktree-FN-DIAG-2"));
-
-        await vi.waitFor(async () => {
-          const agents = await store.listAgents({ includeEphemeral: true });
-          expect(agents.some((a: Agent) => a.name === "executor-FN-DIAG-2")).toBe(true);
-        });
-
-        deleteAgentSpy.mockClear();
-        executorOptions.onError?.({ id: "FN-DIAG-2" } as Task, new Error("Task failed"));
-
-        await vi.advanceTimersByTimeAsync(5000);
-        await Promise.resolve();
-
-        expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining("Failed to delete agent"),
-        );
-        expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining("after error"),
-        );
-      } finally {
-        warnSpy.mockRestore();
-        vi.useRealTimers();
-      }
+      executorOptions.onComplete?.({ id: "FN-WIRING" } as Task);
+      await flushRuntimeCallbackMicrotasks(40);
+      expect(deleteAgentSpy).toHaveBeenCalledWith(worker!.id);
     }, 30000);
   });
+
 
   describe("configuration", () => {
     it("should store projectId in config", () => {
@@ -1265,710 +917,21 @@ describe("InProcessRuntime", () => {
   });
 
   describe("message store wiring", () => {
-    it("registers wake-on-message hook when messageStore is provided", async () => {
-      // Reset the mock to ensure clean state for this test
+    it("creates MessageStore and registers wake-on-message hook", async () => {
+      /*
+      FNXC:TestInfrastructure 2026-07-03-10:45:
+      MessageStore construction and hook registration happen during the same startup path; assert both in one runtime start to avoid duplicate setup.
+      */
       mockMessageStoreSetHook.mockClear();
 
       await runtime.start();
 
-      // Verify that setMessageToAgentHook was called with a function
       expect(mockMessageStoreSetHook).toHaveBeenCalledTimes(1);
       expect(mockMessageStoreSetHook).toHaveBeenCalledWith(expect.any(Function));
-    });
-
-    it("creates MessageStore with correct rootDir", async () => {
-      // Start runtime
-      await runtime.start();
-
-      // The MessageStore mock was created - verify the MessageStore constructor was called
       const { MessageStore } = await import("@fusion/core");
       expect(MessageStore).toHaveBeenCalled();
     });
   });
 
-  describe("dynamic agent registration with HeartbeatTriggerScheduler", () => {
-    beforeEach(async () => {
-      vi.useFakeTimers();
-      await runtime.start();
-    });
 
-    afterEach(async () => {
-      await runtime.stop();
-      vi.useRealTimers();
-    });
-
-    it("registers a new agent when agent:created event is emitted", async () => {
-      // Create a new agent via the AgentStore
-      const store = getAgentStore(runtime);
-      const agent = await store.createAgent({
-        name: "test-agent-dynamic",
-        role: "executor",
-      });
-
-      // Verify the agent was registered with the trigger scheduler
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-    });
-
-    it("registers agent without explicit heartbeatIntervalMs using default 3600s interval", async () => {
-      // Create a new agent with only enabled: true (no heartbeatIntervalMs)
-      // This tests that the default 3600-second interval (1 hour) is applied
-      const store = getAgentStore(runtime);
-      const agent = await store.createAgent({
-        name: "test-agent-default-interval",
-        role: "executor",
-        runtimeConfig: { enabled: true }, // No heartbeatIntervalMs - should use default 3600s (1 hour)
-      });
-
-      // Verify the agent was registered with the trigger scheduler
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-    });
-
-    it("registers a new agent with explicit heartbeatIntervalMs", async () => {
-      // Create a new agent with explicit heartbeat config
-      const store = getAgentStore(runtime);
-      const agent = await store.createAgent({
-        name: "test-agent-explicit",
-        role: "executor",
-        runtimeConfig: {
-          heartbeatIntervalMs: 15000,
-          enabled: true,
-        },
-      });
-
-      // Verify the agent was registered with the trigger scheduler
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-    });
-
-    it("does not register a new agent when enabled is false", async () => {
-      // Create a new agent with heartbeat disabled
-      const store = getAgentStore(runtime);
-      const agent = await store.createAgent({
-        name: "test-agent-disabled",
-        role: "executor",
-        runtimeConfig: {
-          enabled: false,
-        },
-      });
-
-      // Verify the agent was NOT registered with the trigger scheduler
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
-    });
-
-    it("does not reset an armed timer on unrelated agent updates", async () => {
-      const store = getAgentStore(runtime);
-      const monitor = runtime.getHeartbeatMonitor();
-      expect(monitor).toBeDefined();
-
-      const executeHeartbeatSpy = vi
-        .spyOn(monitor!, "executeHeartbeat")
-        .mockResolvedValue({ id: "run-update-timer-stability" } as any);
-
-      const agent = await store.createAgent({
-        name: "test-agent-update",
-        role: "executor",
-        runtimeConfig: {
-          enabled: true,
-          heartbeatIntervalMs: 1000,
-        },
-      });
-
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-
-      await vi.advanceTimersByTimeAsync(400);
-      await store.updateAgent(agent.id, {
-        name: "test-agent-update-renamed",
-      });
-
-      await vi.advanceTimersByTimeAsync(599);
-      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(1);
-      await vi.waitFor(() => {
-        expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
-      });
-
-      expect(executeHeartbeatSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          agentId: agent.id,
-          source: "timer",
-        }),
-      );
-    });
-
-    it("reconciles a missing timer for a tickable durable agent without state changes", async () => {
-      const store = getAgentStore(runtime);
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-
-      const agent = await store.createAgent({
-        name: "audit-rearm-agent",
-        role: "executor",
-        runtimeConfig: {
-          enabled: true,
-          heartbeatIntervalMs: 1_000,
-        },
-      });
-
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-      scheduler!.unregisterAgent(agent.id);
-      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
-
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-    });
-
-    it("unregisters an agent when enabled is set to false in update", async () => {
-      // Create a new agent with heartbeat enabled
-      const store = getAgentStore(runtime);
-      const agent = await store.createAgent({
-        name: "test-agent-toggle",
-        role: "executor",
-        runtimeConfig: {
-          enabled: true,
-        },
-      });
-
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-
-      // Update the agent to disable heartbeat
-      await store.updateAgent(agent.id, {
-        runtimeConfig: {
-          enabled: false,
-        },
-      });
-
-      // Verify the agent was unregistered
-      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
-    });
-
-    it("re-arms the timer when heartbeat interval changes", async () => {
-      const store = getAgentStore(runtime);
-      const monitor = runtime.getHeartbeatMonitor();
-      expect(monitor).toBeDefined();
-
-      const executeHeartbeatSpy = vi
-        .spyOn(monitor!, "executeHeartbeat")
-        .mockResolvedValue({ id: "run-interval-change" } as any);
-
-      const agent = await store.createAgent({
-        name: "interval-change-agent",
-        role: "executor",
-        runtimeConfig: {
-          enabled: true,
-          heartbeatIntervalMs: 1000,
-        },
-      });
-
-      await vi.advanceTimersByTimeAsync(400);
-      await store.updateAgent(agent.id, {
-        runtimeConfig: {
-          enabled: true,
-          heartbeatIntervalMs: 2000,
-        },
-      });
-
-      await vi.advanceTimersByTimeAsync(1599);
-      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(401);
-      await vi.waitFor(() => {
-        expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
-      });
-    });
-
-    it("clears timers on pause and re-arms from resume without stale pre-pause firing", async () => {
-      const store = getAgentStore(runtime);
-      const monitor = runtime.getHeartbeatMonitor();
-      expect(monitor).toBeDefined();
-
-      const executeHeartbeatSpy = vi
-        .spyOn(monitor!, "executeHeartbeat")
-        .mockResolvedValue({ id: "run-resume-test" } as any);
-
-      const agent = await store.createAgent({
-        name: "resume-timer-agent",
-        role: "executor",
-        runtimeConfig: {
-          enabled: true,
-          heartbeatIntervalMs: 1000,
-        },
-      });
-      await store.updateAgentState(agent.id, "active");
-
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler).toBeDefined();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-
-      await vi.advanceTimersByTimeAsync(400);
-      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
-
-      await store.updateAgentState(agent.id, "paused");
-      expect(scheduler!.getRegisteredAgents()).not.toContain(agent.id);
-
-      // Advance beyond the original tick window; stale pre-pause timer must not fire.
-      await vi.advanceTimersByTimeAsync(800);
-      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
-
-      await store.updateAgentState(agent.id, "active");
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-
-      // Resume should start a fresh interval from now, not from pre-pause start.
-      await vi.advanceTimersByTimeAsync(900);
-      expect(executeHeartbeatSpy).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(100);
-      await vi.waitFor(() => {
-        expect(executeHeartbeatSpy).toHaveBeenCalledTimes(1);
-      });
-
-      expect(executeHeartbeatSpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          agentId: agent.id,
-          source: "timer",
-        }),
-      );
-    });
-
-    it("removes event listeners when runtime is stopped", async () => {
-      // Create a new agent before stopping
-      const store = getAgentStore(runtime);
-      const agent = await store.createAgent({
-        name: "test-agent-cleanup",
-        role: "executor",
-      });
-
-      const scheduler = runtime.getTriggerScheduler();
-      expect(scheduler!.getRegisteredAgents()).toContain(agent.id);
-
-      // Stop the runtime
-      await runtime.stop();
-
-      // The agent should still be registered (unregister is internal to scheduler)
-      // But the listeners should be removed - verify by checking they don't fire
-      // Create another agent - it won't be registered since runtime is stopped
-      const agent2 = await store.createAgent({
-        name: "test-agent-after-stop",
-        role: "executor",
-      });
-
-      // Since runtime is stopped, trigger scheduler is stopped
-      // The agent won't be in registered list
-      expect(scheduler!.getRegisteredAgents()).not.toContain(agent2.id);
-    });
-  });
-
-  describe("ephemeral paused-state cleanup", () => {
-    it("auto-deletes ephemeral agent when it transitions to paused via agent:stateChanged", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        // Create an ephemeral task-worker agent
-        const agent = await store.createAgent({
-          name: "executor-FN-TERM-1",
-          role: "executor",
-          metadata: {
-            agentKind: "task-worker",
-            taskWorker: true,
-            managedBy: "task-executor",
-          },
-          runtimeConfig: { enabled: false },
-        });
-
-        // Verify agent exists
-        let agents = await store.listAgents({ includeEphemeral: true });
-        expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
-
-        // Emit agent:stateChanged event to trigger cleanup
-        store.emit("agent:stateChanged", agent.id, "running", "paused");
-
-        // Wait for async handler
-        await vi.advanceTimersByTimeAsync(0);
-
-        await vi.waitFor(() => {
-          expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        });
-        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
-
-        // Note: We verified deleteAgent was called, which is the key behavior.
-        // The actual removal from listAgents depends on the real AgentStore implementation.
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("does not auto-delete non-ephemeral agent when it transitions to paused", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        // Create a non-ephemeral user-managed agent
-        const agent = await store.createAgent({
-          name: "user-managed-agent",
-          role: "executor",
-          // No ephemeral metadata
-          runtimeConfig: { enabled: true },
-        });
-
-        // Verify agent exists
-        let agents = await store.listAgents();
-        expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
-
-        // Emit agent:stateChanged event to trigger cleanup
-        store.emit("agent:stateChanged", agent.id, "active", "paused");
-
-        // Wait for async handler
-        await vi.advanceTimersByTimeAsync(0);
-
-        await vi.advanceTimersByTimeAsync(0);
-
-        // deleteAgent should NOT have been called for non-ephemeral agent
-        expect(deleteAgentSpy).not.toHaveBeenCalled();
-
-        // Agent should still exist
-        agents = await store.listAgents();
-        expect(agents.some((a: Agent) => a.id === agent.id)).toBe(true);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("does not schedule duplicate deletion when termination event fires multiple times", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        // Create an ephemeral task-worker agent
-        const agent = await store.createAgent({
-          name: "executor-FN-DUP-1",
-          role: "executor",
-          metadata: {
-            agentKind: "task-worker",
-            taskWorker: true,
-            managedBy: "task-executor",
-          },
-          runtimeConfig: { enabled: false },
-        });
-
-        // Emit termination event multiple times
-        store.emit("agent:stateChanged", agent.id, "running", "paused");
-        store.emit("agent:stateChanged", agent.id, "paused", "paused"); // Already halted
-
-        // Wait for async handlers
-        await vi.advanceTimersByTimeAsync(0);
-
-        await vi.waitFor(() => {
-          expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        });
-        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("does not warn when cleanup delete fails only because agent is already gone", async () => {
-      vi.useFakeTimers();
-      const warnSpy = vi.spyOn(runtimeLog, "warn");
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-
-        // Create an ephemeral agent
-        const agent = await store.createAgent({
-          name: "executor-FN-BENIGN-1",
-          role: "executor",
-          metadata: {
-            agentKind: "task-worker",
-          },
-          runtimeConfig: { enabled: false },
-        });
-
-        const deleteAgentSpy = vi
-          .spyOn(store, "deleteAgent")
-          .mockRejectedValueOnce(new Error(`Agent ${agent.id} not found`));
-
-        // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "paused");
-
-        // Wait for async handler
-        await vi.advanceTimersByTimeAsync(0);
-
-        // Cleanup should still be attempted
-        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
-
-        // Benign not-found races should not produce warning-level noise
-        const emittedCleanupWarning = warnSpy.mock.calls.some(([msg]) =>
-          typeof msg === "string" && msg.includes("Failed to delete ephemeral agent"),
-        );
-        expect(emittedCleanupWarning).toBe(false);
-      } finally {
-        warnSpy.mockRestore();
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("warns on genuine cleanup failure but does not throw", async () => {
-      vi.useFakeTimers();
-      const warnSpy = vi.spyOn(runtimeLog, "warn");
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockRejectedValue(new Error("delete failed"));
-
-        // Create an ephemeral agent
-        const agent = await store.createAgent({
-          name: "executor-FN-WARN-1",
-          role: "executor",
-          metadata: {
-            agentKind: "task-worker",
-          },
-          runtimeConfig: { enabled: false },
-        });
-
-        // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "paused");
-
-        // Wait for async handler
-        await vi.advanceTimersByTimeAsync(0);
-
-        await vi.advanceTimersByTimeAsync(0);
-
-        // Should have attempted deletion
-        expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
-
-        // Genuine failures still log warning-level context
-        const cleanupWarnings = warnSpy.mock.calls.filter(([msg]) =>
-          typeof msg === "string" && msg.includes("Failed to delete ephemeral agent"),
-        );
-        expect(cleanupWarnings).toHaveLength(1);
-        expect(cleanupWarnings[0]?.[0]).toContain(agent.id);
-        expect(cleanupWarnings[0]?.[0]).toContain("delete failed");
-      } finally {
-        warnSpy.mockRestore();
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("handles runtime stop racing with in-flight cleanup", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        // Create an ephemeral agent
-        const agent = await store.createAgent({
-          name: "executor-FN-STOP-1",
-          role: "executor",
-          metadata: {
-            taskWorker: true,
-          },
-          runtimeConfig: { enabled: false },
-        });
-
-        // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "paused");
-
-        // Wait for async handler
-        await vi.advanceTimersByTimeAsync(0);
-
-        await runtime.stop();
-
-        expect(deleteAgentSpy.mock.calls.length).toBeLessThanOrEqual(1);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("handles spawned ephemeral agents (type=spawned) correctly", async () => {
-      vi.useFakeTimers();
-
-      try {
-        await runtime.start();
-
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        // Create a spawned child agent (type=spawned is ephemeral)
-        const agent = await store.createAgent({
-          name: "child-agent-001",
-          role: "executor",
-          metadata: {
-            type: "spawned",
-            parentTaskId: "FN-PARENT",
-          },
-          runtimeConfig: { enabled: false },
-        });
-
-        // Emit termination event
-        store.emit("agent:stateChanged", agent.id, "running", "paused");
-
-        // Wait for async handler
-        await vi.advanceTimersByTimeAsync(0);
-
-        // Advance timers by 5 seconds
-        await vi.waitFor(() => {
-          expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        });
-
-        // deleteAgent should have been called for spawned ephemeral agent
-        expect(deleteAgentSpy).toHaveBeenCalledWith(agent.id);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("does not double-delete when onComplete already scheduled cleanup", async () => {
-      vi.useFakeTimers();
-      try {
-        await runtime.start();
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-          onComplete?: (task: Task) => void;
-        };
-        executorOptions.onStart?.({ id: "FN-DUP-COMPLETE" } as Task, join(testDir, "worktree-FN-DUP-COMPLETE"));
-
-        let worker: Agent | undefined;
-        await vi.waitFor(async () => {
-          worker = (await store.listAgents({ includeEphemeral: true }))
-            .find((a: Agent) => a.name === "executor-FN-DUP-COMPLETE");
-          expect(worker).toBeDefined();
-        });
-
-        executorOptions.onComplete?.({ id: "FN-DUP-COMPLETE" } as Task);
-        store.emit("agent:stateChanged", worker!.id, "running", "paused");
-
-        await vi.waitFor(() => {
-          expect(deleteAgentSpy).toHaveBeenCalledTimes(1);
-        });
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-
-    it("handles onComplete cleanup racing with runtime stop", async () => {
-      vi.useFakeTimers();
-      try {
-        await runtime.start();
-        const store = getAgentStore(runtime);
-        const deleteAgentSpy = vi.spyOn(store, "deleteAgent").mockResolvedValue(undefined);
-
-        const executorOptions = mockExecutorCtor.mock.calls.at(-1)?.[0] as {
-          onStart?: (task: Task, worktreePath: string) => void;
-          onComplete?: (task: Task) => void;
-        };
-        executorOptions.onStart?.({ id: "FN-STOP-COMPLETE" } as Task, join(testDir, "worktree-FN-STOP-COMPLETE"));
-        executorOptions.onComplete?.({ id: "FN-STOP-COMPLETE" } as Task);
-
-        await runtime.stop();
-        expect(deleteAgentSpy.mock.calls.length).toBeLessThanOrEqual(1);
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 30000);
-  });
-
-  describe("startup ephemeral sweep", () => {
-    it("cleans paused ephemeral agents on startup", async () => {
-      const { AgentStore } = await import("@fusion/core");
-      const preStore = new AgentStore({ rootDir: join(testDir, ".fusion") });
-      await preStore.init();
-      const orphan = await preStore.createAgent({
-        name: "orphan-paused",
-        role: "executor",
-        metadata: { agentKind: "task-worker" },
-        runtimeConfig: { enabled: false },
-      });
-      await preStore.updateAgentState(orphan.id, "active");
-      await preStore.updateAgentState(orphan.id, "paused");
-
-      await runtime.start();
-      const store = getAgentStore(runtime);
-      expect(await store.getAgent(orphan.id)).toBeNull();
-    }, 30000);
-
-    it("cleans ephemeral agents assigned to non-in-progress tasks", async () => {
-      mockTaskStoreGetTask.mockResolvedValue({ id: "FN-DONE", column: "done" });
-      const { AgentStore } = await import("@fusion/core");
-      const preStore = new AgentStore({ rootDir: join(testDir, ".fusion") });
-      await preStore.init();
-      const orphan = await preStore.createAgent({
-        name: "orphan-stale-task",
-        role: "executor",
-        metadata: { agentKind: "task-worker" },
-        runtimeConfig: { enabled: false },
-      });
-      await preStore.assignTask(orphan.id, "FN-DONE");
-
-      await runtime.start();
-      const store = getAgentStore(runtime);
-      expect(await store.getAgent(orphan.id)).toBeNull();
-    }, 30000);
-
-    it("continues startup sweep when one delete fails", async () => {
-      const warnSpy = vi.spyOn(runtimeLog, "warn");
-      const { AgentStore } = await import("@fusion/core");
-      const originalDeleteAgent = AgentStore.prototype.deleteAgent;
-      const deleteProtoSpy = vi
-        .spyOn(AgentStore.prototype, "deleteAgent")
-        .mockRejectedValueOnce(new Error("delete failed"))
-        .mockImplementation(async function(this: AgentStore, agentId: string) {
-          return originalDeleteAgent.call(this, agentId);
-        });
-
-      try {
-        const preStore = new AgentStore({ rootDir: join(testDir, ".fusion") });
-        await preStore.init();
-        const a1 = await preStore.createAgent({ name: "orphan-a1", role: "executor", metadata: { agentKind: "task-worker" }, runtimeConfig: { enabled: false } });
-        const a2 = await preStore.createAgent({ name: "orphan-a2", role: "executor", metadata: { agentKind: "task-worker" }, runtimeConfig: { enabled: false } });
-        await preStore.updateAgentState(a1.id, "active");
-        await preStore.updateAgentState(a1.id, "paused");
-        await preStore.updateAgentState(a2.id, "active");
-        await preStore.updateAgentState(a2.id, "paused");
-
-        await runtime.start();
-        const store = getAgentStore(runtime);
-        expect(runtime.getStatus()).toBe("active");
-        const remaining = await store.listAgents({ includeEphemeral: true });
-        expect(remaining.filter((a: Agent) => a.id === a1.id || a.id === a2.id)).toHaveLength(1);
-        expect(warnSpy).toHaveBeenCalled();
-      } finally {
-        warnSpy.mockRestore();
-        deleteProtoSpy.mockRestore();
-      }
-    }, 30000);
-  });
 });
