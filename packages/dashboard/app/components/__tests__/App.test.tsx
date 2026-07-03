@@ -1606,27 +1606,44 @@ describe("App deep link handling", () => {
   });
 
   it("shows error toast when project param references non-existent project", async () => {
-    mockProjectsState.projects = [];
-    mockCurrentProjectState.currentProject = null;
+    /*
+     * FNXC:DeepLink 2026-07-03-09:50:
+     * The not-found toast is deferred behind a grace window so an onboarding project deep-linked before
+     * its list revalidates does not flash a spurious error. A genuinely nonexistent project stays absent
+     * past the window and still surfaces the toast — advance fake timers to reach it.
+     */
+    vi.useFakeTimers();
+    try {
+      mockProjectsState.projects = [];
+      mockCurrentProjectState.currentProject = null;
 
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: new URL("http://localhost:3000/?project=nonexistent&task=FN-123"),
-    });
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: new URL("http://localhost:3000/?project=nonexistent&task=FN-123"),
+      });
 
-    render(<App />);
+      render(<App />);
 
-    await waitFor(() => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
       expect(fetchSettings).toHaveBeenCalled();
-    });
 
-    // Should show error toast for project not found
-    await waitFor(() => {
+      // Within the grace window nothing has toasted yet.
+      expect(screen.queryByText("Project 'nonexistent' not found")).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+
+      // Grace window elapsed with the project still absent — the error toast now shows.
       expect(screen.getByText("Project 'nonexistent' not found")).toBeTruthy();
-    });
 
-    // Should NOT fetch the task since project wasn't found
-    expect(fetchTaskDetail).not.toHaveBeenCalled();
+      // Should NOT fetch the task since project wasn't found.
+      expect(fetchTaskDetail).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not call setCurrentProject when project param matches current project", async () => {

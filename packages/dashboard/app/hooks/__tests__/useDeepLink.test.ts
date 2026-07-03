@@ -169,32 +169,84 @@ describe("useDeepLink", () => {
     expect(addToast).not.toHaveBeenCalled();
   });
 
-  it("shows unknown project toast only once under StrictMode", async () => {
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: new URL("http://localhost:3000/?project=missing"),
-    });
+  it("shows unknown project toast only once under StrictMode (after the grace window)", async () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: new URL("http://localhost:3000/?project=missing"),
+      });
 
-    const addToast = vi.fn();
-    const strictWrapper = ({ children }: PropsWithChildren) => createElement(StrictMode, null, children);
+      const addToast = vi.fn();
+      const strictWrapper = ({ children }: PropsWithChildren) => createElement(StrictMode, null, children);
 
-    renderHook(() => useDeepLink({
-      projectId: defaultProject.id,
-      projects: [defaultProject, otherProject],
-      projectsLoading: false,
-      currentProject: defaultProject,
-      setCurrentProject: vi.fn(),
-      addToast,
-      openTaskDetail: vi.fn(),
-      closeTaskDetail: vi.fn(),
-    }), { wrapper: strictWrapper });
+      renderHook(() => useDeepLink({
+        projectId: defaultProject.id,
+        projects: [defaultProject, otherProject],
+        projectsLoading: false,
+        currentProject: defaultProject,
+        setCurrentProject: vi.fn(),
+        addToast,
+        openTaskDetail: vi.fn(),
+        closeTaskDetail: vi.fn(),
+      }), { wrapper: strictWrapper });
 
-    await waitFor(() => {
+      // The not-found toast is deferred behind the grace window — nothing fires immediately.
+      expect(addToast).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(3000);
+
       expect(addToast).toHaveBeenCalledTimes(1);
       expect(addToast).toHaveBeenCalledWith("Project 'missing' not found", "error");
-    });
+      expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+  it("does not toast when a freshly-created project appears within the grace window", async () => {
+    // FNXC:DeepLink 2026-07-03-09:50: symptom verification for the onboarding spurious
+    // "Project not found" toast — a project deep-linked before the list revalidates must NOT error.
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: new URL("http://localhost:3000/?project=proj_new"),
+      });
+
+      const addToast = vi.fn();
+      const setCurrentProject = vi.fn();
+      const newProject: ProjectInfo = { ...otherProject, id: "proj_new", name: "Freshly Created" };
+
+      const { rerender } = renderHook(
+        ({ projects }: { projects: ProjectInfo[] }) =>
+          useDeepLink({
+            projectId: defaultProject.id,
+            projects,
+            projectsLoading: false,
+            currentProject: defaultProject,
+            setCurrentProject,
+            addToast,
+            openTaskDetail: vi.fn(),
+            closeTaskDetail: vi.fn(),
+          }),
+        { initialProps: { projects: [defaultProject] } },
+      );
+
+      // Missing from the (stale) list, but still inside the grace window: no toast yet.
+      expect(addToast).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+
+      // Projects list revalidates and now includes the just-created project.
+      rerender({ projects: [defaultProject, newProject] });
+
+      // Advance well past the original grace deadline; the pending toast must have been cancelled.
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(addToast).not.toHaveBeenCalled();
+      expect(setCurrentProject).toHaveBeenCalledWith(newProject);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("switches project and uses project param for task fetch", async () => {
@@ -213,21 +265,25 @@ describe("useDeepLink", () => {
     });
   });
 
-  it("shows toast and skips fetch for unknown project param", async () => {
-    Object.defineProperty(window, "location", {
-      configurable: true,
-      value: new URL("http://localhost:3000/?project=missing&task=FN-123"),
-    });
+  it("shows toast and skips fetch for unknown project param (after the grace window)", async () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: new URL("http://localhost:3000/?project=missing&task=FN-123"),
+      });
 
-    const { addToast, setCurrentProject } = renderUseDeepLink();
+      const { addToast, setCurrentProject } = renderUseDeepLink();
 
-    await waitFor(() => {
+      await vi.advanceTimersByTimeAsync(3000);
+
       expect(addToast).toHaveBeenCalledWith("Project 'missing' not found", "error");
-    });
-
-    expect(addToast).toHaveBeenCalledTimes(1);
-    expect(setCurrentProject).not.toHaveBeenCalled();
-    expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+      expect(addToast).toHaveBeenCalledTimes(1);
+      expect(setCurrentProject).not.toHaveBeenCalled();
+      expect(mockFetchTaskDetail).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps task-only deep-link behavior and strips task on detail close", async () => {

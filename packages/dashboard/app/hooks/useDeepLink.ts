@@ -54,6 +54,30 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
   // Ensure project switching from ?project= only happens once per project value.
   const projectSwitchAppliedRef = useRef<string | null>(null);
 
+  /*
+   * FNXC:DeepLink 2026-07-03-09:50:
+   * A project selected/created during onboarding is deep-linked via ?project=<id> before the projects
+   * list has revalidated to include it, so an eager "Project not found" toast fired even though the
+   * project loads a beat later (operator report: spurious error toast on onboarding project select).
+   * Defer the not-found toast behind a grace window keyed to the pending param, and cancel it as soon
+   * as the project appears in the list (the effect re-runs when `projects` changes). Only a project
+   * that stays absent past the grace window yields the error.
+   */
+  const PROJECT_NOT_FOUND_GRACE_MS = 3000;
+  const projectNotFoundTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const projectNotFoundPendingParamRef = useRef<string | null>(null);
+
+  const clearProjectNotFoundTimer = useCallback(() => {
+    if (projectNotFoundTimerRef.current !== null) {
+      clearTimeout(projectNotFoundTimerRef.current);
+      projectNotFoundTimerRef.current = null;
+    }
+    projectNotFoundPendingParamRef.current = null;
+  }, []);
+
+  // Cancel any pending not-found timer on unmount so it never toasts after teardown.
+  useEffect(() => () => clearProjectNotFoundTimer(), [clearProjectNotFoundTimer]);
+
   useEffect(() => {
     if (!pathRewroteRef.current) {
       const pathMatch = window.location.pathname.match(/^\/tasks\/([A-Z]+-\d+)\/?$/);
@@ -81,13 +105,26 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
     if (projectParam) {
       const matchingProject = projects.find((project) => project.id === projectParam);
       if (!matchingProject) {
-        if (projectNotFoundToastRef.current !== projectParam) {
-          addToast(t("deepLink.projectNotFound", "Project '{{id}}' not found", { id: projectParam }), "error");
-          projectNotFoundToastRef.current = projectParam;
+        // Arm the deferred not-found toast once per still-missing param; a freshly-created project
+        // that arrives within the grace window cancels it via the matched branch below.
+        if (
+          projectNotFoundToastRef.current !== projectParam &&
+          projectNotFoundPendingParamRef.current !== projectParam
+        ) {
+          clearProjectNotFoundTimer();
+          projectNotFoundPendingParamRef.current = projectParam;
+          projectNotFoundTimerRef.current = setTimeout(() => {
+            addToast(t("deepLink.projectNotFound", "Project '{{id}}' not found", { id: projectParam }), "error");
+            projectNotFoundToastRef.current = projectParam;
+            projectNotFoundTimerRef.current = null;
+            projectNotFoundPendingParamRef.current = null;
+          }, PROJECT_NOT_FOUND_GRACE_MS);
         }
         return;
       }
 
+      // Project is present now — cancel any pending not-found toast and clear the one-shot guard.
+      clearProjectNotFoundTimer();
       projectNotFoundToastRef.current = null;
       taskProjectId = matchingProject.id;
 
@@ -99,6 +136,7 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
         projectSwitchAppliedRef.current = matchingProject.id;
       }
     } else {
+      clearProjectNotFoundTimer();
       projectNotFoundToastRef.current = null;
       projectSwitchAppliedRef.current = null;
     }
@@ -124,6 +162,7 @@ export function useDeepLink(options: UseDeepLinkOptions): UseDeepLinkResult {
     setCurrentProject,
     addToast,
     openTaskDetail,
+    clearProjectNotFoundTimer,
     // deepLinkFetchedRef intentionally excluded - it's a mutable ref, not state
   ]);
 
