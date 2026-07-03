@@ -8,7 +8,6 @@ ignoredBuiltDependencies:
   - ssh2
 onlyBuiltDependencies:
   - '@homebridge/node-pty-prebuilt-multiarch'
-  - electron
   - esbuild
   - koffi
   - protobufjs

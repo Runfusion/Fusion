@@ -63,6 +63,7 @@
     "@earendil-works/pi-coding-agent": "^0.80.3",
     "dockerode": "^4.0.12",
     "express": "^5.1.0",
+    "electron": "^33.4.11",
     "i18next": "^26.3.1",
     "ink": "^7.0.5",
     "ink-spinner": "^5.0.0",
