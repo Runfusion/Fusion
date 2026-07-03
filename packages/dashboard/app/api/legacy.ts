@@ -6933,7 +6933,9 @@ export type ExecutorState = "idle" | "running" | "paused" | "stopped";
  * 
  * Counts (runningTaskCount, blockedTaskCount, queuedTaskCount, inReviewCount, stuckTaskCount)
  * are derived client-side from the same tasks array shared with the board, ensuring
- * the footer counts always match the column counts displayed on screen.
+ * the footer counts always match the active work states displayed on screen. Queued covers
+ * todo plus planning/triage work; Done is intentionally not exposed unless a footer Done
+ * segment is added.
  * The API returns settings-based values (globalPause, enginePaused, maxConcurrent) and
  * lastActivityAt from the activity log.
  * 
@@ -6950,7 +6952,7 @@ export interface ExecutorStats {
   blockedTaskCount: number;
   /** Number of "in-progress" tasks with no activity for > 10 minutes */
   stuckTaskCount: number;
-  /** Number of tasks in "todo" column */
+  /** Number of tasks in "todo" plus planning/triage work states */
   queuedTaskCount: number;
   /** Number of tasks in "in-review" column */
   inReviewCount: number;

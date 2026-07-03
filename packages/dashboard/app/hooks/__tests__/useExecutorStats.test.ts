@@ -752,45 +752,52 @@ describe("useExecutorStats", () => {
   });
 
   describe("board-sync regression", () => {
-    it("derives counts from the same tasks array the board uses", async () => {
-      // Simulate a full board: 2 triage, 3 todo (1 blocked), 2 in-progress, 1 in-review, 4 done
+    it("derives the complete footer count matrix from the same tasks array the board uses", async () => {
+      const now = new Date("2026-07-03T12:00:00.000Z").getTime();
+      const staleUpdatedAt = new Date(now - 11 * 60 * 1000).toISOString();
+      const freshUpdatedAt = new Date(now - 2 * 60 * 1000).toISOString();
       const tasks: Task[] = [
         createMockTask("FN-001", "triage"),
-        createMockTask("FN-002", "triage"),
-        createMockTask("FN-003", "todo"),
-        { ...createMockTask("FN-004", "todo"), blockedBy: "FN-010" },
-        createMockTask("FN-005", "todo"),
-        createMockTask("FN-006", "in-progress"),
-        createMockTask("FN-007", "in-progress"),
-        createMockTask("FN-008", "in-review"),
-        createMockTask("FN-009", "done"),
-        createMockTask("FN-010", "done"),
-        createMockTask("FN-011", "done"),
-        createMockTask("FN-012", "done"),
+        createMockTask("FN-002", "todo"),
+        { ...createMockTask("FN-003", "in-progress"), updatedAt: staleUpdatedAt },
+        { ...createMockTask("FN-004", "in-progress"), updatedAt: freshUpdatedAt },
+        createMockTask("FN-005", "in-review"),
+        { ...createMockTask("FN-006", "done"), status: "running" } as Task,
+        createMockTask("FN-007", "archived"),
+        { ...createMockTask("FN-008", "todo"), blockedBy: "FN-006" },
+        { ...createMockTask("FN-009", "todo"), dependencies: ["FN-006"] },
+        { ...createMockTask("FN-010", "todo"), blockedBy: ["FN-006", "FN-006"] } as unknown as Task,
+        { ...createMockTask("FN-011", "todo"), blockedBy: "" },
+        { ...createMockTask("FN-012", "todo"), blockedBy: [] } as unknown as Task,
+        { ...createMockTask("FN-013", "todo"), blockedBy: null } as unknown as Task,
+        { ...createMockTask("FN-014", "custom-column" as Task["column"]) },
+        { ...createMockTask("FN-015", "triage"), status: "planning" } as Task,
+        { ...createMockTask("FN-016", "custom-planning" as Task["column"]), status: "planning" } as Task,
       ];
 
-      const { result } = renderHook(() => useExecutorStats(tasks));
+      const { result } = renderHook(() => useExecutorStats(tasks, undefined, 10 * 60 * 1000, now));
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
       });
 
-      // These must match the column counts shown on the board
-      expect(result.current.stats.runningTaskCount).toBe(2);  // in-progress
-      expect(result.current.stats.queuedTaskCount).toBe(3);   // todo
-      expect(result.current.stats.inReviewCount).toBe(1);     // in-review
-      expect(result.current.stats.blockedTaskCount).toBe(1);  // blockedBy set
-      expect(result.current.stats.stuckTaskCount).toBe(0);    // all recent
-
-      // Verify the executor state reflects running tasks
+      expect(result.current.stats.queuedTaskCount).toBe(10); // triage/planning + todo, no done/archived/non-planning custom
+      expect(result.current.stats.runningTaskCount).toBe(2); // in-progress only
+      expect(result.current.stats.stuckTaskCount).toBe(1); // stuck is an in-progress subset
+      expect(result.current.stats.blockedTaskCount).toBe(2); // actionable string/array blockedBy only
+      expect(result.current.stats.inReviewCount).toBe(1); // in-review only
+      expect("doneTaskCount" in result.current.stats).toBe(false);
       expect(result.current.stats.executorState).toBe("running");
     });
 
-    it("does not count triage, done, or archived tasks in any footer metric", async () => {
+    it("counts planning/triage as queued but excludes done, archived, and unknown columns", async () => {
       const tasks: Task[] = [
         createMockTask("FN-001", "triage"),
-        createMockTask("FN-002", "done"),
-        createMockTask("FN-003", "archived"),
+        { ...createMockTask("FN-002", "triage"), status: "planning" } as Task,
+        createMockTask("FN-003", "done"),
+        createMockTask("FN-004", "archived"),
+        { ...createMockTask("FN-005", "custom-column" as Task["column"]) },
+        { ...createMockTask("FN-006", "custom-planning" as Task["column"]), status: "planning" } as Task,
       ];
 
       const { result } = renderHook(() => useExecutorStats(tasks));
@@ -800,7 +807,7 @@ describe("useExecutorStats", () => {
       });
 
       expect(result.current.stats.runningTaskCount).toBe(0);
-      expect(result.current.stats.queuedTaskCount).toBe(0);
+      expect(result.current.stats.queuedTaskCount).toBe(3);
       expect(result.current.stats.inReviewCount).toBe(0);
       expect(result.current.stats.blockedTaskCount).toBe(0);
       expect(result.current.stats.stuckTaskCount).toBe(0);
