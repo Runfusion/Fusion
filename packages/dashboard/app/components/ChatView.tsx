@@ -2685,8 +2685,8 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             {showMobileDirectThreadHeaderControls ? (
               <>
                 {/*
-                FNXC:ChatHeader 2026-07-02-00:00:
-                Mobile direct-thread view has a single top row: move back navigation and the active conversation switcher into ViewHeader so the transcript gains the height formerly consumed by a second thread header. The ViewHeader still owns the accessible Chat title; CSS only hides its visible text in this direct-thread mobile state.
+                FNXC:ChatHeader 2026-07-02-17:26:
+                Mobile direct-thread view has a single top row: back navigation must be the first visible/focusable control at the far-left edge and the active conversation switcher must stay beside it. The ViewHeader still owns the accessible Chat title; ChatView-scoped CSS hides the entire title/icon shell only in this direct-thread mobile state so it cannot reserve left-edge layout space.
                 */}
                 <button className="btn-icon chat-back-btn" onClick={handleBack} data-testid="chat-back-btn" aria-label={t("chat.backToConversations", "Back to conversations")}>
                   <ChevronLeft size={16} />

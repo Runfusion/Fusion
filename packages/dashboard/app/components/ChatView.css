@@ -769,10 +769,14 @@ Mobile chat session switching needs a dedicated rename tap target beside each se
 }
 
 /*
-FNXC:ChatHeader 2026-07-02-00:00:
-Mobile direct-chat detail uses ViewHeader as the only visible header row. Keep the Chat icon/title relationship available to assistive tech while visually collapsing only the text label, and let the moved session switcher consume the action row width without duplicating the old thread-header controls.
+FNXC:ChatHeader 2026-07-02-17:26:
+Mobile direct-chat detail uses ViewHeader as the only visible header row. The back arrow must be the far-left visible/focusable control and the session selector must stay on that same non-wrapping row, so hide the entire Chat title/icon shell from layout while retaining the accessible heading and make the actions cluster own the row from the left edge.
 */
-.chat-view--mobile-direct-thread > .view-header .view-header__title span {
+.chat-view--mobile-direct-thread > .view-header {
+  flex-wrap: nowrap;
+}
+
+.chat-view--mobile-direct-thread > .view-header .view-header__title {
   position: absolute;
   inline-size: var(--btn-border-width);
   block-size: var(--btn-border-width);
@@ -784,6 +788,10 @@ Mobile direct-chat detail uses ViewHeader as the only visible header row. Keep t
 
 .chat-view--mobile-direct-thread > .view-header .view-header__actions {
   flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  margin-left: 0;
+  flex-wrap: nowrap;
   justify-content: flex-start;
 }
 
@@ -792,7 +800,8 @@ Mobile direct-chat detail uses ViewHeader as the only visible header row. Keep t
 }
 
 .chat-view--mobile-direct-thread .chat-mobile-session-menu {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 @media (max-width: 768px), (max-height: 480px) {
