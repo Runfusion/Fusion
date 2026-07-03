@@ -174,6 +174,14 @@ export function createMainWindow(state?: WindowState, launchTargetUrl?: string):
       return;
     }
 
+    /*
+    FNXC:DesktopClosePolicy 2026-07-03-15:30:
+    Windows Desktop close is a shutdown request, not a tray-minimize request. Let the BrowserWindow close so Electron emits window-all-closed and before-quit, which stops the embedded local Fusion runtime; keep macOS/non-Windows close-to-tray semantics for dock/tray restoration.
+    */
+    if (process.platform === "win32") {
+      return;
+    }
+
     event.preventDefault();
     window.hide();
   });

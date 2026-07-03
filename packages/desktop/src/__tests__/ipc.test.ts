@@ -129,6 +129,15 @@ describe("ipc handlers", () => {
     expect(mocks.setupAutoUpdater).not.toHaveBeenCalled();
   });
 
+  it("window:close delegates to BrowserWindow.close so platform lifecycle policy is inherited", async () => {
+    const { window } = await registerHandlers();
+    const handler = mocks.ipcHandlers.get("window:close");
+
+    handler?.({});
+
+    expect(window.close).toHaveBeenCalledTimes(1);
+  });
+
   it("registers shell channels", async () => {    await registerHandlers();
 
     const channels = new Set(mocks.ipcMain.handle.mock.calls.map(([channel]) => channel));

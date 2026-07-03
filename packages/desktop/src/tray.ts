@@ -156,6 +156,10 @@ export function setupTray(mainWindow: BrowserWindow, tray: Tray): Tray {
       return;
     }
 
+    if (process.platform === "win32") {
+      return;
+    }
+
     event.preventDefault();
     mainWindow.hide();
   });

@@ -1,4 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+
+function mockPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value: platform,
+  });
+}
 
 // Mock renderer module - must be hoisted before importing main
 const rendererMocks = vi.hoisted(() => {
@@ -31,6 +40,7 @@ const mocks = vi.hoisted(() => {
     show: vi.fn(),
     focus: vi.fn(),
     hide: vi.fn(),
+    close: vi.fn(),
     maximize: vi.fn(),
     webContents: { reload: vi.fn() },
   };
@@ -43,12 +53,17 @@ const mocks = vi.hoisted(() => {
   };
   BrowserWindow.getAllWindows = vi.fn(() => []);
 
+  const appHandlers = new Map<string, (...args: unknown[]) => void>();
   const app = {
+    isQuitting: false,
     whenReady: vi.fn(() => Promise.resolve()),
     getVersion: vi.fn(() => "0.1.0"),
     getPath: vi.fn(() => "/mock/home"),
     quit: vi.fn(),
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      appHandlers.set(event, handler);
+      return app;
+    }),
   };
 
   const ipcMain = {
@@ -61,6 +76,7 @@ const mocks = vi.hoisted(() => {
     setToolTip: vi.fn(),
     setContextMenu: vi.fn(),
     on: vi.fn(),
+    destroy: vi.fn(),
   };
 
   const Tray = vi.fn(function () {
@@ -92,6 +108,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     app,
+    appHandlers,
     BrowserWindow,
     ipcMain,
     trayInstance,
@@ -142,6 +159,7 @@ const mainDeps = vi.hoisted(() => {
       return { startLocal, stopLocal, getStatus, getServerPort };
     }),
     startLocal,
+    stopLocal,
   };
 });
 
@@ -208,6 +226,11 @@ describe("main process", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    mocks.appHandlers.clear();
+    mocks.app.isQuitting = false;
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    }
     delete process.env.FUSION_DESKTOP_MODE;
     delete process.env.FUSION_HOME;
     if (originalDashboardUrl === undefined) {
@@ -226,6 +249,13 @@ describe("main process", () => {
     rendererMocks.getRendererFilePath.mockReturnValue("/path/to/dist/client/index.html");
     rendererMocks.isUrlRenderer.mockReturnValue(false);
     mocks.screen.getAllDisplays.mockReturnValue([{ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }]);
+  });
+
+  afterEach(() => {
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    }
+    vi.useRealTimers();
   });
 
   it("DASHBOARD_URL defaults to local file URL in production mode", async () => {
@@ -412,6 +442,48 @@ describe("main process", () => {
 
     expect(mocks.browserWindowInstance.on).toHaveBeenCalledWith("close", expect.any(Function));
     expect(mocks.browserWindowInstance.on).toHaveBeenCalledWith("closed", expect.any(Function));
+  });
+
+  it("windows window close saves state and allows quit cleanup instead of hiding", async () => {
+    mockPlatform("win32");
+    const { initializeApp, run } = await importMainModule();
+
+    await initializeApp();
+    run();
+    const closeHandler = mocks.browserWindowHandlers.get("close") as
+      | ((event: { preventDefault: () => void }) => void)
+      | undefined;
+    const event = { preventDefault: vi.fn() };
+
+    closeHandler?.(event);
+    mocks.appHandlers.get("window-all-closed")?.();
+    mocks.appHandlers.get("before-quit")?.();
+
+    expect(mainDeps.saveWindowState).toHaveBeenCalledWith(mocks.browserWindowInstance);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mocks.browserWindowInstance.hide).not.toHaveBeenCalled();
+    expect(mocks.app.quit).toHaveBeenCalledTimes(1);
+    expect(mainDeps.stopLocal).toHaveBeenCalledTimes(1);
+  });
+
+  it("macOS window close hides to tray without quitting", async () => {
+    mockPlatform("darwin");
+    const { initializeApp, run } = await importMainModule();
+
+    await initializeApp();
+    run();
+    const closeHandler = mocks.browserWindowHandlers.get("close") as
+      | ((event: { preventDefault: () => void }) => void)
+      | undefined;
+    const event = { preventDefault: vi.fn() };
+
+    closeHandler?.(event);
+    mocks.appHandlers.get("window-all-closed")?.();
+
+    expect(mainDeps.saveWindowState).toHaveBeenCalledWith(mocks.browserWindowInstance);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mocks.browserWindowInstance.hide).toHaveBeenCalledTimes(1);
+    expect(mocks.app.quit).not.toHaveBeenCalled();
   });
 
   it("createMainWindow shows and focuses on ready-to-show", async () => {

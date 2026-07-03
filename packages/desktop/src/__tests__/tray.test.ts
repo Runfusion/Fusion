@@ -1,8 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+
+function mockPlatform(platform: NodeJS.Platform): void {
+  Object.defineProperty(process, "platform", {
+    configurable: true,
+    value: platform,
+  });
+}
 
 const mocks = vi.hoisted(() => {
+  const appHandlers = new Map<string, (...args: unknown[]) => void>();
   const app = {
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      appHandlers.set(event, handler);
+      return app;
+    }),
     quit: vi.fn(),
   };
 
@@ -18,6 +31,7 @@ const mocks = vi.hoisted(() => {
 
   return {
     app,
+    appHandlers,
     menu,
     nativeImage,
   };
@@ -33,12 +47,17 @@ vi.mock("electron", () => ({
 
 function createMainWindowMock(isVisible = true) {
   const listeners = new Map<string, (...args: unknown[]) => void>();
+  let visible = isVisible;
 
   return {
-    isVisible: vi.fn(() => isVisible),
-    show: vi.fn(),
+    isVisible: vi.fn(() => visible),
+    show: vi.fn(() => {
+      visible = true;
+    }),
     focus: vi.fn(),
-    hide: vi.fn(),
+    hide: vi.fn(() => {
+      visible = false;
+    }),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
       listeners.set(event, handler);
       return undefined;
@@ -69,6 +88,17 @@ function createTrayMock() {
 describe("tray module", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.resetModules();
+    mocks.appHandlers.clear();
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    }
+  });
+
+  afterEach(() => {
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    }
   });
 
   it("getTrayTooltip returns running label", async () => {
@@ -144,6 +174,76 @@ describe("tray module", () => {
     expect(tray.setToolTip).toHaveBeenCalledWith("Fusion — Running");
     expect(mocks.menu.buildFromTemplate).toHaveBeenCalledTimes(1);
     expect(tray.setContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("tray Show/Hide Window explicitly toggles visibility on every platform", async () => {
+    mockPlatform("win32");
+    const { setupTray } = await import("../tray.ts");
+    const mainWindow = createMainWindowMock(true);
+    const tray = createTrayMock();
+
+    setupTray(mainWindow as never, tray as never);
+    const visibleTemplate = mocks.menu.buildFromTemplate.mock.calls.at(-1)?.[0] as Array<{ label?: string; click?: () => void }>;
+    visibleTemplate[0]?.click?.();
+    mainWindow.getListener("hide")?.();
+    expect(mainWindow.hide).toHaveBeenCalledTimes(1);
+
+    const hiddenTemplate = mocks.menu.buildFromTemplate.mock.calls.at(-1)?.[0] as Array<{ label?: string; click?: () => void }>;
+    expect(hiddenTemplate[0]).toMatchObject({ label: "Show Window" });
+    hiddenTemplate[0]?.click?.();
+    expect(mainWindow.show).toHaveBeenCalledTimes(1);
+    expect(mainWindow.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it("tray Quit Fusion sets quitting state and allows later close events", async () => {
+    mockPlatform("darwin");
+    const { setupTray } = await import("../tray.ts");
+    const mainWindow = createMainWindowMock(true);
+    const tray = createTrayMock();
+
+    setupTray(mainWindow as never, tray as never);
+    const template = mocks.menu.buildFromTemplate.mock.calls.at(-1)?.[0] as Array<{ label?: string; click?: () => void }>;
+    template.find((item) => item.label === "Quit Fusion")?.click?.();
+
+    const closeHandler = mainWindow.getListener("close") as ((event: { preventDefault: () => void }) => void) | undefined;
+    const event = { preventDefault: vi.fn() };
+    closeHandler?.(event);
+
+    expect(mocks.app.quit).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mainWindow.hide).not.toHaveBeenCalled();
+  });
+
+  it("windows close events are not converted into tray hides by setupTray", async () => {
+    mockPlatform("win32");
+    const { setupTray } = await import("../tray.ts");
+    const mainWindow = createMainWindowMock(true);
+    const tray = createTrayMock();
+
+    setupTray(mainWindow as never, tray as never);
+    const closeHandler = mainWindow.getListener("close") as ((event: { preventDefault: () => void }) => void) | undefined;
+    const event = { preventDefault: vi.fn() };
+
+    closeHandler?.(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(mainWindow.hide).not.toHaveBeenCalled();
+  });
+
+  it("macOS close events still hide to tray when quit is not in progress", async () => {
+    mockPlatform("darwin");
+    const { setupTray } = await import("../tray.ts");
+    const mainWindow = createMainWindowMock(true);
+    const tray = createTrayMock();
+
+    setupTray(mainWindow as never, tray as never);
+    const closeHandler = mainWindow.getListener("close") as ((event: { preventDefault: () => void }) => void) | undefined;
+    const event = { preventDefault: vi.fn() };
+
+    closeHandler?.(event);
+
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(mainWindow.hide).toHaveBeenCalledTimes(1);
   });
 
   it("updateTrayStatus updates tooltip and menu", async () => {

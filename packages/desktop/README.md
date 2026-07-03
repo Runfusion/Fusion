@@ -159,21 +159,25 @@ Desktop local mode uses an in-process runtime manager (`src/local-runtime.ts`) t
 11. `startUpdateCheckInterval(mainWindow)` (4-hour periodic background checks)
 12. `mainWindow.maximize()` when restored state was maximized
 
-### Window state and close-to-tray behavior
+### Window state and platform close behavior
 
 - Startup restores width/height from persisted state (fallback: `DEFAULT_WINDOW_STATE`).
 - Restored position (`x`, `y`) is validated against `screen.getAllDisplays()` work areas. If the restored window rectangle has less than `64px × 64px` overlap with every display, `x`/`y` are dropped and the OS picks a visible default location while preserving width/height.
 - After `loadURL`/`loadFile`, the window is explicitly `show()` + `focus()` on `ready-to-show`, with a 2-second fallback timer that also `show()`/`focus()`es if `ready-to-show` never fires.
 - On window close:
   - state is saved via `saveWindowState(mainWindow)`
-  - if app is **not quitting**, close is prevented and the window hides to tray
-  - if app **is quitting**, close proceeds normally
+  - on **Windows**, close proceeds normally so `window-all-closed` can quit the Electron app and `before-quit` can stop the embedded local Fusion runtime
+  - on **macOS** and other non-Windows desktop platforms, if app is **not quitting**, close is prevented and the window hides to tray/dock for later restore
+  - if app **is quitting**, close proceeds normally on every platform
+- Renderer `window:close` uses `mainWindow.close()`, so the custom titlebar close button inherits the same platform policy as the native window close button.
+- Tray **Show/Hide Window** remains the explicit way to hide or restore the window on all platforms.
 
 ### Quit cleanup
 
 - `before-quit` sets `app.isQuitting = true`
 - Periodic updater interval is disposed
 - Tray instance is destroyed (`tray.destroy()`)
+- Embedded local runtime cleanup runs via `localRuntimeManager.stopLocal()`; external CLI runtime mode remains a no-op through the runtime manager
 - `mainWindow` is nulled on `closed` for clean re-creation on macOS `activate`
 
 ## Preload APIs (`window.electronAPI` and `window.fusionShell`)
