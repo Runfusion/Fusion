@@ -6937,7 +6937,10 @@
     "serverUrlLabel": "伺服器 URL",
     "serverUrlProtocolError": "伺服器 URL 必須使用 http 或 https",
     "use": "使用",
-    "useProfile": "使用 {{name}}"
+    "useProfile": "使用 {{name}}",
+    "localServerTitle": "本機伺服器",
+    "localServerDescription": "使用此裝置上的內建 Fusion 伺服器。",
+    "localServerActive": "目前"
   },
   "skills": {
     "addSkill": "新增技能…",

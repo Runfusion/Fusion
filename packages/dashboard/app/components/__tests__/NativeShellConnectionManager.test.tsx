@@ -22,20 +22,81 @@ function createShellApi() {
   };
 }
 
+const remoteProfile = {
+  id: "remote-1",
+  name: "Remote",
+  serverUrl: "https://fusion.example.com",
+  authToken: "token-value",
+  createdAt: "",
+  updatedAt: "",
+};
+
 describe("NativeShellConnectionManager", () => {
-  it("switches desktop mode", async () => {
+  it("shows a desktop Local Server destination and switches back from an active remote profile", async () => {
     const shellApi = createShellApi();
     render(
       <NativeShellConnectionManager
         open={true}
         shellApi={shellApi}
-        shellState={{ host: "desktop-shell", desktopMode: "remote", activeProfileId: null, profiles: [] }}
+        shellState={{ host: "desktop-shell", desktopMode: "remote", activeProfileId: "remote-1", profiles: [remoteProfile] }}
         onClose={vi.fn()}
       />,
     );
 
-    fireEvent.click(screen.getByText("Local"));
+    expect(screen.getByRole("button", { name: /Local Server/i })).toBeInTheDocument();
+    expect(screen.getByText("Remote")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Local Server/i }));
+
     await waitFor(() => expect(shellApi.setDesktopMode).toHaveBeenCalledWith("local"));
+    expect(shellApi.setActiveProfile).not.toHaveBeenCalled();
+  });
+
+  it("marks Local Server active in desktop local mode and switches remote profile use into remote mode", async () => {
+    const shellApi = createShellApi();
+    render(
+      <NativeShellConnectionManager
+        open={true}
+        shellApi={shellApi}
+        shellState={{
+          host: "desktop-shell",
+          desktopMode: "local",
+          activeProfileId: "remote-1",
+          profiles: [
+            remoteProfile,
+            { ...remoteProfile, id: "remote-2", serverUrl: "https://other.example.com" },
+          ],
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Local Server/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Active")).toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByLabelText("Use Remote")[1]!);
+
+    await waitFor(() => {
+      expect(shellApi.setDesktopMode).toHaveBeenCalledWith("remote");
+      expect(shellApi.setActiveProfile).toHaveBeenCalledWith("remote-2");
+    });
+    expect(shellApi.setDesktopMode.mock.invocationCallOrder[0]).toBeLessThan(shellApi.setActiveProfile.mock.invocationCallOrder[0]);
+  });
+
+  it("renders Local Server deterministically with no remote profiles and an unset desktop mode", () => {
+    const shellApi = createShellApi();
+    render(
+      <NativeShellConnectionManager
+        open={true}
+        shellApi={shellApi}
+        shellState={{ host: "desktop-shell", activeProfileId: null, profiles: [] }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Local Server/i })).toBeInTheDocument();
+    expect(screen.getByText("No remote servers saved yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add server" })).toBeInTheDocument();
   });
 
   it("shows active profile indicator and requires delete confirmation", async () => {
@@ -49,6 +110,7 @@ describe("NativeShellConnectionManager", () => {
       />,
     );
 
+    expect(screen.queryByRole("button", { name: /Local Server/i })).toBeNull();
     expect(screen.getByText("Active")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Delete Prod"));
     expect(screen.getByRole("alertdialog", { name: "Delete server confirmation" })).toBeInTheDocument();
@@ -79,7 +141,7 @@ describe("NativeShellConnectionManager", () => {
     });
   });
 
-  it("supports empty-state recovery and QR import", async () => {
+  it("supports empty-state recovery and QR import without a mobile Local Server option", async () => {
     const shellApi = createShellApi();
     render(
       <NativeShellConnectionManager
@@ -90,6 +152,7 @@ describe("NativeShellConnectionManager", () => {
       />,
     );
 
+    expect(screen.queryByRole("button", { name: /Local Server/i })).toBeNull();
     expect(screen.getByText("No remote servers saved yet.")).toBeInTheDocument();
     fireEvent.click(screen.getAllByText("Scan QR")[0]!);
 

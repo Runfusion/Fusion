@@ -24,6 +24,25 @@
   gap: var(--space-md);
 }
 
+.native-shell-connection-manager__destination {
+  width: 100%;
+  border-color: var(--border);
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+}
+
+.native-shell-connection-manager__destination:hover,
+.native-shell-connection-manager__destination:focus-visible {
+  border-color: var(--accent-primary);
+}
+
+.native-shell-connection-manager__destination > span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
 .native-shell-connection-manager__profile-actions {
   display: inline-flex;
   gap: var(--space-sm);

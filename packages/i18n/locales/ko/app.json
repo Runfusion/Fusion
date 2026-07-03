@@ -6937,7 +6937,10 @@
     "serverUrlLabel": "서버 URL",
     "serverUrlProtocolError": "서버 URL은 http 또는 https를 사용해야 합니다",
     "use": "사용",
-    "useProfile": "{{name}} 사용"
+    "useProfile": "{{name}} 사용",
+    "localServerTitle": "로컬 서버",
+    "localServerDescription": "이 기기의 내장 Fusion 서버를 사용합니다.",
+    "localServerActive": "현재"
   },
   "skills": {
     "addSkill": "스킬 추가…",

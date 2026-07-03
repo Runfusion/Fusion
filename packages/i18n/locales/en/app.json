@@ -6947,7 +6947,10 @@
     "serverUrlLabel": "Server URL",
     "serverUrlProtocolError": "Server URL must use http or https",
     "use": "Use",
-    "useProfile": "Use {{name}}"
+    "useProfile": "Use {{name}}",
+    "localServerTitle": "Local Server",
+    "localServerDescription": "Use the embedded Fusion server on this device.",
+    "localServerActive": "Current"
   },
   "skills": {
     "addSkill": "Add a skill…",
