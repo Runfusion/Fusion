@@ -136,11 +136,14 @@ FN-6811 recurrence #6 found the attach terminal imported its own CSS chunk but d
 /*
 FNXC:Terminal 2026-06-18-07:34:
 SessionTerminal hosts the same xterm DOM/canvas measurement subtree as TerminalModal under a different wrapper. Apply the FN-6638 real-iOS text-size-adjust invariant here too so CLI-agent attach terminals do not inherit Safari-inflated ASCII cell metrics while still using the shared font-load remeasure path for every preset and desktop WebGL.
+
+FNXC:Terminal 2026-07-03-00:14:
+Mirror TerminalModal's post-FN-7456 iPhone fix on the embedded attach surface: iOS keyboard-open 10px/12px terminal cells must ignore browser text-size inflation while keeping the user's exact terminal font-size preference and DOM-only prompt glyph fallback.
 */
 .cli-session-terminal__viewport,
 .cli-session-terminal__viewport * {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
 }
 
 /*

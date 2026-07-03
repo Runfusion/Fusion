@@ -50,10 +50,10 @@ function findSessionTerminalGlyphFallbackRule(): string {
   return match?.[1] ?? "";
 }
 
-function expectTextSizeAdjustPinned(ruleBody: string): void {
+function expectTextSizeAdjustDisabledForExactXtermMetrics(ruleBody: string): void {
   expect(ruleBody).not.toBe("");
-  expect(ruleBody).toMatch(/-webkit-text-size-adjust\s*:\s*100%\s*;/);
-  expect(ruleBody).toMatch(/text-size-adjust\s*:\s*100%\s*;/);
+  expect(ruleBody).toMatch(/-webkit-text-size-adjust\s*:\s*none\s*;/);
+  expect(ruleBody).toMatch(/text-size-adjust\s*:\s*none\s*;/);
 }
 
 function findTerminalSymbolsFontFaceRule(cssSource = css): string {
@@ -120,12 +120,12 @@ describe("terminal helper textarea CSS contract", () => {
     expect(ruleBody).toMatch(/opacity:\s*0\.01\b/);
   });
 
-  it("pins iOS text-size adjustment across the xterm measurement subtree", () => {
-    expectTextSizeAdjustPinned(findTerminalTextSizingRule());
+  it("disables iOS text-size adjustment across the xterm measurement subtree", () => {
+    expectTextSizeAdjustDisabledForExactXtermMetrics(findTerminalTextSizingRule());
   });
 
-  it("pins iOS text-size adjustment on the SessionTerminal xterm viewport", () => {
-    expectTextSizeAdjustPinned(findSessionTerminalTextSizingRule());
+  it("disables iOS text-size adjustment on the SessionTerminal xterm viewport", () => {
+    expectTextSizeAdjustDisabledForExactXtermMetrics(findSessionTerminalTextSizingRule());
   });
 
   it("keeps a DOM glyph fallback mechanism outside xterm measurement options", () => {

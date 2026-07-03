@@ -117,6 +117,7 @@ import type { GraphWorkflowSelection } from "./components/GraphWorkflowSwitcherS
 import "./components/ChatView.css";
 
 const IS_TEST_ENV = import.meta.env.MODE === "test";
+export const TASK_DETAIL_FLOATING_GEOMETRY_KEY = "floating-window:task-detail";
 
 const AgentsView = lazy(() => import("./components/AgentsView").then((m) => ({ default: m.AgentsView })));
 const DocumentsView = lazy(() => import("./components/DocumentsView").then((m) => ({ default: m.DocumentsView })));
@@ -1634,6 +1635,9 @@ function AppInner() {
 
       FNXC:TaskDetail 2026-06-22-12:20:
       Task pop-outs use TaskDetailContent's own gray header as the only visible header, matching the one-header fixed task modal while keeping FloatingWindow drag/resize. The generic Maximize title chrome is hidden; close now lives beside edit inside the task header.
+
+      FNXC:TaskPopupGeometry 2026-07-03-00:00:
+      Every task-detail FloatingWindow keeps its per-task windowKey for DOM identity, dedupe, cascade fallback, and z-index independence, but all task-detail popups share one persisted geometry key so operators do not resize or reposition the popup between tasks.
       */}
       {poppedOutTasks.map((snapshot) => {
         const liveTask = tasks.find((candidate) => candidate.id === snapshot.id) ?? snapshot;
@@ -1647,6 +1651,7 @@ function AppInner() {
             hideHeader
             dragHandleSelector=".task-detail-content--embedded > .modal-header"
             className="floating-window--task-detail"
+            persistGeometryKey={TASK_DETAIL_FLOATING_GEOMETRY_KEY}
           >
             <TaskDetailContent
               task={liveTask}

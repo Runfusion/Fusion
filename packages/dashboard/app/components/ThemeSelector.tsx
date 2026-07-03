@@ -41,10 +41,10 @@ export function ThemeSelector({
 }: ThemeSelectorProps) {
   const { t } = useTranslation("app");
   const handleReset = useCallback(() => {
-    onThemeModeChange("dark");
+    onThemeModeChange("system");
     /*
-    FNXC:DashboardTheming 2026-06-30-00:00:
-    Reset to defaults must match the new unset-install fallback so Settings restores Shadcn Ember without migrating explicit Ocean or legacy theme choices.
+    FNXC:DashboardTheming 2026-07-03-00:00:
+    Reset to defaults must match fresh-install behavior: System mode follows the OS preference while Shadcn Ember stays the default color theme, without migrating explicit Ocean or legacy theme choices.
     */
     onColorThemeChange("shadcn-ember");
     onDashboardFontScaleChange(100);

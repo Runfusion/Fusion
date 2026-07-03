@@ -100,11 +100,26 @@ describe("useTheme", () => {
     document.querySelectorAll('link[id="theme-data"]').forEach((link) => link.remove());
   });
 
-  it("initializes with default values when localStorage is empty", () => {
+  it("initializes with system theme and Shadcn Ember color defaults when localStorage is empty", () => {
+    currentSystemDark = false;
+
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.themeMode).toBe("dark");
+    expect(result.current.themeMode).toBe("system");
+    expect(result.current.resolvedThemeMode).toBe("light");
     expect(result.current.colorTheme).toBe("shadcn-ember");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn-ember");
+  });
+
+  it("resolves fresh system theme to dark when the OS preference is dark", () => {
+    currentSystemDark = true;
+
+    const { result } = renderHook(() => useTheme());
+
+    expect(result.current.themeMode).toBe("system");
+    expect(result.current.resolvedThemeMode).toBe("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
 
   it("initializes from localStorage", () => {
@@ -138,7 +153,7 @@ describe("useTheme", () => {
 
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.themeMode).toBe("dark");
+    expect(result.current.themeMode).toBe("system");
 
     await waitFor(() => {
       expect(result.current.themeMode).toBe("light");
@@ -756,11 +771,14 @@ describe("useTheme", () => {
   });
 
   it("ignores invalid theme mode in localStorage", () => {
+    currentSystemDark = false;
     localStorageMock[THEME_MODE_STORAGE_KEY] = "invalid";
 
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.themeMode).toBe("dark");
+    expect(result.current.themeMode).toBe("system");
+    expect(result.current.resolvedThemeMode).toBe("light");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
   it("remaps legacy shadcn mono color theme from localStorage", () => {
@@ -819,7 +837,7 @@ describe("useTheme", () => {
 
     const { result } = renderHook(() => useTheme());
 
-    expect(result.current.themeMode).toBe("dark");
+    expect(result.current.themeMode).toBe("system");
     expect(result.current.colorTheme).toBe("shadcn-ember");
   });
 
@@ -877,6 +895,31 @@ describe("useTheme", () => {
 });
 
 describe("getThemeInitScript", () => {
+  let scriptSystemDark = true;
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    scriptSystemDark = true;
+    localStorage.clear();
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.removeAttribute("data-color-theme");
+    document.documentElement.style.fontSize = "";
+    document.querySelectorAll('link[id="theme-data"]').forEach((link) => link.remove());
+    const themeDataLink = document.createElement("link");
+    themeDataLink.id = "theme-data";
+    themeDataLink.rel = "stylesheet";
+    themeDataLink.href = "/theme-data.css";
+    document.head.appendChild(themeDataLink);
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(prefers-color-scheme: dark)" ? scriptSystemDark : false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+    }));
+  });
+
   it("returns a script string", () => {
     const script = getThemeInitScript();
 
@@ -922,6 +965,64 @@ describe("getThemeInitScript", () => {
     expect(script).toContain("prefers-color-scheme");
     expect(script).toContain("systemDark");
     expect(script).toContain("effectiveMode");
+    expect(script).toContain("mode = localStorage.getItem('kb-dashboard-theme-mode') || 'system'");
+  });
+
+  it("pre-hydration script resolves fresh startup from light OS preference", () => {
+    scriptSystemDark = false;
+
+    window.eval(getThemeInitScript());
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn-ember");
+  });
+
+  it("pre-hydration script resolves fresh startup from dark OS preference", () => {
+    scriptSystemDark = true;
+
+    window.eval(getThemeInitScript());
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(document.documentElement.getAttribute("data-color-theme")).toBe("shadcn-ember");
+  });
+
+  it("pre-hydration script preserves explicit cached dark and light modes", () => {
+    scriptSystemDark = false;
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, "dark");
+    window.eval(getThemeInitScript());
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+
+    scriptSystemDark = true;
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, "light");
+    window.eval(getThemeInitScript());
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("pre-hydration script treats invalid cached theme mode as system", () => {
+    scriptSystemDark = false;
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, "sepia-but-mode");
+
+    window.eval(getThemeInitScript());
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+  });
+
+  it("pre-hydration script catch fallback follows system preference", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("localStorage disabled");
+      },
+      setItem: () => {},
+      removeItem: () => {},
+    });
+    scriptSystemDark = false;
+
+    window.eval(getThemeInitScript());
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+
+    scriptSystemDark = true;
+    window.eval(getThemeInitScript());
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
 
   it("pre-hydration script applies only sanitized shadcn-custom overrides", () => {

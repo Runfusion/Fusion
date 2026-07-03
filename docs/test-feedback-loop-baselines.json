@@ -117,6 +117,119 @@
         "plugins/fusion-plugin-compound-engineering/src/__tests__/work-bridge.test.ts"
       ],
       "notes": "FN-6612 first-cycle publication artifact measured in this worktree: pnpm test:gate 7.2s; pnpm test 36.9s."
+    },
+    {
+      "capturedAt": "2026-07-03T08:47:02.631Z",
+      "cycle": "2026-W27",
+      "gateWallTimeMs": 9514,
+      "pnpmTestWallTimeMs": 43865,
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "slowest20": [
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "durationMs": 26500
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "durationMs": 24700
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "durationMs": 22000
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "durationMs": 21200
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "durationMs": 16900
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "durationMs": 16000
+        },
+        {
+          "packageName": "@runfusion/fusion",
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "durationMs": 15700
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "durationMs": 14800
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "durationMs": 14600
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "durationMs": 14100
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "durationMs": 13700
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "durationMs": 13600
+        },
+        {
+          "packageName": "@fusion/core",
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "durationMs": 13400
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "durationMs": 12700
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "durationMs": 11800
+        },
+        {
+          "packageName": "@fusion/engine",
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "durationMs": 11600
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "durationMs": 11300
+        },
+        {
+          "packageName": "@fusion-plugin-examples/compound-engineering",
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "durationMs": 11000
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "durationMs": 10700
+        },
+        {
+          "packageName": "@fusion/dashboard",
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "durationMs": 10700
+        }
+      ],
+      "flakeCount": 0,
+      "uniqueQuarantinedFileCount": 0,
+      "quarantinedFiles": [],
+      "notes": "FN-7463 refresh: pnpm test:gate 9514ms; pnpm test 43865ms; quarantine ledger 0 entries; FN-5048 candidate packages/dashboard/src/__tests__/insights-routes.test.ts (slowest current snapshot at 26500ms)."
     }
   ]
 }

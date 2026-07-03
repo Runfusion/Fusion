@@ -615,14 +615,6 @@ The Direct-chat context budget indicator is a secondary desktop/tablet header af
   white-space: nowrap;
 }
 
-.chat-mobile-session-trigger .chat-model-tag {
-  flex-shrink: 0;
-  max-width: calc(var(--space-xl) * 4);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .chat-mobile-session-trigger .provider-icon,
 .chat-mobile-session-trigger > svg:first-child {
   flex-shrink: 0;

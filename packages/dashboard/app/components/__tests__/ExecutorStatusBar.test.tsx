@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import fs from "fs";
 import path from "path";
@@ -42,7 +42,7 @@ vi.mock("../EngineControlMenu", async () => {
 });
 
 import { useExecutorStats } from "../../hooks/useExecutorStats";
-import type { ExecutorStats } from "../../api";
+import type { AiSessionSummary, ExecutorStats } from "../../api";
 
 const mockUseExecutorStats = useExecutorStats as ReturnType<typeof vi.fn>;
 const executorStatusBarCss = fs.readFileSync(path.join(__dirname, "../ExecutorStatusBar.css"), "utf-8");
@@ -78,6 +78,32 @@ function makeTask(id: string, column: string, overrides: Record<string, unknown>
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...overrides,
+  };
+}
+
+function getSegmentByLabel(label: string): HTMLElement {
+  const labelElement = screen
+    .getAllByText(label)
+    .find((element) => element.classList.contains("executor-status-bar__label"));
+  expect(labelElement).toBeTruthy();
+  const segment = labelElement?.closest(".executor-status-bar__segment");
+  expect(segment).toBeTruthy();
+  return segment as HTMLElement;
+}
+
+function expectSegmentCount(label: string, count: string): void {
+  expect(within(getSegmentByLabel(label)).getByText(count)).toBeInTheDocument();
+}
+
+function makeBackgroundSession(id: string, status: AiSessionSummary["status"]): AiSessionSummary {
+  return {
+    id,
+    type: "planning",
+    status,
+    title: `Background ${id}`,
+    projectId: "project-1",
+    lockedByTab: null,
+    updatedAt: "2026-07-03T12:00:00.000Z",
   };
 }
 
@@ -118,7 +144,63 @@ describe("ExecutorStatusBar", () => {
       expect(statusBar).toHaveTextContent("Blocked");
       expect(statusBar).toHaveTextContent("Queued");
       expect(statusBar).toHaveTextContent("In Review");
+      expect(statusBar).not.toHaveTextContent("Done");
       expect(statusBar).not.toHaveTextContent("Escalated");
+    });
+
+    it.each(["desktop", "tablet"] as const)("associates every visible footer count with its label on %s", (viewportMode) => {
+      viewportModeMock.value = viewportMode;
+      vi.mocked(mockUseExecutorStats).mockReturnValue({
+        stats: {
+          ...defaultStats,
+          queuedTaskCount: 9,
+          runningTaskCount: 2,
+          maxConcurrent: 4,
+          stuckTaskCount: 1,
+          blockedTaskCount: 2,
+          inReviewCount: 1,
+        },
+        loading: false,
+        error: null,
+        refresh: vi.fn(),
+      });
+      const tasks = [
+        makeTask("FN-010", "in-progress", { columnMovedAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }),
+        makeTask("FN-101", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-102", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-103", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-104", "todo", { blockedBy: "FN-010" }),
+        makeTask("FN-105", "todo", { blockedBy: "FN-010" }),
+      ];
+
+      render(
+        <ExecutorStatusBar
+          tasks={tasks as any[]}
+          staleHighFanoutBlockerAgeThresholdMs={60 * 60 * 1000}
+          backgroundSessions={[
+            makeBackgroundSession("ai-1", "generating"),
+            makeBackgroundSession("ai-2", "awaiting_input"),
+          ]}
+          backgroundGenerating={1}
+          backgroundNeedsInput={1}
+          onOpenBackgroundSession={vi.fn()}
+          onDismissBackgroundSession={vi.fn()}
+        />,
+      );
+
+      const statusBar = screen.getByRole("status");
+      expectSegmentCount("Queued", "9");
+      expectSegmentCount("Running", "2");
+      expect(within(getSegmentByLabel("Running")).getByText("4")).toHaveClass("executor-status-bar__max");
+      expectSegmentCount("Stuck", "1");
+      expectSegmentCount("Blocked", "2");
+      expectSegmentCount("In Review", "1");
+      expect(statusBar).toHaveTextContent("Overlap queue");
+      expect(statusBar).toHaveTextContent("FN-010 · 5 todo");
+      expect(statusBar).toHaveTextContent("AI 2");
+      expect(statusBar).not.toHaveTextContent("Done");
+      expect(statusBar.firstElementChild).not.toHaveClass("executor-status-bar__divider");
+      expect(statusBar.lastElementChild).toHaveClass("executor-status-bar__segment--engine-controls");
     });
 
     it("shows overlap bottleneck summary with stable tie-break ordering", () => {

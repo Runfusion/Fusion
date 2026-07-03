@@ -57,6 +57,9 @@ function deriveExecutorState(
 
 /**
  * Derive statistics from the task list.
+ *
+ * FNXC:ExecutorStatusBar 2026-07-03-00:18:
+ * Footer task counters must mirror the board's operator-facing active work states: Queued includes todo plus planning/triage work, Running and Stuck stay scoped to in-progress execution, Done remains absent from the footer contract unless a labeled Done segment is introduced, and archived/completed/non-planning custom lanes never inflate active pressure counts.
  */
 function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFetchTimeMs?: number): Pick<
   ExecutorStats,
@@ -77,15 +80,20 @@ function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFe
         }
         break;
       case "todo":
+      case "triage":
         queuedTaskCount++;
         break;
       case "in-review":
         inReviewCount++;
         break;
+      default:
+        if (task.status === "planning" && !isTerminalOrActiveTaskColumn(task.column)) {
+          queuedTaskCount++;
+        }
+        break;
     }
 
-    // Count tasks with blockedBy set
-    if (task.blockedBy && task.blockedBy.length > 0) {
+    if (hasActionableBlockedBy(task.blockedBy)) {
       blockedTaskCount++;
     }
   }
@@ -97,6 +105,18 @@ function deriveStatsFromTasks(tasks: Task[], taskStuckTimeoutMs?: number, lastFe
     queuedTaskCount,
     inReviewCount,
   };
+}
+
+function isTerminalOrActiveTaskColumn(column: Task["column"]): boolean {
+  return column === "in-progress" || column === "in-review" || column === "done" || column === "archived";
+}
+
+function hasActionableBlockedBy(blockedBy: Task["blockedBy"] | string[] | null): boolean {
+  if (Array.isArray(blockedBy)) {
+    return blockedBy.some((id) => typeof id === "string" && id.trim().length > 0);
+  }
+
+  return typeof blockedBy === "string" && blockedBy.trim().length > 0;
 }
 
 /**

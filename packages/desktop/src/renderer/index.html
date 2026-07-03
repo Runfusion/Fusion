@@ -8,7 +8,11 @@
       // Theme initialization - runs before React to prevent flash
       (function () {
         try {
-          var mode = localStorage.getItem("kb-dashboard-theme-mode") || "dark";
+          var mode = localStorage.getItem("kb-dashboard-theme-mode") || "system";
+          var validModes = ["dark", "light", "system"];
+          if (!validModes.includes(mode)) {
+            mode = "system";
+          }
           var colorTheme = localStorage.getItem("kb-dashboard-color-theme") || "shadcn-ember";
           var validThemes = [
             "default",
@@ -95,12 +99,17 @@
             colorTheme = "shadcn-ember";
           }
 
+          // FNXC:DashboardTheming 2026-07-03-00:00: Desktop shell startup mirrors dashboard startup: default System mode resolves from prefers-color-scheme before React hydration.
           var systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           var effectiveMode = mode === "system" ? (systemDark ? "dark" : "light") : mode;
           document.documentElement.setAttribute("data-theme", effectiveMode);
           document.documentElement.setAttribute("data-color-theme", colorTheme);
         } catch (error) {
-          document.documentElement.setAttribute("data-theme", "dark");
+          var fallbackSystemDark = false;
+          try {
+            fallbackSystemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          } catch (matchMediaError) {}
+          document.documentElement.setAttribute("data-theme", fallbackSystemDark ? "dark" : "light");
           document.documentElement.setAttribute("data-color-theme", "shadcn-ember");
         }
       })();

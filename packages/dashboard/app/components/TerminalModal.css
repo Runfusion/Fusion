@@ -953,12 +953,15 @@ The terminal header pop-out/dock affordance is an icon-only utility control. It 
 
 /*
 FNXC:Terminal 2026-06-18-07:04:
-Real iOS Safari recurrence #4 kept wide ASCII cells even after unicode-range scoping and symbols-last ordering; the supplied harness measured AGENTS.md at the same 66.76px for every stack, so ordering is ruled out. Pin text-size adjustment across xterm's measurement subtree so mobile WebKit cannot inflate DOM/canvas cell metrics, while WebGL/desktop keep the same 100% text scale and every terminal preset still resolves through terminalPreferences.
+Real iOS Safari recurrence #4 kept wide ASCII cells even after unicode-range scoping and symbols-last ordering; the supplied harness measured AGENTS.md at the same 66.76px for every stack, so ordering is ruled out. Pin text-size adjustment across xterm's measurement subtree so mobile WebKit cannot inflate DOM/canvas cell metrics, while WebGL/desktop keep the same exact user-selected terminal font size and every terminal preset still resolves through terminalPreferences.
+
+FNXC:Terminal 2026-07-03-00:10:
+Post-FN-7456 real iPhone Safari can still render initial keyboard-open 12px terminal text with excessive inter-character spacing when browser text-size adjustment inflates the xterm measurement subtree. Disable text-size adjustment, not the terminal font-size preference, so WebKit measures the same 10px/12px ASCII cells that xterm renders before any close/open, orientation, reconnect, or font reset can repair spacing.
 */
 .terminal-xterm,
 .terminal-xterm * {
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
 }
 
 /*

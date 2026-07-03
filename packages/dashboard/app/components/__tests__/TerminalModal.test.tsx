@@ -34,6 +34,12 @@ function expectMeasurementSafeFontStack(stack: string): void {
   expect(families).not.toContain(TERMINAL_SYMBOLS_FONT_FAMILY);
 }
 
+function expectTextSizeAdjustmentDisabledForExactXtermMetrics(cssSource: string): void {
+  const match = cssSource.match(/\.terminal-xterm\s*,\s*\.terminal-xterm \*\s*\{([^}]*)\}/);
+  expect(match?.[1] ?? "").toMatch(/-webkit-text-size-adjust\s*:\s*none\s*;/);
+  expect(match?.[1] ?? "").toMatch(/text-size-adjust\s*:\s*none\s*;/);
+}
+
 // Mock hooks and API
 vi.mock("../../hooks/useTerminal", () => ({
   useTerminal: vi.fn(),
@@ -5095,6 +5101,7 @@ describe("TerminalModal — FN-872 real-device keyboard overlap refinement", () 
       await waitFor(() => expect(resizeForInitialIOSKeyboard).toHaveBeenCalledWith(80, 24));
       expectMeasurementSafeFontStack(mockTerminalInstance.options.fontFamily as string);
       expect(mockTerminalInstance.options.fontSize).toBe(12);
+      expectTextSizeAdjustmentDisabledForExactXtermMetrics(terminalModalCss);
     } finally {
       helperTextarea.remove();
       Object.defineProperty(window, "screen", { configurable: true, value: originalScreen });

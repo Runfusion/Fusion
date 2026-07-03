@@ -641,7 +641,7 @@ describe("ThemeSelector", () => {
     );
 
     fireEvent.click(screen.getByLabelText("Reset to default theme"));
-    expect(onThemeModeChange).toHaveBeenCalledWith("dark");
+    expect(onThemeModeChange).toHaveBeenCalledWith("system");
     expect(onColorThemeChange).toHaveBeenCalledWith("shadcn-ember");
   });
 

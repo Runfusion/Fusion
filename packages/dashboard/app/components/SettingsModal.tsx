@@ -679,8 +679,12 @@ export function SettingsModal({
   addToast,
   projectId,
   initialSection,
-  themeMode = "dark",
-  colorTheme = "ocean",
+  /*
+  FNXC:DashboardTheming 2026-07-03-00:00:
+  Settings/onboarding surfaces that render before App threads persisted appearance settings should mirror fresh startup defaults: System mode with Shadcn Ember.
+  */
+  themeMode = "system",
+  colorTheme = "shadcn-ember",
   onThemeModeChange,
   onColorThemeChange,
   dashboardFontScalePct = 100,

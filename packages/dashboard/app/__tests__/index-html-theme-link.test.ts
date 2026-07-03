@@ -25,6 +25,24 @@ describe("index.html theme-data boot contract", () => {
     expect(script).toContain("style.fontSize");
   });
 
+  it("defaults web pre-hydration to system theme mode", () => {
+    expect(script).toContain("localStorage.getItem('kb-dashboard-theme-mode') || 'system'");
+    expect(script).toContain("var validModes = ['dark', 'light', 'system']");
+    expect(script).toContain("mode = 'system'");
+    expect(script).not.toContain("localStorage.getItem('kb-dashboard-theme-mode') || 'dark'");
+    expect(script).toContain("fallbackSystemDark ? 'dark' : 'light'");
+  });
+
+  it("keeps desktop renderer pre-hydration aligned with system default", () => {
+    const desktopHtml = readFileSync(resolve(PACKAGE_ROOT, "../desktop/src/renderer/index.html"), "utf8");
+
+    expect(desktopHtml).toContain('localStorage.getItem("kb-dashboard-theme-mode") || "system"');
+    expect(desktopHtml).toContain('var validModes = ["dark", "light", "system"]');
+    expect(desktopHtml).toContain('mode = "system"');
+    expect(desktopHtml).not.toContain('localStorage.getItem("kb-dashboard-theme-mode") || "dark"');
+    expect(desktopHtml).toContain('fallbackSystemDark ? "dark" : "light"');
+  });
+
   it("keeps themeDataUrl resolution branches", () => {
     expect(script).toContain("http://");
     expect(script).toContain("https://");

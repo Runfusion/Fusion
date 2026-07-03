@@ -4,42 +4,44 @@
 
 ## Latest #leads summary
 
-- Cycle: **2026-W25** (2026-06-18T02:11:11.998Z)
-- Gate suite wall-time: **7.2s** (trend: n/a)
-- `pnpm test` wall-time: **36.9s** (trend: n/a)
-- Flake/quarantine count: **5** ledger entries across **4** files
-- Timing snapshot source: `scripts/test-timings.json` captured at **2026-06-03T23:45:49.672Z**
+- Cycle: **2026-W27** (2026-07-03T08:47:02.631Z)
+- Gate suite wall-time: **9.5s** (trend: +2.3s)
+- `pnpm test` wall-time: **43.9s** (trend: +7.0s)
+- Flake/quarantine count: **0** ledger entries across **0** files
+- Timing snapshot source: `scripts/test-timings.json` captured at **2026-06-27T05:41:42.568Z**
+- Notes: FN-7463 refresh: pnpm test:gate 9514ms; pnpm test 43865ms; quarantine ledger 0 entries; FN-5048 candidate packages/dashboard/src/__tests__/insights-routes.test.ts (slowest current snapshot at 26500ms).
 
 ## Slowest 20 test files
 
 | Rank | File | Package | Duration |
 |---:|---|---|---:|
-| 1 | `packages/engine/src/__tests__/reliability-interactions/shared-branch-group-lifecycle.test.ts` | @fusion/engine | 13.9s |
-| 2 | `packages/core/src/__tests__/agent-store.test.ts` | @fusion/core | 11.6s |
-| 3 | `packages/dashboard/src/__tests__/routes-agents.test.ts` | @fusion/dashboard | 11.2s |
-| 4 | `packages/core/src/__tests__/mission-store.test.ts` | @fusion/core | 10.7s |
-| 5 | `packages/core/src/__tests__/db.test.ts` | @fusion/core | 10.1s |
-| 6 | `packages/dashboard/src/__tests__/routes-git.test.ts` | @fusion/dashboard | 9.4s |
-| 7 | `packages/engine/src/__tests__/reliability-interactions/branch-group-automerge-precedence.test.ts` | @fusion/engine | 9.0s |
-| 8 | `packages/engine/src/__tests__/merger-ai.test.ts` | @fusion/engine | 8.7s |
-| 9 | `packages/engine/src/__tests__/reliability-interactions/branch-group-merge-routing.test.ts` | @fusion/engine | 8.4s |
-| 10 | `packages/engine/src/__tests__/reliability-interactions/branch-group-promotion-gate.test.ts` | @fusion/engine | 8.4s |
-| 11 | `packages/core/src/__tests__/task-documents.test.ts` | @fusion/core | 8.3s |
-| 12 | `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts` | @fusion/engine | 7.8s |
-| 13 | `packages/cli/src/__tests__/extension.test.ts` | @runfusion/fusion | 7.0s |
-| 14 | `packages/core/src/__tests__/run-audit.test.ts` | @fusion/core | 6.9s |
-| 15 | `packages/engine/src/__tests__/reliability-interactions/branch-group-promotion.test.ts` | @fusion/engine | 6.1s |
-| 16 | `packages/dashboard/src/__tests__/routes-planning.test.ts` | @fusion/dashboard | 5.6s |
-| 17 | `packages/core/src/__tests__/store-merge-queue.test.ts` | @fusion/core | 5.2s |
-| 18 | `packages/dashboard/app/components/__tests__/FileEditor.test.tsx` | @fusion/dashboard | 5.1s |
-| 19 | `packages/engine/src/__tests__/reliability-interactions/integration-worktree-state.test.ts` | @fusion/engine | 4.9s |
-| 20 | `packages/engine/src/__tests__/self-healing-already-merged.real-git.test.ts` | @fusion/engine | 4.9s |
+| 1 | `packages/dashboard/src/__tests__/insights-routes.test.ts` | @fusion/dashboard | 26.5s |
+| 2 | `packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts` | @fusion/engine | 24.7s |
+| 3 | `packages/dashboard/src/__tests__/workflow-routes.test.ts` | @fusion/dashboard | 22.0s |
+| 4 | `packages/core/src/__tests__/db.test.ts` | @fusion/core | 21.2s |
+| 5 | `packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx` | @fusion/dashboard | 16.9s |
+| 6 | `packages/core/src/__tests__/mission-store.test.ts` | @fusion/core | 16.0s |
+| 7 | `packages/cli/src/__tests__/extension.test.ts` | @runfusion/fusion | 15.7s |
+| 8 | `packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx` | @fusion/dashboard | 14.8s |
+| 9 | `packages/dashboard/app/components/__tests__/App.test.tsx` | @fusion/dashboard | 14.6s |
+| 10 | `packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx` | @fusion/dashboard | 14.1s |
+| 11 | `packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx` | @fusion/dashboard | 13.7s |
+| 12 | `packages/dashboard/src/__tests__/routes-auth.test.ts` | @fusion/dashboard | 13.6s |
+| 13 | `packages/core/src/__tests__/agent-store.test.ts` | @fusion/core | 13.4s |
+| 14 | `packages/engine/src/__tests__/workspace-merger-idempotency.test.ts` | @fusion/engine | 12.7s |
+| 15 | `packages/engine/src/__tests__/self-healing-workspace.test.ts` | @fusion/engine | 11.8s |
+| 16 | `packages/engine/src/__tests__/pr-response-run.test.ts` | @fusion/engine | 11.6s |
+| 17 | `packages/dashboard/app/components/__tests__/ListView.test.tsx` | @fusion/dashboard | 11.3s |
+| 18 | `plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts` | @fusion-plugin-examples/compound-engineering | 11.0s |
+| 19 | `packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx` | @fusion/dashboard | 10.7s |
+| 20 | `packages/dashboard/app/components/__tests__/SecretsView.test.tsx` | @fusion/dashboard | 10.7s |
 
 ## Trend
 
 | Cycle | Captured at | Gate suite | `pnpm test` | Quarantine entries | Quarantined files |
 |---|---|---:|---:|---:|---:|
 | 2026-W25 | 2026-06-18T02:11:11.998Z | 7.2s | 36.9s | 5 | 4 |
+| 2026-W27 | 2026-07-03T08:47:02.631Z | 9.5s | 43.9s | 0 | 0 |
 
 ## Operating rules
 

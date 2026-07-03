@@ -364,7 +364,7 @@ export function FloatingWindow({
 
   /*
   FNXC:ChatModal 2026-06-22-14:57:
-  Quick Chat reopens should restore the last desktop floating-window size and position while still clamping onto the current viewport. Keep persistence generic for other FloatingWindow callers, but opt in with persistGeometryKey so existing task pop-outs remain ephemeral.
+  Quick Chat reopens should restore the last desktop floating-window size and position while still clamping onto the current viewport. Keep persistence generic and opt-in with persistGeometryKey so each caller controls whether geometry is shared or isolated.
   */
   useEffect(() => {
     if (!persistGeometryKey || typeof window === "undefined") return;

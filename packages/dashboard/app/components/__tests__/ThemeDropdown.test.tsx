@@ -120,13 +120,18 @@ describe("ThemeDropdown", () => {
     render(
       <ThemeDropdown
         colorTheme="default"
-        themeMode="dark"
+        themeMode="system"
         onColorThemeChange={vi.fn()}
         onThemeModeChange={onThemeModeChange}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /light/i }));
+    const modeGroup = screen.getByRole("radiogroup", { name: /theme mode/i });
+    expect(within(modeGroup).getByRole("button", { name: /light/i })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modeGroup).getByRole("button", { name: /dark/i })).toHaveAttribute("aria-pressed", "false");
+    expect(within(modeGroup).getByRole("button", { name: /system/i })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(within(modeGroup).getByRole("button", { name: /light/i }));
     expect(onThemeModeChange).toHaveBeenCalledWith("light");
   });
 

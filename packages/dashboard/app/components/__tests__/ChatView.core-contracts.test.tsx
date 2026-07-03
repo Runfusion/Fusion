@@ -346,16 +346,27 @@ describe("Chat Session Delete Button", () => {
     const restoreMatchMedia = mockViewportMode("mobile");
     const renameSession = vi.fn().mockResolvedValue(undefined);
     try {
+      const initialSession: ChatSessionInfo = {
+        id: "session-001",
+        agentId: "__fn_agent__",
+        status: "active",
+        title: "Mobile Chat",
+        modelProvider: "minimax",
+        modelId: "m3",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      };
       setupMockChat({
-        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
-        sessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
-        filteredSessions: [{ id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" }],
+        activeSession: initialSession,
+        sessions: [initialSession],
+        filteredSessions: [initialSession],
         renameSession,
       });
 
       const view = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
       expect(screen.getByTestId("chat-mobile-session-trigger")).toHaveTextContent("Mobile Chat");
+      expect(screen.getByTestId("chat-mobile-session-trigger")).not.toHaveTextContent("M3");
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
       await userEvent.click(screen.getByTestId("chat-mobile-session-rename-session-001"));
 
@@ -367,7 +378,7 @@ describe("Chat Session Delete Button", () => {
 
       expect(renameSession).toHaveBeenCalledWith("session-001", "Mobile Renamed");
 
-      const renamedSession: ChatSessionInfo = { id: "session-001", agentId: "agent-001", status: "active", title: "Mobile Renamed", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" };
+      const renamedSession: ChatSessionInfo = { ...initialSession, title: "Mobile Renamed" };
       setupMockChat({
         activeSession: renamedSession,
         sessions: [renamedSession],
@@ -378,7 +389,10 @@ describe("Chat Session Delete Button", () => {
         view.rerender(<ChatView projectId="proj-123" addToast={vi.fn()} />);
       });
 
-      expect(screen.getByTestId("chat-mobile-session-trigger")).toHaveTextContent("Mobile Renamed");
+      const trigger = screen.getByTestId("chat-mobile-session-trigger");
+      expect(trigger).toHaveTextContent("Mobile Renamed");
+      expect(trigger).not.toHaveTextContent("M3");
+      expect(trigger.querySelector(".chat-model-tag")).not.toBeInTheDocument();
       const headerTitle = document.querySelector(".chat-thread-header-title") as HTMLElement | null;
       expect(headerTitle).toHaveTextContent("Mobile Renamed");
     } finally {
@@ -606,6 +620,7 @@ describe("ChatView CSS — mobile thread switcher", () => {
     expect(optionTitleMatch?.[1]).toContain("line-height: normal");
     expect(optionTitleMatch?.[1]).toContain("white-space: normal");
     expect(optionTitleMatch?.[1]).toContain("overflow-wrap: anywhere");
+    expect(css).not.toMatch(/\.chat-mobile-session-trigger\s+\.chat-model-tag/);
   });
 
   it("keeps mobile override for header identity overflow visible so dropdown can render", async () => {

@@ -64,7 +64,7 @@ describe("GlobalSettingsStore", () => {
 
       const raw = await readFile(join(dir, "settings.json"), "utf-8");
       const parsed = JSON.parse(raw);
-      expect(parsed.themeMode).toBe("dark");
+      expect(parsed.themeMode).toBe("system");
       expect(parsed.colorTheme).toBe("shadcn-ember");
       expect(parsed.ntfyEnabled).toBe(false);
     });
@@ -84,6 +84,13 @@ describe("GlobalSettingsStore", () => {
 
       const settings = await store.getSettings();
       expect(settings.themeMode).toBe("light");
+    });
+
+    it.each(["dark", "light", "system"] as const)("preserves explicit %s theme mode choices", async (themeMode) => {
+      await store.init();
+      await store.updateSettings({ themeMode });
+
+      await expect(store.getSettings()).resolves.toMatchObject({ themeMode });
     });
 
     it("adopts the legacy ~/.pi/kb directory when ~/.fusion does not exist", async () => {
@@ -233,7 +240,7 @@ describe("GlobalSettingsStore", () => {
       expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
       expect(settings.ntfyEnabled).toBe(true);
       expect(settings.ntfyTopic).toBe("my-topic");
-      expect(settings.themeMode).toBe("dark"); // preserved default
+      expect(settings.themeMode).toBe("system"); // preserved default
     });
 
     it("does not overwrite an existing invalid settings file with defaults", async () => {
@@ -486,7 +493,7 @@ describe("GlobalSettingsStore", () => {
 
       const result = await store.readRaw();
       expect(result.futureField).toBe("hello");
-      expect(result.themeMode).toBe("dark");
+      expect(result.themeMode).toBe("system");
     });
 
     it("readRaw returns empty object for missing file", async () => {
@@ -555,7 +562,7 @@ describe("GlobalSettingsStore", () => {
 
       // First call populates cache
       const first = await store.getSettings();
-      expect(first.themeMode).toBe("dark");
+      expect(first.themeMode).toBe("system");
 
       // Update settings
       await store.updateSettings({ themeMode: "light" });
@@ -865,7 +872,7 @@ describe("GlobalSettingsStore", () => {
       // Settings file should exist with defaults but no model fields persisted
       const raw = JSON.parse(await readFile(join(dir, "settings.json"), "utf-8"));
       // Only default theme fields should be present
-      expect(raw.themeMode).toBe("dark");
+      expect(raw.themeMode).toBe("system");
       expect(raw.colorTheme).toBe("shadcn-ember");
       // Model fields should not be persisted
       expect(raw.defaultProvider).toBeUndefined();

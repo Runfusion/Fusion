@@ -158,7 +158,11 @@
       // Theme initialization - runs before React to prevent flash
       (function() {
         try {
-          var mode = localStorage.getItem('kb-dashboard-theme-mode') || 'dark';
+          var mode = localStorage.getItem('kb-dashboard-theme-mode') || 'system';
+          var validModes = ['dark', 'light', 'system'];
+          if (!validModes.includes(mode)) {
+            mode = 'system';
+          }
           var colorTheme = localStorage.getItem('kb-dashboard-color-theme') || 'shadcn-ember';
           var validThemes = ['default', 'ocean', 'forest', 'sunset', 'zen', 'berry', 'high-contrast', 'industrial', 'monochrome', 'slate', 'ash', 'air', 'graphite', 'silver', 'solarized', 'factory', 'factory-mono', 'ayu', 'one-dark', 'nord', 'dracula', 'gruvbox', 'tokyo-night', 'catppuccin-mocha', 'github-dark', 'everforest', 'rose-pine', 'kanagawa', 'night-owl', 'palenight', 'monokai-pro', 'slime', 'brutalist', 'neon-city', 'parchment', 'terminal', 'glass', 'glass-silver', 'horizon', 'vitesse', 'outrun', 'snazzy', 'porple', 'espresso', 'mars', 'poimandres', 'ember', 'rust', 'copper', 'foundry', 'carbon', 'sandstone', 'lagoon', 'frost', 'lavender', 'neon-bloom', 'sepia', 'shadcn', 'shadcn-ember', 'shadcn-custom', 'shadcn-blue', 'shadcn-green', 'shadcn-red', 'shadcn-purple', 'shadcn-pink', 'shadcn-orange', 'shadcn-yellow', 'shadcn-mono-red', 'shadcn-mono-blue', 'shadcn-mono-green', 'shadcn-mono-purple', 'shadcn-mono-pink', 'shadcn-mono-orange', 'shadcn-mono-yellow', 'shadcn-black', 'shadcn-gray', 'shadcn-gray-blue'];
           // FNXC:DashboardTheming 2026-06-30-00:00: Unset startup theme is Shadcn Ember; explicit stored legacy ids such as "default" and "ocean" remain valid and must not be migrated.
@@ -172,6 +176,7 @@
             fontScale = 100;
           }
           fontScale = Math.min(125, Math.max(85, Math.round(fontScale)));
+          // FNXC:DashboardTheming 2026-07-03-00:00: Fresh web startup uses System mode by default so first paint follows prefers-color-scheme until the user stores an explicit Light/Dark/System choice.
           var systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
           var effectiveMode = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
           document.documentElement.setAttribute('data-theme', effectiveMode);
@@ -219,7 +224,11 @@
             }
           }
         } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'dark');
+          var fallbackSystemDark = false;
+          try {
+            fallbackSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          } catch (matchMediaError) {}
+          document.documentElement.setAttribute('data-theme', fallbackSystemDark ? 'dark' : 'light');
           document.documentElement.setAttribute('data-color-theme', 'shadcn-ember');
           document.documentElement.style.fontSize = '100%';
         }

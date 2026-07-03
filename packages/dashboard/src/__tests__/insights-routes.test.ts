@@ -58,6 +58,18 @@ vi.mock("@fusion/engine", () => ({
   resolveMcpServersForStore: piMocks.resolveMcpServersForStore,
 }));
 
+/*
+FNXC:DashboardTests 2026-07-03-02:12:
+FN-7464 measured the only remaining slow test-body seam as retryable insight-route failures waiting the production 250ms retry delay from node:timers/promises. Keep route-boundary retry coverage and assertions intact, but collapse that deliberate backoff in this file so the suite does not spend real wall time on retry pacing.
+*/
+vi.mock("node:timers/promises", async () => {
+  const actual = await vi.importActual<typeof import("node:timers/promises")>("node:timers/promises");
+  return {
+    ...actual,
+    setTimeout: vi.fn(() => Promise.resolve()),
+  };
+});
+
 vi.mock("../project-store-resolver.js", async () => {
   const actual = await vi.importActual<typeof import("../project-store-resolver.js")>("../project-store-resolver.js");
   return {

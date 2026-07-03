@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FloatingWindow } from "../FloatingWindow";
 
 const floatingWindowCss = readFileSync("app/components/FloatingWindow.css", "utf8");
@@ -16,6 +16,9 @@ JSDOM has no real layout/pointer-capture, so drag math is asserted in the RightD
 */
 
 describe("FloatingWindow", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
   it("renders a non-blocking, click-through transparent overlay with a pointer-events:auto panel", () => {
     render(
       <FloatingWindow windowKey="alpha" title="Alpha" onClose={() => {}}>
@@ -297,6 +300,84 @@ describe("FloatingWindow", () => {
     expect(panel.style.height).toBe("500px");
     expect(panel.style.top).toBe("16px");
     expect(Number.parseFloat(panel.style.left)).toBeLessThan(window.innerWidth);
+  });
+
+  it("falls back to default geometry when persisted geometry is malformed", () => {
+    localStorage.setItem("floating-window:malformed", "not-json");
+
+    render(
+      <FloatingWindow
+        windowKey="malformed"
+        title="Malformed"
+        onClose={() => {}}
+        persistGeometryKey="floating-window:malformed"
+        defaultSize={{ width: 610, height: 430 }}
+        defaultPosition={{ x: 80, y: 90 }}
+      >
+        <div>malformed body</div>
+      </FloatingWindow>
+    );
+
+    const panel = screen.getByTestId("floating-window-malformed");
+    expect(panel.style.width).toBe("610px");
+    expect(panel.style.height).toBe("430px");
+    expect(panel.style.left).toBe("80px");
+    expect(panel.style.top).toBe("90px");
+  });
+
+  it("shares geometry only between windows that opt into the same persistence key", () => {
+    localStorage.setItem(
+      "floating-window:shared-task-detail",
+      JSON.stringify({
+        size: { width: 660, height: 470 },
+        position: { x: 120, y: 96 },
+      }),
+    );
+    localStorage.setItem(
+      "floating-window:chat",
+      JSON.stringify({
+        size: { width: 520, height: 390 },
+        position: { x: 220, y: 140 },
+      }),
+    );
+
+    render(
+      <>
+        <FloatingWindow
+          windowKey="task-detail-FN-001"
+          title="FN-001"
+          onClose={() => {}}
+          persistGeometryKey="floating-window:shared-task-detail"
+        >
+          <div>task one</div>
+        </FloatingWindow>
+        <FloatingWindow
+          windowKey="task-detail-FN-002"
+          title="FN-002"
+          onClose={() => {}}
+          persistGeometryKey="floating-window:shared-task-detail"
+        >
+          <div>task two</div>
+        </FloatingWindow>
+        <FloatingWindow windowKey="chat" title="Chat" onClose={() => {}} persistGeometryKey="floating-window:chat">
+          <div>chat body</div>
+        </FloatingWindow>
+      </>
+    );
+
+    for (const id of ["FN-001", "FN-002"]) {
+      const panel = screen.getByTestId(`floating-window-task-detail-${id}`);
+      expect(panel.style.width).toBe("660px");
+      expect(panel.style.height).toBe("470px");
+      expect(panel.style.left).toBe("120px");
+      expect(panel.style.top).toBe("96px");
+    }
+
+    const chatPanel = screen.getByTestId("floating-window-chat");
+    expect(chatPanel.style.width).toBe("520px");
+    expect(chatPanel.style.height).toBe("390px");
+    expect(chatPanel.style.left).toBe("220px");
+    expect(chatPanel.style.top).toBe("140px");
   });
 
   it("makes only the mobile chat floating window full-screen", () => {

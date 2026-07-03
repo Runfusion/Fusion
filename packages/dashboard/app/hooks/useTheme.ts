@@ -71,7 +71,7 @@ function isValidThemeMode(value: unknown): value is ThemeMode {
 }
 
 function readCachedThemeMode(): ThemeMode {
-  if (!isBrowser) return "dark";
+  if (!isBrowser) return "system";
   try {
     const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
     if (isValidThemeMode(saved)) {
@@ -80,7 +80,11 @@ function readCachedThemeMode(): ThemeMode {
   } catch {
     // localStorage not available, use default
   }
-  return "dark";
+  /*
+  FNXC:DashboardTheming 2026-07-03-00:00:
+  Missing or invalid browser cache must behave like a fresh install: System mode is selected and the resolved data-theme follows prefers-color-scheme before backend hydration.
+  */
+  return "system";
 }
 
 function readCachedColorTheme(): ColorTheme {
@@ -464,7 +468,11 @@ export function getThemeInitScript(): string {
   return `
     (function() {
       try {
-        var mode = localStorage.getItem('${THEME_MODE_STORAGE_KEY}') || 'dark';
+        var mode = localStorage.getItem('${THEME_MODE_STORAGE_KEY}') || 'system';
+        var validModes = ['dark', 'light', 'system'];
+        if (!validModes.includes(mode)) {
+          mode = 'system';
+        }
         var colorTheme = localStorage.getItem('${COLOR_THEME_STORAGE_KEY}') || '${DEFAULT_COLOR_THEME}';
         var validThemes = ${JSON.stringify(VALID_COLOR_THEMES)};
         // FNXC:DashboardTheming 2026-06-30-00:00: Unset startup theme is Shadcn Ember; explicit stored legacy ids such as "default" and "ocean" remain valid and must not be migrated.
@@ -478,6 +486,7 @@ export function getThemeInitScript(): string {
           fontScale = ${DEFAULT_FONT_SCALE_PCT};
         }
         fontScale = Math.min(${MAX_FONT_SCALE_PCT}, Math.max(${MIN_FONT_SCALE_PCT}, Math.round(fontScale)));
+        // FNXC:DashboardTheming 2026-07-03-00:00: Pre-hydration defaults to System mode so fresh startup matches the OS preference without waiting for React or backend settings hydration.
         var systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         var effectiveMode = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
         document.documentElement.setAttribute('data-theme', effectiveMode);
@@ -526,7 +535,11 @@ export function getThemeInitScript(): string {
           }
         }
       } catch (e) {
-        document.documentElement.setAttribute('data-theme', 'dark');
+        var fallbackSystemDark = false;
+        try {
+          fallbackSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } catch (matchMediaError) {}
+        document.documentElement.setAttribute('data-theme', fallbackSystemDark ? 'dark' : 'light');
         document.documentElement.setAttribute('data-color-theme', '${DEFAULT_COLOR_THEME}');
         document.documentElement.style.fontSize = '${DEFAULT_FONT_SCALE_PCT}%';
       }

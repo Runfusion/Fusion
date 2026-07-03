@@ -63,7 +63,11 @@ type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
 
 /** Default values for global (user-level) settings. */
 export const DEFAULT_GLOBAL_SETTINGS = {
-  themeMode: "dark",
+  /*
+  FNXC:DashboardTheming 2026-07-03-00:00:
+  Fresh installs must follow the operating system theme until the user explicitly chooses Light, Dark, or System. Keep this global default aligned with dashboard and desktop pre-hydration fallbacks.
+  */
+  themeMode: "system",
   /*
   FNXC:DashboardTheming 2026-06-30-00:00:
   New users and unset installs should start on Shadcn Ember. Existing users who explicitly stored colorTheme "default", "ocean", or another valid theme must remain on that selection, so the ids stay valid and only the absence/default seed changes to "shadcn-ember".

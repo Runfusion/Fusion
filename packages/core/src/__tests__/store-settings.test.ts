@@ -1421,7 +1421,7 @@ describe("TaskStore", () => {
   describe("global/project settings merging", () => {
     it("getSettings returns global defaults when no overrides exist", async () => {
       const settings = await harness.store().getSettings();
-      expect(settings.themeMode).toBe("dark");
+      expect(settings.themeMode).toBe("system");
       expect(settings.colorTheme).toBe("shadcn-ember");
       expect(settings.maxConcurrent).toBe(2);
     });
@@ -1468,7 +1468,7 @@ describe("TaskStore", () => {
       const settings = await harness.store().getSettings();
       expect(settings.maxConcurrent).toBe(5);
       // themeMode should still be the global default, not "light"
-      expect(settings.themeMode).toBe("dark");
+      expect(settings.themeMode).toBe("system");
 
       // Verify the project config doesn't contain themeMode
       const configRaw = await readFile(join(harness.rootDir(), ".fusion", "config.json"), "utf-8");
@@ -1766,7 +1766,7 @@ describe("TaskStore", () => {
       expect(settings.maxWorktrees).toBe(4); // default
       expect(settings.pollIntervalMs).toBe(15000); // default
       // Global settings should still be present
-      expect(settings.themeMode).toBe("dark"); // global default
+      expect(settings.themeMode).toBe("system"); // global default
     });
 
     it("includes global settings merged with project settings", async () => {
