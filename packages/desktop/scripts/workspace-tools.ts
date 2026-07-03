@@ -130,7 +130,17 @@ point electron-builder at that staged directory via --projectDir.
 - The stage has no pnpm-lock, so electron-builder treats it as a plain flat
   project and packs the whole node_modules — no dedup gap.
 */
-export const desktopDeployDir = resolve(packageRoot, "deploy");
+/*
+ * FNXC:DesktopBuild 2026-07-03-10:20:
+ * `pnpm deploy` materializes the flat production closure by renaming a temp dir into place. On some
+ * Windows filesystems (notably the orca-managed workspace mount used for local dev) that final rename
+ * hits EPERM and also litters deeply-nested deploy_tmp_* dirs that are painful to remove. Allow
+ * redirecting the staged deploy to an external, plain-NTFS path via FUSION_DESKTOP_DEPLOY_DIR so local
+ * Windows installer builds can sidestep the race; CI and the default path are unchanged.
+ */
+export const desktopDeployDir = process.env.FUSION_DESKTOP_DEPLOY_DIR
+  ? resolve(process.env.FUSION_DESKTOP_DEPLOY_DIR)
+  : resolve(packageRoot, "deploy");
 
 export async function stageDesktopDeploy(): Promise<void> {
   console.log("[desktop:build] Staging complete production closure via pnpm deploy...");
