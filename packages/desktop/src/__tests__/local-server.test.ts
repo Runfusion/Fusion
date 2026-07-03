@@ -90,6 +90,7 @@ vi.mock("@fusion/dashboard", () => ({ createServer: mocks.createServer }));
 vi.mock("@fusion/engine", () => ({
   ProjectEngineManager: mocks.ProjectEngineManager,
   createFusionAuthStorage: () => ({ reload: () => undefined, getOAuthProviders: () => [], hasAuth: () => false }),
+  createFusionModelRegistry: () => ({ listModels: () => [] }),
 }));
 
 describe("DesktopLocalServerManager", () => {

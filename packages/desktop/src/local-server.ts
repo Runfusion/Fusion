@@ -55,7 +55,7 @@ export class DesktopLocalServerManager {
       const { TaskStore } = await import("@fusion/core");
       const { CentralCore } = await import("@fusion/core");
       const { createServer } = await import("@fusion/dashboard");
-      const { ProjectEngineManager, createFusionAuthStorage } = await import("@fusion/engine");
+      const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry } = await import("@fusion/engine");
       store = new TaskStore(this.rootDir) as TaskStoreLike;
       await store.init();
       await store.watch();
@@ -77,11 +77,13 @@ export class DesktopLocalServerManager {
       const primaryEngine = rootProject ? await engineManager.ensureEngine(rootProject.id) : undefined;
       // FNXC:DesktopRuntime 2026-07-03-06:20: wire auth storage so /api/auth/status works and first-run onboarding can open (see local-runtime.ts).
       const authStorage = createFusionAuthStorage();
+      const modelRegistry = createFusionModelRegistry(authStorage);
       const app = createServer(store as never, {
         ...(primaryEngine ? { engine: primaryEngine } : {}),
         engineManager,
         centralCore,
         authStorage,
+        modelRegistry,
         onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
       });
       server = app.listen(0);

@@ -67,7 +67,7 @@ async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
 async function createDashboardServerDefault(store: TaskStoreLike, rootDir: string): Promise<{ server: Server; cleanup: RuntimeCleanup }> {
   const { CentralCore } = await import("@fusion/core");
   const { createServer } = await import("@fusion/dashboard");
-  const { ProjectEngineManager, createFusionAuthStorage } = await import("@fusion/engine");
+  const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry } = await import("@fusion/engine");
 
   /*
    * FNXC:DesktopRuntime 2026-06-20-23:39:
@@ -109,12 +109,16 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
      * CLI-only for now; OAuth + CLI providers are available here.)
      */
     const authStorage = createFusionAuthStorage();
+    // FNXC:DesktopRuntime 2026-07-03-07:00: a ModelRegistry is required for the /api/models endpoint;
+    // without it the onboarding model picker shows "no models" even with a provider connected.
+    const modelRegistry = createFusionModelRegistry(authStorage);
     strace("createDashboardServer: createServer");
     const app = createServer(store as never, {
       ...(primaryEngine ? { engine: primaryEngine } : {}),
       engineManager,
       centralCore,
       authStorage,
+      modelRegistry,
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     });
 
