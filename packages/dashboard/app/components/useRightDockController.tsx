@@ -23,6 +23,8 @@ export interface RightDockControllerInput {
   workflowSteps: WorkflowStep[];
   subscribePluginEvents: (pluginId: string, onEvent: (event: { event: string; payload: unknown }) => void) => () => void;
   openDetailTask: (task: Task | TaskDetail, initialTab?: DetailTaskTab) => void;
+  openTaskPopup: (task: Task | TaskDetail) => void;
+  openMobileTasksInPopup: boolean;
   openFileInBrowser: (path: string, opts?: { workspace?: string; line?: number; col?: number }) => void;
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
@@ -86,6 +88,19 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     setOpen(true);
     persistRightDockOpen(true);
   }, []);
+
+  /*
+  FNXC:RightDockTaskPopup 2026-07-03-00:00:
+  Ordinary task opens from the right-dock Tasks list must honor the task-popup setting before creating an embedded dock-detail snapshot. Keep `openTaskInDock` intact for setting-off routing, board right-sidebar routing, and the Tasks-tab back/list detail lifecycle.
+  */
+  const openTaskFromDockList = useCallback((task: Task | TaskDetail) => {
+    if (input.openMobileTasksInPopup === true) {
+      input.openTaskPopup(task);
+      return;
+    }
+
+    openTaskInDock(task);
+  }, [input, openTaskInDock]);
 
   const resolvedDockTask = useMemo(() => {
     if (!dockTaskSnapshot) return null;
@@ -189,9 +204,9 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     },
     /*
     FNXC:RightDockTasks 2026-06-28-17:05:
-    DockTaskList rows must open the in-dock Tasks detail, not the canonical full task modal. Thread the existing dock snapshot setter into registry render props so both compact and expanded Tasks lists route TaskCard's internal open action to the Tasks tab.
+    DockTaskList rows must open through the controller's ordinary right-dock task route, not TaskCard's canonical full task modal. Thread one controller-level handler into registry render props so both compact and expanded Tasks lists share popup-setting routing and setting-off dock-detail behavior.
     */
-    onOpenTaskInDock: openTaskInDock,
+    onOpenTaskInDock: openTaskFromDockList,
     onOpenDetail: input.openDetailTask,
     onSendSelectionToTask: input.onSendSelectionToTask,
     onCreateTaskFromInsight: input.onCreateTaskFromInsight,
@@ -201,7 +216,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
     renderTaskCard,
     subscribePluginEvents: input.subscribePluginEvents,
     openFile: input.openFileInBrowser,
-  }), [input, openTaskInDock, renderTaskCard]);
+  }), [input, openTaskFromDockList, renderTaskCard]);
 
   const dockTaskContent = resolvedDockTask ? (
     /*

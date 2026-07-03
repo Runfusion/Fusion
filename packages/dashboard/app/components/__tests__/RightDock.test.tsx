@@ -271,6 +271,135 @@ describe("RightDock", () => {
     expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("Sidebar task");
   });
 
+  it("routes right-dock Tasks list clicks to popups when task popups are enabled", () => {
+    const firstTask = { id: "FN-1", title: "First task", column: "todo" };
+    const openDetailTask = vi.fn();
+    const openTaskPopup = vi.fn();
+    const controllerInput = {
+      active: true,
+      projectId: "project-1",
+      addToast: vi.fn(),
+      settingsLoaded: true,
+      researchReadinessVersion: 0,
+      tasks: [firstTask],
+      workflowSteps: [],
+      subscribePluginEvents: () => () => {},
+      openDetailTask,
+      openTaskPopup,
+      openMobileTasksInPopup: true,
+      openFileInBrowser: vi.fn(),
+      onMoveTask: vi.fn(),
+      onDeleteTask: vi.fn(),
+      onMergeTask: vi.fn(),
+      openSettings: vi.fn(),
+      onSendSelectionToTask: vi.fn(),
+      onCreateTaskFromInsight: vi.fn(),
+      onNavigateToMission: vi.fn(),
+      onTaskCreated: vi.fn(),
+      prAuthAvailable: false,
+      autoMerge: false,
+      taskDetailChatFirst: false,
+      visibilityOptions: {},
+      footerVisible: false,
+    } as unknown as RightDockControllerInput;
+
+    function Harness() {
+      const controller = useRightDockController(controllerInput);
+      return (
+        <>
+          {controller.dock}
+          {controller.modal}
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    fireEvent.click(screen.getByTestId("right-dock-tab-tasks"));
+    expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("mock-task-card-FN-1"));
+
+    expect(openTaskPopup).toHaveBeenCalledTimes(1);
+    expect(openTaskPopup).toHaveBeenCalledWith(firstTask);
+    expect(openDetailTask).not.toHaveBeenCalled();
+    expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
+    expect(screen.queryByTestId("dock-task-detail")).toBeNull();
+    expect(screen.queryByTestId("right-dock-close-task")).toBeNull();
+    expect(screen.queryByTestId("right-dock-header-back-task")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("right-dock-expand"));
+    expect(screen.getByTestId("right-dock-expand-modal")).toHaveAttribute("aria-label", "Tasks expanded");
+    fireEvent.click(screen.getByTestId("mock-task-card-FN-1"));
+    expect(openTaskPopup).toHaveBeenCalledTimes(2);
+    expect(openTaskPopup).toHaveBeenLastCalledWith(firstTask);
+    expect(screen.queryByTestId("dock-task-detail")).toBeNull();
+  });
+
+  it("keeps right-dock Tasks list clicks embedded when task popups are disabled", () => {
+    const firstTask = { id: "FN-1", title: "First task", column: "todo" };
+    const openDetailTask = vi.fn();
+    const openTaskPopup = vi.fn();
+    const controllerInput = {
+      active: true,
+      projectId: "project-1",
+      addToast: vi.fn(),
+      settingsLoaded: true,
+      researchReadinessVersion: 0,
+      tasks: [firstTask],
+      workflowSteps: [],
+      subscribePluginEvents: () => () => {},
+      openDetailTask,
+      openTaskPopup,
+      openMobileTasksInPopup: false,
+      openFileInBrowser: vi.fn(),
+      onMoveTask: vi.fn(),
+      onDeleteTask: vi.fn(),
+      onMergeTask: vi.fn(),
+      openSettings: vi.fn(),
+      onSendSelectionToTask: vi.fn(),
+      onCreateTaskFromInsight: vi.fn(),
+      onNavigateToMission: vi.fn(),
+      onTaskCreated: vi.fn(),
+      prAuthAvailable: false,
+      autoMerge: false,
+      taskDetailChatFirst: false,
+      visibilityOptions: {},
+      footerVisible: false,
+    } as unknown as RightDockControllerInput;
+
+    function Harness() {
+      const controller = useRightDockController(controllerInput);
+      return <>{controller.dock}</>;
+    }
+
+    const { rerender } = render(<Harness />);
+
+    fireEvent.click(screen.getByTestId("right-dock-tab-tasks"));
+    fireEvent.click(screen.getByTestId("mock-task-card-FN-1"));
+
+    expect(openTaskPopup).not.toHaveBeenCalled();
+    expect(openDetailTask).not.toHaveBeenCalled();
+    expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
+    expect(screen.getByTestId("right-dock-close-task")).toBeInTheDocument();
+    expect(screen.getByTestId("right-dock-header-back-task")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("right-dock-tab-files"));
+    expect(screen.queryByTestId("dock-task-detail")).toBeNull();
+    fireEvent.click(screen.getByTestId("right-dock-tab-tasks"));
+    expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
+
+    fireEvent.click(screen.getByTestId("right-dock-header-back-task"));
+    expect(screen.queryByTestId("dock-task-detail")).toBeNull();
+    expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("mock-task-card-FN-1"));
+    expect(screen.getByTestId("dock-task-detail")).toHaveTextContent("First task");
+    fireEvent.click(screen.getByTestId("right-dock-close-task"));
+    rerender(<Harness />);
+    expect(screen.queryByTestId("dock-task-detail")).toBeNull();
+    expect(screen.getByTestId("dock-task-list")).toBeInTheDocument();
+  });
+
   it("controller dock task opens, replaces, persists across tabs, and clears on close or inactive teardown", () => {
     const firstTask = { id: "FN-1", title: "First task", column: "todo" };
     const secondTask = { id: "FN-2", title: "Second task", column: "todo" };
