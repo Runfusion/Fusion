@@ -268,12 +268,48 @@ describe("ChatView mobile behavior", () => {
       expect(backButton.compareDocumentPosition(sessionTrigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(headerTitle).not.toContainElement(backButton);
       expect(headerTitle.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-      expect(sessionTrigger).toHaveTextContent("M3");
+      expect(sessionTrigger).toHaveTextContent("Testing");
+      expect(sessionTrigger).not.toHaveTextContent("M3");
+      expect(sessionTrigger).not.toHaveTextContent("MiniMax M3");
+      expect(within(sessionTrigger).getByTestId("minimax-icon")).toBeInTheDocument();
+      expect(sessionTrigger.querySelector(".chat-model-tag")).not.toBeInTheDocument();
       expect(viewHeader).not.toContainElement(renderToggle);
       expect(renderToggle).toHaveClass("chat-thread-header-render-toggle--floating");
       expect(screen.getAllByTestId("chat-back-btn")).toHaveLength(1);
       expect(screen.getAllByTestId("chat-mobile-session-trigger")).toHaveLength(1);
       expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
+      expect(document.querySelector(".chat-thread-header")).not.toBeInTheDocument();
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
+  it("mobile mode: model-only empty title uses Untitled without model-name text", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    try {
+      setupMockChat({
+        activeSession: {
+          id: "session-001",
+          agentId: "__fn_agent__",
+          status: "active",
+          title: null,
+          modelProvider: "minimax",
+          modelId: "m3",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        },
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+      const trigger = screen.getByTestId("chat-mobile-session-trigger");
+      expect(trigger).toHaveTextContent("Untitled");
+      expect(trigger).not.toHaveTextContent("M3");
+      expect(trigger).not.toHaveTextContent("MiniMax M3");
+      expect(within(trigger).getByTestId("minimax-icon")).toBeInTheDocument();
+      expect(trigger.querySelector(".chat-model-tag")).not.toBeInTheDocument();
+      expect(screen.getAllByTestId("chat-mobile-session-trigger")).toHaveLength(1);
     } finally {
       restoreMatchMedia.mockRestore();
     }
@@ -429,6 +465,7 @@ describe("ChatView mobile behavior", () => {
       expect(headerActions.firstElementChild).toBe(backButton);
       expect(trigger).toHaveTextContent(longTitle);
       expect(within(trigger).getByTestId("icon-bot")).toBeInTheDocument();
+      expect(trigger.querySelector(".chat-model-tag")).not.toBeInTheDocument();
       expect(screen.getAllByTestId("chat-mobile-session-trigger")).toHaveLength(1);
 
       await userEvent.click(trigger);
