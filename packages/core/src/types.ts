@@ -19,6 +19,7 @@ export {
   DEFAULT_GITLAB_API_BASE_URL,
   DEFAULT_GITLAB_INSTANCE_URL,
   resolveGitlabConfig,
+  resolveGitlabEnabled,
 } from "./gitlab-config.js";
 export type { GitlabConfigSettingsSource, ResolvedGitlabConfig, ResolveGitlabConfigInput } from "./gitlab-config.js";
 export { validateMcpServerDefinitionDetailed, validateMcpServerDefinitionsDetailed } from "./settings-validation.js";
@@ -3206,6 +3207,8 @@ export interface GlobalSettings {
   /** Global fallback GitHub tracking repo in `owner/repo` format (FN-3868).
    *  Used when a project has no githubTrackingDefaultRepo. */
   githubTrackingDefaultRepo?: string;
+  /** Global GitLab integration enable flag. Undefined is effectively enabled for backward compatibility; projects can override this value. */
+  gitlabEnabled?: boolean;
   /** Global fallback GitLab web instance URL. Defaults effectively to https://gitlab.com when unset.
    *  Project gitlabInstanceUrl overrides this value. */
   gitlabInstanceUrl?: string;
@@ -4339,6 +4342,8 @@ export interface ProjectSettings {
    * FNXC:GitLabConfiguration 2026-07-02-00:00:
    * FN-7422 adds durable GitLab instance/API URL settings for GitLab.com and self-managed hosts. FN-7423 layers token settings onto the same project-over-global configuration contract without adding runtime GitLab imports or tracking.
    */
+  /** Project GitLab integration enable flag. Undefined inherits global gitlabEnabled, then defaults effectively enabled for backward compatibility. */
+  gitlabEnabled?: boolean;
   /** Project GitLab web instance URL. Falls back to global gitlabInstanceUrl, then https://gitlab.com. */
   gitlabInstanceUrl?: string;
   /** Project GitLab REST API base URL. Falls back to global gitlabApiBaseUrl, then derives `<instance>/api/v4`. */

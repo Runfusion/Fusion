@@ -15,6 +15,7 @@ import {
   apiImportGitLabProjectIssue,
   apiImportGitLabGroupIssue,
   apiImportGitLabMergeRequest,
+  fetchSettings,
   fetchGitRemotes,
 } from "../../api";
 import type { Task } from "@fusion/core";
@@ -40,6 +41,7 @@ vi.mock("../../api", async (importOriginal) => {
     apiImportGitLabProjectIssue: vi.fn(),
     apiImportGitLabGroupIssue: vi.fn(),
     apiImportGitLabMergeRequest: vi.fn(),
+    fetchSettings: vi.fn(),
     fetchGitRemotes: vi.fn(),
   };
 });
@@ -168,6 +170,8 @@ describe("GitHubImportModal", () => {
     vi.mocked(apiImportGitLabProjectIssue).mockReset();
     vi.mocked(apiImportGitLabGroupIssue).mockReset();
     vi.mocked(apiImportGitLabMergeRequest).mockReset();
+    vi.mocked(fetchSettings).mockReset();
+    vi.mocked(fetchSettings).mockResolvedValue({ gitlabEnabled: true } as never);
     // Set default mock for apiFetchGitHubIssues to return empty array (prevents undefined issues state)
     vi.mocked(apiFetchGitHubIssues).mockResolvedValue([]);
     vi.mocked(apiFetchGitHubPulls).mockResolvedValue([]);
@@ -212,6 +216,21 @@ describe("GitHubImportModal", () => {
 
     await waitFor(() => expect(apiImportGitLabProjectIssue).toHaveBeenCalledWith("group/project", 2, undefined));
     expect(onImport).toHaveBeenCalledWith(expect.objectContaining({ id: "FN-099" }));
+  });
+
+  it("shows disabled GitLab import controls without fetching when GitLab is off", async () => {
+    vi.mocked(fetchGitRemotes).mockResolvedValueOnce([]);
+    vi.mocked(fetchSettings).mockResolvedValueOnce({ gitlabEnabled: false } as never);
+
+    render(<GitHubImportModal isOpen={true} onClose={onClose} onImport={onImport} tasks={[]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "GitLab" }));
+
+    expect(await screen.findByTestId("gitlab-import-disabled")).toHaveTextContent("GitLab integration disabled");
+    expect(screen.getByRole("button", { name: /Load/ })).toBeDisabled();
+    expect(screen.getByLabelText("GitLab project path or ID")).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Group issues" })).toBeDisabled();
+    expect(apiFetchGitLabProjectIssues).not.toHaveBeenCalled();
+    expect(apiImportGitLabProjectIssue).not.toHaveBeenCalled();
   });
 
   it("fetches group issues and merge requests without GitHub-only copy", async () => {

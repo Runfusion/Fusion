@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -1341,6 +1341,11 @@ describe("SettingsModal", () => {
     it("renders GitLab authentication controls as secret-safe project settings", async () => {
       renderModal({ initialSection: "merge" });
       await waitForSettingsModalReady();
+
+      const disclosure = screen.getByTestId("project-gitlab-authentication-disclosure");
+      expect(disclosure).not.toHaveAttribute("open");
+      await settingsModalUser.click(within(disclosure).getByText("GitLab Authentication"));
+      expect(disclosure).toHaveAttribute("open");
 
       expect(screen.getByRole("heading", { name: "GitLab Authentication" })).toBeInTheDocument();
       const tokenInput = screen.getByLabelText("GitLab access token") as HTMLInputElement;

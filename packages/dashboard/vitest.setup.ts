@@ -121,6 +121,10 @@ if (typeof window !== "undefined") {
       clear: () => {
         Object.keys(localStorageMock).forEach((key) => delete localStorageMock[key]);
       },
+      get length() {
+        return Object.keys(localStorageMock).length;
+      },
+      key: (index: number) => Object.keys(localStorageMock)[index] ?? null,
     },
     writable: true,
   });

@@ -3,6 +3,7 @@ import {
   DEFAULT_GITLAB_API_BASE_URL,
   DEFAULT_GITLAB_INSTANCE_URL,
   resolveGitlabConfig,
+  resolveGitlabEnabled,
 } from "../gitlab-config.js";
 
 /*
@@ -12,6 +13,7 @@ These tests pin FN-7422 as configuration-only groundwork: GitLab.com is the blan
 describe("resolveGitlabConfig", () => {
   it("defaults to GitLab.com when no settings are configured", () => {
     expect(resolveGitlabConfig()).toEqual({
+      enabled: true,
       instanceUrl: DEFAULT_GITLAB_INSTANCE_URL,
       apiBaseUrl: DEFAULT_GITLAB_API_BASE_URL,
     });
@@ -24,6 +26,7 @@ describe("resolveGitlabConfig", () => {
         project: { gitlabInstanceUrl: "https://project.example/gitlab", gitlabApiBaseUrl: "https://project.example/rest" },
       }),
     ).toEqual({
+      enabled: true,
       instanceUrl: "https://project.example/gitlab",
       apiBaseUrl: "https://project.example/rest",
     });
@@ -36,6 +39,7 @@ describe("resolveGitlabConfig", () => {
         project: { gitlabInstanceUrl: " ", gitlabApiBaseUrl: "" },
       }),
     ).toEqual({
+      enabled: true,
       instanceUrl: "https://global.example/gitlab",
       apiBaseUrl: "https://global.example/gitlab/api/v4",
     });
@@ -43,6 +47,7 @@ describe("resolveGitlabConfig", () => {
 
   it("derives the API base URL from a self-managed path prefix", () => {
     expect(resolveGitlabConfig({ project: { gitlabInstanceUrl: "https://example.com/gitlab/" } })).toEqual({
+      enabled: true,
       instanceUrl: "https://example.com/gitlab",
       apiBaseUrl: "https://example.com/gitlab/api/v4",
     });
@@ -53,14 +58,24 @@ describe("resolveGitlabConfig", () => {
       resolveGitlabConfig({
         project: { gitlabInstanceUrl: "https://gitlab.example", gitlabApiBaseUrl: "https://api.example/custom/v4/" },
       }),
-    ).toEqual({ instanceUrl: "https://gitlab.example", apiBaseUrl: "https://api.example/custom/v4" });
+    ).toEqual({ enabled: true, instanceUrl: "https://gitlab.example", apiBaseUrl: "https://api.example/custom/v4" });
   });
 
   it("treats blank strings as cleared defaults", () => {
     expect(resolveGitlabConfig({ project: { gitlabInstanceUrl: " ", gitlabApiBaseUrl: "\t" } })).toEqual({
+      enabled: true,
       instanceUrl: DEFAULT_GITLAB_INSTANCE_URL,
       apiBaseUrl: DEFAULT_GITLAB_API_BASE_URL,
     });
+  });
+
+
+  it("resolves effective enabled state with project-over-global precedence", () => {
+    expect(resolveGitlabEnabled()).toBe(true);
+    expect(resolveGitlabEnabled({ global: { gitlabEnabled: false } })).toBe(false);
+    expect(resolveGitlabEnabled({ global: { gitlabEnabled: false }, project: { gitlabEnabled: true } })).toBe(true);
+    expect(resolveGitlabEnabled({ global: { gitlabEnabled: true }, project: { gitlabEnabled: false } })).toBe(false);
+    expect(resolveGitlabConfig({ global: { gitlabEnabled: false } })).toMatchObject({ enabled: false });
   });
 
   it.each([

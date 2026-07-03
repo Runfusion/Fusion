@@ -467,6 +467,30 @@ export function SetupWizardModal({
                 </fieldset>
               </section>
 
+              {/*
+                FNXC:Onboarding 2026-07-03-08:20:
+                Folder selection comes BEFORE the project name: the name auto-derives from the chosen
+                directory, so picking the folder first pre-fills a sensible name (rather than asking for
+                a name before there's a folder to base it on).
+              */}
+              <div className="form-group">
+                <label htmlFor="project-path">{isCloneMode ? t("setup.destinationDirectory", "Destination Directory") : isInitMode ? t("setup.newRepositoryDirectory", "New Repository Directory") : t("setup.projectDirectory", "Project Directory")}</label>
+                <DirectoryPicker
+                  value={state.manualPath}
+                  onChange={handlePathChange}
+                  nodeId={state.manualNodeId || undefined}
+                  localNodeId={localNodeId}
+                  placeholder={isCloneMode ? t("setup.clonePathPlaceholder", "/path/for/new-clone") : isInitMode ? t("setup.initPathPlaceholder", "/path/to/new-project") : t("setup.projectPathPlaceholder", "/path/to/your/project")}
+                />
+                <p className="form-hint">
+                  {isCloneMode
+                    ? t("setup.clonePathHint", "Select or type an absolute destination path. Fusion will clone into this directory. The destination must be empty or absent.")
+                    : isInitMode
+                      ? t("setup.initPathHint", "Select or type an absolute path to an empty or non-git folder. Fusion will run git init during registration.")
+                      : t("setup.projectPathHint", "Select or type the absolute path to an existing git repository or workspace root.")}
+                </p>
+              </div>
+
               <div className="form-group">
                 <label htmlFor="project-name">{t("setup.projectName", "Project Name")}</label>
                 <input
@@ -484,24 +508,6 @@ export function SetupWizardModal({
                     : isInitMode
                       ? t("setup.projectNameHintInit", "By default this follows the folder name Fusion will initialize unless you edit it.")
                       : t("setup.projectNameHintExisting", "By default this follows the selected directory name unless you edit it.")}
-                </p>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="project-path">{isCloneMode ? t("setup.destinationDirectory", "Destination Directory") : isInitMode ? t("setup.newRepositoryDirectory", "New Repository Directory") : t("setup.projectDirectory", "Project Directory")}</label>
-                <DirectoryPicker
-                  value={state.manualPath}
-                  onChange={handlePathChange}
-                  nodeId={state.manualNodeId || undefined}
-                  localNodeId={localNodeId}
-                  placeholder={isCloneMode ? t("setup.clonePathPlaceholder", "/path/for/new-clone") : isInitMode ? t("setup.initPathPlaceholder", "/path/to/new-project") : t("setup.projectPathPlaceholder", "/path/to/your/project")}
-                />
-                <p className="form-hint">
-                  {isCloneMode
-                    ? t("setup.clonePathHint", "Select or type an absolute destination path. Fusion will clone into this directory. The destination must be empty or absent.")
-                    : isInitMode
-                      ? t("setup.initPathHint", "Select or type an absolute path to an empty or non-git folder. Fusion will run git init during registration.")
-                      : t("setup.projectPathHint", "Select or type the absolute path to an existing git repository or workspace root.")}
                 </p>
               </div>
 

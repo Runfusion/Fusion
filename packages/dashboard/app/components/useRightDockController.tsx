@@ -62,7 +62,7 @@ export interface RightDockController {
 
 /*
 FNXC:Navigation 2026-06-21-23:40:
-The right dock is visible by default and collapses from inside the dock. Keep the persisted open/collapsed state in this controller so App and Header do not need duplicate right-dock toggle wiring.
+The right dock is HIDDEN by default (no stored preference -> closed; see readStoredRightDockOpen, updated 2026-07-03) so first-run/onboarding lands on an uncluttered board; the operator opts in via the Header toggle. Keep the persisted open/collapsed state in this controller so App and Header do not need duplicate right-dock toggle wiring.
 
 FNXC:RightDock 2026-06-22-18:50:
 The popped-out expand modal is INDEPENDENT of the dock's open state. `expandedView` and the modal it drives live at the controller level (a sibling of `dock`, NOT a child of RightDock — which early-returns null when closed). Toggling the dock closed must therefore NOT clear `expandedView`: once a view is popped out it stays open and interactive even with the dock hidden, and only its own close button (`onClose -> setExpandedView(null)`) dismisses it. We still clear `expandedView` when the surface becomes inactive (project change/teardown) because that unmounts the whole controller surface, not a user dock-hide.

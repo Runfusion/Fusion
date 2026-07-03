@@ -4,6 +4,7 @@ export const DEFAULT_GITLAB_INSTANCE_URL = "https://gitlab.com";
 export const DEFAULT_GITLAB_API_BASE_URL = "https://gitlab.com/api/v4";
 
 export interface GitlabConfigSettingsSource {
+  gitlabEnabled?: boolean;
   gitlabInstanceUrl?: string;
   gitlabApiBaseUrl?: string;
 }
@@ -14,8 +15,19 @@ export interface ResolveGitlabConfigInput {
 }
 
 export interface ResolvedGitlabConfig {
+  enabled: boolean;
   instanceUrl: string;
   apiBaseUrl: string;
+}
+
+export function resolveGitlabEnabled(input: ResolveGitlabConfigInput = {}): boolean {
+  /*
+  FNXC:GitLabEnablement 2026-07-02-00:00:
+  FN-7453 separates saved GitLab URL/token configuration from whether GitLab integrations are active. Undefined remains effectively enabled for backward compatibility; explicit project false overrides global true/undefined and short-circuits runtime network paths before URL or token validation.
+  */
+  if (typeof input.project?.gitlabEnabled === "boolean") return input.project.gitlabEnabled;
+  if (typeof input.global?.gitlabEnabled === "boolean") return input.global.gitlabEnabled;
+  return true;
 }
 
 function readConfiguredString(value: unknown): string | undefined {
@@ -63,6 +75,7 @@ function deriveApiBaseUrl(instanceUrl: string): string {
  * FN-7422 only establishes typed GitLab.com and self-managed URL configuration for later GitLab auth/import/tracking subtasks. Normalize and validate here before any future network client consumes these settings, preserving self-managed path prefixes while rejecting non-http(s) URLs and userinfo-bearing URLs.
  */
 export function resolveGitlabConfig(input: ResolveGitlabConfigInput = {}): ResolvedGitlabConfig {
+  const enabled = resolveGitlabEnabled(input);
   const projectInstanceUrl = readConfiguredString(input.project?.gitlabInstanceUrl);
   const globalInstanceUrl = readConfiguredString(input.global?.gitlabInstanceUrl);
   const projectApiBaseUrl = readConfiguredString(input.project?.gitlabApiBaseUrl);
@@ -75,5 +88,5 @@ export function resolveGitlabConfig(input: ResolveGitlabConfigInput = {}): Resol
       ? DEFAULT_GITLAB_API_BASE_URL
       : deriveApiBaseUrl(instanceUrl);
 
-  return { instanceUrl, apiBaseUrl };
+  return { enabled, instanceUrl, apiBaseUrl };
 }

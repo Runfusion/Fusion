@@ -7,7 +7,7 @@ Root builds may skip unchanged plugin workspaces to keep local and CI feedback f
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import fg from "fast-glob";
 import YAML from "yaml";
 import {
@@ -370,7 +370,14 @@ export function runPlannedBuilds(plannedPackages, rootDir, spawnFn = spawnSync) 
   if (plannedPackages.length === 0) return { status: 0, packageNames: [] };
   const packageNames = plannedPackages.map((pkg) => pkg.name);
   const args = [...packageNames.flatMap((name) => ["--filter", name]), "build"];
-  const result = spawnFn("pnpm", args, { cwd: rootDir, stdio: "inherit" });
+  /*
+   * FNXC:WorkspaceBuild 2026-07-02-15:10:
+   * On Windows `pnpm` resolves to a `.cmd` shim; Node refuses to spawn .cmd/.bat without a
+   * shell (ENOENT / EINVAL since CVE-2024-27980). Without shell:true the root build failed
+   * with `spawn pnpm ENOENT` on Windows. The args are workspace filters + package names
+   * (no spaces or shell metacharacters), so shell quoting is safe.
+   */
+  const result = spawnFn("pnpm", args, { cwd: rootDir, stdio: "inherit", shell: process.platform === "win32" });
   return { status: result.status ?? 1, packageNames };
 }
 
@@ -422,6 +429,15 @@ export function main({ rootDir = repoRoot, spawnFn = spawnSync, gitFn = defaultG
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/*
+ * FNXC:WorkspaceBuild 2026-07-02-15:10:
+ * Cross-platform "run as main" guard. The old `import.meta.url === \`file://${process.argv[1]}\``
+ * check NEVER matched on Windows: import.meta.url is `file:///C:/…/build-workspace.mjs`
+ * (triple slash, forward slashes) while process.argv[1] is `C:\…\build-workspace.mjs`
+ * (backslashes, no scheme). So `pnpm build` at the repo root silently no-opped on Windows
+ * (exit 0, no output, no dist) — packaging then shipped empty/stale dist. Compare against the
+ * file URL of argv[1] so the guard is correct on Windows, macOS, and Linux.
+ */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exit(main());
 }

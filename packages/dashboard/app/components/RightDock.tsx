@@ -35,9 +35,17 @@ export function readStoredRightDockWidth(): number {
   return Number.isFinite(parsed) ? clampRightDockWidth(parsed) : RIGHT_DOCK_DEFAULT_WIDTH;
 }
 
+/*
+ * FNXC:Navigation 2026-07-03-09:40:
+ * The right dock now defaults to HIDDEN when the operator has no stored preference, so first-run and
+ * onboarding land on an uncluttered board rather than the full sidebar. Users opt in via the canonical
+ * Header right-sidebar toggle, which persists "true"; an explicit stored "false" also stays hidden.
+ * Only an explicit "true" opens it. This replaces the previous visible-by-default behavior at the
+ * request of the product owner ("make sure right sidebar isn't shown by default ... on first run").
+ */
 export function readStoredRightDockOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  return window.localStorage.getItem(RIGHT_DOCK_OPEN_STORAGE_KEY) !== "false";
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(RIGHT_DOCK_OPEN_STORAGE_KEY) === "true";
 }
 
 export function persistRightDockOpen(open: boolean): void {
@@ -112,8 +120,8 @@ The right dock is an auxiliary tablet/desktop surface: it remembers the last ove
 FNXC:Navigation 2026-06-21-20:14:
 FN-6882 splits right-dock entries into launcher actions and inline views. Action tabs invoke their existing Header handlers without replacing the Files body; only inline entries persist selection or expand into the modal.
 
-FNXC:Navigation 2026-06-22-09:00:
-The right dock is visible by default on tablet/desktop project screens. Show/hide is owned solely by the canonical Header right-sidebar toggle (the in-dock collapse toggle was removed); the dock takes only `open` and renders null when closed so the main content reclaims the space.
+FNXC:Navigation 2026-06-22-09:00 (updated 2026-07-03-09:40):
+The right dock is HIDDEN by default on tablet/desktop project screens (no stored preference -> closed; see readStoredRightDockOpen) so first-run/onboarding lands on an uncluttered board. Show/hide is owned solely by the canonical Header right-sidebar toggle (the in-dock collapse toggle was removed); the dock takes only `open` and renders null when closed so the main content reclaims the space.
 
 FNXC:i18n 2026-06-22-00:00:
 Right-dock affordance labels are user-facing accessibility copy, so route them through the app namespace and keep English defaults colocated with the component for tests and fallback rendering.

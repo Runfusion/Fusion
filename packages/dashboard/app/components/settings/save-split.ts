@@ -73,6 +73,7 @@ const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   experimental: new Set(["experimentalFeatures"]),
   "global-general": new Set([
     "githubTrackingDefaultRepo",
+    "gitlabEnabled",
     "gitlabInstanceUrl",
     "gitlabApiBaseUrl",
     "gitlabAuthToken",
@@ -323,7 +324,7 @@ export function splitSettingsSave({
     if (key === "githubTrackingDefaultRepo" && activeSection !== "global-general") {
       continue;
     }
-    if ((key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "global-general") {
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection !== "global-general") {
       continue;
     }
     if (key === "mcpServers" && activeSection !== "global-mcp") {
@@ -382,7 +383,7 @@ export function splitSettingsSave({
     if (key === "githubTokenConfigured" || key === "prAuthAvailable") continue; // server-only
     if (key === "customProviders") continue; // persisted via dedicated routes, not save-split (see global branch above)
     if (key === "githubTrackingDefaultRepo" && activeSection === "global-general") continue;
-    if ((key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "global-general") continue;
+    if ((key === "gitlabEnabled" || key === "gitlabInstanceUrl" || key === "gitlabApiBaseUrl" || key === "gitlabAuthToken" || key === "gitlabAuthTokenType") && activeSection === "global-general") continue;
     if (key === "mcpServers" && activeSection === "global-mcp") continue;
     if (!isProjectSettingsKey(key)) continue;
 

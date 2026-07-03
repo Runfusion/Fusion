@@ -202,6 +202,15 @@ function runWorkspaceCommand(command: string, args: string[], cwd: string, timeo
       cwd,
       stdio: "inherit",
       env: process.env,
+      /*
+       * FNXC:DesktopPackaging 2026-07-02-15:10:
+       * On Windows `pnpm` (and other npm bins) resolve to a `.cmd` shim that Node refuses to
+       * spawn without a shell (ENOENT / EINVAL since CVE-2024-27980). Without shell:true the CLI
+       * package build failed with `spawn pnpm ENOENT` on Windows at the "building @fusion/desktop"
+       * step. The command/args here are fixed repo build invocations (no untrusted input), so shell
+       * quoting is safe.
+       */
+      shell: process.platform === "win32",
     });
     const timer = setTimeout(() => {
       child.kill("SIGTERM");

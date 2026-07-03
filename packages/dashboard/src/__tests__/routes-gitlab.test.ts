@@ -99,6 +99,17 @@ describe("GitLab import routes", () => {
     expect(store.createTask.mock.calls[1][0].sourceIssue).toMatchObject({ provider: "gitlab", issueNumber: 5, url: "https://gitlab.example.com/g/p/-/merge_requests/5" });
   });
 
+
+  it("returns a disabled error without fetching GitLab when integration is off", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([]));
+    const { app, store } = buildApp(fetchImpl);
+    store.getSettings.mockResolvedValueOnce({ gitlabEnabled: false, gitlabInstanceUrl: "not-a-url", gitlabAuthToken: "" });
+    const response = await request(app, "POST", "/api/gitlab/project/issues/fetch", JSON.stringify({ project: "g/p" }), { "Content-Type": "application/json" });
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(response.body)).toContain("GitLab integration is disabled");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("normalizes self-managed settings and returns auth/config errors without token leakage", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([]));
     const { app, store } = buildApp(fetchImpl);

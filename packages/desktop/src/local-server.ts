@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import type { Server } from "node:http";
 
-import { ensureDesktopRuntimeProject } from "./engine-runtime.js";
+import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
 
 type TaskStoreLike = {
   init(): Promise<void>;
@@ -55,7 +55,7 @@ export class DesktopLocalServerManager {
       const { TaskStore } = await import("@fusion/core");
       const { CentralCore } = await import("@fusion/core");
       const { createServer } = await import("@fusion/dashboard");
-      const { ProjectEngineManager } = await import("@fusion/engine");
+      const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry } = await import("@fusion/engine");
       store = new TaskStore(this.rootDir) as TaskStoreLike;
       await store.init();
       await store.watch();
@@ -70,14 +70,20 @@ export class DesktopLocalServerManager {
         await centralCore.close?.();
       };
       await centralCore.init();
-      const rootProject = await ensureDesktopRuntimeProject(centralCore, this.rootDir);
+      // FNXC:DesktopRuntime 2026-07-03-03:30: never auto-register the runtime root as a project (see engine-runtime.ts).
       await engineManager.startAll();
       engineManager.startReconciliation();
-      const primaryEngine = await engineManager.ensureEngine(rootProject.id);
+      const rootProject = await resolveDesktopRuntimePrimaryProject(centralCore);
+      const primaryEngine = rootProject ? await engineManager.ensureEngine(rootProject.id) : undefined;
+      // FNXC:DesktopRuntime 2026-07-03-06:20: wire auth storage so /api/auth/status works and first-run onboarding can open (see local-runtime.ts).
+      const authStorage = createFusionAuthStorage();
+      const modelRegistry = createFusionModelRegistry(authStorage);
       const app = createServer(store as never, {
-        engine: primaryEngine,
+        ...(primaryEngine ? { engine: primaryEngine } : {}),
         engineManager,
         centralCore,
+        authStorage,
+        modelRegistry,
         onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
       });
       server = app.listen(0);

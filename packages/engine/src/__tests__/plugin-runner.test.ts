@@ -1428,6 +1428,17 @@ describe("PluginRunner", () => {
   });
 
   describe("task lifecycle hooks", () => {
+    /*
+    FNXC:PluginRunnerTests 2026-07-02-17:20:
+    PluginRunner lifecycle handlers intentionally fire-and-forget their hook dispatch, so tests must wait for the mocked invokeHook promise chain to settle before asserting.
+    Use a bounded microtask flush instead of real wall-clock sleeps because FN-5048 forbids deterministic test settling through setTimeout delays when no production timer behavior is under test.
+    */
+    const flushMicrotasks = async (turns = 4): Promise<void> => {
+      for (let turn = 0; turn < turns; turn += 1) {
+        await Promise.resolve();
+      }
+    };
+
     it("should invoke onTaskCreated when task:created event fires", async () => {
       mockPluginLoader.invokeHook = vi.fn();
       await pluginRunner.init();
@@ -1443,8 +1454,7 @@ describe("PluginRunner", () => {
         createdHandler(mockTask);
       }
       
-      // Give async handler time to execute
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushMicrotasks();
       
       expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith(
         "onTaskCreated",
@@ -1467,8 +1477,7 @@ describe("PluginRunner", () => {
         movedHandler({ task: mockTask, from: "todo", to: "in-progress" });
       }
       
-      // Give async handler time to execute
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushMicrotasks();
       
       expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith(
         "onTaskMoved",
@@ -1505,8 +1514,7 @@ describe("PluginRunner", () => {
         movedHandler({ task: mockTask, from: "in-progress", to: "done" });
       }
       
-      // Give async handler time to execute
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await flushMicrotasks();
       
       expect(mockPluginLoader.invokeHook).toHaveBeenCalledWith(
         "onTaskCompleted",
@@ -1538,8 +1546,7 @@ describe("PluginRunner", () => {
         movedHandler({ task: mockTask, from: "todo", to: "in-progress" });
       }
       
-      // Give async handler time to execute
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await flushMicrotasks();
       
       expect(mockPluginLoader.invokeHook).not.toHaveBeenCalledWith(
         "onTaskCompleted",

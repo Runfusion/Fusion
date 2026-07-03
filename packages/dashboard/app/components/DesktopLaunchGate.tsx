@@ -50,15 +50,20 @@ async function waitForLocalRuntime(
   throw new Error("Local runtime did not become ready in time");
 }
 
-function applyServerBaseUrl(baseUrl: string): void {
-  // Reload the page with the local runtime URL so shell-host bootstrap reads
-  // it and routes API calls through it (the page itself is loaded via file://
-  // so relative /api fetches would otherwise fail).
-  const url = new URL(window.location.href);
-  url.searchParams.set("serverBaseUrl", baseUrl);
-  url.searchParams.set("shellKind", "desktop-shell");
-  url.searchParams.set("shellMode", "local");
-  window.location.replace(url.toString());
+function navigateToLocalRuntimeOrigin(baseUrl: string): void {
+  /*
+   * FNXC:DesktopLaunchGate 2026-07-03-02:10:
+   * Load the UI FROM the embedded runtime's own origin (http://127.0.0.1:<port>/) rather than
+   * staying on the packaged file:// page. The dashboard client makes RELATIVE /api requests; on a
+   * file:// origin those resolve to file:///api/… and fail ("Can't reach the Fusion backend / Failed
+   * to fetch"), and the embedded server sends no CORS header so a cross-origin fetch would be blocked
+   * too. The embedded server also serves the client HTML at /, so navigating there makes /api
+   * same-origin and everything just works — this mirrors how remote mode navigates to its server URL.
+   */
+  const target = new URL("/", baseUrl);
+  target.searchParams.set("shellKind", "desktop-shell");
+  target.searchParams.set("shellMode", "local");
+  window.location.replace(target.toString());
 }
 
 export function DesktopLaunchGate({ children }: PropsWithChildren) {
@@ -92,15 +97,56 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
         // current page URL; if remote, App handles the redirect to the
         // active profile already.
         if (state.desktopMode === "local") {
-          const params = new URLSearchParams(window.location.search);
-          if (params.has("serverBaseUrl")) {
-            setPhase({ kind: "ready", serverBaseUrl: params.get("serverBaseUrl") ?? undefined });
+          /*
+           * FNXC:DesktopLaunchGate 2026-07-03-02:10:
+           * If this page is already served over http(s), it's the embedded runtime serving the UI,
+           * so /api is same-origin — render the app. The packaged renderer first loads from file://
+           * (where relative /api fetches fail); there we start the runtime and navigate to its origin
+           * (navigateToLocalRuntimeOrigin). Gating on the protocol rather than a serverBaseUrl URL
+           * param also avoids the prior reload loop — main.tsx's bootstrapShellHostContext() strips
+           * shell query params at module load, so a param-based "already handed off" check always
+           * missed and reloaded forever ("rapid Starting Fusion flashing").
+           */
+          if (window.location.protocol !== "file:") {
+            setPhase({ kind: "ready" });
             return;
           }
           setPhase({ kind: "starting-local", message: t("desktop.startingLocalRuntime", "Starting local Fusion runtime…") });
+          /*
+           * FNXC:DesktopLaunchGate 2026-07-02-14:35:
+           * Self-healing start. Do NOT assume main already started the embedded runtime.
+           * The gate decides to WAIT from shell `desktopMode:"local"`, but main decides to
+           * START from a separate launch-mode file; when those desync (a first local
+           * selection whose runtime start failed/was interrupted), main never starts the
+           * runtime and this branch would poll a permanently "stopped" runtime until the 30s
+           * timeout — the "hangs at Starting local runtime" bug. If the runtime is not already
+           * running or starting, actively (re)start it via setDesktopMode("local") — idempotent
+           * and awaits startup — before polling, so the gate can never wait for a runtime nobody
+           * launched.
+           *
+           * Re-read the runtime state immediately before deciding: the `state` snapshot was captured
+           * at mount and may not yet reflect a runtime main already started, which would fire a
+           * redundant setDesktopMode("local") on normal boots.
+           */
+          const freshState = await shell.getState();
+          if (cancelled) return;
+          const rt = freshState.localRuntime;
+          if (rt?.state !== "running" && rt?.state !== "starting") {
+            try {
+              await shell.setDesktopMode("local");
+            } catch (startError) {
+              if (cancelled) return;
+              setPhase({
+                kind: "local-error",
+                message: startError instanceof Error ? startError.message : String(startError),
+              });
+              return;
+            }
+            if (cancelled) return;
+          }
           const { baseUrl } = await waitForLocalRuntime(shell);
           if (cancelled) return;
-          applyServerBaseUrl(baseUrl);
+          navigateToLocalRuntimeOrigin(baseUrl);
           return;
         }
 
@@ -185,7 +231,7 @@ export function DesktopLaunchGate({ children }: PropsWithChildren) {
             await shell.setDesktopMode(mode);
             if (mode === "local") {
               const { baseUrl } = await waitForLocalRuntime(shell);
-              applyServerBaseUrl(baseUrl);
+              navigateToLocalRuntimeOrigin(baseUrl);
               return;
             }
             await shell.openConnectionManager();

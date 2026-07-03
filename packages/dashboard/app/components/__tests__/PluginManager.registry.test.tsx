@@ -97,8 +97,8 @@ function stubEventSource() {
   vi.stubGlobal("EventSource", MockEventSource);
 }
 
-async function renderRegistry(entries: RegistryPluginEntry[] = registryEntries) {
-  vi.mocked(fetchPlugins).mockResolvedValue([installedPlugin]);
+async function renderRegistry(entries: RegistryPluginEntry[] = registryEntries, installed: PluginInstallation[] = [installedPlugin]) {
+  vi.mocked(fetchPlugins).mockResolvedValue(installed);
   vi.mocked(fetchPluginRegistry).mockResolvedValue(entries);
   render(<PluginManager addToast={addToast} />);
   await act(async () => {
@@ -149,6 +149,74 @@ describe("PluginManager registry browsing", () => {
 
     const comingSoon = screen.getByText("Coming Soon Registry").closest(".plugin-registry-item") as HTMLElement;
     expect(within(comingSoon).getByText("Coming Soon")).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      state: "not-installed" as const,
+      entry: {
+        id: "fusion-plugin-linear-import",
+        name: "Linear Import",
+        description: "Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.",
+        version: "0.1.0",
+        author: "Fusion",
+        category: "integration" as const,
+        path: "./plugins/fusion-plugin-linear-import",
+        tags: ["linear", "import", "issues", "dashboard"],
+        installed: false,
+        canInstall: true,
+      },
+      installed: [] as PluginInstallation[],
+      action: "Install",
+    },
+    {
+      state: "installed-error" as const,
+      entry: {
+        id: "fusion-plugin-linear-import",
+        name: "Linear Import",
+        description: "Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.",
+        version: "0.1.0",
+        author: "Fusion",
+        category: "integration" as const,
+        path: "./plugins/fusion-plugin-linear-import",
+        tags: ["linear", "import", "issues", "dashboard"],
+        installed: true,
+        installedVersion: "0.1.0",
+        state: "error" as const,
+        canInstall: true,
+      },
+      installed: [{ ...installedPlugin, id: "fusion-plugin-linear-import", name: "Linear Import", state: "error" as const, enabled: true, error: "Linear plugin failed" }],
+      action: "Manage",
+    },
+    {
+      state: "installed-started" as const,
+      entry: {
+        id: "fusion-plugin-linear-import",
+        name: "Linear Import",
+        description: "Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.",
+        version: "0.1.0",
+        author: "Fusion",
+        category: "integration" as const,
+        path: "./plugins/fusion-plugin-linear-import",
+        tags: ["linear", "import", "issues", "dashboard"],
+        installed: true,
+        installedVersion: "0.1.0",
+        state: "started" as const,
+        canInstall: true,
+      },
+      installed: [{ ...installedPlugin, id: "fusion-plugin-linear-import", name: "Linear Import", state: "started" as const, enabled: true }],
+      action: "Manage",
+    },
+  ])("shows Linear Import registry action for $state", async ({ entry, installed, action }) => {
+    await renderRegistry([entry], installed);
+
+    const section = screen.getByRole("region", { name: "Browse Registry" });
+    const linear = within(section).getByText("Linear Import").closest(".plugin-registry-item") as HTMLElement;
+    expect(linear).toBeInTheDocument();
+    expect(within(linear).getByText("Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.")).toBeInTheDocument();
+    expect(within(linear).getByText("integration")).toBeInTheDocument();
+    expect(within(linear).getByRole("button", { name: action })).toBeInTheDocument();
+    expect(within(section).getAllByText("Linear Import")).toHaveLength(1);
   });
 
   it("installs registry plugins with their manifest path and refreshes installed plugins", async () => {

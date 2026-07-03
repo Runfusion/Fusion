@@ -558,6 +558,48 @@ describe("SessionTerminal (mobile) — keyboard-open behavior", () => {
     input.remove();
   });
 
+  it("keeps initial iOS keyboard-open 12px metrics when layout height already shrank", async () => {
+    installMatchMedia(true);
+    const originalScreen = window.screen;
+    installVisualViewport({ innerHeight: 390, vvHeight: 390, vvWidth: 390 });
+    Object.defineProperty(window, "innerWidth", { value: 390, writable: true, configurable: true });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 390,
+      configurable: true,
+    });
+    Object.defineProperty(window, "screen", {
+      configurable: true,
+      value: { width: 390, height: 844 },
+    });
+    window.localStorage.setItem(
+      TERMINAL_PREFERENCES_KEY,
+      JSON.stringify({ ...DEFAULT_TERMINAL_PREFERENCES, fontSize: 12 }),
+    );
+    const input = document.createElement("textarea");
+    document.body.appendChild(input);
+    input.focus();
+
+    try {
+      const { ws } = await renderMobile();
+
+      await waitFor(() => {
+        const root = screen.getByTestId("cli-terminal-mobile-bar").closest(".cli-session-terminal");
+        expect(root).toHaveClass("cli-session-terminal--mobile");
+        expect(root).toHaveAttribute("data-keyboard-open", "true");
+        const bar = screen.getByTestId("cli-terminal-mobile-bar");
+        expect(bar.className).toContain("cli-session-terminal__mobile-bar--keyboard-open");
+        expect(bar.style.bottom).toBe("454px");
+      });
+      expect(mockTerm.options.fontSize).toBe(12);
+      expectMeasurementSafeFontStack(mockTerm.options.fontFamily as string);
+      await waitFor(() => expect(mockFitAddon.fit).toHaveBeenCalled());
+      expect(ws.sent.some((raw) => JSON.parse(raw).type === "resize")).toBe(true);
+    } finally {
+      input.remove();
+      Object.defineProperty(window, "screen", { configurable: true, value: originalScreen });
+    }
+  });
+
   it("keeps Android keyboard-open 10px metrics on visualViewport mobile width", async () => {
     installMatchMedia({ width: false, height: false });
     installVisualViewport({ innerHeight: 700, vvHeight: 320, vvWidth: 390 });

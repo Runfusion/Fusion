@@ -1655,9 +1655,36 @@ export function ModelOnboardingModal({
   );
 
   // Handle model selection from CustomModelDropdown
-  const handleModelSelect = useCallback((value: string) => {
-    setSelectedModel(value);
-  }, []);
+  const handleModelSelect = useCallback(
+    (value: string) => {
+      setSelectedModel(value);
+
+      /*
+       * FNXC:Onboarding 2026-07-03-09:15:
+       * Persist the picked model as the global default IMMEDIATELY on selection. Previously the choice
+       * lived only in local state until completeOnboarding ran on the final step, so a user who selected
+       * a model but exited or skipped before finishing lost the selection and then saw the post-onboarding
+       * "Select Default Model" banner despite having explicitly chosen one. Saving on pick makes the
+       * selection durable regardless of how onboarding is exited.
+       */
+      const slashIdx = value.indexOf("/");
+      const provider = slashIdx !== -1 ? value.slice(0, slashIdx) : undefined;
+      const modelId = slashIdx !== -1 ? value.slice(slashIdx + 1) : value;
+      const model = availableModels.find((m) => m.id === modelId);
+      const updates: Record<string, unknown> = {};
+      if (model) {
+        updates.defaultProvider = model.provider;
+        updates.defaultModelId = model.id;
+      } else if (provider && modelId) {
+        updates.defaultProvider = provider;
+        updates.defaultModelId = modelId;
+      }
+      if (updates.defaultModelId) {
+        void updateGlobalSettings(updates).catch(() => undefined);
+      }
+    },
+    [availableModels, updateGlobalSettings],
+  );
 
   const completeOnboarding = useCallback(async () => {
     try {
@@ -1665,13 +1692,26 @@ export function ModelOnboardingModal({
         modelOnboardingComplete: true,
       };
 
-      // If a model was selected, persist it as the default
-      if (selectedModel) {
-        const slashIdx = selectedModel.indexOf("/");
+      /*
+       * FNXC:Onboarding 2026-07-03-09:10:
+       * Persist a default model on completion so the post-onboarding "Select Default Model"
+       * recommendation does not fire for operators who connected a provider but never opened the model
+       * dropdown. selectedModel is only populated by an explicit dropdown pick (or a previously-saved
+       * default), so a fresh first-run where the user just connects Anthropic and clicks Continue would
+       * otherwise leave defaultProvider/defaultModelId unset and trip the false-positive banner. Prefer
+       * the explicit pick; otherwise fall back to the first available model from the connected provider.
+       * Only when no models are available at all do we leave the default unset.
+       */
+      const effectiveSelection =
+        selectedModel ||
+        (availableModels[0] ? `${availableModels[0].provider}/${availableModels[0].id}` : "");
+
+      if (effectiveSelection) {
+        const slashIdx = effectiveSelection.indexOf("/");
         const provider =
-          slashIdx !== -1 ? selectedModel.slice(0, slashIdx) : undefined;
+          slashIdx !== -1 ? effectiveSelection.slice(0, slashIdx) : undefined;
         const modelId =
-          slashIdx !== -1 ? selectedModel.slice(slashIdx + 1) : selectedModel;
+          slashIdx !== -1 ? effectiveSelection.slice(slashIdx + 1) : effectiveSelection;
 
         const model = availableModels.find((m) => m.id === modelId);
         if (model) {
@@ -1830,7 +1870,15 @@ export function ModelOnboardingModal({
   const githubStatus = getGitHubStatus();
 
   const aiProviders = authProviders.filter((provider) => provider.id !== "github");
-  const showShellConnectionSetup = shellState.host !== "web" && !shellState.activeProfileId;
+  /*
+   * FNXC:Onboarding 2026-07-03-07:20:
+   * Show the "Connect remote Fusion server" card ONLY when not already connected to a remote server
+   * (no active remote profile) — on any host, web included. Never show it in LOCAL desktop mode: a
+   * local runtime is already the connected backend, so prompting for a remote server URL just confuses
+   * first-run setup (the original report).
+   */
+  const showShellConnectionSetup =
+    !shellState.activeProfileId && shellState.desktopMode !== "local";
   const orderedAiProviders = [...aiProviders].sort(compareOnboardingProviders);
   const hasOauthProviders = orderedAiProviders.some((provider) => !provider.type || provider.type === "oauth");
   const providerSupportsApiKey = (provider: AuthProvider) => provider.type === "api_key";
@@ -2353,9 +2401,6 @@ export function ModelOnboardingModal({
               <p className="onboarding-helper-text model-onboarding-primary-helper">
                 {t("setup.onlyNeedOneProvider", "You only need one provider to get started.")}
               </p>
-              <p className="onboarding-helper-text">
-                {t("setup.researchRunsNote", "Research runs require provider credentials and an enabled Research View. After onboarding, verify these in Settings → Authentication and Settings → Experimental Features.")}
-              </p>
 
               {showShellConnectionSetup && (
                 <div className="card">
@@ -2663,7 +2708,15 @@ export function ModelOnboardingModal({
                   <div className="model-onboarding-github-optional__actions">
                     <button
                       className="btn btn-primary btn-sm"
-                      onClick={() => setStep("project-setup")}
+                      /*
+                       * FNXC:Onboarding 2026-07-03-08:00:
+                       * Advance via handleNext/handleSkip (not a raw setStep) so the GitHub step's
+                       * status is recorded. When GitHub is ready via the gh CLI, "Continue with gh CLI
+                       * auth" must COMPLETE the step (handleNext) — previously it jumped to project-setup
+                       * without adding "github" to completedSteps, so step 2 never checked off. When
+                       * GitHub isn't connected, "Continue without GitHub" is a SKIP (handleSkip).
+                       */
+                      onClick={isGitHubReadyViaCli ? handleNext : handleSkip}
                     >
                       {isGitHubReadyViaCli
                         ? t("setup.continueWithGhCli", "Continue with gh CLI auth →")

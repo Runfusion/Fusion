@@ -332,11 +332,9 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
-    it("shows research setup guidance in AI setup step", async () => {
-      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
-
-      expect(await screen.findByText(/Research runs require provider credentials and an enabled Research View/i)).toBeInTheDocument();
-    });
+    // FNXC:Onboarding 2026-07-03: the "Research runs require provider credentials and an enabled
+    // Research View" note was intentionally removed from onboarding at the operator's request (it
+    // belongs in Settings, not first-run), so the assertion that it renders no longer applies.
 
     it("hides deprecated google CLI and antigravity providers while keeping supported Google/Gemini entries", async () => {
       mockFetchAuthStatus.mockResolvedValueOnce({

@@ -39,7 +39,9 @@ const mocks = vi.hoisted(() => {
     init: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
     getProjectByPath: vi.fn(async () => ({ id: "project-1", name: "Repo", path: "/repo", status: "active" })),
-    listProjects: vi.fn(async () => []),
+    // Default: an operator who already onboarded a project. resolveDesktopRuntimePrimaryProject
+    // picks the first one; the runtime NEVER auto-registers the runtime root.
+    listProjects: vi.fn(async () => [{ id: "project-1", name: "Repo", path: "/repo", status: "active" }]),
     registerProject: vi.fn(async ({ path, name }: { path: string; name: string }) => ({ id: "project-1", name, path, status: "initializing" })),
     updateProject: vi.fn(async (id: string, patch: Record<string, unknown>) => ({ id, name: "Repo", path: "/repo", status: patch.status ?? "active" })),
   };
@@ -85,7 +87,11 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@fusion/core", () => ({ TaskStore: mocks.TaskStore, CentralCore: mocks.CentralCore }));
 vi.mock("@fusion/dashboard", () => ({ createServer: mocks.createServer }));
-vi.mock("@fusion/engine", () => ({ ProjectEngineManager: mocks.ProjectEngineManager }));
+vi.mock("@fusion/engine", () => ({
+  ProjectEngineManager: mocks.ProjectEngineManager,
+  createFusionAuthStorage: () => ({ reload: () => undefined, getOAuthProviders: () => [], hasAuth: () => false }),
+  createFusionModelRegistry: () => ({ listModels: () => [] }),
+}));
 
 describe("DesktopLocalServerManager", () => {
   beforeEach(() => {
@@ -102,7 +108,8 @@ describe("DesktopLocalServerManager", () => {
     expect(manager.getPort()).toBe(4545);
     expect(manager.getState().status).toBe("ready");
     expect(mocks.engineManager.startAll).toHaveBeenCalledTimes(1);
-    expect(mocks.centralCore.getProjectByPath).toHaveBeenCalledWith("/repo");
+    // No auto-registration of the runtime root; the primary engine is the first existing project.
+    expect(mocks.centralCore.registerProject).not.toHaveBeenCalled();
     expect(mocks.engineManager.ensureEngine).toHaveBeenCalledWith("project-1");
     expect(mocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
@@ -152,20 +159,22 @@ describe("DesktopLocalServerManager", () => {
     expect(manager.getState()).toMatchObject({ status: "error", error: "server failed" });
   });
 
-  it("registers an active runtime-root project when no projects exist", async () => {
-    mocks.centralCore.getProjectByPath.mockResolvedValueOnce(undefined);
+  it("never auto-registers a project and starts engine-less when no projects exist", async () => {
+    mocks.centralCore.listProjects.mockResolvedValueOnce([]);
     const { DesktopLocalServerManager } = await import("../local-server.ts");
     const manager = new DesktopLocalServerManager("/repo");
 
-    await manager.start();
+    const runtime = await manager.start();
 
-    expect(mocks.centralCore.registerProject).toHaveBeenCalledWith({
-      path: "/repo",
-      name: "repo",
-      isolationMode: "in-process",
-    });
-    expect(mocks.centralCore.updateProject).toHaveBeenCalledWith("project-1", { status: "active" });
-    expect(mocks.engineManager.ensureEngine).toHaveBeenCalledWith("project-1");
+    // Fresh install: the runtime must NOT create a project for its root; the dashboard onboards.
+    expect(mocks.centralCore.registerProject).not.toHaveBeenCalled();
+    expect(mocks.engineManager.ensureEngine).not.toHaveBeenCalled();
+    // The server still starts (engine-less) so the dashboard can render its onboarding empty state.
+    expect(runtime.port).toBe(4545);
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ engine: expect.anything() }),
+    );
   });
 
   it("returns existing runtime when start is called twice", async () => {

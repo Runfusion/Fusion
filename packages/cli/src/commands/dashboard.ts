@@ -1791,7 +1791,16 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
         cwd,
         central: centralCoreForEngine,
         logPrefix: "dashboard",
-        autoRegister: true,
+        /*
+         * FNXC:CliProjectOnboarding 2026-07-03-03:45:
+         * Bare `fusion` / `fn` / `fn dashboard` / `fusion dashboard` must NOT auto-register the CWD as
+         * a project. Auto-registration silently created a project for whatever directory the dashboard
+         * happened to launch from. Instead: use the CWD project only if it is ALREADY registered,
+         * otherwise start with no CWD project and let the dashboard prompt the operator through
+         * onboarding (ProjectOverview "Add your first project" -> SetupWizard). Operators who want the
+         * CWD registered can still run `fn init`.
+         */
+        autoRegister: false,
       }).catch(() => undefined as Awaited<ReturnType<typeof ensureCwdProjectRegistered>> | undefined),
       (async () => {
         try {

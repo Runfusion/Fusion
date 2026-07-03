@@ -176,6 +176,17 @@ export const BUILTIN_PLUGINS: BuiltinPlugin[] = [
     category: "integration",
     path: "./plugins/fusion-plugin-compound-engineering",
   },
+  /*
+   * FNXC:PluginManager 2026-07-02-17:56:
+   * FN-7454 keeps Linear Import in the built-in catalog because FN-7443 shipped the plugin package, registry entry, and dashboard view, but users still could not install or manage it from Plugin Manager without this bundled-plugin registration.
+   */
+  {
+    id: "fusion-plugin-linear-import",
+    name: "Linear Import",
+    description: "Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.",
+    category: "integration",
+    path: "./plugins/fusion-plugin-linear-import",
+  },
   {
     id: BUILTIN_AGENT_BROWSER_PLUGIN_ID,
     name: "Agent Browser",

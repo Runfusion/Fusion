@@ -95,6 +95,18 @@ export function readCache<T>(key: string, options?: { maxAgeMs?: number }): T | 
     if (typeof maxAgeMs === "number") {
       const ageMs = Date.now() - envelope.savedAt;
       if (ageMs > maxAgeMs) {
+        /*
+        FNXC:SwrCache 2026-07-02-00:00:
+        Lazy GC: drop the stale entry so it stops consuming localStorage quota. A stale
+        entry is already treated as a miss by every reader (they re-fetch and overwrite),
+        so deleting it on read is behavior-preserving. This prevents per-session and
+        per-room message caches from accumulating when a reader revisits a stale key.
+        */
+        try {
+          storage.removeItem(key);
+        } catch {
+          // Ignore storage errors — the stale read still returns null.
+        }
         return null;
       }
     }
@@ -155,4 +167,112 @@ export function clearCache(prefix: string): void {
   } catch {
     // Ignore storage errors.
   }
+}
+
+/**
+ * FNXC:SwrCache 2026-07-02-00:00:
+ * Boot-time sweep that removes every SWR hydration entry older than SWR_LONG_MAX_AGE_MS (24h).
+ * Since 24h is the longest TTL any consumer passes to readCache, a pruned entry was already
+ * treated as a miss by every reader — this frees quota without changing hydration behavior.
+ * The main target is per-session / per-room message caches from abandoned conversations that
+ * are never read again (and therefore never hit readCache's lazy GC). Called once from the
+ * DashboardLoader mount so it runs before hydration hooks read their caches.
+ *
+ * Returns the number of entries removed for diagnostics.
+ */
+export function pruneStaleCacheEntries(): number {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return 0;
+  }
+
+  let removed = 0;
+  try {
+    const staleKeys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (typeof key !== "string" || !key.startsWith("kb-dashboard-")) {
+        continue;
+      }
+      const raw = storage.getItem(key);
+      if (raw === null) {
+        continue;
+      }
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object" || !("savedAt" in parsed)) {
+          continue;
+        }
+        const savedAt = parsed.savedAt;
+        if (typeof savedAt !== "number" || Number.isNaN(savedAt)) {
+          continue;
+        }
+        if (Date.now() - savedAt > SWR_LONG_MAX_AGE_MS) {
+          staleKeys.push(key);
+        }
+      } catch {
+        // Malformed JSON — leave it; readCache/clearCache handle their own parsing.
+      }
+    }
+
+    for (const key of staleKeys) {
+      storage.removeItem(key);
+      removed += 1;
+    }
+  } catch {
+    // Ignore storage errors.
+  }
+
+  return removed;
+}
+
+/**
+ * FNXC:SwrCache 2026-07-02-00:00:
+ * User-facing "Clear local data" helper: removes all Fusion-owned browser data — SWR
+ * hydration caches plus per-project scoped preferences and global UI preferences — while
+ * preserving the dashboard auth token so a reload keeps the session usable. Wired to
+ * Settings → General "Clear local data" as the escape hatch for quota exhaustion. Callers
+ * should reload the page after this so React state re-hydrates from a clean slate.
+ *
+ * Returns the number of keys removed for diagnostics.
+ */
+export const LOCAL_CACHE_PRESERVE_KEYS: Readonly<Record<string, true>> = { "fn.authToken": true };
+
+function isFusionOwnedKey(key: string): boolean {
+  return (
+    key.startsWith("kb-") ||
+    key.startsWith("kb:") ||
+    key.startsWith("fn-agent-log-") ||
+    key.startsWith("fusion")
+  );
+}
+
+export function clearAllLocalCache(): number {
+  const storage = getLocalStorage();
+  if (!storage) {
+    return 0;
+  }
+
+  let removed = 0;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (typeof key === "string") {
+        keys.push(key);
+      }
+    }
+
+    for (const key of keys) {
+      if (key in LOCAL_CACHE_PRESERVE_KEYS || !isFusionOwnedKey(key)) {
+        continue;
+      }
+      storage.removeItem(key);
+      removed += 1;
+    }
+  } catch {
+    // Ignore storage errors.
+  }
+
+  return removed;
 }

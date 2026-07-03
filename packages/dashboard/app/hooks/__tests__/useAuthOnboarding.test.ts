@@ -63,6 +63,32 @@ describe("useAuthOnboarding", () => {
     expect(openSettings).not.toHaveBeenCalled();
   });
 
+  it("opens onboarding on a brand-new install even when the provider list is empty", async () => {
+    // Regression: a fresh install (e.g. desktop first launch) can report zero providers; the
+    // old `providers.length > 0` gate skipped onboarding entirely. First-run must still fire.
+    mockFetchAuthStatus.mockResolvedValue({ providers: [] });
+    mockFetchGlobalSettings.mockResolvedValue({
+      modelOnboardingComplete: undefined,
+      defaultProvider: undefined,
+      defaultModelId: undefined,
+    } as never);
+    mockIsOnboardingCompleted.mockReturnValue(false);
+
+    renderHook(() =>
+      useAuthOnboarding({
+        projectId: undefined,
+        setupWizardOpen: false,
+        openModelOnboarding,
+        openSettings,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(openModelOnboarding).toHaveBeenCalledTimes(1);
+    });
+    expect(openSettings).not.toHaveBeenCalled();
+  });
+
   it("opens onboarding when modelOnboardingComplete is undefined (first-run detection)", async () => {
     mockFetchAuthStatus.mockResolvedValue({
       providers: [{ id: "openai", name: "OpenAI", authenticated: false }],

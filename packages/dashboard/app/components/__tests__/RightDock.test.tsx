@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
   RightDock,
+  RIGHT_DOCK_OPEN_STORAGE_KEY,
   RIGHT_DOCK_PINNED_STORAGE_KEY,
   RIGHT_DOCK_VIEW_STORAGE_KEY,
   RIGHT_DOCK_WIDTH_STORAGE_KEY,
+  readStoredRightDockOpen,
   type RightDockProps,
 } from "../RightDock";
 import { RightDockExpandModal } from "../RightDockExpandModal";
@@ -81,10 +83,27 @@ describe("RightDock", () => {
   beforeEach(() => {
     window.localStorage.clear();
     vi.clearAllMocks();
+    // FNXC:Navigation 2026-07-03-09:40: the dock now defaults to HIDDEN, so controller-driven Harness
+    // tests below (which exercise open-dock behavior) represent an opted-in operator and must seed the
+    // stored "open" preference. Tests that render <RightDock open={...}/> directly are unaffected.
+    window.localStorage.setItem(RIGHT_DOCK_OPEN_STORAGE_KEY, "true");
   });
 
   afterEach(() => {
     window.localStorage.clear();
+  });
+
+  it("defaults the dock to hidden with no stored preference and honours explicit choices", () => {
+    // FNXC:Navigation 2026-07-03-09:40: first-run/onboarding must land on an uncluttered board, so the
+    // right dock is hidden until the operator opts in via the Header toggle (persists "true").
+    window.localStorage.removeItem(RIGHT_DOCK_OPEN_STORAGE_KEY);
+    expect(readStoredRightDockOpen()).toBe(false);
+
+    window.localStorage.setItem(RIGHT_DOCK_OPEN_STORAGE_KEY, "true");
+    expect(readStoredRightDockOpen()).toBe(true);
+
+    window.localStorage.setItem(RIGHT_DOCK_OPEN_STORAGE_KEY, "false");
+    expect(readStoredRightDockOpen()).toBe(false);
   });
 
   it("keeps right-dock divider chrome tokenized and invisible by default", () => {

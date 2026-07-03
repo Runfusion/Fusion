@@ -35,21 +35,36 @@ export function useDashboardHealth(): UseDashboardHealthResult {
 
   useEffect(() => {
     let cancelled = false;
+    let settledOnce = false;
 
-    fetchDashboardHealth()
-      .then((next) => {
-        if (!cancelled) {
+    /*
+     * FNXC:DashboardHealth 2026-07-03-08:40:
+     * Poll health periodically instead of fetching once on mount. Engine availability is transient:
+     * right after a project is created the engine is still starting, so the first fetch reports
+     * engine.available=false and the "AI engine is not running" banner shows. Without polling, health
+     * was never refreshed, so the banner stayed up permanently even after the engine came online.
+     * Re-fetching every 15s lets the banner clear on its own. Preserve the previous value on transient
+     * poll errors (only clear to null if we never had a value) so banners don't flicker.
+     */
+    const load = () => {
+      fetchDashboardHealth()
+        .then((next) => {
+          if (cancelled) return;
+          settledOnce = true;
           setHealth(next);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setHealth(null);
-        }
-      });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setHealth((prev) => (settledOnce ? prev : null));
+        });
+    };
+
+    load();
+    const interval = setInterval(load, 15_000);
 
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 

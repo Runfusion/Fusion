@@ -56,30 +56,36 @@ export function useAuthOnboarding({
     fetchAuthStatus()
       .then(({ providers }) => {
         const hasAuthenticatedProvider = providers.some((provider) => provider.authenticated);
-        const needsSetup = providers.length > 0 && !hasAuthenticatedProvider;
 
-        if (needsSetup || (providers.length > 0 && hasAuthenticatedProvider)) {
-          return fetchGlobalSettings()
-            .then((globalSettings) => {
-              const hasDefaultModel = !!(
-                globalSettings.defaultProvider && globalSettings.defaultModelId
-              );
-              // Explicit first-run detection: onboarding is incomplete when
-              // modelOnboardingComplete is false or undefined
-              const onboardingIncomplete =
-                globalSettings.modelOnboardingComplete === false ||
-                globalSettings.modelOnboardingComplete === undefined;
-              const setupIncomplete = !hasAuthenticatedProvider || !hasDefaultModel;
+        /*
+         * FNXC:Onboarding 2026-07-03-04:00:
+         * Always evaluate first-run onboarding from completion state — do NOT gate on
+         * `providers.length > 0`. A brand-new install (notably the desktop app on first launch)
+         * can report an empty provider list; the old gate skipped onboarding entirely and dropped
+         * the operator on an empty dashboard with no AI/GitHub setup. Brand-new users must be guided
+         * through AI + GitHub setup before project creation — the model-onboarding wizard owns that
+         * AI -> GitHub -> Project sequence.
+         */
+        return fetchGlobalSettings()
+          .then((globalSettings) => {
+            const hasDefaultModel = !!(
+              globalSettings.defaultProvider && globalSettings.defaultModelId
+            );
+            // Explicit first-run detection: onboarding is incomplete when
+            // modelOnboardingComplete is false or undefined
+            const onboardingIncomplete =
+              globalSettings.modelOnboardingComplete === false ||
+              globalSettings.modelOnboardingComplete === undefined;
+            const setupIncomplete = !hasAuthenticatedProvider || !hasDefaultModel;
 
-              if (onboardingIncomplete && setupIncomplete && !isOnboardingCompleted()) {
-                shouldOpenOnboarding = true;
-              } else if (!hasAuthenticatedProvider && !isOnboardingCompleted()) {
-                // Completed onboarding but no authenticated provider → fallback
-                // to Settings Authentication section (only if not locally completed)
-                shouldOpenSettings = true;
-              }
-            });
-        }
+            if (onboardingIncomplete && setupIncomplete && !isOnboardingCompleted()) {
+              shouldOpenOnboarding = true;
+            } else if (!hasAuthenticatedProvider && !isOnboardingCompleted()) {
+              // Completed onboarding but no authenticated provider → fallback
+              // to Settings Authentication section (only if not locally completed)
+              shouldOpenSettings = true;
+            }
+          });
       })
       .then(() => {
         // Execute after the promise chain resolves. Re-check the wizard:

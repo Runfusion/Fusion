@@ -17,6 +17,7 @@ import {
   apiImportGitLabProjectIssue,
   apiImportGitLabGroupIssue,
   apiImportGitLabMergeRequest,
+  fetchSettings,
   fetchGitRemotes,
   type GitHubIssue,
   type GitHubPull,
@@ -328,6 +329,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   const [gitlabGroup, setGitlabGroup] = useState("");
   const [gitlabItems, setGitlabItems] = useState<GitLabImportItem[]>([]);
   const [selectedGitlabKey, setSelectedGitlabKey] = useState<string | null>(null);
+  const [gitlabEnabled, setGitlabEnabled] = useState(true);
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>("issues");
@@ -585,9 +587,27 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     }
   }, [owner, repo]);
 
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isOpen) return () => { cancelled = true; };
+    fetchSettings(projectId, { forceFresh: true })
+      .then((settings) => {
+        if (!cancelled) setGitlabEnabled(settings.gitlabEnabled !== false);
+      })
+      .catch(() => {
+        if (!cancelled) setGitlabEnabled(true);
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, projectId]);
+
   const selectedGitlabItem = gitlabItems.find((item) => `${item.resourceKind}:${item.projectId ?? item.projectPath ?? ""}:${item.iid}` === selectedGitlabKey) ?? null;
 
   const handleLoadGitLab = useCallback(async () => {
+    if (!gitlabEnabled) {
+      setError(t("git.gitlabDisabled", "GitLab integration is disabled in Settings. Enable it to fetch or import GitLab resources; saved configuration is preserved."));
+      return;
+    }
     const project = gitlabProject.trim();
     const group = gitlabGroup.trim();
     if ((gitlabResource === "project_issue" || gitlabResource === "merge_request") && !project) {
@@ -616,10 +636,10 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     } finally {
       setLoading(false);
     }
-  }, [gitlabProject, gitlabGroup, gitlabResource, labels, t]);
+  }, [gitlabEnabled, gitlabProject, gitlabGroup, gitlabResource, labels, t]);
 
   const handleImportGitLab = useCallback(async () => {
-    if (!selectedGitlabItem) return;
+    if (!selectedGitlabItem || !gitlabEnabled) return;
     setImporting(true);
     setError(null);
     try {
@@ -636,7 +656,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     } finally {
       setImporting(false);
     }
-  }, [selectedGitlabItem, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, isMobile, mobileView, t]);
+  }, [selectedGitlabItem, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, isMobile, mobileView, t]);
 
   // Auto-load data when owner and repo are set and valid
   useEffect(() => {
@@ -1085,7 +1105,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
         <div className="modal-body github-import-modal__body">
           <div className="github-import-provider" role="group" aria-label={t("git.providerAriaLabel", "Import provider")}>
             <button type="button" className={`github-import-tab ${provider === "github" ? "active" : ""}`} aria-pressed={provider === "github"} onClick={() => setProvider("github")} disabled={loading || importing}>GitHub</button>
-            <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing}>GitLab</button>
+            <button type="button" className={`github-import-tab ${provider === "gitlab" ? "active" : ""}`} aria-pressed={provider === "gitlab"} onClick={() => setProvider("gitlab")} disabled={loading || importing} title={gitlabEnabled ? undefined : t("git.gitlabDisabledTabTitle", "GitLab integration is disabled in Settings")}>GitLab</button>
           </div>
           {provider === "github" ? (
           <>
@@ -1625,23 +1645,24 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
             <div className="github-import-gitlab" data-testid="gitlab-import-panel">
               <div className="github-import-tabs" role="tablist" aria-label={t("git.gitlabResourceAriaLabel", "GitLab resource type")}>
                 {(["project_issue", "group_issue", "merge_request"] as GitLabResourceTab[]).map((resource) => (
-                  <button key={resource} type="button" role="tab" aria-selected={gitlabResource === resource} className={`github-import-tab ${gitlabResource === resource ? "active" : ""}`} onClick={() => { setGitlabResource(resource); setGitlabItems([]); setSelectedGitlabKey(null); }} disabled={loading || importing}>
+                  <button key={resource} type="button" role="tab" aria-selected={gitlabResource === resource} className={`github-import-tab ${gitlabResource === resource ? "active" : ""}`} onClick={() => { setGitlabResource(resource); setGitlabItems([]); setSelectedGitlabKey(null); }} disabled={loading || importing || !gitlabEnabled}>
                     {resource === "project_issue" ? t("git.gitlabProjectIssues", "Project issues") : resource === "group_issue" ? t("git.gitlabGroupIssues", "Group issues") : t("git.gitlabMergeRequests", "Merge requests")}
                   </button>
                 ))}
               </div>
               <div className="github-import-toolbar" role="toolbar" aria-label={t("git.gitlabToolbarAriaLabel", "GitLab import controls")}>
                 {gitlabResource !== "group_issue" ? (
-                  <input className="input" value={gitlabProject} onChange={(event) => setGitlabProject(event.target.value)} placeholder={t("git.gitlabProjectPlaceholder", "group/subgroup/project or numeric ID")} aria-label={t("git.gitlabProjectLabel", "GitLab project path or ID")} disabled={loading || importing} />
+                  <input className="input" value={gitlabProject} onChange={(event) => setGitlabProject(event.target.value)} placeholder={t("git.gitlabProjectPlaceholder", "group/subgroup/project or numeric ID")} aria-label={t("git.gitlabProjectLabel", "GitLab project path or ID")} disabled={loading || importing || !gitlabEnabled} />
                 ) : (
-                  <input className="input" value={gitlabGroup} onChange={(event) => setGitlabGroup(event.target.value)} placeholder={t("git.gitlabGroupPlaceholder", "group/subgroup or numeric ID")} aria-label={t("git.gitlabGroupLabel", "GitLab group path or ID")} disabled={loading || importing} />
+                  <input className="input" value={gitlabGroup} onChange={(event) => setGitlabGroup(event.target.value)} placeholder={t("git.gitlabGroupPlaceholder", "group/subgroup or numeric ID")} aria-label={t("git.gitlabGroupLabel", "GitLab group path or ID")} disabled={loading || importing || !gitlabEnabled} />
                 )}
-                <input className="input" value={labels} onChange={(event) => setLabels(event.target.value)} placeholder={t("git.filterByLabelsPlaceholder", "Filter: bug,enhancement…")} aria-label={t("git.filterGitLabByLabels", "Filter GitLab resources by labels")} disabled={loading || importing} />
-                <button type="button" className="btn btn-primary" onClick={handleLoadGitLab} disabled={loading || importing || (gitlabResource === "group_issue" ? !gitlabGroup.trim() : !gitlabProject.trim())}>
+                <input className="input" value={labels} onChange={(event) => setLabels(event.target.value)} placeholder={t("git.filterByLabelsPlaceholder", "Filter: bug,enhancement…")} aria-label={t("git.filterGitLabByLabels", "Filter GitLab resources by labels")} disabled={loading || importing || !gitlabEnabled} />
+                <button type="button" className="btn btn-primary" onClick={handleLoadGitLab} disabled={!gitlabEnabled || loading || importing || (gitlabResource === "group_issue" ? !gitlabGroup.trim() : !gitlabProject.trim())}>
                   {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
                   {t("git.load", "Load")}
                 </button>
               </div>
+              {!gitlabEnabled && <div className="github-import-state github-import-state--idle" data-testid="gitlab-import-disabled"><strong>{t("git.gitlabDisabledHeading", "GitLab integration disabled")}</strong><span>{t("git.gitlabDisabledHint", "Enable GitLab integration in Settings to fetch or import GitLab resources. Saved GitLab URLs and tokens remain configured.")}</span></div>}
               {error && <div className="github-import-state github-import-state--error" data-testid="gitlab-import-error"><strong>{t("git.gitlabError", "GitLab import unavailable")}</strong><span>{error}</span></div>}
               {gitlabItems.length === 0 && !loading && !error ? <div className="github-import-state github-import-state--idle" data-testid="gitlab-import-empty"><strong>{t("git.gitlabNoResources", "No GitLab resources loaded")}</strong><span>{t("git.gitlabLoadHint", "Enter a project or group and load resources from the configured GitLab instance.")}</span></div> : null}
               <div className="github-import-gitlab__workspace">
@@ -1663,7 +1684,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
                       <h4>{selectedGitlabItem.resourceKind === "merge_request" ? "!" : "#"}{selectedGitlabItem.iid} {selectedGitlabItem.title}</h4>
                       <div className="preview-meta-row"><span className={`preview-state-badge preview-state-badge--${selectedGitlabItem.state}`}>{selectedGitlabItem.state}</span><a href={selectedGitlabItem.webUrl} target="_blank" rel="noopener noreferrer">{t("git.openSource", "Open source")}</a></div>
                       <MailboxMessageContent className="preview-body preview-body--markdown" content={selectedGitlabItem.description?.trim() || t("git.noDescription", "(no description)")} testId="gitlab-import-preview-body" />
-                      <button type="button" className="btn btn-primary" onClick={handleImportGitLab} disabled={importing || importedUrls.has(selectedGitlabItem.webUrl)}>{importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}</button>
+                      <button type="button" className="btn btn-primary" onClick={handleImportGitLab} disabled={!gitlabEnabled || importing || importedUrls.has(selectedGitlabItem.webUrl)}>{importing ? <Loader2 size={14} className="spin" /> : t("git.import", "Import")}</button>
                     </div>
                   ) : <div className="github-import-state github-import-state--idle" data-testid="gitlab-import-preview-empty"><strong>{t("git.gitlabNoSelection", "No GitLab resource selected")}</strong><span>{t("git.gitlabNoSelectionHint", "Choose a resource from the list to preview it.")}</span></div>}
                 </div>
@@ -1687,7 +1708,7 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
               onClick={provider === "gitlab" ? handleImportGitLab : handleImport}
               disabled={
                 provider === "gitlab"
-                  ? selectedGitlabItem === null || importing || (selectedGitlabItem ? importedUrls.has(selectedGitlabItem.webUrl) : false)
+                  ? !gitlabEnabled || selectedGitlabItem === null || importing || (selectedGitlabItem ? importedUrls.has(selectedGitlabItem.webUrl) : false)
                   : (activeTab === "issues" ? selectedIssueNumber === null : selectedPullNumber === null) || importing
               }
             >

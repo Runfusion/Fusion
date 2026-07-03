@@ -16,6 +16,17 @@ interface Props {
 /** localStorage key for permanent dismissal. */
 const DISMISS_KEY = "fusion:cli-binary-banner-dismissed";
 
+/*
+ * FNXC:CliBanner 2026-07-03-09:25:
+ * Delay the CLI-install nudge so it does not clutter the first-run experience. We stamp the first time
+ * the banner becomes eligible (binary missing / version-mismatch) and suppress it until a grace period
+ * elapses. The Settings → General → CLI Binary panel still installs on demand in the meantime, so this
+ * only defers the passive nudge — it never hides the capability. Re-evaluated on each launch, so once
+ * the grace period passes the banner appears on a later run rather than immediately after onboarding.
+ */
+const FIRST_SEEN_KEY = "fusion:cli-binary-banner-first-seen";
+const SHOW_DELAY_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 function isDismissed(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -32,6 +43,39 @@ function persistDismissal(): void {
   } catch {
     // Ignore quota / private-mode errors — dismissal lasts the session only.
   }
+}
+
+/** Returns the ms timestamp the banner first became eligible, or null if never stamped. */
+function readFirstSeen(): number | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(FIRST_SEEN_KEY);
+    if (!raw) return null;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Records the first-eligible timestamp once; later calls are no-ops so the grace window is stable. */
+function stampFirstSeen(now: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (!window.localStorage.getItem(FIRST_SEEN_KEY)) {
+      window.localStorage.setItem(FIRST_SEEN_KEY, String(now));
+    }
+  } catch {
+    // Ignore quota / private-mode errors — without a stamp the banner simply stays deferred.
+  }
+}
+
+/** The banner is eligible to show only for a missing / mismatched binary that isn't opt-out-skipped. */
+function bannerEligible(status: FnBinaryStatus | null): boolean {
+  if (!status) return false;
+  if (status.state === "installed") return false;
+  if (status.state === "skipped") return false;
+  return true;
 }
 
 /**
@@ -57,7 +101,10 @@ export function CliBinaryInstallBanner({ onOpenSettings }: Props) {
     let cancelled = false;
     void fetchFnBinaryStatus()
       .then((next) => {
-        if (!cancelled) setStatus(next);
+        if (cancelled) return;
+        setStatus(next);
+        // Start the grace window the first time the banner would otherwise be eligible.
+        if (bannerEligible(next)) stampFirstSeen(Date.now());
       })
       .catch(() => {
         // Treat probe failure as "don't show banner" — better silent than
@@ -104,6 +151,10 @@ export function CliBinaryInstallBanner({ onOpenSettings }: Props) {
   // Honour the global `fnBinaryCheckEnabled` opt-out — when checks are
   // disabled the install banner would be misleading.
   if (status.state === "skipped") return null;
+
+  // FNXC:CliBanner 2026-07-03-09:25: defer the nudge until the grace period after first eligibility.
+  const firstSeen = readFirstSeen();
+  if (firstSeen === null || Date.now() - firstSeen < SHOW_DELAY_MS) return null;
 
   const isMismatch = status.state === "version-mismatch";
   const installedVersion = status.binary.version;

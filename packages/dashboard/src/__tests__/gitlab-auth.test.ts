@@ -61,6 +61,26 @@ describe("resolveGitlabAuth", () => {
     expect(JSON.stringify(resolution)).not.toMatch(/glab|cli/i);
   });
 
+
+  it("returns disabled before validating URL or token settings", () => {
+    expect(
+      resolveGitlabAuth({
+        projectSettings: { gitlabEnabled: false, gitlabInstanceUrl: "not-a-url", gitlabAuthTokenType: "deploy" },
+        globalSettings: { gitlabEnabled: true, gitlabAuthToken: "global-token" },
+        env: { GITLAB_TOKEN: "env-token" },
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "disabled",
+      message: "GitLab integration is disabled in Settings.",
+    });
+  });
+
+  it("uses project enabled state before global enabled fallback", () => {
+    expect(resolveGitlabAuth({ projectSettings: { gitlabEnabled: true, gitlabAuthToken: "token" }, globalSettings: { gitlabEnabled: false }, env: {} })).toMatchObject({ ok: true });
+    expect(resolveGitlabAuth({ projectSettings: {}, globalSettings: { gitlabEnabled: false, gitlabAuthToken: "token" }, env: {} })).toMatchObject({ ok: false, reason: "disabled" });
+  });
+
   it("returns token_missing when configured settings and GITLAB_TOKEN are blank", () => {
     expect(
       resolveGitlabAuth({

@@ -426,6 +426,19 @@ export const registerProjectRoutes: ApiRouteRegistrar = (ctx) => {
         return { activeProject, outcome: ensured.outcome };
       });
 
+      /*
+       * FNXC:Onboarding 2026-07-03-05:40:
+       * Proactively warm the new project's engine on creation. getOrCreateProjectStore fires the
+       * onProjectFirstAccessed hook (engineManager.onProjectAccessed -> ensureEngine), so the
+       * project's engine starts immediately instead of waiting for the first lazy store access.
+       * Without this, a freshly-created project (especially the operator's FIRST project on the
+       * desktop, where no other engine is running) leaves engineManager with no running engine, so
+       * /api/health reports engine.available=false and the dashboard shows "AI engine is not
+       * running" right after project creation. Fire-and-forget: engine startup is async and must not
+       * block or fail the registration response.
+       */
+      void getOrCreateProjectStore(activeProjectWithOutcome.activeProject.id).catch(() => undefined);
+
       // Bootstrap memory files (non-blocking, non-fatal)
       ensureMemoryFileWithBackend(normalizedPath).catch(() => {
         // Memory bootstrap failure is non-fatal - project registration succeeded

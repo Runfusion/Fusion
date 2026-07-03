@@ -28,6 +28,8 @@ describe("scope anchors", () => {
     expect(isProjectSettingsKey("enabledBuiltinWorkflowIds")).toBe(true);
     expect(isProjectSettingsKey("githubLinkImportedIssuesToTracking")).toBe(true);
     expect(isGlobalSettingsKey("githubLinkImportedIssuesToTracking")).toBe(false);
+    expect(isGlobalSettingsKey("gitlabEnabled")).toBe(true);
+    expect(isProjectSettingsKey("gitlabEnabled")).toBe(true);
     expect(isGlobalSettingsKey("gitlabAuthToken")).toBe(true);
     expect(isProjectSettingsKey("gitlabAuthToken")).toBe(true);
     expect(isGlobalSettingsKey("gitlabAuthTokenType")).toBe(true);
@@ -220,13 +222,14 @@ describe("splitSettingsSave", () => {
     expect(projectPatch).toEqual({ maxConcurrent: 7 });
   });
 
-  it("routes GitLab token settings to global settings only from global general", () => {
+  it("routes GitLab enable and token settings to global settings only from global general", () => {
     const initialScopedValues = {
-      global: { gitlabAuthToken: undefined, gitlabAuthTokenType: undefined },
-      project: { gitlabAuthToken: "project-token", gitlabAuthTokenType: "project" },
+      global: { gitlabEnabled: true, gitlabAuthToken: undefined, gitlabAuthTokenType: undefined },
+      project: { gitlabEnabled: true, gitlabAuthToken: "project-token", gitlabAuthTokenType: "project" },
     } as never;
 
     const payload: Record<string, unknown> = {
+      gitlabEnabled: false,
       gitlabAuthToken: "global-token",
       gitlabAuthTokenType: "group",
     };
@@ -238,17 +241,18 @@ describe("splitSettingsSave", () => {
       activeSection: "global-general",
     });
 
-    expect(globalPatch).toEqual({ gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" });
+    expect(globalPatch).toEqual({ gitlabEnabled: false, gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" });
     expect(projectPatch).toEqual({});
   });
 
-  it("routes GitLab token settings to project settings outside global general", () => {
+  it("routes GitLab enable and token settings to project settings outside global general", () => {
     const initialScopedValues = {
-      global: { gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" },
-      project: {},
+      global: { gitlabEnabled: false, gitlabAuthToken: "global-token", gitlabAuthTokenType: "group" },
+      project: { gitlabEnabled: true },
     } as never;
 
     const payload: Record<string, unknown> = {
+      gitlabEnabled: false,
       gitlabAuthToken: "project-token",
       gitlabAuthTokenType: "project",
     };
@@ -261,7 +265,7 @@ describe("splitSettingsSave", () => {
     });
 
     expect(globalPatch).toEqual({});
-    expect(projectPatch).toEqual({ gitlabAuthToken: "project-token", gitlabAuthTokenType: "project" });
+    expect(projectPatch).toEqual({ gitlabEnabled: false, gitlabAuthToken: "project-token", gitlabAuthTokenType: "project" });
   });
 
   it("clears a project GitLab token with null-as-delete while preserving selected token type", () => {

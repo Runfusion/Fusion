@@ -2,7 +2,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { consumeVersionUpdateFlag } from "../versionCheck";
-import { SWR_CACHE_KEYS, clearCache } from "../utils/swrCache";
+import { SWR_CACHE_KEYS, clearCache, pruneStaleCacheEntries } from "../utils/swrCache";
 import "./DashboardLoader.css";
 
 export type DashboardLoaderStage = "projects" | "project" | "tasks" | "ready";
@@ -44,6 +44,14 @@ function getStepState(stepId: LoaderStep["id"], stage: DashboardLoaderStage): "d
 export function DashboardLoader({ stage }: DashboardLoaderProps) {
   const { t } = useTranslation("app");
   const [isVersionUpdate] = useState(() => {
+    /*
+    FNXC:SwrCache 2026-07-02-00:00:
+    Prune stale SWR hydration entries once on boot, before any hydration hook reads its cache.
+    Removes per-session/per-room caches older than 24h (abandoned conversations) that readCache's
+    lazy GC never reaches because nobody reads them again. This is the fix for localStorage quota
+    exhaustion reported by users with many projects and chat sessions.
+    */
+    pruneStaleCacheEntries();
     const versionUpdated = consumeVersionUpdateFlag();
     if (versionUpdated) {
       clearCache(SWR_CACHE_KEYS.TASKS_PREFIX);

@@ -700,6 +700,46 @@ describe("SettingsModal", () => {
       }
     });
 
+    it("renders and saves global GitLab enabled from scoped global values when project overrides differ", async () => {
+      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, gitlabEnabled: true });
+      mockFetchSettingsByScope.mockResolvedValueOnce({
+        global: { ...defaultSettings, gitlabEnabled: false, gitlabInstanceUrl: "https://global.gitlab.test" },
+        project: { gitlabEnabled: true },
+      });
+
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
+      expect(enableToggle).not.toBeChecked();
+      expect(screen.getByLabelText("Global GitLab instance URL")).toBeDisabled();
+
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: true }));
+    });
+
+    it("saves an explicit global GitLab enable edit without using the project override", async () => {
+      mockFetchSettings.mockResolvedValueOnce({ ...defaultSettings, gitlabEnabled: true });
+      mockFetchSettingsByScope.mockResolvedValueOnce({
+        global: { ...defaultSettings, gitlabEnabled: false },
+        project: { gitlabEnabled: true },
+      });
+
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({ gitlabEnabled: true }));
+      });
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        expect(mockUpdateSettings.mock.calls[0]?.[0]).not.toHaveProperty("gitlabEnabled");
+      }
+    });
+
     it("shows global tracking repo error hint and keeps custom entry when lookups fail", async () => {
       mockFetchProjects.mockRejectedValueOnce(new Error("no projects"));
 
@@ -997,6 +1037,13 @@ describe("SettingsModal", () => {
       renderModal({ initialSection: "general" });
       await waitForSettingsModalReady();
 
+      const disclosure = screen.getByTestId("project-gitlab-configuration-disclosure");
+      expect(disclosure).not.toHaveAttribute("open");
+      const enableToggle = screen.getByLabelText("Enable GitLab integration") as HTMLInputElement;
+      expect(enableToggle.checked).toBe(true);
+      await settingsModalUser.click(within(disclosure).getByText("GitLab Configuration"));
+      expect(disclosure).toHaveAttribute("open");
+
       expect(screen.getByRole("heading", { name: "GitLab Configuration" })).toBeInTheDocument();
       expect(screen.getByText(/Blank uses GitLab.com or the global default/i)).toBeInTheDocument();
       expect(screen.getByText(/Blank derives <instance>\/api\/v4/i)).toBeInTheDocument();
@@ -1017,6 +1064,37 @@ describe("SettingsModal", () => {
         expect(globalPayload.gitlabInstanceUrl).toBeUndefined();
         expect(globalPayload.gitlabApiBaseUrl).toBeUndefined();
       }
+    });
+
+    it("saves project GitLab disabled state without clearing stored URLs", async () => {
+      mockFetchSettings.mockResolvedValueOnce({
+        ...defaultSettings,
+        gitlabEnabled: true,
+        gitlabInstanceUrl: "https://gitlab.example.com/gitlab",
+        gitlabApiBaseUrl: "https://gitlab.example.com/gitlab/api/v4",
+      });
+      mockFetchSettingsByScope.mockResolvedValueOnce({
+        global: defaultSettings,
+        project: {
+          gitlabEnabled: true,
+          gitlabInstanceUrl: "https://gitlab.example.com/gitlab",
+          gitlabApiBaseUrl: "https://gitlab.example.com/gitlab/api/v4",
+        },
+      });
+
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByLabelText("Enable GitLab integration"));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(mockUpdateSettings).toHaveBeenCalled();
+      });
+
+      expect(mockUpdateSettings.mock.calls[0][0]).toMatchObject({ gitlabEnabled: false });
+      expect(mockUpdateSettings.mock.calls[0][0]).not.toHaveProperty("gitlabInstanceUrl");
+      expect(mockUpdateSettings.mock.calls[0][0]).not.toHaveProperty("gitlabApiBaseUrl");
     });
 
     it("clears GitLab URL project overrides back to defaults", async () => {

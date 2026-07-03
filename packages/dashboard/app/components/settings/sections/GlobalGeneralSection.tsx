@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { GlobalSettings } from "@fusion/core";
 import { resolvePersistAgentThinkingLog } from "@fusion/core";
 import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoSelect";
 import { CliBinaryPanel } from "../../CliBinaryPanel";
@@ -6,12 +7,15 @@ import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
 export interface GlobalGeneralSectionProps extends SectionBaseProps {
     scopeBanner: ReactNode;
+    globalSettings: Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType"> | null;
+    onGlobalGitlabSettingsChange: (patch: Partial<Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType">>) => void;
     globalTrackingRepoOptions: TrackingRepoOption[];
     globalTrackingRepoLoading: boolean;
     globalTrackingRepoError: string | null;
 }
-export function GlobalGeneralSection({ scopeBanner, form, setForm, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: GlobalGeneralSectionProps) {
+export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSettings, onGlobalGitlabSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: GlobalGeneralSectionProps) {
     const { t } = useTranslation("app");
+    const globalGitlab = globalSettings ?? form;
     return (<>
       {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.globalGeneral.general", "General")}</h4>
@@ -21,35 +25,44 @@ export function GlobalGeneralSection({ scopeBanner, form, setForm, globalTrackin
         <small>{t("settings.globalGeneral.projectsInheritThisValueWhenTheyDoNot", "Projects inherit this value when they do not set a project default tracking repo.")}</small>
       </div>
       {/*
-        FNXC:GitLabConfiguration 2026-07-02-00:00:
-        Global GitLab URL settings are fallbacks for projects that do not set their own self-managed GitLab instance/API URLs.
-
-        FNXC:GitLabAuthentication 2026-07-02-00:00:
-        Global GitLab token settings are secret-safe fallbacks for projects without their own token override. They do not make project/group access tokens globally authorized; resource membership still applies to future GitLab runtime tasks.
+        FNXC:GitLabEnablement 2026-07-02-00:00:
+        FN-7453 adds a global GitLab enable fallback that can disable outbound GitLab HTTP API operations without deleting saved self-managed URL or token settings. Projects can override the enabled state when they need GitLab active while the global fallback is off.
       */}
-      <div className="form-group">
-        <label htmlFor="globalGitlabInstanceUrl">{t("settings.globalGeneral.gitLabInstanceUrl", "Global GitLab instance URL")}</label>
-        <input id="globalGitlabInstanceUrl" className="input" type="url" placeholder="https://gitlab.com" value={form.gitlabInstanceUrl ?? ""} onChange={(e) => setForm((f) => ({ ...f, gitlabInstanceUrl: e.target.value || undefined }))}/>
-        <small>{t("settings.globalGeneral.gitLabInstanceUrlHint", "Blank defaults to GitLab.com. Projects inherit this self-managed GitLab URL unless they set their own project value.")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="globalGitlabApiBaseUrl">{t("settings.globalGeneral.gitLabApiBaseUrlOptional", "Global GitLab API base URL (optional / advanced)")}</label>
-        <input id="globalGitlabApiBaseUrl" className="input" type="url" placeholder="https://gitlab.com/api/v4" value={form.gitlabApiBaseUrl ?? ""} onChange={(e) => setForm((f) => ({ ...f, gitlabApiBaseUrl: e.target.value || undefined }))}/>
-        <small>{t("settings.globalGeneral.gitLabApiBaseUrlHint", "Blank derives <instance>/api/v4. Override only for self-managed GitLab API gateways that use a different absolute http:// or https:// URL.")}</small>
-      </div>
-      <div className="form-group">
-        <label htmlFor="globalGitlabAuthTokenType">{t("settings.globalGeneral.gitLabTokenType", "Global GitLab token type")}</label>
-        <select id="globalGitlabAuthTokenType" className="select" value={form.gitlabAuthTokenType ?? "personal"} onChange={(e) => setForm((f) => ({ ...f, gitlabAuthTokenType: e.target.value as "personal" | "project" | "group" }))}>
-          <option value="personal">{t("settings.globalGeneral.gitLabPersonalAccessToken", "Personal access token")}</option>
-          <option value="project">{t("settings.globalGeneral.gitLabProjectAccessToken", "Project access token")}</option>
-          <option value="group">{t("settings.globalGeneral.gitLabGroupAccessToken", "Group access token")}</option>
-        </select>
-      </div>
-      <div className="form-group">
-        <label htmlFor="globalGitlabAuthToken">{t("settings.globalGeneral.gitLabAccessToken", "Global GitLab access token")}</label>
-        <input id="globalGitlabAuthToken" className="input" type="password" autoComplete="off" value={form.gitlabAuthToken ?? ""} onChange={(e) => setForm((f) => ({ ...f, gitlabAuthToken: e.target.value || undefined }))}/>
-        <small className="settings-description">{t("settings.globalGeneral.gitLabAuthTokenHint", "Projects inherit this fallback only when they do not set a project GitLab token. Read-only operations need read_api or api; future write actions need api; project/group tokens remain limited by resource membership.")}</small>
-      </div>
+      <details className="settings-gitlab-disclosure" data-testid="global-gitlab-configuration-disclosure">
+        <summary>
+          <span className="settings-gitlab-disclosure__title">{t("settings.globalGeneral.gitLabConfiguration", "GitLab Configuration")}</span>
+          <label className="checkbox-label settings-gitlab-disclosure__toggle" htmlFor="globalGitlabEnabled" onClick={(event) => event.stopPropagation()}>
+            <input id="globalGitlabEnabled" type="checkbox" checked={globalGitlab.gitlabEnabled !== false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabEnabled: e.target.checked })}/>
+            {t("settings.globalGeneral.enableGitLabIntegration", "Enable GitLab integration")}
+          </label>
+        </summary>
+        <small className="settings-description">{globalGitlab.gitlabEnabled === false ? t("settings.globalGeneral.gitLabDisabledHint", "GitLab API operations are disabled by global default. Saved URL and token fallbacks remain stored for re-enable.") : t("settings.globalGeneral.gitLabEnabledHint", "Global GitLab URL and token fallbacks apply to projects that do not set their own values.")}</small>
+        <div className="settings-gitlab-disclosure__body" aria-disabled={globalGitlab.gitlabEnabled === false}>
+          <div className="form-group">
+            <label htmlFor="globalGitlabInstanceUrl">{t("settings.globalGeneral.gitLabInstanceUrl", "Global GitLab instance URL")}</label>
+            <input id="globalGitlabInstanceUrl" className="input" type="url" placeholder="https://gitlab.com" value={globalGitlab.gitlabInstanceUrl ?? ""} disabled={globalGitlab.gitlabEnabled === false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabInstanceUrl: e.target.value || undefined })}/>
+            <small>{t("settings.globalGeneral.gitLabInstanceUrlHint", "Blank defaults to GitLab.com. Projects inherit this self-managed GitLab URL unless they set their own project value.")}</small>
+          </div>
+          <div className="form-group">
+            <label htmlFor="globalGitlabApiBaseUrl">{t("settings.globalGeneral.gitLabApiBaseUrlOptional", "Global GitLab API base URL (optional / advanced)")}</label>
+            <input id="globalGitlabApiBaseUrl" className="input" type="url" placeholder="https://gitlab.com/api/v4" value={globalGitlab.gitlabApiBaseUrl ?? ""} disabled={globalGitlab.gitlabEnabled === false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabApiBaseUrl: e.target.value || undefined })}/>
+            <small>{t("settings.globalGeneral.gitLabApiBaseUrlHint", "Blank derives <instance>/api/v4. Override only for self-managed GitLab API gateways that use a different absolute http:// or https:// URL.")}</small>
+          </div>
+          <div className="form-group">
+            <label htmlFor="globalGitlabAuthTokenType">{t("settings.globalGeneral.gitLabTokenType", "Global GitLab token type")}</label>
+            <select id="globalGitlabAuthTokenType" className="select" value={globalGitlab.gitlabAuthTokenType ?? "personal"} disabled={globalGitlab.gitlabEnabled === false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabAuthTokenType: e.target.value as "personal" | "project" | "group" })}>
+              <option value="personal">{t("settings.globalGeneral.gitLabPersonalAccessToken", "Personal access token")}</option>
+              <option value="project">{t("settings.globalGeneral.gitLabProjectAccessToken", "Project access token")}</option>
+              <option value="group">{t("settings.globalGeneral.gitLabGroupAccessToken", "Group access token")}</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label htmlFor="globalGitlabAuthToken">{t("settings.globalGeneral.gitLabAccessToken", "Global GitLab access token")}</label>
+            <input id="globalGitlabAuthToken" className="input" type="password" autoComplete="off" value={globalGitlab.gitlabAuthToken ?? ""} disabled={globalGitlab.gitlabEnabled === false} onChange={(e) => onGlobalGitlabSettingsChange({ gitlabAuthToken: e.target.value || undefined })}/>
+            <small className="settings-description">{t("settings.globalGeneral.gitLabAuthTokenHint", "Projects inherit this fallback only when they do not set a project GitLab token. Read-only operations need read_api or api; write actions need api; project/group tokens remain limited by resource membership.")}</small>
+          </div>
+        </div>
+      </details>
       <CliBinaryPanel />
       <div className="form-group">
         <label htmlFor="dismissModalsOnOutsideClick" className="checkbox-label">

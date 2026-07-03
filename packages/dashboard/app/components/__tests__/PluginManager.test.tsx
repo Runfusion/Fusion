@@ -113,6 +113,7 @@ vi.mock("../../hooks/useConfirm", () => ({
 import {
   AGENT_BROWSER_SETTINGS_SCHEMA,
   BUILTIN_AGENT_BROWSER_PLUGIN_ID,
+  BUILTIN_PLUGINS,
   PluginManager,
   STATE_COLORS,
 } from "../PluginManager";
@@ -131,6 +132,15 @@ import {
 } from "../../api";
 
 const addToast = vi.fn();
+const LINEAR_PLUGIN_ID = "fusion-plugin-linear-import";
+
+function getBuiltInPluginCard(name: string): HTMLElement {
+  const card = screen.getAllByText(name)
+    .map((node) => node.closest(".plugin-builtins-item"))
+    .find((node): node is HTMLElement => node instanceof HTMLElement);
+  expect(card).toBeTruthy();
+  return card;
+}
 
 function expectEventsUrl(url: string, projectId?: string) {
   const parsed = new URL(url, "http://localhost");
@@ -271,7 +281,77 @@ describe("PluginManager", () => {
     expect(screen.getByText("Reports")).toBeTruthy();
     expect(screen.getByText("WhatsApp Chat")).toBeTruthy();
     expect(screen.getByText("CLI Printing Press")).toBeTruthy();
+    expect(screen.getByText("Linear Import")).toBeTruthy();
     expect(screen.getByText(/Pairs to WhatsApp Web \(multi-device\) with QR or pairing code/i)).toBeTruthy();
+  });
+
+  it("keeps Linear Import in the bundled plugin catalog", () => {
+    expect(BUILTIN_PLUGINS.find((plugin) => plugin.id === LINEAR_PLUGIN_ID)).toMatchObject({
+      id: LINEAR_PLUGIN_ID,
+      name: "Linear Import",
+      category: "integration",
+      path: "./plugins/fusion-plugin-linear-import",
+      description: "Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.",
+    });
+  });
+
+  it("installs Linear Import from the built-in section when not installed", async () => {
+    vi.mocked(fetchPlugins).mockResolvedValue([]);
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(fetchPlugins).toHaveBeenCalled();
+    });
+
+    const linearCard = getBuiltInPluginCard("Linear Import");
+    expect(within(linearCard).getByText("Not installed")).toBeTruthy();
+    const installButton = within(linearCard).getByRole("button", { name: /Install Linear Import/i });
+    await userEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(installPlugin).toHaveBeenCalledWith({ path: "./plugins/fusion-plugin-linear-import" }, undefined);
+      expect(addToast).toHaveBeenCalledWith("Linear Import installed globally", "success");
+    });
+  });
+
+  it.each([
+    { state: "installed" as const, enabled: false, statusLabel: "installed" },
+    { state: "started" as const, enabled: true, statusLabel: "started" },
+    { state: "error" as const, enabled: true, statusLabel: "error" },
+  ])("shows Manage for installed Linear Import in $state state", async ({ state, enabled, statusLabel }) => {
+    vi.mocked(fetchPlugins).mockResolvedValue([
+      {
+        ...mockPlugins[0],
+        id: LINEAR_PLUGIN_ID,
+        name: "Linear Import",
+        description: "Browse Linear issues and import selected issues as Fusion triage tasks through plugin-owned settings.",
+        state,
+        enabled,
+        error: state === "error" ? "Linear plugin failed to start" : undefined,
+        settingsSchema: {},
+      },
+    ]);
+
+    render(<PluginManager addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Linear Import").length).toBeGreaterThanOrEqual(2);
+    });
+
+    const linearCard = getBuiltInPluginCard("Linear Import");
+    expect(within(linearCard).getByText("Installed")).toBeTruthy();
+    expect(within(linearCard).queryByText("Built-in metadata only")).toBeNull();
+    expect(within(linearCard).getAllByText("integration").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(statusLabel).length).toBeGreaterThanOrEqual(1);
+
+    const manageButton = within(linearCard).getByRole("button", { name: /^Manage$/i });
+    expect(manageButton).not.toBeDisabled();
+    await userEvent.click(manageButton);
+
+    await waitFor(() => {
+      expect(fetchPluginSettings).toHaveBeenCalledWith(LINEAR_PLUGIN_ID, undefined);
+    });
+    expect(screen.getByTestId("plugin-manager-detail")).toBeTruthy();
   });
 
   it("renders built-in agent browser metadata-only entry when uninstalled", async () => {

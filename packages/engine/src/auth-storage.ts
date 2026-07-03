@@ -9,7 +9,7 @@ import {
   shouldHydrateStoredCredential,
   type StoredAuthCredential,
 } from "@fusion/core";
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { AuthCredential } from "@earendil-works/pi-coding-agent";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
@@ -305,6 +305,18 @@ function readModelsJsonApiKeys(home = getHomeDir()): Map<string, string> {
   }
 
   return apiKeys;
+}
+
+/*
+ * FNXC:ModelRegistry 2026-07-03-07:00:
+ * Shared model-registry factory so non-CLI hosts (the desktop embedded runtime) can wire the
+ * dashboard's models API without depending on @earendil-works/pi-coding-agent directly. Mirrors the
+ * CLI's ModelRegistry.create(authStorage, getModelRegistryModelsPath()). Without a ModelRegistry the
+ * /api/models endpoint returns an empty list, so the onboarding model picker shows "no models" even
+ * when a provider (e.g. Anthropic) is connected.
+ */
+export function createFusionModelRegistry(authStorage: AuthStorage, home?: string): ModelRegistry {
+  return ModelRegistry.create(authStorage, getModelRegistryModelsPath(home));
 }
 
 export function createFusionAuthStorage(): AuthStorage {

@@ -1208,6 +1208,83 @@ Settings section headings should preserve hierarchy through spacing and type onl
   content: "▾";
 }
 
+/*
+FNXC:GitLabSettings 2026-07-02-00:00:
+FN-7453 keeps GitLab's enable switch visible while hiding noisy URL/token fields behind native details disclosure. The layout uses token spacing and native summary semantics so collapsed and disabled states do not leave empty icon-button shells or focusable hidden fields.
+*/
+.settings-gitlab-disclosure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+}
+
+.settings-gitlab-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-primary);
+}
+
+.settings-gitlab-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-gitlab-disclosure > summary::before {
+  content: "▸";
+  color: var(--text-muted);
+}
+
+.settings-gitlab-disclosure[open] > summary::before {
+  content: "▾";
+}
+
+.settings-gitlab-disclosure__title {
+  flex: 1 1 auto;
+  font-weight: var(--font-weight-semibold);
+  min-width: 0;
+}
+
+.settings-gitlab-disclosure__toggle {
+  flex: 0 0 auto;
+}
+
+.settings-gitlab-disclosure__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  min-width: 0;
+}
+
+.settings-gitlab-disclosure__body > .form-group {
+  margin-top: 0;
+  padding: 0;
+}
+
+@media (max-width: 768px) {
+  .settings-gitlab-disclosure {
+    padding: var(--space-sm);
+  }
+
+  .settings-gitlab-disclosure > summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+  }
+
+  .settings-gitlab-disclosure__toggle {
+    flex-basis: 100%;
+  }
+}
+
 .remote-cf-advanced-details {
   margin-top: var(--space-xs);
 }

@@ -1,10 +1,11 @@
-import { resolveGitlabConfig, type GlobalSettings, type ProjectSettings } from "@fusion/core";
+import { resolveGitlabConfig, resolveGitlabEnabled, type GlobalSettings, type ProjectSettings } from "@fusion/core";
 import type { GitlabAuthTokenType } from "@fusion/core";
 
 export const GITLAB_AUTH_HEADER_NAME = "PRIVATE-TOKEN" as const;
 export const GITLAB_AUTH_TOKEN_TYPES = ["personal", "project", "group"] as const satisfies readonly GitlabAuthTokenType[];
 
 export interface GitlabAuthSettingsSource {
+  gitlabEnabled?: boolean;
   gitlabInstanceUrl?: string;
   gitlabApiBaseUrl?: string;
   gitlabAuthToken?: string;
@@ -23,12 +24,12 @@ export type GitlabAuthResolution =
   | { ok: true; auth: ResolvedGitlabAuth }
   | {
     ok: false;
-    reason: "token_missing" | "invalid_token_type" | "invalid_config";
+    reason: "disabled" | "token_missing" | "invalid_token_type" | "invalid_config";
     message: string;
   };
 
 export interface ResolveGitlabAuthDeps {
-  projectSettings?: GitlabAuthSettingsSource | Pick<ProjectSettings, "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType"> | null;
+  projectSettings?: GitlabAuthSettingsSource | Pick<ProjectSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType"> | null;
   globalSettings?: GitlabAuthSettingsSource | Partial<GlobalSettings> | Record<string, unknown> | null;
   env?: NodeJS.ProcessEnv;
 }
@@ -65,6 +66,10 @@ function firstConfiguredTokenType(...values: unknown[]): GitlabAuthTokenType | u
  * FN-7423 resolves personal, project, and group GitLab access tokens for future HTTP API integrations without invoking `glab` or any GitLab CLI. GitLab REST auth uses the PRIVATE-TOKEN header; read-only features require read_api or api, while future write/comment/close features require api and token resource membership.
  */
 export function resolveGitlabAuth(deps: ResolveGitlabAuthDeps = {}): GitlabAuthResolution {
+  if (!resolveGitlabEnabled({ project: deps.projectSettings ?? undefined, global: deps.globalSettings as Partial<GlobalSettings> | undefined })) {
+    return { ok: false, reason: "disabled", message: "GitLab integration is disabled in Settings." };
+  }
+
   let config: ReturnType<typeof resolveGitlabConfig>;
   try {
     config = resolveGitlabConfig({
