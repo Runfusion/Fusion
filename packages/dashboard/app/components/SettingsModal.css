@@ -1431,6 +1431,39 @@ FN-7453 keeps GitLab's enable switch visible while hiding noisy URL/token fields
   margin: var(--space-lg) var(--space-xl);
 }
 
+/*
+FNXC:SettingsReset 2026-07-04-00:45:
+Reset Settings confirmation dialog (FN-7506). Reuses .modal/.modal-md/.modal-overlay/
+.modal-actions chrome; only the choice-list layout and destructive-reason hint are new.
+Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
+*/
+.settings-reset-dialog__choice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-block-end: var(--space-md);
+}
+
+.settings-reset-dialog__choice-btn {
+  align-self: flex-start;
+  width: 100%;
+}
+
+.settings-reset-dialog__ineligible-reason {
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .settings-reset-dialog {
+    max-width: calc(100vw - var(--space-md));
+  }
+
+  .settings-reset-dialog__choice-btn {
+    /* Full-width tappable target at narrow widths; avoids horizontal overflow. */
+    width: 100%;
+  }
+}
+
 @media (max-width: 768px) {
   .settings-note {
     padding: 0 var(--space-lg);

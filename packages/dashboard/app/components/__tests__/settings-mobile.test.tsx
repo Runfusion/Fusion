@@ -201,6 +201,31 @@ describe("SettingsModal mobile adaptations", () => {
     expect(container.querySelector(".settings-content")).toBeTruthy();
   });
 
+  /*
+  FNXC:SettingsReset 2026-07-04-01:00:
+  FN-7506 mobile surface coverage: the Reset Settings button and its confirmation
+  dialog must be reachable and usable at the mobile breakpoint, with no horizontal
+  overflow, mirroring the desktop assertions in SettingsModal.general.test.tsx.
+  */
+  it("renders and operates the Reset Settings button/dialog at the mobile breakpoint", async () => {
+    mockSettingsViewport(true);
+    const { findByTestId, container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const resetBtn = await findByTestId("settings-reset");
+    expect(container.querySelector(".modal-actions")?.contains(resetBtn)).toBe(true);
+
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
+    await user.click(resetBtn);
+
+    const dialog = await findByTestId("settings-reset-dialog");
+    expect(dialog).toBeTruthy();
+    expect(dialog.querySelector(".settings-reset-dialog")).toBeTruthy();
+    expect(within(dialog).getByTestId("settings-reset-menu")).toBeTruthy();
+    expect(within(dialog).getByTestId("settings-reset-all-project")).toBeTruthy();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
   it("renders the app version label in mobile layout", async () => {
     mockSettingsViewport(true);
     const { findByText, container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
@@ -372,11 +397,11 @@ describe("SettingsModal mobile adaptations", () => {
     expect(within(document.body).getByLabelText("Max Duration (ms)").closest(".settings-research-limits-grid")).toBe(projectLimitsGrid);
     expect(within(document.body).getByLabelText("Request Timeout (ms)").closest(".settings-research-limits-grid")).toBe(projectLimitsGrid);
 
-    const projectSourceGrid = within(document.body).getByRole("checkbox", { name: "Page Fetch" }).closest(".settings-research-source-grid");
+    const projectSourceGrid = within(document.body).getByRole("checkbox", { name: /^Page Fetch/ }).closest(".settings-research-source-grid");
     expect(projectSourceGrid).toBeTruthy();
-    expect(within(document.body).getByRole("checkbox", { name: "GitHub" }).closest(".settings-research-source-grid")).toBe(projectSourceGrid);
-    expect(within(document.body).getByRole("checkbox", { name: "Local Docs" }).closest(".settings-research-source-grid")).toBe(projectSourceGrid);
-    expect(within(document.body).getByRole("checkbox", { name: "LLM Synthesis" }).closest(".settings-research-source-grid")).toBe(projectSourceGrid);
+    expect(within(document.body).getByRole("checkbox", { name: /^GitHub/ }).closest(".settings-research-source-grid")).toBe(projectSourceGrid);
+    expect(within(document.body).getByRole("checkbox", { name: /^Local Docs/ }).closest(".settings-research-source-grid")).toBe(projectSourceGrid);
+    expect(within(document.body).getByRole("checkbox", { name: /^LLM Synthesis/ }).closest(".settings-research-source-grid")).toBe(projectSourceGrid);
   });
 
   it("renders settings nav items with active class for touch styling", async () => {
@@ -493,6 +518,10 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-research-provider-advanced-details", "padding-inline-start: 0;");
     expectMobileRule(css, ".settings-research-source-grid", "grid-template-columns: 1fr;");
     expectMobileRule(css, ".settings-research-limits-grid", "grid-template-columns: 1fr;");
+
+    // FN-7506: Reset Settings dialog mobile overrides — full-width tappable choices, no horizontal overflow.
+    expectMobileRule(css, ".settings-reset-dialog", "max-width: calc(100vw - var(--space-md));");
+    expectMobileRule(css, ".settings-reset-dialog__choice-btn", "width: 100%;");
 
     // Base rules: desktop uses --space-xl horizontal margin for remote header elements
     expectBaseRule(css, ".remote-status-bar", "margin: 0 var(--space-xl) var(--space-md);");

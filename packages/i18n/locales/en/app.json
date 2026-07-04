@@ -6672,6 +6672,17 @@
     },
     "modelPricing": {
       "description": "Override per-1M token rates used by Command Center cost estimates. Overrides win over the built-in baseline; unlisted models still use the baseline. No default — unset (no overrides)."
+    },
+    "reset": {
+      "button": "Reset Settings",
+      "buttonTitle": "Reset settings to their defaults",
+      "dialogAriaLabel": "Reset settings",
+      "dialogTitle": "Reset Settings",
+      "dialogBody": "Choose what to reset to its defaults. This cannot be undone.",
+      "resetMenuAction": "Reset this menu ({{section}})",
+      "resetAllProjectAction": "Reset all project settings",
+      "menuResetSuccess": "{{section}} settings reset to defaults",
+      "allProjectResetSuccess": "All project settings reset to defaults"
     }
   },
   "setup": {

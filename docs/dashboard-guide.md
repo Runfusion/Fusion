@@ -16,6 +16,18 @@ Use **Search settings** at the top of Settings to find the section that contains
 <!-- FNXC:SettingsDefaults 2026-07-04-00:00: FN-7505 requires every user-editable setting's help text to state its own default value, so operators reading a field's description know what it defaults to without checking the reference doc. -->
 Every user-editable setting's help text (the `.settings-description`/`<small>` hint under a field) states its own default value — for example “Default: 3.”, “Default: enabled.”, or “No default — unset (inherits the global setting).” for values that fall back to another scope. Canonical default values come from `DEFAULT_GLOBAL_SETTINGS` / `DEFAULT_PROJECT_SETTINGS` in `packages/core/src/settings-schema.ts`; the dashboard copy never invents a number. A guard test (`settings-default-descriptions.test.tsx`) enforces that every surfaced setting states its default and that every `DEFAULT_SETTINGS` key is either documented or explicitly allowlisted as not surfaced in the Settings UI.
 
+## Reset Settings
+
+<!-- FNXC:SettingsResetDocs 2026-07-04-00:00: Reset Settings is a DESTRUCTIVE action. Document both choices, the scope-precision guarantee, and which sections are excluded so operators understand exactly what a reset does and does not touch before they click it. -->
+The Settings footer includes a **Reset Settings** button, next to Import/Export, in both the Settings modal and the embedded Settings page (desktop and mobile). Selecting it opens a confirmation dialog with two destructive choices, plus Cancel:
+
+- **Reset this menu ({{section}})** — resets only the settings owned by the currently active section, at that section's own scope (global or project). A global section (for example Appearance) writes the section's keys back to their canonical defaults. A project section (for example Merge) clears the section's keys back to their inherited/default value. No other section's settings are touched.
+- **Reset all project settings** — resets every project-scoped setting for the current project back to its default/inherited value. This never touches global (cross-project) settings.
+
+Both actions are irreversible; there is no undo after confirming. The dialog closes and the form refreshes to show the reset values immediately after a successful reset.
+
+**Excluded sections.** Some sections are not a simple settings form and are intentionally excluded from **Reset this menu** (the button is disabled with an explanatory tooltip when one of these is the active section), because each already has its own dedicated management flow: **Secrets**, **MCP Servers** (global and project), **Plugins**, **Memory**, **Authentication**, **Prompts**, **CLI Agents**, and the **Hermes**/**OpenClaw**/**Paperclip** runtime sections. **Reset all project settings** is unaffected by this exclusion list since it resets the underlying project settings values directly, not through any of those sections' own flows.
+
 ## Keyboard shortcuts
 
 <!-- FNXC:DashboardShortcuts 2026-07-04-00:00: Dashboard keyboard shortcuts are configurable global operator preferences. The docs must state the defaults, editable-field safety guard, duplicate/invalid save behavior, and one-popup Escape semantics so operators know why Space/Terminal/Escape act differently in text fields than on the board. -->

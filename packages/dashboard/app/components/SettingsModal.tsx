@@ -7,9 +7,15 @@ import {
   normalizeMergeAdvanceAutoSyncMode,
 } from "@fusion/core";
 import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } from "@fusion/core";
+import { DEFAULT_GLOBAL_SETTINGS } from "@fusion/core";
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { splitSettingsSave } from "./settings/save-split";
+import {
+  ALL_PROJECT_RESET_KEYS,
+  getResetIneligibleReason,
+  getSectionKeyEntry,
+} from "./settings/section-keys";
 import { describeShortcutValidation, normalizeKeyboardShortcut } from "../utils/keyboardShortcuts";
 import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
@@ -930,6 +936,14 @@ export function SettingsModal({
   const [overlapPathPickerIndex, setOverlapPathPickerIndex] = useState<number | null>(null);
   const [worktreesDirPickerOpen, setWorktreesDirPickerOpen] = useState(false);
   const [worktreeCopyFilePickerIndex, setWorktreeCopyFilePickerIndex] = useState<number | null>(null);
+  /*
+  FNXC:SettingsReset 2026-07-04-00:20:
+  Reset Settings confirmation dialog state (FN-7506). `resetInFlight` guards both
+  destructive actions against double-submit while the reset write + form refresh
+  are in progress, mirroring the `isSaving` guard on the Save action.
+  */
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetInFlight, setResetInFlight] = useState(false);
 
   const {
     entries: overlapPathPickerEntries,
@@ -1139,9 +1153,17 @@ export function SettingsModal({
     return () => mediaQuery.removeEventListener("change", updateMobilePicker);
   }, []);
 
-  useEffect(() => {
+  /*
+  FNXC:SettingsReset 2026-07-04-00:15:
+  Factored out of the initial-load effect so the FN-7506 reset handlers can
+  re-fetch and re-normalize the merged + scoped settings after a reset write,
+  refreshing the form to the just-reset values without duplicating the
+  normalization logic. `showLoadingState` is false for post-reset refreshes so
+  the whole modal doesn't flash back to the loading spinner.
+  */
+  const refreshSettingsForm = useCallback((showLoadingState: boolean) => {
     // Load both merged and scoped settings to enable inheritance detection
-    Promise.all([fetchSettings(projectId), fetchSettingsByScope(projectId)])
+    return Promise.all([fetchSettings(projectId), fetchSettingsByScope(projectId)])
       .then(([s, scoped]) => {
         const normalizedSettings = {
           ...s,
@@ -1184,12 +1206,20 @@ export function SettingsModal({
               : normalizeMergeAdvanceAutoSyncMode(scoped.project.mergeAdvanceAutoSync),
           },
         }); // Store initial scoped values for null-as-delete
-        setLoading(false);
+        if (showLoadingState) {
+          setLoading(false);
+        }
       })
       .catch((err) => {
         addToast(getErrorMessage(err), "error");
-        setLoading(false);
+        if (showLoadingState) {
+          setLoading(false);
+        }
       });
+  }, [addToast, projectId]);
+
+  useEffect(() => {
+    void refreshSettingsForm(true);
   }, [addToast, projectId]);
 
   useEffect(() => {
@@ -2251,14 +2281,16 @@ export function SettingsModal({
   }, [favoriteModels, favoriteProviders]);
 
   // Modal-only: Escape dismisses the dialog. Embedded view is navigated away via the left sidebar, not Escape.
+  // FNXC:SettingsReset 2026-07-04-00:30: Skipped while the Reset Settings confirmation dialog is
+  // open so Escape closes only that dialog (its own listener below), not the whole Settings modal.
   useEffect(() => {
     if (!escapeEnabled) return;
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !resetDialogOpen) onClose();
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose, escapeEnabled]);
+  }, [onClose, escapeEnabled, resetDialogOpen]);
 
   // Modal-only: backdrop click dismisses. Embedded view has no overlay backdrop.
   const modalOverlayDismissProps = useOverlayDismiss(onClose);
@@ -2737,6 +2769,96 @@ export function SettingsModal({
       setIsSaving(false);
     }
   }, [form, globalGitlabSettings, globalMaxConcurrent, prefixError, presetDraft, initialValues, initialScopedValues, onClose, addToast, projectId, activeSection, isSaving, t]);
+
+  /*
+  FNXC:SettingsReset 2026-07-04-00:25:
+  "Reset this menu" resolves the active section's { scope, keys } from the
+  shared section-keys registry (packages/dashboard/app/components/settings/section-keys.ts)
+  and writes ONLY those keys, at the correct scope, through the SAME
+  updateGlobalSettings/updateSettings plumbing (and null-as-delete convention)
+  used by handleSave/splitSettingsSave. GLOBAL keys reset to the canonical
+  DEFAULT_GLOBAL_SETTINGS value; PROJECT keys reset via null-as-delete so an
+  overridable project setting reverts to its inherited/default value. The form
+  is refreshed afterward via refreshSettingsForm so fields immediately show the
+  reset values.
+  */
+  const activeSectionResetEntry = useMemo(() => getSectionKeyEntry(activeSection), [activeSection]);
+  const activeSectionResetIneligibleReason = useMemo(() => getResetIneligibleReason(activeSection), [activeSection]);
+  const activeSectionLabel = useMemo(() => {
+    const section = SETTINGS_SECTIONS.find((s) => s.id === activeSection);
+    return section ? t(section.labelKey, section.label) : activeSection;
+  }, [activeSection, t]);
+
+  const handleResetActiveSection = useCallback(async () => {
+    if (resetInFlight || !activeSectionResetEntry) return;
+    setResetInFlight(true);
+    try {
+      if (activeSectionResetEntry.scope === "global") {
+        const patch: Record<string, unknown> = {};
+        for (const key of activeSectionResetEntry.keys) {
+          patch[key] = (DEFAULT_GLOBAL_SETTINGS as Record<string, unknown>)[key];
+        }
+        await updateGlobalSettings(patch);
+      } else {
+        const patch: Record<string, unknown> = {};
+        for (const key of activeSectionResetEntry.keys) {
+          patch[key] = null; // null-as-delete: revert to inherited/default project value
+        }
+        await updateSettings(patch, projectId);
+      }
+      await refreshSettingsForm(false);
+      addToast(t("settings.reset.menuResetSuccess", "{{section}} settings reset to defaults", { section: activeSectionLabel }), "success");
+      setResetDialogOpen(false);
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    } finally {
+      setResetInFlight(false);
+    }
+  }, [resetInFlight, activeSectionResetEntry, projectId, refreshSettingsForm, addToast, t, activeSectionLabel]);
+
+  const handleResetAllProjectSettings = useCallback(async () => {
+    if (resetInFlight) return;
+    setResetInFlight(true);
+    try {
+      const patch: Record<string, unknown> = {};
+      for (const key of ALL_PROJECT_RESET_KEYS) {
+        patch[key] = null; // null-as-delete: never touches global keys
+      }
+      await updateSettings(patch, projectId);
+      await refreshSettingsForm(false);
+      addToast(t("settings.reset.allProjectResetSuccess", "All project settings reset to defaults"), "success");
+      setResetDialogOpen(false);
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    } finally {
+      setResetInFlight(false);
+    }
+  }, [resetInFlight, projectId, refreshSettingsForm, addToast, t]);
+
+  const closeResetDialog = useCallback(() => {
+    if (resetInFlight) return;
+    setResetDialogOpen(false);
+  }, [resetInFlight]);
+
+  const handleResetDialogOverlayClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      closeResetDialog();
+    }
+  }, [closeResetDialog]);
+
+  // Reset dialog gets its own Escape handler (takes precedence over the modal-level
+  // Escape-to-close so Escape closes only the confirmation dialog, not the whole modal).
+  useEffect(() => {
+    if (!resetDialogOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeResetDialog();
+      }
+    };
+    document.addEventListener("keydown", handleKey, true);
+    return () => document.removeEventListener("keydown", handleKey, true);
+  }, [resetDialogOpen, closeResetDialog]);
 
   const handleSaveMemory = useCallback(async () => {
     try {
@@ -3594,6 +3716,23 @@ export function SettingsModal({
             >
               {importLoading ? t("settings.importExport.loadingFile", "Loading…") : t("settings.importExport.importBtn", "Import")}
             </button>
+            {/*
+            FNXC:SettingsReset 2026-07-04-00:35:
+            Reset Settings lives in the footer next to Import/Export in BOTH the modal and
+            embedded (SettingsView) presentations — the footer is not gated by isEmbedded
+            (only Cancel is), so this button renders in both automatically (FN-7506
+            Surface Enumeration: modal + embedded).
+            */}
+            <button
+              type="button"
+              className="btn btn-sm"
+              data-testid="settings-reset"
+              onClick={() => setResetDialogOpen(true)}
+              disabled={loading}
+              title={t("settings.reset.buttonTitle", "Reset settings to their defaults")}
+            >
+              {t("settings.reset.button", "Reset Settings")}
+            </button>
           </div>
           <div className="modal-actions-right">
             {/* FNXC:Settings 2026-06-22-00:00: Cancel/close is a dialog affordance; the embedded main view is left via the sidebar, so it shows only Save. */}
@@ -3836,6 +3975,70 @@ export function SettingsModal({
               >
                 {importLoading ? t("settings.importExport.importing", "Importing…") : t("settings.importExport.confirmImport", "Confirm Import")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+      FNXC:SettingsReset 2026-07-04-00:40:
+      Reset Settings confirmation dialog (FN-7506). Mirrors the overlap-path-picker
+      modal-overlay dialog pattern in this file: role="dialog", aria-modal, aria-label,
+      overlay-click-to-cancel, and its own Escape handler (registered above). Offers two
+      destructive choices — reset the active section only (disabled/explained when the
+      section is excluded/non-key) and reset all project settings — plus Cancel.
+      */}
+      {resetDialogOpen && (
+        <div
+          className="modal-overlay open"
+          onClick={handleResetDialogOverlayClick}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("settings.reset.dialogAriaLabel", "Reset settings")}
+          data-testid="settings-reset-dialog"
+        >
+          <div className="modal modal-md settings-reset-dialog" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{t("settings.reset.dialogTitle", "Reset Settings")}</h3>
+              <button className="modal-close" onClick={closeResetDialog} aria-label={t("actions.close", "Close")}>
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <p>{t("settings.reset.dialogBody", "Choose what to reset to its defaults. This cannot be undone.")}</p>
+              <div className="settings-reset-dialog__choice">
+                <button
+                  type="button"
+                  className="btn btn-danger settings-reset-dialog__choice-btn"
+                  data-testid="settings-reset-menu"
+                  onClick={() => void handleResetActiveSection()}
+                  disabled={resetInFlight || !activeSectionResetEntry}
+                  title={activeSectionResetIneligibleReason}
+                >
+                  {t("settings.reset.resetMenuAction", "Reset this menu ({{section}})", { section: activeSectionLabel })}
+                </button>
+                {activeSectionResetIneligibleReason && (
+                  <small className="settings-reset-dialog__ineligible-reason">{activeSectionResetIneligibleReason}</small>
+                )}
+              </div>
+              <div className="settings-reset-dialog__choice">
+                <button
+                  type="button"
+                  className="btn btn-danger settings-reset-dialog__choice-btn"
+                  data-testid="settings-reset-all-project"
+                  onClick={() => void handleResetAllProjectSettings()}
+                  disabled={resetInFlight}
+                >
+                  {t("settings.reset.resetAllProjectAction", "Reset all project settings")}
+                </button>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <div className="modal-actions-right">
+                <button className="btn btn-sm" onClick={closeResetDialog} disabled={resetInFlight}>
+                  {t("settings.actions.cancel", "Cancel")}
+                </button>
+              </div>
             </div>
           </div>
         </div>

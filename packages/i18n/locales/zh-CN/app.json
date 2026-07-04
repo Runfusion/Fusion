@@ -6574,6 +6574,17 @@
       "projectTitle": "Project MCP servers",
       "globalDescription": "Configure MCP servers shared by all projects. Project settings may override or disable these servers by name.",
       "projectDescription": "Configure project-specific MCP servers, overrides, and disabled inherited servers."
+    },
+    "reset": {
+      "button": "Reset Settings",
+      "buttonTitle": "Reset settings to their defaults",
+      "dialogAriaLabel": "Reset settings",
+      "dialogTitle": "Reset Settings",
+      "dialogBody": "Choose what to reset to its defaults. This cannot be undone.",
+      "resetMenuAction": "Reset this menu ({{section}})",
+      "resetAllProjectAction": "Reset all project settings",
+      "menuResetSuccess": "{{section}} settings reset to defaults",
+      "allProjectResetSuccess": "All project settings reset to defaults"
     }
   },
   "setup": {
