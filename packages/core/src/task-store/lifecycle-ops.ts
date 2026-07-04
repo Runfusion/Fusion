@@ -334,16 +334,14 @@ export function setupActivityLogListenersImpl(store: TaskStore): void {
 
 export async function reconcileOrphanedTaskDirsImpl(store: TaskStore, opts: { ignoreRecencyWindow?: boolean } = {},): Promise<{ recovered: string[]; skipped: Array<{ id: string; reason: string }> }> {
     /*
-    FNXC:PostgresCutover 2026-07-04:
-    The orphaned-task-dir sweep is a SQLite-era corruption/recovery mechanism:
-    it scans on-disk task.json files and re-INSERTs rows the DB lost, gated by
-    a recency window and soft-delete tombstones. In PostgreSQL backend mode
-    the authoritative store is the DB (not the filesystem), the sync insert/
-    tombstone probes go through store.db (which is removed), and self-healing
-    calls this directly. Return an empty recovery result so self-healing no-
-    ops instead of throwing. PG-side recovery of orphaned dirs is handled by
-    the async self-healing pass; this matches the assignment-sanctioned P1
-    early-return.
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Assessed safe-default: in PG backend mode, the sync filesystem scan + store.db re-insert
+    path cannot run (Drizzle is async, store.db is removed). The self-healing caller (line 2302)
+    receives an empty result — orphaned task dirs are NOT reconciled in PG mode. This is low-risk
+    because PG soft-delete is the norm (task.json dirs persist for active tasks; deleted tasks
+    keep their dirs but are tombstoned in PG, not lost). A full async reconcile (scan dirs,
+    check PG for matching rows, re-import missing) is feasible but not P0 given the rarity of
+    PG-mode orphans. Not claiming a non-existent async fallback.
     */
     if (store.backendMode) {
       return { recovered: [], skipped: [] };

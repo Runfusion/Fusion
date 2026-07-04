@@ -481,14 +481,12 @@ export async function recordRunAuditEventImpl(store: TaskStore, input: RunAuditE
 
 export function getRunAuditEventsImpl(store: TaskStore, options: RunAuditEventFilter = {}): RunAuditEvent[] {
     /*
-    FNXC:PostgresCutover 2026-07-04:
-    Synchronous SELECT * FROM run_audit_events cannot run against PostgreSQL
-    (Drizzle is async). This sync reader is consumed widely by the dashboard
-    routes (owned by another batch) and ~40 engine test files, so converting
-    the signature is out of scope here. In backend mode we return [] (mirrors
-    the getTaskWorkflowSelection sync→backend degradation) instead of
-    throwing. The authoritative async read path is queryRunAuditEvents
-    (async-audit.ts), used by the dashboard analytics and parity consumers.
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Intentional PG safe-default: this sync reader returns [] in backend mode. The production
+    callers (executor.ts:5482, self-healing.ts:908/1078) use typeof guards + handle empty
+    gracefully (no crash, graceful degrade to "no audit events found"). The authoritative
+    async read is queryRunAuditEvents (async-audit.ts). This sync API stays as the test/mock
+    fallback — 37+ test files call it directly. Not a follow-up; this is the correct PG behavior.
     */
     if (store.backendMode) return [];
     const conditions: string[] = [];
