@@ -1065,3 +1065,41 @@ export function applyActivityLogSnapshotImpl(store: TaskStore, snapshot: Activit
     return { applied, skipped };
 }
 
+/*
+FNXC:PostgresCutover 2026-07-04-00:00:
+Async mesh state-apply for activity_log. Uses Drizzle INSERT ... ON CONFLICT (id) DO NOTHING
+with .returning() to count applied vs skipped — preserves the snapshot's id/timestamp/type
+(NOT recordActivityLogEntry which generates new ids). Idempotent: re-applying the same
+snapshot is a no-op (all skipped).
+*/
+export async function applyActivityLogSnapshotAsyncImpl(store: TaskStore, snapshot: ActivityLogSnapshot): Promise<{ applied: number; skipped: number }> {
+  validateSnapshotEnvelope(snapshot);
+  if (!store.backendMode) return store.applyActivityLogSnapshot(snapshot);
+  const entries = snapshot.payload.entries;
+  if (entries.length === 0) return { applied: 0, skipped: 0 };
+  const layer = store.asyncLayer!;
+  let applied = 0;
+  let skipped = 0;
+  for (const entry of entries) {
+    const inserted = await layer.db
+      .insert(schema.project.activityLog)
+      .values({
+        id: entry.id,
+        timestamp: entry.timestamp,
+        type: entry.type,
+        taskId: entry.taskId ?? null,
+        taskTitle: entry.taskTitle ?? null,
+        details: entry.details,
+        metadata: entry.metadata ?? null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: schema.project.activityLog.id });
+    if (inserted.length > 0) {
+      applied++;
+    } else {
+      skipped++;
+    }
+  }
+  return { applied, skipped };
+}
+

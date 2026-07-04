@@ -516,7 +516,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         await applyDomain("activity-log", async () => {
           if (!sharedState.activityLog) return;
           validateSnapshotEnvelope(sharedState.activityLog);
-          store.applyActivityLogSnapshot(sharedState.activityLog as Parameters<typeof store.applyActivityLogSnapshot>[0]);
+          await store.applyActivityLogSnapshotAsync(sharedState.activityLog as Parameters<typeof store.applyActivityLogSnapshotAsync>[0]);
         });
 
         await applyDomain("run-audit", async () => {
