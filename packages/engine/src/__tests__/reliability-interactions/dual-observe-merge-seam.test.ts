@@ -43,12 +43,12 @@ describe("FN-5742 dual-observe merge seam", () => {
     );
   });
 
-  it("shadow dequeue selector skips manual-required records", () => {
+  it("shadow dequeue selector skips manual-required records", async () => {
     const fakeEngine = {
       mergeQueue: ["FN-A", "FN-B", "FN-C"],
       runtime: {
         getTaskStore: () => ({
-          getMergeRequestRecord: (taskId: string) => {
+          getMergeRequestRecordAsync: async (taskId: string) => {
             if (taskId === "FN-A") return { state: "manual-required" };
             if (taskId === "FN-B") return { state: "queued" };
             return null;
@@ -57,7 +57,7 @@ describe("FN-5742 dual-observe merge seam", () => {
       },
     };
 
-    const candidate = (ProjectEngine.prototype as any).getShadowMergeRequestCandidateId.call(fakeEngine);
+    const candidate = await (ProjectEngine.prototype as any).getShadowMergeRequestCandidateId.call(fakeEngine);
     expect(candidate).toBe("FN-B");
   });
 
@@ -104,7 +104,7 @@ describe("FN-5742 dual-observe merge seam", () => {
     );
   });
 
-  it("is a no-op when shadow dequeue API is unavailable", () => {
+  it("is a no-op when shadow dequeue API is unavailable", async () => {
     const fakeEngine = {
       mergeQueue: ["FN-A"],
       runtime: {
@@ -112,7 +112,7 @@ describe("FN-5742 dual-observe merge seam", () => {
       },
     };
 
-    const candidate = (ProjectEngine.prototype as any).getShadowMergeRequestCandidateId.call(fakeEngine);
+    const candidate = await (ProjectEngine.prototype as any).getShadowMergeRequestCandidateId.call(fakeEngine);
     expect(candidate).toBeNull();
   });
 
@@ -197,6 +197,7 @@ describe("FN-5742 dual-observe merge seam", () => {
     const store = {
       getSettings: vi.fn().mockResolvedValue({ mergeRequestContractShadowEnabled: true }),
       getMergeRequestRecord: vi.fn(() => ({ state, attemptCount: 0, lastError: null })),
+      getMergeRequestRecordAsync: vi.fn(async () => ({ state, attemptCount: 0, lastError: null })),
       transitionMergeRequestState: vi.fn((_taskId: string, to: string) => {
         transitions.push(`${state}->${to}`);
         state = to;
@@ -224,6 +225,7 @@ describe("FN-5742 dual-observe merge seam", () => {
       getSettings: vi.fn().mockResolvedValue({ mergeRequestContractShadowEnabled: true }),
       getTask: vi.fn().mockResolvedValue({ id: "FN-MR", column: "in-review" }),
       getMergeRequestRecord: vi.fn(() => ({ state, attemptCount: 3, lastError: null })),
+      getMergeRequestRecordAsync: vi.fn(async () => ({ state, attemptCount: 3, lastError: null })),
       transitionMergeRequestState: vi.fn((_taskId: string, to: string) => {
         state = to;
       }),

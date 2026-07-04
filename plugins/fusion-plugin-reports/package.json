@@ -26,6 +26,7 @@
     "@fusion/core": "workspace:*",
     "@fusion/dashboard": "workspace:*",
     "@fusion/plugin-sdk": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "lucide-react": "^0.542.0",
     "react": "^19.0.0",
     "react-dom": "^19.2.4"

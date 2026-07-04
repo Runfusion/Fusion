@@ -1675,16 +1675,20 @@ export class ProjectEngine {
     return undefined;
   }
 
-  private getShadowMergeRequestCandidateId(): string | null {
+  // FNXC:PostgresCutover 2026-07-04-00:00:
+  // Async-cascaded to use getMergeRequestRecordAsync (the PG-backed read) so
+  // shadow-dequeue parity works in backend mode. The single caller (the merge
+  // loop at line ~1868) already runs in an async while-loop.
+  private async getShadowMergeRequestCandidateId(): Promise<string | null> {
     const store = this.runtime.getTaskStore() as TaskStore & {
-      getMergeRequestRecord?: (taskId: string) => { state: string } | null;
+      getMergeRequestRecordAsync?: (taskId: string) => Promise<{ state: string } | null>;
     };
-    if (typeof store.getMergeRequestRecord !== "function") {
+    if (typeof store.getMergeRequestRecordAsync !== "function") {
       return null;
     }
 
     for (const queuedTaskId of this.mergeQueue) {
-      const record = store.getMergeRequestRecord(queuedTaskId);
+      const record = await store.getMergeRequestRecordAsync(queuedTaskId);
       if (!record) continue;
       if (record.state === "manual-required") continue;
       if (record.state === "queued" || record.state === "retrying" || record.state === "running") {
@@ -1859,13 +1863,13 @@ export class ProjectEngine {
       const cwd = this.config.workingDirectory;
 
       while (this.mergeQueue.length > 0 && !this.shuttingDown) {
-        const shadowCandidateTaskId = this.getShadowMergeRequestCandidateId();
+        const shadowCandidateTaskId = await this.getShadowMergeRequestCandidateId();
         const taskId = await this.pickNextMergeTaskId(store);
         if (!taskId) break;
         const shadowSettings = await store.getSettings();
         if (shadowSettings.mergeRequestContractShadowEnabled === true) {
           this.emitMergeRequestShadowDequeueParity(taskId, shadowCandidateTaskId);
-          const mergeRequest = store.getMergeRequestRecord(taskId);
+          const mergeRequest = await store.getMergeRequestRecordAsync(taskId);
           if (mergeRequest?.state === "manual-required" || mergeRequest?.state === "cancelled" || mergeRequest?.state === "succeeded" || mergeRequest?.state === "exhausted") {
             continue;
           }
@@ -3172,7 +3176,7 @@ export class ProjectEngine {
                   const settings = await store.getSettings().catch(() => null);
                   const useMergeRequestContract = settings?.mergeRequestContractShadowEnabled === true;
                   if (useMergeRequestContract) {
-                    const record = store.getMergeRequestRecord(taskId);
+                    const record = await store.getMergeRequestRecordAsync(taskId);
                     if (record && record.state !== "exhausted" && record.state !== "cancelled" && record.state !== "succeeded") {
                       if (record.state === "running") {
                         await store.transitionMergeRequestState(taskId, "retrying", {
@@ -3180,7 +3184,7 @@ export class ProjectEngine {
                           lastError: errorMsg,
                         });
                       }
-                      const refreshed = store.getMergeRequestRecord(taskId);
+                      const refreshed = await store.getMergeRequestRecordAsync(taskId);
                       if (refreshed && refreshed.state === "retrying") {
                         await store.transitionMergeRequestState(taskId, "exhausted", {
                           attemptCount: refreshed.attemptCount,
@@ -3228,7 +3232,7 @@ export class ProjectEngine {
                 const settings = await store.getSettings().catch(() => null);
                 const useMergeRequestContract = settings?.mergeRequestContractShadowEnabled === true;
                 if (useMergeRequestContract) {
-                  const record = store.getMergeRequestRecord(taskId);
+                  const record = await store.getMergeRequestRecordAsync(taskId);
                   if (record && record.state !== "exhausted" && record.state !== "cancelled" && record.state !== "succeeded") {
                     if (record.state === "running") {
                       await store.transitionMergeRequestState(taskId, "retrying", {
@@ -3236,7 +3240,7 @@ export class ProjectEngine {
                         lastError: errorMsg,
                       });
                     }
-                    const refreshed = store.getMergeRequestRecord(taskId);
+                    const refreshed = await store.getMergeRequestRecordAsync(taskId);
                     if (refreshed && refreshed.state === "retrying") {
                       await store.transitionMergeRequestState(taskId, "exhausted", {
                         attemptCount: refreshed.attemptCount,
@@ -3321,7 +3325,7 @@ export class ProjectEngine {
     const settings = await store.getSettings().catch(() => null);
     const useMergeRequestContract = settings?.mergeRequestContractShadowEnabled === true;
     if (useMergeRequestContract) {
-      const record = store.getMergeRequestRecord(taskId);
+      const record = await store.getMergeRequestRecordAsync(taskId);
       if (record && record.state !== "manual-required" && record.state !== "cancelled" && record.state !== "succeeded" && record.state !== "exhausted") {
         if (record.state === "running") {
           await store.transitionMergeRequestState(taskId, "retrying", {
@@ -3329,7 +3333,7 @@ export class ProjectEngine {
             lastError: errorMsg,
           });
         }
-        if (store.getMergeRequestRecord(taskId)?.state === "retrying") {
+        if ((await store.getMergeRequestRecordAsync(taskId))?.state === "retrying") {
           await store.transitionMergeRequestState(taskId, "queued", {
             attemptCount: nextRetryCount,
             lastError: errorMsg,

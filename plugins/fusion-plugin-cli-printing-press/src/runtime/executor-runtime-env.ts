@@ -1,10 +1,8 @@
 import { dirname, isAbsolute, join } from "node:path";
 import { existsSync } from "node:fs";
 import type { ExecutorRuntimeEnvContribution, ExecutorRuntimeTaskContext, PluginContext } from "@fusion/plugin-sdk";
-import type { createCliPressStore } from "../store/cli-press-store.js";
+import type { CliPressStore } from "../store/cli-press-store.js";
 import { decodeCredentialValue } from "../store/credentials.js";
-
-type CliPressStore = ReturnType<typeof createCliPressStore>;
 
 function toEpoch(value?: string): number {
   if (!value) return 0;
@@ -12,27 +10,22 @@ function toEpoch(value?: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function buildExecutorRuntimeEnv(
+export async function buildExecutorRuntimeEnv(
   store: CliPressStore,
   taskCtx: ExecutorRuntimeTaskContext,
   ctx: PluginContext,
-): ExecutorRuntimeEnvContribution {
+): Promise<ExecutorRuntimeEnvContribution> {
   const pathDirs: string[] = [];
   const env: Record<string, string> = {};
 
-  for (const service of store.listServices()) {
-    const specs = store
-      .listSpecs(service.id)
+  for (const service of await store.listServices()) {
+    const specs = (await store.listSpecs(service.id))
       .filter((spec) => spec.status === "generated")
       .sort((a, b) => toEpoch(b.generatedAt ?? b.updatedAt) - toEpoch(a.generatedAt ?? a.updatedAt));
 
-    const selectedSpec = specs.find((spec) => {
-      const artifacts = store.listArtifacts(spec.id);
-      return artifacts.some((artifact) => artifact.executable);
-    });
-
+    const selectedSpec = await findExecutableSpec(store, specs);
     if (selectedSpec) {
-      const executableArtifacts = store.listArtifacts(selectedSpec.id).filter((artifact) => artifact.executable);
+      const executableArtifacts = (await store.listArtifacts(selectedSpec.id)).filter((artifact) => artifact.executable);
       for (const artifact of executableArtifacts) {
         const absoluteArtifactPath = isAbsolute(artifact.path)
           ? artifact.path
@@ -47,7 +40,7 @@ export function buildExecutorRuntimeEnv(
       }
     }
 
-    for (const credential of store.listCredentials(service.id)) {
+    for (const credential of await store.listCredentials(service.id)) {
       const credentialKind = (credential as { kind: string }).kind;
       if (credentialKind === "oauth" || credentialKind === "oauth2") {
         throw new Error(`OAuth credentials are not supported for service ${service.slug}`);
@@ -72,4 +65,21 @@ export function buildExecutorRuntimeEnv(
     env,
     description: "cli-printing-press generated CLIs",
   };
+}
+
+/**
+ * First spec (in the given order) that owns at least one executable artifact.
+ * Pulled out so the loop body stays flat; returns undefined when none qualify.
+ */
+async function findExecutableSpec(
+  store: CliPressStore,
+  specs: { id: string }[],
+): Promise<{ id: string } | undefined> {
+  for (const spec of specs) {
+    const artifacts = await store.listArtifacts(spec.id);
+    if (artifacts.some((artifact) => artifact.executable)) {
+      return spec;
+    }
+  }
+  return undefined;
 }

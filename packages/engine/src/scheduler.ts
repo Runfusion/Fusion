@@ -1553,7 +1553,7 @@ export class Scheduler {
           }
 
           if (settings.mergeRequestContractShadowEnabled === true) {
-            const mergeRequestRecord = this.store.getMergeRequestRecord(t.id);
+            const mergeRequestRecord = await this.store.getMergeRequestRecordAsync(t.id);
             const { shadowExecutorLeaseApplied, shadowMergeLockApplied, shadowLeaseApplied } =
               computeShadowLeaseParityState(mergeRequestRecord?.state ?? null);
             if (shadowLeaseApplied !== !handoffAccepted) {

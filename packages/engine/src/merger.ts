@@ -8337,7 +8337,7 @@ export async function aiMergeTask(
       (settings.autoMerge === false && task.autoMerge !== true) ||
       providerManualRoute;
     const initialState = autoMergeManuallyGated ? "manual-required" : "queued";
-    const existingRecord = store.getMergeRequestRecord(task.id);
+    const existingRecord = await store.getMergeRequestRecordAsync(task.id);
     const currentState = existingRecord?.state ?? initialState;
     if (!existingRecord) {
       await store.upsertMergeRequestRecord(task.id, { state: initialState });
@@ -12378,7 +12378,7 @@ async function completeTask(
   const task = await store.moveTask(taskId, "done");
   const settings = await store.getSettings();
   if (isMergeRequestContractShadowEnabled(settings) && preMoveTask?.autoMerge !== false) {
-    const mergeRequestRecord = store.getMergeRequestRecord(taskId);
+    const mergeRequestRecord = await store.getMergeRequestRecordAsync(taskId);
     if (mergeRequestRecord) {
       await store.transitionMergeRequestState(taskId, "succeeded");
     }

@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
-import { runPluginSchemaInitHooks, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
+import { runPluginSchemaInitHooks, DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS, type PluginSchemaInitHook } from "./plugin-schema-hook.js";
 
 /** The single migration version this applier knows about. */
 export const SCHEMA_BASELINE_VERSION = "0000";
@@ -99,7 +99,7 @@ export async function applySchemaBaseline(
   // applied or already present — plugin tables must exist on every connection
   // the applier touches. The hooks are themselves idempotent (CREATE TABLE IF
   // NOT EXISTS), so re-running is safe.
-  const pluginHooks = options.pluginHooks ?? [];
+  const pluginHooks = options.pluginHooks ?? DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS;
   await runPluginSchemaInitHooks(db, pluginHooks);
 
   return { applied: !alreadyApplied, pluginHooksRun: pluginHooks.length };

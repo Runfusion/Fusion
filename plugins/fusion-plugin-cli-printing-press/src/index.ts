@@ -1,19 +1,32 @@
 import { definePlugin } from "@fusion/plugin-sdk";
 import { createCliPrintingPressRoutes } from "./routes/wizard-routes.js";
 import { buildExecutorRuntimeEnv } from "./runtime/executor-runtime-env.js";
-import { createCliPressStore, ensureCliPressSchema } from "./store/cli-press-store.js";
+import { createCliPressStore, ensureCliPressSchema, type CliPressStore } from "./store/cli-press-store.js";
 import { CLI_PRINTING_PRESS_WORKFLOW_STEPS } from "./workflow-steps.js";
 
-const storeByDb = new WeakMap<object, ReturnType<typeof createCliPressStore>>();
+interface TaskStoreLike {
+  getDatabase(): object;
+  isBackendMode(): boolean;
+  getAsyncLayer(): { db: unknown } | null;
+}
 
-function getStore(taskStore: { getDatabase: () => object; isBackendMode: () => boolean }) {
+// Cache keyed by the SQLite db object (legacy mode). In backend mode the store
+// is cached by the TaskStore instance instead (the async layer is stable per
+// TaskStore), so a null-db store is never cached here.
+const storeByDb = new WeakMap<object, CliPressStore>();
+const storeByTaskStore = new WeakMap<object, CliPressStore>();
+
+function getStore(taskStore: TaskStoreLike): CliPressStore {
   // FNXC:PostgresCutover 2026-07-04-00:00:
-  // In backend mode, getDatabase() throws. Pass null so the store degrades
-  // (methods throw a clear error) rather than crashing at factory time. The
-  // WeakMap cache is keyed by the db object, so a null-db store is returned
-  // directly without caching.
+  // Dual-mode: in backend mode pass the AsyncDataLayer so the store routes to
+  // Drizzle queries against the plugin-owned PG tables (materialized by the
+  // cliPressPluginSchemaInit hook). Legacy SQLite mode passes the sync db.
   if (taskStore.isBackendMode()) {
-    return createCliPressStore(null);
+    const cached = storeByTaskStore.get(taskStore as object);
+    if (cached) return cached;
+    const next = createCliPressStore(null, taskStore.getAsyncLayer());
+    storeByTaskStore.set(taskStore as object, next);
+    return next;
   }
   const db = taskStore.getDatabase();
   const existing = storeByDb.get(db);
@@ -36,8 +49,8 @@ const plugin = definePlugin({
     onSchemaInit: ensureCliPressSchema,
   },
   routes: createCliPrintingPressRoutes(),
-  executorRuntimeEnv: (taskCtx, ctx) => {
-    const store = getStore(ctx.taskStore as { getDatabase: () => object; isBackendMode: () => boolean });
+  executorRuntimeEnv: async (taskCtx, ctx) => {
+    const store = getStore(ctx.taskStore as TaskStoreLike);
     return buildExecutorRuntimeEnv(store, taskCtx, ctx);
   },
   workflowSteps: CLI_PRINTING_PRESS_WORKFLOW_STEPS,
@@ -63,5 +76,6 @@ const plugin = definePlugin({
 
 export default plugin;
 export { createCliPressStore, ensureCliPressSchema } from "./store/cli-press-store.js";
+export type { CliPressStore } from "./store/cli-press-store.js";
 export { CLI_PRINTING_PRESS_WORKFLOW_STEPS } from "./workflow-steps.js";
 export * from "./store/cli-press-types.js";

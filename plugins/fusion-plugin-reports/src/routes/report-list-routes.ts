@@ -13,10 +13,13 @@ function getStore(ctx: PluginContext): ReportStore {
   const cached = reportStoreCache.get(key);
   if (cached) return cached;
   // FNXC:PostgresCutover 2026-07-04-00:00:
-  // In backend mode, getDatabase() throws. Guard with isBackendMode() check.
-  // ReportStore methods have no async path yet — they degrade in PG until ported.
-  const db = ctx.taskStore.isBackendMode() ? null : ctx.taskStore.getDatabase();
-  const store = new ReportStore(db);
+  // In backend mode, pass asyncLayer so ReportStore async methods work.
+  if (ctx.taskStore.isBackendMode()) {
+    const store = new ReportStore(null, { asyncLayer: ctx.taskStore.getAsyncLayer() });
+    reportStoreCache.set(key, store);
+    return store;
+  }
+  const store = new ReportStore(ctx.taskStore.getDatabase());
   reportStoreCache.set(key, store);
   return store;
 }
@@ -41,7 +44,7 @@ export function createReportListRoutes(): PluginRouteDefinition[] {
         const agent = typeof query.agentId === "string" && query.agentId.length > 0 ? query.agentId.toLowerCase() : undefined;
 
         const store = getStore(ctx);
-        const reports = store.listReports({
+        const reports = await store.listReportsAsync({
           cadence: cadence as never,
           status: status as never,
           periodStartFrom,
@@ -67,7 +70,7 @@ export function createReportListRoutes(): PluginRouteDefinition[] {
       path: "/reports/:id",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const request = req as RouteRequest;
-        const report = getStore(ctx).getReport(request.params.id);
+        const report = await getStore(ctx).getReportAsync(request.params.id);
         if (!report) return { status: 404, body: { error: `Report ${request.params.id} not found` } };
         return { status: 200, body: { report } };
       },

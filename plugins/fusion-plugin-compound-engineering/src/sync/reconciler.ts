@@ -93,9 +93,9 @@ export class CeReconciler {
     // (1) Drain the queue. Draining is just an audit/ack — the actual decision is
     // re-derived from board truth below, so a queue entry for an already-handled
     // transition is harmless.
-    const pending = this.store.listPendingSync();
+    const pending = await this.store.listPendingSyncAsync();
     for (const entry of pending) {
-      this.store.markSyncProcessed(entry.id);
+      await this.store.markSyncProcessedAsync(entry.id);
       result.drained++;
     }
 
@@ -103,7 +103,7 @@ export class CeReconciler {
     // ones with queued entries. This is what recovers a dropped/never-enqueued
     // hook event — board truth is compared against pipeline state regardless of
     // whether a queue row exists.
-    const states = this.store.listAllState();
+    const states = await this.store.listAllStateAsync();
     for (const state of states) {
       result.inspected++;
       const advanced = await this.reconcileOne(state);
@@ -128,7 +128,7 @@ export class CeReconciler {
     // All links for this pipeline (fetched once, reused by advance's idempotency
     // check). The board tasks whose completion gates advancement are this
     // pipeline's links AT its current stage.
-    const links = this.store.listByPipeline(state.cePipelineId);
+    const links = await this.store.listByPipelineAsync(state.cePipelineId);
     const currentStageLinks = links.filter((l) => l.ceStageId === state.currentStage);
     if (currentStageLinks.length === 0) return undefined;
 
@@ -155,7 +155,7 @@ export class CeReconciler {
     if (!allTerminal) {
       // Still running on the board — make sure our status reflects that and stop.
       if (state.status !== "running") {
-        this.store.transitionState(state.cePipelineId, { status: "running" });
+        await this.store.transitionStateAsync(state.cePipelineId, { status: "running" });
       }
       return undefined;
     }
@@ -163,7 +163,7 @@ export class CeReconciler {
     const next = nextStageAfter(state.currentStage);
     if (!next) {
       // Terminal stage finished → pipeline completed. No outbound task.
-      this.store.transitionState(state.cePipelineId, { status: "completed" });
+      await this.store.transitionStateAsync(state.cePipelineId, { status: "completed" });
       this.ctx.emitEvent("compound-engineering:pipeline-completed", {
         cePipelineId: state.cePipelineId,
         stage: state.currentStage,
@@ -196,7 +196,7 @@ export class CeReconciler {
     const already = links.some((l) => l.ceStageId === nextStage);
 
     if (already) {
-      this.store.transitionState(state.cePipelineId, {
+      await this.store.transitionStateAsync(state.cePipelineId, {
         currentStage: nextStage,
         status: "running",
       });
@@ -215,7 +215,7 @@ export class CeReconciler {
 
     // Single state write on the create path: advance to the next stage and mark
     // the pipeline as waiting on the freshly-created board task.
-    this.store.transitionState(state.cePipelineId, {
+    await this.store.transitionStateAsync(state.cePipelineId, {
       currentStage: nextStage,
       status: "awaiting_board",
     });

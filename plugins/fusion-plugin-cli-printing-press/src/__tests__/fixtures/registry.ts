@@ -5,20 +5,20 @@ import { Database } from "@fusion/core";
 import { createCliPressStore } from "../../store/cli-press-store.js";
 import { encodeCredentialValue } from "../../store/credentials.js";
 
-export function makeFakeRegistry() {
+export async function makeFakeRegistry() {
   const rootDir = mkdtempSync(join(tmpdir(), "cli-printing-press-registry-"));
   const db = new Database(join(rootDir, ".fusion"), { inMemory: true });
   db.init();
   const store = createCliPressStore(db);
 
-  const acme = store.createService({
+  const acme = await store.createService({
     slug: "acme",
     displayName: "Acme Service",
     description: "Acme CLI",
     baseUrl: "https://acme.example.com",
     sourceKind: "manual",
   });
-  const acmeSpec = store.createSpec({
+  const acmeSpec = await store.createSpec({
     serviceId: acme.id,
     name: "acme-cli",
     version: "1.0.0",
@@ -32,8 +32,8 @@ export function makeFakeRegistry() {
   const acmeAbsPath = join(rootDir, ".fusion", acmePath);
   mkdirSync(join(acmeAbsPath, ".."), { recursive: true });
   writeFileSync(acmeAbsPath, "#!/bin/sh\necho acme\n");
-  store.createArtifact({ cliSpecId: acmeSpec.id, kind: "script", path: acmePath, executable: true });
-  store.createCredential({
+  await store.createArtifact({ cliSpecId: acmeSpec.id, kind: "script", path: acmePath, executable: true });
+  await store.createCredential({
     serviceId: acme.id,
     name: "token",
     kind: "env_var",
@@ -41,14 +41,14 @@ export function makeFakeRegistry() {
     value: encodeCredentialValue("acme-secret"),
   });
 
-  const beta = store.createService({
+  const beta = await store.createService({
     slug: "beta",
     displayName: "Beta Service",
     description: "Beta CLI",
     baseUrl: "https://beta.example.com",
     sourceKind: "manual",
   });
-  const betaSpec = store.createSpec({
+  const betaSpec = await store.createSpec({
     serviceId: beta.id,
     name: "beta-cli",
     version: "1.0.0",
@@ -58,7 +58,7 @@ export function makeFakeRegistry() {
     generatedAt: undefined,
     lastGenerationError: undefined,
   });
-  store.createCredential({
+  await store.createCredential({
     serviceId: beta.id,
     name: "header-token",
     kind: "header",

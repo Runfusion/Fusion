@@ -571,7 +571,7 @@ describe("executeHeartbeat", () => {
       await (monitor as any).buildReportsHealthSection("agent-001", store);
 
       expect(heartbeatLog.log).toHaveBeenCalledWith(
-        expect.stringContaining("[reports-health] stale report agent-overdue intervalSource=persisted-agent"),
+        expect.stringContaining("[reports-health] stale report agent-overdue intervalSource=runtimeConfig"),
       );
       expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("staleThresholdMs="));
       expect(heartbeatLog.log).toHaveBeenCalledWith(expect.stringContaining("heartbeatAgeMs="));

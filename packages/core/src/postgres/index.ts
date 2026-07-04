@@ -78,6 +78,9 @@ export {
 } from "./schema-applier.js";
 export {
   roadmapPluginSchemaInit,
+  cePluginSchemaInit,
+  reportsPluginSchemaInit,
+  cliPressPluginSchemaInit,
   DEFAULT_PLUGIN_SCHEMA_INIT_HOOKS,
   runPluginSchemaInitHooks,
   type PluginSchemaInitHook,

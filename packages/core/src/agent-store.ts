@@ -2979,7 +2979,7 @@ export class AgentStore extends EventEmitter {
   }
 
   private async resolveCompatibleBundleDir(agentId: string, createIfMissing: boolean): Promise<string> {
-    const agent = this.readAgent(agentId);
+    const agent = await this.getAgent(agentId);
     if (!agent) {
       throw new Error(`Agent ${agentId} not found`);
     }
@@ -3125,11 +3125,11 @@ export class AgentStore extends EventEmitter {
   }
 
   private readAgent(agentId: string): Agent | null {
-    // FNXC:PostgresCutover 2026-07-04: backend mode has no synchronous DB handle.
-    // This sync helper cannot await the async readAgent helper, so it degrades to
-    // null in backend mode. Callers needing the agent must use the async getAgent()
-    // (which delegates to readAgentAsync). Strictly safer than the pre-cutover
-    // behaviour where this.db threw in backend mode.
+    // SQLite sync read path. In PG backend mode there is no synchronous DB
+    // handle, so this returns null — the async path is wired via getAgent()
+    // (which delegates to readAgentAsync). The remaining internal sync caller
+    // (getInstructionsDir) uses it only for non-critical path computation;
+    // resolveCompatibleBundleDir now uses getAgent() directly.
     if (this.backendMode) {
       return null;
     }
@@ -3167,15 +3167,17 @@ export class AgentStore extends EventEmitter {
 
   /**
    * Synchronously read an agent from SQLite (for use in synchronous hot paths).
-   * Returns null if the agent does not exist or cannot be parsed.
+   * Returns null if the agent does not exist, cannot be parsed, or the store is
+   * in PG backend mode (no synchronous DB handle — async callers must use
+   * {@link getAgent} which delegates to `readAgentAsync`).
    * @param agentId - The agent ID
    */
   getCachedAgent(agentId: string): Agent | null {
-    // FNXC:PostgresCutover 2026-07-04: getCachedAgent is a synchronous hot-path
-    // reader and cannot await the async PG layer. In backend mode it degrades to
-    // null; callers that need the agent must use the async getAgent(). The mesh
-    // heartbeat wake-up path already routes through getAgent() (see
-    // agent-wake-getagent.pg.test.ts), so this only affects best-effort sync reads.
+    // SQLite sync fast-path. In PG backend mode there is no sync DB handle, so
+    // this returns null. Both production callers (HeartbeatMonitor's sync
+    // resolveAgentConfig and the reports-health interval resolver) wrap this in
+    // try/catch and degrade to monitor defaults; the async getAgentConfig() path
+    // does its own async getAgent() lookup, so per-agent runtimeConfig is honored.
     if (this.backendMode) {
       return null;
     }

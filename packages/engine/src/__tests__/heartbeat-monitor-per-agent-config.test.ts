@@ -158,7 +158,7 @@ describe("per-agent heartbeat config", () => {
 
     it("falls back to monitor defaults when agent is not found", async () => {
       const agentStore = createStoreWithAgent({ id: "agent-001" });
-      (agentStore.getCachedAgent as ReturnType<typeof vi.fn>).mockReturnValue(null);
+      vi.mocked(agentStore.getAgent).mockResolvedValue(null);
 
       const monitor = new HeartbeatMonitor({
         store,
@@ -172,11 +172,9 @@ describe("per-agent heartbeat config", () => {
       expect(config.heartbeatTimeoutMs).toBe(10000);
     });
 
-    it("returns monitor defaults when getCachedAgent throws", async () => {
+    it("returns monitor defaults when getAgent throws", async () => {
       const agentStore = createStoreWithAgent({ id: "agent-001" });
-      (agentStore.getCachedAgent as ReturnType<typeof vi.fn>).mockImplementation(() => {
-        throw new Error("Read error");
-      });
+      vi.mocked(agentStore.getAgent).mockRejectedValue(new Error("Read error"));
 
       const monitor = new HeartbeatMonitor({
         store,

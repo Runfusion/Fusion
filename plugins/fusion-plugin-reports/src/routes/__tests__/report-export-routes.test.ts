@@ -34,7 +34,7 @@ function report(overrides: Partial<Report> = {}): Report {
   };
 }
 
-function ctxWithStore(store: { getReport: (id: string) => Report | null; setRenderedHtml: (id: string, html: string) => void }): PluginContext {
+function ctxWithStore(store: { getReportAsync: (id: string) => Promise<Report | null>; setRenderedHtmlAsync: (id: string, html: string) => Promise<unknown> }): PluginContext {
   return {
     pluginId: "fusion-plugin-reports",
     taskStore: { getDatabase: () => ({}), getReportStore: () => store } as any,
@@ -52,9 +52,9 @@ describe("report export routes", () => {
     const routes = createReportExportRoutes();
     const route = routes.find((r) => r.path.endsWith("export.html"))!;
     const record = report();
-    const getReport = vi.fn().mockReturnValue(record);
-    const setRenderedHtml = vi.fn();
-    const ctx = ctxWithStore({ getReport, setRenderedHtml });
+    const getReportAsync = vi.fn().mockResolvedValue(record);
+    const setRenderedHtmlAsync = vi.fn().mockResolvedValue(undefined);
+    const ctx = ctxWithStore({ getReportAsync, setRenderedHtmlAsync });
     const res = await route.handler({ params: { id: "rep_1" } }, ctx as any) as any;
     expect(res.status).toBe(200);
     expect(res.contentType).toContain("text/html");
@@ -63,21 +63,21 @@ describe("report export routes", () => {
 
   it("returns 404 for missing id", async () => {
     const route = createReportExportRoutes().find((r) => r.path.endsWith("export.html"))!;
-    const ctx = ctxWithStore({ getReport: vi.fn().mockReturnValue(null), setRenderedHtml: vi.fn() });
+    const ctx = ctxWithStore({ getReportAsync: vi.fn().mockResolvedValue(null), setRenderedHtmlAsync: vi.fn().mockResolvedValue(undefined) });
     const res = await route.handler({ params: { id: "missing" } }, ctx as any) as any;
     expect(res.status).toBe(404);
   });
 
   it("returns 409 for generating report", async () => {
     const route = createReportExportRoutes().find((r) => r.path.endsWith("export.html"))!;
-    const ctx = ctxWithStore({ getReport: vi.fn().mockReturnValue(report({ status: "generating" })), setRenderedHtml: vi.fn() });
+    const ctx = ctxWithStore({ getReportAsync: vi.fn().mockResolvedValue(report({ status: "generating" })), setRenderedHtmlAsync: vi.fn().mockResolvedValue(undefined) });
     const res = await route.handler({ params: { id: "rep_1" } }, ctx as any) as any;
     expect(res.status).toBe(409);
   });
 
   it("returns body-only preview html", async () => {
     const route = createReportExportRoutes().find((r) => r.path.endsWith("preview.html"))!;
-    const ctx = ctxWithStore({ getReport: vi.fn().mockReturnValue(report()), setRenderedHtml: vi.fn() });
+    const ctx = ctxWithStore({ getReportAsync: vi.fn().mockResolvedValue(report()), setRenderedHtmlAsync: vi.fn().mockResolvedValue(undefined) });
     const res = await route.handler({ params: { id: "rep_1" } }, ctx as any) as any;
     expect(res.status).toBe(200);
     expect(res.contentType).toContain("text/html");
@@ -88,17 +88,17 @@ describe("report export routes", () => {
   it("caches rendered html after first export", async () => {
     const route = createReportExportRoutes().find((r) => r.path.endsWith("export.html"))!;
     const mutable = report();
-    const getReport = vi.fn().mockImplementation(() => mutable);
-    const setRenderedHtml = vi.fn().mockImplementation((_id: string, html: string) => {
+    const getReportAsync = vi.fn().mockImplementation(async () => mutable);
+    const setRenderedHtmlAsync = vi.fn().mockImplementation(async (_id: string, html: string) => {
       mutable.renderedHtml = html;
     });
-    const ctx = ctxWithStore({ getReport, setRenderedHtml });
+    const ctx = ctxWithStore({ getReportAsync, setRenderedHtmlAsync });
 
     const first = await route.handler({ params: { id: "rep_1" } }, ctx as any) as any;
     const second = await route.handler({ params: { id: "rep_1" } }, ctx as any) as any;
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    expect(setRenderedHtml).toHaveBeenCalledTimes(1);
+    expect(setRenderedHtmlAsync).toHaveBeenCalledTimes(1);
   });
 });

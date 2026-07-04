@@ -3343,16 +3343,15 @@ export class HeartbeatMonitor {
       let intervalSource: "runtimeConfig" | "persisted-agent" | "monitor-default" = "monitor-default";
 
       try {
-        const cachedAgent = this.configStore.getCachedAgent?.(report.id);
-        if (cachedAgent?.runtimeConfig && typeof cachedAgent.runtimeConfig.heartbeatIntervalMs === "number" && Number.isFinite(cachedAgent.runtimeConfig.heartbeatIntervalMs)) {
-          pollIntervalMs = Math.max(1000, cachedAgent.runtimeConfig.heartbeatIntervalMs);
+        // Async lookup — works in both SQLite and PG backend modes. Previously
+        // tried sync getCachedAgent first (returns null in PG mode); the async
+        // path is now the single source of truth.
+        const agent = typeof storeWithReports.getAgent === "function"
+          ? await storeWithReports.getAgent(report.id)
+          : (this.configStore.getCachedAgent?.(report.id) ?? null);
+        if (agent?.runtimeConfig && typeof agent.runtimeConfig.heartbeatIntervalMs === "number" && Number.isFinite(agent.runtimeConfig.heartbeatIntervalMs)) {
+          pollIntervalMs = Math.max(1000, agent.runtimeConfig.heartbeatIntervalMs);
           intervalSource = "runtimeConfig";
-        } else if (typeof storeWithReports.getAgent === "function") {
-          const persisted = await storeWithReports.getAgent(report.id);
-          if (persisted?.runtimeConfig && typeof persisted.runtimeConfig.heartbeatIntervalMs === "number" && Number.isFinite(persisted.runtimeConfig.heartbeatIntervalMs)) {
-            pollIntervalMs = Math.max(1000, persisted.runtimeConfig.heartbeatIntervalMs);
-            intervalSource = "persisted-agent";
-          }
         }
       } catch (reportsHealthConfigErr) {
         heartbeatLog.warn(`[reports-health] failed to resolve interval for ${report.id}: ${reportsHealthConfigErr instanceof Error ? reportsHealthConfigErr.message : String(reportsHealthConfigErr)} — using monitor-default`);
@@ -3604,10 +3603,47 @@ export class HeartbeatMonitor {
   }
 
   /**
-   * Resolve per-agent heartbeat config from runtimeConfig with validation and fallbacks.
+   * Apply an agent's runtimeConfig overrides to a config result (pre-multiplier).
+   * Shared between the sync resolveAgentConfig (SQLite getCachedAgent) and the
+   * async getAgentConfig (PG-capable getAgent) paths.
+   */
+  private applyAgentRuntimeConfig(
+    agent: { runtimeConfig?: Record<string, unknown> } | null | undefined,
+    result: ResolvedHeartbeatConfig,
+  ): void {
+    if (!agent?.runtimeConfig) return;
+    const rc = agent.runtimeConfig;
+    if (typeof rc.heartbeatIntervalMs === "number" && Number.isFinite(rc.heartbeatIntervalMs)) {
+      result.pollIntervalMs = Math.max(1000, rc.heartbeatIntervalMs);
+    }
+    if (typeof rc.heartbeatTimeoutMs === "number" && Number.isFinite(rc.heartbeatTimeoutMs)) {
+      result.heartbeatTimeoutMs = Math.max(5000, rc.heartbeatTimeoutMs);
+    }
+    if (typeof rc.maxConcurrentRuns === "number" && Number.isFinite(rc.maxConcurrentRuns)) {
+      result.maxConcurrentRuns = Math.max(1, Math.round(rc.maxConcurrentRuns));
+    }
+  }
+
+  /**
+   * Apply the cached heartbeat-memory multiplier to poll interval and timeout.
+   * Used by both sync and async config resolvers so isAgentHealthy (sync) and
+   * checkMissedHeartbeats (async) apply the same scaling.
+   */
+  private applyCachedMultiplier(result: ResolvedHeartbeatConfig): void {
+    const multiplier = this.cachedHeartbeatMultiplierAt > 0 ? this.cachedHeartbeatMultiplier : 1;
+    result.pollIntervalMs = Math.max(1000, Math.round(result.pollIntervalMs * multiplier));
+    result.heartbeatTimeoutMs = Math.max(5000, Math.round(result.heartbeatTimeoutMs * multiplier));
+  }
+
+  /**
+   * Resolve per-agent heartbeat config synchronously (SQLite fast-path).
+   *
+   * In PG backend mode getCachedAgent returns null (no sync DB handle), so this
+   * degrades to monitor defaults — used only by sync callers like isAgentHealthy.
+   * The async getAgentConfig() path does its own async getAgent() lookup and is
+   * the authoritative source for per-agent runtimeConfig in PG mode.
    */
   private resolveAgentConfig(agentId: string): ResolvedHeartbeatConfig {
-    // Defaults from monitor-level construction
     const result: ResolvedHeartbeatConfig = {
       pollIntervalMs: this.pollIntervalMs,
       heartbeatTimeoutMs: this.heartbeatTimeoutMs,
@@ -3615,30 +3651,13 @@ export class HeartbeatMonitor {
     };
 
     try {
-      const agent = this.configStore.getCachedAgent?.(agentId);
-      if (agent?.runtimeConfig) {
-        const rc = agent.runtimeConfig;
-
-        if (typeof rc.heartbeatIntervalMs === "number" && Number.isFinite(rc.heartbeatIntervalMs)) {
-          result.pollIntervalMs = Math.max(1000, rc.heartbeatIntervalMs);
-        }
-        if (typeof rc.heartbeatTimeoutMs === "number" && Number.isFinite(rc.heartbeatTimeoutMs)) {
-          result.heartbeatTimeoutMs = Math.max(5000, rc.heartbeatTimeoutMs);
-        }
-        if (typeof rc.maxConcurrentRuns === "number" && Number.isFinite(rc.maxConcurrentRuns)) {
-          result.maxConcurrentRuns = Math.max(1, Math.round(rc.maxConcurrentRuns));
-        }
-      }
+      // Sync SQLite read — null in PG backend mode. Sync callers safely degrade.
+      this.applyAgentRuntimeConfig(this.configStore.getCachedAgent?.(agentId), result);
     } catch (agentLookupErr) {
-      heartbeatLog.warn(`getAgentConfig(${agentId}) agent lookup failed: ${agentLookupErr instanceof Error ? agentLookupErr.message : String(agentLookupErr)} — using monitor defaults`);
+      heartbeatLog.warn(`resolveAgentConfig(${agentId}) agent lookup failed: ${agentLookupErr instanceof Error ? agentLookupErr.message : String(agentLookupErr)} — using monitor defaults`);
     }
 
-    // Sync health checks (isAgentHealthy / orphan reconcile / reports-health)
-    // are best-effort and use the most recent async-loaded multiplier cache.
-    const multiplier = this.cachedHeartbeatMultiplierAt > 0 ? this.cachedHeartbeatMultiplier : 1;
-    result.pollIntervalMs = Math.max(1000, Math.round(result.pollIntervalMs * multiplier));
-    result.heartbeatTimeoutMs = Math.max(5000, Math.round(result.heartbeatTimeoutMs * multiplier));
-
+    this.applyCachedMultiplier(result);
     return result;
   }
 
@@ -3654,7 +3673,23 @@ export class HeartbeatMonitor {
   }
 
   private async getAgentConfig(agentId: string): Promise<ResolvedHeartbeatConfig> {
-    const result = this.resolveAgentConfig(agentId);
+    const result: ResolvedHeartbeatConfig = {
+      pollIntervalMs: this.pollIntervalMs,
+      heartbeatTimeoutMs: this.heartbeatTimeoutMs,
+      maxConcurrentRuns: this.maxConcurrentRuns,
+    };
+
+    // Async agent lookup — works in both SQLite and PG backend modes. This
+    // replaces the previous reliance on the sync resolveAgentConfig() (whose
+    // getCachedAgent returns null in PG mode, losing per-agent runtimeConfig).
+    try {
+      const agent = await this.configStore.getAgent?.(agentId);
+      this.applyAgentRuntimeConfig(agent, result);
+    } catch (agentLookupErr) {
+      heartbeatLog.warn(`getAgentConfig(${agentId}) agent lookup failed: ${agentLookupErr instanceof Error ? agentLookupErr.message : String(agentLookupErr)} — using monitor defaults`);
+    }
+
+    this.applyCachedMultiplier(result);
 
     if (!this.taskStore) {
       return result;

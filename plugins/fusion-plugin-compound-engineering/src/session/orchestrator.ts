@@ -856,7 +856,7 @@ export class CeOrchestrator {
     // Seed the CE-pipeline STATE record (U8). This is the pipeline's OWN state
     // machine, distinct from the board task columns it will spawn. The pipeline
     // is "running" at this stage until a board signal advances it.
-    this.pipelineStore.upsertState({
+    await this.pipelineStore.upsertStateAsync({
       cePipelineId,
       currentStage: ceStageId,
       status: "running",

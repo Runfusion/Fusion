@@ -2219,3 +2219,12 @@ export type {
 // can build raw queries against the AsyncDataLayer without depending on
 // drizzle-orm directly.
 export { sql as drizzleSql } from "drizzle-orm";
+
+// FNXC:PostgresSchema 2026-07-04-00:00:
+// Re-export the PostgreSQL Drizzle schema namespace so plugin stores (which
+// run in backend mode via ctx.taskStore.getAsyncLayer()) can build type-safe
+// Drizzle queries against their own plugin-owned tables (materialized via the
+// plugin schema-init hook) without a direct relative import into core's
+// postgres internals. The shape definitions are harmless to expose: they only
+// describe tables the AsyncDataLayer can already reach.
+export { schema as postgresSchema } from "./postgres/index.js";

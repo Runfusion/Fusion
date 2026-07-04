@@ -34,7 +34,7 @@ function makeReport(overrides: Partial<Report> = {}): Report {
   };
 }
 
-function ctxWithStore(store: { getReport: (id: string) => Report | null; updateReport: (id: string, patch: Partial<Report>) => Report }, settings: Record<string, unknown> = {}): PluginContext {
+function ctxWithStore(store: { getReportAsync: (id: string) => Promise<Report | null>; updateReportAsync: (id: string, patch: Partial<Report>) => Promise<Report> }, settings: Record<string, unknown> = {}): PluginContext {
   return {
     pluginId: "fusion-plugin-reports",
     taskStore: { getDatabase: () => ({}), getReportStore: () => store } as any,
@@ -52,8 +52,8 @@ describe("report approval routes", () => {
   it("approve then publish happy path", async () => {
     let current = makeReport({ approvalState: "awaiting_approval" });
     const store = {
-      getReport: vi.fn(() => current),
-      updateReport: vi.fn((_id: string, patch: Partial<Report>) => {
+      getReportAsync: vi.fn(async () => current),
+      updateReportAsync: vi.fn(async (_id: string, patch: Partial<Report>) => {
         current = { ...current, ...patch };
         return current;
       }),
@@ -71,8 +71,8 @@ describe("report approval routes", () => {
 
   it("supports reject path", async () => {
     const store = {
-      getReport: vi.fn(() => makeReport()),
-      updateReport: vi.fn((_id: string, patch: Partial<Report>) => ({ ...makeReport(), ...patch })),
+      getReportAsync: vi.fn(async () => makeReport()),
+      updateReportAsync: vi.fn(async (_id: string, patch: Partial<Report>) => ({ ...makeReport(), ...patch })),
     };
     const ctx = ctxWithStore(store, { approvalRequired: true, autoPublishOnApproval: false, approverAgentIds: ["agent-1"] });
     const reject = await route("/reports/:id/reject", "POST").handler({ params: { id: "rep_1" }, headers: { "x-fusion-actor-type": "agent", "x-fusion-user": "agent-1" } }, ctx as any) as any;
@@ -82,8 +82,8 @@ describe("report approval routes", () => {
 
   it("returns 403 for unauthorized approver", async () => {
     const store = {
-      getReport: vi.fn(() => makeReport()),
-      updateReport: vi.fn(),
+      getReportAsync: vi.fn(async () => makeReport()),
+      updateReportAsync: vi.fn(),
     };
     const ctx = ctxWithStore(store, { approvalRequired: true, autoPublishOnApproval: false, approverAgentIds: ["agent-1"] });
     const res = await route("/reports/:id/approve", "POST").handler({ params: { id: "rep_1" }, headers: { "x-fusion-actor-type": "agent", "x-fusion-user": "agent-2" } }, ctx as any) as any;
@@ -93,14 +93,14 @@ describe("report approval routes", () => {
   it("share-blocks returns 409 before approval and 200 after", async () => {
     const current = makeReport({ approvalState: "awaiting_approval", combinedReview: { overallVerdict: "approve", consensusSummary: "ok", mergedHighlights: ["a"], mergedLowlights: [], mergedSuggestions: [], individual: [], failures: [] } });
     const store = {
-      getReport: vi.fn(() => current),
-      updateReport: vi.fn(),
+      getReportAsync: vi.fn(async () => current),
+      updateReportAsync: vi.fn(),
     };
     const ctx = ctxWithStore(store);
     const locked = await route("/reports/:id/share-blocks", "GET").handler({ params: { id: "rep_1" } }, ctx as any) as any;
     expect(locked.status).toBe(409);
 
-    const openStore = { ...store, getReport: vi.fn(() => ({ ...current, approvalState: "approved" as const })) };
+    const openStore = { ...store, getReportAsync: vi.fn(async () => ({ ...current, approvalState: "approved" as const })) };
     const openCtx = ctxWithStore(openStore);
     const open = await route("/reports/:id/share-blocks", "GET").handler({ params: { id: "rep_1" } }, openCtx as any) as any;
     expect(open.status).toBe(200);

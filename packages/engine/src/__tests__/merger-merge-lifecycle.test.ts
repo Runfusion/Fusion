@@ -230,6 +230,7 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
     recordVerificationCachePass: vi.fn(),
     recordRunAuditEvent: vi.fn(),
     getMergeRequestRecord: vi.fn().mockReturnValue(null),
+    getMergeRequestRecordAsync: vi.fn().mockResolvedValue(null),
     upsertMergeRequestRecord: vi.fn(),
     transitionMergeRequestState: vi.fn(),
     enqueueMergeQueue: vi.fn(),

@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import type { Database } from "@fusion/core";
+import { and, asc, desc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
+import type { AsyncDataLayer, Database } from "@fusion/core";
+import { postgresSchema as schema } from "@fusion/core";
 import type { ApprovalDecision, ApprovalState } from "../approval.js";
 import type { CombinedReview } from "../review-types.js";
 import {
@@ -40,6 +42,40 @@ interface ReportRow {
   updatedAt: string;
 }
 
+/**
+ * Drizzle row shape for project.reports (PostgreSQL). PG column names are
+ * snake_case; the Drizzle shape (postgres/schema/plugin.ts) maps them to the
+ * camelCase JS keys below. JSON-stringified fields (approvalHistory,
+ * metadataJson, combinedReviewJson) are parsed by drizzleRowToReport.
+ */
+interface DrizzleReportRow {
+  id: string;
+  cadence: string;
+  periodStart: string;
+  periodEnd: string;
+  title: string;
+  status: string;
+  generationStartedAt: string;
+  generationCompletedAt: string | null;
+  reviewStartedAt: string | null;
+  reviewCompletedAt: string | null;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  publishedAt: string | null;
+  archivedAt: string | null;
+  failureReason: string | null;
+  approvalState: string;
+  approvalHistory: string;
+  draftMarkdown: string | null;
+  renderedHtmlPath: string | null;
+  renderedHtml: string | null;
+  renderedHtmlGeneratedAt: string | null;
+  metadataJson: string;
+  combinedReviewJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ReportStoreEvents {
   "report:created": [Report];
   "report:updated": [Report];
@@ -56,13 +92,20 @@ export class ReportStoreError extends Error {
 }
 
 export class ReportStore extends EventEmitter<ReportStoreEvents> {
-  // FNXC:RuntimeSatelliteAsync 2026-06-24-22:25:
-  // db is null in backend mode (PostgreSQL). Plugin store methods that use
-  // sync SQLite will throw when called in backend mode until the async path
-  // is implemented.
-  constructor(private readonly db: Database | null) {
+  private readonly asyncLayer: AsyncDataLayer | null;
+
+  constructor(
+    private readonly db: Database | null,
+    options?: { asyncLayer?: AsyncDataLayer | null },
+  ) {
     super();
     this.setMaxListeners(50);
+    this.asyncLayer = options?.asyncLayer ?? null;
+  }
+
+  /** True when the store is backed by PostgreSQL (AsyncDataLayer present). */
+  private get backendMode(): boolean {
+    return this.asyncLayer !== null;
   }
 
   /** Asserts sync db is available (throws in backend mode). */
@@ -396,5 +439,302 @@ export class ReportStore extends EventEmitter<ReportStoreEvents> {
     } catch {
       return [];
     }
+  }
+
+  // ── Async siblings (PostgreSQL / backend mode) ────────────────────
+  // Each method delegates to the sync path when not in backend mode (SQLite
+  // fallback). In backend mode, queries go through asyncLayer.db (Drizzle)
+  // against project.reports. PG column names are snake_case; the Drizzle
+  // shape in postgres/schema/plugin.ts maps them to the camelCase JS keys.
+
+  /** Async create. Delegates to sync createReport in SQLite mode. */
+  async createReportAsync(input: ReportCreateInput): Promise<Report> {
+    if (!this.backendMode) return this.createReport(input);
+    const layer = this.asyncLayer!;
+    const now = new Date().toISOString();
+    const report: Report = {
+      id: `rep_${randomUUID().replaceAll("-", "")}`,
+      cadence: input.cadence,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      title: input.title,
+      status: "generating",
+      generationStartedAt: now,
+      generationCompletedAt: null,
+      reviewStartedAt: null,
+      reviewCompletedAt: null,
+      approvedAt: null,
+      approvedBy: null,
+      publishedAt: null,
+      archivedAt: null,
+      failureReason: null,
+      approvalState: "not_required",
+      approvalHistory: [],
+      draftMarkdown: input.draftMarkdown ?? null,
+      renderedHtmlPath: null,
+      renderedHtml: null,
+      renderedHtmlGeneratedAt: null,
+      metadata: input.metadata ?? {},
+      combinedReview: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await layer.db.insert(schema.plugin.reports).values(this.reportToInsertValues(report));
+    this.emit("report:created", report);
+    return report;
+  }
+
+  /** Async get by id. Returns null when not found. */
+  async getReportAsync(id: string): Promise<Report | null> {
+    if (!this.backendMode) return this.getReport(id);
+    const rows = await this.asyncLayer!.db
+      .select()
+      .from(schema.plugin.reports)
+      .where(eq(schema.plugin.reports.id, id));
+    return rows[0] ? this.drizzleRowToReport(rows[0] as DrizzleReportRow) : null;
+  }
+
+  /** Async list with filters, ordering, and pagination. */
+  async listReportsAsync(filter: ReportListFilter = {}): Promise<Report[]> {
+    if (!this.backendMode) return this.listReports(filter);
+    const table = schema.plugin.reports;
+    const conditions: SQL[] = [];
+    if (filter.cadence) conditions.push(eq(table.cadence, filter.cadence));
+    if (filter.statusIn && filter.statusIn.length > 0) {
+      conditions.push(inArray(table.status, filter.statusIn));
+    } else if (filter.status) {
+      conditions.push(eq(table.status, filter.status));
+    }
+    if (filter.periodStartFrom) conditions.push(gte(table.periodStart, filter.periodStartFrom));
+    if (filter.periodStartTo) conditions.push(lte(table.periodStart, filter.periodStartTo));
+    const limit = Math.min(Math.max(filter.limit ?? 50, 1), 500);
+    const offset = Math.max(filter.offset ?? 0, 0);
+    const orderCol = filter.orderBy === "periodStart" ? table.periodStart : table.createdAt;
+    const orderFn = filter.orderDir === "asc" ? asc : desc;
+    const query = this.asyncLayer!.db
+      .select()
+      .from(table)
+      .orderBy(orderFn(orderCol), orderFn(table.id))
+      .limit(limit)
+      .offset(offset);
+    const rows = conditions.length > 0 ? await query.where(and(...conditions)) : await query;
+    return rows.map((row) => this.drizzleRowToReport(row as DrizzleReportRow));
+  }
+
+  /** Async update by id with a partial patch. Throws if not found. */
+  async updateReportAsync(id: string, patch: ReportUpdateInput): Promise<Report> {
+    if (!this.backendMode) return this.updateReport(id, patch);
+    const current = await this.requireReportAsync(id);
+    const next: Report = {
+      ...current,
+      title: patch.title ?? current.title,
+      draftMarkdown: patch.draftMarkdown ?? current.draftMarkdown,
+      renderedHtmlPath: patch.renderedHtmlPath ?? current.renderedHtmlPath,
+      metadata: patch.metadata ?? current.metadata,
+      renderedHtml: patch.renderedHtml ?? current.renderedHtml,
+      renderedHtmlGeneratedAt: patch.renderedHtmlGeneratedAt ?? current.renderedHtmlGeneratedAt,
+      failureReason: patch.failureReason ?? current.failureReason,
+      approvalState: patch.approvalState ?? current.approvalState,
+      approvalHistory: patch.approvalHistory ?? current.approvalHistory,
+      status: patch.status ?? current.status,
+      approvedAt: patch.approvedAt ?? current.approvedAt,
+      approvedBy: patch.approvedBy ?? current.approvedBy,
+      publishedAt: patch.publishedAt ?? current.publishedAt,
+      reviewCompletedAt: patch.reviewCompletedAt ?? current.reviewCompletedAt,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.persistExistingAsync(next);
+    this.emit("report:updated", next);
+    return next;
+  }
+
+  /** Async status transition with validation. */
+  async setStatusAsync(
+    id: string,
+    next: ReportStatus,
+    opts: { failureReason?: string; approvedBy?: string } = {},
+  ): Promise<Report> {
+    if (!this.backendMode) return this.setStatus(id, next, opts);
+    const current = await this.requireReportAsync(id);
+    if (current.status === next) return current;
+    if (!isValidReportStatusTransition(current.status, next)) {
+      throw new ReportStoreError(`Invalid status transition: ${current.status} -> ${next}`);
+    }
+    const now = new Date().toISOString();
+    const updated: Report = {
+      ...current,
+      status: next,
+      updatedAt: now,
+      failureReason: next === "failed" ? (opts.failureReason ?? current.failureReason) : current.failureReason,
+    };
+    if (next === "review_pending") updated.generationCompletedAt = now;
+    if (next === "review_in_progress") updated.reviewStartedAt = now;
+    if (next === "review_complete") updated.reviewCompletedAt = now;
+    if (next === "approved") {
+      updated.approvedAt = now;
+      updated.approvedBy = opts.approvedBy ?? current.approvedBy;
+    }
+    if (next === "published") updated.publishedAt = now;
+    if (next === "archived") updated.archivedAt = now;
+    await this.persistExistingAsync(updated);
+    this.emit("report:status-changed", updated);
+    return updated;
+  }
+
+  /** Async attach review. Requires review_in_progress status. */
+  async attachReviewAsync(id: string, combined: CombinedReview): Promise<Report> {
+    if (!this.backendMode) return this.attachReview(id, combined);
+    const current = await this.requireReportAsync(id);
+    if (current.status !== "review_in_progress") {
+      throw new ReportStoreError(`attachReview requires review_in_progress status; got ${current.status}`);
+    }
+    const now = new Date().toISOString();
+    const updated: Report = {
+      ...current,
+      combinedReview: combined,
+      status: "review_complete",
+      reviewCompletedAt: now,
+      updatedAt: now,
+    };
+    await this.persistExistingAsync(updated);
+    this.emit("report:review-attached", updated);
+    this.emit("report:status-changed", updated);
+    return updated;
+  }
+
+  /** Async attach rendered-html file path. */
+  attachRenderedHtmlAsync(id: string, htmlPath: string): Promise<Report> {
+    return this.updateReportAsync(id, { renderedHtmlPath: htmlPath });
+  }
+
+  /** Async set rendered-html content + generation timestamp. */
+  setRenderedHtmlAsync(id: string, html: string): Promise<Report> {
+    return this.updateReportAsync(id, {
+      renderedHtml: html,
+      renderedHtmlGeneratedAt: new Date().toISOString(),
+    });
+  }
+
+  /** Async delete by id. Throws if not found. */
+  async deleteReportAsync(id: string): Promise<void> {
+    if (!this.backendMode) {
+      this.deleteReport(id);
+      return;
+    }
+    await this.requireReportAsync(id);
+    await this.asyncLayer!.db
+      .delete(schema.plugin.reports)
+      .where(eq(schema.plugin.reports.id, id));
+    this.emit("report:deleted", id);
+  }
+
+  /** Async require — throws ReportStoreError if not found. */
+  private async requireReportAsync(id: string): Promise<Report> {
+    const report = await this.getReportAsync(id);
+    if (!report) throw new ReportStoreError(`Report ${id} not found`);
+    return report;
+  }
+
+  /** Async UPDATE of an existing report row. Throws if the row vanished. */
+  private async persistExistingAsync(report: Report): Promise<void> {
+    const result = await this.asyncLayer!.db
+      .update(schema.plugin.reports)
+      .set(this.reportToUpdateSet(report))
+      .where(eq(schema.plugin.reports.id, report.id))
+      .returning();
+    if (result.length === 0) {
+      throw new ReportStoreError(`Report ${report.id} not found`);
+    }
+  }
+
+  /** Map a Report to a Drizzle insert-values object. */
+  private reportToInsertValues(report: Report): typeof schema.plugin.reports.$inferInsert {
+    return {
+      id: report.id,
+      cadence: report.cadence,
+      periodStart: report.periodStart,
+      periodEnd: report.periodEnd,
+      title: report.title,
+      status: report.status,
+      generationStartedAt: report.generationStartedAt,
+      generationCompletedAt: report.generationCompletedAt,
+      reviewStartedAt: report.reviewStartedAt,
+      reviewCompletedAt: report.reviewCompletedAt,
+      approvedAt: report.approvedAt,
+      approvedBy: report.approvedBy,
+      publishedAt: report.publishedAt,
+      archivedAt: report.archivedAt,
+      failureReason: report.failureReason,
+      approvalState: report.approvalState,
+      approvalHistory: JSON.stringify(report.approvalHistory ?? []),
+      draftMarkdown: report.draftMarkdown,
+      renderedHtmlPath: report.renderedHtmlPath,
+      renderedHtml: report.renderedHtml,
+      renderedHtmlGeneratedAt: report.renderedHtmlGeneratedAt,
+      metadataJson: JSON.stringify(report.metadata ?? {}),
+      combinedReviewJson: report.combinedReview ? JSON.stringify(report.combinedReview) : null,
+      createdAt: report.createdAt,
+      updatedAt: report.updatedAt,
+    };
+  }
+
+  /** Map a Report to a Drizzle update-set object (no createdAt/id). */
+  private reportToUpdateSet(report: Report): Partial<typeof schema.plugin.reports.$inferInsert> {
+    return {
+      cadence: report.cadence,
+      periodStart: report.periodStart,
+      periodEnd: report.periodEnd,
+      title: report.title,
+      status: report.status,
+      generationStartedAt: report.generationStartedAt,
+      generationCompletedAt: report.generationCompletedAt,
+      reviewStartedAt: report.reviewStartedAt,
+      reviewCompletedAt: report.reviewCompletedAt,
+      approvedAt: report.approvedAt,
+      approvedBy: report.approvedBy,
+      publishedAt: report.publishedAt,
+      archivedAt: report.archivedAt,
+      failureReason: report.failureReason,
+      approvalState: report.approvalState,
+      approvalHistory: JSON.stringify(report.approvalHistory ?? []),
+      draftMarkdown: report.draftMarkdown,
+      renderedHtmlPath: report.renderedHtmlPath,
+      renderedHtml: report.renderedHtml,
+      renderedHtmlGeneratedAt: report.renderedHtmlGeneratedAt,
+      metadataJson: JSON.stringify(report.metadata ?? {}),
+      combinedReviewJson: report.combinedReview ? JSON.stringify(report.combinedReview) : null,
+      updatedAt: report.updatedAt,
+    };
+  }
+
+  /** Map a Drizzle row (camelCase JS keys) to a Report domain object. */
+  private drizzleRowToReport(row: DrizzleReportRow): Report {
+    return {
+      id: row.id,
+      cadence: row.cadence as Report["cadence"],
+      periodStart: row.periodStart,
+      periodEnd: row.periodEnd,
+      title: row.title,
+      status: row.status as ReportStatus,
+      generationStartedAt: row.generationStartedAt,
+      generationCompletedAt: row.generationCompletedAt,
+      reviewStartedAt: row.reviewStartedAt,
+      reviewCompletedAt: row.reviewCompletedAt,
+      approvedAt: row.approvedAt,
+      approvedBy: row.approvedBy,
+      publishedAt: row.publishedAt,
+      archivedAt: row.archivedAt,
+      failureReason: row.failureReason,
+      approvalState: row.approvalState as ApprovalState,
+      approvalHistory: this.parseApprovalHistory(row.approvalHistory),
+      draftMarkdown: row.draftMarkdown,
+      renderedHtmlPath: row.renderedHtmlPath,
+      renderedHtml: row.renderedHtml,
+      renderedHtmlGeneratedAt: row.renderedHtmlGeneratedAt,
+      metadata: this.parseMetadata(row.metadataJson),
+      combinedReview: this.parseCombinedReview(row.combinedReviewJson),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
   }
 }

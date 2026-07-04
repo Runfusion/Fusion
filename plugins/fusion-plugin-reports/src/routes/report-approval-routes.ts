@@ -19,9 +19,13 @@ function getStore(ctx: PluginContext): ReportStore {
   const cached = reportStoreCache.get(key);
   if (cached) return cached;
   // FNXC:PostgresCutover 2026-07-04-00:00:
-  // In backend mode, getDatabase() throws. Guard with isBackendMode() check.
-  const db = ctx.taskStore.isBackendMode() ? null : ctx.taskStore.getDatabase();
-  const store = new ReportStore(db);
+  // In backend mode, pass asyncLayer so ReportStore async methods work.
+  if (ctx.taskStore.isBackendMode()) {
+    const store = new ReportStore(null, { asyncLayer: ctx.taskStore.getAsyncLayer() });
+    reportStoreCache.set(key, store);
+    return store;
+  }
+  const store = new ReportStore(ctx.taskStore.getDatabase());
   reportStoreCache.set(key, store);
   return store;
 }
@@ -64,7 +68,7 @@ export function createReportApprovalRoutes(): PluginRouteDefinition[] {
     const request = req as RouteRequest;
     const reportId = request.params.id;
     const store = getStore(ctx);
-    const report = store.getReport(reportId);
+    const report = await store.getReportAsync(reportId);
     if (!report) return notFound(reportId);
 
     const actor = actorFromRequest(request, ctx);
@@ -75,7 +79,7 @@ export function createReportApprovalRoutes(): PluginRouteDefinition[] {
       return { status: result.error === "unauthorized" ? 403 : 409, body: { error: result.error } };
     }
 
-    const updated = store.updateReport(reportId, result.updatedReport);
+    const updated = await store.updateReportAsync(reportId, result.updatedReport);
     return { status: 200, body: { report: updated, sideEffects: result.sideEffects } };
   };
 
@@ -89,7 +93,7 @@ export function createReportApprovalRoutes(): PluginRouteDefinition[] {
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const request = req as RouteRequest;
         const reportId = request.params.id;
-        const report = getStore(ctx).getReport(reportId);
+        const report = await getStore(ctx).getReportAsync(reportId);
         if (!report) return notFound(reportId);
         if (!(report.approvalState === "approved" || report.approvalState === "published")) {
           return { status: 409, body: { error: "Share blocks unlock after approval" } };

@@ -863,7 +863,7 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
     await store.writeTaskJsonFile(dir, task);
     if (fromColumn === "in-review" && toColumn === "todo" && moveSource === "user") {
       const handoffAccepted = await store.getCompletionHandoffAcceptedMarker(id);
-      const mergeRequest = store.getMergeRequestRecord(id);
+      const mergeRequest = await store.getMergeRequestRecordAsync(id);
       if (handoffAccepted && mergeRequest && mergeRequest.state !== "succeeded" && mergeRequest.state !== "cancelled") {
         if (mergeRequest.state === "queued" || mergeRequest.state === "running" || mergeRequest.state === "retrying" || mergeRequest.state === "manual-required") {
           await store.transitionMergeRequestState(id, "cancelled", {

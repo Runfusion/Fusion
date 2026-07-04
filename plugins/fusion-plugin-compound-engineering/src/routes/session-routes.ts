@@ -170,7 +170,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
       description: "List the CE pipeline-link records (work→board) for a session/pipeline.",
       handler: async (req: unknown, ctx: PluginContext): Promise<PluginRouteResponse> => {
         const id = (req as RouteRequest).params.id;
-        const links = getCePipelineStore(ctx).listByPipeline(id);
+        const links = await getCePipelineStore(ctx).listByPipelineAsync(id);
         return { status: 200, body: { links } };
       },
     },

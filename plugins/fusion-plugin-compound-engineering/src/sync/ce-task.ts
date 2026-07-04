@@ -56,7 +56,7 @@ export async function createCeTaskWithLink<T extends { id: string }>(
     },
   });
 
-  pipelineStore.createLink({
+  await pipelineStore.createLinkAsync({
     taskId: task.id,
     cePipelineId: spec.cePipelineId,
     ceStageId: spec.ceStageId,

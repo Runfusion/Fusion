@@ -27,4 +27,4 @@ export * as plugin from "./plugin.js";
 export { projectTableNames } from "./project.js";
 export { centralTableNames } from "./central.js";
 export { archiveTableNames } from "./archive.js";
-export { roadmapPluginTableNames } from "./plugin.js";
+export { roadmapPluginTableNames, cePluginTableNames, reportsPluginTableNames, cliPressPluginTableNames } from "./plugin.js";

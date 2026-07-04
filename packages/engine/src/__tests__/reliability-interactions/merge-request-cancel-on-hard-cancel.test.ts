@@ -64,6 +64,7 @@ describe("FN-5743 hard-cancel merge-request cutover", () => {
     const fakeStore = {
       getSettings: vi.fn().mockResolvedValue({ mergeRequestContractShadowEnabled: true }),
       getMergeRequestRecord: vi.fn(() => ({ state, attemptCount: 0, lastError: null })),
+      getMergeRequestRecordAsync: vi.fn(() => Promise.resolve({ state, attemptCount: 0, lastError: null })),
       transitionMergeRequestState: vi.fn((_taskId: string, toState: string) => {
         state = toState;
       }),
