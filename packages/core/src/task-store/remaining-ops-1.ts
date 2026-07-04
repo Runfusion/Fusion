@@ -244,25 +244,35 @@ export async function duplicateTaskImpl(store: TaskStore, id: string): Promise<T
 
 export async function listStrandedRefinementsImpl(store: TaskStore, options?: { freshnessThresholdMs?: number; }): Promise<Array<{ task: Task; reasons: Array<"untriaged-stale" | "awaiting-approval" | "failed" | "stuck-killed" | "recovery-backoff">; nextRecoveryAt?: string; ageMs: number; }>> {
     /*
-    FNXC:PostgresCutover 2026-07-04:
-    Backend-mode early-return []. The stranded-refinement scan uses the
-    SQLite-specific getTaskSelectClause + store.db query; the async equivalent
-    would compose listTasksAsync with the sourceType='task_refine'/'triage'
-    // filter and the same staleness reason classification. That is a follow-up;
-    returning [] here stops the throw on the dashboard self-healing route and
-    matches the assignment-sanctioned P1 early-return.
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Backend-mode: async Drizzle SELECT on project.tasks WHERE sourceType='task_refine'
+    AND column='triage' AND deletedAt IS NULL. The classification logic below is pure
+    computation and runs identically in both backends.
     */
-    if (store.backendMode) return [];
     const defaultFreshnessThresholdMs = 10 * 60 * 1000;
     const requestedThresholdMs = options?.freshnessThresholdMs;
     const freshnessThresholdMs = Number.isFinite(requestedThresholdMs) && (requestedThresholdMs ?? 0) >= 0
       ? requestedThresholdMs as number
       : defaultFreshnessThresholdMs;
 
-    const selectClause = store.getTaskSelectClause(false);
-    const rows = store.db.prepare(
-      `SELECT ${selectClause} FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND "sourceType" = 'task_refine' AND "column" = 'triage' ORDER BY createdAt ASC`,
-    ).all() as unknown as TaskRow[];
+    let rows: TaskRow[];
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const pgRows = await layer.db.select()
+        .from(schema.project.tasks)
+        .where(and(
+          isNull(schema.project.tasks.deletedAt),
+          eq(schema.project.tasks.sourceType, 'task_refine'),
+          eq(schema.project.tasks.column, 'triage'),
+        ))
+        .orderBy(schema.project.tasks.createdAt);
+      rows = pgRows.map((r) => store.pgRowToTaskRow(r as Record<string, unknown>)) as unknown as TaskRow[];
+    } else {
+      const selectClause = store.getTaskSelectClause(false);
+      rows = store.db.prepare(
+        `SELECT ${selectClause} FROM tasks WHERE ${TaskStore.ACTIVE_TASKS_WHERE} AND "sourceType" = 'task_refine' AND "column" = 'triage' ORDER BY createdAt ASC`,
+      ).all() as unknown as TaskRow[];
+    }
 
     const now = Date.now();
     const stranded: Array<{
