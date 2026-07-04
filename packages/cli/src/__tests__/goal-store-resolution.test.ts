@@ -1,5 +1,5 @@
 /**
- * FNXC:PostgresCutover 2026-07-02-00:00:
+ * FNXC:PostgresCutover 2026-07-04-00:00:
  * Migrated from the legacy SQLite `new TaskStore(rootDir)` harness to the
  * PostgreSQL extension harness. The goal tools resolve a PG-backed store via
  * `getStore(cwd)` (injected by the harness for the canonical project root).

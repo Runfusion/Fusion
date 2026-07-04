@@ -1,5 +1,5 @@
 /**
- * FNXC:PostgresCutover 2026-07-02-00:00:
+ * FNXC:PostgresCutover 2026-07-04-00:00:
  * Migrated from the legacy SQLite `new TaskStore(tmpDir)` harness to the
  * PostgreSQL extension harness. Research runs are seeded via the PG-backed
  * AsyncResearchStore (`h.store().getResearchStore()`), and the research tools

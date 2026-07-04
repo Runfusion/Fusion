@@ -162,7 +162,7 @@ function resolveProjectRoot(cwd: string): string {
 }
 
 /*
-FNXC:PostgresCutover 2026-07-02-00:00:
+FNXC:PostgresCutover 2026-07-04-00:00:
 The agent-tool store path must boot the PostgreSQL backend (embedded by default, or external via DATABASE_URL) instead of constructing a legacy SQLite TaskStore, whose runtime was removed under VAL-REMOVAL-005. Mirrors the fn serve boot path, which already routes through createTaskStoreForBackend. The boot result is cached per project root so the connection pool (and any embedded PostgreSQL process) is released deterministically in closeCachedStores.
 */
 interface CachedStoreEntry {
@@ -236,7 +236,7 @@ function getFusionDir(cwd: string): string {
   return join(resolveProjectRoot(cwd), ".fusion");
 }
 /*
-FNXC:PostgresCutover 2026-07-02-00:00:
+FNXC:PostgresCutover 2026-07-04-00:00:
 Agent tools must construct AgentStore in backend mode so agent data lives in PostgreSQL, not the removed SQLite runtime (VAL-REMOVAL-005). The asyncLayer is borrowed from the project's cached TaskStore (same connection pool), mirroring the TaskStore backend injection. The returned store is NOT pre-initialized — callers keep their existing `await agentStore.init()` (idempotent mkdir in backend mode).
 */
 async function getAgentStore(cwd: string): Promise<AgentStore> {

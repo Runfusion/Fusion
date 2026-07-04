@@ -1,5 +1,5 @@
 /**
- * FNXC:PostgresCutover 2026-07-02-00:00:
+ * FNXC:PostgresCutover 2026-07-04-00:00:
  * Migrated from the legacy SQLite `new TaskStore(tmpDir)` harness to the
  * PostgreSQL extension harness. `runTaskRetry` resolves its store through the
  * CLI command path (`project-context.resolveProject`), which is independent of

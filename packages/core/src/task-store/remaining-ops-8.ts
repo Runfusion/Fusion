@@ -470,7 +470,7 @@ export function resolveTaskWorkflowIrSyncImpl(store: TaskStore, taskId: string):
 
 export function getTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): { workflowId: string; stepIds: string[] } | undefined {
     /*
-    FNXC:PostgresCutover 2026-07-02-00:00:
+    FNXC:PostgresCutover 2026-07-04-00:00:
     Backend mode cannot synchronously read PostgreSQL, so return undefined and let the sync readers (resolveEffectiveWorkflowIdSync / resolveTaskWorkflowIrSync) fall back to their defaults. The authoritative read is getTaskWorkflowSelectionAsync; this also converts the prior PG-mode throw into a graceful default.
     */
     if (store.backendMode) return undefined;
@@ -489,7 +489,7 @@ export function getTaskWorkflowSelectionImpl(store: TaskStore, taskId: string): 
 }
 
 /*
-FNXC:PostgresCutover 2026-07-02-00:00:
+FNXC:PostgresCutover 2026-07-04-00:00:
 Async backend-mode read of a task's workflow selection (PostgreSQL). stepIds is a JSONB array, returned by Drizzle already parsed. Returns undefined when no row exists. SQLite mode delegates to the sync impl.
 */
 export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined> {
@@ -511,7 +511,7 @@ export async function getTaskWorkflowSelectionAsyncImpl(store: TaskStore, taskId
 export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: string, workflowId: string, stepIds: string[]): Promise<void> {
     const updatedAt = new Date().toISOString();
     /*
-    FNXC:PostgresCutover 2026-07-02-00:00:
+    FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode upsert of the task_workflow_selection row via async Drizzle (taskId is the primary key). stepIds is stored as a JSONB array.
     */
     if (store.backendMode) {
@@ -539,7 +539,7 @@ export async function writeTaskWorkflowSelectionImpl(store: TaskStore, taskId: s
 
 export async function removeMaterializedSelectionImpl(store: TaskStore, taskId: string): Promise<void> {
     /*
-    FNXC:PostgresCutover 2026-07-02-00:00:
+    FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode delete reuses purgeTaskWorkflowSelectionRowsAsyncImpl (read stepIds, delete workflow_steps children, delete the selection row) so PG stays in lockstep with the SQLite path.
     */
     if (store.backendMode) {

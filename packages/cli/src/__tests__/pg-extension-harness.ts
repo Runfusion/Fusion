@@ -1,5 +1,5 @@
 /**
- * FNXC:PostgresCutover 2026-07-02-00:00:
+ * FNXC:PostgresCutover 2026-07-04-00:00:
  * Reusable PostgreSQL fixture + typed mocks for CLI extension (agent-tool) tests.
  *
  * The CLI extension's agent tools resolve their store via `getStore(cwd)`, which

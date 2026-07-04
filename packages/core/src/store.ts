@@ -2131,7 +2131,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   getTaskWorkflowSelection(taskId: string): { workflowId: string; stepIds: string[] } | undefined {
     return getTaskWorkflowSelectionImpl(this, taskId);
   }
-  /** FNXC:PostgresCutover 2026-07-02-00:00: authoritative backend-mode read (async Drizzle); SQLite delegates to the sync getter. */
+  /** FNXC:PostgresCutover 2026-07-04-00:00: authoritative backend-mode read (async Drizzle); SQLite delegates to the sync getter. */
   public async getTaskWorkflowSelectionAsync(taskId: string): Promise<{ workflowId: string; stepIds: string[] } | undefined> {
     return getTaskWorkflowSelectionAsyncImpl(this, taskId);
   }

@@ -38,7 +38,7 @@ import {
 } from "./pg-extension-harness.js";
 
 /**
- * FNXC:PostgresCutover 2026-07-02-00:00:
+ * FNXC:PostgresCutover 2026-07-04-00:00:
  * Migrated from the legacy SQLite `new TaskStore(rootDir)` harness to a shared
  * PostgreSQL extension harness. Store construction goes through `h.store()`,
  * tool calls use `cwd: h.rootDir()`, and state is read via async store methods.
@@ -2657,7 +2657,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     await h.store().updateSettings({ taskPrefix: "FN" });
   });
 
-  // FNXC:PostgresCutover 2026-07-02-00:00:
+  // FNXC:PostgresCutover 2026-07-04-00:00:
   // The FN-6734/FN-6839 "close cached TaskStore handles before SQLite/WAL
   // fixture removal" regression was SQLite-specific (no WAL handles exist under
   // the PostgreSQL backend), so it was dropped with the cutover. Store and
@@ -2930,7 +2930,7 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.details.count).toBe(20);
     });
 
-    // FNXC:PostgresCutover 2026-07-02-00:00:
+    // FNXC:PostgresCutover 2026-07-04-00:00:
     // The FN-6535 "resolve @fusion/core through the built dist barrel"
     // regression was removed: it forced a runtime `await import` of the dist
     // extension whose startup-factory applies the PG schema baseline from

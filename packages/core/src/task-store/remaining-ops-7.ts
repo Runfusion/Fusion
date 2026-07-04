@@ -330,7 +330,7 @@ export async function syncAgentTaskLinkOnReassignmentImpl(store: TaskStore,
     const updatedAt = new Date().toISOString();
 
     /*
-    FNXC:PostgresCutover 2026-07-02-00:00:
+    FNXC:PostgresCutover 2026-07-04-00:00:
     Backend-mode agent-task-link sync: update the agents.taskId column via async Drizzle. Only the dedicated taskId column is authoritative in PG (agent.data jsonb is not read for the link), so the SQLite json_set/json_remove on data is not mirrored.
     */
     if (store.backendMode) {

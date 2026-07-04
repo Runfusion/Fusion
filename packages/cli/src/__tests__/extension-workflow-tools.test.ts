@@ -1,5 +1,5 @@
 /**
- * FNXC:PostgresCutover 2026-07-02-00:00:
+ * FNXC:PostgresCutover 2026-07-04-00:00:
  * Migrated from the legacy SQLite `new TaskStore(rootDir)` harness to the
  * PostgreSQL extension harness. Workflow state is seeded and read back through
  * `h.store()` (PG-backed), and the authoring tools resolve that same store via
@@ -189,7 +189,7 @@ pgTest("pi extension workflow authoring tools", () => {
     expect(invalid.details?.rejections).toMatchObject([{ settingId: "workflowStepTimeoutMs", code: "type-mismatch" }]);
 
     /*
-     * FNXC:PostgresCutover 2026-07-02-00:00:
+     * FNXC:PostgresCutover 2026-07-04-00:00:
      * The re-read-via-`get` round-trip is SQLite-only: in PG backend mode the
      * `get` action reads through the sync `getWorkflowSettingValues`, which
      * returns {} (async reads of `workflow_settings` aren't possible on the
@@ -231,7 +231,7 @@ pgTest("pi extension workflow authoring tools", () => {
     expect(noTask.content[0]?.text).toMatch(/task_id is required/i);
 
     /*
-     * FNXC:PostgresCutover 2026-07-02-00:00:
+     * FNXC:PostgresCutover 2026-07-04-00:00:
      * The task-bound default-success path (fn_workflow_select forwarding ctx.taskId
      * and selecting the workflow) is SQLite-only here: selectTaskWorkflow routes
      * through getTaskWorkflowSelection / writeTaskWorkflowSelection, which use the
