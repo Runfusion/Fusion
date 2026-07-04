@@ -155,6 +155,60 @@ describe("refinement routing from triage", () => {
     expect(store.moveTask).toHaveBeenCalledWith(taskId, "todo");
   });
 
+  /*
+   * FNXC:PlanApproval 2026-07-04-12:22:
+   * FN-7526 — locks the auto-approve-all invariant specifically for refinement
+   * (`sourceType: "task_refine"`) tasks routed through the real mergeEffectiveSettings
+   * pipeline (recoverApprovedTask), not just the isolated finalizeApprovedTask unit
+   * calls above which pass a bare `{ requirePlanApproval }` object. Proves the
+   * settings object handed to finalizeApprovedTask for a refinement still carries
+   * the project planApprovalMode even when the workflow has a stored
+   * requirePlanApproval: true value.
+   */
+  it("moves a refinement to todo when project auto-approve-all overrides stored workflow approval", async () => {
+    const rootDir = await createRoot();
+    const taskId = "FN-R4";
+    const taskDir = join(rootDir, ".fusion", "tasks", taskId);
+    await mkdir(taskDir, { recursive: true });
+    await writeFile(join(taskDir, "PROMPT.md"), "# FN-R4\n\n## File Scope\n- packages/engine/src/triage.ts\n");
+
+    const store: any = withStoreEvents({
+      getSettings: vi.fn().mockResolvedValue({
+        maxConcurrent: 2,
+        maxTriageConcurrent: 2,
+        pollIntervalMs: 10_000,
+        groupOverlappingFiles: false,
+        autoMerge: true,
+        planApprovalMode: "auto-approve-all",
+        requirePlanApproval: false,
+      }),
+      getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
+      getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
+      getWorkflowSettingValues: vi.fn().mockReturnValue({ requirePlanApproval: true }),
+      getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
+      parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
+      parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+      updateTask: vi.fn().mockResolvedValue(undefined),
+      moveTask: vi.fn().mockResolvedValue(undefined),
+      logEntry: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const processor = new TriageProcessor(store, rootDir);
+    const task = createTriageTask({
+      id: taskId,
+      sourceType: "task_refine",
+      sourceParentTaskId: "FN-003",
+      status: "planning",
+      log: [{ timestamp: "2026-05-15T12:00:00.000Z", action: "Spec review: APPROVE" }],
+    });
+
+    const recovered = await processor.recoverApprovedTask(task);
+
+    expect(recovered).toBe(true);
+    expect(store.moveTask).toHaveBeenCalledWith(taskId, "todo");
+    expect(store.updateTask).not.toHaveBeenCalledWith(taskId, expect.objectContaining({ status: "awaiting-approval" }));
+  });
+
   it("retains baseline ordering for non-refinement triage tasks", async () => {
     const rootDir = await createRoot();
     const tasks: Task[] = [

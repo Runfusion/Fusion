@@ -2532,6 +2532,9 @@ export class TriageProcessor {
 
     FNXC:PlanApproval 2026-07-01-08:12:
     This is the ordinary manual plan-approval gate only, after release authorization and Workflow Plan Review have already made their independent decisions. Always call resolvePlanApprovalRequired with the merged settings object so project auto-approve-all can override workflow requirePlanApproval without weakening non-plan safety gates.
+
+    FNXC:PlanApproval 2026-07-04-12:15:
+    FN-7526 re-verified this invariant end to end: every finalizeApprovedTask caller (specifyTask, recoverApprovedTask, retryUnavailablePlanReview, tryFinalizeExplicitDuplicateMarker) already derives `settings` from mergeEffectiveSettings so planApprovalMode (never a MOVED_SETTINGS_KEYS/workflow-owned key) survives any stored workflow requirePlanApproval overlay untouched. No production defect was found; regression tests were added across every surface to lock the invariant so a future bare-settings call site (e.g. `{ requirePlanApproval }` without planApprovalMode) is caught immediately instead of silently reintroducing the reported parking behavior.
     */
     if (resolvePlanApprovalRequired(settings)) {
       const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };

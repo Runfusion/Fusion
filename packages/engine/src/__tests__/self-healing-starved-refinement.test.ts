@@ -191,4 +191,65 @@ describe("SelfHealingManager.recoverStarvedRefinementTriageTasks", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-12:20:
+   * FN-7526 — locks the auto-approve-all invariant for the starved-refinement
+   * finalize surface specifically, using the REAL mergeEffectiveSettings pipeline
+   * (not a bare `{ requirePlanApproval }` object) so a project auto-approve-all
+   * override still wins even when the stored workflow value would otherwise
+   * require manual plan approval. This is the surface `recoverApprovedTask`
+   * exercises when self-healing recovers a starved refinement stuck in
+   * `status: "planning"`.
+   */
+  it("moves a starved refinement to todo when project auto-approve-all overrides stored workflow approval", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fusion-fn7526-refine-"));
+    try {
+      const taskDir = join(root, ".fusion", "tasks", "FN-RG2");
+      await mkdir(taskDir, { recursive: true });
+      await writeFile(join(taskDir, "PROMPT.md"), "# FN-RG2\n\n## File Scope\n- packages/engine/src/self-healing.ts\n", "utf-8");
+
+      const updateTask = vi.fn().mockResolvedValue(undefined);
+      const moveTask = vi.fn().mockResolvedValue(undefined);
+      const store: any = {
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          planApprovalMode: "auto-approve-all",
+          requirePlanApproval: false,
+        }),
+        getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
+        getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
+        getWorkflowSettingValues: vi.fn().mockReturnValue({ requirePlanApproval: true }),
+        getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
+        updateTask,
+        moveTask,
+        logEntry: vi.fn().mockResolvedValue(undefined),
+        parseDependenciesFromPrompt: vi.fn().mockResolvedValue([]),
+        parseStepsFromPrompt: vi.fn().mockResolvedValue([]),
+        on: () => {},
+        off: () => {},
+        removeListener: () => {},
+      };
+
+      const refinement = task({
+        id: "FN-RG2",
+        sourceType: "task_refine",
+        status: "planning",
+        log: [{ timestamp: "2026-05-15T10:00:00.000Z", action: "Spec review: APPROVE" }],
+      });
+
+      const processor = new TriageProcessor(store, root);
+      const recovered = await processor.recoverApprovedTask(refinement);
+
+      expect(recovered).toBe(true);
+      expect(moveTask).toHaveBeenCalledWith("FN-RG2", "todo");
+      expect(updateTask).not.toHaveBeenCalledWith("FN-RG2", expect.objectContaining({ status: "awaiting-approval" }));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
