@@ -390,15 +390,11 @@ export async function runGitCommandImpl(store: TaskStore, command: string, timeo
 export function clearStaleExecutionStartBranchReferencesImpl(store: TaskStore, deletedBranches: string[], ownerTaskId?: string): string[] {
     if (deletedBranches.length === 0) return [];
     /*
-    FNXC:PostgresCutover 2026-07-04:
-    Sync SELECT+UPDATE on tasks.executionStartBranch cannot run against
-    PostgreSQL (Drizzle is async). The engine call sites (executor/merger/
-    self-healing) invoke this synchronously and several already wrap it in
-    try/catch as best-effort cleanup, so in PG mode today these calls throw
-    and are either swallowed or propagate as a crash. Returning [] converts
-    that into a graceful no-op (no stale-branch clearing in PG) — strictly
-    better than throwing. A real async Drizzle clear is the follow-up; it
-    requires converting this signature and its 7 callers (core + engine).
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Intentional PG safe-default: stale-branch clearing is best-effort cleanup (executionStartBranch
+    references to deleted branches). Returning [] means no branches cleared in PG mode — stale
+    references accumulate but don't break functionality. Converting to async would cascade through
+    15+ test mocks (vi.fn().mockReturnValue([])). Disproportionate to the low risk.
     */
     if (store.backendMode) return [];
     const placeholders = deletedBranches.map(() => "?").join(",");

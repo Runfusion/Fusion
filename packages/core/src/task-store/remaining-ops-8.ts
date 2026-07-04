@@ -313,14 +313,14 @@ export function occupantsByColumnForWorkflowImpl(store: TaskStore,
     includeNullSelection: boolean,
   ): Map<string, number> {
     /*
-    FNXC:PostgresCutover 2026-07-04:
-    Sync per-task SELECT of tasks."column" cannot run against PostgreSQL
-    (Drizzle is async), and the underlying listWorkflowOccupantTaskIds is
-    itself SQLite-only in this path. updateWorkflowDefinitionImpl drives this
-    for the "cannot remove an occupied column" guard; in backend mode we return
-    an empty occupancy map so the guard is skipped (the async layer-set path in
-    workflow-ops.ts already enforces occupancy via its own branch). Mirrors the
-    getTaskWorkflowSelection sync→backend degradation and prevents the throw.
+    FNXC:PostgresCutover 2026-07-04-00:00:
+    Assessed safe-default: the occupied-column guard is skipped in PG mode (empty Map →
+    removed=[] → no OccupiedColumnsError). The async enforcement path in workflow-ops.ts
+    (lines 365-372) does read columns via Drizzle, but it's gated on removed.length > 0
+    which is always false here. Full fix requires async listWorkflowOccupantTaskIds +
+    async occupancy map — a deep refactor of the workflow occupancy system. Low-impact:
+    flag-gated (workflowColumnsFlagOn, off by default), only triggers on workflow IR
+    edits that remove columns. Tasks in removed columns are orphaned but not lost.
     */
     if (store.backendMode) return new Map();
     const counts = new Map<string, number>();
