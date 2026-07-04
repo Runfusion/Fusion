@@ -60,6 +60,45 @@ export function applyRunAuditSnapshotImpl(store: TaskStore, snapshot: RunAuditSn
     return { applied, skipped };
 }
 
+/*
+FNXC:PostgresCutover 2026-07-04-00:00:
+Async mesh state-apply for run_audit_events. Uses Drizzle INSERT ... ON CONFLICT (id) DO NOTHING
+with .returning() to count applied vs skipped — preserves the snapshot's id/timestamp/agentId/runId
+(NOT recordRunAuditEvent which generates new ids). Idempotent: re-applying the same snapshot is a no-op.
+*/
+export async function applyRunAuditSnapshotAsyncImpl(store: TaskStore, snapshot: RunAuditSnapshot): Promise<{ applied: number; skipped: number }> {
+  validateSnapshotEnvelope(snapshot);
+  if (!store.backendMode) return store.applyRunAuditSnapshot(snapshot);
+  const entries = snapshot.payload.entries;
+  if (entries.length === 0) return { applied: 0, skipped: 0 };
+  const layer = store.asyncLayer!;
+  let applied = 0;
+  let skipped = 0;
+  for (const entry of entries) {
+    const inserted = await layer.db
+      .insert(schema.project.runAuditEvents)
+      .values({
+        id: entry.id,
+        timestamp: entry.timestamp,
+        taskId: entry.taskId ?? null,
+        agentId: entry.agentId,
+        runId: entry.runId,
+        domain: entry.domain,
+        mutationType: entry.mutationType,
+        target: entry.target,
+        metadata: entry.metadata ?? null,
+      })
+      .onConflictDoNothing()
+      .returning({ id: schema.project.runAuditEvents.id });
+    if (inserted.length > 0) {
+      applied++;
+    } else {
+      skipped++;
+    }
+  }
+  return { applied, skipped };
+}
+
 export async function getTaskCommitAssociationsByLineageIdImpl(store: TaskStore, lineageId: string): Promise<TaskCommitAssociation[]> {
     /*
     FNXC:PostgresCutover 2026-07-04:

@@ -522,7 +522,7 @@ export const registerMeshRoutes: ApiRouteRegistrar = (ctx) => {
         await applyDomain("run-audit", async () => {
           if (!sharedState.runAudit) return;
           validateSnapshotEnvelope(sharedState.runAudit);
-          store.applyRunAuditSnapshot(sharedState.runAudit as Parameters<typeof store.applyRunAuditSnapshot>[0]);
+          await store.applyRunAuditSnapshotAsync(sharedState.runAudit as Parameters<typeof store.applyRunAuditSnapshotAsync>[0]);
         });
 
         await applyDomain("project-settings", async () => {
