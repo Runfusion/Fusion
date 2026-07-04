@@ -785,6 +785,8 @@ describe("SettingsModal", () => {
       });
       mockUseWorktrunkInstallStatus.mockReturnValue({
         status: "missing",
+        // Save re-verifies when enabling-but-unverified; still not installed → stays clamped off.
+        refresh: vi.fn().mockResolvedValue({ status: "missing" }),
         requestInstall: vi.fn(),
         requesting: false,
         version: undefined,

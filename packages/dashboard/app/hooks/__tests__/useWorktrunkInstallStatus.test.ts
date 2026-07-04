@@ -44,4 +44,18 @@ describe("useWorktrunkInstallStatus", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/worktrunk/status");
   });
+
+  it("probes exactly once when enabled flips false -> true live (the SettingsModal toggle path)", async () => {
+    const { rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useWorktrunkInstallStatus("p1", { enabled }),
+      { initialProps: { enabled: false } },
+    );
+    // No probe while disabled.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Toggling on triggers exactly one probe.
+    rerender({ enabled: true });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/api/worktrunk/status");
+  });
 });

@@ -335,6 +335,7 @@ export function installSettingsModalEnv() {
     mockFetchProjects.mockResolvedValue([]);
     mockUseWorktrunkInstallStatus.mockReturnValue({
       status: "missing",
+      refresh: vi.fn().mockResolvedValue({ status: "missing" }),
       requestInstall: vi.fn(),
       requesting: false,
       version: undefined,

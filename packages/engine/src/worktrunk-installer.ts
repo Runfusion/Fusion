@@ -212,7 +212,7 @@ async function lookupPath(binaryName: string): Promise<string | null> {
 
 /*
 FNXC:WindowsTerminalStartup 2026-07-03-16:10:
-On Windows the worktrunk CLI (`wt`) collides by name with Windows Terminal (`wt.exe`), which ships as an App Execution Alias under %LOCALAPPDATA%\Microsoft\WindowsApps and is on PATH by default on Windows 11. `where wt` therefore resolves to Windows Terminal, and probing it with `wt --version` LAUNCHES Windows Terminal — popping its native "Windows Terminal <version>" Help/version dialog whenever worktrunk resolution runs (e.g. on dashboard load or a Settings save, field report Issue 4). Never exec a resolved `wt` that is the Windows Terminal alias; a genuine worktrunk binary lives on PATH elsewhere or under ~/.fusion/bin, never under WindowsApps / a WindowsTerminal package dir. This guard sits in probeWorktrunk — the single choke point every resolution surface (cached/override/PATH/install/settings-route) funnels through — so the invariant holds everywhere.
+On Windows the worktrunk CLI (`wt`) collides by name with Windows Terminal (`wt.exe`), which ships as an App Execution Alias under %LOCALAPPDATA%\Microsoft\WindowsApps and is on PATH by default on Windows 11. `where wt` therefore resolves to Windows Terminal, and probing it with `wt --version` LAUNCHES Windows Terminal — popping its native "Windows Terminal <version>" Help/version dialog whenever worktrunk resolution runs (e.g. on dashboard load or a Settings save, field report Issue 4). Never exec a resolved `wt` that is the Windows Terminal alias: on Windows a bare `wt`/`wt.exe` command name (PATH auto-discovery OR a bare `binaryPath` override) is refused because it resolves to Windows Terminal, and an absolute path is refused when it lives under WindowsApps or a Microsoft.WindowsTerminal package dir. A genuine worktrunk must be an explicit full path or the Fusion-managed ~/.fusion/bin install. This guard sits in probeWorktrunk — the single choke point every resolution surface (cached/override/PATH/install/settings-route) funnels through — so the invariant holds everywhere.
 */
 export const WORKTRUNK_WINDOWS_TERMINAL_COLLISION_MESSAGE =
   "Refusing to probe `wt` on Windows: the resolved binary is Windows Terminal (wt.exe), not worktrunk. Set `worktrunk.binaryPath` to the real worktrunk executable, or let Fusion install it under ~/.fusion/bin.";
@@ -225,7 +225,17 @@ export function isWindowsTerminalBinary(binaryPath: string): boolean {
   const normalized = binaryPath.replace(/\//g, "\\").toLowerCase();
   const base = (normalized.split("\\").pop() ?? "").replace(/\.exe$/, "");
   if (base !== "wt") return false;
-  return normalized.includes("\\windowsapps\\") || normalized.includes("windowsterminal");
+  // A bare `wt` / `wt.exe` (no directory component) resolves through PATH, where on
+  // Windows it is Windows Terminal's App Execution Alias — so a bare override is just
+  // as dangerous as a PATH auto-discovery. Refuse it; worktrunk must be an explicit
+  // full path or the Fusion-managed install.
+  if (!normalized.includes("\\")) return true;
+  // With a directory, only treat it as Windows Terminal when it lives in one of its
+  // known homes: the WindowsApps alias dir, or a `Microsoft.WindowsTerminal_*` package
+  // dir. Match the full package prefix (not a bare "windowsterminal" substring) so a
+  // genuine worktrunk under an unrelated folder like `...\windowsterminal-tools\wt.exe`
+  // is still probed.
+  return normalized.includes("\\windowsapps\\") || normalized.includes("microsoft.windowsterminal");
 }
 
 export async function probeWorktrunk(binaryPath: string): Promise<{ ok: boolean; version?: string; error?: string }> {

@@ -42,12 +42,22 @@ export function useWorktrunkInstallStatus(projectId?: string, options?: { enable
   const [status, setStatus] = useState<WorktrunkInstallStatusResponse>({ status: "missing" });
   const [requesting, setRequesting] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // Returns the freshly-fetched status so callers (e.g. Save) can act on a
+  // definitive result instead of the async-lagging `status` state — this closes
+  // the enable-then-save race where a save fired before the probe returned would
+  // otherwise read a stale "not verified" and silently drop the user's enable.
+  const refresh = useCallback(async (): Promise<WorktrunkInstallStatusResponse> => {
     try {
       const next = await requestJson<WorktrunkInstallStatusResponse>(withProjectId("/api/worktrunk/status", projectId));
       setStatus(next);
+      return next;
     } catch (err) {
-      setStatus({ status: "failed", error: err instanceof Error ? err.message : "Failed to load worktrunk status" });
+      const failed: WorktrunkInstallStatusResponse = {
+        status: "failed",
+        error: err instanceof Error ? err.message : "Failed to load worktrunk status",
+      };
+      setStatus(failed);
+      return failed;
     }
   }, [projectId]);
 
@@ -94,6 +104,7 @@ export function useWorktrunkInstallStatus(projectId?: string, options?: { enable
 
   return {
     ...status,
+    refresh,
     requestInstall,
     requesting,
   };

@@ -769,11 +769,6 @@ export function SettingsModal({
     prTitlePromptInstructions: "",
     prDescriptionPromptInstructions: "",
   });
-  // FNXC:WindowsTerminalStartup 2026-07-03-16:25:
-  // Only probe worktrunk status when the integration is enabled (user opted in),
-  // so opening Settings on Windows can't auto-launch Windows Terminal (`wt.exe`).
-  const worktrunkInstall = useWorktrunkInstallStatus(projectId, { enabled: form.worktrunk?.enabled === true });
-  const worktrunkInstallVerified = worktrunkInstall.status === "installed";
   const [loading, setLoading] = useState(true);
   // Guards the Save action against double-submit (rapid clicks / Enter) while the
   // parallel global+project writes are in flight.
@@ -794,6 +789,19 @@ export function SettingsModal({
     }
     return initialSection ?? DEFAULT_SETTINGS_SECTION;
   });
+  /*
+  FNXC:WindowsTerminalStartup 2026-07-04-06:30:
+  Do NOT auto-probe worktrunk status on a plain Settings/dashboard mount — on Windows the
+  status route resolves `wt`, which is Windows Terminal, and would pop its version dialog
+  (field report Issue 4; the engine probeWorktrunk guard is the backstop). Probe only when
+  the user is actually viewing the Worktrees section (a deliberate navigation) or worktrunk
+  is already enabled. Gating on `enabled` alone would deadlock: the enable toggle is disabled
+  until status === "installed", but status would never be fetched until enabled.
+  */
+  const worktrunkInstall = useWorktrunkInstallStatus(projectId, {
+    enabled: activeSection === "worktrees" || form.worktrunk?.enabled === true,
+  });
+  const worktrunkInstallVerified = worktrunkInstall.status === "installed";
   // Deterministic default: opening Plugins starts on Fusion Plugins unless legacy
   // `initialSection="pi-extensions"` is explicitly provided.
   const [activePluginsSubsection, setActivePluginsSubsection] = useState<PluginsSubsectionId>(() =>
@@ -2491,6 +2499,20 @@ export function SettingsModal({
     try {
       const normalizedWorktreeCopyFiles = normalizeWorktreeCopyFilesForSave(form.worktreeCopyFiles);
       /*
+      FNXC:WindowsTerminalStartup 2026-07-04-06:30:
+      Worktrunk status is now only auto-probed once the integration is enabled, so a
+      user who toggles worktrunk on and hits Save before the probe returns would read a
+      stale `worktrunkInstallVerified === false` and silently persist `enabled: false`,
+      discarding their opt-in. When enabling but not yet verified, await one definitive
+      probe (safe: the engine guard refuses to launch Windows Terminal) and clamp on
+      that fresh result instead.
+      */
+      let worktrunkVerifiedForSave = worktrunkInstallVerified;
+      if (form.worktrunk?.enabled === true && !worktrunkVerifiedForSave) {
+        const freshWorktrunkStatus = await worktrunkInstall.refresh();
+        worktrunkVerifiedForSave = freshWorktrunkStatus.status === "installed";
+      }
+      /*
       FNXC:GitLabEnablement 2026-07-02-00:00:
       The Global General section must edit raw global GitLab settings, not the merged project-effective form. Otherwise a project override can silently overwrite the global GitLab default on a no-op save.
       */
@@ -2500,7 +2522,7 @@ export function SettingsModal({
         worktreeInitCommand: form.worktreeInitCommand?.trim() || undefined,
         worktreesDir: form.worktreesDir?.trim() || undefined,
         worktrunk: {
-          enabled: worktrunkInstallVerified && form.worktrunk?.enabled === true,
+          enabled: worktrunkVerifiedForSave && form.worktrunk?.enabled === true,
           binaryPath: form.worktrunk?.binaryPath?.trim() || undefined,
           onFailure: form.worktrunk?.onFailure ?? "fail",
         },

@@ -314,6 +314,48 @@ describe("worktrunk-installer", () => {
     }
   });
 
+  it("probeWorktrunk refuses a bare wt/wt.exe override on Windows (resolves to Windows Terminal via PATH)", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      for (const bare of ["wt", "wt.exe"]) {
+        execMock.mockClear();
+        const result = await probeWorktrunk(bare);
+        expect(result.ok).toBe(false);
+        expect(execMock).not.toHaveBeenCalled();
+      }
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("probeWorktrunk refuses a forward-slash-normalized Windows Terminal path", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      execMock.mockClear();
+      const result = await probeWorktrunk("C:/Users/me/AppData/Local/Microsoft/WindowsApps/wt.exe");
+      expect(result.ok).toBe(false);
+      expect(execMock).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
+  it("probeWorktrunk probes a genuine wt.exe under an unrelated windowsterminal-named folder", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+    try {
+      mockExecSequence([{ stdout: "wt 0.4.2\n" }]);
+      // "windowsterminal-tools" is an unrelated dir, not the Microsoft.WindowsTerminal package.
+      const result = await probeWorktrunk("C:\\tools\\windowsterminal-tools\\wt.exe");
+      expect(result).toEqual({ ok: true, version: "0.4.2" });
+      expect(execMock).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+    }
+  });
+
   it("installer metadata points at canonical upstream", () => {
     const serialized = JSON.stringify(WORKTRUNK_PINNED_RELEASE);
     const fabricatedUpstream = ["worktrunk", "worktrunk"].join("/");
