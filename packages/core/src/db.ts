@@ -183,7 +183,7 @@ export function isFts5CorruptionError(error: unknown): boolean {
 
 // ── Schema Definition ────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 136;
+const SCHEMA_VERSION = 137;
 
 const TASKS_FTS_AUTOMERGE = 8;
 const TASKS_FTS_CRISISMERGE = 16;
@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   summary TEXT,
   thinkingLevel TEXT,
   executionMode TEXT DEFAULT 'standard',
+  plannerOversightLevel TEXT,
   tokenUsageInputTokens INTEGER,
   tokenUsageOutputTokens INTEGER,
   tokenUsageCachedTokens INTEGER,
@@ -5553,6 +5554,20 @@ export class Database {
           CREATE INDEX IF NOT EXISTS idxChatTokenUsageRoomMessage ON chat_token_usage(roomId, messageId);
           CREATE INDEX IF NOT EXISTS idxChatTokenUsageAgentCreatedAt ON chat_token_usage(agentId, createdAt);
         `);
+      });
+    }
+
+    if (version < 137) {
+      /*
+       * FNXC:PlannerOversight 2026-07-04-00:00:
+       * Per-task override of the workflow-native `plannerOversightLevel` setting
+       * (FN-7508/FN-7509). Additive-only: no SQL default and no backfill — a NULL
+       * value means "inherit the workflow's effective oversight level", which is
+       * distinct from executionMode's non-null 'standard' default. Legacy rows
+       * must stay NULL.
+       */
+      this.applyMigration(137, () => {
+        this.addColumnIfMissing("tasks", "plannerOversightLevel", "TEXT");
       });
     }
 

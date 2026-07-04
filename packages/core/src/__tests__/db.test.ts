@@ -1778,6 +1778,51 @@ describe("schema migrations", () => {
     db.close();
   });
 
+  it("migrates v136 databases by adding plannerOversightLevel column with legacy rows staying NULL (no backfill)", () => {
+    tmpDir = makeTmpDir();
+    const fusionDir = join(tmpDir, ".fusion");
+    const db = new Database(fusionDir);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        executionMode TEXT DEFAULT 'standard'
+      );
+      CREATE TABLE IF NOT EXISTS config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        nextId INTEGER DEFAULT 1,
+        nextWorkflowStepId INTEGER DEFAULT 1,
+        settings TEXT DEFAULT '{}',
+        workflowSteps TEXT DEFAULT '[]',
+        updatedAt TEXT
+      );
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '136')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`INSERT INTO tasks (id, description, "column", createdAt, updatedAt) VALUES ('FN-1', 'legacy', 'triage', '2026-01-01', '2026-01-01')`);
+
+    db.init();
+
+    expect(db.getSchemaVersion()).toBe(SCHEMA_VERSION);
+
+    const cols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+    expect(cols.map((col) => col.name)).toContain("plannerOversightLevel");
+
+    // FNXC:PlannerOversight 2026-07-04-00:00: migration 137 is additive-only and must NOT backfill
+    // legacy rows — a NULL value means "inherit workflow default".
+    const task = db.prepare("SELECT plannerOversightLevel FROM tasks WHERE id = 'FN-1'").get() as {
+      plannerOversightLevel: string | null;
+    };
+    expect(task.plannerOversightLevel).toBeNull();
+
+    db.close();
+  });
+
   it("migrates v43 databases by adding task token-usage aggregate columns with null-compatible defaults", () => {
     tmpDir = makeTmpDir();
     const fusionDir = join(tmpDir, ".fusion");

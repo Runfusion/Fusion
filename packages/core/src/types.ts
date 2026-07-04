@@ -272,6 +272,18 @@ export type ExecutionMode = (typeof EXECUTION_MODES)[number];
 /** Default execution mode for new tasks */
 export const DEFAULT_EXECUTION_MODE: ExecutionMode = "standard";
 
+/*
+ * FNXC:PlannerOversight 2026-07-04-00:00:
+ * Per-task override of the workflow-native `plannerOversightLevel` setting
+ * (declared in `BUILTIN_OVERSIGHT_SETTINGS`, packages/core/src/builtin-workflow-settings.ts).
+ * When a task sets this field, it wins over the workflow's effective oversight
+ * value; unset (NULL in storage) means "inherit the workflow default". Values,
+ * order, and default here must stay in sync with `BUILTIN_OVERSIGHT_SETTINGS`.
+ */
+export const PLANNER_OVERSIGHT_LEVELS = ["off", "observe", "steer", "autonomous"] as const;
+export type PlannerOversightLevel = (typeof PLANNER_OVERSIGHT_LEVELS)[number];
+export const DEFAULT_PLANNER_OVERSIGHT_LEVEL: PlannerOversightLevel = "autonomous";
+
 /** Controls whether triage should require completion documentation artifacts in task specs. */
 export const COMPLETION_DOCUMENTATION_MODES = ["off", "changeset", "changelog"] as const;
 export type CompletionDocumentationMode = (typeof COMPLETION_DOCUMENTATION_MODES)[number];
@@ -2456,6 +2468,11 @@ export interface Task {
    *  - "fast": Expedited execution with minimal overhead for simple tasks
    *  Defaults to "standard" when not specified. */
   executionMode?: ExecutionMode;
+  /** Per-task override of the workflow-native planner oversight level (FNXC:PlannerOversight).
+   *  When set, wins over the workflow's effective `plannerOversightLevel`. Unset means
+   *  "inherit workflow default" — see `resolveEffectivePlannerOversightLevel` in
+   *  workflow-settings-resolver.ts for precedence. */
+  plannerOversightLevel?: PlannerOversightLevel;
   /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
   assignedAgentId?: string;
   /** Per-task node override. When set, this task routes to the specified node instead of the project's default node. Undefined means use the project default. Use empty string to explicitly clear. */
@@ -2733,6 +2750,10 @@ export interface TaskCreateInput {
    *  - "fast": Expedited execution with minimal overhead for simple tasks
    *  Defaults to "standard" when not specified. */
   executionMode?: ExecutionMode;
+  /** Per-task override of the workflow-native planner oversight level (FNXC:PlannerOversight).
+   *  When set, wins over the workflow's effective `plannerOversightLevel`. Unset means
+   *  "inherit workflow default". */
+  plannerOversightLevel?: PlannerOversightLevel;
 }
 
 // ── Todo List Types ──────────────────────────────────────────────────────
@@ -4878,6 +4899,8 @@ export interface ArchivedTaskEntry {
    *  - "standard": Full execution with complete review workflow (default)
    *  - "fast": Expedited execution with minimal overhead for simple tasks */
   executionMode?: ExecutionMode;
+  /** Per-task override of the workflow-native planner oversight level at time of archival. */
+  plannerOversightLevel?: PlannerOversightLevel;
   prInfo?: PrInfo;
   prInfos?: PrInfo[];
   issueInfo?: IssueInfo;

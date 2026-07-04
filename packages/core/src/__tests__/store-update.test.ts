@@ -945,6 +945,81 @@ describe("TaskStore", () => {
     });
   });
 
+  // FNXC:PlannerOversight 2026-07-04-00:00: per-task override of the workflow-native
+  // `plannerOversightLevel` setting (FN-7508/FN-7509); mirrors executionMode persistence.
+  describe("plannerOversightLevel persistence", () => {
+    it("sets plannerOversightLevel to 'steer' via createTask and persists", async () => {
+      const created = await store.createTask({
+        description: "Task with steer oversight override",
+        plannerOversightLevel: "steer",
+      });
+      expect(created.plannerOversightLevel).toBe("steer");
+
+      const persisted = await store.getTask(created.id);
+      expect(persisted.plannerOversightLevel).toBe("steer");
+    });
+
+    it("persists plannerOversightLevel as undefined (inherit) by default when not specified", async () => {
+      const created = await store.createTask({
+        description: "Task without oversight override",
+      });
+      expect(created.plannerOversightLevel).toBeUndefined();
+
+      const persisted = await store.getTask(created.id);
+      expect(persisted.plannerOversightLevel).toBeUndefined();
+    });
+
+    it("updates plannerOversightLevel via updateTask", async () => {
+      const created = await store.createTask({
+        description: "Task for oversight override update",
+        plannerOversightLevel: "observe",
+      });
+      expect(created.plannerOversightLevel).toBe("observe");
+
+      const updated = await store.updateTask(created.id, { plannerOversightLevel: "off" });
+      expect(updated.plannerOversightLevel).toBe("off");
+
+      const reloaded = await store.getTask(created.id);
+      expect(reloaded.plannerOversightLevel).toBe("off");
+    });
+
+    it("clears plannerOversightLevel via null in updateTask (reverts to inherit)", async () => {
+      const task = await store.createTask({
+        description: "Task with oversight override to clear",
+        plannerOversightLevel: "observe",
+      });
+      expect(task.plannerOversightLevel).toBe("observe");
+
+      const updated = await store.updateTask(task.id, { plannerOversightLevel: null });
+      expect(updated.plannerOversightLevel).toBeUndefined();
+
+      const reloaded = await store.getTask(task.id);
+      expect(reloaded.plannerOversightLevel).toBeUndefined();
+    });
+
+    it("leaves plannerOversightLevel unchanged when updateTask omits it", async () => {
+      const task = await store.createTask({
+        description: "Task with oversight override to preserve",
+        plannerOversightLevel: "steer",
+      });
+      const updated = await store.updateTask(task.id, { title: "Updated title" });
+      expect(updated.plannerOversightLevel).toBe("steer");
+      expect(updated.title).toBe("Updated title");
+    });
+
+    it("returns plannerOversightLevel in listTasks", async () => {
+      await store.createTask({ description: "Steer task", plannerOversightLevel: "steer" });
+      await store.createTask({ description: "Unspecified oversight task" });
+
+      const tasks = await store.listTasks();
+      const steerTask = tasks.find((t) => t.description === "Steer task");
+      const unspecifiedTask = tasks.find((t) => t.description === "Unspecified oversight task");
+
+      expect(steerTask?.plannerOversightLevel).toBe("steer");
+      expect(unspecifiedTask?.plannerOversightLevel).toBeUndefined();
+    });
+  });
+
 
   describe("updateTask — PROMPT.md regeneration", () => {
     it("regenerates PROMPT.md when title is updated", async () => {
