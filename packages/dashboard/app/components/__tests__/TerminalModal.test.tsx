@@ -490,7 +490,8 @@ describe("TerminalModal", () => {
     expect(menuRule).toContain("max-height: min(var(--terminal-workspace-menu-height), calc(100dvh - (var(--space-md) * 2)));");
     expect(menuRule).toContain("overflow-y: auto;");
     expect(menuRule).toContain("overscroll-behavior: contain;");
-    expect(actionsRule).toContain("flex: 0 0 auto;");
+    expect(actionsRule).toContain("flex: 1 1 auto;");
+    expect(actionsRule).toContain("overflow-x: auto;");
     expect(mobileHeaderRule).toContain("flex-wrap: wrap;");
     expect(mobileHeaderRule).toContain("overflow: hidden;");
     expect(mobileTerminalTabsRule).toContain("display: none;");
@@ -549,6 +550,93 @@ describe("TerminalModal", () => {
       expect(modal).toHaveClass("terminal-modal--docked");
       expect(screen.getByTestId("terminal-docked-resize-handle")).toBeInTheDocument();
     });
+  });
+
+  it("defaults missing and invalid display-mode storage to overlay docked mode", async () => {
+    const missingProjectId = "missing-display-mode-test";
+    window.localStorage.removeItem(`fusion:terminal-display-mode-${missingProjectId}`);
+
+    const { unmount } = render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={missingProjectId} />);
+    expect(await screen.findByTestId("terminal-modal")).toHaveClass("terminal-modal--docked");
+    expect(screen.getByTestId("terminal-modal-overlay")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+    unmount();
+
+    const invalidProjectId = "invalid-display-mode-test";
+    window.localStorage.setItem(`fusion:terminal-display-mode-${invalidProjectId}`, "sideways");
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={invalidProjectId} />);
+
+    expect(await screen.findByTestId("terminal-modal")).toHaveClass("terminal-modal--docked");
+    expect(screen.getByTestId("terminal-modal-overlay")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+  });
+
+  it("pins and persists the terminal below the application with right-dock-style labels", async () => {
+    const projectId = "below-pin-test";
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={projectId} />);
+
+    const pin = await screen.findByTestId("terminal-pin-toggle");
+    expect(pin).toHaveAttribute("aria-label", "Pin terminal (push content)");
+    expect(pin).toHaveAttribute("title", "Pin terminal (push content)");
+    expect(pin).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(pin);
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem(`fusion:terminal-display-mode-${projectId}`)).toBe("below");
+      expect(screen.getByTestId("terminal-below-host")).toBeInTheDocument();
+      expect(screen.queryByTestId("terminal-modal-overlay")).toBeNull();
+      expect(screen.getByTestId("terminal-modal")).toHaveClass("terminal-modal--below");
+    });
+    expect(screen.getByTestId("terminal-pin-toggle")).toHaveAttribute("aria-label", "Unpin terminal (overlay content)");
+    expect(screen.getByTestId("terminal-pin-toggle")).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByTestId("terminal-pin-toggle"));
+    await waitFor(() => {
+      expect(window.localStorage.getItem(`fusion:terminal-display-mode-${projectId}`)).toBe("docked");
+      expect(screen.getByTestId("terminal-modal-overlay")).toBeInTheDocument();
+      expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+    });
+  });
+
+  it("keeps floating and mobile modes out of the below-layout shell", async () => {
+    const floatingProjectId = "floating-no-below-shell";
+    window.localStorage.setItem(`fusion:terminal-display-mode-${floatingProjectId}`, "floating");
+    const { unmount } = render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId={floatingProjectId} />);
+    expect(await screen.findByTestId("terminal-modal")).toHaveClass("terminal-modal--floating");
+    expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+    unmount();
+
+    const previousInnerWidth = window.innerWidth;
+    const previousOntouchstart = window.ontouchstart;
+    Object.defineProperty(window, "innerWidth", { value: 500, configurable: true });
+    Object.defineProperty(window, "ontouchstart", { value: null, configurable: true });
+    try {
+      window.localStorage.setItem("fusion:terminal-display-mode-mobile-no-below-shell", "below");
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} projectId="mobile-no-below-shell" />);
+      expect(await screen.findByTestId("terminal-modal")).not.toHaveClass("terminal-modal--below");
+      expect(screen.queryByTestId("terminal-below-host")).toBeNull();
+      expect(screen.queryByTestId("terminal-pin-toggle")).toBeNull();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      if (previousOntouchstart === undefined) {
+        delete (window as any).ontouchstart;
+      } else {
+        Object.defineProperty(window, "ontouchstart", { value: previousOntouchstart, configurable: true });
+      }
+    }
+  });
+
+  it("encodes below-terminal in-flow layout without fixed overlay geometry", () => {
+    const hostRule = terminalModalCss.match(/\.terminal-below-host\s*\{([^}]*)\}/)?.[1] ?? "";
+    const belowRule = terminalModalCss.match(/\.modal\.terminal-modal\.terminal-modal--below\s*\{([^}]*)\}/)?.[1] ?? "";
+    const footerShellRule = terminalModalCss.match(/\.terminal-status-bar\s*\{/);
+
+    expect(hostRule).toContain("display: flex;");
+    expect(belowRule).toContain("position: relative;");
+    expect(belowRule).not.toContain("position: fixed;");
+    expect(belowRule).toContain("height: var(--terminal-below-height);");
+    expect(footerShellRule).toBeNull();
   });
 
   it("exposes floating drag and resize handles and refits after floating resize", async () => {
@@ -3147,14 +3235,14 @@ describe("TerminalModal — mobile layout contract", () => {
     });
   });
 
-  it("status-bar shows connection state text alongside tabs row", async () => {
+  it("header actions show connection state without a footer status-bar shell", async () => {
     render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 
     await waitFor(() => {
-      const statusBar = screen.getByTestId("terminal-status-bar");
-      expect(statusBar).toBeTruthy();
-      // Should contain connection status text
-      const connectionStatus = statusBar.querySelector(".terminal-connection-status");
+      expect(screen.queryByTestId("terminal-status-bar")).toBeNull();
+      expect(screen.queryByTestId("terminal-footer-actions")).toBeNull();
+      const actions = screen.getByTestId("terminal-actions");
+      const connectionStatus = actions.querySelector(".terminal-connection-status");
       expect(connectionStatus?.textContent).toBe("Disconnected");
     });
   });

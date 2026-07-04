@@ -27,6 +27,8 @@ import {
   ChevronDown,
   FolderGit2,
   FolderRoot,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { useTerminal } from "../hooks/useTerminal";
 import { useTerminalSessions } from "../hooks/useTerminalSessions";
@@ -57,11 +59,16 @@ const XTERM_INIT_TIMEOUT_MS = 10000;
 
 const XTERM_IMPORT_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
 
-type TerminalDisplayMode = "docked" | "floating";
+export type TerminalDisplayMode = "docked" | "floating" | "below";
+
+export const TERMINAL_DISPLAY_MODE_STORAGE_PREFIX = "fusion:terminal-display-mode-";
 
 const TERMINAL_DOCKED_DEFAULT_HEIGHT = 360;
 const TERMINAL_DOCKED_MIN_HEIGHT = 240;
 const TERMINAL_DOCKED_VIEWPORT_MARGIN = 96;
+const TERMINAL_BELOW_DEFAULT_HEIGHT = 260;
+const TERMINAL_BELOW_MIN_HEIGHT = 180;
+const TERMINAL_BELOW_APP_MIN_HEIGHT = 320;
 const TERMINAL_FLOAT_DEFAULT_WIDTH = 960;
 const TERMINAL_FLOAT_DEFAULT_HEIGHT = 560;
 const TERMINAL_FLOAT_MIN_WIDTH = 480;
@@ -88,15 +95,23 @@ interface TerminalWorkspaceMenuPosition {
   maxHeight: number;
 }
 
-function readTerminalDisplayMode(projectId?: string): TerminalDisplayMode {
+function terminalDisplayModeStorageKey(projectId?: string): string {
+  return `${TERMINAL_DISPLAY_MODE_STORAGE_PREFIX}${projectId ?? "default"}`;
+}
+
+/*
+FNXC:TerminalLayout 2026-07-04-19:08:
+Terminal display mode is a project-scoped, reversible layout preference. Missing or invalid storage must continue to use the original overlay docked terminal, while the new below mode persists only when the operator pins the terminal to push content.
+*/
+export function readTerminalDisplayMode(projectId?: string): TerminalDisplayMode {
   if (typeof window === "undefined") return "docked";
-  const value = window.localStorage.getItem(`fusion:terminal-display-mode-${projectId ?? "default"}`);
-  return value === "floating" ? "floating" : "docked";
+  const value = window.localStorage.getItem(terminalDisplayModeStorageKey(projectId));
+  return value === "floating" || value === "below" ? value : "docked";
 }
 
 function writeTerminalDisplayMode(mode: TerminalDisplayMode, projectId?: string): TerminalDisplayMode {
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(`fusion:terminal-display-mode-${projectId ?? "default"}`, mode);
+    window.localStorage.setItem(terminalDisplayModeStorageKey(projectId), mode);
   }
   return mode;
 }
@@ -107,14 +122,22 @@ function readTerminalDockedHeight(projectId?: string): number {
   return Number.isFinite(parsed) ? parsed : TERMINAL_DOCKED_DEFAULT_HEIGHT;
 }
 
-function clampTerminalDockedHeight(height: number): number {
-  if (typeof window === "undefined") return Math.max(TERMINAL_DOCKED_MIN_HEIGHT, height);
-  const maxHeight = Math.max(TERMINAL_DOCKED_MIN_HEIGHT, window.innerHeight - TERMINAL_DOCKED_VIEWPORT_MARGIN);
-  return Math.min(Math.max(height, TERMINAL_DOCKED_MIN_HEIGHT), maxHeight);
+function clampTerminalPanelHeight(height: number, minHeight: number, viewportReserve: number): number {
+  if (typeof window === "undefined") return Math.max(minHeight, height);
+  const maxHeight = Math.max(minHeight, window.innerHeight - viewportReserve);
+  return Math.min(Math.max(height, minHeight), maxHeight);
 }
 
-function writeTerminalDockedHeight(height: number, projectId?: string): number {
-  const clamped = clampTerminalDockedHeight(height);
+function clampTerminalDockedHeight(height: number): number {
+  return clampTerminalPanelHeight(height, TERMINAL_DOCKED_MIN_HEIGHT, TERMINAL_DOCKED_VIEWPORT_MARGIN);
+}
+
+function clampTerminalBelowHeight(height: number): number {
+  return clampTerminalPanelHeight(height, TERMINAL_BELOW_MIN_HEIGHT, TERMINAL_BELOW_APP_MIN_HEIGHT);
+}
+
+function writeTerminalDockedHeight(height: number, projectId?: string, mode: "docked" | "below" = "docked"): number {
+  const clamped = mode === "below" ? clampTerminalBelowHeight(height) : clampTerminalDockedHeight(height);
   if (typeof window !== "undefined") {
     window.localStorage.setItem(`fusion:terminal-docked-height-${projectId ?? "default"}`, String(Math.round(clamped)));
   }
@@ -525,6 +548,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
   const isDockedMode = !isMobileTerminal && displayMode === "docked";
   const isFloatingMode = !isMobileTerminal && displayMode === "floating";
+  const isBelowMode = !isMobileTerminal && displayMode === "below";
   // FNXC:FloatingWindow 2026-06-22-21:30: The FLOATING terminal shares the SINGLE cross-type floating z-index stack (floatingWindowStack) so tapping it raises it above every other floating modal regardless of type. A fresh z is claimed each time the modal opens (see effect below); tapping the panel (pointerdown/focus capture) re-raises it. Docked/mobile modes ignore this z-index (full-width bottom panel / full-screen sheet).
   const [floatingZ, setFloatingZ] = useState<number>(() => nextFloatingZ());
   const bringFloatingToFront = useCallback(() => {
@@ -604,6 +628,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
   const setDisplayMode = useCallback((mode: TerminalDisplayMode) => {
     setDisplayModeState(writeTerminalDisplayMode(mode, projectId));
+    window.dispatchEvent(new CustomEvent("fusion:terminal-display-mode-change", { detail: { projectId, mode } }));
   }, [projectId]);
 
   const persistFloatingSize = useCallback((size: TerminalFloatSize) => {
@@ -626,7 +651,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   Docked top-edge resize, smooth on touch + desktop (same technique as the right-dock pop-out RightDockExpandModal). On pointerdown we setPointerCapture on the handle and attach pointermove/up/cancel to the CAPTURED element (`captureTarget` = event.currentTarget), NOT `document` — capture redirects the full pointer stream for this pointerId to that element so element-scoped listeners receive every move even when the finger drifts off the handle, and they pair cleanly with the handle's `touch-action: none` (CSS) without a non-passive document listener. Moves are filtered by pointerId and coalesced into one rAF, so we set height at most once per frame and never thrash layout on a flood of touch-move events. localStorage is written only on pointerup (existing behavior). Teardown (pointerup/cancel + unmount via dragTeardownRef) cancels the pending rAF, releases pointer capture, and detaches listeners.
   */
   const handleDockedResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isDockedMode) return;
+    if (!isDockedMode && !isBelowMode) return;
     event.preventDefault();
     const captureTarget = event.currentTarget;
     const pointerId = event.pointerId;
@@ -641,7 +666,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return;
-      latestHeight = clampTerminalDockedHeight(startHeight + (startY - moveEvent.clientY));
+      const nextHeight = isBelowMode ? startHeight + (moveEvent.clientY - startY) : startHeight + (startY - moveEvent.clientY);
+      latestHeight = isBelowMode ? clampTerminalBelowHeight(nextHeight) : clampTerminalDockedHeight(nextHeight);
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
@@ -656,7 +682,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     };
     function handlePointerUp() {
       if (frame) cancelAnimationFrame(frame);
-      setDockedHeight(writeTerminalDockedHeight(latestHeight, projectId));
+      setDockedHeight(writeTerminalDockedHeight(latestHeight, projectId, isBelowMode ? "below" : "docked"));
       document.body.style.userSelect = previousUserSelect;
       detachListeners();
       dragTeardownRef.current = null;
@@ -673,7 +699,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     captureTarget.addEventListener("pointermove", handlePointerMove);
     captureTarget.addEventListener("pointerup", handlePointerUp);
     captureTarget.addEventListener("pointercancel", handlePointerUp);
-  }, [dockedHeight, isDockedMode, projectId]);
+  }, [dockedHeight, isBelowMode, isDockedMode, projectId]);
 
   /*
   FNXC:Terminal 2026-06-22-19:50:
@@ -2007,6 +2033,13 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     setDisplayMode(displayMode === "floating" ? "docked" : "floating");
   }, [displayMode, setDisplayMode]);
 
+  const handleToggleBelowMode = useCallback(() => {
+    setDisplayMode(displayMode === "below" ? "docked" : "below");
+    if (displayMode !== "below") {
+      setDockedHeight((current) => clampTerminalBelowHeight(current || TERMINAL_BELOW_DEFAULT_HEIGHT));
+    }
+  }, [displayMode, setDisplayMode]);
+
   const handlePreferenceFontSizeChange = useCallback(
     (value: string) => {
       const parsed = Number.parseInt(value, 10);
@@ -2112,7 +2145,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const isLoading = !isReady || (!activeTab && !bootstrapError);
   // FNXC:Terminal 2026-06-23-04:30: Always carry the base `terminal-modal-overlay` class so the no-dim/no-blur rule applies in EVERY mode (docked, floating, AND the mobile/default sheet that is neither) — the terminal must never dim the page behind it.
   const overlayClassName = `modal-overlay open terminal-modal-overlay${isDockedMode ? " terminal-modal-overlay--docked" : ""}${isFloatingMode ? " terminal-modal-overlay--floating" : ""}`;
-  const modalClassName = `modal terminal-modal${isMobileTerminal ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}`;
+  const modalClassName = `modal terminal-modal${isMobileTerminal ? " terminal-modal--mobile" : ""}${isDockedMode ? " terminal-modal--docked" : ""}${isFloatingMode ? " terminal-modal--floating" : ""}${isBelowMode ? " terminal-modal--below" : ""}`;
   const modalStyle = {
     ...(keyboardOverlap > 0
       ? {
@@ -2126,6 +2159,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         }
       : {}),
     ...(isDockedMode ? { "--terminal-docked-height": `${dockedHeight}px` } : {}),
+    ...(isBelowMode ? { "--terminal-below-height": `${clampTerminalBelowHeight(dockedHeight || TERMINAL_BELOW_DEFAULT_HEIGHT)}px` } : {}),
     ...(isFloatingMode
       ? {
           "--terminal-float-x": `${floatingPosition.x}px`,
@@ -2138,36 +2172,24 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       : {}),
   } as CSSProperties;
 
-  // FNXC:FloatingWindow 2026-06-22-22:30: Portaled to document.body so the terminal shares the ONE root stacking context with the other floating modals; the shared cross-type z stack only orders correctly when all panels live at the document root. Docked/floating/mobile are all position:fixed, so portaling does not change their placement.
-  return createPortal(
+  const terminalPanel = (
     <div
-      className={overlayClassName}
-      onMouseDown={handleOverlayMouseDown}
-      onMouseUp={handleOverlayMouseUp}
-      role="dialog"
-      aria-modal="true"
-      data-testid="terminal-modal-overlay"
-      style={{
-        // FNXC:FloatingWindow 2026-06-22-23:00: In floating mode the z-index lives on the fixed overlay (it owns the stacking context); a panel z is trapped inside it and loses to page stacking contexts like the right dock (position:absolute z-index:20). Docked/mobile keep their CSS z.
-        ...(isFloatingMode ? { zIndex: floatingZ } : {}),
-        ...(keyboardOverlap > 0 ? { "--overlay-padding-top": "0px" } : {}),
-      } as CSSProperties}
+      ref={modalRef}
+      className={modalClassName}
+      data-testid="terminal-modal"
+      style={modalStyle}
+      onPointerDownCapture={isFloatingMode ? bringFloatingToFront : undefined}
+      onFocusCapture={isFloatingMode ? bringFloatingToFront : undefined}
+      role={isBelowMode ? "region" : undefined}
+      aria-label={isBelowMode ? t("terminal.belowRegion", "Pinned terminal") : undefined}
     >
-      <div
-        ref={modalRef}
-        className={modalClassName}
-        data-testid="terminal-modal"
-        style={modalStyle}
-        onPointerDownCapture={isFloatingMode ? bringFloatingToFront : undefined}
-        onFocusCapture={isFloatingMode ? bringFloatingToFront : undefined}
-      >
-        {isDockedMode && (
+        {(isDockedMode || isBelowMode) && (
           <div
-            className="terminal-docked-resize-handle"
+            className={isBelowMode ? "terminal-below-resize-handle" : "terminal-docked-resize-handle"}
             data-testid="terminal-docked-resize-handle"
             role="separator"
             aria-orientation="horizontal"
-            aria-label={t("terminal.resizeDockedPanel", "Resize terminal panel")}
+            aria-label={isBelowMode ? t("terminal.resizeBelowPanel", "Resize pinned terminal panel") : t("terminal.resizeDockedPanel", "Resize terminal panel")}
             onPointerDown={handleDockedResizePointerDown}
           />
         )}
@@ -2412,6 +2434,51 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
               >
                 <RefreshCw size={14} />
                 <span className="terminal-action-label">{t("terminal.newSession", "New Session")}</span>
+              </button>
+            )}
+            {/*
+            FNXC:TerminalHeader 2026-07-04-19:16:
+            Footer controls live in the terminal header so docked, floating, pinned-below, and mobile layouts keep terminal actions reachable without spending a separate footer row. The pin button mirrors the right sidebar contract: aria-pressed means the persistent below-application push layout is active.
+            */}
+            <span className="terminal-font-size-controls terminal-font-size-controls--header">
+              <button type="button" className="terminal-font-size-btn" onClick={handleDecreaseFontSize} data-testid="terminal-font-size-decrease" aria-label={t("terminal.decreaseFontSize", "Decrease terminal font size")}>
+                <Minus size={14} />
+              </button>
+              <span className="terminal-font-size-value" data-testid="terminal-font-size-value">{fontSize}{TERMINAL_KEY_LABELS.pxUnit}</span>
+              <button type="button" className="terminal-font-size-btn" onClick={handleIncreaseFontSize} data-testid="terminal-font-size-increase" aria-label={t("terminal.increaseFontSize", "Increase terminal font size")}>
+                <Plus size={14} />
+              </button>
+            </span>
+            <button className="terminal-clear-btn" onClick={handleClear} data-testid="terminal-clear-btn" title={t("terminal.clearTerminal", "Clear terminal")}>
+              <Trash2 size={14} />
+              <span className="terminal-action-label">{t("terminal.clear", "Clear")}</span>
+            </button>
+            <button className="terminal-clear-btn terminal-clear-btn--shortcut" onClick={() => setShowShortcuts((current) => !current)} data-testid="terminal-shortcut-toggle" title={t("terminal.shortcuts", "Shortcuts")} aria-pressed={showShortcuts}>
+              <Keyboard size={14} />
+              <span className="terminal-action-label">{t("terminal.shortcuts", "Shortcuts")}</span>
+            </button>
+            <button className="terminal-clear-btn terminal-clear-btn--shortcut" onClick={() => setShowPreferences((current) => !current)} data-testid="terminal-preferences-toggle" title={t("terminal.preferences", "Preferences")} aria-pressed={showPreferences}>
+              <Settings size={14} />
+              <span className="terminal-action-label">{t("terminal.preferences", "Preferences")}</span>
+            </button>
+            <span className={`terminal-connection-status ${connectionStatus}`}>
+              {connectionStatus === "connected" && t("terminal.statusConnected", "Connected")}
+              {connectionStatus === "connecting" && t("terminal.statusConnecting", "Connecting...")}
+              {connectionStatus === "reconnecting" && t("terminal.statusReconnecting", "Reconnecting...")}
+              {connectionStatus === "disconnected" && t("terminal.statusDisconnected", "Disconnected")}
+            </span>
+            {exitCode !== null && <span className="terminal-exit-code" data-testid="terminal-exit-code">{t("terminal.exitLabel", "Exit: {{code}}", { code: exitCode })}</span>}
+            <span className="terminal-shortcuts terminal-shortcuts--header">{t("terminal.helpText", "Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close")}</span>
+            {!isMobileTerminal && (
+              <button
+                className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
+                onClick={handleToggleBelowMode}
+                data-testid="terminal-pin-toggle"
+                title={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
+                aria-label={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
+                aria-pressed={isBelowMode}
+              >
+                {isBelowMode ? <PinOff size={14} /> : <Pin size={14} />}
               </button>
             )}
             {/*
@@ -2709,82 +2776,33 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           </div>
         )}
 
-        {/*
-        FNXC:Terminal 2026-06-23-00:15:
-        Footer is laid out left-to-right as a flex row: the text-size control sits at the LEFT, followed by the relocated Clear / Shortcuts / Preferences action buttons (a grouped cluster). The connection-status text and zoom-hint copy stay on the right and collapse first on narrow widths. The whole control cluster wraps/scrolls when the footer is too narrow so docked/floating/mobile layouts never clip the buttons.
-        */}
-        <div className="terminal-status-bar" data-testid="terminal-status-bar">
-          <span className="terminal-font-size-controls">
-            <button
-              type="button"
-              className="terminal-font-size-btn"
-              onClick={handleDecreaseFontSize}
-              data-testid="terminal-font-size-decrease"
-              aria-label={t("terminal.decreaseFontSize", "Decrease terminal font size")}
-            >
-              <Minus size={14} />
-            </button>
-            <span className="terminal-font-size-value" data-testid="terminal-font-size-value">
-              {fontSize}{TERMINAL_KEY_LABELS.pxUnit}
-            </span>
-            <button
-              type="button"
-              className="terminal-font-size-btn"
-              onClick={handleIncreaseFontSize}
-              data-testid="terminal-font-size-increase"
-              aria-label={t("terminal.increaseFontSize", "Increase terminal font size")}
-            >
-              <Plus size={14} />
-            </button>
-          </span>
-          {/* FNXC:Terminal 2026-06-23-00:15: Clear / Shortcuts / Preferences relocated here from the header actions; same handlers, testids, and labels preserved. */}
-          <span className="terminal-footer-actions" data-testid="terminal-footer-actions">
-            <button
-              className="terminal-clear-btn"
-              onClick={handleClear}
-              data-testid="terminal-clear-btn"
-              title={t("terminal.clearTerminal", "Clear terminal")}
-            >
-              <Trash2 size={14} />
-              <span className="terminal-action-label">{t("terminal.clear", "Clear")}</span>
-            </button>
-            <button
-              className="terminal-clear-btn terminal-clear-btn--shortcut"
-              onClick={() => setShowShortcuts((current) => !current)}
-              data-testid="terminal-shortcut-toggle"
-              title={t("terminal.shortcuts", "Shortcuts")}
-              aria-pressed={showShortcuts}
-            >
-              <Keyboard size={14} />
-              <span className="terminal-action-label">{t("terminal.shortcuts", "Shortcuts")}</span>
-            </button>
-            <button
-              className="terminal-clear-btn terminal-clear-btn--shortcut"
-              onClick={() => setShowPreferences((current) => !current)}
-              data-testid="terminal-preferences-toggle"
-              title={t("terminal.preferences", "Preferences")}
-              aria-pressed={showPreferences}
-            >
-              <Settings size={14} />
-              <span className="terminal-action-label">{t("terminal.preferences", "Preferences")}</span>
-            </button>
-          </span>
-          <span className={`terminal-connection-status ${connectionStatus}`}>
-            {connectionStatus === "connected" && t("terminal.statusConnected", "Connected")}
-            {connectionStatus === "connecting" && t("terminal.statusConnecting", "Connecting...")}
-            {connectionStatus === "reconnecting" && t("terminal.statusReconnecting", "Reconnecting...")}
-            {connectionStatus === "disconnected" && t("terminal.statusDisconnected", "Disconnected")}
-          </span>
-          {exitCode !== null && (
-            <span className="terminal-exit-code" data-testid="terminal-exit-code">
-              {t("terminal.exitLabel", "Exit: {{code}}", { code: exitCode })}
-            </span>
-          )}
-          <span className="terminal-shortcuts">
-            {t("terminal.helpText", "Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close")}
-          </span>
-        </div>
+    </div>
+  );
+
+  if (isBelowMode) {
+    return (
+      <div className="terminal-below-host" data-testid="terminal-below-host">
+        {terminalPanel}
       </div>
+    );
+  }
+
+  // FNXC:FloatingWindow 2026-06-22-22:30: Portaled to document.body so overlay terminal modes share the ONE root stacking context with other floating modals. Below mode intentionally skips the portal so it can reserve in-flow application space.
+  return createPortal(
+    <div
+      className={overlayClassName}
+      onMouseDown={handleOverlayMouseDown}
+      onMouseUp={handleOverlayMouseUp}
+      role="dialog"
+      aria-modal="true"
+      data-testid="terminal-modal-overlay"
+      style={{
+        // FNXC:FloatingWindow 2026-06-22-23:00: In floating mode the z-index lives on the fixed overlay (it owns the stacking context); a panel z is trapped inside it and loses to page stacking contexts like the right dock (position:absolute z-index:20). Docked/mobile keep their CSS z.
+        ...(isFloatingMode ? { zIndex: floatingZ } : {}),
+        ...(keyboardOverlap > 0 ? { "--overlay-padding-top": "0px" } : {}),
+      } as CSSProperties}
+    >
+      {terminalPanel}
     </div>,
     document.body,
   );

@@ -527,14 +527,16 @@ On Windows, the embedded terminal starts a supported shell inside Fusion, such a
 Use the terminal on desktop/tablet:
 
 1. Select the **Terminal** button in the footer executor status bar.
-   Expected outcome: the terminal opens as a bottom-docked panel with the active shell session and a draggable top resize handle.
-2. Drag the top edge of the docked panel.
-   Expected outcome: the panel height changes within its viewport-safe bounds and persists per project.
-3. Select **Pop out** from the terminal header.
+   Expected outcome: the terminal opens as a bottom-docked overlay panel with the active shell session, header controls for font size / clear / shortcuts / preferences, and a draggable top resize handle.
+2. Select **Pin terminal (push content)** from the terminal header.
+   Expected outcome: the terminal moves into a persisted below-application panel that reserves space instead of covering the board, chat, or right sidebar. Select **Unpin terminal (overlay content)** to return to the overlay docked panel.
+3. Drag the top edge of the docked or pinned panel.
+   Expected outcome: the panel height changes within its viewport-safe bounds and persists per project, with pinned mode clamped shorter so the application remains usable.
+4. Select **Pop out** from the terminal header.
    Expected outcome: the terminal switches to a floating window that can be dragged and freely resized; size, position, and display mode are saved per project.
-4. Select **Dock** in the floating terminal.
-   Expected outcome: the terminal returns to the bottom docked panel using the saved docked height.
-5. Select the scripts chevron beside the footer **Terminal** button.
+5. Select **Dock** in the floating terminal.
+   Expected outcome: the terminal returns to the bottom docked overlay panel using the saved docked height.
+6. Select the scripts chevron beside the footer **Terminal** button.
    Expected outcome: the quick scripts menu opens without toggling the terminal; choosing a script runs it in the terminal, and the menu footer opens script management.
 
 Use the terminal on mobile:

@@ -12,6 +12,7 @@ import { AppModals } from "./components/AppModals";
 import { DashboardLoader, type DashboardLoaderStage } from "./components/DashboardLoader";
 import { TopProgressBar } from "./components/TopProgressBar";
 import { ExecutorStatusBar } from "./components/ExecutorStatusBar";
+import { TerminalModal } from "./components/TerminalModal";
 import { type CliActionId } from "./components/SessionNotificationBanner";
 import {
   isOnboardingCompleted,
@@ -937,15 +938,19 @@ function AppInner() {
     pushNav({ type: "modal", close: modalManager.closeGitHubImport });
   }, [modalManager, pushNav]);
 
+  const closeTerminalWithNav = useCallback(() => {
+    removeNav(modalManager.closeTerminal);
+    modalManager.closeTerminal();
+  }, [modalManager, removeNav]);
+
   const toggleTerminalWithNav = useCallback(() => {
     if (!modalManager.terminalOpen) {
       modalManager.toggleTerminal();
       pushNav({ type: "modal", close: modalManager.closeTerminal });
     } else {
-      removeNav(modalManager.closeTerminal);
-      modalManager.toggleTerminal();
+      closeTerminalWithNav();
     }
-  }, [modalManager, pushNav, removeNav]);
+  }, [closeTerminalWithNav, modalManager, pushNav]);
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
@@ -1475,6 +1480,7 @@ function AppInner() {
         }
       />
       <DashboardBanners {...dashboardBannersProps} />
+      <div className="dashboard-project-stack" data-testid="dashboard-project-stack">
       <div className={`dashboard-project-shell${sidebarActive ? " dashboard-project-shell--with-sidebar" : ""}${rightDockActive ? " dashboard-project-shell--with-right-dock" : ""}`} data-testid="dashboard-project-shell">
         {sidebarActive && (
           <LeftSidebarNav
@@ -1510,6 +1516,16 @@ function AppInner() {
           <MainContent {...mainContentProps} />
         </div>
         {rightDock.dock}
+      </div>
+      {currentProject && (
+        <TerminalModal
+          isOpen={modalManager.terminalOpen}
+          onClose={closeTerminalWithNav}
+          initialCommand={modalManager.terminalInitialCommand}
+          initialCommandGeneration={modalManager.terminalInitialCommandGeneration}
+          projectId={currentProject.id}
+        />
+      )}
       </div>
       {rightDock.modal}
       {executorFooterVisible && currentProject && (

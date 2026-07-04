@@ -9,7 +9,6 @@ import { ModalErrorBoundary } from "./ErrorBoundary";
 import { TaskDetailModal } from "./TaskDetailModal";
 import { GitHubImportModal } from "./GitHubImportModal";
 import { SubtaskBreakdownModal } from "./SubtaskBreakdownModal";
-import { TerminalModal } from "./TerminalModal";
 import { ScriptsModal } from "./ScriptsModal";
 import { FileBrowserModal } from "./FileBrowserModal";
 import { UsageIndicator } from "./UsageIndicator";
@@ -179,11 +178,6 @@ export function AppModals({
     removeNav(modalManager.closeSubtask);
     modalManager.closeSubtask();
   }, [modalManager.closeSubtask, removeNav]);
-
-  const closeTerminalWithNav = useCallback(() => {
-    removeNav(modalManager.closeTerminal);
-    modalManager.closeTerminal();
-  }, [modalManager.closeTerminal, removeNav]);
 
   const closeScriptsWithNav = useCallback(() => {
     removeNav(modalManager.closeScripts);
@@ -407,14 +401,6 @@ export function AppModals({
           onOpenGroupModal={openGroupModalWithNav}
         />
       </ModalErrorBoundary>
-
-      <TerminalModal
-        isOpen={modalManager.terminalOpen}
-        onClose={closeTerminalWithNav}
-        initialCommand={modalManager.terminalInitialCommand}
-        initialCommandGeneration={modalManager.terminalInitialCommandGeneration}
-        projectId={projectId}
-      />
 
       <ScriptsModal
         isOpen={modalManager.scriptsOpen}

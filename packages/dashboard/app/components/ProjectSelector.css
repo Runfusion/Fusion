@@ -566,10 +566,22 @@
 
 /* === Project Content Wrapper (footer-safe layout) === */
 
+.dashboard-project-stack {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+}
+
 .dashboard-project-shell {
   /*
   FNXC:DashboardFooterLayout 2026-06-21-10:30:
   Keep the desktop footer-height token on the project shell for sibling consumers such as the left sidebar, which cannot inherit custom properties from project-content itself.
+
+  FNXC:TerminalLayout 2026-07-04-19:26:
+  The optional pinned terminal sits below this shell inside .dashboard-project-stack, so this flex row must keep min-height:0 and relinquish vertical space instead of being covered by an overlay.
   */
   --executor-footer-height: 36px;
   display: flex;

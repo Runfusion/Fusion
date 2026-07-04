@@ -132,6 +132,57 @@ Larger grab target for the docked terminal top resize handle: it straddles the p
   background: var(--border);
 }
 
+
+/*
+FNXC:TerminalLayout 2026-07-04-19:22:
+Pinned terminal mode is an in-flow project-shell child instead of a portaled overlay. Reserve a smaller, clamped panel below the application so the board, chat, and right dock stay visible and usable above it.
+*/
+.terminal-below-host {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 0;
+  width: 100%;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.modal.terminal-modal.terminal-modal--below {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  height: var(--terminal-below-height);
+  min-height: calc(var(--space-xl) * 7.5);
+  max-width: none;
+  max-height: min(35dvh, calc(100dvh - (var(--space-2xl) * 10)));
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.terminal-below-resize-handle {
+  position: absolute;
+  top: calc(var(--space-sm) * -1);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: calc(var(--space-md) + var(--space-sm));
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.terminal-below-resize-handle::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: calc(var(--space-xs) / 2);
+  width: calc(var(--space-xl) * 2);
+  height: calc(var(--space-xs) / 2);
+  transform: translateX(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+
 .modal.terminal-modal.terminal-modal--floating {
   --floating-window-shadow: var(--shadow-lg);
   position: fixed;
@@ -723,8 +774,12 @@ The terminal header pop-out/dock affordance is an icon-only utility control. It 
 .terminal-actions {
   display: flex;
   align-items: center;
-  gap: 0;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .terminal-output {
@@ -1187,35 +1242,8 @@ The shortcut bar (modifier keys + arrow keys) must sit on ONE line, not stack in
   justify-self: start;
 }
 
-/*
-FNXC:Terminal 2026-06-23-00:15:
-Footer reads left-to-right: text-size control, then the relocated Clear/Shortcuts/Preferences action cluster, then connection status / exit code / zoom-hint pushed to the right edge (margin-left:auto on the connection status). flex-wrap keeps the action cluster from clipping when the docked/floating panel is narrow; gap replaces the old space-between distribution.
-*/
-.terminal-status-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  padding: var(--space-sm) var(--space-lg);
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-/* FNXC:Terminal 2026-06-23-00:15: Grouped cluster of the relocated Clear/Shortcuts/Preferences buttons; scrolls horizontally as a unit on very narrow footers so the buttons stay reachable instead of clipping. */
-.terminal-footer-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  min-width: 0;
-  overflow-x: auto;
-}
-
-/* FNXC:Terminal 2026-06-23-00:15: Connection status starts the right-aligned trailing group (status + exit code + zoom hint) so the left edge holds the text-size and action controls. */
 .terminal-connection-status {
   font-weight: 500;
-  margin-left: auto;
 }
 
 .terminal-connection-status.connected {
@@ -1224,7 +1252,7 @@ Footer reads left-to-right: text-size control, then the relocated Clear/Shortcut
 
 .terminal-connection-status.connecting,
 .terminal-connection-status.reconnecting {
-  color: var(--in-progress);
+  color: var(--color-warning);
 }
 
 .terminal-connection-status.disconnected {
@@ -1241,6 +1269,10 @@ Footer reads left-to-right: text-size control, then the relocated Clear/Shortcut
   align-items: center;
   justify-content: center;
   gap: var(--space-xs);
+}
+
+.terminal-font-size-controls--header {
+  flex: 0 0 auto;
 }
 
 .terminal-font-size-btn {
@@ -1649,5 +1681,21 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
   .terminal-tab-close {
     min-width: 36px;
     min-height: 36px;
+  }
+}
+
+@media (max-width: 768px) {
+  .terminal-below-host {
+    display: none;
+  }
+
+  .terminal-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .terminal-shortcuts--header,
+  .terminal-connection-status {
+    display: none;
   }
 }
