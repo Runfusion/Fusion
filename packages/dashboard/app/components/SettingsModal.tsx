@@ -10,6 +10,7 @@ import type { Settings, GlobalSettings, ThemeMode, ColorTheme, ModelPreset } fro
 import { fetchSettings, fetchSettingsByScope, updateSettings, updateGlobalSettings, fetchAuthStatus, loginProvider, logoutProvider, cancelProviderLogin, saveApiKey, clearApiKey, fetchModels, testNotification, fetchBackups, createBackup, exportSettings, importSettings, fetchMemoryFile, fetchMemoryFiles, saveMemoryFile, compactMemory, fetchGlobalConcurrency, updateGlobalConcurrency, installQmd, testMemoryRetrieval, triggerMemoryDreams, fetchGitRemotes, fetchGitRemotesDetailed, fetchGitBranches, fetchProjects, fetchDashboardHealth, checkForUpdates, installUpdate, fetchRemoteSettings, fetchRemoteStatus, installCloudflared, fetchRemoteQr, fetchRemoteUrl, submitProviderManualCode } from "../api";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, BackupListResponse, SettingsExportData, MemoryFileInfo, MemoryRetrievalTestResult, GitRemote, GitRemoteDetailed, ProjectInfo, RemoteStatus, UpdateCheckResponse, UpdateInstallResponse, OAuthDeviceCodeInfo } from "../api";
 import { splitSettingsSave } from "./settings/save-split";
+import { describeShortcutValidation, normalizeKeyboardShortcut } from "../utils/keyboardShortcuts";
 import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { ExperimentalSection } from "./settings/sections/ExperimentalSection";
@@ -2620,6 +2621,12 @@ export function SettingsModal({
     }
     setResearchLimitError(null);
 
+    const shortcutValidationError = describeShortcutValidation(form.dashboardKeyboardShortcuts ?? {});
+    if (shortcutValidationError) {
+      addToast(shortcutValidationError, "error");
+      return;
+    }
+
     setIsSaving(true);
     try {
       const normalizedWorktreeCopyFiles = normalizeWorktreeCopyFilesForSave(form.worktreeCopyFiles);
@@ -2654,6 +2661,10 @@ export function SettingsModal({
         maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(form),
         taskPrefix: form.taskPrefix?.trim() || undefined,
         githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
+        dashboardKeyboardShortcuts: {
+          quickChat: normalizeKeyboardShortcut(form.dashboardKeyboardShortcuts?.quickChat ?? "").normalized,
+          terminal: normalizeKeyboardShortcut(form.dashboardKeyboardShortcuts?.terminal ?? "").normalized,
+        },
         gitlabEnabled: gitlabFormForSave.gitlabEnabled,
         gitlabInstanceUrl: gitlabFormForSave.gitlabInstanceUrl?.trim() || undefined,
         gitlabApiBaseUrl: gitlabFormForSave.gitlabApiBaseUrl?.trim() || undefined,

@@ -40,6 +40,7 @@ import { ConfirmDialogProvider } from "./hooks/useConfirm";
 import { useTheme } from "./hooks/useTheme";
 import { useModalManager, type DetailTaskOrigin, type DetailTaskTab } from "./hooks/useModalManager";
 import { useAppSettings } from "./hooks/useAppSettings";
+import { useDashboardKeyboardShortcuts } from "./hooks/useDashboardKeyboardShortcuts";
 import { ModalDismissPreferenceProvider } from "./hooks/useOverlayDismiss";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
@@ -572,6 +573,7 @@ function AppInner() {
     taskDetailChatFirst,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
+    dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
@@ -951,6 +953,56 @@ function AppInner() {
       closeTerminalWithNav();
     }
   }, [closeTerminalWithNav, modalManager, pushNav]);
+
+  const closeTopmostPopupForShortcut = useCallback(() => {
+    /*
+    FNXC:DashboardShortcuts 2026-07-04-00:00:
+    Escape should close only one visible dashboard popup per key press. Floating user surfaces close before fixed app modals so a Quick Chat or task popout on top does not accidentally dismiss the underlying Terminal, Settings, or Task Detail modal.
+    */
+    if (quickChatOpen) {
+      setQuickChatOpen(false);
+      return true;
+    }
+    const lastPoppedOutTask = poppedOutTasks[poppedOutTasks.length - 1];
+    if (lastPoppedOutTask) {
+      closePoppedOutTask(lastPoppedOutTask.id);
+      return true;
+    }
+    if (modalManager.terminalOpen) {
+      closeTerminalWithNav();
+      return true;
+    }
+    const modalClosers: Array<[boolean, () => void]> = [
+      [modalManager.filesOpen, modalManager.closeFiles],
+      [modalManager.workflowEditorOpen, modalManager.closeWorkflowEditor],
+      [modalManager.gitManagerOpen, modalManager.closeGitManager],
+      [modalManager.activityLogOpen, modalManager.closeActivityLog],
+      [modalManager.scriptsOpen, modalManager.closeScripts],
+      [modalManager.agentsOpen, modalManager.closeAgents],
+      [modalManager.usageOpen, modalManager.closeUsage],
+      [modalManager.schedulesOpen, modalManager.closeSchedules],
+      [modalManager.githubImportOpen, modalManager.closeGitHubImport],
+      [modalManager.settingsOpen, modalManager.closeSettings],
+      [Boolean(modalManager.detailTask), modalManager.closeDetailTask],
+      [Boolean(modalManager.groupModalGroupId), modalManager.closeGroupModal],
+      [modalManager.isSubtaskOpen, modalManager.closeSubtask],
+      [modalManager.isPlanningOpen, modalManager.closePlanning],
+      [modalManager.newTaskModalOpen, modalManager.closeNewTask],
+      [modalManager.setupWizardOpen, modalManager.closeSetupWizard],
+      [modalManager.modelOnboardingOpen, modalManager.closeModelOnboarding],
+    ];
+    const match = modalClosers.find(([open]) => open);
+    if (!match) return false;
+    match[1]();
+    return true;
+  }, [closePoppedOutTask, closeTerminalWithNav, modalManager, poppedOutTasks, quickChatOpen]);
+
+  useDashboardKeyboardShortcuts({
+    shortcuts: dashboardKeyboardShortcuts,
+    openQuickChat: () => setQuickChatOpen(true),
+    toggleTerminal: toggleTerminalWithNav,
+    closeTopmostPopup: closeTopmostPopupForShortcut,
+  });
 
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);

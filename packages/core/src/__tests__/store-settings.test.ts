@@ -20,6 +20,16 @@ describe("TaskStore", () => {
       expect(settings.defaultModelId).toBe("claude-sonnet-4-5");
     });
 
+    it("persists dashboard keyboard shortcuts via global settings scope", async () => {
+      await harness.store().updateGlobalSettings({ dashboardKeyboardShortcuts: { quickChat: "Meta+K", terminal: "" } });
+      const settings = await harness.store().getSettings();
+      expect(settings.dashboardKeyboardShortcuts).toEqual({ quickChat: "Meta+K", terminal: "" });
+
+      const { global, project } = await harness.store().getSettingsByScope();
+      expect(global.dashboardKeyboardShortcuts).toEqual({ quickChat: "Meta+K", terminal: "" });
+      expect((project as Record<string, unknown>).dashboardKeyboardShortcuts).toBeUndefined();
+    });
+
     it("default settings do not include model fields", async () => {
       const settings = await harness.store().getSettings();
       expect(settings.defaultProvider).toBeUndefined();

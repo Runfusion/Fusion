@@ -13,6 +13,20 @@ When Fusion detects a newer `@runfusion/fusion` release, the Settings modal foot
 <!-- FNXC:SettingsSearchDocs 2026-07-04-00:00: Settings search is section-discovery, not a global command palette. Document that it filters visible Settings sections by section names and setting keywords while preserving feature-gated hidden sections. -->
 Use **Search settings** at the top of Settings to find the section that contains a setting by name or keyword. The same search works in the Settings modal and embedded Settings page, filters both the desktop section list and mobile section picker, and only searches sections currently visible for enabled feature flags.
 
+## Keyboard shortcuts
+
+<!-- FNXC:DashboardShortcuts 2026-07-04-00:00: Dashboard keyboard shortcuts are configurable global operator preferences. The docs must state the defaults, editable-field safety guard, duplicate/invalid save behavior, and one-popup Escape semantics so operators know why Space/Terminal/Escape act differently in text fields than on the board. -->
+Open **Settings → General → Keyboard shortcuts** to configure dashboard-wide shortcut bindings. Defaults are:
+
+- **Quick Chat:** `Space`
+- **Terminal:** <kbd>Ctrl+`</kbd>
+
+Leave a shortcut field blank to disable that action. Settings validates each shortcut before saving: unsupported key strings are marked invalid, and duplicate populated shortcuts (for example binding both Quick Chat and Terminal to `Ctrl+K`) are rejected until one binding changes or is disabled.
+
+Shortcut handling is intentionally guarded. Fusion ignores global shortcuts while focus is inside inputs, textareas, selects, contenteditable editors, chat composers, task fields, Settings fields, search boxes, and terminal input, so typing Space or shortcut letters never opens another surface unexpectedly. Hardware keyboards on desktop, tablet, and mobile use the same bindings when focus is on the page/body.
+
+Press `Escape` to close the current/topmost dashboard popup. Floating Quick Chat and popped-out task windows close before fixed app modals such as Terminal, Settings, Files, or Task Detail, and only one surface closes per key press. Nested editors and menus that already handle Escape keep first ownership by preventing the global handler.
+
 ## Mobile/PWA app icons
 
 The installed mobile/PWA home-screen icons are generated from `packages/dashboard/app/public/logo.svg` by the desktop icon generator. When the Fusion brand mark changes, run `pnpm --filter @fusion/desktop generate:icons` so `packages/dashboard/app/public/icons/icon-192.png` and `packages/dashboard/app/public/icons/icon-512.png` stay aligned with the canonical logo. Also bump `CACHE_NAME` in `packages/dashboard/app/public/sw.js` whenever those icon assets change so installed PWAs refresh the cached launcher images.

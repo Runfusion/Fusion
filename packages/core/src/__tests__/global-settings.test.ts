@@ -276,6 +276,26 @@ describe("GlobalSettingsStore", () => {
       expect(settings.testMode).toBe(true);
     });
 
+    it("round-trips dashboard keyboard shortcuts including disabled values", async () => {
+      await store.init();
+
+      await store.updateSettings({ dashboardKeyboardShortcuts: { quickChat: "", terminal: "Alt+T" } });
+
+      const settings = await store.getSettings();
+      expect(settings.dashboardKeyboardShortcuts).toEqual({ quickChat: "", terminal: "Alt+T" });
+    });
+
+    it("restores dashboard keyboard shortcut defaults when cleared", async () => {
+      await store.init();
+      await store.updateSettings({ dashboardKeyboardShortcuts: { quickChat: "Meta+K", terminal: "" } });
+
+      // @ts-expect-error - null is intentionally used to clear field (null-as-delete)
+      await store.updateSettings({ dashboardKeyboardShortcuts: null });
+
+      const settings = await store.getSettings();
+      expect(settings.dashboardKeyboardShortcuts).toEqual({ quickChat: "Space", terminal: "Ctrl+`" });
+    });
+
     it("creates directory if missing", async () => {
       const nested = join(dir, "auto", "create");
       const nestedStore = new GlobalSettingsStore(nested);

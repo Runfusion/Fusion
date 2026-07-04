@@ -608,6 +608,69 @@ describe("SettingsModal", () => {
       expect(screen.getByText(/Projects inherit this value when they do not set a project default tracking repo/i)).toBeInTheDocument();
     });
 
+    it("renders default keyboard shortcuts and saves normalized valid edits globally", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByRole("textbox", { name: "Quick Chat shortcut" })).toHaveValue("Space");
+      expect(screen.getByRole("textbox", { name: "Terminal shortcut" })).toHaveValue("Ctrl+`");
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Quick Chat shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Quick Chat shortcut" }), "meta+k");
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Terminal shortcut" }), "Alt+T");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.dashboardKeyboardShortcuts).toEqual({ quickChat: "Meta+K", terminal: "Alt+T" });
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.dashboardKeyboardShortcuts).toBeUndefined();
+      }
+    });
+
+    it("blocks duplicate and invalid keyboard shortcuts before saving", async () => {
+      const addToast = vi.fn();
+      renderModal({ initialSection: "global-general", addToast });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Quick Chat shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Quick Chat shortcut" }), "Ctrl+K");
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Terminal shortcut" }), "Control+K");
+
+      expect(screen.getByRole("alert")).toHaveTextContent("both use Ctrl+K");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("both use Ctrl+K"), "error");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Terminal shortcut" }), "Ctrl+Alt");
+      expect(screen.getByRole("textbox", { name: "Terminal shortcut" })).toHaveAttribute("aria-invalid", "true");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Terminal shortcut is invalid"), "error");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("allows disabling keyboard shortcuts with blank values", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Quick Chat shortcut" }));
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.dashboardKeyboardShortcuts).toEqual({ quickChat: "", terminal: "" });
+    });
+
+    it("keeps the keyboard shortcut layout responsive", () => {
+      expect(settingsModalCss).toMatch(/\.settings-keyboard-shortcuts__grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+      expect(settingsModalCss).toMatch(/@media \(max-width: 768px\)\s*\{[^}]*\.settings-keyboard-shortcuts__grid\s*\{[^}]*grid-template-columns:\s*1fr;/s);
+    });
+
     it("reflects persisted checked value from global settings", async () => {
       mockFetchSettings.mockResolvedValue({
         ...defaultSettings,

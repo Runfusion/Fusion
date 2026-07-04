@@ -2492,3 +2492,24 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     padding: var(--space-sm);
   }
 }
+
+/*
+FNXC:DashboardShortcuts 2026-07-04-00:00:
+Keyboard shortcut fields need to sit as a compact pair on desktop while wrapping naturally in the Settings modal and embedded Settings view on mobile. Use token spacing and existing input styling so validation states do not create orphaned labels or button shells.
+*/
+.settings-keyboard-shortcuts__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.settings-keyboard-shortcuts__grid > .form-group {
+  margin-top: 0;
+  padding: 0;
+}
+
+@media (max-width: 768px) {
+  .settings-keyboard-shortcuts__grid {
+    grid-template-columns: 1fr;
+  }
+}

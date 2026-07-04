@@ -5,6 +5,12 @@ import { TrackingRepoSelect, type TrackingRepoOption } from "../../TrackingRepoS
 import { CliBinaryPanel } from "../../CliBinaryPanel";
 import type { SectionBaseProps } from "./context";
 import { useTranslation } from "react-i18next";
+import {
+    DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS,
+    describeShortcutValidation,
+    normalizeKeyboardShortcut,
+    resolveDashboardKeyboardShortcuts,
+} from "../../../utils/keyboardShortcuts";
 export interface GlobalGeneralSectionProps extends SectionBaseProps {
     scopeBanner: ReactNode;
     globalSettings: Pick<GlobalSettings, "gitlabEnabled" | "gitlabInstanceUrl" | "gitlabApiBaseUrl" | "gitlabAuthToken" | "gitlabAuthTokenType"> | null;
@@ -16,6 +22,17 @@ export interface GlobalGeneralSectionProps extends SectionBaseProps {
 export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSettings, onGlobalGitlabSettingsChange, globalTrackingRepoOptions, globalTrackingRepoLoading, globalTrackingRepoError, }: GlobalGeneralSectionProps) {
     const { t } = useTranslation("app");
     const globalGitlab = globalSettings ?? form;
+    const shortcutValues = resolveDashboardKeyboardShortcuts(form.dashboardKeyboardShortcuts);
+    const shortcutValidationMessage = describeShortcutValidation(shortcutValues);
+    const quickChatShortcut = normalizeKeyboardShortcut(shortcutValues.quickChat);
+    const terminalShortcut = normalizeKeyboardShortcut(shortcutValues.terminal);
+    const updateShortcut = (action: "quickChat" | "terminal", value: string) => setForm((f) => ({
+        ...f,
+        dashboardKeyboardShortcuts: {
+            ...resolveDashboardKeyboardShortcuts(f.dashboardKeyboardShortcuts),
+            [action]: value,
+        },
+    }));
     return (<>
       {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.globalGeneral.general", "General")}</h4>
@@ -64,6 +81,27 @@ export function GlobalGeneralSection({ scopeBanner, form, setForm, globalSetting
         </div>
       </details>
       <CliBinaryPanel />
+      {/*
+        FNXC:DashboardShortcuts 2026-07-04-00:00:
+        Keyboard shortcut controls live in Global General because shortcuts open user-interface surfaces for the current browser/operator, not project execution behavior. Blank inputs intentionally disable the action; duplicate or invalid populated shortcuts are blocked before save.
+      */}
+      <div className="form-group settings-keyboard-shortcuts" data-testid="keyboard-shortcuts-settings">
+        <h5 className="settings-section-heading">{t("settings.globalGeneral.keyboardShortcuts", "Keyboard shortcuts")}</h5>
+        <p className="settings-description">{t("settings.globalGeneral.keyboardShortcutsHint", "Configure global dashboard shortcuts. Shortcuts are ignored while typing in inputs, editors, chat composers, and terminal fields.")}</p>
+        <div className="settings-keyboard-shortcuts__grid">
+          <div className="form-group">
+            <label htmlFor="dashboardShortcutQuickChat">{t("settings.globalGeneral.quickChatShortcut", "Quick Chat shortcut")}</label>
+            <input id="dashboardShortcutQuickChat" className="input" value={shortcutValues.quickChat} placeholder={DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS.quickChat} aria-invalid={!quickChatShortcut.valid || undefined} aria-describedby="dashboardShortcutQuickChatHint" onChange={(e) => updateShortcut("quickChat", e.target.value)}/>
+            <small id="dashboardShortcutQuickChatHint">{quickChatShortcut.valid ? t("settings.globalGeneral.quickChatShortcutHint", "Default: Space. Leave blank to disable Quick Chat keyboard opening.") : quickChatShortcut.error}</small>
+          </div>
+          <div className="form-group">
+            <label htmlFor="dashboardShortcutTerminal">{t("settings.globalGeneral.terminalShortcut", "Terminal shortcut")}</label>
+            <input id="dashboardShortcutTerminal" className="input" value={shortcutValues.terminal} placeholder={DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS.terminal} aria-invalid={!terminalShortcut.valid || undefined} aria-describedby="dashboardShortcutTerminalHint" onChange={(e) => updateShortcut("terminal", e.target.value)}/>
+            <small id="dashboardShortcutTerminalHint">{terminalShortcut.valid ? t("settings.globalGeneral.terminalShortcutHint", "Default: Ctrl+`. Leave blank to disable Terminal keyboard opening.") : terminalShortcut.error}</small>
+          </div>
+        </div>
+        {shortcutValidationMessage && <small className="settings-description error-text" role="alert">{shortcutValidationMessage}</small>}
+      </div>
       <div className="form-group">
         <label htmlFor="dismissModalsOnOutsideClick" className="checkbox-label">
           <input id="dismissModalsOnOutsideClick" type="checkbox" checked={form.dismissModalsOnOutsideClick === true} onChange={(e) => setForm((f) => ({ ...f, dismissModalsOnOutsideClick: e.target.checked }))}/>{t("settings.globalGeneral.dismissModalsByClickingOutside", " Dismiss modals by clicking outside ")}</label>

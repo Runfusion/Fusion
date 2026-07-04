@@ -3008,6 +3008,13 @@ export interface McpServersSettings {
   servers?: McpServerDefinition[];
 }
 
+export interface DashboardKeyboardShortcuts {
+  /** Opens the dashboard Quick Chat surface. Empty string disables this shortcut. Default: "Space". */
+  quickChat?: string;
+  /** Opens or toggles the dashboard Terminal surface. Empty string disables this shortcut. Default: "Ctrl+`". */
+  terminal?: string;
+}
+
 export interface GlobalSettings {
   /** Theme mode preference: dark, light, or system (follows OS). Default: "dark". */
   themeMode?: ThemeMode;
@@ -3017,6 +3024,11 @@ export interface GlobalSettings {
   shadcnCustomColors?: Record<string, string>;
   /** Dashboard font size scale percentage. Bounded to 85-125. Default: 100. */
   dashboardFontScalePct?: number;
+  /**
+   * FNXC:DashboardShortcuts 2026-07-04-00:00:
+   * Dashboard keyboard shortcuts are global operator preferences because they control browser UI affordances, not project execution policy. Defaults keep Space for Quick Chat and Ctrl+` for Terminal; blank values intentionally disable an action.
+   */
+  dashboardKeyboardShortcuts?: DashboardKeyboardShortcuts;
   /**
    * FNXC:ModalDismissal 2026-06-29-00:00:
    * Modal backdrop dismissal is a global operator preference, not project policy. Default false keeps fixed modal overlays from closing on accidental outside clicks unless the operator opts in.

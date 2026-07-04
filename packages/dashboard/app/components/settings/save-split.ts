@@ -80,6 +80,7 @@ const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "gitlabAuthTokenType",
     "language",
     "dismissModalsOnOutsideClick",
+    "dashboardKeyboardShortcuts",
     "persistAgentToolOutput",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",
