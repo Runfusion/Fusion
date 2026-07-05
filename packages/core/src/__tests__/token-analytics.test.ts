@@ -423,7 +423,7 @@ describe("token-analytics", () => {
     );
   });
 
-  it("groups by provider, node, and agent", () => {
+  it("groups by provider, node, agent, and task", () => {
     insertTask(db, { id: "t1", inputTokens: 100, totalTokens: 100, lastUsedAt: "2026-03-01T00:00:00.000Z", modelProvider: "anthropic", nodeId: "node-1", agentId: "agent-x" });
     insertTask(db, { id: "t2", inputTokens: 200, totalTokens: 200, lastUsedAt: "2026-03-02T00:00:00.000Z", modelProvider: "openai", nodeId: "node-1", agentId: "agent-y" });
 
@@ -440,6 +440,11 @@ describe("token-analytics", () => {
     const byAgent = aggregateTokenAnalytics(db, { groupBy: "agent" });
     expect(new Map(byAgent.groups.map((g) => [g.key, g.totalTokens]))).toEqual(
       new Map([["agent-x", 100], ["agent-y", 200]]),
+    );
+
+    const byTask = aggregateTokenAnalytics(db, { groupBy: "task" });
+    expect(new Map(byTask.groups.map((g) => [g.key, g.totalTokens]))).toEqual(
+      new Map([["t1", 100], ["t2", 200]]),
     );
   });
 

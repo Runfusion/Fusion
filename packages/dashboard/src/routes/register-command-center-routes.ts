@@ -67,6 +67,7 @@ const VALID_GROUP_BY: ReadonlySet<string> = new Set<TokenGroupBy>([
   "provider",
   "node",
   "agent",
+  "task",
 ]);
 
 const VALID_TOKEN_GRANULARITY: ReadonlySet<string> = new Set<TokenTimeGranularity>([
@@ -174,7 +175,7 @@ export const registerCommandCenterRoutes: ApiRouteRegistrar = (ctx) => {
   /**
    * GET /api/command-center/tokens
    * Token consumption + derived USD cost (U2 + U3) over a date range.
-   * Query: from, to (ISO-8601), groupBy (model|provider|node|agent).
+   * Query: from, to (ISO-8601), groupBy (model|provider|node|agent|task).
    */
   router.get("/command-center/tokens", async (req, res) => {
     try {
