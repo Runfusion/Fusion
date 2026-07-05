@@ -1307,6 +1307,17 @@ export interface CreateAiUndoTaskDeps {
   /** Idempotency lookup — see `REVERT_OF_METADATA_KEY`. Implemented by `TaskStore.findOpenRevertTaskForSource` (core). */
   findOpenRevertTaskForSource(sourceTaskId: string): Promise<Task | null>;
   sourceTask: Pick<Task, "id" | "title" | "description" | "prompt" | "mergeDetails" | "priority">;
+  /**
+   * FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
+   * Workflow id to select for the created AI-undo task, forwarded verbatim
+   * into `createTask({ workflowId })`. The CALLER (the route) resolves and
+   * validates this from the `aiUndoTaskWorkflowId` project setting (default
+   * `builtin:review-heavy`) — this helper stays pure and never reads
+   * settings/the store itself. A blank/undefined value means the created
+   * task INHERITS the project default workflow (`createTask`'s `undefined`
+   * semantics) — do NOT pass `null` here, which would mean "no workflow".
+   */
+  workflowId?: string;
 }
 
 /**
@@ -1326,6 +1337,10 @@ export async function createAiUndoTask(deps: CreateAiUndoTaskDeps): Promise<AiUn
   }
 
   const description = buildAiUndoTaskDescription({ task: sourceTask });
+  // FNXC:TaskRevert 2026-07-05-00:00 (FN-7556): forward `workflowId` ONLY when
+  // a non-empty string is supplied; otherwise omit the key entirely so
+  // `createTask` inherits the project default (never pass `null`/"" through).
+  const workflowId = deps.workflowId && deps.workflowId.trim() !== "" ? deps.workflowId : undefined;
   const created = await deps.createTask({
     title: `Undo ${sourceTask.id}: ${sourceTask.title ?? sourceTask.description.slice(0, 80)}`,
     description,
@@ -1335,6 +1350,7 @@ export async function createAiUndoTask(deps: CreateAiUndoTaskDeps): Promise<AiUn
       sourceType: "recovery",
       sourceMetadata: { [REVERT_OF_METADATA_KEY]: sourceTask.id },
     },
+    ...(workflowId !== undefined ? { workflowId } : {}),
   });
 
   return { mode: "ai", createdTaskId: created.id };

@@ -3673,6 +3673,20 @@ export interface ProjectSettings {
   /** Default custom workflow (WF-…) applied to newly created tasks when the
    *  caller does not specify enabledWorkflowSteps. Overridable per task. */
   defaultWorkflowId?: string;
+  /**
+   * FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
+   * Workflow selected for AI-undo board tasks (`createAiUndoTask`, engine
+   * `task-revert.ts`) — these tasks surgically reverse ALREADY-SHIPPED code
+   * while preserving unrelated later changes to the same files, so they
+   * warrant a stricter default review posture than ordinary new work.
+   * Defaults to `builtin:review-heavy` (see `DEFAULT_PROJECT_SETTINGS`).
+   * Empty/unset means AI-undo tasks inherit the project default workflow
+   * (today's pre-FN-7556 behavior). The route resolving this setting
+   * (`POST /api/tasks/:id/revert`) validates the configured id exists and
+   * falls back to inherit (undefined) on a blank/unknown value so a
+   * misconfigured id never breaks AI-undo task creation.
+   */
+  aiUndoTaskWorkflowId?: string;
   /** Built-in workflow ids visible/selectable in project workflow pickers.
    *  Undefined preserves the default of showing every built-in workflow. */
   enabledBuiltinWorkflowIds?: string[];

@@ -296,6 +296,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   globalPause: false,
   globalPauseReason: undefined,
   defaultWorkflowId: undefined,
+  // FNXC:TaskRevert 2026-07-05-00:00 (FN-7556): AI-undo tasks reverse
+  // already-shipped code, so default them to the stricter review-heavy
+  // workflow; empty/unset means inherit the project default workflow.
+  aiUndoTaskWorkflowId: "builtin:review-heavy",
   enabledBuiltinWorkflowIds: undefined,
   approvedWorkflowCliCommands: undefined,
   approvedCliAutonomyAdapters: undefined,

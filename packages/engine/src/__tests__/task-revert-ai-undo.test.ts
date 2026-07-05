@@ -111,4 +111,71 @@ describe("createAiUndoTask (FN-7524)", () => {
     expect(result).toEqual({ mode: "ai", createdTaskId: "FN-955", alreadyOpen: true });
     expect(createTask).not.toHaveBeenCalled();
   });
+
+  it("forwards a non-blank workflowId into the createTask input (FN-7556)", async () => {
+    const createTask = vi.fn(async (input: TaskCreateInput) => makeExistingTask({
+      id: "FN-961",
+      description: input.description,
+      dependencies: input.dependencies ?? [],
+      sourceParentTaskId: input.source?.sourceParentTaskId,
+      sourceMetadata: input.source?.sourceMetadata,
+    }));
+    const findOpenRevertTaskForSource = vi.fn(async () => null);
+
+    const result = await createAiUndoTask({
+      createTask,
+      findOpenRevertTaskForSource,
+      sourceTask: makeSourceTask(),
+      workflowId: "builtin:review-heavy",
+    });
+
+    expect(result).toEqual({ mode: "ai", createdTaskId: "FN-961" });
+    const input = createTask.mock.calls[0][0] as TaskCreateInput;
+    expect(input.workflowId).toBe("builtin:review-heavy");
+  });
+
+  it("omits the workflowId key entirely when no/blank workflowId is supplied (inherit project default, FN-7556)", async () => {
+    const createTask = vi.fn(async (input: TaskCreateInput) => makeExistingTask({
+      id: "FN-962",
+      description: input.description,
+      dependencies: input.dependencies ?? [],
+      sourceParentTaskId: input.source?.sourceParentTaskId,
+      sourceMetadata: input.source?.sourceMetadata,
+    }));
+    const findOpenRevertTaskForSource = vi.fn(async () => null);
+
+    await createAiUndoTask({
+      createTask,
+      findOpenRevertTaskForSource,
+      sourceTask: makeSourceTask(),
+    });
+    const noWorkflowIdInput = createTask.mock.calls[0][0] as TaskCreateInput;
+    expect("workflowId" in noWorkflowIdInput).toBe(false);
+
+    createTask.mockClear();
+    await createAiUndoTask({
+      createTask,
+      findOpenRevertTaskForSource,
+      sourceTask: makeSourceTask(),
+      workflowId: "   ",
+    });
+    const blankWorkflowIdInput = createTask.mock.calls[0][0] as TaskCreateInput;
+    expect("workflowId" in blankWorkflowIdInput).toBe(false);
+  });
+
+  it("never creates a task on the idempotent alreadyOpen path regardless of workflowId (FN-7556)", async () => {
+    const createTask = vi.fn();
+    const existing = makeExistingTask({ id: "FN-963", column: "triage" });
+    const findOpenRevertTaskForSource = vi.fn(async () => existing);
+
+    const result = await createAiUndoTask({
+      createTask,
+      findOpenRevertTaskForSource,
+      sourceTask: makeSourceTask(),
+      workflowId: "builtin:review-heavy",
+    });
+
+    expect(result).toEqual({ mode: "ai", createdTaskId: "FN-963", alreadyOpen: true });
+    expect(createTask).not.toHaveBeenCalled();
+  });
 });

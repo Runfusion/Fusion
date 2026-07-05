@@ -108,7 +108,13 @@ function makeWorkspaceTask(overrides: Partial<Task>): Task {
 
 function createMockStore(
   task: Task,
-  opts?: { openUndoTask?: Task | null; createdUndoTask?: Task; autoMerge?: boolean },
+  opts?: {
+    openUndoTask?: Task | null;
+    createdUndoTask?: Task;
+    autoMerge?: boolean;
+    aiUndoTaskWorkflowId?: string;
+    knownWorkflowIds?: string[];
+  },
 ): TaskStore {
   let nextId = 800;
   const createTask = vi.fn().mockImplementation(async (input: { description: string; source?: { sourceParentTaskId?: string; sourceMetadata?: Record<string, unknown> } }) => {
@@ -126,9 +132,19 @@ function createMockStore(
     return created;
   });
   const findOpenRevertTaskForSource = vi.fn().mockResolvedValue(opts?.openUndoTask ?? null);
+  // FN-7556: `getWorkflowDefinition` backs the route's validation of a
+  // configured (non-builtin) `aiUndoTaskWorkflowId`; default to "unknown" so
+  // tests must explicitly declare a custom id as known via `knownWorkflowIds`.
+  const getWorkflowDefinition = vi.fn().mockImplementation(async (id: string) =>
+    (opts?.knownWorkflowIds ?? []).includes(id) ? { id, name: id, ir: {} } : undefined,
+  );
   return {
     getSettings: vi.fn().mockResolvedValue({}),
-    getSettingsFast: vi.fn().mockResolvedValue({ autoMerge: opts?.autoMerge ?? true }),
+    getSettingsFast: vi.fn().mockResolvedValue({
+      autoMerge: opts?.autoMerge ?? true,
+      aiUndoTaskWorkflowId: opts?.aiUndoTaskWorkflowId,
+    }),
+    getWorkflowDefinition,
     getRootDir: vi.fn().mockReturnValue(makeGitRepoOnMain()),
     getTask: vi.fn().mockResolvedValue(task),
     getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
@@ -397,6 +413,38 @@ describe("POST /tasks/:id/revert — FN-7524 mode + AI-undo fallback", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "ai", createdTaskId: "FN-950", alreadyOpen: true });
     expect(store.createTask as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  it("(FN-7556) forwards the configured aiUndoTaskWorkflowId (default review-heavy) into the created AI-undo task", async () => {
+    const task = makeTask({ id: "FN-970", column: "done" });
+    const store = createMockStore(task, { aiUndoTaskWorkflowId: "builtin:review-heavy" });
+
+    const res = await POST_JSON(createApp(store), `/api/tasks/${task.id}/revert`, { mode: "ai" });
+    expect(res.status).toBe(200);
+    expect(store.createTask as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    const createInput = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0] as { workflowId?: string };
+    expect(createInput.workflowId).toBe("builtin:review-heavy");
+  });
+
+  it("(FN-7556) a blank/unset aiUndoTaskWorkflowId omits workflowId so the task inherits the project default", async () => {
+    const task = makeTask({ id: "FN-971", column: "done" });
+    const store = createMockStore(task, { aiUndoTaskWorkflowId: "" });
+
+    const res = await POST_JSON(createApp(store), `/api/tasks/${task.id}/revert`, { mode: "ai" });
+    expect(res.status).toBe(200);
+    const createInput = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0] as { workflowId?: string };
+    expect("workflowId" in createInput).toBe(false);
+  });
+
+  it("(FN-7556) an unknown configured workflow id falls back to inherit (task still created, no 500)", async () => {
+    const task = makeTask({ id: "FN-972", column: "done" });
+    const store = createMockStore(task, { aiUndoTaskWorkflowId: "WF-does-not-exist", knownWorkflowIds: [] });
+
+    const res = await POST_JSON(createApp(store), `/api/tasks/${task.id}/revert`, { mode: "ai" });
+    expect(res.status).toBe(200);
+    expect(store.createTask as ReturnType<typeof vi.fn>).toHaveBeenCalledTimes(1);
+    const createInput = (store.createTask as ReturnType<typeof vi.fn>).mock.calls[0][0] as { workflowId?: string };
+    expect("workflowId" in createInput).toBe(false);
   });
 
   it("(d) auto + clean: returns the git result and does NOT create an AI-undo task", async () => {

@@ -45,6 +45,7 @@ import {
   isWorkflowColumnsEnabled,
   TransitionRejectionError,
   getPlannerInterventionTimeline,
+  isBuiltinWorkflowId,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
@@ -1744,11 +1745,40 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         granularity = requestedGranularity;
       }
 
+      /*
+      FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
+      `settings` is fetched HERE (before `createAiUndoResult` is defined/used)
+      because the `mode === "ai"` early-return path below uses the closure
+      before the git-path `settings` fetch that used to follow it. AI-undo
+      tasks default to the `aiUndoTaskWorkflowId` project setting (default
+      `builtin:review-heavy` — a stricter review posture than ordinary new
+      work, since these tasks reverse already-shipped code). A blank/whitespace
+      value means inherit the project default workflow; a non-blank value that
+      does not resolve to a real workflow (custom or builtin) is logged and
+      falls back to inherit too — a misconfigured id must never break AI-undo
+      task creation.
+      */
+      const settings = await scopedStore.getSettingsFast();
+      const configuredAiUndoWorkflowId = settings.aiUndoTaskWorkflowId?.trim();
+      let aiUndoWorkflowId: string | undefined;
+      if (configuredAiUndoWorkflowId) {
+        const exists =
+          isBuiltinWorkflowId(configuredAiUndoWorkflowId) || Boolean(await scopedStore.getWorkflowDefinition(configuredAiUndoWorkflowId));
+        if (exists) {
+          aiUndoWorkflowId = configuredAiUndoWorkflowId;
+        } else {
+          console.warn(
+            `[task-revert] aiUndoTaskWorkflowId "${configuredAiUndoWorkflowId}" does not resolve to a known workflow; AI-undo task will inherit the project default workflow instead`,
+          );
+        }
+      }
+
       const createAiUndoResult = async (): Promise<AiUndoTaskResult> =>
         createAiUndoTask({
           createTask: (input) => scopedStore.createTask(input),
           findOpenRevertTaskForSource: (id) => scopedStore.findOpenRevertTaskForSource(id),
           sourceTask: task,
+          workflowId: aiUndoWorkflowId,
         });
 
       if (mode === "ai") {
@@ -1757,7 +1787,6 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       }
 
       const rootDir = scopedStore.getRootDir();
-      const settings = await scopedStore.getSettingsFast();
 
       /*
       FNXC:TaskRevert 2026-07-04-00:00 (FN-7547 — workspace dispatch):
