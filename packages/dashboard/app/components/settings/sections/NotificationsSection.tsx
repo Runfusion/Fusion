@@ -79,7 +79,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
                 failureNotificationDelayMs: Number.isFinite(parsed) && parsed >= 0 ? parsed : 0,
             }));
         }}/>
-          <small>{t("settings.notifications.howLongAFailureMustPersistBeforeA", " How long a failure must persist before a push notification is sent. 0 = notify immediately. ")}</small>
+          <small>{t("settings.notifications.howLongAFailureMustPersistBeforeA", " How long a failure must persist before a push notification is sent. 0 = notify immediately. Default: 30000 (30 seconds). ")}</small>
         </div>
       </div>
 
@@ -88,6 +88,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
           <strong>{t("settings.notifications.ntfy", "ntfy")}</strong>
           <label htmlFor="ntfyEnabled" className="checkbox-label">
             <input id="ntfyEnabled" type="checkbox" checked={form.ntfyEnabled || false} onChange={(e) => setForm((f) => ({ ...f, ntfyEnabled: e.target.checked }))}/>{t("settings.notifications.enable", " Enable ")}</label>
+          <small>{t("settings.notifications.ntfyEnabledHint", "Default: disabled.")}</small>
         </div>
         {form.ntfyEnabled && (<div className="notification-provider-body">
             <div className="form-group">
@@ -96,7 +97,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
                 const val = e.target.value;
                 setForm((f) => ({ ...f, ntfyTopic: val || undefined }));
             }}/>
-              <small>{t("settings.notifications.yourNtfyShTopicName164Alphanumeric", " Your ntfy.sh topic name (1\u201364 alphanumeric/hyphen/underscore characters).")}{" "}
+              <small>{t("settings.notifications.yourNtfyShTopicName164Alphanumeric", " Your ntfy.sh topic name (1\u201364 alphanumeric/hyphen/underscore characters). No default \u2014 unset.")}{" "}
                 <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer" className="settings-inline-link">{t("settings.notifications.learnMoreAboutNtfySh", " Learn more about ntfy.sh ")}</a>
               </small>
               {form.ntfyTopic && !/^[a-zA-Z0-9_-]{1,64}$/.test(form.ntfyTopic) && (<small className="field-error">{t("settings.notifications.topicMustBe164AlphanumericHyphenOr", " Topic must be 1\u201364 alphanumeric, hyphen, or underscore characters ")}</small>)}
@@ -108,13 +109,13 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
                 const value = e.target.value;
                 setForm((f) => ({ ...f, ntfyBaseUrl: value || undefined }));
             }}/>
-                  <small>{t("settings.notifications.leaveBlankToKeepTheDefaultServerHttps", " Leave blank to keep the default server: https://ntfy.sh. Custom servers must use http:// or https://. ")}</small>
+                  <small>{t("settings.notifications.leaveBlankToKeepTheDefaultServerHttps", " Leave blank to keep the default server: https://ntfy.sh. Custom servers must use http:// or https://. No default \u2014 unset. ")}</small>
                   <label htmlFor="ntfyAccessToken">{t("settings.notifications.accessTokenOptional", "Access token (optional)")}</label>
                   <input id="ntfyAccessToken" type="password" autoComplete="off" placeholder={t("settings.notifications.tk", "tk_...")} value={form.ntfyAccessToken || ""} onChange={(e) => {
                 const value = e.target.value;
                 setForm((f) => ({ ...f, ntfyAccessToken: value || undefined }));
             }}/>
-                  <small>{t("settings.notifications.leaveBlankToPublishWithoutAuthenticationWhenSet", " Leave blank to publish without authentication. When set, Fusion sends an Authorization Bearer header with ntfy requests. ")}</small>
+                  <small>{t("settings.notifications.leaveBlankToPublishWithoutAuthenticationWhenSet", " Leave blank to publish without authentication. When set, Fusion sends an Authorization Bearer header with ntfy requests. No default \u2014 unset. ")}</small>
                 </div>
               </details>
             </div>
@@ -145,7 +146,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
                 const val = e.target.value;
                 setForm((f) => ({ ...f, ntfyDashboardHost: val || undefined }));
             }}/>
-              <small>{t("settings.notifications.baseURLForDeepLinksInNotificationsWhen", " Base URL for deep links in notifications. When set, clicking a notification opens the dashboard directly to the task. ")}</small>
+              <small>{t("settings.notifications.baseURLForDeepLinksInNotificationsWhen", " Base URL for deep links in notifications. When set, clicking a notification opens the dashboard directly to the task. No default \u2014 unset. ")}</small>
               {form.ntfyDashboardHost && !/^https?:\/\/.+/.test(form.ntfyDashboardHost) && (<small className="field-error">{t("settings.notifications.mustBeAValidURLStartingWithHttp", " Must be a valid URL starting with http:// or https:// ")}</small>)}
             </div>
             <div className="notification-provider-actions">
@@ -190,6 +191,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
           <strong>{t("settings.notifications.webhook", "Webhook")}</strong>
           <label htmlFor="webhookEnabled" className="checkbox-label">
             <input id="webhookEnabled" type="checkbox" checked={form.webhookEnabled || false} onChange={(e) => setForm((f) => ({ ...f, webhookEnabled: e.target.checked }))}/>{t("settings.notifications.webhookNotifications", " Webhook notifications ")}</label>
+          <small>{t("settings.notifications.webhookEnabledHint", "Default: disabled.")}</small>
         </div>
         {form.webhookEnabled && (<div className="notification-provider-body">
             <div className="form-group">
@@ -198,6 +200,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
                 const val = e.target.value;
                 setForm((f) => ({ ...f, webhookUrl: val || undefined }));
             }}/>
+              <small>{t("settings.notifications.webhookUrlHint", "No default \u2014 unset.")}</small>
             </div>
             <div className="form-group">
               <label htmlFor="webhookFormat">{t("settings.notifications.format", "Format")}</label>
@@ -209,6 +212,7 @@ export function NotificationsSection({ scopeBanner, form, setForm, testNotificat
                 <option value="discord">{t("settings.notifications.discord", "Discord")}</option>
                 <option value="generic">{t("settings.notifications.generic", "Generic")}</option>
               </select>
+              <small>{t("settings.notifications.webhookFormatHint", "Default: generic.")}</small>
             </div>
             <div className="form-group">
               <label>{t("settings.notifications.notifyOnEvents", "Notify on events")}</label>

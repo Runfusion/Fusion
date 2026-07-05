@@ -13,6 +13,35 @@ When Fusion detects a newer `@runfusion/fusion` release, the Settings modal foot
 <!-- FNXC:SettingsSearchDocs 2026-07-04-00:00: Settings search is section-discovery, not a global command palette. Document that it filters visible Settings sections by section names and setting keywords while preserving feature-gated hidden sections. -->
 Use **Search settings** at the top of Settings to find the section that contains a setting by name or keyword. The same search works in the Settings modal and embedded Settings page, filters both the desktop section list and mobile section picker, and only searches sections currently visible for enabled feature flags.
 
+<!-- FNXC:SettingsDefaults 2026-07-04-00:00: FN-7505 requires every user-editable setting's help text to state its own default value, so operators reading a field's description know what it defaults to without checking the reference doc. -->
+Every user-editable setting's help text (the `.settings-description`/`<small>` hint under a field) states its own default value — for example “Default: 3.”, “Default: enabled.”, or “No default — unset (inherits the global setting).” for values that fall back to another scope. Canonical default values come from `DEFAULT_GLOBAL_SETTINGS` / `DEFAULT_PROJECT_SETTINGS` in `packages/core/src/settings-schema.ts`; the dashboard copy never invents a number. A guard test (`settings-default-descriptions.test.tsx`) enforces that every surfaced setting states its default and that every `DEFAULT_SETTINGS` key is either documented or explicitly allowlisted as not surfaced in the Settings UI.
+
+## Reset Settings
+
+<!-- FNXC:SettingsResetDocs 2026-07-04-00:00: Reset Settings is a DESTRUCTIVE action. Document both choices, the scope-precision guarantee, and which sections are excluded so operators understand exactly what a reset does and does not touch before they click it. -->
+The Settings footer includes a **Reset Settings** button, next to Import/Export, in both the Settings modal and the embedded Settings page (desktop and mobile). Selecting it opens a confirmation dialog with two destructive choices, plus Cancel:
+
+- **Reset this menu ({{section}})** — resets only the settings owned by the currently active section, at that section's own scope (global or project). A global section (for example Appearance) writes the section's keys back to their canonical defaults. A project section (for example Merge) clears the section's keys back to their inherited/default value. No other section's settings are touched.
+- **Reset all project settings** — resets every project-scoped setting for the current project back to its default/inherited value. This never touches global (cross-project) settings.
+
+Both actions are irreversible; there is no undo after confirming. The dialog closes and the form refreshes to show the reset values immediately after a successful reset.
+
+**Excluded sections.** Some sections are not a simple settings form and are intentionally excluded from **Reset this menu** (the button is disabled with an explanatory tooltip when one of these is the active section), because each already has its own dedicated management flow: **Secrets**, **MCP Servers** (global and project), **Plugins**, **Memory**, **Authentication**, **Prompts**, **CLI Agents**, and the **Hermes**/**OpenClaw**/**Paperclip** runtime sections. **Reset all project settings** is unaffected by this exclusion list since it resets the underlying project settings values directly, not through any of those sections' own flows.
+
+## Keyboard shortcuts
+
+<!-- FNXC:DashboardShortcuts 2026-07-04-00:00: Dashboard keyboard shortcuts are configurable global operator preferences. The docs must state the defaults, editable-field safety guard, duplicate/invalid save behavior, and one-popup Escape semantics so operators know why Space/Terminal/Escape act differently in text fields than on the board. -->
+Open **Settings → General → Keyboard shortcuts** to configure dashboard-wide shortcut bindings. Defaults are:
+
+- **Quick Chat:** `Space`
+- **Terminal:** <kbd>Ctrl+`</kbd>
+
+Leave a shortcut field blank to disable that action. Settings validates each shortcut before saving: unsupported key strings are marked invalid, and duplicate populated shortcuts (for example binding both Quick Chat and Terminal to `Ctrl+K`) are rejected until one binding changes or is disabled.
+
+Shortcut handling is intentionally guarded. Fusion ignores global shortcuts while focus is inside inputs, textareas, selects, contenteditable editors, chat composers, task fields, Settings fields, search boxes, and terminal input, so typing Space or shortcut letters never opens another surface unexpectedly. Hardware keyboards on desktop, tablet, and mobile use the same bindings when focus is on the page/body.
+
+Press `Escape` to close the current/topmost dashboard popup. Popped-out task windows and floating Quick Chat close before fixed app modals such as Terminal, Settings, Files, or Task Detail, and only one surface closes per key press. Nested editors and menus that already handle Escape keep first ownership by preventing the global handler.
+
 ## Mobile/PWA app icons
 
 The installed mobile/PWA home-screen icons are generated from `packages/dashboard/app/public/logo.svg` by the desktop icon generator. When the Fusion brand mark changes, run `pnpm --filter @fusion/desktop generate:icons` so `packages/dashboard/app/public/icons/icon-192.png` and `packages/dashboard/app/public/icons/icon-512.png` stay aligned with the canonical logo. Also bump `CACHE_NAME` in `packages/dashboard/app/public/sw.js` whenever those icon assets change so installed PWAs refresh the cached launcher images.
@@ -402,6 +431,7 @@ Rules:
 - `auto-new` creates a branch after task creation using `fusion/{task-id}-{short-name}` (for example `fusion/fn-5671-branch-strategy-dropdown`).
 - `Merge target / base branch` stays optional for all modes and uses the same branch-dropdown + `Custom…` fallback behavior as Planning Mode.
 - In **More options → Model Configuration**, **Auto-merge** is a per-task override with three states: **Default** (follow project setting), **Enabled**, or **Disabled**.
+- In **More options → Model Configuration**, **Planner oversight** is a per-task override of the workflow-native `plannerOversightLevel` setting (FN-7508): **Inherit from workflow** (default) plus **Off**, **Observe**, **Steer**, and **Autonomous recovery**. This selector appears in both the New Task dialog and the Task Detail edit form (same shared control). Selecting **Inherit from workflow** clears the per-task override (sent as `null` on edit, omitted on create) so the task falls back to the effective `plannerOversightLevel` configured on its workflow — set project/global defaults for this in the **Workflow Editor → Values** tab, not in Project Settings; it is workflow-native, not a project setting.
 
 The dialog also exposes AI handoffs that quick-add no longer shows: **Plan** opens Planning Mode with the current description, and **Subtask** opens Subtask Breakdown with the current description when **Settings → Experimental Features → Subtask Breakdown** is enabled. The Subtask handoff is hidden by default; visible handoff buttons remain disabled until the description has content, matching the quick-add row behavior for Subtask. **Execution mode** and optional workflow-step selection are available in the New Task dialog as well as quick entry, so users can choose Fast or standard execution and opt into workflow-specific creation-time steps before creating a task from either surface.
 

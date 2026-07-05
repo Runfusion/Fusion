@@ -37,8 +37,8 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
       <h4 className="settings-section-heading">{t("settings.researchGlobal.researchDefaults", "Research Defaults")}</h4>
       <div className="form-group settings-research-provider-group">
         <label htmlFor="research-global-provider-builtin" className="checkbox-label">
-          <input id="research-global-provider-builtin" type="radio" name="research-global-search-provider" checked={!externalProvider} onChange={() => setSearchProvider("builtin")}/>{t("settings.researchGlobal.builtInUsesAgentWebTools", " Built-in (uses agent web tools) ")}</label>
-        <small>{t("settings.researchGlobal.searchesAndFetchesUseTheAgentsNativeWebSearch", " Searches and fetches use the agent's native WebSearch/WebFetch tools. No API key required. ")}</small>
+          <input id="research-global-provider-builtin" type="radio" name="research-global-search-provider" checked={!externalProvider} onChange={() => setSearchProvider("builtin")}/>{t("settings.researchGlobal.builtInUsesAgentWebTools", " Built-in (uses agent web tools) (default) ")}</label>
+        <small>{t("settings.researchGlobal.searchesAndFetchesUseTheAgentsNativeWebSearch", " Searches and fetches use the agent's native WebSearch/WebFetch tools. No API key required. Default: builtin. ")}</small>
         <details className="settings-option-details settings-research-provider-advanced-details">
           <summary>{t("settings.researchGlobal.advancedExternalSearchProviders", "Advanced \u2014 external search providers")}</summary>
           <div className="settings-research-provider-advanced-body">
@@ -57,6 +57,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             ...current,
             researchGlobalSearxngUrl: event.target.value || undefined,
         }))} placeholder={t("settings.researchGlobal.httpsSearxExampleCom", "https://searx.example.com")}/>
+              <small>{t("settings.researchGlobal.searXNGURLHint", "No default \u2014 unset.")}</small>
             </div>
             <div className="form-group">
               <label htmlFor="research-global-google-cx">{t("settings.researchGlobal.googleSearchCX", "Google Search CX")}</label>
@@ -64,6 +65,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             ...current,
             researchGlobalGoogleSearchCx: event.target.value || undefined,
         }))} placeholder={t("settings.researchGlobal.customSearchEngineId", "custom-search-engine-id")}/>
+              <small>{t("settings.researchGlobal.googleSearchCXHint", "No default \u2014 unset.")}</small>
             </div>
             <div className="settings-empty-state settings-research-empty-state" role="note">{t("settings.researchGlobal.configureBraveTavilyAndGoogleAPIKeysIn", " Configure Brave, Tavily, and Google API keys in Authentication. ")}<button type="button" className="btn btn-sm" onClick={() => onNavigateToSection("authentication")}>{t("settings.researchGlobal.openAuthenticationSettings", " Open Authentication Settings ")}</button>
             </div>
@@ -78,6 +80,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             ...current,
             researchGlobalMaxConcurrentRuns: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
+            <small>{t("settings.researchGlobal.maxConcurrentRunsHint", "Default: 3.")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-global-max-sources">{t("settings.researchGlobal.defaultMaxSourcesPerRun", "Default Max Sources Per Run")}</label>
@@ -89,6 +92,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
                 maxSourcesPerRun: event.target.value === "" ? undefined : Number(event.target.value),
             },
         }))}/>
+            <small>{t("settings.researchGlobal.maxSourcesPerRunHint", "Default: 20.")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-global-default-timeout">{t("settings.researchGlobal.defaultMaxDurationMs", "Default Max Duration (ms)")}</label>
@@ -96,6 +100,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             ...current,
             researchGlobalDefaultTimeout: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
+            <small>{t("settings.researchGlobal.defaultMaxDurationMsHint", "Default: 300000 (5 minutes).")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-global-fetch-timeout">{t("settings.researchGlobal.requestTimeoutMs", "Request Timeout (ms)")}</label>
@@ -103,6 +108,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             ...current,
             researchGlobalFetchTimeoutMs: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
+            <small>{t("settings.researchGlobal.requestTimeoutMsHint", "Default: 30000 (30 seconds).")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-global-max-synthesis-rounds">{t("settings.researchGlobal.maxSynthesisRounds", "Max Synthesis Rounds")}</label>
@@ -110,6 +116,7 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             ...current,
             researchGlobalMaxSynthesisRounds: event.target.value === "" ? undefined : Number(event.target.value),
         }))}/>
+            <small>{t("settings.researchGlobal.maxSynthesisRoundsHint", "Default: 2.")}</small>
           </div>
         </div>
       </div>
@@ -123,12 +130,12 @@ export function ResearchGlobalSection({ scopeBanner, form, setForm, authProvider
             <input id="research-global-source-github" type="checkbox" checked={form.researchGlobalGitHubEnabled ?? false} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalGitHubEnabled: event.target.checked,
-        }))}/>{t("settings.researchGlobal.gitHub", " GitHub ")}</label>
+        }))}/>{t("settings.researchGlobal.gitHub", " GitHub ")}<small>{t("settings.researchGlobal.gitHubSourceHint", " Default: disabled. ")}</small></label>
           <label htmlFor="research-global-source-local-docs" className="checkbox-label">
             <input id="research-global-source-local-docs" type="checkbox" checked={form.researchGlobalLocalDocsEnabled ?? true} onChange={(event) => setForm((current) => ({
             ...current,
             researchGlobalLocalDocsEnabled: event.target.checked,
-        }))}/>{t("settings.researchGlobal.localDocs", " Local Docs ")}</label>
+        }))}/>{t("settings.researchGlobal.localDocs", " Local Docs ")}<small>{t("settings.researchGlobal.localDocsSourceHint", " Default: enabled. ")}</small></label>
         </div>
       </div>
       {hasMissingResearchCredential && (<div className="settings-empty-state" role="alert">{t("settings.researchGlobal.missingCredentialsForTheSelectedResearchProvider", " Missing credentials for the selected research provider. ")}<button type="button" className="btn btn-sm" onClick={() => onNavigateToSection("authentication")}>{t("settings.researchGlobal.openAuthentication", " Open Authentication ")}</button>

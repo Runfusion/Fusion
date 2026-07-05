@@ -2888,6 +2888,10 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
       expect(result.details.count).toBe(15);
     });
 
+    /*
+    FNXC:CliTests 2026-07-04-13:50:
+    FN-7530 split the sibling "executes with @fusion/core resolved through the built dist barrel" case (formerly directly below this test) into packages/cli/src/__tests__/extension-dist-barrel.test.ts. That test's own in-test dist-barrel recompilation (vi.resetModules + vi.importActual of the built @fusion/core dist barrel) is CPU-bound and timeout-prone under 4-shard CI contention (FN-6483/FN-6705/FN-6795/FN-6839/FN-7447 same signature); isolating it kept the ~68 stable tests in this file on the default lane while only the isolated file carries its own quarantine entry. This test covers the identical truncation invariant against the source-aliased @fusion/core.
+    */
     it("bounds large column-filtered listings as a single plain-text block", async () => {
       const store = createStore();
       try {
@@ -2937,7 +2941,6 @@ pgTest("fn pi extension (runnable structured-output regression slice)", () => {
     // dist/postgres/migrations/0000_initial.sql (not shipped in this dist), so
     // it could not bootstrap a PG store. The stale-dist-exports guard is
     // covered by the maintained extension-integration lane.
-
     it("degrades to bounded text when formatter exports are unavailable", () => {
       const boardLinesWithoutParams = [
         "Planning (2):",

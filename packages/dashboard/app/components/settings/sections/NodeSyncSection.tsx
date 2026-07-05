@@ -12,13 +12,13 @@ export function NodeSyncSection({ scopeBanner, form, setForm }: NodeSyncSectionP
       <div className="form-group">
         <label htmlFor="settingsSyncEnabled" className="checkbox-label">
           <input id="settingsSyncEnabled" type="checkbox" checked={form.settingsSyncEnabled || false} onChange={(e) => setForm((f) => ({ ...f, settingsSyncEnabled: e.target.checked }))}/>{t("settings.nodeSync.enableAutomaticSettingsSync", " Enable automatic settings sync ")}</label>
-        <small>{t("settings.nodeSync.automaticallySynchronizeSettingsBetweenThisNodeAndConnected", "Automatically synchronize settings between this node and connected remote nodes")}</small>
+        <small>{t("settings.nodeSync.automaticallySynchronizeSettingsBetweenThisNodeAndConnected", "Automatically synchronize settings between this node and connected remote nodes. Default: disabled.")}</small>
       </div>
       {form.settingsSyncEnabled && (<>
           <div className="form-group">
             <label htmlFor="settingsSyncAuth" className="checkbox-label">
               <input id="settingsSyncAuth" type="checkbox" checked={form.settingsSyncAuth || false} onChange={(e) => setForm((f) => ({ ...f, settingsSyncAuth: e.target.checked }))}/>{t("settings.nodeSync.syncModelAuthCredentials", " Sync model auth credentials ")}</label>
-            <small>{t("settings.nodeSync.includeAPIKeysAndOAuthTokensInSync", "Include API keys and OAuth tokens in sync operations")}</small>
+            <small>{t("settings.nodeSync.includeAPIKeysAndOAuthTokensInSync", "Include API keys and OAuth tokens in sync operations. Default: disabled.")}</small>
           </div>
           <div className="form-group">
             <label htmlFor="settingsSyncInterval">{t("settings.nodeSync.syncInterval", "Sync interval")}</label>
@@ -28,6 +28,7 @@ export function NodeSyncSection({ scopeBanner, form, setForm }: NodeSyncSectionP
               <option value={1800000}>{t("settings.nodeSync.every30Minutes", "Every 30 minutes")}</option>
               <option value={3600000}>{t("settings.nodeSync.every1Hour", "Every 1 hour")}</option>
             </select>
+            <small>{t("settings.nodeSync.syncIntervalHint", "Default: every 15 minutes.")}</small>
           </div>
           <div className="form-group">
             <label htmlFor="settingsSyncConflictResolution">{t("settings.nodeSync.conflictResolution", "Conflict resolution")}</label>
@@ -40,6 +41,7 @@ export function NodeSyncSection({ scopeBanner, form, setForm }: NodeSyncSectionP
               <option value="keep-local">{t("settings.nodeSync.keepLocal", "Keep local")}</option>
               <option value="keep-remote">{t("settings.nodeSync.keepRemote", "Keep remote")}</option>
             </select>
+            <small>{t("settings.nodeSync.conflictResolutionHint", "Default: last write wins.")}</small>
           </div>
         </>)}
       {/* KTD-8: workflow settings are not yet part of the cross-node sync

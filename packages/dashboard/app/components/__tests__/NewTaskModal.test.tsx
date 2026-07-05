@@ -640,6 +640,37 @@ describe("NewTaskModal", () => {
     expect(payload).not.toHaveProperty("executionMode");
   });
 
+  // FNXC:PlannerOversight 2026-07-04-00:00: leaving the selector on "Inherit from workflow" ("") must omit plannerOversightLevel from the create payload so the task falls back to the workflow's effective value.
+  it("omits plannerOversightLevel from the create payload when left on Inherit", async () => {
+    const { props } = renderNewTaskModal();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Inherit oversight task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(props.onCreateTask).toHaveBeenCalledTimes(1);
+    });
+    const payload = vi.mocked(props.onCreateTask).mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("plannerOversightLevel");
+  });
+
+  it("includes the selected plannerOversightLevel in the create payload", async () => {
+    const { props } = renderNewTaskModal();
+
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    const select = await screen.findByTestId("planner-oversight-level-select");
+    fireEvent.change(select, { target: { value: "steer" } });
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Steer oversight task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Task" }));
+
+    await waitFor(() => {
+      expect(props.onCreateTask).toHaveBeenCalledWith(
+        expect.objectContaining({ plannerOversightLevel: "steer" }),
+      );
+    });
+  });
+
   it("resets executionMode to standard after canceling and discarding changes", async () => {
     const { props, rerender } = renderNewTaskModal();
 

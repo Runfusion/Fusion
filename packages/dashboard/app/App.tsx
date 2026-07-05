@@ -40,6 +40,7 @@ import { ConfirmDialogProvider } from "./hooks/useConfirm";
 import { useTheme } from "./hooks/useTheme";
 import { useModalManager, type DetailTaskOrigin, type DetailTaskTab } from "./hooks/useModalManager";
 import { useAppSettings } from "./hooks/useAppSettings";
+import { useDashboardKeyboardShortcuts } from "./hooks/useDashboardKeyboardShortcuts";
 import { ModalDismissPreferenceProvider } from "./hooks/useOverlayDismiss";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useFavorites } from "./hooks/useFavorites";
@@ -87,7 +88,7 @@ import { fetchTaskDetail, fetchWorkflowSteps } from "./api";
 import {
   SETUP_WARNING_DISMISSED_KEY,
   RETRY_WARNING_RATIO,
-  buildRemoteDashboardUrl,
+  resolveDesktopShellRedirectTarget,
   requiresNativeShellOnboarding,
   shouldShowFirstEverBootLoader,
   isSessionNeedingInputForBanner,
@@ -205,6 +206,46 @@ export function getBoardTaskOpenRoute(options: {
     return "dock";
   }
   return "main-panel";
+}
+
+export interface DashboardShortcutPopupState {
+  poppedOutTaskIds: string[];
+  quickChatOpen: boolean;
+  terminalOpen: boolean;
+  modalClosers: Array<[boolean, () => void]>;
+}
+
+export interface DashboardShortcutPopupHandlers {
+  closePoppedOutTask: (taskId: string) => void;
+  closeQuickChat: () => void;
+  closeTerminal: () => void;
+}
+
+/*
+FNXC:DashboardShortcuts 2026-07-04-12:02:
+The App-level Escape close order is factored into a pure helper so regression tests can prove the real dashboard shell ordering without rendering every lazy dashboard surface. The helper must close exactly one surface and return false when no popup is open so component-local Escape handlers remain authoritative.
+*/
+export function closeTopmostDashboardPopupForShortcut(
+  state: DashboardShortcutPopupState,
+  handlers: DashboardShortcutPopupHandlers,
+): boolean {
+  const lastPoppedOutTaskId = state.poppedOutTaskIds[state.poppedOutTaskIds.length - 1];
+  if (lastPoppedOutTaskId) {
+    handlers.closePoppedOutTask(lastPoppedOutTaskId);
+    return true;
+  }
+  if (state.quickChatOpen) {
+    handlers.closeQuickChat();
+    return true;
+  }
+  if (state.terminalOpen) {
+    handlers.closeTerminal();
+    return true;
+  }
+  const match = state.modalClosers.find(([open]) => open);
+  if (!match) return false;
+  match[1]();
+  return true;
 }
 
 function AppInner() {
@@ -572,6 +613,7 @@ function AppInner() {
     taskDetailChatFirst,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
+    dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     maxTotalRetriesBeforeFail,
     prAuthAvailable,
@@ -952,6 +994,54 @@ function AppInner() {
     }
   }, [closeTerminalWithNav, modalManager, pushNav]);
 
+  const closeTopmostPopupForShortcut = useCallback(() => {
+    /*
+    FNXC:DashboardShortcuts 2026-07-04-00:00:
+    Escape should close only one visible dashboard popup per key press. Floating user surfaces close before fixed app modals so a Quick Chat or task popout on top does not accidentally dismiss the underlying Terminal, Settings, or Task Detail modal.
+
+    FNXC:DashboardShortcuts 2026-07-04-12:02:
+    Popped-out tasks are the most recent floating work surface and must close before Quick Chat. This preserves the topmost-popup invariant when a task popout overlays chat, then falls back to Terminal and modal-manager surfaces one layer per Escape.
+    */
+    return closeTopmostDashboardPopupForShortcut(
+      {
+        poppedOutTaskIds: poppedOutTasks.map((task) => task.id),
+        quickChatOpen,
+        terminalOpen: modalManager.terminalOpen,
+        modalClosers: [
+          [modalManager.filesOpen, modalManager.closeFiles],
+          [modalManager.workflowEditorOpen, modalManager.closeWorkflowEditor],
+          [modalManager.gitManagerOpen, modalManager.closeGitManager],
+          [modalManager.activityLogOpen, modalManager.closeActivityLog],
+          [modalManager.scriptsOpen, modalManager.closeScripts],
+          [modalManager.agentsOpen, modalManager.closeAgents],
+          [modalManager.usageOpen, modalManager.closeUsage],
+          [modalManager.schedulesOpen, modalManager.closeSchedules],
+          [modalManager.githubImportOpen, modalManager.closeGitHubImport],
+          [modalManager.settingsOpen, modalManager.closeSettings],
+          [Boolean(modalManager.detailTask), modalManager.closeDetailTask],
+          [Boolean(modalManager.groupModalGroupId), modalManager.closeGroupModal],
+          [modalManager.isSubtaskOpen, modalManager.closeSubtask],
+          [modalManager.isPlanningOpen, modalManager.closePlanning],
+          [modalManager.newTaskModalOpen, modalManager.closeNewTask],
+          [modalManager.setupWizardOpen, modalManager.closeSetupWizard],
+          [modalManager.modelOnboardingOpen, modalManager.closeModelOnboarding],
+        ],
+      },
+      {
+        closePoppedOutTask,
+        closeQuickChat: () => setQuickChatOpen(false),
+        closeTerminal: closeTerminalWithNav,
+      },
+    );
+  }, [closePoppedOutTask, closeTerminalWithNav, modalManager, poppedOutTasks, quickChatOpen]);
+
+  useDashboardKeyboardShortcuts({
+    shortcuts: dashboardKeyboardShortcuts,
+    openQuickChat: () => setQuickChatOpen(true),
+    toggleTerminal: toggleTerminalWithNav,
+    closeTopmostPopup: closeTopmostPopupForShortcut,
+  });
+
   const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
     modalManager.openFiles(workspace, initialFile);
     pushNav({ type: "modal", close: modalManager.closeFiles });
@@ -1100,39 +1190,23 @@ function AppInner() {
     };
   }, [shellHost.host, shellState.activeProfileId, shellState.desktopMode, shellState.host, shellState.profiles]);
 
+  /*
+   * FNXC:DesktopSwitchServer 2026-07-04-13:20:
+   * Single shared decision path for the in-dashboard "Switch server" navigation, covering BOTH directions
+   * (remote -> local and local -> remote). This mirrors the working native-menu / desktopLaunchMode flow by
+   * navigating the renderer to the selected server's origin, since the in-dashboard switch does not route
+   * through the Electron main-process launch-mode handlers. See resolveDesktopShellRedirectTarget in
+   * appLifecycle.ts for the pure decision logic and negative-state guards (not-running runtime, already-on-
+   * target origin, non-desktop hosts, missing active profile).
+   */
   useEffect(() => {
-    if (shellState.host !== "desktop-shell") {
+    if (typeof window === "undefined") {
       return;
     }
 
-    if (shellState.desktopMode !== "local") {
-      return;
-    }
-
-    if (shellState.localServer?.status !== "ready" || !shellState.localServer.port) {
-      return;
-    }
-
-    if (window.location.port === String(shellState.localServer.port)) {
-      return;
-    }
-
-    window.location.href = `http://localhost:${shellState.localServer.port}`;
-  }, [shellState]);
-
-  useEffect(() => {
-    if (shellState.host !== "desktop-shell" || shellState.desktopMode !== "remote") {
-      return;
-    }
-
-    const activeProfile = shellState.profiles.find((profile) => profile.id === shellState.activeProfileId);
-    if (!activeProfile || typeof window === "undefined") {
-      return;
-    }
-
-    const nextUrl = buildRemoteDashboardUrl(activeProfile.serverUrl, activeProfile.authToken ?? null);
-    if (window.location.href !== nextUrl) {
-      window.location.href = nextUrl;
+    const target = resolveDesktopShellRedirectTarget(shellState, window.location.href);
+    if (target) {
+      window.location.href = target;
     }
   }, [shellState]);
 

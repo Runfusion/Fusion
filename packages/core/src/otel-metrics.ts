@@ -161,7 +161,7 @@ function gauge(
 /**
  * Attributes for a token group. The grouped dimension is reflected by the key
  * the aggregator chose (`groupBy`); we tag it with the matching attribute name
- * so a collector sees `model` / `provider` / `node.id` / `agent.id`.
+ * so a collector sees `model` / `provider` / `node.id` / `agent.id` / `task.id`.
  */
 function groupAttributes(
   groupBy: TokenAnalytics["groupBy"],
@@ -177,6 +177,8 @@ function groupAttributes(
       return [attr("node.id", key)];
     case "agent":
       return [attr("agent.id", key)];
+    case "task":
+      return [attr("task.id", key)];
   }
 }
 

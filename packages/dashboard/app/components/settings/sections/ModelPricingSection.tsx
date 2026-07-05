@@ -233,7 +233,7 @@ export function ModelPricingSection({ form, setForm, addToast, projectId }: Mode
         <div>
           <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.modelPricing.title", "Model Pricing")}</h4>
           <p className="settings-description">
-            {t("settings.modelPricing.description", "Override per-1M token rates used by Command Center cost estimates. Overrides win over the built-in baseline; unlisted models still use the baseline.")}
+            {t("settings.modelPricing.description", "Override per-1M token rates used by Command Center cost estimates. Overrides win over the built-in baseline; unlisted models still use the baseline. No default \u2014 unset (no overrides).")}
           </p>
           <p className="settings-muted model-pricing-section__meta">
             {form.modelPricingFetchedAt

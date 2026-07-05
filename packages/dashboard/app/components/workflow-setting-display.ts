@@ -1,6 +1,6 @@
 import type { WorkflowSettingDefinition } from "../api";
 
-export type WorkflowSettingGroup = "models" | "review" | "steps" | "advanced";
+export type WorkflowSettingGroup = "models" | "review" | "oversight" | "steps" | "advanced";
 
 export interface WorkflowSettingDisplay {
   group: WorkflowSettingGroup;
@@ -151,11 +151,25 @@ const DISPLAY: Record<string, WorkflowSettingDisplay> = {
     group: "steps",
     label: "Post-review fix passes",
   },
+  /*
+   * FNXC:PlannerOversight 2026-07-04-00:00:
+   * First-class Values-tab display entry for the workflow-native plannerOversightLevel
+   * setting (FN-7508). This is the project/global default surface: the default
+   * workflow's stored value here is the effective oversight level for every task
+   * under it that does not set a per-task override (FN-7515, TaskForm selector).
+   */
+  plannerOversightLevel: {
+    group: "oversight",
+    label: "Planner oversight level",
+    description:
+      "Off disables oversight; Observe watches only; Steer injects guidance or suggests revisions; Autonomous recovery enables bounded retry and targeted-fix recovery. Per-task overrides are set on individual tasks and win over this project/global default.",
+  },
 };
 
 export const WORKFLOW_SETTING_GROUP_ORDER: WorkflowSettingGroup[] = [
   "models",
   "review",
+  "oversight",
   "steps",
   "advanced",
 ];
@@ -163,6 +177,7 @@ export const WORKFLOW_SETTING_GROUP_ORDER: WorkflowSettingGroup[] = [
 export const WORKFLOW_SETTING_GROUP_LABELS: Record<WorkflowSettingGroup, string> = {
   models: "Models",
   review: "Review & Approval",
+  oversight: "Planner Oversight",
   steps: "Step Execution",
   advanced: "Advanced",
 };

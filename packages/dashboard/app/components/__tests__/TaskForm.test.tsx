@@ -160,6 +160,34 @@ describe("TaskForm", () => {
     expect(screen.getByRole("option", { name: /Very High/i })).toHaveAttribute("value", "xhigh");
   });
 
+  // FNXC:PlannerOversight 2026-07-04-00:00: per-task override selector must render Inherit + the four BUILTIN_OVERSIGHT_SETTINGS levels and fire onPlannerOversightLevelChange on selection.
+  it("renders the planner oversight selector with Inherit + four levels and fires onPlannerOversightLevelChange", async () => {
+    const onPlannerOversightLevelChange = vi.fn();
+    renderTaskForm({
+      plannerOversightLevel: "",
+      onPlannerOversightLevelChange,
+    });
+
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+
+    const select = await screen.findByTestId("planner-oversight-level-select");
+    expect(select).toHaveValue("");
+    expect(screen.getByRole("option", { name: /Inherit from workflow/i })).toHaveAttribute("value", "");
+    expect(screen.getByRole("option", { name: /^Off$/i })).toHaveAttribute("value", "off");
+    expect(screen.getByRole("option", { name: /^Observe$/i })).toHaveAttribute("value", "observe");
+    expect(screen.getByRole("option", { name: /^Steer$/i })).toHaveAttribute("value", "steer");
+    expect(screen.getByRole("option", { name: /Autonomous recovery/i })).toHaveAttribute("value", "autonomous");
+
+    fireEvent.change(select, { target: { value: "steer" } });
+    expect(onPlannerOversightLevelChange).toHaveBeenCalledWith("steer");
+  });
+
+  it("does not render the planner oversight selector when onPlannerOversightLevelChange is not provided", () => {
+    renderTaskForm({});
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    expect(screen.queryByTestId("planner-oversight-level-select")).toBeNull();
+  });
+
   it("renders description field with AI refine button when text is present", () => {
     renderTaskForm({ description: "Some text" });
 

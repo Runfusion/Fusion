@@ -420,6 +420,7 @@ export async function createTask(
     planningModelProvider,
     planningModelId,
     thinkingLevel,
+    plannerOversightLevel,
     summarize,
     reviewLevel,
     executionMode,
@@ -457,6 +458,7 @@ export async function createTask(
       planningModelProvider,
       planningModelId,
       thinkingLevel,
+      plannerOversightLevel,
       summarize,
       reviewLevel,
       executionMode,
@@ -523,6 +525,7 @@ export function updateTask(
     planningModelProvider?: string | null;
     planningModelId?: string | null;
     thinkingLevel?: string | null;
+    plannerOversightLevel?: "off" | "observe" | "steer" | "autonomous" | null;
     reviewLevel?: number | null;
     executionMode?: "standard" | "fast" | null;
     noCommitsExpected?: boolean;

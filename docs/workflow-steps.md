@@ -461,6 +461,8 @@ A gate node also has a `gateMode`:
 Defaults:
 - gates are `advisory` by default (advisory-by-default per FN-4368); opt in to `gate` by setting the node's `gateMode` in the [Workflow Editor](./workflow-editor.md).
 
+A task paused awaiting a prompt/script gate's cli-approval or ask-input response (`pausedReason` prefixed `workflow-cli-approval:` or `workflow-input:`) is one of the five stages the records-only planner-overseer monitor watches (`workflow-gate`, `packages/engine/src/planner-overseer.ts`, FN-7511) — see **`docs/architecture.md` § "Planner overseer monitoring (records-only)"**.
+
 ## Built-In Quality Gates
 
 <!--
@@ -829,13 +831,21 @@ engine resolves *effective settings* per task as `stored value ?? declaration
 default`, dropping any stored value that no longer validates against the current
 declaration (drop-on-orphan) and falling back to the default.
 
-The **step-execution**, **review/approval**, **per-phase model-lane**, and
-**triage/spec policy** knobs are workflow settings declared by `builtin:coding`.
-Triage policy includes `triageProactiveSubtaskSplittingEnabled` (default `true`),
-which controls automatic large-task splitting guidance for oversized M/L work.
-Set it to `false` in a workflow's Values tab when triage should keep large tasks
-whole unless the task explicitly has `breakIntoSubtasks: true`; explicit subtask
-requests still follow the mandatory split flow. See
+The **step-execution**, **review/approval**, **per-phase model-lane**,
+**triage/spec policy**, and **planner oversight** knobs are workflow settings
+declared by `builtin:coding`. Triage policy includes
+`triageProactiveSubtaskSplittingEnabled` (default `true`), which controls
+automatic large-task splitting guidance for oversized M/L work. Set it to `false`
+in a workflow's Values tab when triage should keep large tasks whole unless the
+task explicitly has `breakIntoSubtasks: true`; explicit subtask requests still
+follow the mandatory split flow. Planner oversight uses `plannerOversightLevel`
+(default `autonomous`) with `off`, `observe`, `steer`, and `autonomous` values —
+full steering/control is ON for every workflow unless explicitly changed. Tasks
+may set a nullable `Task.plannerOversightLevel` override that wins over the
+workflow value when present; `resolveEffectivePlannerOversightLevel` in
+`@fusion/core` resolves the effective level as task override → workflow
+effective value → `autonomous`. The overseer runtime/monitoring behavior that
+acts on this level is still follow-up work (FN-7511+). See
 [Settings Reference → Workflow Settings](./settings-reference.md#workflow-settings)
 for the full moved-key catalog, the editor walkthrough, and the export/sync posture.
 

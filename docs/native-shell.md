@@ -57,7 +57,7 @@ Profiles are first-class saved objects shared by onboarding and Connection Manag
 
 Connection Manager supports:
 
-- **Desktop Switch server** presents the built-in **Local Server** separately from saved **Remote servers**. Local Server is always available in the desktop shell; selecting it calls `setDesktopMode("local")` and returns the shell to the embedded/local Fusion server without deleting remote profiles.
+- **Desktop Switch server** presents the built-in **Local Server** separately from saved **Remote servers**. Local Server is always available in the desktop shell; selecting it calls `setDesktopMode("local")` and returns the shell to the embedded/local Fusion server without deleting remote profiles. Choosing **Local Server** or a remote profile from this in-dashboard menu navigates the renderer to the selected server's origin (the running local runtime's `baseUrl`, or the remote profile's `serverUrl`) — the same end result as switching modes from the native desktop menu (FN-7527).
 - **Add remote server** is the desktop CTA for saving another Fusion server profile. The remote profile editor stays collapsed until a user chooses **Add remote server** or edits an existing saved profile, so local-only desktop users do not see an empty setup form.
 - **Use** (activate a saved remote profile). In desktop local mode, using a remote profile first switches desktop mode back to `remote`, then activates the selected profile.
 - **Edit** (update name/URL/token)

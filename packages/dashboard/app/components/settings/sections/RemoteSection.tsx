@@ -187,10 +187,11 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
               <small>{t("settings.remote.tailscaleFunnelWillExposeThisDashboardOnYour", "Tailscale Funnel will expose this dashboard on your tailnet's public ")}{`https://<machine>.<tailnet>.ts.net/`}{t("settings.remote.uRLNoHostnameOrPortConfigurationNeeded", " URL \u2014 no hostname or port configuration needed.")}</small>
               <label htmlFor="remoteTailscaleAcceptRoutes" className="checkbox-label">
                 <input id="remoteTailscaleAcceptRoutes" type="checkbox" checked={Boolean(remoteForm.remoteTailscaleAcceptRoutes)} onChange={(e) => setForm((f) => ({ ...f, remoteTailscaleAcceptRoutes: e.target.checked } as SettingsFormState))}/>{t("settings.remote.acceptRoutes", " Accept routes ")}</label>
+              <small>{t("settings.remote.acceptRoutesHint", "Default: disabled.")}</small>
             </>) : (<>
               <small>
                 {(remoteForm.remoteCloudflareQuickTunnel ?? true)
-                    ? t("settings.remote.usingQuickTunnel", "Using Quick Tunnel — automatically creates a random trycloudflare.com URL, no account needed.")
+                    ? t("settings.remote.usingQuickTunnel", "Using Quick Tunnel — automatically creates a random trycloudflare.com URL, no account needed. Default: enabled.")
                     : t("settings.remote.namedTunnelModeEnabled", "Named Tunnel mode enabled — configure tunnel name, token, and ingress URL below.")}
               </small>
               <details className="remote-cf-advanced-details" open={!(remoteForm.remoteCloudflareQuickTunnel ?? true)} onToggle={(event) => {
@@ -265,14 +266,16 @@ export function RemoteSection({ scopeBanner, form, setForm, remote }: RemoteSect
         <div className="form-group">
           <label htmlFor="remoteShortLivedEnabled" className="checkbox-label">
             <input id="remoteShortLivedEnabled" type="checkbox" checked={Boolean(remoteForm.remoteShortLivedEnabled)} onChange={(e) => setForm((f) => ({ ...f, remoteShortLivedEnabled: e.target.checked } as SettingsFormState))}/>{t("settings.remote.enableShortLivedTokens", " Enable short-lived tokens ")}</label>
+          <small>{t("settings.remote.shortLivedEnabledHint", "Default: disabled.")}</small>
           <label htmlFor="remoteShortLivedTtlMs">{t("settings.remote.shortLivedTTLMs", "Short-lived TTL (ms)")}</label>
           <input id="remoteShortLivedTtlMs" type="number" min={60000} max={86400000} value={Number(remoteForm.remoteShortLivedTtlMs ?? 900000)} onChange={(e) => setForm((f) => ({ ...f, remoteShortLivedTtlMs: Number(e.target.value || 900000) } as SettingsFormState))}/>
+          <small>{t("settings.remote.shortLivedTtlMsHint", "Default: 900000 (15 minutes).")}</small>
           {remoteShortLivedToken && <small>{t("settings.remote.lastShortLivedTokenExpiresAt", "Last short-lived token expires at ")}{new Date(remoteShortLivedToken.expiresAt).toLocaleString()} ({remoteShortLivedToken.ttlMs}{t("settings.remote.ms", "ms)")}</small>}
         </div>
         <div className="form-group">
           <label htmlFor="remoteRememberLastRunning" className="checkbox-label">
             <input id="remoteRememberLastRunning" type="checkbox" checked={Boolean(remoteForm.remoteRememberLastRunning)} onChange={(e) => setForm((f) => ({ ...f, remoteRememberLastRunning: e.target.checked } as SettingsFormState))}/>{t("settings.remote.rememberLastRunningState", " Remember last running state ")}</label>
-          <small>{t("settings.remote.automaticallyRestoreTunnelOnStartupIfItWas", "Automatically restore tunnel on startup if it was running when last stopped.")}</small>
+          <small>{t("settings.remote.automaticallyRestoreTunnelOnStartupIfItWas", "Automatically restore tunnel on startup if it was running when last stopped. Default: disabled.")}</small>
         </div>
         <div className="form-group">
           <label>{t("settings.remote.authLinks", "Auth Links")}</label>

@@ -27,12 +27,12 @@ export function WorktreesSection({ scopeBanner, form, setForm, gitRemotes, workt
             const val = e.target.value;
             setForm((f) => ({ ...f, maxWorktrees: val === "" ? undefined : Number(val) } as SettingsFormState));
         }}/>
-        <small>{t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits total git worktrees including in-review tasks")}</small>
+        <small>{t("settings.worktrees.limitsTotalGitWorktreesIncludingInReviewTasks", "Limits total git worktrees including in-review tasks. Default: 4.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="worktreeInitCommand">{t("settings.worktrees.worktreeInitCommand", "Worktree Init Command")}</label>
         <input id="worktreeInitCommand" type="text" placeholder={t("settings.worktrees.pnpmInstallFrozenLockfile", "pnpm install --frozen-lockfile")} value={form.worktreeInitCommand || ""} onChange={(e) => setForm((f) => ({ ...f, worktreeInitCommand: e.target.value }))}/>
-        <small>{t("settings.worktrees.shellCommandToRunInEachNewWorktree", "Shell command to run in each new worktree after creation")}</small>
+        <small>{t("settings.worktrees.shellCommandToRunInEachNewWorktree", "Shell command to run in each new worktree after creation. No default \u2014 unset.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="recycleWorktrees" className="checkbox-label">
@@ -86,12 +86,12 @@ export function WorktreesSection({ scopeBanner, form, setForm, gitRemotes, workt
         <button type="button" className="btn btn-sm" onClick={onAddWorktreeCopyFile}>
           {t("settings.worktrees.addCopyFile", "Add file")}
         </button>
-        <small>{t("settings.worktrees.copyFilesHelp", "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents.")}</small>
+        <small>{t("settings.worktrees.copyFilesHelp", "Optional. Repository-root-relative regular files are copied into fresh or pooled task worktrees before init commands run. Missing files or directories are skipped without exposing contents. Default: empty (no files copied).")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="executorAllowSiblingBranchRename" className="checkbox-label">
           <input id="executorAllowSiblingBranchRename" type="checkbox" checked={form.executorAllowSiblingBranchRename === true} onChange={(e) => setForm((f) => ({ ...f, executorAllowSiblingBranchRename: e.target.checked }))}/>{t("settings.worktrees.allowSilentSiblingBranchRenameDuringExecutorConflicts", " Allow silent sibling branch rename during executor conflicts ")}</label>
-        <small>{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. ")}</small>
+        <small>{t("settings.worktrees.discouragedThisRestoresTheLegacyBehaviorWhereA", " Discouraged. This restores the legacy behavior where a live ")}<code>fusion/&lt;task-id&gt;</code>{t("settings.worktrees.branchCollisionSilentlyForksWorkOntoSiblingBranches", " branch collision silently forks work onto sibling branches like ")}<code>-2</code>{t("settings.worktrees.andCanHidePriorCommitsFromTheDefault", " and can hide prior commits from the default recovery flow. Default: disabled. ")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="worktreeNaming">{t("settings.worktrees.worktreeNamingStyle", "Worktree Naming Style")}</label>
@@ -102,8 +102,8 @@ export function WorktreesSection({ scopeBanner, form, setForm, gitRemotes, workt
         </select>
         <small>
           {form.recycleWorktrees
-            ? "Naming style is not applicable when recycling worktrees — pooled worktrees retain their existing names"
-            : "How to name fresh worktree directories. Only applies when recycling is off."}
+            ? t("settings.worktrees.namingStyleNotApplicableWhenRecycling", "Naming style is not applicable when recycling worktrees \u2014 pooled worktrees retain their existing names")
+            : t("settings.worktrees.howToNameFreshWorktreeDirectories", "How to name fresh worktree directories. Only applies when recycling is off. Default: random.")}
         </small>
       </div>
       <div className="form-group">
@@ -121,7 +121,7 @@ export function WorktreesSection({ scopeBanner, form, setForm, gitRemotes, workt
       <div className="form-group">
         <label htmlFor="worktreeRebaseBeforeMerge" className="checkbox-label">
           <input id="worktreeRebaseBeforeMerge" type="checkbox" checked={form.worktreeRebaseBeforeMerge !== false} onChange={(e) => setForm((f) => ({ ...f, worktreeRebaseBeforeMerge: e.target.checked }))}/>{t("settings.worktrees.rebaseFromRemoteBeforeMerge", " Rebase from remote before merge ")}</label>
-        <small>{t("settings.worktrees.whenEnabledTheMergerFetchesFromTheConfigured", "When enabled, the merger fetches from the configured remote and rebases the task branch onto the latest default-branch tip before merging \u2014 catching concurrent pushes from other collaborators or fusion workers. Any conflicts the rebase surfaces flow into the existing smart/AI resolve pipeline.")}</small>
+        <small>{t("settings.worktrees.whenEnabledTheMergerFetchesFromTheConfigured", "When enabled, the merger fetches from the configured remote and rebases the task branch onto the latest default-branch tip before merging \u2014 catching concurrent pushes from other collaborators or fusion workers. Any conflicts the rebase surfaces flow into the existing smart/AI resolve pipeline. Default: enabled.")}</small>
       </div>
       {form.worktreeRebaseBeforeMerge !== false && (<div className="form-group">
           <label htmlFor="worktreeRebaseRemote">{t("settings.worktrees.rebaseRemote", "Rebase Remote")}</label>

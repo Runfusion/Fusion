@@ -31,7 +31,7 @@ export function PromptsSection({ scopeBanner, form, setForm, onOpenWorkflowSetti
         <small>
           {t(
             "settings.prompts.surfaceExplanation",
-            "Use this section for agent role system prompt templates, role assignments, and global PromptKey segment overrides. Per-workflow step prompts for prompt and gate nodes are edited in the Workflow Editor.",
+            "Use this section for agent role system prompt templates, role assignments, and global PromptKey segment overrides. Per-workflow step prompts for prompt and gate nodes are edited in the Workflow Editor. No default \u2014 unset (built-in role prompts apply until overridden).",
           )}
         </small>
       </div>

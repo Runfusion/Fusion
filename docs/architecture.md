@@ -1352,6 +1352,214 @@ Limits are controlled by project settings (`maxSpawnedAgentsPerParent`, `maxSpaw
 ### Custom instructions
 `packages/engine/src/agent-instructions.ts` resolves per-agent instruction text/path with path-traversal and extension validation.
 
+### Planner overseer monitoring (records-only)
+
+/*
+FNXC:PlannerOversight 2026-07-04-00:00:
+FN-7511 delivers the monitoring foundation for a planner-oversight layer that watches an in-flight task's
+lifecycle without steering it. `packages/engine/src/planner-overseer.ts` declares the five watched stages
+(`OVERSEER_WATCHED_STAGES`: executor, reviewer, merger, pull-request, workflow-gate), a normalized
+`OverseerStageObservation` model, and a `resolveWatchedStage(task)` resolver with deterministic precedence
+(workflow-gate > pull-request > merger > reviewer > executor) so a task in a compound state resolves to
+exactly one stage. `PlannerOverseerMonitor#observeTask(task, level)` is the gating seam: when the task's
+effective planner oversight level (`resolveEffectivePlannerOversightLevel`, FN-7508/FN-7509/FN-7510) is
+`"off"`, nothing is recorded; otherwise exactly one observation is recorded into a bounded per-task ring
+buffer (default cap 20) and the optional `onObservation` callback is invoked best-effort.
+*/
+
+`ProjectEngine` constructs a `PlannerOverseerMonitor` alongside `PrMonitor` and exposes it via
+`getPlannerOverseer()`. A bounded `setInterval` poll (45s cadence, cleared on `stop()`) walks the
+current `in-progress`/`in-review` tasks, resolves each task's effective planner oversight level, and
+calls `observeTask` — skipping tasks that resolve to `"off"` or to no watched stage. Observations for
+tasks that leave the in-flight set are dropped from the ring buffer on the next poll.
+
+This layer is **records-only**: no lifecycle mutation, retry, merge, notification, or external-service
+call happens here, and it emits no run-audit events or dashboard UI. Steering/recovery, confirmation
+gates, human-control safeguards, and dashboard/UI/run-audit surfaces are deferred to FN-7512 through
+FN-7520; this module is the seam those subtasks read observations from.
+
+### Planner overseer bounded autonomous recovery (FN-7512)
+
+/*
+FNXC:PlannerOversight 2026-07-04-12:00:
+FN-7512 builds the bounded autonomous-recovery layer on top of FN-7511's observation seam. When the
+task's effective planner oversight level resolves to `"autonomous"`, the planner overseer may take ONE
+of three bounded corrective actions on the task's currently watched stage:
+  - **inject_guidance** — post a planner-authored steering comment into the active agent lane.
+  - **retry_step** — re-enqueue a stuck/failed step via the existing store retry/re-enqueue path.
+  - **request_targeted_fix** — post a steering comment tagged as a targeted-fix request, referencing
+    the observation's specific error source link.
+At every other effective level (`"off"`/`"observe"`/`"steer"`) the decision is always `"none"` — this
+layer is completely inert unless oversight is `"autonomous"`.
+*/
+
+`packages/core/src/planner-recovery.ts` declares the shared, engine-free recovery vocabulary:
+`PlannerRecoveryActionKind` (`inject_guidance | retry_step | request_targeted_fix | none`),
+`PlannerRecoveryObservation` (a structural mirror of FN-7511's `OverseerStageObservation` so the engine
+can pass one straight through with no adapter), `PlannerRecoveryAttemptState`, `PlannerRecoveryDecision`,
+and the pure, never-throw `decidePlannerRecovery(input)`. Decision rules, in order:
+
+1. No observation, or `oversightLevel !== "autonomous"` → `"none"`.
+2. The per-`(taskId, watchedStage)` attempt count has reached `PLANNER_RECOVERY_MAX_ATTEMPTS` (default
+   `3`, mirroring `MAX_RECOVERY_RETRIES` in `recovery-policy.ts`) → `"none"`, `exhausted: true` — the
+   layer stops autonomously and the task is left for escalation (FN-7514+ owns the human-control story).
+3. `merger` / `pull-request` stages → `"await_confirmation"` (FN-7513) with `requiresConfirmation: true`,
+   `sideEffectClass: "merge_pr"`: these require confirmation and are surfaced, never dispatched, by the
+   bounded layer itself — see "Planner overseer confirmation gate (FN-7513)" below.
+4. `reviewer` stage → `"inject_guidance"`.
+5. `executor` / `workflow-gate` stage with `signal === "failed"` → `"request_targeted_fix"` when a
+   source link carries a specific fixable error (`failed-check` / `merge-error`), else `"retry_step"`.
+6. Any other `executor` / `workflow-gate` signal (stuck/blocked/progressing/awaiting-human) →
+   `"inject_guidance"`.
+
+`packages/engine/src/planner-recovery-controller.ts`'s `PlannerRecoveryController` is the dispatcher,
+mirroring the `AutoRecoveryDispatcher` + `StuckTaskDetector` handler-injection conventions: it holds an
+in-memory per-`(taskId, watchedStage)` attempt registry, calls `decidePlannerRecovery`, and — only when
+an action other than `"none"` is chosen — dispatches through injected `PlannerRecoveryHandlers`
+(`injectGuidance` / `retryStep` / `requestTargetedFix`, all optional and async), incrementing the
+attempt count only on a successful dispatch. `tick(task, ctx)` is a no-op (returns `null`) when
+`task.userPaused === true` or when there is no active observation, and never throws — any handler or
+snapshot-provider error degrades to a no-op.
+
+`ProjectEngine` wires one concrete `PlannerRecoveryController` alongside its `PlannerOverseerMonitor`,
+reusing ONLY existing mechanisms — no new session/tool/merge channel:
+
+- `injectGuidance` / `requestTargetedFix` → `store.addSteeringComment(taskId, text, "agent")` (the same
+  channel the executor's real-time injection listener already watches).
+- `retryStep` → `store.moveTask(taskId, "todo", { preserveProgress: true, moveSource: "engine" })` — the
+  same in-progress→todo retry/re-enqueue path auto-recovery and self-healing already use.
+
+`controller.tick(task)` is called from the SAME bounded 45s poll FN-7511 uses for `observeTask`, guarded
+so it only runs when the resolved effective level is `"autonomous"` (every other level already
+`continue`s before reaching the tick). Attempt state for a task is cleared (`controller.clear(taskId)`)
+whenever the task leaves the in-flight `in-progress`/`in-review` set, alongside the FN-7511 observation
+ring buffer.
+
+**Explicit scope boundaries (owned by later subtasks, not this layer):** merge/PR actions and
+destructive/external-service side effects (FN-7513, confirmation-gated); comprehensive human-pause /
+`autoMerge:false` / human-review terminal safeguards beyond the bare `userPaused` skip (FN-7514); a
+persisted intervention timeline (FN-7519); run-audit/activity events (FN-7520); and any dashboard UI
+(FN-7515+).
+
+### Planner overseer confirmation gate (FN-7513)
+
+/*
+FNXC:PlannerOversight 2026-07-04-13:00:
+FN-7513 adds the safety gate deciding which FN-7512 recovery-layer actions may run autonomously versus
+which must be blocked behind an explicit, recorded human approval. Merge/PR progression (advancing a
+merge, promoting a shared branch, retrying/forcing a merge, opening/updating/merging a pull request) and
+any destructive or external-service side effect (branch/worktree deletion, force operations, remote
+pushes, third-party GitHub/GitLab calls) are classified confirmation-required, regardless of the
+effective oversight level. Bounded recovery (inject_guidance / retry_step / request_targeted_fix on
+non-merge/PR stages, FN-7512) is unaffected and remains no-confirmation. The invariant: a gated action
+NEVER executes without a recorded, approved `PlannerConfirmationRequest`.
+*/
+
+`packages/core/src/planner-confirmation.ts` declares the classifier vocabulary:
+
+- **`PlannerActionSideEffectClass`** (`"bounded_recovery" | "merge_pr" | "destructive_external"`).
+- **`PlannerConfirmationRequest`** — `{ requestId, taskId, watchedStage, sideEffectClass, proposedAction,
+  reason, sourceLinks, requestedAt, status: "pending" | "approved" | "denied", resolvedAt?, resolvedBy? }`.
+  Conceptually mirrors `TaskMergeDetails.mergeConfirmed` (an explicit human approval precedes a side
+  effect) but is its own record — it never reads or writes `mergeConfirmed`, which stays owned by the
+  merge dispatch path.
+- **`classifyPlannerActionSideEffect({ watchedStage, proposedAction })`** — pure, deterministic,
+  never-throw. `merger` / `pull-request` stage actions beyond guidance/retry → `"merge_pr"`; an
+  explicit allow-list of destructive/external action names (branch/worktree delete, force push/merge/
+  delete, remote push, GitHub/GitLab/external-service calls, PR open/merge, shared-branch promotion) →
+  `"destructive_external"` regardless of stage; everything else → `"bounded_recovery"`. Malformed input
+  or an unrecognized non-bounded action on a non-merge/PR stage fails CLOSED to
+  `"destructive_external"` rather than silently allowing an unclassified action through.
+- **`requiresPlannerConfirmation(sideEffectClass)`** — `true` for `"merge_pr"` / `"destructive_external"`,
+  `false` for `"bounded_recovery"`.
+
+`packages/core/src/planner-recovery.ts`'s `decidePlannerRecovery` now calls the classifier for every
+branch and returns `requiresConfirmation` / `sideEffectClass` / (for gated decisions) `proposedAction` on
+`PlannerRecoveryDecision`. The merger/pull-request branch, previously `"none"`, now returns `action:
+"await_confirmation"` naming what would run on approval (`advance_merge` / `advance_pull_request`); every
+other rule (level gate, attempt bound, exhaustion) is unchanged.
+
+`packages/engine/src/planner-recovery-controller.ts`'s `PlannerRecoveryController` adds the gate:
+
+- A per-`(taskId, watchedStage)` **pending-confirmation registry** (`getPendingConfirmations(taskId)`)
+  — idempotent: `tick` never creates a second pending request for a stage that already has one pending.
+- `requestConfirmation(task, request, ctx)` (optional handler) — records/surfaces the pending request;
+  it must NOT perform the side effect itself.
+- `executeMergePrAction(taskId, request, ctx)` / `executeDestructiveExternalAction(taskId, request, ctx)`
+  (optional handlers) — invoked ONLY from `resolveConfirmation(..., "approved", ...)`, never from `tick`.
+- `resolveConfirmation(taskId, requestId, "approved" | "denied", resolvedBy?)` — on `"approved"`,
+  dispatches the matching execution handler exactly once and clears the pending request; on `"denied"`,
+  clears the request with no side effect, leaving the task for other escalation (FN-7514+), AND consumes
+  one bounded-recovery attempt for that `(taskId, watchedStage)` pair (the same shared
+  `PLANNER_RECOVERY_MAX_ATTEMPTS` budget `dispatch()` consumes). Without counting denials against the
+  budget, a denied merge/PR/destructive confirmation would resurface as an identical pending request on
+  the very next `tick()` forever; counting it means repeated denials eventually exhaust the stage
+  (`decidePlannerRecovery` then returns `action: "none", exhausted: true`) instead of re-prompting
+  indefinitely. Never throws — handler rejections are logged and swallowed, and the request is still
+  cleared.
+- `tick(task, ctx)`: when `decidePlannerRecovery` returns `requiresConfirmation: true`, calls
+  `requestConfirmation` (idempotently) and does NOT invoke any side-effecting handler; bounded-recovery
+  decisions still dispatch exactly as FN-7512 (with the attempt increment). The `"autonomous"`-only gate
+  and the `userPaused` skip are preserved.
+- `clear(taskId)` also clears pending confirmations (in addition to attempt state) on terminal task
+  transitions.
+
+`ProjectEngine` wires the concrete handlers in `buildPlannerRecoveryHandlers`: `requestConfirmation`
+posts a `[planner-oversight] confirmation required (...)` steering comment (reusing the same
+`addSteeringComment` channel as bounded recovery, so a human sees it). `executeMergePrAction` branches
+on `request.proposedAction` (falling back to `request.watchedStage` defensively) rather than treating
+every approved `"merge_pr"` request identically: ONLY `"advance_merge"` (the `merger` stage) reuses the
+EXISTING `store.mergeTask(taskId)` merge mechanism; `"advance_pull_request"` (the `pull-request` stage)
+is intentionally a no-op today because no reusable PR-specific advance mechanism exists yet — an
+approved PR confirmation must never fall through to a direct task merge/cleanup, which would bypass the
+PR workflow entirely. No `executeDestructiveExternalAction` is wired yet, since FN-7511's observation
+model does not currently emit a destructive-action signal; a future task can wire one (and the
+PR-specific execution handler) using existing safe helpers when a concrete need arises.
+
+**Downstream ownership (not this layer):** rendering the pending-confirmation UI/badge (FN-7515+/
+FN-7517), comprehensive human-control safeguards beyond `userPaused` (FN-7514), a persisted intervention
+timeline (FN-7519), and run-audit/activity events (FN-7520) all consume the data this gate exposes but
+are implemented elsewhere.
+
+### Planner overseer human-control guard (FN-7514)
+
+FN-7514 supplies the comprehensive human-control safeguard the FN-7512/FN-7513 layers deferred: the
+overseer must be fully inert — no steering, retry, targeted-fix, or FN-7513 confirmation-required action
+(merge/PR progression, destructive/external-service side effect) may fire, and no pending confirmation
+may even be recorded — whenever a task is (a) user-paused, or (b) ineligible for auto-merge processing
+per the FN-5147 `autoMerge:false` / PR-based human-review terminal contract.
+
+`packages/engine/src/overseer-human-control-policy.ts` exports the pure predicate
+`evaluateOverseerHumanControl(task, settings)` (no I/O, mirrors the `recovery-policy.ts` style), returning
+`{ withhold: boolean; reason?: "user-paused" | "auto-merge-off-human-review" }`. It reuses
+`allowsAutoMergeProcessing` from `@fusion/core` VERBATIM for the auto-merge-off half — never re-derives
+the predicate inline. For the pause half, it distinguishes:
+
+- Explicit user pause: `task.userPaused === true`, OR `task.paused === true` with NO `task.pausedReason`
+  (the `fn_task_pause` tool / `TaskStore.pauseTask` never stamps a `pausedReason`).
+- Engine/self-healing park (NOT user pause): `task.paused === true` WITH a `pausedReason` (every
+  self-healing park path — branch-conflict-unrecoverable, token_budget_exceeded,
+  in-review-stall-deadlock, worktrunk_operation_failed, etc. — always stamps one).
+
+`PlannerRecoveryController.tick()` (`planner-recovery-controller.ts`) consults this guard FIRST — before
+the snapshot lookup, before `decidePlannerRecovery`, before FN-7513's confirmation classification. When
+withheld, `tick()` returns `null` immediately (same contract as the prior bare `userPaused` check) and
+never reaches the point where a pending `PlannerConfirmationRequest` could be created. A snapshot lookup
+AFTER the withhold decision (read-only, for audit metadata only — stage/oversightLevel — never feeding
+back into the decision) feeds an optional `recordHumanControlWithheld` handler, which `ProjectEngine`
+wires to a bounded `RunAuditor.database({ type: "overseer:oversight-withheld-human-control", ... })`
+no-action event (metadata: `{ taskId, reason, stage, oversightLevel }`). The controller dedupes this
+emission per `(taskId, withheld reason)` — a task stuck in the same withheld state across many poll
+cycles emits the event once, not on every tick; a reason change (or `clear(taskId)` on terminal
+transition) re-arms it.
+
+`ProjectEngine.pollPlannerOverseer` fetches global `Settings` once per poll cycle (not per task) and
+threads it through `ctx.settings` to `tick()`, so the guard's `allowsAutoMergeProcessing` check sees the
+same settings self-healing already gates lifecycle mutation on.
+
+**Downstream ownership (not this layer):** the dashboard UI/badges surfacing withheld state (FN-7515+),
+a persisted intervention timeline (FN-7519), and richer run-audit/activity presentation (FN-7520).
+
 ---
 
 ## 11) Multi-Project Architecture

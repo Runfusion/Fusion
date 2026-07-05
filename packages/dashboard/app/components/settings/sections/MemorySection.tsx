@@ -73,7 +73,7 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
       <div className="form-group">
         <label htmlFor="memoryEnabled" className="checkbox-label">
           <input id="memoryEnabled" type="checkbox" checked={form.memoryEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, memoryEnabled: e.target.checked }))}/>{t("settings.memory.enableMemoryTools", " Enable memory tools ")}</label>
-        <small>{t("settings.memory.agentsGetMemorySearchMemoryGetAndMemory", "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback.")}</small>
+        <small>{t("settings.memory.agentsGetMemorySearchMemoryGetAndMemory", "Agents get memory_search, memory_get, and memory_append tools. Search defaults to qmd with a local file fallback. Default: enabled.")}</small>
       </div>
 
       {backendLoading ? (<div className="form-group">
@@ -93,7 +93,7 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
       <div className="form-group">
         <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
           <input id="memoryAutoSummarizeEnabled" type="checkbox" checked={form.memoryAutoSummarizeEnabled || false} onChange={(e) => setForm((f) => ({ ...f, memoryAutoSummarizeEnabled: e.target.checked }))}/>{t("settings.memory.autoSummarizeMemory", " Auto-Summarize Memory ")}</label>
-        <small>{t("settings.memory.automaticallyCompactMemoryWhenItExceedsTheThreshold", "Automatically compact memory when it exceeds the threshold on a schedule")}</small>
+        <small>{t("settings.memory.automaticallyCompactMemoryWhenItExceedsTheThreshold", "Automatically compact memory when it exceeds the threshold on a schedule. Default: disabled.")}</small>
       </div>
 
       {(form.memoryAutoSummarizeEnabled || false) && (<>
@@ -103,12 +103,12 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
                 ...f,
                 memoryAutoSummarizeThresholdChars: parseInt(e.target.value, 10) || 50000,
             }))} min={1000}/>
-            <small>{t("settings.memory.memoryWillBeCompactedWhenItExceedsThis", "Memory will be compacted when it exceeds this character count")}</small>
+            <small>{t("settings.memory.memoryWillBeCompactedWhenItExceedsThis", "Memory will be compacted when it exceeds this character count. Default: 50000.")}</small>
           </div>
           <div className="form-group">
             <label htmlFor="memoryAutoSummarizeSchedule">{t("settings.memory.scheduleCron", "Schedule (cron)")}</label>
             <input id="memoryAutoSummarizeSchedule" type="text" className="input" value={form.memoryAutoSummarizeSchedule ?? "0 3 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryAutoSummarizeSchedule: e.target.value }))} placeholder={t("settings.memory.03", "0 3 * * *")}/>
-            <small>{t("settings.memory.cronExpressionForAutoSummarizeScheduleDefaultDaily", "Cron expression for auto-summarize schedule (default: daily at 3 AM)")}</small>
+            <small>{t("settings.memory.cronExpressionForAutoSummarizeScheduleDefaultDaily", "Cron expression for auto-summarize schedule. Default: 0 3 * * * (daily at 3 AM).")}</small>
           </div>
         </>)}
 
@@ -117,14 +117,14 @@ export function MemorySection({ scopeBanner, form, setForm, memory }: MemorySect
       <div className="form-group">
         <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
           <input id="memoryDreamsEnabled" type="checkbox" checked={form.memoryDreamsEnabled === true} onChange={(e) => setForm((f) => ({ ...f, memoryDreamsEnabled: e.target.checked }))} disabled={!isMemoryEnabled}/>{t("settings.memory.processDreamsFromDailyMemory", " Process dreams from daily memory ")}</label>
-        <small>{t("settings.memory.turnsDailyNotesIntoDREAMSMdAndPromotes", "Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md.")}</small>
+        <small>{t("settings.memory.turnsDailyNotesIntoDREAMSMdAndPromotes", "Turns daily notes into DREAMS.md and promotes reusable lessons into MEMORY.md. Default: disabled.")}</small>
       </div>
 
       {isMemoryEnabled && form.memoryDreamsEnabled === true && (<>
           <div className="form-group">
             <label htmlFor="memoryDreamsSchedule">{t("settings.memory.dreamSchedule", "Dream Schedule")}</label>
             <input id="memoryDreamsSchedule" type="text" value={form.memoryDreamsSchedule ?? "0 4 * * *"} onChange={(e) => setForm((f) => ({ ...f, memoryDreamsSchedule: e.target.value }))}/>
-            <small>{t("settings.memory.cronExpressionForDreamProcessing", "Cron expression for dream processing.")}</small>
+            <small>{t("settings.memory.cronExpressionForDreamProcessing", "Cron expression for dream processing. Default: 0 4 * * * (daily at 4 AM).")}</small>
           </div>
           <div className="form-group">
             <button type="button" className="btn btn-sm" onClick={onDreamNow} disabled={dreamRunning || form.memoryDreamsEnabled !== true}>

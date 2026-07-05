@@ -45,7 +45,7 @@ export function NodeRoutingSection({ scopeBanner, form, setForm, nodes }: NodeRo
               <NodeHealthDot status={selectedNode.status} showLabel/>
             </div>);
         })()}
-        <small>{t("settings.nodeRouting.usedWhenATaskHasNoNodeOverride", "Used when a task has no node override. Node status is shown for safer routing selection.")}</small>
+        <small>{t("settings.nodeRouting.usedWhenATaskHasNoNodeOverride", "Used when a task has no node override. Node status is shown for safer routing selection. No default \u2014 unset (local execution).")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="unavailableNodePolicy">{t("settings.nodeRouting.unavailableNodePolicy", "Unavailable Node Policy")}</label>
@@ -56,6 +56,7 @@ export function NodeRoutingSection({ scopeBanner, form, setForm, nodes }: NodeRo
           <option value="block">{t("settings.nodeRouting.blockExecution", "Block execution")}</option>
           <option value="fallback-local">{t("settings.nodeRouting.fallBackToLocal", "Fall back to local")}</option>
         </select>
+        <small>{t("settings.nodeRouting.unavailableNodePolicyHint", "Default: block execution.")}</small>
       </div>
     </>);
 }

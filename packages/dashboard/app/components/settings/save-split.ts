@@ -48,7 +48,14 @@ const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
 type RemoteAccessProvider = "tailscale" | "cloudflare";
 type RemoteAccessPatch = NonNullable<GlobalSettings["remoteAccess"]>;
 
-const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
+/*
+FNXC:SettingsReset 2026-07-04-00:00:
+Exported (not just module-private) so the FN-7506 section-keys registry
+(settings/section-keys.ts) can reuse this as the single source of truth for
+which GLOBAL keys belong to which settings section, instead of duplicating
+the list for the "Reset this menu" feature.
+*/
+export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
   appearance: new Set([
     "themeMode",
     "colorTheme",
@@ -80,6 +87,7 @@ const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "gitlabAuthTokenType",
     "language",
     "dismissModalsOnOutsideClick",
+    "dashboardKeyboardShortcuts",
     "persistAgentToolOutput",
     "persistAgentThinkingLogPermanent",
     "persistAgentThinkingLogEphemeral",

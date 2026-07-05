@@ -26,7 +26,7 @@ export function ExperimentalSection({ scopeBanner, form, setForm, knownFeatures,
       {scopeBanner}
       <h4 className="settings-section-heading">{t("settings.experimental.experimentalFeatures", "Experimental Features")}</h4>
       <div className="form-group">
-        <small>{t("settings.experimental.experimentalFeaturesAreEarlyCapabilitiesThatAreNot", " Experimental features are early capabilities that are not yet fully stable. Enable them to test new functionality, but be aware they may change or be removed. ")}</small>
+        <small>{t("settings.experimental.experimentalFeaturesAreEarlyCapabilitiesThatAreNot", " Experimental features are early capabilities that are not yet fully stable. Enable them to test new functionality, but be aware they may change or be removed. Default: disabled for every feature flag below. ")}</small>
       </div>
 
       <div className="form-group">

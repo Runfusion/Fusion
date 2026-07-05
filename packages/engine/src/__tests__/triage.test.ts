@@ -2049,6 +2049,63 @@ describe("TriageProcessor", () => {
     }
   });
 
+  /*
+   * FNXC:PlanApproval 2026-07-04-12:25:
+   * FN-7526 — locks the auto-approve-all invariant on the Plan Review reviewer-outage
+   * retry surface (retryUnavailablePlanReview, dispatched from specifyTask for
+   * status: "plan-review-unavailable"). Plan Review APPROVE clears the independent
+   * Plan Review gate; the manual plan-approval gate must then still honor project
+   * planApprovalMode: "auto-approve-all" over the workflow's stored
+   * requirePlanApproval: true and move the task straight to todo (never
+   * awaiting-approval).
+   */
+  it("moves Plan Review retry to todo when project auto-approve-all overrides stored workflow approval", async () => {
+    const tempRoot = await createTriageFixtureRoot("fusion-triage-plan-review-retry-auto-approve-");
+    const taskId = "FN-PLAN-RETRY-AUTO-APPROVE";
+    const promptPath = join(tempRoot, ".fusion", "tasks", taskId, "PROMPT.md");
+    const prompt = `# Task: ${taskId} - Retry review auto-approve\n\n## Mission\n\nReviewer approves; project auto-approve-all must still win.\n`;
+
+    try {
+      await mkdir(join(tempRoot, ".fusion", "tasks", taskId), { recursive: true });
+      await writeFile(promptPath, prompt, "utf-8");
+
+      const retryTask = createTriageTask({
+        id: taskId,
+        title: "Retry review auto-approve",
+        status: "plan-review-unavailable",
+        nextRecoveryAt: "2026-01-01T00:00:00.000Z",
+        enabledWorkflowSteps: ["plan-review", "code-review"],
+      } as Partial<Task>);
+      const retryStore = createMockStore({
+        getTaskWorkflowSelection: vi.fn().mockReturnValue({ workflowId: "builtin:coding", stepIds: [] }),
+        getWorkflowDefinition: vi.fn().mockResolvedValue(undefined),
+        getWorkflowSettingValues: vi.fn().mockReturnValue({ requirePlanApproval: true }),
+        getWorkflowSettingsProjectId: vi.fn().mockReturnValue("project-auto-approval"),
+      } as Partial<TaskStore>);
+      (retryStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(retryTask);
+      (retryStore.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        planApprovalMode: "auto-approve-all",
+        requirePlanApproval: false,
+      } as Settings);
+      const retryProcessor = new TriageProcessor(retryStore, tempRoot);
+
+      mockCreateFnAgent.mockClear();
+      mockReviewStep.mockResolvedValue({
+        verdict: "APPROVE",
+        review: "### Verdict: APPROVE\n\n### Summary\nReady.",
+        summary: "Ready.",
+      });
+
+      await retryProcessor.specifyTask(retryTask);
+
+      expect(mockCreateFnAgent).not.toHaveBeenCalled();
+      expect(retryStore.moveTask).toHaveBeenCalledWith(taskId, "todo");
+      expect(retryStore.updateTask).not.toHaveBeenCalledWith(taskId, expect.objectContaining({ status: "awaiting-approval" }));
+    } finally {
+      await cleanupTriageFixtureRoot(tempRoot);
+    }
+  });
+
   it("includes workflow discovery and selection tools in the full triage toolset", async () => {
     const task = createTriageTask({ id: "FN-WORKFLOW-TOOLS" });
     const detailedTask = { ...mockTaskDetail, id: task.id, attachments: [], comments: [] };
@@ -2574,6 +2631,88 @@ describe("requirePlanApproval setting", () => {
 
     expect(store.updateTask).toHaveBeenCalledWith("FN-APPROVAL", expect.objectContaining({ status: "awaiting-approval" }));
     expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-12:28:
+   * FN-7526 — auto-approve-all must NOT bypass the independent release-authorization
+   * gate. Both gates set status: "awaiting-approval", so this asserts the release
+   * gate's own activity/log evidence (recordActivity type
+   * "task:release-authorization-required", distinct log copy) fires instead of the
+   * ordinary manual-approval log line, proving the release gate — not the manual
+   * gate — is what parked the task.
+   */
+  it("release-authorization gate still parks a release-class task even when auto-approve-all is on", async () => {
+    const task = createTriageTask({
+      id: "FN-RELEASE",
+      title: "Release @runfusion/fusion patch",
+      status: "planning",
+      sourceType: "agent_heartbeat",
+    } as Partial<Task>);
+    const recordActivity = vi.fn().mockResolvedValue(undefined);
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue(task),
+      recordActivity,
+    } as Partial<TaskStore>);
+    const processor = new TriageProcessor(store, rootDir);
+
+    await (processor as unknown as {
+      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+    }).finalizeApprovedTask(
+      task,
+      "# Task: FN-RELEASE - Release @runfusion/fusion patch\n\n## Mission\n\nRun pnpm release --yes.\n",
+      { requirePlanApproval: false, planApprovalMode: "auto-approve-all" } as Settings,
+    );
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-RELEASE", expect.objectContaining({ status: "awaiting-approval" }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({ type: "task:release-authorization-required" }));
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-RELEASE",
+      "Release authorization required — leaving task in triage awaiting release authorization",
+      expect.any(String),
+    );
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-12:30:
+   * FN-7526 — auto-approve-all must NOT bypass Workflow Plan Review. A REVISE
+   * verdict routes to status: "needs-replan" (never reaches the manual
+   * resolvePlanApprovalRequired gate at all), which is distinct from the manual
+   * gate's "awaiting-approval" outcome and proves the two gates remain independent.
+   */
+  it("Plan Review still blocks execution on REVISE even when auto-approve-all is on", async () => {
+    const task = createTriageTask({
+      id: "FN-PLAN-REVIEW-AUTO-APPROVE",
+      title: "Plan review auto-approve",
+      status: "planning",
+      enabledWorkflowSteps: ["plan-review"],
+    } as Partial<Task>);
+    const store = createMockStore({
+      getTask: vi.fn().mockResolvedValue(task),
+    } as Partial<TaskStore>);
+    const processor = new TriageProcessor(store, rootDir);
+    mockReviewStep.mockReset();
+    mockReviewStep.mockResolvedValue({
+      verdict: "REVISE",
+      review: "### Verdict: REVISE\n\nAdd acceptance criteria.",
+      summary: "Needs revision.",
+    });
+
+    await (processor as unknown as {
+      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+    }).finalizeApprovedTask(
+      task,
+      "# Task: FN-PLAN-REVIEW-AUTO-APPROVE - Plan review auto-approve\n\n## Mission\n\nDo it.\n",
+      { requirePlanApproval: true, planApprovalMode: "auto-approve-all" } as Settings,
+    );
+
+    expect(store.updateTask).toHaveBeenCalledWith("FN-PLAN-REVIEW-AUTO-APPROVE", expect.objectContaining({
+      status: "needs-replan",
+    }));
+    expect(store.moveTask).not.toHaveBeenCalled();
+    // The manual gate's own awaiting-approval update must never fire for this path.
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-PLAN-REVIEW-AUTO-APPROVE", { status: "awaiting-approval" });
   });
 
   it("clears stale workflow step instances when a fresh accepted plan replaces existing steps", async () => {

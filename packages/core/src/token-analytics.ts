@@ -20,7 +20,7 @@ import type { TaskTokenUsagePerModel } from "./types.js";
  */
 
 /** Dimension to group token totals by. */
-export type TokenGroupBy = "model" | "provider" | "node" | "agent";
+export type TokenGroupBy = "model" | "provider" | "node" | "agent" | "task";
 
 /** Bucket size for optional token-usage time-series analytics. */
 export type TokenTimeGranularity = "hour" | "day" | "week";
@@ -158,6 +158,8 @@ function groupKeyFor(row: TokenContributionRow, groupBy: TokenGroupBy): string |
       return row.contributionKind === "task" ? row.checkoutNodeId : null;
     case "agent":
       return row.contributionKind === "task" ? row.assignedAgentId : row.agentId;
+    case "task":
+      return row.contributionKind === "task" ? row.id : null;
   }
 }
 

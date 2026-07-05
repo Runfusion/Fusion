@@ -16,7 +16,7 @@
 | Merge gate wall-time (`pnpm test:gate`) | 7.7s | +778ms |
 | Boot smoke wall-time (`pnpm smoke:boot`) | 17.4s | -557ms |
 | Changed-only test wall-time (`pnpm test`) | 9.3s | -4.4s |
-| Quarantine / flake count | 0 | 0 |
+| Quarantine / flake count | 1 | +1 |
 | Deletion-due quarantines | 0 | n/a |
 
 ## Measurement failures
@@ -56,7 +56,7 @@
 
 | Age bucket | Count |
 |---|---:|
-| 0-6 days | 0 |
+| 0-6 days | 1 |
 | 7-13 days | 0 |
 | deletion due (>=14 days) | 0 |
 | unknown/future | 0 |
@@ -72,15 +72,15 @@
 | Row | Captured at | Gate | Boot smoke | `pnpm test` | Quarantine count |
 |---|---|---:|---:|---:|---:|
 | Previous | 2026-06-27T05:43:17.293Z | 6.9s | 18.0s | 13.7s | 0 |
-| Latest | 2026-07-02T08:47:17.721Z | 7.7s | 17.4s | 9.3s | 0 |
-| Delta | — | +778ms | -557ms | -4.4s | 0 |
+| Latest | 2026-07-02T08:47:17.721Z | 7.7s | 17.4s | 9.3s | 1 |
+| Delta | — | +778ms | -557ms | -4.4s | +1 |
 
 _Future weekly rows append to `scripts/test-velocity-history.json`; compare the latest row against the previous row before posting to #leads._
 
 ## Post to #leads
 
 ```text
-FN-6612 weekly test velocity: gate 7.7s (+778ms), boot smoke 17.4s (-557ms), pnpm test 9.3s (-4.4s), quarantine ledger 0 (0). Slowest file: packages/dashboard/src/__tests__/insights-routes.test.ts at 26.5s. Deletion-due quarantines: 0.
+FN-6612 weekly test velocity: gate 7.7s (+778ms), boot smoke 17.4s (-557ms), pnpm test 9.3s (-4.4s), quarantine ledger 1 (+1). Slowest file: packages/dashboard/src/__tests__/insights-routes.test.ts at 26.5s. Deletion-due quarantines: 0.
 ```
 
 ## How to refresh

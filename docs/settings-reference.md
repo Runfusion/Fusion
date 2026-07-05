@@ -13,6 +13,9 @@ Fusion uses a two-tier settings system:
 
 At runtime, settings are merged. **Project settings override global settings** when keys overlap.
 
+<!-- FNXC:SettingsDefaults 2026-07-04-00:00: FN-7505 mirrors this table's Default column into the dashboard Settings UI's own help text so operators do not need this doc open to see a field's default. -->
+The `Default` column below is the same source of truth (`DEFAULT_GLOBAL_SETTINGS` / `DEFAULT_PROJECT_SETTINGS` in `packages/core/src/settings-schema.ts`) that the dashboard Settings UI now surfaces inline in each field's own description/help text (see `docs/dashboard-guide.md` → Settings discovery).
+
 ## Settings API Endpoints
 
 | Endpoint | Purpose |
@@ -280,8 +283,10 @@ Actions. It has two tabs:
   controls. Built-in Plan Review/spec and Code Review revision caps also live here:
   leave `planReviewMaxRevisions` or `codeReviewMaxRevisions` empty for unbounded
   automatic revisions, enter a non-negative integer to cap attempts, or enter `0`
-  to disable automatic revision for that path. Edits batch and commit through a
-  single **Save** in the Values tab.
+  to disable automatic revision for that path. `plannerOversightLevel` is the
+  workflow-native planner oversight mode and accepts `off`, `observe`, `steer`,
+  or `autonomous` (default). Edits batch and commit through a single **Save** in
+  the Values tab.
 
 **How values resolve.** The engine resolves *effective settings* per task as
 `stored value ?? declaration default`. The task-detail Workflow, Chat, and Agent
@@ -320,6 +325,7 @@ These groups moved out of project settings and into workflow settings (built-in
 |---|---|
 | **Step execution** | `workflowStepTimeoutMs`, `runStepsInNewSessions`, `maxParallelSteps`, `workflowStepScopeEnforcement`, `strictScopeEnforcement`, `verificationFixRetries`, `maxPostReviewFixes`, `buildRetryCount` |
 | **Review / approval** | Workflow values: `requirePrApproval`, `requirePlanApproval`, `reviewHandoffPolicy`, `maxReviewerContextRetries`, `maxReviewerFallbackRetries`, `planReviewMaxRevisions`, `codeReviewMaxRevisions`; project override: `planApprovalMode` |
+| **Planner oversight** | `plannerOversightLevel` (workflow-native; values: `off`, `observe`, `steer`, `autonomous`) |
 | **Per-phase model lanes** | `executionProvider`/`executionModelId`, `planningProvider`/`planningModelId` (+ fallbacks), `validatorProvider`/`validatorModelId` (+ fallbacks) |
 
 ### Workflow-native triage policy settings
@@ -353,6 +359,7 @@ The built-in workflows also declare triage/spec policy settings that were **not*
 | `autoApproveSpec` | `false` | Legacy compatibility setting. Workflow Plan Review now owns optional pre-execution AI plan approval. |
 | `planReviewMaxRevisions` | unset | Workflow-native Plan Review/spec revision cap. Unset/empty means unbounded automatic replans; a non-negative integer caps attempts; `0` disables automatic Plan Review revision. |
 | `codeReviewMaxRevisions` | unset | Workflow-native Code Review remediation cap. Unset/empty means unbounded automatic code-fix passes; a non-negative integer caps attempts; `0` disables automatic Code Review remediation. |
+| `plannerOversightLevel` | `autonomous` | Workflow-native planner oversight mode. `off` disables oversight; `observe` watches only; `steer` injects guidance or suggests revisions; `autonomous` enables bounded retry and targeted-fix recovery — but merge/PR progression and any destructive or external-service side effect ALWAYS require an explicit, recorded human confirmation before they run, even at `autonomous` (FN-7513's confirmation gate; see `docs/architecture.md` → "Planner overseer confirmation gate"). Tasks may set a nullable `Task.plannerOversightLevel` override (same four values) that wins over this workflow value when present; `null`/unset means "inherit the workflow value". `resolveEffectivePlannerOversightLevel` in `@fusion/core` computes the effective level (task override → workflow effective → `autonomous`). The per-task override is exposed in the dashboard as a "Planner oversight" selector (Inherit from workflow / Off / Observe / Steer / Autonomous recovery) in both the New Task dialog and Task Detail edit form, threaded through `createTask`/`updateTask` (FN-7515); the project/global default is set via the **Workflow Editor → Values** tab on the default workflow's `plannerOversightLevel` value, not in Project Settings. Engine read-site behavior beyond the FN-7513 confirmation gate remains follow-up work (FN-7510+). |
 
 When `triageProactiveSubtaskSplittingEnabled` is `true` (the default), triage may proactively replace a large task with 2-5 child tasks when the size, step-count, package breadth, file-scope, or remediation-batch signals justify the coordination overhead. When it is `false`, those automatic oversized-task signals are advisory only for writing a realistic single-task spec; triage must not split solely because the task is large. The per-task `breakIntoSubtasks: true` flag is separate and remains mandatory: if a user explicitly asks for subtask breakdown, triage still evaluates and creates child tasks when the work is meaningfully decomposable.
 

@@ -91,11 +91,11 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
             }
         }}/>
         {prefixError && <small className="field-error">{prefixError}</small>}
-        {!prefixError && <small>{t("settings.general.prefixForNewTaskIDsEGKB", "Prefix for new task IDs (e.g. KB, PROJ)")}</small>}
+        {!prefixError && <small>{t("settings.general.prefixForNewTaskIDsEGKB", "Prefix for new task IDs (e.g. KB, PROJ). No default \u2014 unset.")}</small>}
       </div>
       <div className="form-group">
         <ProjectDefaultWorkflowField projectId={projectId} addToast={addToast}/>
-        <small>{t("settings.general.newTasksInheritThisCustomWorkflowsStepsOverridable", "New tasks inherit this custom workflow's steps (overridable per task)")}</small>
+        <small>{t("settings.general.newTasksInheritThisCustomWorkflowsStepsOverridable", "New tasks inherit this custom workflow's steps (overridable per task). No default \u2014 unset (built-in default workflow).")}</small>
       </div>
       {builtinWorkflows.length > 0 && (<div className="form-group">
           <label>{t("settings.general.fusionWorkflows", "Fusion workflows")}</label>
@@ -106,7 +106,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
                 <span>{workflow.name}</span>
               </label>))}
           </div>
-          <small>{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve.")}</small>
+          <small>{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).")}</small>
         </div>)}
       <div className="form-group">
         <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">
@@ -132,7 +132,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
       <div className="form-group">
         <label htmlFor="workspaceMode" className="checkbox-label">
           <input id="workspaceMode" type="checkbox" checked={form.workspaceMode === true} onChange={(e) => setForm((f) => ({ ...f, workspaceMode: e.target.checked }))}/>{t("settings.general.workspaceMode", " Workspace mode (multi-repo) ")}</label>
-        <small>{t("settings.general.workspaceModeHint", "When enabled, the project root is treated as a workspace containing multiple git sub-repos. Tasks run per-sub-repo and no git repo is created at the root. Disable for single-repo projects.")}</small>
+        <small>{t("settings.general.workspaceModeHint", "When enabled, the project root is treated as a workspace containing multiple git sub-repos. Tasks run per-sub-repo and no git repo is created at the root. Disable for single-repo projects. No default \u2014 unset (disabled).")}</small>
       </div>
       {/*
         FNXC:FileBrowser 2026-06-29-00:00:
@@ -141,7 +141,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
       <div className="form-group">
         <label htmlFor="allowAbsoluteFileBrowserPaths" className="checkbox-label">
           <input id="allowAbsoluteFileBrowserPaths" type="checkbox" checked={form.allowAbsoluteFileBrowserPaths === true} onChange={(e) => setForm((f) => ({ ...f, allowAbsoluteFileBrowserPaths: e.target.checked }))}/>{t("settings.general.allowAbsoluteFileBrowserPaths", " Allow absolute file-browser paths ")}</label>
-        <small>{t("settings.general.allowAbsoluteFileBrowserPathsHint", "When enabled, slash-prefixed paths such as /tmp can be opened in the workspace file browser. Windows drive-letter paths remain blocked, and other path validators are unchanged.")}</small>
+        <small>{t("settings.general.allowAbsoluteFileBrowserPathsHint", "When enabled, slash-prefixed paths such as /tmp can be opened in the workspace file browser. Windows drive-letter paths remain blocked, and other path validators are unchanged. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="completionDocumentationMode">{t("settings.general.completionDocumentationAutomation", "Completion Documentation Automation")}</label>
@@ -153,7 +153,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
           <option value="changeset">{t("settings.general.requireChangesetChangesetMd", "Require changeset (.changeset/*.md)")}</option>
           <option value="changelog">{t("settings.general.requireChangelogUpdateExistingChangelog", "Require changelog update (existing changelog)")}</option>
         </select>
-        <small>{t("settings.general.controlsHowFutureTaskSpecsHandleReleaseNote", " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ")}<code>.changeset</code>{t("settings.general.workflowsOrChangelogModeWhenContributorsShouldUpdate", " workflows, or changelog mode when contributors should update an existing changelog file. ")}</small>
+        <small>{t("settings.general.controlsHowFutureTaskSpecsHandleReleaseNote", " Controls how future task specs handle release-note artifacts at completion. Use changeset mode for repositories that follow ")}<code>.changeset</code>{t("settings.general.workflowsOrChangelogModeWhenContributorsShouldUpdate", " workflows, or changelog mode when contributors should update an existing changelog file. Default: off. ")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="quickChatButtonMode">{t("settings.general.quickChatLauncher", "Quick Chat launcher")}</label>
@@ -166,7 +166,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
           <option value="footer">{t("settings.general.quickChatLauncherFooter", "Footer button")}</option>
           <option value="off">{t("settings.general.off", "Off")}</option>
         </select>
-        <small>{t("settings.general.quickChatLauncherHint", "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden.")}</small>
+        <small>{t("settings.general.quickChatLauncherHint", "Choose whether Quick Chat opens from the draggable floating button, a footer button beside Terminal, or stays hidden. Default: off (hidden).")}</small>
       </div>
       {/*
         FNXC:ChatModal 2026-06-28-00:00:
@@ -175,7 +175,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
       <div className="form-group">
         <label htmlFor="quickChatCloseOnOutsideClick" className="checkbox-label">
           <input id="quickChatCloseOnOutsideClick" type="checkbox" checked={form.quickChatCloseOnOutsideClick !== false} onChange={(e) => setForm((f) => ({ ...f, quickChatCloseOnOutsideClick: e.target.checked }))}/>{t("settings.general.quickChatCloseOnOutsideClick", "Close Quick Chat on outside click")}</label>
-        <small>{t("settings.general.quickChatCloseOnOutsideClickHint", "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly.")}</small>
+        <small>{t("settings.general.quickChatCloseOnOutsideClickHint", "When enabled, clicking outside the Quick Chat window closes it. Disable to keep it open until you close it explicitly. Default: enabled.")}</small>
       </div>
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.chatHistory", "Chat history")}</h4>
       {/*
@@ -185,7 +185,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
       <div className="form-group">
         <label htmlFor="showTaskChatsInCommonFeed" className="checkbox-label">
           <input id="showTaskChatsInCommonFeed" type="checkbox" checked={form.showTaskChatsInCommonFeed === true} onChange={(e) => setForm((f) => ({ ...f, showTaskChatsInCommonFeed: e.target.checked }))}/>{t("settings.general.showTaskChatsInCommonFeed", "Show task chats in common Chat feed")}</label>
-        <small>{t("settings.general.showTaskChatsInCommonFeedHint", "When enabled, populated task-detail Chat conversations appear in the common Direct feed. Empty task chats stay hidden.")}</small>
+        <small>{t("settings.general.showTaskChatsInCommonFeedHint", "When enabled, populated task-detail Chat conversations appear in the common Direct feed. Empty task chats stay hidden. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="chatAutoCleanupDays">{t("settings.general.autoCleanupOldChats", "Auto-cleanup old chats")}</label>
@@ -243,7 +243,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
       <div className="form-group">
         <label htmlFor="capacityRiskBannerEnabled" className="checkbox-label">
           <input id="capacityRiskBannerEnabled" type="checkbox" checked={form.capacityRiskBannerEnabled === true} onChange={(e) => setForm((f) => ({ ...f, capacityRiskBannerEnabled: e.target.checked }))}/>{t("settings.general.showCapacityRiskBanner", " Show capacity risk banner ")}</label>
-        <small>{t("settings.general.warnOnTheBoardWhenTodoWorkExceeds", "Warn on the board when todo work exceeds the threshold and no idle agents are available.")}</small>
+        <small>{t("settings.general.warnOnTheBoardWhenTodoWorkExceeds", "Warn on the board when todo work exceeds the threshold and no idle agents are available. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="capacityRiskTodoThresholdGeneral">{t("settings.general.todoThreshold", "Todo threshold")}</label>
@@ -286,7 +286,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
         */}
         <label htmlFor="githubLinkImportedIssuesToTracking" className="checkbox-label">
           <input id="githubLinkImportedIssuesToTracking" type="checkbox" checked={form.githubLinkImportedIssuesToTracking === true} onChange={(e) => setForm((f) => ({ ...f, githubLinkImportedIssuesToTracking: e.target.checked }))}/>{t("settings.general.alwaysLinkImportedGitHubIssuesToTracking", " Always link imported GitHub issues to GitHub tracking ")}</label>
-        <small>{t("settings.general.whenEnabledImportedGitHubIssuesUseTheirSource", "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks.")}</small>
+        <small>{t("settings.general.whenEnabledImportedGitHubIssuesUseTheirSource", "When enabled, GitHub issue imports become tracked tasks that adopt the source issue. This does not turn GitHub tracking on for ordinary new tasks. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="projectGithubTrackingDefaultRepoGeneral">{t("settings.general.projectDefaultTrackingRepo", "Project default tracking repo")}</label>
@@ -296,7 +296,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
       <div className="form-group">
         <label htmlFor="githubTrackingDedupEnabled" className="checkbox-label">
           <input id="githubTrackingDedupEnabled" type="checkbox" checked={form.githubTrackingDedupEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, githubTrackingDedupEnabled: e.target.checked }))}/>{t("settings.general.searchTheTrackingRepoForLikelyDuplicatesBefore", " Search the tracking repo for likely duplicates before opening a new issue ")}</label>
-        <small>{t("settings.general.whenEnabledFusionChecksOpenAndClosedIssues", " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. ")}</small>
+        <small>{t("settings.general.whenEnabledFusionChecksOpenAndClosedIssues", " When enabled, Fusion checks open and closed issues in the target repo for likely duplicates (using File Scope paths and key symptoms) before creating a new tracking issue. Uncheck to always create a new issue. Default: enabled. ")}</small>
       </div>
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.general.gitLabConfiguration", "GitLab Configuration")}</h4>
       {/*
@@ -311,7 +311,7 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
             {t("settings.general.enableGitLabIntegration", "Enable GitLab integration")}
           </label>
         </summary>
-        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.general.gitLabDisabledHint", "GitLab API imports, comments, close/reopen, and refresh operations are disabled. Saved URLs and tokens remain stored for re-enable.") : t("settings.general.gitLabEnabledHint", "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com.")}</small>
+        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.general.gitLabDisabledHint", "GitLab API imports, comments, close/reopen, and refresh operations are disabled. Saved URLs and tokens remain stored for re-enable.") : t("settings.general.gitLabEnabledHint", "Configure GitLab.com or self-managed GitLab URLs. Blank values inherit global fallbacks and then GitLab.com. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
         <div className="settings-gitlab-disclosure__body" aria-disabled={form.gitlabEnabled === false}>
           <div className="form-group">
             <label htmlFor="gitlabInstanceUrl">{t("settings.general.gitLabInstanceUrl", "GitLab instance URL")}</label>

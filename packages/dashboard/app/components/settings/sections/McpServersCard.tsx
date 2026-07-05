@@ -537,6 +537,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
         <input type="checkbox" checked={settings.enabled === true} onChange={(event) => setEnabled(event.target.checked)} />
         {t("settings.mcp.enabled", "Enable MCP servers for this scope")}
       </label>
+      <small className="settings-description">{t("settings.mcp.enabledHint", "Default: disabled, with no servers configured.")}</small>
 
       <div className="mcp-discovery card" data-testid={`mcp-discovery-${scope}`}>
         <div className="mcp-discovery__header">

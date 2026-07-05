@@ -286,7 +286,7 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         }}/>
           {form.tokenCap != null && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToDefaultNoCap", "Reset to default (no cap)")} onClick={() => setForm((f) => ({ ...f, tokenCap: null } as unknown as SettingsFormState))} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
         </div>
-        <small>{t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count.")}</small>
+        <small>{t("settings.projectModels.automaticallyCompactContextWhenApproachingThisTokenCount", "Automatically compact context when approaching this token count. Leave empty for no cap (compact only on overflow errors). Set a number to proactively compact when reaching this token count. No default \u2014 unset (no cap).")}</small>
       </div>
 
       {/* --- Project Model Lanes --- */}
@@ -455,6 +455,7 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       <div className="form-group settings-preset-auto-select">
         <label htmlFor="autoSelectModelPreset" className="checkbox-label">
           <input id="autoSelectModelPreset" type="checkbox" checked={form.autoSelectModelPreset || false} onChange={(e) => setForm((current) => ({ ...current, autoSelectModelPreset: e.target.checked }))}/>{t("settings.projectModels.autoSelectPresetBasedOnTaskSize", " Auto-select preset based on task size ")}</label>
+        <small>{t("settings.projectModels.autoSelectModelPresetHint", "Default: disabled.")}</small>
       </div>
 
       {form.autoSelectModelPreset ? (<div className="settings-preset-size-grid">
@@ -484,13 +485,13 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       <div className="form-group">
         <label htmlFor="autoSummarizeTitles" className="checkbox-label">
           <input id="autoSummarizeTitles" type="checkbox" checked={form.autoSummarizeTitles || false} onChange={(e) => setForm((f) => ({ ...f, autoSummarizeTitles: e.target.checked }))}/>{t("settings.projectModels.autoSummarizeLongDescriptionsAsTitles", " Auto-summarize long descriptions as titles ")}</label>
-        <small>{t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title (max 60 characters). The same model is also used to generate fallback merge commit message bodies when the branch's commit log is empty (e.g. squash merges with no unique commits), and GitHub tracking issue titles when a tracked task has no title yet. ")}</small>
+        <small>{t("settings.projectModels.whenEnabledTasksCreatedWithoutATitleBut", " When enabled, tasks created without a title but with descriptions over 200 characters will automatically get an AI-generated title (max 60 characters). The same model is also used to generate fallback merge commit message bodies when the branch's commit log is empty (e.g. squash merges with no unique commits), and GitHub tracking issue titles when a tracked task has no title yet. Default: disabled. ")}</small>
       </div>
 
       <div className="form-group">
         <label htmlFor="useAiMergeCommitSummary" className="checkbox-label">
           <input id="useAiMergeCommitSummary" type="checkbox" checked={form.useAiMergeCommitSummary || false} onChange={(e) => setForm((f) => ({ ...f, useAiMergeCommitSummary: e.target.checked }))}/>{t("settings.projectModels.aIMergeCommitSummaries", " AI merge commit summaries ")}</label>
-        <small>{t("settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI", " When enabled, merge commit messages include an AI-generated subject plus body summary (narrative + bullets + diff-stat) instead of just listing step commit subjects. Uses the title summarization model. ")}</small>
+        <small>{t("settings.projectModels.whenEnabledMergeCommitMessagesIncludeAnAI", " When enabled, merge commit messages include an AI-generated subject plus body summary (narrative + bullets + diff-stat) instead of just listing step commit subjects. Uses the title summarization model. Default: enabled. ")}</small>
       </div>
 
       {(form.autoSummarizeTitles || form.useAiMergeCommitSummary || form.githubTrackingEnabledByDefault || false) && (<p className="settings-description">
@@ -500,13 +501,13 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       <div className="form-group">
         <label htmlFor="prTitlePromptInstructions">{t("settings.projectModels.prTitlePromptInstructions", "PR title prompt guidance")}</label>
         <textarea id="prTitlePromptInstructions" value={form.prTitlePromptInstructions || ""} onChange={(e) => setForm((f) => ({ ...f, prTitlePromptInstructions: e.target.value }))} rows={3} placeholder={t("settings.projectModels.prTitlePromptInstructionsPlaceholder", "Example: Use conventional-commit style and keep titles under 72 characters.")}/>
-        <small>{t("settings.projectModels.prTitlePromptInstructionsHelp", "Guides the AI-generated Create PR title. Leave blank to use the default PR metadata prompt.")}</small>
+        <small>{t("settings.projectModels.prTitlePromptInstructionsHelp", "Guides the AI-generated Create PR title. Leave blank to use the default PR metadata prompt. No default \u2014 unset.")}</small>
       </div>
 
       <div className="form-group">
         <label htmlFor="prDescriptionPromptInstructions">{t("settings.projectModels.prDescriptionPromptInstructions", "PR description prompt guidance")}</label>
         <textarea id="prDescriptionPromptInstructions" value={form.prDescriptionPromptInstructions || ""} onChange={(e) => setForm((f) => ({ ...f, prDescriptionPromptInstructions: e.target.value }))} rows={4} placeholder={t("settings.projectModels.prDescriptionPromptInstructionsPlaceholder", "Example: Emphasize operator-facing behavior and list verification commands exactly.")}/>
-        <small>{t("settings.projectModels.prDescriptionPromptInstructionsHelp", "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt.")}</small>
+        <small>{t("settings.projectModels.prDescriptionPromptInstructionsHelp", "Guides the AI-generated Create PR summary, changes, and testing sections. Leave blank to use the default PR metadata prompt. No default \u2014 unset.")}</small>
       </div>
     </>);
 }

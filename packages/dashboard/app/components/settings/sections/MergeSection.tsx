@@ -89,7 +89,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="autoMerge" type="checkbox" checked={form.autoMerge} onChange={(e) => setForm((f) => ({ ...f, autoMerge: e.target.checked }))}/>{t("settings.merge.autoMergeCompletedTasks", " Auto-merge completed tasks ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledTasksThatPassReviewAreAutomatically", "When enabled, tasks that pass review are automatically merged into the main branch")}</small>
+          <small>{t("settings.merge.whenEnabledTasksThatPassReviewAreAutomatically", "When enabled, tasks that pass review are automatically merged into the main branch. Default: enabled.")}</small>
         </details>
       </div>
       <div className="form-group">
@@ -102,7 +102,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
             const nextMode = e.target.value as Settings["planApprovalMode"];
             setForm((f) => ({ ...f, planApprovalMode: nextMode }));
         }} data-testid="plan-approval-mode-select">
-          <option value="workflow">{t("settings.merge.planApprovalModeWorkflow", "Use workflow setting")}</option>
+          <option value="workflow">{t("settings.merge.planApprovalModeWorkflow", "Use workflow setting (default)")}</option>
           <option value="auto-approve-all">{t("settings.merge.planApprovalModeAutoApproveAll", "Auto-approve all tasks")}</option>
           <option value="require-all">{t("settings.merge.planApprovalModeRequireAll", "Require approval for all tasks")}</option>
         </select>
@@ -166,7 +166,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
             }))}/>{t("settings.merge.allowAIMergeToSyncADirtyChecked", " Allow AI merge to sync a dirty checked-out integration branch ")}</label>
             <details className="settings-option-details">
               <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-              <small>{t("settings.merge.dangerousCompatibilityEscapeHatchLeaveOffUnlessYou", " Dangerous compatibility escape hatch. Leave off unless you explicitly want the legacy stash \u2192 fast-forward \u2192 restore behavior when your checked-out integration branch has unrelated local edits. When off, AI merge blocks before advancing the branch so dirty project-root edits cannot contaminate a completed merge. ")}</small>
+              <small>{t("settings.merge.dangerousCompatibilityEscapeHatchLeaveOffUnlessYou", " Dangerous compatibility escape hatch \u2014 restores the legacy stash \u2192 fast-forward \u2192 restore behavior when your checked-out integration branch has unrelated local edits. When off, AI merge blocks before advancing the branch so dirty project-root edits cannot contaminate a completed merge. Default: enabled (new/unconfigured projects sync a dirty checkout). ")}</small>
             </details>
           </div>
         </>)}
@@ -175,14 +175,14 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="testMode" type="checkbox" checked={form.testMode === true} onChange={(e) => setForm((f) => ({ ...f, testMode: e.target.checked }))}/>{t("settings.merge.enableTestMode", " Enable test mode ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.forcesAllAILanesToUseTheDeterministic", "Forces all AI lanes to use the deterministic mock provider. No network calls, zero token cost.")}</small>
+          <small>{t("settings.merge.forcesAllAILanesToUseTheDeterministic", "Forces all AI lanes to use the deterministic mock provider. No network calls, zero token cost. No default \u2014 unset (disabled).")}</small>
         </details>
       </div>
       <MovedSettingsStub message={t("settings.movedStub.reviewVerification", "Review, verification auto-fix, and scope-enforcement settings now live on the workflow.")} onOpenWorkflowSettings={onOpenWorkflowSettings}/>
       <div className="form-group">
         <label htmlFor="mergeStrategy">{t("settings.merge.autoCompletionMode", "Auto-completion mode")}</label>
         <select id="mergeStrategy" value={form.mergeStrategy || "direct"} onChange={(e) => setForm((f) => ({ ...f, mergeStrategy: e.target.value as Settings["mergeStrategy"] }))}>
-          <option value="direct">{t("settings.merge.directMergeIntoTheCurrentBranch", "Direct merge into the current branch")}</option>
+          <option value="direct">{t("settings.merge.directMergeIntoTheCurrentBranch", "Direct merge into the current branch (default)")}</option>
           <option value="pull-request">{t("settings.merge.createMonitorAndMergeAGitHubPullRequest", "Create, monitor, and merge a GitHub pull request")}</option>
         </select>
         <details className="settings-option-details">
@@ -231,7 +231,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
         })()}
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.theCanonicalBranchFusionMergesTasksIntoAnd", " The canonical branch Fusion merges tasks into and uses as the reference for all ahead/behind / overlap / pre-rebase computations. Leave on ")}<em>{t("settings.merge.autoDetect", "auto-detect")}</em>{t("settings.merge.toResolveViaTheStandardCascade", " to resolve via the standard cascade (")}<code>integrationBranch</code>{t("settings.merge.legacy", " \u2192 legacy ")}<code>baseBranch</code> →
+          <small>{t("settings.merge.theCanonicalBranchFusionMergesTasksIntoAnd", " No default \u2014 unset (auto-detect). The canonical branch Fusion merges tasks into and uses as the reference for all ahead/behind / overlap / pre-rebase computations. Leave on ")}<em>{t("settings.merge.autoDetect", "auto-detect")}</em>{t("settings.merge.toResolveViaTheStandardCascade", " to resolve via the standard cascade (")}<code>integrationBranch</code>{t("settings.merge.legacy", " \u2192 legacy ")}<code>baseBranch</code> →
             <code>origin/HEAD</code>{t("settings.merge.symbolicRefFallback", " symbolic ref \u2192 fallback ")}<code>main</code>{t("settings.merge.pickALocalBranchFromTheDropdownCommon", "). Pick a local branch from the dropdown \u2014 common integration names like ")}<code>main</code>,
             <code>master</code>, <code>trunk</code>{t("settings.merge.and", ", and ")}<code>develop</code>{t("settings.merge.areListedFirstOrChoose", " are listed first \u2014 or choose ")}<em>{t("settings.merge.custom", "Custom\u2026")}</em>{t("settings.merge.toTypeABranchThatDoesnAposT", " to type a branch that doesn't exist locally yet. Applies to both direct merges and pull-request mode; individual tasks can still override via task metadata. ")}</small>
         </details>
@@ -244,7 +244,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
                 directMergeCommitStrategy: e.target.value as "auto" | "always-squash" | "always-rebase",
             }))}>
               <option value="auto">{t("settings.merge.autoSquashSingleSubstantiveBranchesPreserveMultiSubstantive", "Auto \u2014 squash single-substantive branches, preserve multi-substantive history")}</option>
-              <option value="always-squash">{t("settings.merge.alwaysSquashDirectMerges", "Always squash direct merges")}</option>
+              <option value="always-squash">{t("settings.merge.alwaysSquashDirectMerges", "Always squash direct merges (default)")}</option>
               <option value="always-rebase">{t("settings.merge.alwaysPreserveDirectMergeCommitHistory", "Always preserve direct-merge commit history")}</option>
             </select>
             <details className="settings-option-details">
@@ -286,13 +286,14 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
       <div className="form-group">
         <label htmlFor="githubAuthMode">{t("settings.merge.gitHubAuthMode", "GitHub auth mode")}</label>
         <select id="githubAuthMode" className="select" value={form.githubAuthMode ?? "gh-cli"} onChange={(e) => setForm((f) => ({ ...f, githubAuthMode: e.target.value as "gh-cli" | "token" }))}>
-          <option value="gh-cli">{t("settings.merge.gitHubCLIGhAuth", "GitHub CLI (gh auth)")}</option>
+          <option value="gh-cli">{t("settings.merge.gitHubCLIGhAuth", "GitHub CLI (gh auth) (default)")}</option>
           <option value="token">{t("settings.merge.personalAccessToken", "Personal access token")}</option>
         </select>
       </div>
       {(form.githubAuthMode ?? "gh-cli") === "token" && (<div className="form-group">
           <label htmlFor="githubAuthToken">{t("settings.merge.gitHubPersonalAccessToken", "GitHub personal access token")}</label>
           <input id="githubAuthToken" type="password" className="input" value={form.githubAuthToken ?? ""} onChange={(e) => setForm((f) => ({ ...f, githubAuthToken: e.target.value || undefined }))}/>
+          <small>{t("settings.merge.githubAuthTokenHint", "No default \u2014 unset.")}</small>
         </div>)}
       <h4 className="settings-section-heading settings-section-heading--spaced">{t("settings.merge.gitLabAuthentication", "GitLab Authentication")}</h4>
       {/**
@@ -307,12 +308,12 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
             {t("settings.merge.enableGitLabIntegration", "Enable GitLab integration")}
           </label>
         </summary>
-        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.merge.gitLabDisabledHint", "GitLab comments, close/reopen, import fetches, and refresh operations are disabled. Saved tokens remain stored for re-enable.") : t("settings.merge.gitLabAuthDetails", "Fusion uses GitLab REST API token authentication with the PRIVATE-TOKEN header. Leave the token blank to clear the project override and fall back to a configured global GitLab token or GITLAB_TOKEN where available.")}</small>
+        <small className="settings-description">{form.gitlabEnabled === false ? t("settings.merge.gitLabDisabledHint", "GitLab comments, close/reopen, import fetches, and refresh operations are disabled. Saved tokens remain stored for re-enable.") : t("settings.merge.gitLabAuthDetails", "Fusion uses GitLab REST API token authentication with the PRIVATE-TOKEN header. Leave the token blank to clear the project override and fall back to a configured global GitLab token or GITLAB_TOKEN where available. No default — unset (unset behaves as enabled until explicitly disabled).")}</small>
         <div className="settings-gitlab-disclosure__body" aria-disabled={form.gitlabEnabled === false}>
           <div className="form-group">
             <label htmlFor="gitlabAuthTokenType">{t("settings.merge.gitLabTokenType", "GitLab token type")}</label>
             <select id="gitlabAuthTokenType" className="select" value={form.gitlabAuthTokenType ?? "personal"} disabled={form.gitlabEnabled === false} onChange={(e) => setForm((f) => ({ ...f, gitlabAuthTokenType: e.target.value as "personal" | "project" | "group" }))}>
-              <option value="personal">{t("settings.merge.gitLabPersonalAccessToken", "Personal access token")}</option>
+              <option value="personal">{t("settings.merge.gitLabPersonalAccessToken", "Personal access token (default)")}</option>
               <option value="project">{t("settings.merge.gitLabProjectAccessToken", "Project access token")}</option>
               <option value="group">{t("settings.merge.gitLabGroupAccessToken", "Group access token")}</option>
             </select>
@@ -320,7 +321,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <div className="form-group">
             <label htmlFor="gitlabAuthToken">{t("settings.merge.gitLabAccessToken", "GitLab access token")}</label>
             <input id="gitlabAuthToken" type="password" className="input" autoComplete="off" value={form.gitlabAuthToken ?? ""} disabled={form.gitlabEnabled === false} onChange={(e) => setForm((f) => ({ ...f, gitlabAuthToken: e.target.value || undefined }))}/>
-            <small className="settings-description">{t("settings.merge.gitLabAuthTokenHint", "Read-only GitLab operations need read_api or api. Future write actions such as comments and auto-close need api. Project and group tokens are limited to their associated resource and role membership.")}</small>
+            <small className="settings-description">{t("settings.merge.gitLabAuthTokenHint", "Read-only GitLab operations need read_api or api. Future write actions such as comments and auto-close need api. Project and group tokens are limited to their associated resource and role membership. No default \u2014 unset.")}</small>
           </div>
         </div>
       </details>
@@ -329,7 +330,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="includeTaskIdInCommit" type="checkbox" checked={form.includeTaskIdInCommit !== false} onChange={(e) => setForm((f) => ({ ...f, includeTaskIdInCommit: e.target.checked }))}/>{t("settings.merge.includeTaskIDInCommitScope", " Include task ID in commit scope ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenDisabledMergeCommitMessagesOmitTheTask", "When disabled, merge commit messages omit the task ID from the scope (e.g. ")}<code>feat: ...</code>{t("settings.merge.insteadOf", " instead of ")}<code>feat(KB-001): ...</code>)</small>
+          <small>{t("settings.merge.whenDisabledMergeCommitMessagesOmitTheTask", "When disabled, merge commit messages omit the task ID from the scope (e.g. ")}<code>feat: ...</code>{t("settings.merge.insteadOf", " instead of ")}<code>feat(KB-001): ...</code>{t("settings.merge.includeTaskIdInCommitDefault", "). Default: enabled.")}</small>
         </details>
       </div>
       <div className="form-group">
@@ -337,7 +338,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="commitAuthorEnabled" type="checkbox" checked={form.commitAuthorEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, commitAuthorEnabled: e.target.checked }))}/>{t("settings.merge.addFusionAsCoAuthorOnCommits", " Add Fusion as co-author on commits ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledCommitsMadeByFusionKeepYour", " When enabled, commits made by Fusion keep your git identity as the primary author and append a ")}<code>Co-authored-by</code>{t("settings.merge.trailerCreditingFusionRecognizedByGitHubForShared", " trailer crediting Fusion (recognized by GitHub for shared attribution). ")}</small>
+          <small>{t("settings.merge.whenEnabledCommitsMadeByFusionKeepYour", " When enabled, commits made by Fusion keep your git identity as the primary author and append a ")}<code>Co-authored-by</code>{t("settings.merge.trailerCreditingFusionRecognizedByGitHubForShared", " trailer crediting Fusion (recognized by GitHub for shared attribution). Default: enabled. ")}</small>
         </details>
       </div>
 
@@ -348,7 +349,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
                 ...f,
                 commitAuthorName: e.target.value || undefined,
             }))}/>
-            <small>{t("settings.merge.nameUsedInThe", "Name used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailer", " trailer")}</small>
+            <small>{t("settings.merge.nameUsedInThe", "Name used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailer", " trailer. Default: Fusion.")}</small>
           </div>
           <div className="form-group">
             <label htmlFor="commitAuthorEmail">{t("settings.merge.coAuthorEmail", "Co-author Email")}</label>
@@ -356,7 +357,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
                 ...f,
                 commitAuthorEmail: e.target.value || undefined,
             }))}/>
-            <small>{t("settings.merge.emailUsedInThe", "Email used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailer", " trailer")}</small>
+            <small>{t("settings.merge.emailUsedInThe", "Email used in the ")}<code>Co-authored-by</code>{t("settings.merge.trailerEmail", " trailer. Default: noreply@runfusion.ai.")}</small>
           </div>
         </>)}
 
@@ -365,7 +366,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="autoResolveConflicts" type="checkbox" checked={form.autoResolveConflicts !== false} onChange={(e) => setForm((f) => ({ ...f, autoResolveConflicts: e.target.checked }))}/>{t("settings.merge.autoResolveConflictsInLockFilesAndGenerated", " Auto-resolve conflicts in lock files and generated files ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review.")}</small>
+          <small>{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.), generated files (dist/*, *.gen.ts), and trivial whitespace conflicts are resolved automatically without AI intervention. Complex code conflicts still require AI review. Default: enabled.")}</small>
         </details>
       </div>
       {(form.merger?.mode ?? "ai") !== "ai" && (<>
@@ -374,7 +375,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="smartConflictResolution" type="checkbox" checked={form.smartConflictResolution !== false} onChange={(e) => setForm((f) => ({ ...f, smartConflictResolution: e.target.checked }))}/>{t("settings.merge.smartConflictResolution", " Smart conflict resolution ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm2", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review.")}</small>
+          <small>{t("settings.merge.whenEnabledLockFilesPackageLockJsonPnpm2", "When enabled, lock files (package-lock.json, pnpm-lock.yaml, etc.) are resolved using 'ours' strategy, generated files (dist/*, *.gen.ts) using 'theirs' strategy, and trivial whitespace conflicts are auto-resolved without spawning an AI agent. Complex code conflicts still require AI review. Default: enabled.")}</small>
         </details>
       </div>
       <div className="form-group">
@@ -427,7 +428,7 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
           <input id="pushAfterMerge" type="checkbox" checked={form.pushAfterMerge === true} onChange={(e) => setForm((f) => ({ ...f, pushAfterMerge: e.target.checked }))}/>{t("settings.merge.pushToRemoteAfterMerge", " Push to remote after merge ")}</label>
         <details className="settings-option-details">
           <summary>{t("settings.merge.moreDetails", "More details")}</summary>
-          <small>{t("settings.merge.whenEnabledTheMergedResultIsAutomaticallyPushed", "When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed.")}</small>
+          <small>{t("settings.merge.whenEnabledTheMergedResultIsAutomaticallyPushed", "When enabled, the merged result is automatically pushed to the configured git remote. This includes pulling the latest from the remote first (rebase) and resolving any conflicts with AI if needed. Default: disabled.")}</small>
         </details>
       </div>
 

@@ -20,6 +20,7 @@ export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledE
                 enabled: event.target.checked,
             },
         }))}/>{t("settings.scheduledEvals.enableScheduledEvalRunsForThisProject", " Enable scheduled eval runs for this project ")}</label>
+        <small>{t("settings.scheduledEvals.enabledHint", "Default: disabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="scheduled-evals-interval">{t("settings.scheduledEvals.intervalMs", "Interval (ms)")}</label>
@@ -30,6 +31,7 @@ export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledE
                 intervalMs: event.target.value === "" ? undefined : Number(event.target.value),
             },
         }))}/>
+        <small>{t("settings.scheduledEvals.intervalMsHint", "Default: 86400000 (24 hours).")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="scheduled-evals-provider">{t("settings.scheduledEvals.evaluatorProvider", "Evaluator Provider")}</label>
@@ -40,6 +42,7 @@ export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledE
                 evaluatorProvider: event.target.value.trim() === "" ? undefined : event.target.value,
             },
         }))} placeholder={t("settings.scheduledEvals.openai", "openai")}/>
+        <small>{t("settings.scheduledEvals.evaluatorProviderHint", "No default \u2014 unset (inherits the project validator lane provider).")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="scheduled-evals-model">{t("settings.scheduledEvals.evaluatorModel", "Evaluator Model")}</label>
@@ -50,7 +53,7 @@ export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledE
                 evaluatorModelId: event.target.value.trim() === "" ? undefined : event.target.value,
             },
         }))} placeholder={t("settings.scheduledEvals.gpt5", "gpt-5")}/>
-        <small className="form-text text-muted">{t("settings.scheduledEvals.leaveProviderAndModelBlankToInheritThe", " Leave provider and model blank to inherit the project validator lane model settings. ")}</small>
+        <small className="form-text text-muted">{t("settings.scheduledEvals.leaveProviderAndModelBlankToInheritThe", " Leave provider and model blank to inherit the project validator lane model settings. No default \u2014 unset. ")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="scheduled-evals-follow-up-policy">{t("settings.scheduledEvals.followUpPolicy", "Follow-up Policy")}</label>
@@ -65,6 +68,7 @@ export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledE
           <option value="suggest-only">{t("settings.scheduledEvals.suggestOnly", "Suggest only")}</option>
           <option value="auto-create">{t("settings.scheduledEvals.autoCreateTasks", "Auto-create tasks")}</option>
         </select>
+        <small>{t("settings.scheduledEvals.followUpPolicyHint", "Default: suggest only.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="scheduled-evals-retention-days">{t("settings.scheduledEvals.retentionDays", "Retention (days)")}</label>
@@ -75,6 +79,7 @@ export function ScheduledEvalsSection({ scopeBanner, form, setForm }: ScheduledE
                 retentionDays: event.target.value === "" ? undefined : Number(event.target.value),
             },
         }))}/>
+        <small>{t("settings.scheduledEvals.retentionDaysHint", "Default: 30.")}</small>
       </div>
     </>);
 }

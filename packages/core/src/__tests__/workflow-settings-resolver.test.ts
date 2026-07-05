@@ -6,6 +6,7 @@ import {
   resolveEffectiveSettings,
   resolveEffectiveSettingsById,
   resolveOptionalReviewRevisionBudget,
+  resolveEffectivePlannerOversightLevel,
   type WorkflowSettingsResolverStore,
 } from "../workflow-settings-resolver.js";
 
@@ -148,6 +149,7 @@ describe("resolveEffectiveSettings (per-task)", () => {
         expect(eff[s.id]).toStrictEqual(s.default);
       }
     }
+    expect(eff.plannerOversightLevel).toBe("autonomous");
   });
 
   it("a stored value for (workflow, project) is returned over the default", async () => {
@@ -281,5 +283,32 @@ describe("resolveEffectiveSettingsById", () => {
     const store = makeStore({});
     const eff = await resolveEffectiveSettingsById(store, "builtin:coding", "proj-9");
     expect(eff.requirePrApproval).toBe(false);
+  });
+});
+
+// FNXC:PlannerOversight 2026-07-04-00:00: task override > workflow effective > "autonomous" default (FN-7509).
+describe("resolveEffectivePlannerOversightLevel", () => {
+  it("task override wins over workflow effective value", () => {
+    expect(resolveEffectivePlannerOversightLevel("steer", "observe")).toBe("steer");
+  });
+
+  it("uses workflow effective value when no task override", () => {
+    expect(resolveEffectivePlannerOversightLevel(undefined, "observe")).toBe("observe");
+  });
+
+  it("falls back to 'autonomous' when task override is an unknown/invalid string", () => {
+    expect(resolveEffectivePlannerOversightLevel("bogus", "observe")).toBe("observe");
+  });
+
+  it("falls back to 'autonomous' when workflow effective value is an unknown/invalid string", () => {
+    expect(resolveEffectivePlannerOversightLevel(undefined, "bogus")).toBe("autonomous");
+  });
+
+  it("falls back to 'autonomous' when both are unset", () => {
+    expect(resolveEffectivePlannerOversightLevel(undefined, undefined)).toBe("autonomous");
+  });
+
+  it("falls back to 'autonomous' when both are null", () => {
+    expect(resolveEffectivePlannerOversightLevel(null, null)).toBe("autonomous");
   });
 });

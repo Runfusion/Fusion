@@ -14,6 +14,7 @@ import {
   PLAN_REVIEW_GROUP_ID,
   TaskDeletedError,
   buildTriageMemoryInstructions,
+  buildBootstrapPrompt,
   getTaskDuplicateLineage,
   parseExplicitDuplicateMarker,
   resolveAgentPrompt,
@@ -335,8 +336,13 @@ export class TriageProcessor {
   }
 
   private async clearStaleSpecifyingStatuses(): Promise<void> {
-    const tasks = await this.store.listTasks({ column: "triage", slim: true });
-    const stale = tasks.filter(
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-04-12:00:
+    In the merged planner/capacity "todo" column a task can carry status "planning" when the triage service is specifying it in place. A crash/restart before planning completes leaves that status set, so the startup sweep must clear it from BOTH triage and todo — otherwise a stale planning todo task permanently occupies a maxTriageConcurrent slot and blocks new triage work.
+    */
+    const triageTasks = await this.store.listTasks({ column: "triage", slim: true });
+    const todoTasks = await this.store.listTasks({ column: "todo", slim: true });
+    const stale = [...triageTasks, ...todoTasks].filter(
       (t) => t.status === "planning" && !this.processing.has(t.id),
     );
     for (const t of stale) {
@@ -788,7 +794,30 @@ export class TriageProcessor {
           // Skip tasks with a recovery backoff that hasn't elapsed yet
           && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
       );
-      const triageTasks = sortTasksByPriorityThenAgeAndId(eligibleTriageTasks).sort((a, b) => {
+      /*
+      Workflows with a manual intake (e.g. Coding (Ideas)) merge the planner and capacity-hold stages into a single "todo" column. The triage service must also discover "todo" tasks whose PROMPT.md is still the bootstrap stub — they have been promoted out of the manual intake but not yet planned in place. Planned todo tasks carry a real spec and are left for the scheduler. The bootstrap-prompt file check is the ground-truth unplanned signal; it is false for every normal-workflow todo task because triage writes a real spec before it ever moves a card into todo.
+      */
+      const eligibleTodoTasksRaw = allTasks.filter(
+        (t) => t.column === "todo" && !this.processing.has(t.id) && !t.paused
+          && t.status !== "awaiting-approval"
+          && t.status !== "failed"
+          && t.status !== "stuck-killed"
+          && t.status !== "planning"
+          && !(t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now),
+      );
+      const eligibleTodoTasks: Task[] = [];
+      for (const todoTask of eligibleTodoTasksRaw) {
+        try {
+          const promptPath = join(this.rootDir, ".fusion", "tasks", todoTask.id, "PROMPT.md");
+          const content = await readFile(promptPath, "utf-8");
+          if (content === buildBootstrapPrompt(todoTask.id, todoTask.title, todoTask.description)) {
+            eligibleTodoTasks.push(todoTask);
+          }
+        } catch {
+          // Missing/unreadable prompt — skip; the scheduler's filesystem validation handles it.
+        }
+      }
+      const triageTasks = sortTasksByPriorityThenAgeAndId([...eligibleTriageTasks, ...eligibleTodoTasks]).sort((a, b) => {
         const priorityCmp = compareTaskPriority(a.priority, b.priority);
         if (priorityCmp !== 0) {
           return priorityCmp;
@@ -813,7 +842,7 @@ export class TriageProcessor {
       // Only planning tasks count against the triage limit; execution is governed by maxConcurrent.
       const maxTriageConcurrent = settings.maxTriageConcurrent ?? settings.maxConcurrent ?? 2;
       const planning = allTasks.filter(
-        (t) => t.column === "triage" && t.status === "planning" && !t.paused,
+        (t) => (t.column === "triage" || t.column === "todo") && t.status === "planning" && !t.paused,
       ).length;
       const activeAgents = planning;
 
@@ -2532,6 +2561,9 @@ export class TriageProcessor {
 
     FNXC:PlanApproval 2026-07-01-08:12:
     This is the ordinary manual plan-approval gate only, after release authorization and Workflow Plan Review have already made their independent decisions. Always call resolvePlanApprovalRequired with the merged settings object so project auto-approve-all can override workflow requirePlanApproval without weakening non-plan safety gates.
+
+    FNXC:PlanApproval 2026-07-04-12:15:
+    FN-7526 re-verified this invariant end to end: every finalizeApprovedTask caller (specifyTask, recoverApprovedTask, retryUnavailablePlanReview, tryFinalizeExplicitDuplicateMarker) already derives `settings` from mergeEffectiveSettings so planApprovalMode (never a MOVED_SETTINGS_KEYS/workflow-owned key) survives any stored workflow requirePlanApproval overlay untouched. No production defect was found; regression tests were added across every surface to lock the invariant so a future bare-settings call site (e.g. `{ requirePlanApproval }` without planApprovalMode) is caught immediately instead of silently reintroducing the reported parking behavior.
     */
     if (resolvePlanApprovalRequired(settings)) {
       const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };
@@ -2565,7 +2597,13 @@ export class TriageProcessor {
       }
     }
 
-    await this.store.moveTask(task.id, "todo");
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-04-10:35:
+    A task planned in place inside the merged "todo" column (Coding (Ideas) and any workflow with a manual intake) is already where it needs to be. Skipping the move avoids a redundant same-column transition that would re-run reset-on-entry and capacity trait hooks on a card that never left the column. Legacy triage tasks (column "triage") still move to "todo" as before.
+    */
+    if (task.column !== "todo") {
+      await this.store.moveTask(task.id, "todo");
+    }
 
     if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
       await this.store.updateTask(task.id, { title: promptDeclaredTitle });

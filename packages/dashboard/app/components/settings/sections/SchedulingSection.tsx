@@ -52,7 +52,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
             const val = e.target.value;
             onGlobalMaxConcurrentChange(val === "" ? undefined : Number(val));
         }}/>
-        <small className="form-text text-muted">{t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects")}</small>
+        <small className="form-text text-muted">{t("settings.scheduling.maximumConcurrentAgentsAcrossAllProjects", "Maximum concurrent agents across all projects. Default: 4.")}</small>
       </div>
       <div className="settings-section-divider"/>
       <ScopeGroupHeader scope="project" title={t("settings.scheduling.scopeProjectTitle", "This project")} caption={t("settings.scheduling.scopeProjectCaption", "Only affects the currently selected project.")} badgeLabel={t("settings.scheduling.scopeBadgeProject", "Project")}/>
@@ -62,6 +62,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
             const val = e.target.value;
             setForm((f) => ({ ...f, maxConcurrent: val === "" ? undefined : Number(val) } as SettingsFormState));
         }}/>
+        <small>{t("settings.scheduling.maxConcurrentTasksHint", "Default: 2.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="maxTriageConcurrent">{t("settings.scheduling.maxTriageConcurrent", "Max Triage Concurrent")}</label>
@@ -69,7 +70,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
             const val = e.target.value;
             setForm((f) => ({ ...f, maxTriageConcurrent: val === "" ? undefined : Number(val) } as SettingsFormState));
         }}/>
-        <small>{t("settings.scheduling.maximumConcurrentPlanningAgents", "Maximum concurrent planning agents")}</small>
+        <small>{t("settings.scheduling.maximumConcurrentPlanningAgents", "Maximum concurrent planning agents. Default: 2.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="pollIntervalMs">{t("settings.scheduling.pollIntervalMs", "Poll Interval (ms)")}</label>
@@ -77,6 +78,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
             const val = e.target.value;
             setForm((f) => ({ ...f, pollIntervalMs: val === "" ? undefined : Number(val) } as SettingsFormState));
         }}/>
+        <small>{t("settings.scheduling.pollIntervalMsHint", "Default: 15000 (15 seconds).")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="heartbeatScopeDiscipline">{t("settings.scheduling.heartbeatScopeDiscipline", "Heartbeat Scope Discipline")}</label>
@@ -104,7 +106,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
             const num = Number(val);
             setForm((f) => ({ ...f, taskStuckTimeoutMs: val && num > 0 ? num * 60000 : undefined }));
         }}/>
-        <small>{t("settings.scheduling.timeoutInMinutesForDetectingStuckTasksWhen", "Timeout in minutes for detecting stuck tasks. When a task's agent session shows no activity for longer than this duration, the task is terminated and retried. Leave empty to disable. Suggested: 10.")}</small>
+        <small>{t("settings.scheduling.timeoutInMinutesForDetectingStuckTasksWhen", "Timeout in minutes for detecting stuck tasks. When a task's agent session shows no activity for longer than this duration, the task is terminated and retried. Leave empty to disable. Suggested: 10. Default: 10 minutes (600000ms).")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="staleHighFanoutBlockerAgeThresholdMs">{t("settings.scheduling.staleHighFanOutEscalationHours", "Stale High Fan-out Escalation (hours)")}</label>
@@ -126,7 +128,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
       <div className="form-group">
         <label htmlFor="specStalenessEnabled" className="checkbox-label">
           <input id="specStalenessEnabled" type="checkbox" checked={form.specStalenessEnabled || false} onChange={(e) => setForm((f) => ({ ...f, specStalenessEnabled: e.target.checked }))}/>{t("settings.scheduling.enablePlanStalenessEnforcement", " Enable plan staleness enforcement ")}</label>
-        <small>{t("settings.scheduling.whenEnabledTasksWithStalePlansPROMPTMd", "When enabled, tasks with stale plans (PROMPT.md older than the threshold) are automatically sent back to planning for replanning")}</small>
+        <small>{t("settings.scheduling.whenEnabledTasksWithStalePlansPROMPTMd", "When enabled, tasks with stale plans (PROMPT.md older than the threshold) are automatically sent back to planning for replanning. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="specStalenessMaxAgeMs">{t("settings.scheduling.staleSpecThresholdHours", "Stale Spec Threshold (hours)")}</label>
@@ -143,7 +145,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
             ...f,
             autoArchiveDoneTasksEnabled: e.target.checked,
         }))}/>{t("settings.scheduling.enableAutomaticTaskArchiving", " Enable automatic task archiving ")}</label>
-        <small>{t("settings.scheduling.completedTasksOlderThanTheThresholdAreMoved", "Completed tasks older than the threshold are moved out of the active task database.")}</small>
+        <small>{t("settings.scheduling.completedTasksOlderThanTheThresholdAreMoved", "Completed tasks older than the threshold are moved out of the active task database. Default: enabled.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="autoArchiveDoneAfterMs">{t("settings.scheduling.archiveCompletedTasksAfterDays", "Archive Completed Tasks After (days)")}</label>
@@ -167,7 +169,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
           <option value="none">{t("settings.scheduling.doNotArchiveAgentLogs", "Do not archive agent logs")}</option>
           <option value="full">{t("settings.scheduling.fullAgentLog", "Full agent log")}</option>
         </select>
-        <small>{t("settings.scheduling.compactModeKeepsArchiveSizeLowWhilePreserving", "Compact mode keeps archive size low while preserving recent agent activity for context.")}</small>
+        <small>{t("settings.scheduling.compactModeKeepsArchiveSizeLowWhilePreserving", "Compact mode keeps archive size low while preserving recent agent activity for context. Default: compact.")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="maxStuckKills">{t("settings.scheduling.maxStuckRetries", "Max Stuck Retries")}</label>
@@ -181,7 +183,7 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
       <div className="form-group">
         <label htmlFor="groupOverlappingFiles" className="checkbox-label">
           <input id="groupOverlappingFiles" type="checkbox" checked={form.groupOverlappingFiles} onChange={(e) => setForm((f) => ({ ...f, groupOverlappingFiles: e.target.checked }))}/>{t("settings.scheduling.serializeTasksWithOverlappingFiles", " Serialize tasks with overlapping files ")}</label>
-        <small>{t("settings.scheduling.whenEnabledTasksThatModifyTheSameFiles", "When enabled, tasks that modify the same files are queued serially to avoid merge conflicts")}</small>
+        <small>{t("settings.scheduling.whenEnabledTasksThatModifyTheSameFiles", "When enabled, tasks that modify the same files are queued serially to avoid merge conflicts. Default: enabled.")}</small>
       </div>
 
       {/**
@@ -191,12 +193,12 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
       <div className="form-group">
         <label htmlFor="ignoreHiddenOverlapPaths" className="checkbox-label">
           <input id="ignoreHiddenOverlapPaths" type="checkbox" checked={form.ignoreHiddenOverlapPaths !== false} onChange={(e) => setForm((f) => ({ ...f, ignoreHiddenOverlapPaths: e.target.checked }))}/>{t("settings.scheduling.ignoreHiddenDotPathsInOverlapChecks", " Ignore hidden dot paths in overlap checks ")}</label>
-        <small>{t("settings.scheduling.ignoreHiddenDotPathsHelp", "When enabled, overlap checks ignore hidden path segments such as .fusion/, .changeset/, .github/, .env, and nested .cache/ directories. Uncheck to restore legacy counting for stricter serialization.")}</small>
+        <small>{t("settings.scheduling.ignoreHiddenDotPathsHelp", "When enabled, overlap checks ignore hidden path segments such as .fusion/, .changeset/, .github/, .env, and nested .cache/ directories. Uncheck to restore legacy counting for stricter serialization. Default: enabled.")}</small>
       </div>
 
       <div className="form-group settings-overlap-ignore-group">
         <label>{t("settings.scheduling.ignoredOverlapPaths", "Ignored overlap paths")}</label>
-        <small>{t("settings.scheduling.optionalFileOrDirectoryPathsToIgnoreWhen", " Optional file or directory paths to ignore when overlap serialization is enabled. Paths are project-relative (for example ")}<code>docs/</code>{t("settings.scheduling.or", " or ")}<code>generated/*</code>{t("settings.scheduling.closeParenPeriod", ").")}
+        <small>{t("settings.scheduling.optionalFileOrDirectoryPathsToIgnoreWhen", " No default \u2014 unset (empty). Optional file or directory paths to ignore when overlap serialization is enabled. Paths are project-relative (for example ")}<code>docs/</code>{t("settings.scheduling.or", " or ")}<code>generated/*</code>{t("settings.scheduling.closeParenPeriod", ").")}
         </small>
         <div className="settings-overlap-ignore-list">
           {(form.overlapIgnorePaths && form.overlapIgnorePaths.length > 0 ? form.overlapIgnorePaths : [""]).map((path, index) => (<div key={`overlap-ignore-${index}`} className="settings-overlap-ignore-row">

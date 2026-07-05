@@ -1,4 +1,5 @@
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
+import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./builtin-coding-ideas-workflow-ir.js";
 import { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "./builtin-lead-generation-workflow-ir.js";
 import { BUILTIN_MARKETING_WORKFLOW_IR } from "./builtin-marketing-workflow-ir.js";
 import { BUILTIN_PR_WORKFLOW_IR } from "./builtin-pr-workflow-ir.js";
@@ -331,6 +332,42 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
     description: "Default coding pipeline: plan steps, execute them one at a time, then run the optional final code review and merge.",
     kind: "workflow",
     ir: BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR,
+    layout: {
+      start: { x: 60, y: 160 },
+      plan: { x: 230, y: 160 },
+      "plan-review": { x: 400, y: 160 },
+      "plan-replan": { x: 400, y: 320 },
+      parse: { x: 570, y: 160 },
+      steps: { x: 740, y: 160 },
+      "browser-verification": { x: 910, y: 160 },
+      "browser-verification-remediation": { x: 910, y: 320 },
+      "code-review": { x: 1080, y: 160 },
+      "code-review-remediation": { x: 1080, y: 320 },
+      "completion-summary": { x: 1250, y: 160 },
+      "merge-gate": { x: 1420, y: 160 },
+      "branch-group-member-integration": { x: 1590, y: 80 },
+      "branch-group-promotion": { x: 1760, y: 80 },
+      "merge-attempt": { x: 1930, y: 160 },
+      "merge-retry": { x: 2100, y: 80 },
+      "recovery-router": { x: 2100, y: 240 },
+      "merge-manual-hold": { x: 1590, y: 240 },
+      "post-merge-verification": { x: 2270, y: 160 },
+      end: { x: 2440, y: 160 },
+    },
+    createdAt: BUILTIN_TS,
+    updatedAt: BUILTIN_TS,
+  },
+  /*
+   * FNXC:CodingIdeasWorkflow 2026-07-04-09:40:
+   * The Coding (Ideas) variant adds a manual "Ideas" intake in front of the default stepwise pipeline. New cards land in "ideas" (autoTriage off) and are not planned until an operator promotes them into the merged "todo" planner column; from there the graph is identical to the default Coding workflow.
+   */
+  {
+    id: "builtin:coding-ideas",
+    name: "Coding (Ideas)",
+    description:
+      "Capture-first coding pipeline: park ideas in a manual intake, then plan, execute per step, run the optional final code review, and merge.",
+    kind: "workflow",
+    ir: BUILTIN_CODING_IDEAS_WORKFLOW_IR,
     layout: {
       start: { x: 60, y: 160 },
       plan: { x: 230, y: 160 },

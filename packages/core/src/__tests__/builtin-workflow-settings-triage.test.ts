@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_MOVED_WORKFLOW_SETTINGS,
+  BUILTIN_OVERSIGHT_SETTINGS,
   BUILTIN_REVIEW_REVISION_SETTINGS,
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_WORKFLOW_SETTINGS,
@@ -78,6 +79,37 @@ describe("workflow-native built-in workflow settings", () => {
       expect(movedIds.has(id), `${id} should not be in the moved-key catalog`).toBe(false);
       expect(movedKeyIds.has(id), `${id} should not be in MOVED_SETTINGS_KEYS`).toBe(false);
     }
+  });
+
+  it("declares planner oversight level as a workflow-native enum outside moved/project settings", () => {
+    const fullIds = new Set(BUILTIN_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
+    const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
+
+    expect(BUILTIN_OVERSIGHT_SETTINGS.map((setting) => setting.id)).toEqual(["plannerOversightLevel"]);
+    const oversight = BUILTIN_OVERSIGHT_SETTINGS[0];
+    expect(oversight).toMatchObject({
+      type: "enum",
+      default: "autonomous",
+    });
+    expect(oversight.options?.map((option) => option.value)).toEqual(["off", "observe", "steer", "autonomous"]);
+    expect(oversight.options?.map((option) => option.label)).toEqual([
+      "Off",
+      "Observe",
+      "Steer",
+      "Autonomous recovery",
+    ]);
+    expect(fullIds.has("plannerOversightLevel"), "plannerOversightLevel should be in the full built-in catalog").toBe(
+      true,
+    );
+    expect(
+      movedIds.has("plannerOversightLevel"),
+      "plannerOversightLevel should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerOversightLevel"),
+      "plannerOversightLevel should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
   });
 
   it("renders placeholders from resolved settings and rejects dangling tokens", () => {

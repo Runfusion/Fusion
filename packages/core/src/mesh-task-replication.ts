@@ -101,6 +101,7 @@ export function taskMatchesReplicatedCreate(existing: TaskDetail, payload: MeshR
     assigneeUserId: existing.assigneeUserId,
     reviewLevel: existing.reviewLevel,
     executionMode: existing.executionMode,
+    plannerOversightLevel: existing.plannerOversightLevel,
     priority: existing.priority,
     sourceIssue: existing.sourceIssue,
     source: toTaskSource({
@@ -152,6 +153,7 @@ export function toReplicatedCreateInput(task: Task): TaskCreateInput {
     assigneeUserId: task.assigneeUserId,
     reviewLevel: task.reviewLevel,
     executionMode: task.executionMode,
+    plannerOversightLevel: task.plannerOversightLevel,
     priority: task.priority,
     sourceIssue: task.sourceIssue,
     source: toTaskSource({

@@ -21,6 +21,7 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
                 enabled: event.target.checked,
             },
         }))}/>{t("settings.researchProject.enableResearchInThisProject", " Enable research in this project ")}</label>
+        <small>{t("settings.researchProject.enableResearchInThisProjectHint", "Default: enabled.")}</small>
       </div>
       <div className="form-group">
         <label>{t("settings.researchProject.enabledSources", "Enabled Sources")}</label>
@@ -30,11 +31,11 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
         <small className="settings-muted">{t("settings.researchProject.webSearchIsAlwaysEnabledConfigureTheSearch", " Web search is always enabled. Configure the search provider under Research Defaults. ")}</small>
         <div className="settings-research-source-grid">
           {[
-            ["pageFetch", t("settings.researchProject.pageFetch", "Page Fetch")],
-            ["github", t("settings.researchProject.github", "GitHub")],
-            ["localDocs", t("settings.researchProject.localDocs", "Local Docs")],
-            ["llmSynthesis", t("settings.researchProject.llmSynthesis", "LLM Synthesis")],
-        ].map(([key, label]) => (<label key={key} htmlFor={`research-project-source-${key}`} className="checkbox-label">
+            ["pageFetch", t("settings.researchProject.pageFetch", "Page Fetch"), "Default: enabled."],
+            ["github", t("settings.researchProject.github", "GitHub"), "Default: disabled."],
+            ["localDocs", t("settings.researchProject.localDocs", "Local Docs"), "Default: enabled."],
+            ["llmSynthesis", t("settings.researchProject.llmSynthesis", "LLM Synthesis"), "Default: enabled."],
+        ].map(([key, label, defaultHint]) => (<label key={key} htmlFor={`research-project-source-${key}`} className="checkbox-label">
               <input id={`research-project-source-${key}`} type="checkbox" checked={sources?.[key as keyof NonNullable<typeof sources>] ?? false} onChange={(event) => setForm((current) => ({
                 ...current,
                 researchSettings: {
@@ -46,6 +47,7 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
                 },
             }))}/>
               {label}
+              <small>{defaultHint}</small>
             </label>))}
         </div>
       </div>
@@ -63,6 +65,7 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
                 },
             },
         }))}/>
+            <small>{t("settings.researchProject.maxConcurrentRunsHint", "Default: 3.")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-project-max-sources">{t("settings.researchProject.maxSourcesPerRun", "Max Sources Per Run")}</label>
@@ -76,6 +79,7 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
                 },
             },
         }))}/>
+            <small>{t("settings.researchProject.maxSourcesPerRunHint", "Default: 20.")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-project-max-duration">{t("settings.researchProject.maxDurationMs", "Max Duration (ms)")}</label>
@@ -89,6 +93,7 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
                 },
             },
         }))}/>
+            <small>{t("settings.researchProject.maxDurationMsHint", "Default: 300000 (5 minutes).")}</small>
           </div>
           <div className="settings-research-limit-field">
             <label htmlFor="research-project-request-timeout">{t("settings.researchProject.requestTimeoutMs", "Request Timeout (ms)")}</label>
@@ -102,6 +107,7 @@ export function ResearchProjectSection({ scopeBanner, form, setForm, researchLim
                 },
             },
         }))}/>
+            <small>{t("settings.researchProject.requestTimeoutMsHint", "Default: 30000 (30 seconds).")}</small>
           </div>
           {researchLimitError && <small className="field-error settings-research-limits-error">{researchLimitError}</small>}
         </div>

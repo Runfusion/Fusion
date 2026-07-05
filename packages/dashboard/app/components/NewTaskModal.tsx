@@ -569,6 +569,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
   const [validatorModel, setValidatorModel] = useState("");
   const [planningModel, setPlanningModel] = useState("");
   const [thinkingLevel, setThinkingLevel] = useState<string>("");
+  // FNXC:PlannerOversight 2026-07-04-00:00: Per-task override of the workflow-native plannerOversightLevel setting (FN-7508). "" means inherit from workflow.
+  const [plannerOversightLevel, setPlannerOversightLevel] = useState<string>("");
   const [selectedPresetId, setSelectedPresetId] = useState<string>("");
   const [presetMode, setPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [hasDirtyState, setHasDirtyState] = useState(false);
@@ -713,6 +715,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       validatorModel !== "" ||
       planningModel !== "" ||
       thinkingLevel !== "" ||
+      plannerOversightLevel !== "" ||
       selectedAgentId !== null ||
       reviewLevel !== undefined ||
       autoMerge !== undefined ||
@@ -725,7 +728,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       githubTrackingEnabled ||
       githubRepoOverrideTrimmed !== "";
     setHasDirtyState(isDirty);
-  }, [description, dependencies, pendingImages, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
+  }, [description, dependencies, pendingImages, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, selectedAgentId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed]);
 
   const resetForm = useCallback(() => {
     // Clean up object URLs
@@ -738,6 +741,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     setValidatorModel("");
     setPlanningModel("");
     setThinkingLevel("");
+    setPlannerOversightLevel("");
     setSelectedPresetId("");
     setPresetMode("default");
     setSelectedWorkflowId(undefined);
@@ -808,6 +812,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
       planningModelProvider: planningModel && planningSlashIdx !== -1 ? planningModel.slice(0, planningSlashIdx) : undefined,
       planningModelId: planningModel && planningSlashIdx !== -1 ? planningModel.slice(planningSlashIdx + 1) : undefined,
       thinkingLevel: thinkingLevel !== "" ? thinkingLevel as "minimal" | "low" | "medium" | "high" | "xhigh" : undefined,
+      // FNXC:PlannerOversight 2026-07-04-00:00: omit when "Inherit from workflow" ("") is selected so the task falls back to the workflow's effective plannerOversightLevel.
+      ...(plannerOversightLevel !== "" ? { plannerOversightLevel: plannerOversightLevel as "off" | "observe" | "steer" | "autonomous" } : {}),
       reviewLevel,
       ...(autoMerge !== undefined ? { autoMerge } : {}),
       priority,
@@ -852,7 +858,7 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     resetForm();
     addToast(t("newTaskModal.taskCreated", "Created {{taskId}}", { taskId: task.id }), "success");
     onClose();
-  }, [executorModel, validatorModel, planningModel, thinkingLevel, dependencies, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
+  }, [executorModel, validatorModel, planningModel, thinkingLevel, plannerOversightLevel, dependencies, selectedWorkflowId, shouldSubmitEnabledWorkflowSteps, enabledWorkflowSteps, selectedAgentId, presetMode, selectedPresetId, reviewLevel, autoMerge, priority, nodeId, executionMode, branchMode, isBranchNameRequired, branch, baseBranch, githubTrackingEnabled, githubRepoOverrideTrimmed, onCreateTask, pendingImages, resetForm, addToast, t, onClose, projectId]);
 
   const handleSubmit = useCallback(async () => {
     const trimmedDesc = description.trim();
@@ -1176,6 +1182,8 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
             planningModel={planningModel}
             onPlanningModelChange={setPlanningModel}
             thinkingLevel={thinkingLevel}
+            plannerOversightLevel={plannerOversightLevel}
+            onPlannerOversightLevelChange={setPlannerOversightLevel}
             onThinkingLevelChange={setThinkingLevel}
             reviewLevel={reviewLevel}
             onReviewLevelChange={setReviewLevel}

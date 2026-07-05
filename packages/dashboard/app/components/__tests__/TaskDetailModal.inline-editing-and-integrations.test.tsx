@@ -963,6 +963,82 @@ describe("TaskDetailModal", () => {
       });
     });
 
+    // FNXC:PlannerOversight 2026-07-04-00:00: the edit path clear-to-default contract — selecting a level sends the value, returning to Inherit sends null, no change emits nothing.
+    it("emits plannerOversightLevel when changed from Inherit to a level", async () => {
+      const { updateTask, fetchModels } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValue({ id: "FN-001" } as Task);
+      vi.mocked(fetchModels).mockResolvedValue({
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 }],
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
+      const { container } = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc" })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      // No change → no updateTask call.
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(mockUpdate).not.toHaveBeenCalled();
+      });
+
+      // Selecting a level sends that value.
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+      const select = await screen.findByTestId("planner-oversight-level-select");
+      fireEvent.change(select, { target: { value: "observe" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { plannerOversightLevel: "observe" }, undefined);
+      });
+    });
+
+    it("emits plannerOversightLevel: null when changed from a level back to Inherit (clear-to-default)", async () => {
+      const { updateTask, fetchModels } = await import("../../api");
+      const mockUpdate = vi.mocked(updateTask);
+      mockUpdate.mockResolvedValue({ id: "FN-001" } as Task);
+      vi.mocked(fetchModels).mockResolvedValue({
+        models: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, contextWindow: 200000 }],
+        favoriteProviders: [],
+        favoriteModels: [],
+      });
+
+      const { container } = render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ id: "FN-001", column: "triage", title: "Test", description: "Desc", plannerOversightLevel: "observe" as Task["plannerOversightLevel"] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(container.querySelector(".modal-edit-btn")!);
+      fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+      const select = await screen.findByTestId("planner-oversight-level-select");
+      expect(select).toHaveValue("observe");
+      fireEvent.change(select, { target: { value: "" } });
+      fireEvent.click(screen.getByText("Save"));
+      await waitFor(() => {
+        expect(mockUpdate).toHaveBeenCalledWith("FN-001", { plannerOversightLevel: null }, undefined);
+      });
+    });
+
     it("sends executionMode: \"fast\" when changed from standard to fast", async () => {
       const { updateTask } = await import("../../api");
       const mockUpdate = vi.mocked(updateTask);

@@ -92,6 +92,17 @@ export interface TaskFormProps {
   onPlanningModelChange?: (value: string) => void;
   thinkingLevel?: string;
   onThinkingLevelChange?: (value: string) => void;
+  /*
+   * FNXC:PlannerOversight 2026-07-04-00:00:
+   * Per-task override selector for the workflow-native `plannerOversightLevel` setting
+   * (FN-7508). Empty string ("") means "inherit from workflow" — the task uses the
+   * default workflow's effective `plannerOversightLevel` value. The four non-empty
+   * values (off/observe/steer/autonomous) mirror `BUILTIN_OVERSIGHT_SETTINGS` verbatim.
+   * This control is configuration only; runtime oversight controls (quick change,
+   * manual nudge, stop, explain-current-action) are FN-7517, not this task.
+   */
+  plannerOversightLevel?: string;
+  onPlannerOversightLevelChange?: (value: string) => void;
   presetMode: "default" | "preset" | "custom";
   onPresetModeChange: (mode: "default" | "preset" | "custom") => void;
   selectedPresetId: string;
@@ -196,6 +207,8 @@ export function TaskForm({
   onPlanningModelChange,
   thinkingLevel,
   onThinkingLevelChange,
+  plannerOversightLevel,
+  onPlannerOversightLevelChange,
   presetMode,
   onPresetModeChange,
   selectedPresetId,
@@ -244,6 +257,7 @@ export function TaskForm({
     validatorModel !== "" ||
     (planningModel || "") !== "" ||
     (thinkingLevel || "") !== "" ||
+    (plannerOversightLevel || "") !== "" ||
     reviewLevel !== undefined ||
     autoMerge !== undefined ||
     executionMode === "fast" ||
@@ -419,6 +433,7 @@ export function TaskForm({
     validatorModel !== "" ||
     (planningModel || "") !== "" ||
     (thinkingLevel || "") !== "" ||
+    (plannerOversightLevel || "") !== "" ||
     reviewLevel !== undefined ||
     autoMerge !== undefined ||
     executionMode === "fast" ||
@@ -1571,6 +1586,25 @@ export function TaskForm({
                   <option value="medium">{t("taskForm.thinkingMedium", "Medium")}</option>
                   <option value="high">{t("taskForm.thinkingHigh", "High")}</option>
                   <option value="xhigh">{t("taskForm.thinkingXhigh", "Very High")}</option>
+                </select>
+              </div>
+            )}
+            {onPlannerOversightLevelChange && (
+              <div className="model-select-row">
+                {/* FNXC:PlannerOversight 2026-07-04-00:00: Per-task override for the workflow-native plannerOversightLevel setting (FN-7508). Empty value inherits the workflow's effective value; the four levels mirror BUILTIN_OVERSIGHT_SETTINGS verbatim. Configuration only — runtime controls are FN-7517. */}
+                <label htmlFor="planner-oversight-level" className="model-select-label">{t("taskForm.plannerOversightLabel", "Planner oversight")}</label>
+                <select
+                  id="planner-oversight-level"
+                  data-testid="planner-oversight-level-select"
+                  value={plannerOversightLevel || ""}
+                  onChange={(e) => onPlannerOversightLevelChange(e.target.value)}
+                  disabled={disabled}
+                >
+                  <option value="">{t("taskForm.plannerOversightInherit", "Inherit from workflow")}</option>
+                  <option value="off">{t("taskForm.plannerOversightOff", "Off")}</option>
+                  <option value="observe">{t("taskForm.plannerOversightObserve", "Observe")}</option>
+                  <option value="steer">{t("taskForm.plannerOversightSteer", "Steer")}</option>
+                  <option value="autonomous">{t("taskForm.plannerOversightAutonomous", "Autonomous recovery")}</option>
                 </select>
               </div>
             )}

@@ -68,8 +68,8 @@ describe("AppearanceSection", () => {
 
     const checkbox = screen.getByLabelText("Open tasks as popups");
     expect(checkbox).not.toBeChecked();
-    expect(screen.getByText(/ordinary board task-card clicks open the existing task popup/)).toBeInTheDocument();
-    expect(screen.getByText(/Deep-tab and non-board task opens keep their current behavior/)).toBeInTheDocument();
+    expect(screen.getByText(/ordinary board task-card and right-dock Tasks-list clicks open the existing task popup/)).toBeInTheDocument();
+    expect(screen.getByText(/Deep-tab and other task opens keep their current behavior/)).toBeInTheDocument();
 
     fireEvent.click(checkbox);
 

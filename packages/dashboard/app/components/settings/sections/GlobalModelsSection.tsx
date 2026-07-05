@@ -55,7 +55,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                     }));
                 }
             }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
-            <small>{t("settings.globalModels.defaultAIModelUsedForTaskExecutionWhen", "Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically.")}</small>
+            <small>{t("settings.globalModels.defaultAIModelUsedForTaskExecutionWhen", "Default AI model used for task execution when no per-task override is set. &quot;Use default&quot; lets the engine choose automatically. No default \u2014 unset.")}</small>
           </div>
 
           <div className="form-group">
@@ -73,7 +73,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                     }));
                 }
             }} placeholder={t("settings.globalModels.noFallback", "No fallback")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
-            <small>{t("settings.globalModels.usedAutomaticallyIfThePrimaryDefaultModelHits", "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload.")}</small>
+            <small>{t("settings.globalModels.usedAutomaticallyIfThePrimaryDefaultModelHits", "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default \u2014 unset.")}</small>
           </div>
         </>)}
       {(() => {
@@ -92,7 +92,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                   {level.charAt(0).toUpperCase() + level.slice(1)}
                 </option>))}
             </select>
-            <small>{t("settings.globalModels.controlsHowMuchReasoningEffortTheAIModel", "Controls how much reasoning effort the AI model uses. Higher levels produce better results but cost more.")}</small>
+            <small>{t("settings.globalModels.controlsHowMuchReasoningEffortTheAIModel", "Controls how much reasoning effort the AI model uses. Higher levels produce better results but cost more. No default \u2014 unset (model's own default effort applies).")}</small>
           </div>);
         })()}
 
@@ -133,12 +133,12 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
       <div className="form-group">
         <label htmlFor="openrouterModelSync" className="checkbox-label">
           <input id="openrouterModelSync" type="checkbox" checked={form.openrouterModelSync !== false} onChange={(e) => setForm((f) => ({ ...f, openrouterModelSync: e.target.checked }))}/>{t("settings.globalModels.syncOpenRouterModelListAtStartup", " Sync OpenRouter model list at startup ")}</label>
-        <small>{t("settings.globalModels.whenEnabledStartupFetchesTheLatestAvailableModels", " When enabled, startup fetches the latest available models from the OpenRouter API so model pickers always include the newest catalog. ")}</small>
+        <small>{t("settings.globalModels.whenEnabledStartupFetchesTheLatestAvailableModels", " When enabled, startup fetches the latest available models from the OpenRouter API so model pickers always include the newest catalog. Default: enabled. ")}</small>
       </div>
       <div className="form-group">
         <label htmlFor="opencodeGoModelSync" className="checkbox-label">
           <input id="opencodeGoModelSync" type="checkbox" checked={form.opencodeGoModelSync !== false} onChange={(e) => setForm((f) => ({ ...f, opencodeGoModelSync: e.target.checked }))}/>{t("settings.globalModels.syncOpencodeGoModelListAtStartup", " Sync opencode-go model list at startup ")}</label>
-        <small>{t("settings.globalModels.whenEnabledStartupRefreshesModelsThroughTheLocal", " When enabled, startup refreshes models through the local ")}<code>opencode models opencode --refresh</code>{t("settings.globalModels.flowAndPublishesThemUnderTheOpencodeGo", " flow and publishes them under the opencode-go provider in model pickers. ")}</small>
+        <small>{t("settings.globalModels.whenEnabledStartupRefreshesModelsThroughTheLocal", " When enabled, startup refreshes models through the local ")}<code>opencode models opencode --refresh</code>{t("settings.globalModels.flowAndPublishesThemUnderTheOpencodeGo", " flow and publishes them under the opencode-go provider in model pickers. Default: enabled. ")}</small>
       </div>
       <details>
         <summary>{t("settings.globalModels.openRouterAdvanced", "OpenRouter advanced")}</summary>
@@ -151,7 +151,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 referer: e.target.value,
             },
         }))}/>
-          <small>{t("settings.globalModels.leaveEmptyToOmitThisHeaderDefaultHttps", "Leave empty to omit this header. Default: https://runfusion.ai.")}</small>
+          <small>{t("settings.globalModels.leaveEmptyToOmitThisHeaderDefaultHttps", "Leave empty to omit this header. No default — unset (Fusion falls back to https://runfusion.ai when unset).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterAppAttributionTitle">{t("settings.globalModels.openRouterXTitle", "OpenRouter X-Title")}</label>
@@ -162,7 +162,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 title: e.target.value,
             },
         }))}/>
-          <small>{t("settings.globalModels.leaveEmptyToOmitThisHeaderDefaultFusion", "Leave empty to omit this header. Default: Fusion.")}</small>
+          <small>{t("settings.globalModels.leaveEmptyToOmitThisHeaderDefaultFusion", "Leave empty to omit this header. No default — unset (Fusion falls back to the title \"Fusion\" when unset).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterModelFiltersSupportedParameters">{t("settings.globalModels.openRouterSupportedParametersFilter", "OpenRouter supported_parameters filter")}</label>
@@ -176,7 +176,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 },
             }));
         }}/>
-          <small>{t("settings.globalModels.commaSeparatedValuesSentToOpenRouterModelSync", "Comma-separated values sent to OpenRouter model sync.")}</small>
+          <small>{t("settings.globalModels.commaSeparatedValuesSentToOpenRouterModelSync", "Comma-separated values sent to OpenRouter model sync. No default \u2014 unset (unfiltered).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterModelFiltersOutputModalities">{t("settings.globalModels.openRouterOutputModalitiesFilter", "OpenRouter output_modalities filter")}</label>
@@ -190,7 +190,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 },
             }));
         }}/>
-          <small>{t("settings.globalModels.commaSeparatedValuesSentToOpenRouterModelSync", "Comma-separated values sent to OpenRouter model sync.")}</small>
+          <small>{t("settings.globalModels.commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities", "Comma-separated values sent to OpenRouter model sync. No default \u2014 unset (unfiltered).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterProviderPreferencesOrder">{t("settings.globalModels.openRouterRoutingOrder", "OpenRouter routing order")}</label>
@@ -204,6 +204,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 },
             }));
         }}/>
+          <small>{t("settings.globalModels.openRouterRoutingOrderHint", "No default \u2014 unset (OpenRouter's own default routing order applies).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterProviderPreferencesIgnore">{t("settings.globalModels.openRouterRoutingIgnore", "OpenRouter routing ignore")}</label>
@@ -217,6 +218,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 },
             }));
         }}/>
+          <small>{t("settings.globalModels.openRouterRoutingIgnoreHint", "No default \u2014 unset (no providers ignored).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterProviderPreferencesOnly">{t("settings.globalModels.openRouterRoutingOnly", "OpenRouter routing only")}</label>
@@ -230,6 +232,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 },
             }));
         }}/>
+          <small>{t("settings.globalModels.openRouterRoutingOnlyHint", "No default \u2014 unset (no provider restriction).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterProviderPreferencesAllowFallbacks">{t("settings.globalModels.openRouterAllowFallbacks", "OpenRouter allow fallbacks")}</label>
@@ -247,6 +250,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
             <option value="allow">{t("settings.globalModels.allow", "allow")}</option>
             <option value="deny">{t("settings.globalModels.deny", "deny")}</option>
           </select>
+          <small>{t("settings.globalModels.openRouterAllowFallbacksHint", "No default \u2014 unset (OpenRouter's own default fallback behavior applies).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterProviderPreferencesSort">{t("settings.globalModels.openRouterRoutingSort", "OpenRouter routing sort")}</label>
@@ -265,6 +269,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
             <option value="throughput">{t("settings.globalModels.throughput", "throughput")}</option>
             <option value="latency">{t("settings.globalModels.latency", "latency")}</option>
           </select>
+          <small>{t("settings.globalModels.openRouterRoutingSortHint", "No default \u2014 unset (OpenRouter's own default sort applies).")}</small>
         </div>
         <div className="form-group">
           <label htmlFor="openrouterProviderPreferencesRequireParameters" className="checkbox-label">
@@ -275,6 +280,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 require_parameters: e.target.checked,
             },
         }))}/>{t("settings.globalModels.requireParameters", " Require parameters ")}</label>
+          <small>{t("settings.globalModels.requireParametersHint", "Default: disabled.")}</small>
         </div>
       </details>
     </>);

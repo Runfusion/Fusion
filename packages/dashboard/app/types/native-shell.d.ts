@@ -24,11 +24,14 @@ export interface ShellConnectionState {
   };
   activeProfileId: string | null;
   profiles: ShellConnectionProfile[];
-  localServer?: {
-    status: "idle" | "starting" | "ready" | "error";
-    port?: number;
-    error?: string | null;
-  };
+  /*
+   * FNXC:DesktopSwitchServer 2026-07-04-13:20:
+   * `localRuntime` is the only field the desktop preload/IPC ever populates for the embedded local server
+   * (see packages/desktop/src/ipc.ts). A previous `localServer` field here was never emitted by the shell and
+   * was removed after it caused the in-dashboard "Switch server" -> Local Server redirect to silently no-op
+   * (FN-7527); resolveDesktopShellRedirectTarget in appLifecycle.ts is the sole consumer of localRuntime for
+   * renderer-side navigation decisions.
+   */
   localRuntime?: {
     source: "embedded-local" | "external-cli" | "none";
     state: "stopped" | "starting" | "running" | "error";

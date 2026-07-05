@@ -419,6 +419,16 @@ describe("settings key parity", () => {
     expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).experimentalFeatures).toBeUndefined();
   });
 
+  it("keeps dashboard keyboard shortcuts scoped to global settings only", () => {
+    const globalKeys = GLOBAL_SETTINGS_KEYS as readonly string[];
+    const projectKeys = PROJECT_SETTINGS_KEYS as readonly string[];
+
+    expect(projectKeys).not.toContain("dashboardKeyboardShortcuts");
+    expect(globalKeys).toContain("dashboardKeyboardShortcuts");
+    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ quickChat: "Space", terminal: "Ctrl+`" });
+    expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).dashboardKeyboardShortcuts).toBeUndefined();
+  });
+
   it("only intentional shared keys appear in both global and project scopes", () => {
     const projectKeySet = new Set(PROJECT_SETTINGS_KEYS as readonly string[]);
     const overlap = (GLOBAL_SETTINGS_KEYS as readonly string[]).filter((key) => projectKeySet.has(key));

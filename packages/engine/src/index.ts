@@ -636,6 +636,50 @@ export {
 } from "./research/providers/index.js";
 export { PrMonitor, type PrComment, type TrackedPr, type OnNewCommentsCallback } from "./pr-monitor.js";
 export {
+  PlannerOverseerMonitor,
+  OVERSEER_WATCHED_STAGES,
+  resolveWatchedStage,
+  type OverseerWatchedStage,
+  type OverseerObservationSignal,
+  type OverseerStageObservation,
+  type OverseerSourceLink,
+  type OverseerTaskRef,
+  type OverseerLogStore,
+  type PlannerOverseerMonitorOptions,
+} from "./planner-overseer.js";
+export {
+  PlannerRecoveryController,
+  type PlannerRecoveryContext,
+  type PlannerRecoveryHandlers,
+  type PlannerRecoverySnapshotProvider,
+  type PlannerRecoveryObservationSource,
+  type PlannerRecoveryControllerOptions,
+} from "./planner-recovery-controller.js";
+export {
+  evaluateOverseerHumanControl,
+  type OverseerHumanControlDecision,
+  type OverseerHumanControlWithholdReason,
+  type OverseerHumanControlTask,
+  type OverseerHumanControlSettings,
+} from "./overseer-human-control-policy.js";
+export {
+  decidePlannerRecovery,
+  PLANNER_RECOVERY_MAX_ATTEMPTS,
+  type PlannerRecoveryActionKind,
+  type PlannerRecoveryWatchedStage,
+  type PlannerRecoveryObservationSignal,
+  type PlannerRecoverySourceLink,
+  type PlannerRecoveryObservation,
+  type PlannerRecoveryAttemptState,
+  type PlannerRecoveryDecision,
+  type DecidePlannerRecoveryInput,
+  classifyPlannerActionSideEffect,
+  requiresPlannerConfirmation,
+  type PlannerActionSideEffectClass,
+  type PlannerConfirmationRequest,
+  type ClassifyPlannerActionSideEffectInput,
+} from "@fusion/core";
+export {
   SECRET_MUTATION_TYPES,
   SECRET_AUDIT_PLAINTEXT_FORBIDDEN_KEYS,
   assertNoSecretPlaintext,

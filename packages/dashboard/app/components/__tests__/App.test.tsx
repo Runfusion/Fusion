@@ -221,7 +221,6 @@ const mockShellConnectionState = {
   desktopMode: "local" as const,
   profiles: [],
   activeProfileId: null,
-  localServer: null,
 };
 
 const mockGetShellConnectionNativeResult = vi.fn(async () => ({
@@ -4353,8 +4352,13 @@ describe("App board branch filters", () => {
     rerender(<App />);
     await waitForAppShell();
 
-    fireEvent.click(screen.getByTestId("desktop-header-search-btn"));
-
+    /*
+     * FNXC:BoardSearch 2026-07-04-13:30: The non-mobile search panel intentionally stays open
+     * across a same-instance rerender (Header's isNonMobileSearchOpen state is not project-scoped),
+     * so the toggle button correctly unmounts once the panel is open (see canShowNonMobileSearchToggle
+     * in Header.tsx) and there is no button left to re-click here. The branch-filter selects remain
+     * rendered while the panel is open, so read them directly instead of re-clicking the toggle.
+     */
     expect((screen.getByTestId("working-branch-filter") as HTMLSelectElement).value).toBe("");
     expect((screen.getByTestId("target-branch-filter") as HTMLSelectElement).value).toBe("");
     expect(localStorage.getItem(scopedProjectKey(WORKING_BRANCH_FILTER_STORAGE_KEY, projectTwoId))).toBeNull();

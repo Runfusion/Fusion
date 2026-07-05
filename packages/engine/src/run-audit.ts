@@ -728,7 +728,20 @@ export type DatabaseMutationType =
    * Goal injection diagnostic event (FN-5658).
    * Metadata: { lane, outcome, goalCount, goalIds, truncated, reason?, errorClass?, runId?, agentId?, taskId? }
    */
-  | "prompt:goal-injection";
+  | "prompt:goal-injection"
+  /**
+   * FNXC:PlannerOverseer 2026-07-04-15:00:
+   * FN-7514 no-action event: the planner overseer's per-task oversight loop
+   * (`PlannerRecoveryController.tick`) withheld ALL action (no steering,
+   * retry, targeted-fix, or pending confirmation) because the task is either
+   * user-paused or ineligible for auto-merge processing per the FN-5147
+   * `autoMerge:false` / PR-based human-review terminal contract
+   * (`allowsAutoMergeProcessing`). Emitted at most once per
+   * (taskId, withheld reason) transition — not on every poll while the
+   * withheld state persists unchanged.
+   * Metadata: { taskId: string; reason: "user-paused" | "auto-merge-off-human-review"; stage?: string; oversightLevel?: string }
+   */
+  | "overseer:oversight-withheld-human-control";
 
 // ── Filesystem mutation types ─────────────────────────────────────────────────
 

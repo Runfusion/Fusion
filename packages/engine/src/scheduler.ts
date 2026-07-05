@@ -14,6 +14,7 @@ import {
   type AgentStore,
   type Settings,
   TransitionRejectionError,
+  buildBootstrapPrompt,
 } from "@fusion/core";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -1403,8 +1404,28 @@ export class Scheduler {
         if (t.column !== "todo" || t.paused) return false;
         // Skip tasks with a recovery backoff that hasn't elapsed yet
         if (t.nextRecoveryAt && new Date(t.nextRecoveryAt).getTime() > now) return false;
+        // FNXC:CodingIdeasWorkflow 2026-07-04-10:45: a todo task with status "planning" is being specified in place by the triage service (merged planner/capacity column in Coding (Ideas)); it must not be dispatched until planning finishes and the status clears.
+        if (t.status === "planning") return false;
         return true;
       });
+      /*
+      FNXC:CodingIdeasWorkflow 2026-07-04-10:46:
+      Exclude unplanned todo tasks whose PROMPT.md is still the bootstrap stub. In a merged planner/capacity column a freshly promoted card has no real spec yet; dispatching it would execute the stub. Normal-workflow todo tasks always carry a real spec (triage writes it before moving them to todo), so this filter is a no-op for them. This closes the gap between the operator promoting a card and the triage service picking it up.
+      */
+      todo = (
+        await Promise.all(
+          todo.map(async (t) => {
+            try {
+              const content = await readFile(getPromptPath(this.store.getTasksDir(), t.id), "utf-8");
+              if (content === buildBootstrapPrompt(t.id, t.title, t.description)) return null;
+            } catch {
+              // Missing prompt is handled by filesystem validation below; keep the candidate.
+            }
+            return t;
+          }),
+        )
+      ).filter((t): t is Task => t !== null);
+
 
       // Filter out tasks belonging to blocked missions
       if (todo.length > 0 && this.options.missionStore) {
@@ -2250,6 +2271,24 @@ export class Scheduler {
         now: () => Date.now(),
         reserveSlot: async (task): Promise<SlotReservation | null> => {
           let reservedScope = false;
+
+          /*
+          FNXC:CodingIdeasWorkflow 2026-07-04-12:10:
+          The workflow-column dispatch path is the only dispatcher when the flag is on, so the planning/bootstrap guards from the legacy todo filter must also apply here. A todo task being specified in place (status "planning") or still carrying the bootstrap stub PROMPT.md must not be released into an execution slot.
+          */
+          if (task.status === "planning") {
+            return null;
+          }
+          if (task.column === "todo") {
+            try {
+              const promptContent = await readFile(getPromptPath(this.store.getTasksDir(), task.id), "utf-8");
+              if (promptContent === buildBootstrapPrompt(task.id, task.title, task.description)) {
+                return null;
+              }
+            } catch {
+              // Missing prompt handled by filesystem validation below.
+            }
+          }
 
           const unmetDeps = getUnmetSchedulingDependencies(task, tasks, schedulingDependencyOptions);
           if (unmetDeps.length > 0) {

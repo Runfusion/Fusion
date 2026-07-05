@@ -28,6 +28,16 @@ describe("settings defaults invariants", () => {
     expect(DEFAULT_PROJECT_SETTINGS.worktreesDir).toBeUndefined();
   });
 
+  it("defaults dashboard keyboard shortcuts globally", () => {
+    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
+      quickChat: "Space",
+      terminal: "Ctrl+`",
+    });
+    expect(GLOBAL_SETTINGS_KEYS).toContain("dashboardKeyboardShortcuts");
+    expect(PROJECT_SETTINGS_KEYS).not.toContain("dashboardKeyboardShortcuts");
+    expect("dashboardKeyboardShortcuts" in DEFAULT_PROJECT_SETTINGS).toBe(false);
+  });
+
   it("graduates workflow runtime defaults out of experimental flags", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.experimentalFeatures.workflowColumns).toBeUndefined();
     expect(DEFAULT_GLOBAL_SETTINGS.experimentalFeatures.workflowGraphExecutor).toBeUndefined();

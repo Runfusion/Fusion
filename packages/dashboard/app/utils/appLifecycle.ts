@@ -73,6 +73,76 @@ export function buildRemoteDashboardUrl(serverUrl: string, authToken?: string | 
   return url.toString();
 }
 
+export interface DesktopShellRedirectShellState {
+  host: "web" | "mobile-shell" | "desktop-shell";
+  desktopMode?: "local" | "remote";
+  activeProfileId: string | null;
+  profiles: Array<{ id: string; serverUrl: string; authToken?: string | null }>;
+  localRuntime?: {
+    state: "stopped" | "starting" | "running" | "error";
+    port?: number;
+    baseUrl?: string;
+  };
+}
+
+/*
+ * FNXC:DesktopSwitchServer 2026-07-04-13:20:
+ * The in-dashboard "Switch server" (Connection Manager) affordance calls `shellApi.setDesktopMode(...)` /
+ * `setActiveProfile(...)` directly and relies on THIS renderer-side redirect to navigate, because it does not
+ * route through the Electron main-process launch-mode handlers (`desktopLaunchMode:setMode` in
+ * packages/desktop/src/main.ts) the way the native menu does. The desktop preload only ever emits the live
+ * `localRuntime` field (see native-shell.d.ts / packages/desktop/src/ipc.ts) — the legacy `localServer` field is
+ * never populated and must not be used. This helper is the single decision point shared by both the local- and
+ * remote-redirect effects in App.tsx so both switch directions behave like the working native-menu path and
+ * so neither introduces a reload loop.
+ */
+export function resolveDesktopShellRedirectTarget(
+  shellState: DesktopShellRedirectShellState,
+  currentHref: string,
+): string | null {
+  if (shellState.host !== "desktop-shell") {
+    return null;
+  }
+
+  if (shellState.desktopMode === "local") {
+    const runtime = shellState.localRuntime;
+    if (!runtime || runtime.state !== "running") {
+      return null;
+    }
+    const baseUrl = runtime.baseUrl || (runtime.port ? `http://localhost:${runtime.port}` : undefined);
+    if (!baseUrl) {
+      return null;
+    }
+    if (currentHref === baseUrl) {
+      return null;
+    }
+    try {
+      const current = new URL(currentHref);
+      const target = new URL(baseUrl);
+      if (current.origin === target.origin) {
+        return null;
+      }
+    } catch {
+      // fall through and navigate — currentHref/baseUrl were not parseable URLs
+    }
+    return baseUrl;
+  }
+
+  if (shellState.desktopMode === "remote") {
+    const activeProfile = shellState.profiles.find((profile) => profile.id === shellState.activeProfileId);
+    if (!activeProfile) {
+      return null;
+    }
+    const nextUrl = buildRemoteDashboardUrl(activeProfile.serverUrl, activeProfile.authToken ?? null);
+    if (currentHref === nextUrl) {
+      return null;
+    }
+    return nextUrl;
+  }
+
+  return null;
+}
+
 export function requiresNativeShellOnboarding(
   shellState: { host: "web" | "mobile-shell" | "desktop-shell"; desktopMode?: "local" | "remote"; activeProfileId: string | null },
   shellReady: boolean,

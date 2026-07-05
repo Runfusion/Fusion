@@ -13,13 +13,15 @@ import type {
   ResearchSynthesisRequest,
   ResearchSynthesisResult,
 } from "@fusion/core";
-import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, isWorkspaceTask, normalizeMergerMode, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
+import { allowsAutoMergeProcessing, compareTasksByPriorityThenAgeAndId, getTaskHardMergeBlocker, isSharedBranchGroupMemberIntegration, isWorkspaceTask, normalizeMergerMode, resolveEffectivePlannerOversightLevel, resolveEffectiveSettings, resolveMaxAutoMergeRetries, sortTasksByPriorityThenAgeAndId } from "@fusion/core";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
+import { PlannerOverseerMonitor } from "./planner-overseer.js";
+import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./planner-recovery-controller.js";
 import type { PrNodeGithubOps } from "./pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
@@ -322,6 +324,30 @@ export class ProjectEngine {
   private runtime: InProcessRuntime;
   private started = false;
   private prMonitor?: PrMonitor;
+  /**
+   * FNXC:PlannerOversight 2026-07-04-00:00:
+   * FN-7511 records-only planner-overseer monitor. Watches in-flight tasks
+   * (in-progress/in-review) across the executor/reviewer/merger/pull-request/
+   * workflow-gate stages, gated by the task's effective planner oversight
+   * level (`resolveEffectivePlannerOversightLevel`). No lifecycle mutation —
+   * steering/recovery land in FN-7512+.
+   */
+  private plannerOverseer?: PlannerOverseerMonitor;
+  private plannerOverseerPollTimer: ReturnType<typeof setInterval> | null = null;
+  /** Conservative poll cadence for the records-only planner-overseer monitor (45s). */
+  private static readonly PLANNER_OVERSEER_POLL_INTERVAL_MS = 45 * 1000;
+  /**
+   * FNXC:PlannerOversight 2026-07-04-12:00:
+   * FN-7512 bounded autonomous-recovery dispatcher. Consumes the FN-7511
+   * `plannerOverseer`'s recorded observations and, ONLY when the task's
+   * effective planner oversight level resolves to `"autonomous"`, dispatches
+   * one bounded action per poll tick (inject guidance / retry the step /
+   * request a targeted fix) through handlers wired to the existing
+   * steering-comment API and store retry/re-enqueue path. Never merge/PR or
+   * destructive actions (FN-7513 owns those); comprehensive human-control
+   * safeguards beyond the userPaused skip are FN-7514's responsibility.
+   */
+  private plannerRecoveryController?: PlannerRecoveryController;
   private prReconciler?: PrReconciler;
   private prCommentHandler?: PrCommentHandler;
   private notifier?: NtfyNotifier;
@@ -603,6 +629,19 @@ export class ProjectEngine {
       runtimeLog.warn(`Remote tunnel restore evaluation failed (continuing startup): ${message}`);
     }
 
+    // FN-7511: Initialize the records-only planner-overseer monitor and start
+    // its bounded, gated poll over in-flight tasks.
+    this.plannerOverseer = new PlannerOverseerMonitor({ store });
+    // FN-7512: bounded autonomous-recovery dispatcher, wired to the existing
+    // steering-comment API + store retry/re-enqueue path only — no new
+    // session/tool/merge channel. Ticked from the same poll as the FN-7511
+    // observer, guarded to the "autonomous" effective level there.
+    this.plannerRecoveryController = new PlannerRecoveryController({
+      snapshotProvider: this.plannerOverseer,
+      handlers: this.buildPlannerRecoveryHandlers(store),
+    });
+    this.startPlannerOverseerPoll(store);
+
     // 2. Initialize PrMonitor + PrCommentHandler
     this.prMonitor = new PrMonitor();
     this.prCommentHandler = new PrCommentHandler(store);
@@ -840,6 +879,7 @@ export class ProjectEngine {
       clearInterval(this.mergeActiveReconcileTimer);
       this.mergeActiveReconcileTimer = null;
     }
+    this.stopPlannerOverseerPoll();
 
     // Abort active/pending merge work before tearing down sessions.
     this.mergeAbortController?.abort();
@@ -1005,6 +1045,121 @@ export class ProjectEngine {
   /** Get the PrMonitor (if initialized). */
   getPrMonitor(): PrMonitor | undefined {
     return this.prMonitor;
+  }
+
+  /** Get the records-only PlannerOverseerMonitor (if initialized). See FN-7511. */
+  getPlannerOverseer(): PlannerOverseerMonitor | undefined {
+    return this.plannerOverseer;
+  }
+
+  /** Get the bounded PlannerRecoveryController (if initialized). See FN-7512. */
+  getPlannerRecoveryController(): PlannerRecoveryController | undefined {
+    return this.plannerRecoveryController;
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-04-12:00:
+   * Concrete FN-7512 handler wiring — ONLY reuses existing mechanisms:
+   * `injectGuidance`/`requestTargetedFix` post a planner-authored steering
+   * comment via `store.addSteeringComment` (the same channel the executor's
+   * real-time injection listener already watches); `retryStep` calls the
+   * store's existing in-progress→todo retry/re-enqueue path
+   * (`moveTask(id, "todo", { preserveProgress: true })`), preserving
+   * progress exactly like the auto-recovery/self-healing retry handlers do.
+   * No new session/tool/merge channel is introduced.
+   */
+  private buildPlannerRecoveryHandlers(store: TaskStore): PlannerRecoveryHandlers {
+    return {
+      injectGuidance: async (task, decision) => {
+        const text = `[planner-oversight] ${decision.reason}`;
+        await store.addSteeringComment(task.id, text, "agent");
+      },
+      retryStep: async (task) => {
+        await store.moveTask(task.id, "todo", { preserveProgress: true, moveSource: "engine" } as Parameters<TaskStore["moveTask"]>[2]);
+      },
+      requestTargetedFix: async (task, decision) => {
+        const sourceRef = decision.sourceLinks[0]?.ref;
+        const text = sourceRef
+          ? `[planner-oversight] targeted-fix requested: ${decision.reason} (source: ${sourceRef})`
+          : `[planner-oversight] targeted-fix requested: ${decision.reason}`;
+        await store.addSteeringComment(task.id, text, "agent");
+      },
+      // FNXC:PlannerOversight 2026-07-04-13:00:
+      // FN-7513 requirement: merge/PR actions beyond guidance/retry, and any
+      // destructive/external-service side effect, must never run
+      // autonomously — `requestConfirmation` ONLY records a pending
+      // `PlannerConfirmationRequest` via a planner-authored steering comment
+      // (reusing the same `addSteeringComment` channel as bounded recovery)
+      // so a human sees it; it never performs the side effect itself. The
+      // dashboard confirmation UI/badge that lets a human act on this is
+      // owned by FN-7515+/FN-7517.
+      requestConfirmation: async (task, request) => {
+        const text = `[planner-oversight] confirmation required (${request.sideEffectClass}): ${request.reason}`;
+        await store.addSteeringComment(task.id, text, "agent");
+      },
+      // FNXC:PlannerOversight 2026-07-04-14:30:
+      // FN-7513 code-review fix: a `"merge_pr"`-classified confirmation covers
+      // TWO distinct proposed actions (`decidePlannerRecovery` sets
+      // `proposedAction: "advance_merge"` for the `merger` stage and
+      // `"advance_pull_request"` for the `pull-request` stage) — they must NOT
+      // share one handler. Calling `store.mergeTask` unconditionally on every
+      // approved merge_pr request would let an approved PR-stage confirmation
+      // perform a direct task merge/cleanup instead of a PR-specific action,
+      // bypassing the PR workflow entirely. Branch on `request.proposedAction`
+      // (falling back to `request.watchedStage` defensively) and ONLY reuse
+      // the existing `store.mergeTask` merge-advance mechanism for
+      // `"advance_merge"` / the `merger` stage. `"advance_pull_request"` has
+      // no existing PR-advance mechanism to reuse yet (FN-7515+/FN-7517 own
+      // the PR-specific execution wiring) — it is intentionally a no-op here
+      // so an approved PR confirmation never falls through to a merge.
+      executeMergePrAction: async (taskId, request) => {
+        const proposedAction = request.proposedAction;
+        const isMergeAdvance = proposedAction === "advance_merge" || (!proposedAction && request.watchedStage === "merger");
+        if (!isMergeAdvance) {
+          // PR-stage (or any other non-merge-advance) approval: no reusable
+          // PR-advance mechanism exists yet — deliberately do nothing rather
+          // than fall back to a task merge.
+          return;
+        }
+        await store.mergeTask(taskId);
+      },
+      // FN-7513: no destructive/external execution handler is wired yet —
+      // `decidePlannerRecovery` does not currently produce a
+      // `destructive_external` action (FN-7511 has no destructive-action
+      // signal), so this is intentionally left unset; a future task can wire
+      // a concrete handler using existing safe helpers when one is needed.
+      // FNXC:PlannerOverseer 2026-07-04-15:00:
+      // FN-7514 requirement: when the human-control guard (user-paused, or
+      // autoMerge:false/human-review) withholds ALL oversight for a task,
+      // record a bounded `overseer:oversight-withheld-human-control` no-action
+      // run-audit event (metadata: taskId/reason/stage/oversightLevel) so the
+      // withholding is observable, mirroring the `*-no-action` self-healing
+      // convention. Audit-only — this handler performs no lifecycle mutation.
+      recordHumanControlWithheld: async (task, decision, ctx) => {
+        try {
+          const auditor = createRunAuditor(store, {
+            runId: generateSyntheticRunId("planner-overseer-human-control", task.id),
+            agentId: "planner-overseer",
+            taskId: task.id,
+            phase: "planner-overseer-poll",
+          });
+          await auditor.database({
+            type: "overseer:oversight-withheld-human-control",
+            target: task.id,
+            metadata: {
+              taskId: task.id,
+              reason: decision.reason,
+              stage: (ctx as { stage?: string }).stage,
+              oversightLevel: (ctx as { oversightLevel?: string }).oversightLevel,
+            },
+          });
+        } catch (err: unknown) {
+          runtimeLog.warn(
+            `Failed to record overseer:oversight-withheld-human-control for ${task.id}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      },
+    };
   }
 
   /** Get the CronRunner (if initialized). */
@@ -1813,6 +1968,90 @@ export class ProjectEngine {
       cleared++;
     }
     return cleared;
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-04-00:00:
+   * Bounded, gated poll over in-flight tasks (in-progress/in-review). For
+   * each task, resolves the effective planner oversight level and, unless it
+   * is "off" or the task resolves to no watched stage, records one
+   * `OverseerStageObservation` via `PlannerOverseerMonitor#observeTask`.
+   * Records-only: no lifecycle mutation, retry, or notification here.
+   * Cleared on `stop()`. Never an unbounded loop — a single bounded
+   * `setInterval` at a conservative cadence.
+   */
+  private startPlannerOverseerPoll(store: TaskStore): void {
+    if (this.plannerOverseerPollTimer) {
+      return;
+    }
+    this.plannerOverseerPollTimer = setInterval(() => {
+      void this.pollPlannerOverseer(store);
+    }, ProjectEngine.PLANNER_OVERSEER_POLL_INTERVAL_MS);
+  }
+
+  private async pollPlannerOverseer(store: TaskStore): Promise<void> {
+    if (!this.plannerOverseer || this.shuttingDown) {
+      return;
+    }
+    const overseer = this.plannerOverseer;
+    try {
+      const [inProgress, inReview] = await Promise.all([
+        store.listTasks({ column: "in-progress" }).catch(() => [] as Task[]),
+        store.listTasks({ column: "in-review" }).catch(() => [] as Task[]),
+      ]);
+      const inFlight = [...inProgress, ...inReview];
+      const inFlightIds = new Set(inFlight.map((t) => t.id));
+      // FN-7514: fetch global engine Settings ONCE per poll cycle (not per
+      // task) so `PlannerRecoveryController.tick`'s human-control guard can
+      // consult `allowsAutoMergeProcessing(task, settings)` — the same
+      // FN-5147 predicate `self-healing.ts` gates lifecycle mutation on.
+      const engineSettings = await store.getSettings().catch(() => undefined);
+
+      for (const task of inFlight) {
+        try {
+          const workflowEffective = await resolveEffectiveSettings(store, { id: task.id }).catch(() => ({}) as Record<string, unknown>);
+          const level = resolveEffectivePlannerOversightLevel(
+            task.plannerOversightLevel,
+            workflowEffective.plannerOversightLevel as string | undefined,
+          );
+          if (level === "off") {
+            continue;
+          }
+          await overseer.observeTask(task, level);
+
+          // FN-7512: one guarded, autonomous-only bounded recovery tick at the
+          // same passive seam FN-7511 uses for observation. Inert for every
+          // other effective level ("off"/"observe"/"steer" already `continue`d
+          // above). FN-7514: `PlannerRecoveryController.tick` now consults the
+          // full human-control guard (user-paused OR autoMerge:false/
+          // human-review) BEFORE any action/confirmation classification —
+          // never throws.
+          if (level === "autonomous" && this.plannerRecoveryController) {
+            await this.plannerRecoveryController.tick(task, { settings: engineSettings });
+          }
+        } catch {
+          // Best-effort per-task — never let one task's failure block the poll.
+        }
+      }
+
+      // Drop retained observations for tasks that have left the in-flight set
+      // (moved to done/archived/failed/etc.) so the ring buffers don't leak.
+      for (const taskId of overseer.getObservedTaskIds()) {
+        if (!inFlightIds.has(taskId)) {
+          overseer.clear(taskId);
+          this.plannerRecoveryController?.clear(taskId);
+        }
+      }
+    } catch {
+      // Best-effort poll — degrade silently, never throw out of the interval.
+    }
+  }
+
+  private stopPlannerOverseerPoll(): void {
+    if (this.plannerOverseerPollTimer) {
+      clearInterval(this.plannerOverseerPollTimer);
+      this.plannerOverseerPollTimer = null;
+    }
   }
 
   private scheduleMergeActiveReconciliation(intervalMs: number): void {

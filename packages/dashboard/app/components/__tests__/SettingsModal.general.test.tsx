@@ -588,7 +588,7 @@ describe("SettingsModal", () => {
 
       // Global modal outside-dismiss and persistAgentToolOutput default to unchecked; Star-on-GitHub control absent.
       expect(screen.getByRole("checkbox", { name: "Dismiss modals by clicking outside" })).not.toBeChecked();
-      expect(screen.getByText(/Off by default to prevent accidental dismissal/i).closest("small")).toBeTruthy();
+      expect(screen.getByText(/Default: disabled, to prevent accidental dismissal/i).closest("small")).toBeTruthy();
       expect(screen.getByRole("checkbox", { name: "Save tool output in agent logs" })).not.toBeChecked();
       expect(screen.queryByRole("checkbox", { name: /Show "Star on GitHub" button in Settings header/i })).toBeNull();
 
@@ -606,6 +606,69 @@ describe("SettingsModal", () => {
       // Global default tracking repo control + inheritance hint render.
       expect(screen.getByRole("combobox", { name: "Global default tracking repo" })).toBeInTheDocument();
       expect(screen.getByText(/Projects inherit this value when they do not set a project default tracking repo/i)).toBeInTheDocument();
+    });
+
+    it("renders default keyboard shortcuts and saves normalized valid edits globally", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      expect(screen.getByRole("textbox", { name: "Quick Chat shortcut" })).toHaveValue("Space");
+      expect(screen.getByRole("textbox", { name: "Terminal shortcut" })).toHaveValue("Ctrl+`");
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Quick Chat shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Quick Chat shortcut" }), "meta+k");
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Terminal shortcut" }), "Alt+T");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.dashboardKeyboardShortcuts).toEqual({ quickChat: "Meta+K", terminal: "Alt+T" });
+      if (mockUpdateSettings.mock.calls.length > 0) {
+        const projectPayload = mockUpdateSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+        expect(projectPayload.dashboardKeyboardShortcuts).toBeUndefined();
+      }
+    });
+
+    it("blocks duplicate and invalid keyboard shortcuts before saving", async () => {
+      const addToast = vi.fn();
+      renderModal({ initialSection: "global-general", addToast });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Quick Chat shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Quick Chat shortcut" }), "Ctrl+K");
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Terminal shortcut" }), "Control+K");
+
+      expect(screen.getByRole("alert")).toHaveTextContent("both use Ctrl+K");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("both use Ctrl+K"), "error");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.type(screen.getByRole("textbox", { name: "Terminal shortcut" }), "Ctrl+Alt");
+      expect(screen.getByRole("textbox", { name: "Terminal shortcut" })).toHaveAttribute("aria-invalid", "true");
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+      expect(addToast).toHaveBeenCalledWith(expect.stringContaining("Terminal shortcut is invalid"), "error");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("allows disabling keyboard shortcuts with blank values", async () => {
+      renderModal({ initialSection: "global-general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Quick Chat shortcut" }));
+      await settingsModalUser.clear(screen.getByRole("textbox", { name: "Terminal shortcut" }));
+      await settingsModalUser.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+      const globalPayload = mockUpdateGlobalSettings.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(globalPayload.dashboardKeyboardShortcuts).toEqual({ quickChat: "", terminal: "" });
+    });
+
+    it("keeps the keyboard shortcut layout responsive", () => {
+      expect(settingsModalCss).toMatch(/\.settings-keyboard-shortcuts__grid\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/);
+      expect(settingsModalCss).toMatch(/@media \(max-width: 768px\)\s*\{[^}]*\.settings-keyboard-shortcuts__grid\s*\{[^}]*grid-template-columns:\s*1fr;/s);
     });
 
     it("reflects persisted checked value from global settings", async () => {
@@ -1440,6 +1503,151 @@ describe("SettingsModal", () => {
 
       const payload = mockUpdateGlobalSettings.mock.calls[0][0];
       expect(payload).toEqual(expect.objectContaining({ dashboardFontScalePct: 120 }));
+    });
+  });
+
+  /*
+  FNXC:SettingsReset 2026-07-04-00:50:
+  FN-7506 Reset Settings coverage: dialog open/close (button, Cancel, overlay, Escape) without
+  mutating settings; both destructive actions present and correctly labeled; per-menu reset
+  disabled with a reason for an excluded/non-key section; SCOPE PRECISION for a project section
+  (merge), a global section (appearance), and "reset all project settings" (project keys only,
+  never global); and the form refetches/re-renders after a reset.
+  */
+  describe("Reset Settings", () => {
+    it("renders the Reset Settings button in both modal and embedded presentations", async () => {
+      const { unmount } = renderModal();
+      await waitForSettingsModalReady();
+      expect(screen.getByTestId("settings-reset")).toBeInTheDocument();
+      unmount();
+
+      renderModal({ presentation: "embedded" });
+      await waitForSettingsModalReady();
+      expect(screen.getByTestId("settings-reset")).toBeInTheDocument();
+    });
+
+    it("opens a dialog with both destructive actions and Cancel, without mutating settings", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+
+      const dialog = screen.getByTestId("settings-reset-dialog");
+      expect(dialog).toHaveAttribute("role", "dialog");
+      expect(dialog).toHaveAttribute("aria-modal", "true");
+      expect(dialog).toHaveAttribute("aria-label");
+      expect(screen.getByTestId("settings-reset-menu")).toHaveTextContent(/Reset this menu/i);
+      expect(screen.getByTestId("settings-reset-all-project")).toHaveTextContent(/Reset all project settings/i);
+
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("Cancel closes the dialog without mutating settings", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+      const dialog = screen.getByTestId("settings-reset-dialog");
+      expect(dialog).toBeInTheDocument();
+
+      await settingsModalUser.click(within(dialog).getByRole("button", { name: /^Cancel$/ }));
+      expect(screen.queryByTestId("settings-reset-dialog")).not.toBeInTheDocument();
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("overlay click closes the dialog without mutating settings", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+
+      fireEvent.click(screen.getByTestId("settings-reset-dialog"));
+      expect(screen.queryByTestId("settings-reset-dialog")).not.toBeInTheDocument();
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+    });
+
+    it("Escape closes only the reset dialog, not the whole Settings modal", async () => {
+      const onClose = vi.fn();
+      renderModal({ initialSection: "general", onClose });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByTestId("settings-reset-dialog")).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    it("disables per-menu reset with a documented reason for an excluded/non-key section (Secrets)", async () => {
+      renderModal({ initialSection: "secrets" });
+      await waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+      await settingsModalUser.click(await screen.findByTestId("settings-reset"));
+
+      const menuBtn = screen.getByTestId("settings-reset-menu");
+      expect(menuBtn).toBeDisabled();
+      expect(menuBtn).toHaveAttribute("title");
+      expect(menuBtn.getAttribute("title")).toBeTruthy();
+    });
+
+    it("SCOPE PRECISION: per-menu reset of a project section (Merge) writes only its keys via updateSettings, never updateGlobalSettings", async () => {
+      renderModal({ initialSection: "merge" });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+      await settingsModalUser.click(screen.getByTestId("settings-reset-menu"));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.autoMerge).toBeNull();
+      expect(payload.mergeStrategy).toBeNull();
+      expect(payload.gitlabAuthToken).toBeNull();
+      // Not part of "merge" — owned by "general" instead; must not leak in.
+      expect(payload).not.toHaveProperty("gitlabEnabled");
+      expect(payload).not.toHaveProperty("taskPrefix");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("SCOPE PRECISION: per-menu reset of a global section (Appearance) writes only its keys via updateGlobalSettings, never updateSettings", async () => {
+      renderModal({ initialSection: "appearance" });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+      await settingsModalUser.click(screen.getByTestId("settings-reset-menu"));
+
+      await waitFor(() => expect(mockUpdateGlobalSettings).toHaveBeenCalled());
+      const payload = mockUpdateGlobalSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload).toEqual(
+        expect.objectContaining({
+          themeMode: "system",
+          colorTheme: "shadcn-ember",
+        }),
+      );
+      expect(mockUpdateSettings).not.toHaveBeenCalled();
+    });
+
+    it("reset all project settings writes only project keys via updateSettings and never touches updateGlobalSettings", async () => {
+      renderModal({ initialSection: "general" });
+      await waitForSettingsModalReady();
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+      await settingsModalUser.click(screen.getByTestId("settings-reset-all-project"));
+
+      await waitFor(() => expect(mockUpdateSettings).toHaveBeenCalled());
+      const payload = mockUpdateSettings.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload.taskPrefix).toBeNull();
+      expect(payload.autoMerge).toBeNull();
+      expect(payload.maxConcurrent).toBeNull();
+      // Global-only key must never appear in a project-scope reset payload.
+      expect(payload).not.toHaveProperty("themeMode");
+      expect(mockUpdateGlobalSettings).not.toHaveBeenCalled();
+    });
+
+    it("refreshes the form after a successful reset (refetches settings) and closes the dialog", async () => {
+      renderModal({ initialSection: "merge" });
+      await waitForSettingsModalReady();
+      const fetchCallsBefore = mockFetchSettings.mock.calls.length;
+
+      await settingsModalUser.click(screen.getByTestId("settings-reset"));
+      await settingsModalUser.click(screen.getByTestId("settings-reset-menu"));
+
+      await waitFor(() => expect(mockFetchSettings.mock.calls.length).toBeGreaterThan(fetchCallsBefore));
+      await waitFor(() => expect(screen.queryByTestId("settings-reset-dialog")).not.toBeInTheDocument());
     });
   });
 });

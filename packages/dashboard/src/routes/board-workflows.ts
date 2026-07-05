@@ -71,6 +71,7 @@ export interface BoardWorkflowsPayload {
 }
 
 const BUILTIN_WORKFLOW_COLUMN_LABELS: Record<string, string> = {
+  ideas: "Ideas",
   triage: "Triage",
   todo: "Todo",
   "in-progress": "In Progress",

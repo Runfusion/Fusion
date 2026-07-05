@@ -48,7 +48,7 @@ describe("MergeSection legacy auto-merge stamp cleanup", () => {
 
     const select = screen.getByTestId("plan-approval-mode-select") as HTMLSelectElement;
     expect(select.value).toBe("require-all");
-    expect(screen.getByRole("option", { name: "Use workflow setting" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Use workflow setting (default)" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Auto-approve all tasks" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Require approval for all tasks" })).toBeInTheDocument();
 

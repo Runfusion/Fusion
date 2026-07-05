@@ -21,6 +21,10 @@ import type { WorkflowSettingDefinition } from "./workflow-ir-types.js";
  * `BUILTIN_REVIEW_REVISION_SETTINGS` is workflow-native review-loop policy.
  * These keys also never lived in project/global settings and intentionally omit
  * declaration defaults: an unset workflow value means unbounded remediation.
+ *
+ * `BUILTIN_OVERSIGHT_SETTINGS` is workflow-native planner oversight policy.
+ * These keys never lived in project/global settings and must never be added to
+ * `MOVED_SETTINGS_KEYS`.
  */
 
 /**
@@ -428,10 +432,32 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
   },
 ];
 
+/**
+ * FNXC:PlannerOversight 2026-07-04-00:00:
+ * Workflows declare a default planner oversight level before per-task override and engine reader support land in FN-7509/FN-7510. The workflow-native enum stays out of project settings and `MOVED_SETTINGS_KEYS`; its schema default is `autonomous` so built-in workflows preserve full steering/control until operators choose Off, Observe, or Steer.
+ */
+export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
+  {
+    id: "plannerOversightLevel",
+    name: "Planner oversight level",
+    type: "enum",
+    default: "autonomous",
+    options: [
+      { value: "off", label: "Off" },
+      { value: "observe", label: "Observe" },
+      { value: "steer", label: "Steer" },
+      { value: "autonomous", label: "Autonomous recovery" },
+    ],
+    description:
+      "Workflow planner oversight mode: Off disables oversight; Observe watches only; Steer injects guidance or suggests revisions; Autonomous recovery enables bounded retry and targeted-fix recovery.",
+  },
+];
+
 export const BUILTIN_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
   ...BUILTIN_MOVED_WORKFLOW_SETTINGS,
   ...BUILTIN_TRIAGE_POLICY_SETTINGS,
   ...BUILTIN_REVIEW_REVISION_SETTINGS,
+  ...BUILTIN_OVERSIGHT_SETTINGS,
 ];
 
 const TRIAGE_POLICY_DEFAULTS = new Map(

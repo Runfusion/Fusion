@@ -216,6 +216,40 @@ describe("WorkflowSettingsPanel — Values tab", () => {
     expect(screen.getByText(/Leave empty for unbounded automatic Code Review remediation/i)).toBeInTheDocument();
   });
 
+  // FNXC:PlannerOversight 2026-07-04-00:00: the Values tab is the project/global default
+  // surface for the workflow-native plannerOversightLevel setting (FN-7508/FN-7515) —
+  // confirm it renders with its own first-class group/label and all four options.
+  it("renders plannerOversightLevel in the Values tab with its four options and a first-class oversight group", async () => {
+    mockFetchValues.mockResolvedValue(payload({ effective: { plannerOversightLevel: "autonomous" } }));
+    render(
+      <Host
+        readOnly
+        initial={[
+          {
+            id: "plannerOversightLevel",
+            name: "Planner oversight level",
+            type: "enum",
+            default: "autonomous",
+            options: [
+              { value: "off", label: "Off" },
+              { value: "observe", label: "Observe" },
+              { value: "steer", label: "Steer" },
+              { value: "autonomous", label: "Autonomous recovery" },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(mockFetchValues).toHaveBeenCalledWith("wf-1", "proj-1"));
+    expect(within(screen.getByTestId("wf-settings-group-oversight")).getByText("Planner Oversight")).toBeInTheDocument();
+    const select = screen.getByLabelText("Planner oversight level") as HTMLSelectElement;
+    expect(select).toBeInTheDocument();
+    expect(select).toHaveValue("autonomous");
+    const optionValues = Array.from(select.options).map((o) => o.value);
+    expect(optionValues).toEqual(expect.arrayContaining(["off", "observe", "steer", "autonomous"]));
+  });
+
   it("renders and saves the automatic large-task splitting workflow toggle once", async () => {
     const triageToggle: WorkflowSettingDefinition[] = [
       {

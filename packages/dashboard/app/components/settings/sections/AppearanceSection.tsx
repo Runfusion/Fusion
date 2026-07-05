@@ -42,7 +42,7 @@ export function AppearanceSection({ scopeBanner, form, setForm, themeMode, color
           <input type="checkbox" checked={form.openTasksInRightSidebar === true} onChange={(e) => setForm((f) => ({ ...f, openTasksInRightSidebar: e.target.checked }))}/>
           <span>{t("settings.appearance.openTasksInRightSidebar", "Open tasks in the right sidebar")}</span>
         </label>
-        <small className="form-text text-muted">{t("settings.appearance.openTasksInRightSidebarHelp", "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel.")}</small>
+        <small className="form-text text-muted">{t("settings.appearance.openTasksInRightSidebarHelp", "When enabled, board task cards open detail in the right sidebar when it is available; mobile and hidden-sidebar states keep the full task panel. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         {/* FNXC:MobileTaskPopups 2026-07-01-12:00: Keep the stored openMobileTasksInPopup key for compatibility, but present the setting as all-viewport ordinary task popup routing because desktop operators also need the board or right-dock Tasks list visible behind task detail. */}
@@ -50,7 +50,7 @@ export function AppearanceSection({ scopeBanner, form, setForm, themeMode, color
           <input type="checkbox" checked={form.openMobileTasksInPopup === true} onChange={(e) => setForm((f) => ({ ...f, openMobileTasksInPopup: e.target.checked }))}/>
           <span>{t("settings.appearance.openMobileTasksInPopup", "Open tasks as popups")}</span>
         </label>
-        <small className="form-text text-muted">{t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior.")}</small>
+        <small className="form-text text-muted">{t("settings.appearance.openMobileTasksInPopupHelp", "When enabled, ordinary board task-card and right-dock Tasks-list clicks open the existing task popup so the board or list remains visible. Deep-tab and other task opens keep their current behavior. Default: disabled.")}</small>
       </div>
       <div className="form-group">
         {/* FNXC:TaskDetailActivityFirst 2026-06-30-23:59: The project setting is opt-in because task details now default to Activity-first; explicit Activity/Chat/Logs links keep their destination regardless of this checkbox. */}

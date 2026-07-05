@@ -919,6 +919,8 @@ export function TaskDetailContent({
   const [editValidatorModel, setEditValidatorModel] = useState("");
   const [editPlanningModel, setEditPlanningModel] = useState("");
   const [editThinkingLevel, setEditThinkingLevel] = useState("");
+  // FNXC:PlannerOversight 2026-07-04-00:00: Per-task override of the workflow-native plannerOversightLevel setting (FN-7508). "" means "inherit from workflow" (clear-to-default).
+  const [editPlannerOversightLevel, setEditPlannerOversightLevel] = useState("");
   const [editPresetMode, setEditPresetMode] = useState<"default" | "preset" | "custom">("default");
   const [editReviewLevel, setEditReviewLevel] = useState<number | undefined>(undefined);
   const [editPriority, setEditPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -1546,6 +1548,7 @@ export function TaskDetailContent({
     setEditValidatorModel(valModel);
     setEditPlanningModel(planModel);
     setEditThinkingLevel(task.thinkingLevel ?? "");
+    setEditPlannerOversightLevel(task.plannerOversightLevel ?? "");
     setEditNodeId(task.nodeId);
     setEditPresetMode(execModel || valModel || planModel ? "custom" : "default");
     setEditSelectedPresetId("");
@@ -1624,6 +1627,9 @@ export function TaskDetailContent({
 
     const currentThinkingLevel = task.thinkingLevel ?? "";
     if (editThinkingLevel !== currentThinkingLevel) updates.thinkingLevel = editThinkingLevel !== "" ? (editThinkingLevel as "minimal" | "low" | "medium" | "high" | "xhigh") : null;
+    // FNXC:PlannerOversight 2026-07-04-00:00: "" (Inherit from workflow) clears the per-task override to null so the workflow's effective plannerOversightLevel applies.
+    const currentPlannerOversightLevel = task.plannerOversightLevel ?? "";
+    if (editPlannerOversightLevel !== currentPlannerOversightLevel) updates.plannerOversightLevel = editPlannerOversightLevel !== "" ? (editPlannerOversightLevel as "off" | "observe" | "steer" | "autonomous") : null;
     if ((task.nodeId ?? undefined) !== editNodeId) updates.nodeId = editNodeId ?? null;
     if (editReviewLevel !== task.reviewLevel) updates.reviewLevel = editReviewLevel;
     if (editPriority !== normalizeTaskPriorityValue(task.priority)) updates.priority = editPriority;
@@ -1664,7 +1670,7 @@ export function TaskDetailContent({
     }
 
     return { updates, error: null as string | null };
-  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editExecutorModel, editNodeId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editTitle, editValidatorModel, task]);
+  }, [editBaseBranch, editBranch, editDependencies, editDescription, editExecutionMode, editExecutorModel, editNodeId, editPlanningModel, editPriority, editReviewLevel, editSelectedWorkflowSteps, editSourceIssueExternalId, editSourceIssueProvider, editSourceIssueRepository, editSourceIssueUrl, editThinkingLevel, editPlannerOversightLevel, editTitle, editValidatorModel, task]);
 
   const persistEditChanges = useCallback(async (includeDescription: boolean) => {
     const { updates, error } = buildEditUpdates(includeDescription);
@@ -1768,6 +1774,7 @@ export function TaskDetailContent({
     editValidatorModel,
     editPlanningModel,
     editThinkingLevel,
+    editPlannerOversightLevel,
     editNodeId,
     editReviewLevel,
     editPriority,
@@ -3266,6 +3273,8 @@ export function TaskDetailContent({
                 onPlanningModelChange={setEditPlanningModel}
                 thinkingLevel={editThinkingLevel}
                 onThinkingLevelChange={setEditThinkingLevel}
+                plannerOversightLevel={editPlannerOversightLevel}
+                onPlannerOversightLevelChange={setEditPlannerOversightLevel}
                 presetMode={editPresetMode}
                 onPresetModeChange={setEditPresetMode}
                 selectedPresetId={editSelectedPresetId}

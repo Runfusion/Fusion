@@ -76,6 +76,14 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   shadcnCustomColors: undefined,
   dashboardFontScalePct: 100,
   /*
+  FNXC:DashboardShortcuts 2026-07-04-00:00:
+  Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. Empty strings are preserved so operators can disable an action.
+  */
+  dashboardKeyboardShortcuts: {
+    quickChat: "Space",
+    terminal: "Ctrl+`",
+  },
+  /*
   FNXC:ModalDismissal 2026-06-29-00:00:
   Fixed dashboard modals must ignore backdrop clicks by default so accidental outside taps do not discard in-progress form state. Operators can globally opt in to the legacy outside-click dismissal behavior.
   */

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchConfig, fetchSettings, updateSettings, updateGlobalSettings } from "../api";
-import type { ProjectSettings } from "@fusion/core";
+import type { GlobalSettings, ProjectSettings } from "@fusion/core";
 import { setAutoReloadEnabled } from "../versionCheck";
+import { DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS, resolveDashboardKeyboardShortcuts, type DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 
 export type QuickChatButtonMode = "floating" | "footer" | "off";
 export type PlanApprovalMode = NonNullable<ProjectSettings["planApprovalMode"]>;
@@ -30,6 +31,7 @@ export interface UseAppSettingsResult {
   taskDetailChatFirst: boolean;
   quickChatButtonMode: QuickChatButtonMode;
   quickChatCloseOnOutsideClick: boolean;
+  dashboardKeyboardShortcuts: Required<DashboardKeyboardShortcutMap>;
   dismissModalsOnOutsideClick: boolean;
   showQuickChatFAB: boolean;
   maxTotalRetriesBeforeFail: number;
@@ -76,6 +78,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [taskDetailChatFirst, setTaskDetailChatFirst] = useState(false);
   const [quickChatButtonMode, setQuickChatButtonMode] = useState<QuickChatButtonMode>("off");
   const [quickChatCloseOnOutsideClick, setQuickChatCloseOnOutsideClick] = useState(true);
+  const [dashboardKeyboardShortcuts, setDashboardKeyboardShortcuts] = useState<Required<DashboardKeyboardShortcutMap>>(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
   const [dismissModalsOnOutsideClick, setDismissModalsOnOutsideClick] = useState(false);
   const [showQuickChatFAB, setShowQuickChatFAB] = useState(false);
   const [maxTotalRetriesBeforeFail, setMaxTotalRetriesBeforeFail] = useState(25);
@@ -140,6 +143,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
             : "off";
       setQuickChatButtonMode(nextQuickChatButtonMode);
       setQuickChatCloseOnOutsideClick(settings.quickChatCloseOnOutsideClick !== false);
+      setDashboardKeyboardShortcuts(resolveDashboardKeyboardShortcuts((settings as GlobalSettings).dashboardKeyboardShortcuts));
       setDismissModalsOnOutsideClick(settings.dismissModalsOnOutsideClick === true);
       setShowQuickChatFAB(nextQuickChatButtonMode === "floating");
       setMaxTotalRetriesBeforeFail(settings.maxTotalRetriesBeforeFail ?? 25);
@@ -182,6 +186,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     setOpenMobileTasksInPopup(false);
     setTaskDetailChatFirst(false);
     setQuickChatCloseOnOutsideClick(true);
+    setDashboardKeyboardShortcuts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
     setDismissModalsOnOutsideClick(false);
     setPlanApprovalMode("workflow");
     setTodosEnabled(true);
@@ -313,6 +318,7 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
     taskDetailChatFirst,
     quickChatButtonMode,
     quickChatCloseOnOutsideClick,
+    dashboardKeyboardShortcuts,
     dismissModalsOnOutsideClick,
     showQuickChatFAB,
     maxTotalRetriesBeforeFail,
