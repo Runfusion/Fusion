@@ -20,7 +20,8 @@
     "dev:android": "tsx scripts/live-reload.ts --platform android",
     "build:mobile": "pnpm --filter @fusion/dashboard build && npx cap sync",
     "patch:android-manifest": "npx tsx scripts/patch-android-manifest.ts",
-    "capacitor:sync:after": "npx tsx scripts/patch-android-manifest.ts",
+    "patch:ios-webview": "npx tsx scripts/patch-ios-webview.ts",
+    "capacitor:sync:after": "npx tsx scripts/patch-android-manifest.ts && npx tsx scripts/patch-ios-webview.ts",
     "test": "vitest run --silent=passed-only --reporter=dot",
     "typecheck": "tsc --noEmit"
   },

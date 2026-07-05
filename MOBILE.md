@@ -89,6 +89,16 @@ Implementation notes:
 - Active-profile deletion fallback is shell-owned: deleting the active profile promotes the first remaining profile, and deleting the final profile resets to a clean empty state.
 - The dashboard consumes this through the shared `window.fusionShell` connection APIs.
 
+### Native Back Handling (Android Back + iOS Edge-Swipe-Back)
+
+Task-detail dismissal via native "back" (Android hardware Back / predictive-back gesture,
+iOS edge-swipe-back, or plain browser swipe-back) converges on a single shared invariant:
+the dashboard's `useNavigationHistory` nav-history stack. See `packages/mobile/README.md`
+→ "Native Back Handling" for the full Android (`fusion:native-back`) vs. iOS (`popstate`)
+routing details and the tracked post-`cap sync` patch scripts (`scripts/
+patch-android-manifest.ts`, `scripts/patch-ios-webview.ts`) that keep each platform's native
+gesture delivery enabled across `cap sync` regenerations.
+
 ### Planning Mode
 
 Planning Mode opens directly into the composer pane on mobile when no planning sessions exist, avoiding an empty-sidebar dead end. On desktop/tablet the split view is unaffected. Once sessions are saved, mobile shows the session list as usual and the user can navigate between list and detail panes.
@@ -186,3 +196,5 @@ Mobile package scripts (`packages/mobile/package.json`):
 - `dev:ios`
 - `dev:android`
 - `build:mobile`
+- `patch:ios-webview` — idempotently enables the iOS WKWebView edge-swipe-back gesture in the generated `ios/App/App/AppDelegate.swift` (safe no-op if `ios/` doesn't exist yet)
+- `capacitor:sync:after` — Capacitor's own post-`cap sync` hook; currently runs the iOS webview patch so `cap sync` regeneration can't silently drop the gesture opt-in

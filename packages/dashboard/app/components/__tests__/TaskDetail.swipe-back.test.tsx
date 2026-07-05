@@ -802,4 +802,135 @@ describe("Task detail mobile swipe-back", () => {
     expect(window.history.pushState).not.toHaveBeenCalled();
     expect(screen.queryByTestId("task-detail-modal")).toBeNull();
   });
+
+  /*
+  FNXC:TaskDetailIOSSwipeBack 2026-07-05-12:10:
+  FN-7586 diagnosed the iOS edge-swipe-back gap as native-delivery-only: WKWebView's
+  `allowsBackForwardNavigationGestures` defaults to `false` and Capacitor never sets it, so
+  the gesture never fires at all today (fixed via `packages/mobile/scripts/
+  patch-ios-webview.ts`, an AppDelegate patch wired into the `capacitor:sync:after` hook).
+  Once enabled, iOS drives ordinary WKWebView back-forward navigation, which is delivered to
+  the page as a `popstate` — the EXACT SAME seam desktop/browser swipe-back already uses.
+  This suite's existing `dispatchPopState` coverage above (board main-panel, list-mobile,
+  nested modal) therefore already proves the shared nav-history dismissal invariant for the
+  iOS gesture too, and required NO dashboard-side change. This describe block adds
+  iOS-labeled regression coverage (same `popstate` seam, explicitly named) plus the one gap
+  not yet covered above: the empty-stack fallback via `popstate` (no Fusion nav entry ->
+  safe no-op, matching how native Android Back already no-ops on an empty stack).
+  */
+  describe("iOS edge-swipe-back (popstate seam)", () => {
+    it("dismisses the board main-panel task detail on iOS edge-swipe-back (popstate)", async () => {
+      const task = makeTask("FN-1", "iOS Board Detail");
+      mockUseTasks.mockImplementation(() => ({
+        tasks: [task],
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        archiveTask: vi.fn(),
+        unarchiveTask: vi.fn(),
+        archiveAllDone: vi.fn(),
+        refreshTasks: vi.fn(),
+      }));
+
+      await renderAppAndWait("board-view");
+      fireEvent.click(screen.getByTestId("open-task-FN-1"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("task-detail-main-panel-content")).toBeInTheDocument();
+      });
+
+      dispatchPopState({ navIndex: 0 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("task-detail-main-panel-content")).toBeNull();
+        expect(screen.getByTestId("board-view")).toBeInTheDocument();
+      });
+    });
+
+    it("dismisses the list-mobile task detail on iOS edge-swipe-back (popstate)", async () => {
+      const task = makeTask("FN-1", "iOS Mobile List Detail");
+      mockUseTasks.mockImplementation(() => ({
+        tasks: [task],
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        archiveTask: vi.fn(),
+        unarchiveTask: vi.fn(),
+        archiveAllDone: vi.fn(),
+        refreshTasks: vi.fn(),
+      }));
+      localStorage.setItem("kb-dashboard-view-mode", "project");
+      localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
+
+      await renderAppAndWait("list-view");
+      fireEvent.click(screen.getByTestId("list-open-FN-1"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("task-detail-modal")).toBeInTheDocument();
+      });
+
+      dispatchPopState({ navIndex: 0 });
+
+      await waitFor(() => {
+        expect(screen.queryByTestId("task-detail-modal")).toBeNull();
+        expect(screen.getByTestId("list-view")).toBeInTheDocument();
+      });
+    });
+
+    it("restores the previous modal detail when iOS edge-swipe-back (popstate) closes a nested task detail", async () => {
+      const task = makeTask("FN-1", "iOS Parent Task");
+      mockUseTasks.mockImplementation(() => ({
+        tasks: [task, makeTask("FN-2", "iOS Nested Task")],
+        createTask: mockCreateTask,
+        moveTask: vi.fn(),
+        deleteTask: vi.fn(),
+        mergeTask: vi.fn(),
+        retryTask: vi.fn(),
+        updateTask: vi.fn(),
+        duplicateTask: vi.fn(),
+        archiveTask: vi.fn(),
+        unarchiveTask: vi.fn(),
+        archiveAllDone: vi.fn(),
+        refreshTasks: vi.fn(),
+      }));
+      localStorage.setItem("kb-dashboard-view-mode", "project");
+      localStorage.setItem(scopedKey("kb-dashboard-task-view", DEFAULT_PROJECT_ID), "list");
+
+      await renderAppAndWait("list-view");
+      fireEvent.click(screen.getByTestId("list-open-FN-1"));
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "iOS Parent Task" })).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId("task-detail-open-nested"));
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "iOS Nested Task" })).toBeInTheDocument();
+      });
+
+      dispatchPopState({ navIndex: 1 });
+
+      await waitFor(() => {
+        expect(screen.getByRole("dialog", { name: "iOS Parent Task" })).toBeInTheDocument();
+      });
+      expect(screen.queryByRole("dialog", { name: "iOS Nested Task" })).toBeNull();
+    });
+
+    it("safely no-ops on iOS edge-swipe-back (popstate) when Fusion owns no nav entry", async () => {
+      await renderAppAndWait("board-view");
+
+      expect(() => dispatchPopState(null)).not.toThrow();
+
+      await waitFor(() => {
+        expect(screen.getByTestId("board-view")).toBeInTheDocument();
+      });
+    });
+  });
 });

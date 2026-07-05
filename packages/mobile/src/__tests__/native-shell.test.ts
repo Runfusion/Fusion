@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildMobileShellHandoff } from "../plugins/shell-handoff.js";
 import { patchAndroidManifest, patchManifestSource } from "../../scripts/patch-android-manifest.js";
+import { patchAppDelegateSource, patchIOSWebView } from "../../scripts/patch-ios-webview.js";
 
 type BackButtonListener = (event: { canGoBack: boolean }) => void;
 
@@ -265,6 +266,7 @@ describe("MobileNativeShellBridge", () => {
   });
 
   /*
+  /*
   FNXC:TaskDetailAndroidBack 2026-07-05-11:45:
   FN-7583 — the Android back GESTURE (predictive back / edge swipe, Android 13+) reached
   the OS but was never delivered to `AndroidBackButtonManager`'s `backButton` listener
@@ -359,6 +361,126 @@ describe("MobileNativeShellBridge", () => {
       expect(changed).toBe(true);
       expect(xml).toContain('<activity android:name=".MainActivity" />');
       expect(xml).toContain('android:label="@string/app_name"');
+    });
+  });
+
+  /*
+  FNXC:TaskDetailIOSSwipeBack 2026-07-05-12:10:
+  FN-7586 — the iOS edge-swipe-back GESTURE (WKWebView interactive pop) is a no-op on a
+  stock Capacitor 7 iOS build: `WKWebView.allowsBackForwardNavigationGestures` defaults to
+  `false`, `CAPBridgeViewController.prepareWebView` never sets it, and no capacitor.config
+  toggle exists. The raw WKWebView gesture cannot be dispatched from a unit test, so these
+  tests drive the actual seam the fix introduces (`patch-ios-webview.ts`) and assert it
+  converges on the exact contract the popstate-based coverage in
+  `TaskDetail.swipe-back.test.tsx` already proves: once AppDelegate enables the gesture, iOS
+  drives ordinary WKWebView back-forward navigation -> `popstate` -> the shared nav-history
+  dismissal stack, with no iOS-specific `fusion:native-back` emitter introduced. This test
+  fails against the pre-fix tree (no `patch-ios-webview.ts` module, so the import above
+  throws) and passes after.
+  */
+  describe("iOS Back: edge-swipe-back gesture opt-in (patch-ios-webview)", () => {
+    let workDir: string;
+
+    beforeEach(() => {
+      workDir = mkdtempSync(join(tmpdir(), "fusion-fn7586-appdelegate-"));
+    });
+
+    afterEach(() => {
+      rmSync(workDir, { recursive: true, force: true });
+    });
+
+    function writeAppDelegate(swift: string): string {
+      const appDir = join(workDir, "ios", "App", "App");
+      mkdirSync(appDir, { recursive: true });
+      const appDelegatePath = join(appDir, "AppDelegate.swift");
+      writeFileSync(appDelegatePath, swift, "utf8");
+      return appDelegatePath;
+    }
+
+    const baseAppDelegate = `import UIKit
+import Capacitor
+
+@UIApplicationMain
+class AppDelegate: UIResponder, UIApplicationDelegate {
+
+    var window: UIWindow?
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Override point for customization after application launch.
+        return true
+    }
+
+    func applicationWillResignActive(_ application: UIApplication) {
+    }
+
+}
+`;
+
+    it("enables the WKWebView edge-swipe-back gesture in the generated AppDelegate (the seam the gesture needs)", () => {
+      const appDelegatePath = writeAppDelegate(baseAppDelegate);
+
+      const result = patchIOSWebView(workDir);
+
+      expect(result.patched).toBe(true);
+      expect(result.skipped).toBe(false);
+      const patchedSwift = readFileSync(appDelegatePath, "utf8");
+      expect(patchedSwift).toContain("as? CAPBridgeViewController");
+      expect(patchedSwift).toContain("webView?.allowsBackForwardNavigationGestures = true");
+      // Injected before the existing `return true` so the override still returns true.
+      expect(patchedSwift.indexOf("allowsBackForwardNavigationGestures")).toBeLessThan(
+        patchedSwift.indexOf("return true"),
+      );
+    });
+
+    it("is idempotent across repeated cap sync runs (does not duplicate the patch)", () => {
+      writeAppDelegate(baseAppDelegate);
+
+      const first = patchIOSWebView(workDir);
+      const second = patchIOSWebView(workDir);
+
+      expect(first.patched).toBe(true);
+      expect(second.patched).toBe(false);
+      const appDelegatePath = join(workDir, "ios", "App", "App", "AppDelegate.swift");
+      const swift = readFileSync(appDelegatePath, "utf8");
+      expect(swift.match(/allowsBackForwardNavigationGestures/g)).toHaveLength(1);
+    });
+
+    it("leaves an already-patched AppDelegate untouched", () => {
+      const alreadyPatched = baseAppDelegate.replace(
+        "// Override point for customization after application launch.",
+        "// Override point for customization after application launch.\n        self.window?.rootViewController.map { _ in }\n        // allowsBackForwardNavigationGestures already set elsewhere",
+      );
+      writeAppDelegate(alreadyPatched);
+
+      const result = patchIOSWebView(workDir);
+
+      expect(result.patched).toBe(false);
+      const swift = readFileSync(join(workDir, "ios", "App", "App", "AppDelegate.swift"), "utf8");
+      expect(swift.match(/allowsBackForwardNavigationGestures/g)).toHaveLength(1);
+    });
+
+    it("no-ops safely (does not throw) when no ios/ project has been added yet", () => {
+      const result = patchIOSWebView(workDir);
+
+      expect(result.skipped).toBe(true);
+      expect(result.patched).toBe(false);
+    });
+
+    it("patchAppDelegateSource preserves the rest of AppDelegate verbatim aside from the injected snippet", () => {
+      const { changed, swift } = patchAppDelegateSource(baseAppDelegate);
+
+      expect(changed).toBe(true);
+      expect(swift).toContain("func applicationWillResignActive(_ application: UIApplication) {");
+      expect(swift).toContain("class AppDelegate: UIResponder, UIApplicationDelegate {");
+    });
+
+    it("does not change patchAppDelegateSource when the didFinishLaunchingWithOptions signature is unrecognized", () => {
+      const unrecognized = "import UIKit\nclass AppDelegate {}\n";
+
+      const { changed, swift } = patchAppDelegateSource(unrecognized);
+
+      expect(changed).toBe(false);
+      expect(swift).toBe(unrecognized);
     });
   });
 });
