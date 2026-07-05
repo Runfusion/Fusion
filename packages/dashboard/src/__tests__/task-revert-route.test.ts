@@ -11,7 +11,7 @@ this suite stubs `performTaskRevert` at the route boundary and asserts:
 */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import express from "express";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -19,6 +19,25 @@ import type { Task, TaskStore } from "@fusion/core";
 import { createApiRoutes } from "../routes.js";
 import { request as performRequest } from "../test-request.js";
 import { githubRateLimiter } from "../github-poll.js";
+
+// FN-7577: `getCurrentRepo` is mocked at the `@fusion/core` boundary (partial
+// mock, everything else passes through to the real module) so workspace
+// mode:"pr" tests can resolve distinct owner/repo per sub-repo without a real
+// GitHub remote. The returned wrapper defers reading `getCurrentRepoMock` (and
+// falls back to the REAL `getCurrentRepo`) until CALL time — never inside the
+// synchronous factory body — so existing single-repo FN-7554 tests (which
+// rely on real local-remote resolution / the `GITHUB_REPOSITORY` env
+// override) are unaffected; workspace tests below override via
+// `mockImplementation`.
+const getCurrentRepoMock = vi.fn();
+vi.mock("@fusion/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fusion/core")>();
+  return {
+    ...actual,
+    getCurrentRepo: (...args: [string?]) =>
+      getCurrentRepoMock.getMockImplementation() ? getCurrentRepoMock(...args) : actual.getCurrentRepo(...args),
+  };
+});
 
 // FNXC:TaskRevert 2026-07-04-00:00: the route now guards against `rootDir`
 // (the shared user checkout) sitting on a branch other than the resolved
@@ -44,6 +63,7 @@ function makeGitRepoOnMain(): string {
 const performTaskRevertMock = vi.fn();
 const revertWorkspaceTaskMock = vi.fn();
 const prepareRevertPrBranchMock = vi.fn();
+const prepareWorkspaceRevertPrBranchesMock = vi.fn();
 
 vi.mock("@fusion/engine", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@fusion/engine")>();
@@ -52,6 +72,7 @@ vi.mock("@fusion/engine", async (importOriginal) => {
     performTaskRevert: (...args: unknown[]) => performTaskRevertMock(...args),
     revertWorkspaceTask: (...args: unknown[]) => revertWorkspaceTaskMock(...args),
     prepareRevertPrBranch: (...args: unknown[]) => prepareRevertPrBranchMock(...args),
+    prepareWorkspaceRevertPrBranches: (...args: unknown[]) => prepareWorkspaceRevertPrBranchesMock(...args),
   };
 });
 
@@ -106,6 +127,29 @@ function makeWorkspaceTask(overrides: Partial<Task>): Task {
   });
 }
 
+// FN-7577: real multi-sub-repo git fixture for workspace mode:"pr" tests —
+// each sub-repo is its own real git repo with a real bare "origin" remote, so
+// the route's REAL `git push -u origin <revertBranch>` has something to push
+// (mirrors `makeGitRepoOnMain`'s single-repo pattern, once per sub-repo).
+function makeWorkspaceGitRoot(repoRels: string[]): { rootDir: string; repoDirs: Record<string, string> } {
+  const rootDir = mkdtempSync(join(tmpdir(), "kb-task-revert-ws-route-"));
+  const repoDirs: Record<string, string> = {};
+  for (const rel of repoRels) {
+    const dir = join(rootDir, rel);
+    mkdirSync(dir, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: dir });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "init"], { cwd: dir });
+    const originDir = mkdtempSync(join(tmpdir(), "kb-task-revert-ws-route-origin-"));
+    execFileSync("git", ["init", "--bare", "-b", "main"], { cwd: originDir });
+    execFileSync("git", ["remote", "add", "origin", originDir], { cwd: dir });
+    execFileSync("git", ["push", "-u", "origin", "main"], { cwd: dir });
+    repoDirs[rel] = dir;
+  }
+  return { rootDir, repoDirs };
+}
+
 function createMockStore(
   task: Task,
   opts?: {
@@ -114,6 +158,7 @@ function createMockStore(
     autoMerge?: boolean;
     aiUndoTaskWorkflowId?: string;
     knownWorkflowIds?: string[];
+    rootDir?: string;
   },
 ): TaskStore {
   let nextId = 800;
@@ -145,7 +190,7 @@ function createMockStore(
       aiUndoTaskWorkflowId: opts?.aiUndoTaskWorkflowId,
     }),
     getWorkflowDefinition,
-    getRootDir: vi.fn().mockReturnValue(makeGitRepoOnMain()),
+    getRootDir: vi.fn().mockReturnValue(opts?.rootDir ?? makeGitRepoOnMain()),
     getTask: vi.fn().mockResolvedValue(task),
     getTaskCommitAssociationsByLineageId: vi.fn().mockResolvedValue([]),
     createTask,
@@ -697,5 +742,269 @@ describe("POST /tasks/:id/revert — FN-7554 mode:'pr' (autoMerge:false)", () =>
     expect(prepareRevertPrBranchMock).not.toHaveBeenCalled();
     expect(performTaskRevertMock).not.toHaveBeenCalled();
     expect(createPrMock).not.toHaveBeenCalled();
+  });
+});
+
+// FN-7577: mode:"pr" — PR-based revert extended to WORKSPACE (multi-repo)
+// tasks under autoMerge:false. Real per-sub-repo branch-prep behavior is
+// proven by packages/engine/src/__tests__/task-revert-workspace-pr.real-git.test.ts;
+// this suite stubs `prepareWorkspaceRevertPrBranches` at the engine boundary
+// and `getCurrentRepo` at the core boundary, and asserts the route's
+// per-sub-repo PR orchestration, atomic pre-check degrade ordering, and
+// idempotency.
+describe("POST /tasks/:id/revert — FN-7577 workspace mode:'pr' (autoMerge:false)", () => {
+  const originalGithubRepository = process.env.GITHUB_REPOSITORY;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    if (originalGithubRepository === undefined) {
+      delete process.env.GITHUB_REPOSITORY;
+    } else {
+      process.env.GITHUB_REPOSITORY = originalGithubRepository;
+    }
+  });
+
+  function mockRepoResolution(resolvable: Record<string, { owner: string; repo: string } | null>): void {
+    getCurrentRepoMock.mockImplementation((cwd?: string) => {
+      for (const [rel, value] of Object.entries(resolvable)) {
+        if (typeof cwd === "string" && cwd.endsWith(rel)) return value;
+      }
+      return null;
+    });
+  }
+
+  it("all clean + autoMerge:false → mode:'pr' (multi-PR), one PR per sub-repo, manual:true persistence", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-100", column: "done" });
+    const { rootDir, repoDirs } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    // `prepareWorkspaceRevertPrBranches` is mocked (real branch-prep behavior is
+    // proven by the engine real-git suite) — create the branches it would have
+    // created locally, so the route's REAL `git push -u origin <branch>` per
+    // sub-repo has something to push.
+    execFileSync("git", ["branch", "fusion/revert-fn-100"], { cwd: repoDirs["repo-a"] });
+    execFileSync("git", ["branch", "fusion/revert-fn-100"], { cwd: repoDirs["repo-b"] });
+    mockRepoResolution({ "repo-a": { owner: "o", repo: "repo-a" }, "repo-b": { owner: "o", repo: "repo-b" } });
+    vi.spyOn(githubRateLimiter, "canMakeRequest").mockReturnValue(true);
+    findPrForBranchMock.mockResolvedValue(null);
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({
+      eligible: true,
+      repos: [
+        { repo: "repo-a", revertBranch: "fusion/revert-fn-100", integrationBranch: "main", revertCommitShas: ["a"] },
+        { repo: "repo-b", revertBranch: "fusion/revert-fn-100", integrationBranch: "main", revertCommitShas: ["b"] },
+      ],
+    });
+    let callCount = 0;
+    createPrMock.mockImplementation(async () => {
+      callCount += 1;
+      return { number: 100 + callCount, url: `https://github.com/o/repo/pull/${100 + callCount}` };
+    });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      mode: "pr",
+      clean: true,
+      workspace: {
+        repos: [
+          { repo: "repo-a", revertBranch: "fusion/revert-fn-100" },
+          { repo: "repo-b", revertBranch: "fusion/revert-fn-100" },
+        ],
+      },
+    });
+    expect(createPrMock).toHaveBeenCalledTimes(2);
+    expect(createPrMock.mock.calls[0]?.[0]).toMatchObject({ owner: "o", repo: "repo-a", head: "fusion/revert-fn-100", base: "main" });
+    expect(createPrMock.mock.calls[1]?.[0]).toMatchObject({ owner: "o", repo: "repo-b", head: "fusion/revert-fn-100", base: "main" });
+    for (const call of createPrMock.mock.calls) {
+      expect(typeof call[0]?.body).toBe("string");
+      expect((call[0]?.body as string).length).toBeGreaterThan(0);
+    }
+    expect(store.updatePrInfo as ReturnType<typeof vi.fn>).toHaveBeenCalledWith(task.id, expect.objectContaining({ manual: true }));
+    expect(revertWorkspaceTaskMock).not.toHaveBeenCalled();
+    expect(performTaskRevertMock).not.toHaveBeenCalled();
+  });
+
+  it("existing PR idempotency: links repo-a's existing PR and only creates a PR for repo-b", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-101", column: "done" });
+    const { rootDir, repoDirs } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    execFileSync("git", ["branch", "fusion/revert-fn-101"], { cwd: repoDirs["repo-b"] });
+    mockRepoResolution({ "repo-a": { owner: "o", repo: "repo-a" }, "repo-b": { owner: "o", repo: "repo-b" } });
+    vi.spyOn(githubRateLimiter, "canMakeRequest").mockReturnValue(true);
+    findPrForBranchMock.mockImplementation(async ({ repo }: { repo: string }) =>
+      repo === "repo-a" ? { number: 55, url: "https://github.com/o/repo-a/pull/55" } : null,
+    );
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({
+      eligible: true,
+      repos: [
+        { repo: "repo-a", revertBranch: "fusion/revert-fn-101", integrationBranch: "main", revertCommitShas: ["a"] },
+        { repo: "repo-b", revertBranch: "fusion/revert-fn-101", integrationBranch: "main", revertCommitShas: ["b"] },
+      ],
+    });
+    createPrMock.mockResolvedValue({ number: 56, url: "https://github.com/o/repo-b/pull/56" });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      mode: "pr",
+      clean: true,
+      workspace: {
+        repos: [
+          { repo: "repo-a", prNumber: 55, existingPr: true },
+          { repo: "repo-b", prNumber: 56 },
+        ],
+      },
+    });
+    expect(createPrMock).toHaveBeenCalledTimes(1);
+    expect(createPrMock.mock.calls[0]?.[0]).toMatchObject({ repo: "repo-b" });
+  });
+
+  it("GitHub unconfigured degrade (whole-task): needsHuman, no createPr for ANY sub-repo", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-102", column: "done" });
+    const { rootDir, repoDirs } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    execFileSync("git", ["branch", "fusion/revert-fn-102"], { cwd: repoDirs["repo-a"] });
+    execFileSync("git", ["branch", "fusion/revert-fn-102"], { cwd: repoDirs["repo-b"] });
+    // repo-b has NO configured GitHub repository.
+    mockRepoResolution({ "repo-a": { owner: "o", repo: "repo-a" }, "repo-b": null });
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({
+      eligible: true,
+      repos: [
+        { repo: "repo-a", revertBranch: "fusion/revert-fn-102", integrationBranch: "main", revertCommitShas: ["a"] },
+        { repo: "repo-b", revertBranch: "fusion/revert-fn-102", integrationBranch: "main", revertCommitShas: ["b"] },
+      ],
+    });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", needsHuman: true });
+    expect(String((res.body as { reason?: string }).reason ?? "")).toMatch(/no GitHub repository/i);
+    expect(createPrMock).not.toHaveBeenCalled();
+    expect(findPrForBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("rate-limited degrade (whole-task): needsHuman without touching createPr for any sub-repo", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-103", column: "done" });
+    const { rootDir, repoDirs } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    execFileSync("git", ["branch", "fusion/revert-fn-103"], { cwd: repoDirs["repo-a"] });
+    execFileSync("git", ["branch", "fusion/revert-fn-103"], { cwd: repoDirs["repo-b"] });
+    mockRepoResolution({ "repo-a": { owner: "o", repo: "repo-a" }, "repo-b": { owner: "o", repo: "repo-b" } });
+    vi.spyOn(githubRateLimiter, "canMakeRequest").mockImplementation((repoKey: string) => repoKey !== "o/repo-b");
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({
+      eligible: true,
+      repos: [
+        { repo: "repo-a", revertBranch: "fusion/revert-fn-103", integrationBranch: "main", revertCommitShas: ["a"] },
+        { repo: "repo-b", revertBranch: "fusion/revert-fn-103", integrationBranch: "main", revertCommitShas: ["b"] },
+      ],
+    });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", needsHuman: true });
+    expect(String((res.body as { reason?: string }).reason ?? "")).toMatch(/rate limit/i);
+    expect(createPrMock).not.toHaveBeenCalled();
+    expect(findPrForBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("conflicting under autoMerge:false, mode:'git' → { mode: 'git', clean: false, workspace, conflicts }, no PR", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-104", column: "done" });
+    const { rootDir } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({
+      eligible: false,
+      classification: "conflicting",
+      conflicts: [{ repo: "repo-b", file: "b.ts", status: "UU" }],
+      repos: [
+        { repo: "repo-a", classification: "clean" },
+        { repo: "repo-b", classification: "conflicting", conflicts: [{ file: "b.ts", status: "UU" }] },
+      ],
+    });
+
+    const res = await POST_JSON(createApp(store), `/api/tasks/${task.id}/revert`, { mode: "git" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      mode: "git",
+      clean: false,
+      conflicts: [{ repo: "repo-b", file: "b.ts" }],
+    });
+    expect(createPrMock).not.toHaveBeenCalled();
+  });
+
+  it("conflicting under autoMerge:false, mode:'auto' → falls back to the AI-undo task", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-105", column: "done" });
+    const { rootDir } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({
+      eligible: false,
+      classification: "conflicting",
+      conflicts: [{ repo: "repo-b", file: "b.ts", status: "UU" }],
+      repos: [
+        { repo: "repo-a", classification: "clean" },
+        { repo: "repo-b", classification: "conflicting", conflicts: [{ file: "b.ts", status: "UU" }] },
+      ],
+    });
+
+    const res = await POST_JSON(createApp(store), `/api/tasks/${task.id}/revert`, { mode: "auto" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "ai" });
+    expect((res.body as { createdTaskId?: string }).createdTaskId).toBeTruthy();
+    expect(createPrMock).not.toHaveBeenCalled();
+  });
+
+  it("empty prep (all already-reverted) → { mode: 'git', clean: true, workspace: { repos: [] } }, no createPr", async () => {
+    delete process.env.GITHUB_REPOSITORY;
+    const task = makeWorkspaceTask({ id: "FN-106", column: "done" });
+    const { rootDir } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: false, rootDir });
+    prepareWorkspaceRevertPrBranchesMock.mockResolvedValue({ eligible: true, repos: [] });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", clean: true, workspace: { repos: [] } });
+    expect(createPrMock).not.toHaveBeenCalled();
+    expect(findPrForBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("regression — workspace autoMerge:true unchanged: still calls revertWorkspaceTask, prepareWorkspaceRevertPrBranches/createPr not called", async () => {
+    const task = makeWorkspaceTask({ id: "FN-107", column: "done" });
+    const { rootDir } = makeWorkspaceGitRoot(["repo-a", "repo-b"]);
+    const store = createMockStore(task, { autoMerge: true, rootDir });
+    revertWorkspaceTaskMock.mockResolvedValue({
+      mode: "git",
+      clean: true,
+      workspace: {
+        repos: [
+          { repo: "repo-a", classification: "clean", revertCommitSha: "rev-a" },
+          { repo: "repo-b", classification: "clean", revertCommitSha: "rev-b" },
+        ],
+      },
+    });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", clean: true });
+    expect(revertWorkspaceTaskMock).toHaveBeenCalledTimes(1);
+    expect(prepareWorkspaceRevertPrBranchesMock).not.toHaveBeenCalled();
+    expect(createPrMock).not.toHaveBeenCalled();
+  });
+
+  it("regression — single-repo autoMerge:false unchanged: still takes prepareRevertPrBranch, prepareWorkspaceRevertPrBranches not called", async () => {
+    process.env.GITHUB_REPOSITORY = "o/r";
+    const task = makeTask({ id: "FN-108", column: "done" });
+    const store = createMockStore(task, { autoMerge: false });
+    vi.spyOn(githubRateLimiter, "canMakeRequest").mockReturnValue(true);
+    findPrForBranchMock.mockResolvedValue({ number: 21, url: "https://github.com/o/r/pull/21" });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "pr", clean: true, prNumber: 21, existingPr: true });
+    expect(prepareWorkspaceRevertPrBranchesMock).not.toHaveBeenCalled();
   });
 });

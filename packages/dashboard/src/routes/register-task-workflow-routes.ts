@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type {
   TaskStore,
   Task,
@@ -60,8 +60,11 @@ import {
   TaskRevertError,
   createAiUndoTask,
   prepareRevertPrBranch,
+  prepareWorkspaceRevertPrBranches,
   type AiUndoTaskResult,
   type PrepareRevertPrBranchResult,
+  type PrepareWorkspaceRevertPrBranchesResult,
+  type WorkspaceRepoRevertPrBranch,
 } from "@fusion/engine";
 import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
@@ -1704,10 +1707,15 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }` OR, for workspace tasks (FN-7547),
   `{ mode: "git", clean, workspace: { repos: [{ repo, classification, revertCommitSha?, conflicts?,
   alreadyReverted? }] }, conflicts?: {repo, file, ...}[] }` OR
-  `{ mode: "ai", createdTaskId: "FN-YYYY", alreadyOpen?: true }`. The AI-undo task is created via
-  `createAiUndoTask` (engine) + `TaskStore.findOpenRevertTaskForSource` (core) for the idempotency
-  guard — a second call while an undo task is still open returns the SAME `createdTaskId` with
-  `alreadyOpen: true` rather than creating a duplicate.
+  `{ mode: "ai", createdTaskId: "FN-YYYY", alreadyOpen?: true }` OR, for a single-repo task under
+  `autoMerge:false` (FN-7554), `{ mode: "pr", clean: true, prUrl, prNumber, revertBranch, existingPr? }`
+  OR, for a WORKSPACE task under `autoMerge:false` (FN-7577 — additive over FN-7554/FN-7547),
+  `{ mode: "pr", clean: true, workspace: { repos: [{ repo, revertBranch, prUrl, prNumber, existingPr? }] } }`
+  — one revert PR opened per sub-repo, all-or-nothing at the branch-prep phase
+  (`prepareWorkspaceRevertPrBranches`), never force-writing any sub-repo integration branch. The
+  AI-undo task is created via `createAiUndoTask` (engine) + `TaskStore.findOpenRevertTaskForSource`
+  (core) for the idempotency guard — a second call while an undo task is still open returns the
+  SAME `createdTaskId` with `alreadyOpen: true` rather than creating a duplicate.
   */
   router.post("/tasks/:id/revert", async (req, res) => {
     try {
@@ -1800,6 +1808,169 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       UNCHANGED. `granularity` does not apply to the workspace path.
       */
       if (isWorkspaceTask(task)) {
+        /*
+        FNXC:TaskRevert 2026-07-05-00:00 (FN-7577 — workspace mode:"pr" dispatch,
+        additive over FN-7554/FN-7547): `revertWorkspaceTask` refuses
+        (`needsHuman`) whenever autoMerge is effectively off, the same dead end
+        `performTaskRevert` hits for single-repo tasks. Instead of stopping
+        there, take the multi-PR path: `prepareWorkspaceRevertPrBranches`
+        classifies EVERY sub-repo first and only prepares one dedicated
+        `fusion/revert-<id>` branch per sub-repo (never writing any sub-repo
+        integration branch) when every sub-repo is clean/already-reverted; this
+        route then opens ONE revert PR per prepared sub-repo branch, reusing
+        FN-7554's per-repo owner/repo resolution, rate-limiter gate,
+        `findPrForBranch` idempotency, and `manual:true` handoff. The
+        `autoMerge:true` workspace path below (the existing `revertWorkspaceTask`
+        call) is UNCHANGED.
+        */
+        const effectiveAutoMerge = task.autoMerge ?? settings.autoMerge ?? true;
+
+        if (effectiveAutoMerge === false) {
+          const revertBranch = `fusion/revert-${task.id.toLowerCase()}`;
+
+          const prepared: PrepareWorkspaceRevertPrBranchesResult = await prepareWorkspaceRevertPrBranches({
+            task,
+            workspaceRootDir: rootDir,
+            settings,
+            revertBranch,
+            commitAssociationSource: {
+              getTaskCommitAssociationsByLineageId: (lineageId: string) =>
+                scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
+            },
+          });
+
+          if (!prepared.eligible) {
+            if ("classification" in prepared && prepared.classification === "conflicting") {
+              if (mode === "auto") {
+                res.json(await createAiUndoResult());
+                return;
+              }
+              res.json({ mode: "git", clean: false, workspace: { repos: prepared.repos }, conflicts: prepared.conflicts });
+              return;
+            }
+            if ("unsupported" in prepared && prepared.unsupported) {
+              if (mode === "auto") {
+                res.json(await createAiUndoResult());
+                return;
+              }
+              res.json({ mode: "git", unsupported: true, reason: prepared.reason });
+              return;
+            }
+          }
+
+          if (prepared.eligible) {
+            // prepared.eligible === true
+            if (prepared.repos.length === 0) {
+              // Every sub-repo was already-reverted — nothing to PR.
+              res.json({ mode: "git", clean: true, workspace: { repos: [] } });
+              return;
+            }
+
+            /*
+            FNXC:TaskRevert 2026-07-05-00:00 (FN-7577 — atomic pre-check ordering):
+            Resolve owner/repo AND check the rate limiter for EVERY prepared
+            sub-repo BEFORE pushing/creating any PR, so the two common degrade
+            cases (GitHub unconfigured / rate-limited) never leave a partial
+            subset of PRs open across sub-repos. Nothing has been pushed to any
+            remote yet at this point, so degrading here only needs to delete the
+            purely-local prepared branches.
+            */
+            const cleanupPreparedBranches = async (): Promise<void> => {
+              for (const repoBranch of prepared.repos) {
+                const repoRootDir = join(rootDir, repoBranch.repo);
+                await runGitCommand(["checkout", repoBranch.integrationBranch], repoRootDir, 10_000).catch(() => undefined);
+                await runGitCommand(["branch", "-D", revertBranch], repoRootDir, 10_000).catch(() => undefined);
+              }
+            };
+
+            const targets: { repoBranch: WorkspaceRepoRevertPrBranch; owner: string; repo: string }[] = [];
+            for (const repoBranch of prepared.repos) {
+              const gitRepo = getCurrentRepo(join(rootDir, repoBranch.repo));
+              if (!gitRepo) {
+                await cleanupPreparedBranches();
+                res.json({
+                  mode: "git",
+                  needsHuman: true,
+                  reason: "autoMerge is disabled and one or more sub-repos have no GitHub repository configured; cannot open revert PRs",
+                });
+                return;
+              }
+              targets.push({ repoBranch, owner: gitRepo.owner, repo: gitRepo.repo });
+            }
+
+            for (const target of targets) {
+              const repoKey = `${target.owner}/${target.repo}`;
+              if (!githubRateLimiter.canMakeRequest(repoKey)) {
+                await cleanupPreparedBranches();
+                res.json({
+                  mode: "git",
+                  needsHuman: true,
+                  reason: "GitHub API rate limit exceeded; try again later",
+                });
+                return;
+              }
+            }
+
+            /*
+            FNXC:TaskRevert 2026-07-05-00:00 (FN-7577 — idempotent multi-PR
+            recovery contract): from this point on, a thrown error (network down,
+            push rejected, GitHub 5xx, etc.) is surfaced via the shared `catch`
+            below rather than a graceful needsHuman degrade, because an earlier
+            sub-repo in this loop may already have an open remote PR by the time a
+            later sub-repo fails — this route NEVER attempts to close/delete an
+            already-created remote PR. A re-run of this endpoint is safe:
+            `findPrForBranch` links any already-created sub-repo PR instead of
+            re-creating it, and `prepareWorkspaceRevertPrBranches`'s `checkout -B`
+            re-preps local branches for any sub-repo not yet pushed.
+            */
+            const resultRepos: { repo: string; revertBranch: string; prUrl: string; prNumber: number; existingPr?: boolean }[] = [];
+            const persistPrInfo = async (prInfo: PrInfo): Promise<void> => {
+              const existingPrs = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
+              if (existingPrs.length > 0) {
+                await scopedStore.addPrInfo(task.id, prInfo);
+              } else {
+                await scopedStore.updatePrInfo(task.id, prInfo);
+              }
+            };
+
+            for (const target of targets) {
+              const client = new GitHubClient();
+              const existingPr = await client.findPrForBranch({ head: revertBranch, state: "all", owner: target.owner, repo: target.repo });
+
+              if (existingPr) {
+                // Idempotency — never re-push/re-create when an open (or all-state)
+                // PR already exists for this sub-repo's branch, just link it.
+                const prInfo: PrInfo = { ...existingPr, manual: true };
+                await persistPrInfo(prInfo);
+                await scopedStore.logEntry(task.id, "Linked existing revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`);
+                resultRepos.push({ repo: target.repoBranch.repo, revertBranch, prUrl: prInfo.url, prNumber: prInfo.number, existingPr: true });
+                continue;
+              }
+
+              await runGitCommand(["push", "-u", "origin", revertBranch], join(rootDir, target.repoBranch.repo), 60_000);
+              const prTitle = `revert(${task.id}): undo landed work (${target.repoBranch.repo})`;
+              const prBody =
+                `This PR reverts the work landed by task ${task.id} in sub-repo \`${target.repoBranch.repo}\`.\n\n` +
+                `See \`GET /api/tasks/${task.id}/diff\` for the full landed diff being reverted.\n`;
+              const created = await client.createPr({
+                owner: target.owner,
+                repo: target.repo,
+                title: prTitle,
+                body: prBody,
+                head: revertBranch,
+                base: target.repoBranch.integrationBranch,
+              });
+              const prInfo: PrInfo = { ...created, manual: true };
+              await persistPrInfo(prInfo);
+              await scopedStore.logEntry(task.id, "Created revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`);
+              resultRepos.push({ repo: target.repoBranch.repo, revertBranch, prUrl: prInfo.url, prNumber: prInfo.number });
+            }
+
+            res.json({ mode: "pr", clean: true, workspace: { repos: resultRepos } });
+            return;
+          }
+        }
+
         const workspaceResult = await revertWorkspaceTask({
           task,
           workspaceRootDir: rootDir,
