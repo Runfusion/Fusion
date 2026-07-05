@@ -323,6 +323,22 @@ describe("SettingsModal mobile adaptations", () => {
     expect(getByText("No sections match this search.")).toBeTruthy();
   });
 
+  // FN-7552: the Authentication section is storage-less (scope: undefined) but belongs to the
+  // Global group in SETTINGS_SECTIONS, so its mobile picker option must still carry the
+  // "Global — " prefix like its Global-group siblings, without changing scoped sibling labels.
+  it("prefixes the storage-less Authentication section with 'Global —' in the mobile picker", async () => {
+    mockSettingsViewport(true);
+    const { getByLabelText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const picker = getByLabelText("Settings Section") as HTMLSelectElement;
+    const optionByValue = (value: string) => Array.from(picker.options).find((opt) => opt.value === value);
+
+    expect(optionByValue("authentication")?.textContent).toBe("Global — Authentication");
+    expect(optionByValue("global-mcp")?.textContent).toBe("Global — MCP Servers");
+    expect(optionByValue("mcp")?.textContent).toBe("Project — MCP Servers");
+  });
+
   it("can open memory settings from the mobile section picker", async () => {
     mockSettingsViewport(true);
     const user = userEvent.setup();

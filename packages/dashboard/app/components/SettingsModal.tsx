@@ -292,12 +292,47 @@ function resolveFirstSelectableSettingsSection(sections: SettingsSection[], fall
   return sections.find((section) => !section.isGroupHeader)?.id ?? fallback;
 }
 
+/*
+FNXC:SettingsNavigation 2026-07-04-00:00:
+The mobile Settings section picker (`<select>` on narrow viewports) prefixes every
+section option with its owning group (`Global — `/`Project — `) so entries are
+unambiguous when labels collide across scopes (e.g. "MCP Servers" exists in both
+Global and Project). The Authentication section is intentionally `scope: undefined`
+(it is not backed by settings storage — see SETTINGS_SECTIONS), but it still lives
+under the Global group header in SETTINGS_SECTIONS, so its mobile option rendered as
+bare "Authentication" instead of "Global — Authentication", inconsistent with its
+Global-group siblings (FN-7552). SETTINGS_SECTION_GROUP_LABEL_BY_ID maps every
+non-header section id to the label of the most recent group-header row preceding it
+in SETTINGS_SECTIONS, so resolveSettingsSectionOptionLabel can fall back to a
+group-derived "Global — " prefix for storage-less sections that belong to the Global
+group — without changing behavior for any section that already declares a scope
+(Runtimes entries keep their existing scope:"global" path) or for undefined-scope
+group-header rows themselves (which are never rendered as selectable options).
+*/
+function buildSettingsSectionGroupLabelMap(sections: SettingsSection[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let currentGroupLabel: string | undefined;
+  for (const section of sections) {
+    if (section.isGroupHeader) {
+      currentGroupLabel = section.label;
+      continue;
+    }
+    if (currentGroupLabel !== undefined) {
+      map.set(section.id, currentGroupLabel);
+    }
+  }
+  return map;
+}
+
 function resolveSettingsSectionOptionLabel(section: SettingsSection, label: string): string {
   if (section.scope === "global") {
     return `Global — ${label}`;
   }
   if (section.scope === "project") {
     return `Project — ${label}`;
+  }
+  if (SETTINGS_SECTION_GROUP_LABEL_BY_ID.get(section.id) === "Global") {
+    return `Global — ${label}`;
   }
   return label;
 }
@@ -383,6 +418,11 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "prompts", label: "Prompts", labelKey: "settings.nav.prompts", scope: "project", searchableText: ["prompt instructions", "PR title prompt", "PR description prompt", "custom prompts"] },
   { id: "plugins", label: "Plugins", labelKey: "settings.nav.plugins", scope: "project", searchableText: ["Fusion plugins", "Pi extensions", "plugin manager", "extension marketplace"] },
 ];
+
+// FNXC:SettingsNavigation 2026-07-04-00:00: sectionId -> owning group label ("Global"/"Runtimes"/"Project"),
+// derived once from SETTINGS_SECTIONS order. Used by resolveSettingsSectionOptionLabel to prefix
+// storage-less (scope: undefined) sections like "authentication" that belong to the Global group (FN-7552).
+const SETTINGS_SECTION_GROUP_LABEL_BY_ID = buildSettingsSectionGroupLabelMap(SETTINGS_SECTIONS);
 
 /** Well-known experimental feature flags with display labels.
  *  These always appear in the Experimental Features settings tab,
