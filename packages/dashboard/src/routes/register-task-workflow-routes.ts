@@ -49,7 +49,7 @@ import {
 import { GitHubClient } from "../github.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
-import { planTaskWorktreePath, promoteHeldTask } from "@fusion/engine";
+import { planTaskWorktreePath, promoteHeldTask, performTaskRevert, TaskRevertError } from "@fusion/engine";
 import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import type { RunAuditEventInput } from "@fusion/core";
@@ -1659,6 +1659,79 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         : (err instanceof Error ? err.message : String(err)).includes("conflict") ? 409
         : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /*
+  FNXC:TaskRevert 2026-07-04-00:00:
+  POST /tasks/:id/revert — intelligent git-revert for Done/Archived tasks (FN-7523, foundation
+  for FN-7501). Guard rails (enforced here AND in the engine service):
+    - only done/archived tasks are revertable (400/409 otherwise);
+    - autoMerge-off is a needsHuman result, not a forced write;
+    - the source task's column/status is NEVER mutated as a side effect of a revert.
+  Response contract: `{ mode: "git", clean, revertCommitSha?, conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }`.
+  On conflict, this route does NOT create the AI-undo follow-up task — that is sibling FN-7524's
+  job; the UI/caller decides what to do with the conflict result. This route also never moves the
+  source task backward through its lifecycle.
+  */
+  router.post("/tasks/:id/revert", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      if (task.column !== "done" && task.column !== "archived") {
+        throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      const settings = await scopedStore.getSettingsFast();
+      const baseBranch = task.mergeDetails?.mergeTargetBranch || await resolveIntegrationBranch(rootDir, settings);
+
+      /*
+      FNXC:TaskRevert 2026-07-04-00:00:
+      `rootDir` (`scopedStore.getRootDir()`) is the SHARED user checkout, not a
+      dedicated per-task worktree — `computeExtendedGitStatus`'s `isOnIntegrationBranch`
+      handling and `pullGitBranch`'s integration-worktree branch-mismatch guard both
+      document that this checkout can legitimately be on any branch at any time (e.g.
+      a user mid-review on a feature branch). `performTaskRevert` mutates `worktreePath`
+      in place (dry-run revert + real commit on "the appropriate base branch"), so
+      without this check a revert requested while rootDir sits on a different branch
+      would silently apply/commit the revert onto THAT branch instead of `baseBranch` —
+      committing to the wrong branch is worse than refusing. Mirror `pullGitBranch`'s
+      `branch-mismatch` 409 contract here rather than assuming the caller pre-checked out.
+      */
+      const currentBranch = (await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], rootDir, 5_000)).trim();
+      if (currentBranch !== baseBranch) {
+        throw new ApiError(409, `Checkout is on "${currentBranch}", not the task's base branch "${baseBranch}"; switch to "${baseBranch}" before reverting`, {
+          code: "branch-mismatch",
+          currentBranch,
+          baseBranch,
+        });
+      }
+
+      const result = await performTaskRevert({
+        task,
+        worktreePath: rootDir,
+        baseBranch,
+        commitAssociationSource: {
+          getTaskCommitAssociationsByLineageId: (lineageId: string) =>
+            scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
+        },
+        effectiveAutoMerge: settings.autoMerge,
+      });
+
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof TaskRevertError) {
+        const status = err.code === "dirty-working-tree" ? 409 : 500;
+        throw new ApiError(status, err.message, { code: err.code });
+      }
+      rethrowAsApiError(err);
     }
   });
 

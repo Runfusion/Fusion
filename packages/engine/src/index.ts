@@ -267,6 +267,20 @@ export {
   __resetIntegrationBranchCacheForTests,
 } from "./integration-branch.js";
 export {
+  resolveTaskRevertCommits,
+  classifyTaskRevert,
+  performTaskRevert,
+  TaskRevertError,
+  type TaskRevertCommitSource,
+  type ResolvedTaskRevertCommits,
+  type UnsupportedTaskRevert,
+  type TaskRevertClassification,
+  type TaskRevertConflict,
+  type ClassifyTaskRevertResult,
+  type TaskRevertResult,
+  type TaskCommitAssociationSource,
+} from "./task-revert.js";
+export {
   resolveBranchGroupMergeRouting,
   evaluateBranchGroupPromotion,
   evaluateBranchGroupCompletion,
