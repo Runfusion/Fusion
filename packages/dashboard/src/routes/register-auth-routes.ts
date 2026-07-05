@@ -251,6 +251,23 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return providerId === "github-copilot";
   }
 
+  function parseManualOAuthCallbackUrl(input: string): URL | undefined {
+    const trimmed = input.trim();
+    const candidates = [trimmed];
+    if (/^(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/)/i.test(trimmed)) {
+      candidates.unshift(`http://${trimmed}`);
+    }
+
+    for (const candidate of candidates) {
+      try {
+        return new URL(candidate);
+      } catch {
+        // Try the next representation.
+      }
+    }
+    return undefined;
+  }
+
   function normalizeManualOAuthInputForProvider(providerId: string, input: string): string {
     if (providerId !== "anthropic" && providerId !== "openai-codex") {
       return input.trim();
@@ -262,10 +279,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     }
 
     try {
-      const url = new URL(trimmed);
+      const url = parseManualOAuthCallbackUrl(trimmed);
+      if (!url) {
+        throw new Error("not a URL");
+      }
       const searchCode = url.searchParams.get("code");
       if (searchCode) {
-        if (url.protocol === "http:" || url.protocol === "https:") {
+        if (providerId === "openai-codex" && (url.protocol === "http:" || url.protocol === "https:")) {
           return trimmed;
         }
         const normalized = new URLSearchParams();
@@ -291,6 +311,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       FNXC:ProviderAuth 2026-07-04-00:00:
       Anthropic subscription and Codex pasted-login flows must accept the exact browser address bar after redirect, including providers/browsers that place OAuth `code` and `state` in the URL fragment or omit the URL scheme.
       The upstream CLI parser treats a syntactically valid URL as search-only and schemeless localhost text as raw parameters, so normalize callback inputs to query-param text before resolving the pending manual-code prompt.
+      Also keep the raw callback URL parseable for server-side callback delivery when the browser cannot reach the local OAuth listener itself.
       */
       const normalized = new URLSearchParams();
       normalized.set("code", hashCode);
@@ -317,6 +338,33 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
       return trimmed;
+    }
+  }
+
+  async function deliverManualOAuthCallbackToLocalListener(providerId: string, input: string): Promise<void> {
+    if (providerId !== "anthropic") {
+      return;
+    }
+
+    const url = parseManualOAuthCallbackUrl(input);
+    if (!url || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+      return;
+    }
+
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code || !state || !url.port) {
+      return;
+    }
+
+    const callbackUrl = new URL(`http://127.0.0.1:${url.port}${url.pathname}`);
+    callbackUrl.searchParams.set("code", code);
+    callbackUrl.searchParams.set("state", state);
+
+    try {
+      await fetch(callbackUrl, { method: "GET", signal: AbortSignal.timeout(3_000) });
+    } catch {
+      // Fall back to resolving the pending manual-code prompt below.
     }
   }
 
@@ -1206,7 +1254,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * Body: { provider: string, code: string }
    * Response: { success: true, submitted: boolean }
    */
-  router.post("/auth/manual-code", (req, res) => {
+  router.post("/auth/manual-code", async (req, res) => {
     try {
       const { provider, code } = req.body;
       if (!provider || typeof provider !== "string") {
@@ -1226,8 +1274,10 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         return;
       }
 
+      const storageProvider = toOauthLoginProviderId(provider);
       activeLogin.inputSubmitted = true;
-      activeLogin.resolveInput(normalizeManualOAuthInputForProvider(toOauthLoginProviderId(provider), code));
+      await deliverManualOAuthCallbackToLocalListener(storageProvider, code);
+      activeLogin.resolveInput(normalizeManualOAuthInputForProvider(storageProvider, code));
       res.json({ success: true, submitted: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

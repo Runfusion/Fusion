@@ -2189,6 +2189,7 @@ describe("POST /auth/login", () => {
   });
 
   it.each([
+    ["http query", "http://localhost:53692/callback?code=http-code&state=expected-state", "code=http-code&state=expected-state"],
     ["fragment", "http://localhost:53692/callback#code=fragment-code&state=expected-state", "code=fragment-code&state=expected-state"],
     ["schemeless", "localhost:53692/callback?code=schemeless-code&state=expected-state", "code=schemeless-code&state=expected-state"],
   ])("normalizes Anthropic subscription pasted callback URLs with %s parameters", async (_case, callbackUrl, expectedInput) => {
@@ -2494,6 +2495,55 @@ describe("POST /auth/manual-code", () => {
     await vi.waitFor(() => {
       expect(submittedCode).toBe("http://localhost:1455/auth/callback?code=test-code&state=test-state");
     });
+  });
+
+  it("delivers pasted Anthropic callback URLs to the local OAuth listener", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "ok" });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let submittedCode: string | undefined;
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_provider: string, callbacks: {
+        onAuth: (info: { url: string; instructions?: string }) => void;
+        onManualCodeInput?: () => Promise<string>;
+      }) => {
+        callbacks.onAuth({
+          url: "https://claude.ai/oauth/authorize?state=anthropic-state&redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback",
+        });
+        submittedCode = await callbacks.onManualCodeInput?.();
+      },
+    );
+
+    try {
+      const app = buildApp();
+      const loginRes = await REQUEST(
+        app,
+        "POST",
+        "/api/auth/login",
+        JSON.stringify({ provider: "anthropic-subscription", origin: "https://remote.example.com" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(loginRes.status).toBe(200);
+
+      const submitRes = await REQUEST(
+        app,
+        "POST",
+        "/api/auth/manual-code",
+        JSON.stringify({ provider: "anthropic-subscription", code: "http://localhost:53692/callback?code=anthropic-code&state=anthropic-state" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(submitRes.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:53692/callback?code=anthropic-code&state=anthropic-state");
+      expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: "GET" }));
+      await vi.waitFor(() => {
+        expect(submittedCode).toBe("code=anthropic-code&state=anthropic-state");
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("submits pasted manual code for anthropic login", async () => {
