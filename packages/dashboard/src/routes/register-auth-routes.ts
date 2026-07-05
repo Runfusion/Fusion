@@ -82,10 +82,33 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return undefined;
   }
 
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  FN-7574: an expired-and-unrefreshable subscription OAuth credential was reported as
+  `authenticated:true` on the settings card and never surfaced the re-login banner,
+  even though OAuthExpiryMonitor (engine side) had already fired the oauth-token-expired
+  notification for the same credential. Root cause enumerated in task notes: a stored
+  OAuth-typed credential with a missing/non-numeric `expires` field was previously
+  treated as "not expired" here, while `resolveOAuthApiKey`/`getApiKey` in
+  packages/engine/src/auth-storage.ts already treat a missing numeric `expires` as
+  unusable (never yields a runtime key). Make the status predicate fail-safe: a stored
+  OAuth credential without a usable numeric expiry now reports `expired:true` (shows as
+  not-connected) rather than silently claiming a live session it cannot actually use.
+  OAuthExpiryMonitor intentionally keeps its separate skip-and-don't-notify behavior for
+  unknown-expiry credentials (see oauth-expiry-monitor.ts) — the notification channel
+  should stay conservative about spamming, while this "are you logged in" status surface
+  should stay conservative about claiming a live session.
+  */
   function isExpiredOauthCredential(providerId: string, storage: AuthStorageLike): boolean {
     const credential = getOauthStatusCredential(providerId, storage);
-    if (!credential || typeof credential.expires !== "number") {
+    if (!credential) {
       return false;
+    }
+    if (typeof credential.expires !== "number" || !Number.isFinite(credential.expires)) {
+      // A stored OAuth credential with no usable expiry can never mint a runtime API
+      // key (see resolveOAuthApiKey in auth-storage.ts), so treat it as expired rather
+      // than authenticated.
+      return true;
     }
 
     return Date.now() >= credential.expires;

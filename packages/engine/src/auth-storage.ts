@@ -16,7 +16,19 @@ import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 
 type StoredCredential = StoredAuthCredential;
 
-const OAUTH_REFRESH_BUFFER_MS = 60_000;
+/*
+FNXC:ClaudeOAuth 2026-07-05-00:00:
+FN-7574: a 60s reactive refresh buffer meant a healthy Anthropic subscription token was
+only ever refreshed a few seconds before (or after) it actually expired — too late to
+reliably beat a slow/failed network round trip, so subscriptions routinely lapsed and
+forced a manual re-login even though the refresh token was still valid. Widen the
+proactive-refresh window to 5 minutes so both the reactive getApiKey() path AND the new
+background OAuthRefreshScheduler (see notification/oauth-refresh-scheduler.ts) renew the
+access token well ahead of expiry, without refreshing needlessly often (the scheduler
+runs on a multi-minute interval, and the in-flight dedupe + failure cooldown below still
+apply so a single stuck token doesn't get hammered).
+*/
+const OAUTH_REFRESH_BUFFER_MS = 5 * 60_000;
 const ANTHROPIC_PROVIDER_ID = "anthropic";
 const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
 const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";

@@ -1184,6 +1184,82 @@ describe("GET /auth/status", () => {
     expect(anthropic).toMatchObject({ authenticated: false, expired: true });
   });
 
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  FN-7574 symptom verification: an expired, unrefreshable Anthropic Subscription OAuth
+  credential must report authenticated:false/expired:true across BOTH the legacy
+  pre-split `anthropic`-row storage permutation and the separated `anthropic-subscription`-
+  row permutation, so the settings card and OAuthReloniBanner never show a lapsed
+  subscription as connected. Covers the exact reproduction from the task's Symptom
+  Verification section.
+  */
+  it("FN-7574: reports expired-and-unrefreshable subscription OAuth as not-connected (separated anthropic-subscription row)", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "expired-token",
+      refresh: "revoked-refresh-token",
+      expires: now - 60_000,
+    }) : undefined);
+    // Simulate a revoked refresh token: the best-effort refresh attempt inside the
+    // status route fails (non-200 from the OAuth token endpoint), so getApiKey resolves
+    // to undefined without throwing.
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+  });
+
+  it("FN-7574: reports expired-and-unrefreshable subscription OAuth as not-connected (legacy anthropic row)", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic" ? ({
+      type: "oauth",
+      access: "expired-legacy-token",
+      refresh: "revoked-refresh-token",
+      expires: now - 60_000,
+    }) : undefined);
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+  });
+
+  it("FN-7574: treats an oauth credential missing a numeric expires as expired, not authenticated", async () => {
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "token-without-expiry",
+      refresh: "refresh",
+      // expires intentionally omitted — a partially-hydrated/corrupted credential.
+    }) : undefined);
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+  });
+
   it("reports loginInProgress for oauth providers with active logins", async () => {
     let releaseLogin: (() => void) | undefined;
     (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(
