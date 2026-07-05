@@ -42,18 +42,53 @@ const RELEASE_SIGNAL_PATTERNS: ReleaseSignalPattern[] = [
   { label: "version-bump release commit", pattern: /\b(?:version\s*bump|bump\s+version|release\s+commit|release\s+version)\b[\s\S]{0,120}\bv\d+\.\d+\.\d+\b|\bv\d+\.\d+\.\d+\b[\s\S]{0,120}\b(?:version\s*bump|bump\s+version|release\s+commit|release\s+version)\b/i },
 ];
 
+/*
+FNXC:ReleaseAuthorizationGate 2026-07-05-15:40:
+FN-7560: classifyReleaseTask matched a bare mention of a release signal (e.g. `scripts/release.mjs`) even when it appeared inside a disclaimer clause that explicitly states the task does NOT release — "this task performs no release/publish (releases are owned by `scripts/release.mjs`)". AI-authored specs routinely append such disclaimers, so revert/undo/UI tasks (FN-7525, FN-7554, FN-7556) were false-flagged as release-class and parked in awaiting-release-authorization with no in-band exit (their non-user sources make the authorization marker inert). Strip negated release-disclaimer clauses before signal matching so a spec that disclaims releasing does not self-incriminate. Genuine release intent survives because "run pnpm release" / "publish @runfusion/fusion" lives in a non-negated clause and is evaluated normally.
+*/
+const RELEASE_NEGATION_PATTERNS: RegExp[] = [
+  // "performs no release", "performs no package release/publish"
+  /\bperforms?\s+no\s+(?:[\w-]+\s+){0,3}?(?:release|publish)/i,
+  // "does not perform any package release", "will not publish", "doesn't release"
+  /\b(?:does|do|did|will|would|shall|can|could|should)(?:\s+not|n['’]?t)\b\s+(?:[\w-]+\s+){0,4}?(?:release|publish)/i,
+  // "no release/publish", "no package/actual release"
+  /\bno\s+(?:[\w-]+\s+){0,2}?(?:release|publish)\b/i,
+  // "releases are owned by scripts/release.mjs" — ownership disclaimer, not intent
+  /\breleases?\s+are\s+owned\s+by\b/i,
+  // "never release/publish"
+  /\bnever\s+(?:[\w-]+\s+){0,3}?(?:release|publish)/i,
+];
+
+/**
+ * FNXC:ReleaseAuthorizationGate 2026-07-05-15:40:
+ * Split into clause-sized segments (sentence terminators and line breaks) and
+ * drop any segment carrying a release-negation cue, keeping segments small so
+ * removing one disclaimer clause never discards an adjacent genuine release
+ * instruction. Returns the surviving text for signal matching.
+ */
+export function stripNegatedReleaseClauses(text: string): string {
+  return text
+    .split(/(?<=[.!?;])\s+|\n+/)
+    .filter((clause) => !RELEASE_NEGATION_PATTERNS.some((pattern) => pattern.test(clause)))
+    .join("\n");
+}
+
 export function isUserAuthoredSource(sourceType: string | null | undefined): boolean {
   return typeof sourceType === "string" && USER_AUTHORED_SOURCE_TYPES.has(sourceType);
 }
 
 export function classifyReleaseTask(input: ReleaseTaskClassificationInput): ReleaseTaskClassification {
-  const text = [input.title, input.description, input.promptText]
+  const rawText = [input.title, input.description, input.promptText]
     .filter((value): value is string => typeof value === "string" && value.length > 0)
     .join("\n\n");
 
-  if (!text.trim()) {
+  if (!rawText.trim()) {
     return { isReleaseClass: false, signals: [] };
   }
+
+  // Evaluate signals only against clauses that are not release disclaimers, so a
+  // spec that says "this task performs no release" is not flagged as one.
+  const text = stripNegatedReleaseClauses(rawText);
 
   const signals: string[] = [];
   for (const { label, pattern } of RELEASE_SIGNAL_PATTERNS) {
