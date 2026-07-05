@@ -284,6 +284,8 @@ export {
   REVERT_OF_METADATA_KEY,
   type AiUndoTaskResult,
   type CreateAiUndoTaskDeps,
+  type TaskRevertGranularity,
+  type PerformTaskRevertOptions,
 } from "./task-revert.js";
 export {
   resolveBranchGroupMergeRouting,

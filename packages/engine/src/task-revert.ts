@@ -352,12 +352,85 @@ export async function classifyTaskRevert(opts: ClassifyTaskRevertOptions): Promi
   return { classification: "clean" };
 }
 
+// FNXC:TaskRevert 2026-07-04-12:00 (shared per-sha apply primitive, FN-7548):
+// factors the `git revert --no-commit` + status-diff no-op detection +
+// unmerged-file conflict detection used by BOTH performTaskRevert apply paths
+// (squash and per-sha) into one place. Returns a discriminated outcome
+// instead of committing or rolling back itself — callers own the
+// commit/rollback decision (squash accumulates across shas before
+// committing once; per-sha commits after each staged sha).
+type RevertShaApplyOutcome =
+  | { kind: "staged" }
+  | { kind: "noop" }
+  | { kind: "conflict"; conflicts: TaskRevertConflict[] };
+
+async function applyRevertNoCommit(
+  execImpl: ExecAsyncImpl,
+  worktreePath: string,
+  sha: string,
+): Promise<RevertShaApplyOutcome> {
+  const statusBefore = (await runGit(execImpl, "git status --porcelain", worktreePath)).stdout;
+  try {
+    await runGit(execImpl, `git revert --no-commit --no-edit ${quoteShellArg(sha)}`, worktreePath);
+    // FNXC:TaskRevert 2026-07-04-00:00: `git revert --no-commit` on an
+    // already-reverted commit exits 0 with no staged/working-tree diff (no
+    // thrown error, no "nothing to commit" text on this call). Detect this by
+    // diffing `git status --porcelain` before/after: if unchanged, this sha is
+    // a no-op; `--quit` clears the sequencer's in-progress marker WITHOUT
+    // touching any diff staged by earlier shas in this same batch.
+    const statusAfter = (await runGit(execImpl, "git status --porcelain", worktreePath)).stdout;
+    if (statusAfter === statusBefore) {
+      await runGit(execImpl, "git revert --quit", worktreePath).catch(() => undefined);
+      return { kind: "noop" };
+    }
+    return { kind: "staged" };
+  } catch (error) {
+    const stderr =
+      typeof error === "object" && error && "stderr" in error && typeof (error as { stderr?: unknown }).stderr === "string"
+        ? (error as { stderr: string }).stderr
+        : "";
+    const stdout =
+      typeof error === "object" && error && "stdout" in error && typeof (error as { stdout?: unknown }).stdout === "string"
+        ? (error as { stdout: string }).stdout
+        : "";
+    if (/nothing to commit|no changes|empty commit/i.test(`${stdout}\n${stderr}`)) {
+      await runGit(execImpl, "git revert --quit", worktreePath).catch(() => undefined);
+      return { kind: "noop" };
+    }
+    const unmergedFiles = await getUnmergedFiles(execImpl, worktreePath);
+    return { kind: "conflict", conflicts: unmergedFiles };
+  }
+}
+
+function deriveShortSummary(originalSubject: string): string {
+  return (
+    originalSubject
+      .replace(/^(?:feat|fix|test|chore|docs|refactor|perf|build|ci|style)\([^)]*\):\s*/i, "")
+      .slice(0, 72) || "revert landed changes"
+  );
+}
+
 export type TaskRevertResult =
-  | { mode: "git"; clean: true; revertCommitSha: string }
+  | { mode: "git"; clean: true; revertCommitSha: string; revertCommitShas: string[] }
   | { mode: "git"; clean: true; alreadyReverted: true }
   | { mode: "git"; clean: false; conflicts: TaskRevertConflict[] }
   | { mode: "git"; unsupported: true; reason: string }
   | { mode: "git"; needsHuman: true; reason: string };
+
+/**
+ * FNXC:TaskRevert 2026-07-04-12:00 (granularity, FN-7548):
+ * `"squash"` (default, unchanged FN-7523 behavior) accumulates every
+ * attributable sha into ONE final revert commit. `"per-sha"` creates one
+ * attributed `revert(FN-xxxx): ...` commit PER non-no-op original sha, each
+ * with its own `Fusion-Task-Id` trailer and an audit line referencing that
+ * specific sha — giving finer-grained audit trail / rollback (an operator
+ * can drop a single per-sha revert without unwinding the whole task). A
+ * mid-batch conflict in EITHER mode rolls the whole batch back to
+ * `preRevertHead` — partially-landed per-commit reverts are never left on
+ * disk (see the shared `mutated`/`preRevertHead` rollback in the outer
+ * catch, and the inline abort+reset on conflict below).
+ */
+export type TaskRevertGranularity = "squash" | "per-sha";
 
 export interface PerformTaskRevertOptions {
   task: Pick<Task, "id" | "lineageId" | "column" | "mergeDetails" | "autoMerge" | "userPaused" | "paused">;
@@ -367,6 +440,8 @@ export interface PerformTaskRevertOptions {
   commitAssociationSource?: TaskCommitAssociationSource;
   /** Resolved effective project autoMerge setting (task.autoMerge overrides this when set). Defaults to true (autoMerge on) when omitted. */
   effectiveAutoMerge?: boolean;
+  /** Commit granularity for the real (committing) revert. Defaults to `"squash"` — omitting this option preserves FN-7523 behavior exactly. */
+  granularity?: TaskRevertGranularity;
 }
 
 // FNXC:TaskRevert 2026-07-04-00:00 (guard rails, enforced in BOTH the service
@@ -442,46 +517,78 @@ export async function performTaskRevert(opts: PerformTaskRevertOptions): Promise
     throw new TaskRevertError("failed to resolve HEAD before applying revert", "head-resolve-failed", error);
   }
 
+  const granularity: TaskRevertGranularity = opts.granularity ?? "squash";
   let mutated = false;
-  let anyStaged = false;
   try {
+    if (granularity === "per-sha") {
+      // FNXC:TaskRevert 2026-07-04-12:00 (per-commit apply path, FN-7548):
+      // stage-and-commit ONE sha at a time so each attributable original sha
+      // gets its own attributed revert commit. No-op shas (already reverted
+      // at HEAD) are skipped without creating an empty commit. A conflict on
+      // any sha rolls the ENTIRE batch back to preRevertHead — there is no
+      // partially-landed per-commit state.
+      const createdCommitShas: string[] = [];
+      for (const sha of resolved.shas) {
+        mutated = true;
+        const outcome = await applyRevertNoCommit(execImpl, worktreePath, sha);
+        if (outcome.kind === "conflict") {
+          await runGit(execImpl, "git revert --abort", worktreePath).catch(() => undefined);
+          await runGit(execImpl, `git reset --hard ${quoteShellArg(preRevertHead)}`, worktreePath).catch(() => undefined);
+          return { mode: "git", clean: false, conflicts: outcome.conflicts };
+        }
+        if (outcome.kind === "noop") continue;
+
+        let originalSubject = "";
+        try {
+          const { stdout } = await runGit(execImpl, `git log -1 --format=%s ${quoteShellArg(sha)}`, worktreePath);
+          originalSubject = stdout.trim();
+        } catch {
+          originalSubject = "";
+        }
+        const shortSummary = deriveShortSummary(originalSubject);
+        const subject = `revert(${task.id}): ${shortSummary}`;
+        const body1 = `Fusion-Task-Id: ${task.id}`;
+        const body2 = `Reverts ${originalSubject || sha} @ ${sha.slice(0, 8)}.`;
+
+        await runGit(
+          execImpl,
+          `git commit -m ${quoteShellArg(subject)} -m ${quoteShellArg(body1)} -m ${quoteShellArg(body2)}`,
+          worktreePath,
+        );
+        const { stdout: newHead } = await runGit(execImpl, "git rev-parse HEAD", worktreePath);
+        createdCommitShas.push(newHead.trim());
+      }
+
+      if (createdCommitShas.length === 0) {
+        // Defensive: every sha in this batch turned out to be a no-op during the
+        // apply pass even though classify saw at least one real change (branch
+        // moved between classify and apply, or a race). Nothing to commit —
+        // report already-reverted rather than attempting an empty commit.
+        return { mode: "git", clean: true, alreadyReverted: true };
+      }
+      return {
+        mode: "git",
+        clean: true,
+        revertCommitSha: createdCommitShas[0]!,
+        revertCommitShas: createdCommitShas,
+      };
+    }
+
+    // granularity === "squash" (default, byte-for-byte unchanged FN-7523 behavior):
+    // accumulate every attributable sha via `git revert --no-commit`, then create
+    // ONE final commit spanning the whole batch.
+    let anyStaged = false;
     for (const sha of resolved.shas) {
       mutated = true;
-      const statusBefore = (await runGit(execImpl, "git status --porcelain", worktreePath)).stdout;
-      try {
-        await runGit(execImpl, `git revert --no-commit --no-edit ${quoteShellArg(sha)}`, worktreePath);
-        // FNXC:TaskRevert 2026-07-04-00:00: mirror classifyTaskRevert's
-        // status-diff no-op detection here — `git revert --no-commit` on an
-        // already-reverted commit exits 0 with no staged diff (no thrown
-        // error, no "nothing to commit" text on this call). `--quit` clears
-        // the sequencer marker without disturbing diff staged by earlier
-        // shas in this batch.
-        const statusAfter = (await runGit(execImpl, "git status --porcelain", worktreePath)).stdout;
-        if (statusAfter === statusBefore) {
-          await runGit(execImpl, "git revert --quit", worktreePath).catch(() => undefined);
-          continue;
-        }
-        anyStaged = true;
-      } catch (error) {
-        const stderr =
-          typeof error === "object" && error && "stderr" in error && typeof (error as { stderr?: unknown }).stderr === "string"
-            ? (error as { stderr: string }).stderr
-            : "";
-        const stdout =
-          typeof error === "object" && error && "stdout" in error && typeof (error as { stdout?: unknown }).stdout === "string"
-            ? (error as { stdout: string }).stdout
-            : "";
-        if (/nothing to commit|no changes|empty commit/i.test(`${stdout}\n${stderr}`)) {
-          await runGit(execImpl, "git revert --quit", worktreePath).catch(() => undefined);
-          continue;
-        }
+      const outcome = await applyRevertNoCommit(execImpl, worktreePath, sha);
+      if (outcome.kind === "conflict") {
         // The dry-run already proved this is clean; a live conflict here means
         // the branch moved between classify and apply. Roll back and report conflicting.
-        const unmergedFiles = await getUnmergedFiles(execImpl, worktreePath);
         await runGit(execImpl, "git revert --abort", worktreePath).catch(() => undefined);
         await runGit(execImpl, `git reset --hard ${quoteShellArg(preRevertHead)}`, worktreePath).catch(() => undefined);
-        return { mode: "git", clean: false, conflicts: unmergedFiles };
+        return { mode: "git", clean: false, conflicts: outcome.conflicts };
       }
+      if (outcome.kind === "staged") anyStaged = true;
     }
 
     if (!anyStaged) {
@@ -500,7 +607,7 @@ export async function performTaskRevert(opts: PerformTaskRevertOptions): Promise
       originalSubject = "";
     }
 
-    const shortSummary = originalSubject.replace(/^(?:feat|fix|test|chore|docs|refactor|perf|build|ci|style)\([^)]*\):\s*/i, "").slice(0, 72) || "revert landed changes";
+    const shortSummary = deriveShortSummary(originalSubject);
     const subject = `revert(${task.id}): ${shortSummary}`;
     const referencedSha = resolved.shas[0] ?? "unknown";
     const body1 = `Fusion-Task-Id: ${task.id}`;
@@ -513,7 +620,8 @@ export async function performTaskRevert(opts: PerformTaskRevertOptions): Promise
     );
 
     const { stdout: newHead } = await runGit(execImpl, "git rev-parse HEAD", worktreePath);
-    return { mode: "git", clean: true, revertCommitSha: newHead.trim() };
+    const revertCommitSha = newHead.trim();
+    return { mode: "git", clean: true, revertCommitSha, revertCommitShas: [revertCommitSha] };
   } catch (error) {
     if (mutated) {
       await runGit(execImpl, "git revert --abort", worktreePath).catch(() => undefined);

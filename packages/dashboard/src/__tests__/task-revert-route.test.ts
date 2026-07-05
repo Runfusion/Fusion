@@ -104,8 +104,11 @@ function createApp(store: TaskStore) {
   return app;
 }
 
-async function REQUEST(app: express.Express, method: string, path: string) {
-  return performRequest(app, method, path);
+async function REQUEST(app: express.Express, method: string, path: string, body?: unknown) {
+  if (body === undefined) {
+    return performRequest(app, method, path);
+  }
+  return performRequest(app, method, path, JSON.stringify(body), { "content-type": "application/json" });
 }
 
 async function POST_JSON(app: express.Express, path: string, body: Record<string, unknown>) {
@@ -313,5 +316,44 @@ describe("POST /tasks/:id/revert — FN-7524 mode + AI-undo fallback", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ mode: "git", needsHuman: true });
     expect(store.createTask as ReturnType<typeof vi.fn>).not.toHaveBeenCalled();
+  });
+
+  // FN-7548: the optional `granularity` request-body field ("squash" | "per-sha")
+  // is validated at the route and forwarded verbatim to `performTaskRevert`.
+  it("forwards granularity: \"per-sha\" to the engine service and returns the revertCommitShas result shape", async () => {
+    const task = makeTask({ column: "done" });
+    const store = createMockStore(task);
+    performTaskRevertMock.mockResolvedValue({
+      mode: "git",
+      clean: true,
+      revertCommitSha: "def456",
+      revertCommitShas: ["def456", "abc123"],
+    });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`, { granularity: "per-sha" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ mode: "git", clean: true, revertCommitShas: ["def456", "abc123"] });
+    expect(performTaskRevertMock).toHaveBeenCalledTimes(1);
+    expect(performTaskRevertMock.mock.calls[0]?.[0]).toMatchObject({ granularity: "per-sha" });
+  });
+
+  it("rejects an unknown granularity value with a 400, before invoking the engine service", async () => {
+    const task = makeTask({ column: "done" });
+    const store = createMockStore(task);
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`, { granularity: "bogus" });
+    expect(res.status).toBe(400);
+    expect(String((res.body as { error?: string }).error ?? "")).toMatch(/granularity/i);
+    expect(performTaskRevertMock).not.toHaveBeenCalled();
+  });
+
+  it("defaults to squash granularity when the body omits the field, preserving existing behavior", async () => {
+    const task = makeTask({ column: "done" });
+    const store = createMockStore(task);
+    performTaskRevertMock.mockResolvedValue({ mode: "git", clean: true, revertCommitSha: "abc123", revertCommitShas: ["abc123"] });
+
+    const res = await REQUEST(createApp(store), "POST", `/api/tasks/${task.id}/revert`);
+    expect(res.status).toBe(200);
+    expect(performTaskRevertMock.mock.calls[0]?.[0]).toMatchObject({ granularity: "squash" });
   });
 });

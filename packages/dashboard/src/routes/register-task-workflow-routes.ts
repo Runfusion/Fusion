@@ -1670,25 +1670,30 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   /*
-  FNXC:TaskRevert 2026-07-04-00:00 (FN-7524 mode contract):
+  FNXC:TaskRevert 2026-07-04-00:00 (FN-7524 mode contract; FN-7548 granularity contract):
   POST /tasks/:id/revert — intelligent git-revert for Done/Archived tasks (FN-7523), with an
-  AI-undo fallback (FN-7524, foundation for FN-7501). Guard rails (enforced here AND in the
-  engine service):
+  AI-undo fallback (FN-7524, foundation for FN-7501) and per-sha revert-commit granularity
+  (FN-7548). Guard rails (enforced here AND in the engine service):
     - only done/archived tasks are revertable (400/409 otherwise);
     - autoMerge-off is a needsHuman result, not a forced write, and NEVER triggers the AI fallback
       (leave that for a human / sibling FN-7525 to decide);
     - the source task's column/status is NEVER mutated as a side effect of a revert (git OR AI path).
 
-  Optional request body: `{ mode?: "git" | "ai" | "auto" }` (default `"auto"`; unknown values reject
-  with 400). Semantics:
-    - `"git"`  — FN-7523 behavior only; the git result (incl. a conflict/unsupported result) is
-      returned as-is and the AI-undo path is NEVER invoked.
-    - `"ai"`   — skip git entirely; always take the AI-undo fallback.
-    - `"auto"` — attempt git first. A clean/alreadyReverted/needsHuman git result is returned
-      unchanged (NO AI task created). A conflicting or unsupported (e.g. workspace-task) git result
-      falls through to the AI-undo fallback.
+  Optional request body:
+    - `mode?: "git" | "ai" | "auto"` (default `"auto"`; unknown values reject with 400). Semantics:
+      - `"git"`  — FN-7523 behavior only; the git result (incl. a conflict/unsupported result) is
+        returned as-is and the AI-undo path is NEVER invoked.
+      - `"ai"`   — skip git entirely; always take the AI-undo fallback.
+      - `"auto"` — attempt git first. A clean/alreadyReverted/needsHuman git result is returned
+        unchanged (NO AI task created). A conflicting or unsupported (e.g. workspace-task) git result
+        falls through to the AI-undo fallback.
+    - `granularity?: "squash" | "per-sha"` (FN-7548, default `"squash"`) — commit granularity for the
+      git-path revert only; forwarded verbatim to `performTaskRevert`. `"squash"` preserves the
+      unchanged FN-7523 single-commit behavior; `"per-sha"` creates one attributed revert commit per
+      original sha (see `performTaskRevert`'s per-sha apply path). Ignored when `mode` resolves to `"ai"`.
 
-  Response contract is ADDITIVE over FN-7523: `{ mode: "git", ... }` (unchanged shape) OR
+  Response contract is ADDITIVE over FN-7523: `{ mode: "git", clean, revertCommitSha?, revertCommitShas?,
+  conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }` OR
   `{ mode: "ai", createdTaskId: "FN-YYYY", alreadyOpen?: true }`. The AI-undo task is created via
   `createAiUndoTask` (engine) + `TaskStore.findOpenRevertTaskForSource` (core) for the idempotency
   guard — a second call while an undo task is still open returns the SAME `createdTaskId` with
@@ -1710,6 +1715,25 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw badRequest(`Invalid revert mode "${String(requestedMode)}"; expected "git", "ai", or "auto"`);
       }
       const mode: "git" | "ai" | "auto" = (requestedMode as "git" | "ai" | "auto" | undefined) ?? "auto";
+
+      /*
+      FNXC:TaskRevert 2026-07-04-12:00 (FN-7548):
+      Optional `granularity` request-body field selects the commit granularity
+      of the revert: `"squash"` (default, unchanged FN-7523 behavior — one
+      combined revert commit) or `"per-sha"` (one attributed revert commit per
+      original sha, see `performTaskRevert`'s per-sha apply path). An absent/
+      empty value defaults to `"squash"`; any other value is a 400 naming the
+      allowed values. Only relevant to the git path — ignored when `mode`
+      resolves to `"ai"`.
+      */
+      const requestedGranularity = (req.body as { granularity?: unknown } | undefined)?.granularity;
+      let granularity: "squash" | "per-sha" = "squash";
+      if (requestedGranularity !== undefined && requestedGranularity !== null && requestedGranularity !== "") {
+        if (requestedGranularity !== "squash" && requestedGranularity !== "per-sha") {
+          throw badRequest(`granularity must be one of: "squash", "per-sha"`);
+        }
+        granularity = requestedGranularity;
+      }
 
       const createAiUndoResult = async (): Promise<AiUndoTaskResult> =>
         createAiUndoTask({
@@ -1758,6 +1782,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
         },
         effectiveAutoMerge: settings.autoMerge,
+        granularity,
       });
 
       if (mode === "git") {
