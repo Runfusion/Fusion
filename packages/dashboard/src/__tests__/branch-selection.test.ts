@@ -38,7 +38,12 @@ describe("branch-selection", () => {
   });
 
   it("resolves assignment context", () => {
-    expect(resolveBranchAssignmentContext(undefined)).toEqual({ mode: "shared" });
+    // Absent input resolves to undefined so callers fall back to their own
+    // default (e.g. mission triage uses mission.branchStrategy).
+    expect(resolveBranchAssignmentContext(undefined)).toEqual({ mode: undefined });
+    expect(resolveBranchAssignmentContext(null)).toEqual({ mode: undefined });
+    expect(resolveBranchAssignmentContext({})).toEqual({ mode: undefined });
+    expect(resolveBranchAssignmentContext({ mode: "shared" })).toEqual({ mode: "shared" });
     expect(resolveBranchAssignmentContext({ mode: "per-task-derived" })).toEqual({ mode: "per-task-derived" });
     expect(() => resolveBranchAssignmentContext({ mode: "bad" })).toThrow("branchAssignment.mode must be one of");
   });

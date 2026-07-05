@@ -21,6 +21,7 @@ import type {
   AgentStore,
   Settings,
   Milestone,
+  Mission,
 } from "@fusion/core";
 import { normalizeMissionAssertionType } from "@fusion/core";
 import type { VerificationOutcome } from "./mission-verification.js";
@@ -414,6 +415,21 @@ export class MissionExecutionLoop extends EventEmitter {
       const feature = this.missionStore.getFeatureByTaskId(taskId);
       if (!feature) {
         loopLog.log(`Task ${taskId} has no linked feature; skipping validation`);
+        return;
+      }
+
+      // Only validate features of active missions — mirrors the
+      // recoverActiveMissions guard. A parked/blocked/completed mission must
+      // not keep minting validations (and Fix features) for completed tasks.
+      // Features that don't resolve to a mission keep the current behavior.
+      const mission = this.resolveFeatureMission(feature);
+      if (mission && mission.status !== "active") {
+        loopLog.log(`Feature ${feature.id} belongs to mission ${mission.id} with status "${mission.status}"; skipping validation`);
+        this.logFeatureWarningEvent(feature.id, "validation_skipped_mission_inactive", `Validation skipped: mission ${mission.id} status is "${mission.status}" (expected "active").`, {
+          taskId,
+          missionId: mission.id,
+          missionStatus: mission.status,
+        });
         return;
       }
 
@@ -1187,6 +1203,15 @@ ${taskContext ? `\n\nImplementation context:\n${taskContext}` : ""}`;
     }
 
     return this.missionStore.getMilestone(slice.milestoneId);
+  }
+
+  private resolveFeatureMission(feature: MissionFeature): Mission | undefined {
+    const milestone = this.resolveFeatureMilestone(feature);
+    if (!milestone) {
+      return undefined;
+    }
+
+    return this.missionStore.getMission(milestone.missionId);
   }
 
   private completeValidatorRunIfStillRunning(

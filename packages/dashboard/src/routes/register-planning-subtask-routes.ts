@@ -238,7 +238,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
         resolveBranchSelection(branchSelection, branch, baseBranch);
-      const { mode: branchMode } = resolveBranchAssignmentContext(branchAssignment);
+      // Planning subtasks have no strategy fallback; keep the historical shared default.
+      const { mode: branchMode = "shared" } = resolveBranchAssignmentContext(branchAssignment);
       // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
       // resolves members. The group is only ensured (and the id set) in shared
       // mode below. Non-shared members get NO groupId — stamping a synthetic
@@ -1323,7 +1324,8 @@ export function registerPlanningSubtaskRoutes(ctx: ApiRoutesContext, deps: Plann
 
       const { branch: resolvedBranch, baseBranch: resolvedBaseBranch } =
         resolveBranchSelection(branchSelection, branch, baseBranch);
-      const { mode: branchMode } = resolveBranchAssignmentContext(branchAssignment);
+      // Planning subtasks have no strategy fallback; keep the historical shared default.
+      const { mode: branchMode = "shared" } = resolveBranchAssignmentContext(branchAssignment);
       // Stamp the real BranchGroup id (BG-…) so listTasksByBranchGroup(group.id)
       // resolves members. The group is only ensured (and the id set) in shared
       // mode below. Non-shared members get NO groupId — stamping a synthetic

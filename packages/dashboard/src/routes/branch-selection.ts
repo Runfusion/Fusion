@@ -68,7 +68,8 @@ export interface BranchAssignmentContext {
 }
 
 export interface ResolvedBranchAssignmentContext {
-  mode: PlanningBranchMode;
+  /** undefined when the request did not specify a mode; callers pick their own default. */
+  mode: PlanningBranchMode | undefined;
 }
 
 function normalizeOptionalBranch(value: unknown, fieldName: string): string | undefined {
@@ -133,7 +134,10 @@ export function resolveBranchSelection(
 
 export function resolveBranchAssignmentContext(input: unknown): ResolvedBranchAssignmentContext {
   if (input === undefined || input === null) {
-    return { mode: "shared" };
+    // No explicit assignment requested: leave mode undefined so callers can
+    // apply their own default (e.g. mission triage falls back to the
+    // mission's branchStrategy instead of being forced into a shared group).
+    return { mode: undefined };
   }
   if (typeof input !== "object" || Array.isArray(input)) {
     throw badRequest("branchAssignment must be an object");
@@ -143,9 +147,7 @@ export function resolveBranchAssignmentContext(input: unknown): ResolvedBranchAs
   if (mode !== undefined && mode !== "shared" && mode !== "per-task-derived") {
     throw badRequest("branchAssignment.mode must be one of: shared, per-task-derived");
   }
-  return {
-    mode: mode === "per-task-derived" ? "per-task-derived" : "shared",
-  };
+  return { mode };
 }
 
 export function sanitizeSegment(input: string): string {
