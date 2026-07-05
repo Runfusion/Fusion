@@ -2043,6 +2043,88 @@ describe("POST /tasks/:id/approve-plan", () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Database error");
   });
+
+  // FN-7564: a release-authorization hold (FN-7559's awaitingApprovalReason
+  // discriminator) must reject a direct approve-plan API call with 400 — the
+  // FN-6481 authorization-marker requirement must not be bypassable outside the UI.
+  it("returns 400 and does not move the task for a release-authorization hold", async () => {
+    const releaseHoldTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage" as const,
+      status: "awaiting-approval" as const,
+      awaitingApprovalReason: "release-authorization" as const,
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(releaseHoldTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("release authorization");
+    expect(res.body.error).toContain("Release Authorized By User");
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  // Passthrough: an ordinary manual-approval hold (no awaitingApprovalReason)
+  // must still approve exactly as before — the guard is scoped to release-authorization only.
+  it("still approves a manual-approval hold with awaitingApprovalReason unset", async () => {
+    const awaitingTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage" as const,
+      status: "awaiting-approval" as const,
+      awaitingApprovalReason: undefined,
+    };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...movedTask, status: undefined });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
+
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-22:41:
+   * FN-7569 — approve-plan must persist an approvedPlanFingerprint hash of the current
+   * on-disk PROMPT.md so a later re-specification of the SAME plan can skip re-asking.
+   */
+  it("records an approvedPlanFingerprint hash of the on-disk PROMPT.md", async () => {
+    const root = mkdtempSync(join(tmpdir(), "kb-dashboard-approve-plan-"));
+    try {
+      mkdirSync(join(root, ".fusion", "tasks", "FN-001"), { recursive: true });
+      writeFileSync(join(root, ".fusion", "tasks", "FN-001", "PROMPT.md"), "# Task: FN-001\n\nApproved plan body.\n");
+
+      const localStore = createMockStore({
+        getTask: vi.fn(),
+        moveTask: vi.fn(),
+        updateTask: vi.fn(),
+        logEntry: vi.fn().mockResolvedValue(undefined),
+        getRootDir: vi.fn().mockReturnValue(root),
+      });
+      const awaitingTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: "awaiting-approval" as const };
+      const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
+      (localStore.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+      (localStore.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+      (localStore.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...movedTask, status: undefined });
+
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(localStore));
+
+      const res = await REQUEST(app, "POST", "/api/tasks/KB-001/approve-plan");
+
+      expect(res.status).toBe(200);
+      expect(localStore.updateTask).toHaveBeenCalledWith(
+        "FN-001",
+        expect.objectContaining({ status: undefined, approvedPlanFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) }),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("POST /tasks/:id/reject-plan", () => {
@@ -2075,7 +2157,9 @@ describe("POST /tasks/:id/reject-plan", () => {
 
     expect(res.status).toBe(200);
     expect(store.logEntry).toHaveBeenCalledWith("FN-001", "Plan rejected by user", "Specification will be regenerated");
-    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined });
+    // FN-7569: reject-plan clears any previously-recorded approval fingerprint so a
+    // regenerated plan is always treated as new and requires fresh manual approval.
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined, approvedPlanFingerprint: null });
     expect(res.body.column).toBe("triage");
   });
 
@@ -2118,6 +2202,69 @@ describe("POST /tasks/:id/reject-plan", () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Database error");
+  });
+
+  // FN-7564: a release-authorization hold must reject a direct reject-plan API
+  // call with 400 too — rejecting must not silently wipe/regenerate the spec
+  // without the operator ever acknowledging the FN-6481 authorization gate.
+  it("returns 400 and does not clear status or remove PROMPT.md for a release-authorization hold", async () => {
+    const releaseHoldTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage" as const,
+      status: "awaiting-approval" as const,
+      awaitingApprovalReason: "release-authorization" as const,
+    };
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(releaseHoldTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("release authorization");
+    expect(res.body.error).toContain("Release Authorized By User");
+    expect(store.updateTask).not.toHaveBeenCalled();
+  });
+
+  // Passthrough: an ordinary manual-approval hold (no awaitingApprovalReason)
+  // must still reject exactly as before — the guard is scoped to release-authorization only.
+  it("still rejects a manual-approval hold with awaitingApprovalReason unset", async () => {
+    const awaitingTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage" as const,
+      status: "awaiting-approval" as const,
+      awaitingApprovalReason: undefined,
+    };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined, approvedPlanFingerprint: null });
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-22:41:
+   * FN-7569 — reject-plan must clear a previously-recorded approval fingerprint
+   * regardless of its prior value, so a regenerated plan never inherits it.
+   */
+  it("clears an existing approvedPlanFingerprint on reject", async () => {
+    const awaitingTask = {
+      ...FAKE_TASK_DETAIL,
+      column: "triage" as const,
+      status: "awaiting-approval" as const,
+      approvedPlanFingerprint: "deadbeef",
+    };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined, approvedPlanFingerprint: undefined };
+
+    (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(awaitingTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
+
+    const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
+
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined, approvedPlanFingerprint: null });
   });
 });
 

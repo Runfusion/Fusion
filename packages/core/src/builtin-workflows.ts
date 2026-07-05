@@ -1,5 +1,6 @@
 import { BUILTIN_CODING_WORKFLOW_IR } from "./builtin-coding-workflow-ir.js";
 import { BUILTIN_CODING_IDEAS_WORKFLOW_IR } from "./builtin-coding-ideas-workflow-ir.js";
+import { BUILTIN_BRAINSTORMING_WORKFLOW_IR } from "./builtin-brainstorming-workflow-ir.js";
 import { BUILTIN_LEAD_GENERATION_WORKFLOW_IR } from "./builtin-lead-generation-workflow-ir.js";
 import { BUILTIN_MARKETING_WORKFLOW_IR } from "./builtin-marketing-workflow-ir.js";
 import { BUILTIN_PR_WORKFLOW_IR } from "./builtin-pr-workflow-ir.js";
@@ -704,6 +705,51 @@ export const BUILTIN_WORKFLOWS: WorkflowDefinition[] = [
       "draft-outreach": { x: 910, y: 160 },
       "completion-summary": { x: 1080, y: 160 },
       end: { x: 1250, y: 160 },
+    },
+    createdAt: BUILTIN_TS,
+    updatedAt: BUILTIN_TS,
+  },
+  /*
+   * FNXC:WorkflowBrainstorming 2026-07-05-00:00:
+   * FN-7584 registers a discoverable built-in for FN-7579's ask-user -> refine ->
+   * exit-gate-on-approval brainstorming composition (docs/workflow-steps.md). It
+   * clones the default Coding graph (BUILTIN_STEPWISE_FINAL_REVIEW_CODING_WORKFLOW_IR)
+   * and prepends the brainstorm loop between `start` and `plan`, so every downstream
+   * node/edge is byte-identical to `builtin:coding`. Appended LAST (after
+   * lead-generation) so it does not disturb the defaultEnabledBuiltinWorkflowIds()
+   * `.slice(0, 5)` ordering assertion in builtin-workflows.test.ts.
+   */
+  {
+    id: "builtin:brainstorming",
+    name: "Brainstorming",
+    description:
+      "Brainstorm with the user first: ask a question, refine the idea, and exit the loop on approval, then run the standard coding plan/execute/review/merge pipeline.",
+    kind: "workflow",
+    ir: BUILTIN_BRAINSTORMING_WORKFLOW_IR,
+    layout: {
+      start: { x: 60, y: 160 },
+      "brainstorm-ask": { x: 230, y: 160 },
+      "brainstorm-refine": { x: 400, y: 160 },
+      "brainstorm-exit": { x: 570, y: 160 },
+      plan: { x: 740, y: 160 },
+      "plan-review": { x: 910, y: 160 },
+      "plan-replan": { x: 910, y: 320 },
+      parse: { x: 1080, y: 160 },
+      steps: { x: 1250, y: 160 },
+      "browser-verification": { x: 1420, y: 160 },
+      "browser-verification-remediation": { x: 1420, y: 320 },
+      "code-review": { x: 1590, y: 160 },
+      "code-review-remediation": { x: 1590, y: 320 },
+      "completion-summary": { x: 1760, y: 160 },
+      "merge-gate": { x: 1930, y: 160 },
+      "branch-group-member-integration": { x: 2100, y: 80 },
+      "branch-group-promotion": { x: 2270, y: 80 },
+      "merge-attempt": { x: 2440, y: 160 },
+      "merge-retry": { x: 2610, y: 80 },
+      "recovery-router": { x: 2610, y: 240 },
+      "merge-manual-hold": { x: 2100, y: 240 },
+      "post-merge-verification": { x: 2780, y: 160 },
+      end: { x: 2950, y: 160 },
     },
     createdAt: BUILTIN_TS,
     updatedAt: BUILTIN_TS,

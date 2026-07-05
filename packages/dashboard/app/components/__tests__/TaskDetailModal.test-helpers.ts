@@ -130,6 +130,13 @@ vi.mock("lucide-react", () => ({
   Bell: () => null,
   // FNXC:PlannerOversight 2026-07-04-19:00: FN-7545 mobile oversight overflow-menu trigger icon.
   MoreVertical: (props: any) => React.createElement("svg", { "data-testid": "more-vertical-icon", ...props }),
+  // FNXC:Test 2026-07-05-11:20: FN-7579 added "ask-user"/"exit-gate" workflow node types to
+  // WorkflowNodeTypes.tsx (HelpCircle, DoorOpen), which WorkflowNodeEditor/WorkflowResultsTab
+  // import transitively behind TaskDetailModal's lazy workflow surfaces. The explicit mock list
+  // omitted them, breaking every TaskDetailModal suite at import (pre-existing gap, unrelated to
+  // FN-7582's copy change) — keep this list in sync with the node-editor icon set.
+  HelpCircle: () => null,
+  DoorOpen: () => null,
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({

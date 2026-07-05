@@ -11,7 +11,13 @@
  *  `branch-group-promotion`;
  *  and the unified PR-entity additions (U3):
  *  `pr-create` (open/reuse the PR + write the entity), `pr-respond` (the
- *  review-response run), and `pr-merge` (tool-side merge with expectedHeadOid). */
+ *  review-response run), and `pr-merge` (tool-side merge with expectedHeadOid);
+ *  and the brainstorming / chat reach-out additions (FN-7579):
+ *  `ask-user` (first-class surface over the existing await-input park/resume
+ *  plumbing — parks the task awaiting a user reply and surfaces `config.question`
+ *  in the task chat/detail) and `exit-gate` (routes the walk early to the
+ *  terminal `end` node when `config.condition` matches, or unconditionally when
+ *  absent — lets a workflow break out of a brainstorming loop once approved). */
 export type WorkflowIrNodeKind =
   | "start"
   | "prompt"
@@ -37,7 +43,9 @@ export type WorkflowIrNodeKind =
   | "branch-group-promotion"
   | "pr-create"
   | "pr-respond"
-  | "pr-merge";
+  | "pr-merge"
+  | "ask-user"
+  | "exit-gate";
 
 export interface WorkflowIrNode {
   id: string;

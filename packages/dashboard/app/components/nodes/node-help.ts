@@ -193,6 +193,30 @@ const NODE_HELP: Record<string, NodeHelp> = {
     edges: "One outgoing edge (success); the node is pass-through.",
   },
 
+  // FN-7579: brainstorming / chat reach-out nodes.
+  "ask-user": {
+    title: "Ask user question",
+    summary:
+      "Reaches out to the user from inside the running task: parks the task awaiting a reply, surfaces the Question in the task chat/detail, and resumes the flow once the user replies and unpauses. First-class surface over the same park/resume plumbing a Prompt node's Wait for user input option uses.",
+    configure:
+      'Write the Question the user is asked. Leave it blank to use the default "This workflow is waiting for your input" prompt.',
+    inputs: "The task at this point in the flow.",
+    outputs: "The user's reply, available downstream as this node's input context.",
+    edges:
+      "One outgoing edge (success), taken once the user replies. Compose with an Exit gate for a brainstorm ask → refine → exit-when-approved loop.",
+  },
+  "exit-gate": {
+    title: "Exit gate",
+    summary:
+      "Lets a workflow terminate early — routing straight to the terminal End node — instead of always walking the full graph. Useful for breaking out of a brainstorming ask-user/refine loop once the user approves.",
+    configure:
+      "Optionally set an Exit condition (output contains / output matches regex) checked against a referenced node's input (e.g. an Ask user question's reply). Leave unset for an unconditional exit.",
+    inputs: "The task plus prior context (e.g. an Ask user question's reply).",
+    outputs: "An exit / continue decision.",
+    edges:
+      "outcome:exit → routes to End; outcome:continue → falls through to the next node (e.g. back into the brainstorm loop).",
+  },
+
   // ── Graph-only (engine-managed) IR kinds ──────────────────────────────────
   "merge-gate": {
     title: "Auto-merge gate",

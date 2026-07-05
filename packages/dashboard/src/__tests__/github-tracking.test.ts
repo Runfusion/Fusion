@@ -254,13 +254,14 @@ describe("maybeCreateTrackingIssue", () => {
     const linkGithubIssue = vi.fn();
     const recordActivity = vi.fn();
 
+    // FNXC:GithubTracking Only OPEN issues may be reused (a shared File-Scope path is present here).
     searchIssuesMock.mockResolvedValue([
       {
         number: 400,
         title: "Diff route truncation in packages/dashboard/src/routes/register-session-diff-routes.ts",
         body: "rebase-merge path drops output",
         html_url: "https://github.com/o/r/issues/400",
-        state: "closed",
+        state: "open",
         updatedAt: "2026-05-01T00:00:00.000Z",
       },
     ]);
@@ -288,6 +289,74 @@ describe("maybeCreateTrackingIssue", () => {
     expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({ type: "github-issue-dedup-matched", number: 400 }),
     }));
+  });
+
+  // FNXC:GithubTracking 2026-07-05 Regression (FN-7579): dedup mis-linked new tasks to old/stale issues.
+  // Surfaces: (1) a resolved CLOSED issue that path+keyword-matches must NOT be reused; (2) an OPEN
+  // issue that matches only on generic keywords (zero File-Scope path overlap) must NOT be reused.
+  // Invariant: the only reusable candidate is an OPEN issue sharing at least one File-Scope path.
+  it("does not reuse a CLOSED issue even when file scope and keywords match (FN-7579 stale-issue regression)", async () => {
+    const linkGithubIssue = vi.fn();
+
+    searchIssuesMock.mockResolvedValue([
+      {
+        number: 500,
+        title: "Diff route truncation in packages/dashboard/src/routes/register-session-diff-routes.ts",
+        body: "rebase-merge truncation resolved long ago",
+        html_url: "https://github.com/o/r/issues/500",
+        state: "closed",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await maybeCreateTrackingIssue(buildTask({
+      title: "Fix rebase-merge truncation in registerSessionDiffRoutes",
+      description: "## File Scope\n- packages/dashboard/src/routes/register-session-diff-routes.ts",
+      githubTracking: { enabled: true },
+    }), {
+      taskStore: { linkGithubIssue, recordActivity: vi.fn() } as any,
+      projectSettings: {},
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+
+    expect(result).toMatchObject({ created: true });
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    expect(linkGithubIssue).toHaveBeenCalledWith("FN-1", expect.objectContaining({ number: 12 }));
+    expect(linkGithubIssue).not.toHaveBeenCalledWith("FN-1", expect.objectContaining({ number: 500 }));
+  });
+
+  it("does not reuse an OPEN issue matched on keywords only when no file-scope path overlaps (FN-7579)", async () => {
+    const linkGithubIssue = vi.fn();
+
+    // Shares generic identifiers (truncation / registerSessionDiffRoutes) but references a DIFFERENT file.
+    searchIssuesMock.mockResolvedValue([
+      {
+        number: 501,
+        title: "truncation bug in registerSessionDiffRoutes helper",
+        body: "affects packages/dashboard/src/routes/register-other-routes.ts truncation registerSessionDiffRoutes",
+        html_url: "https://github.com/o/r/issues/501",
+        state: "open",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await maybeCreateTrackingIssue(buildTask({
+      title: "Fix rebase-merge truncation in registerSessionDiffRoutes",
+      description: "## File Scope\n- packages/dashboard/src/routes/register-session-diff-routes.ts",
+      githubTracking: { enabled: true },
+    }), {
+      taskStore: { linkGithubIssue, recordActivity: vi.fn() } as any,
+      projectSettings: {},
+      globalSettings: { githubTrackingDefaultRepo: "o/r" } as any,
+      rootDir,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    });
+
+    expect(result).toMatchObject({ created: true });
+    expect(createIssueMock).toHaveBeenCalledTimes(1);
+    expect(linkGithubIssue).not.toHaveBeenCalledWith("FN-1", expect.objectContaining({ number: 501 }));
   });
 
   it("falls through to create issue when dedup search has no qualifying match", async () => {

@@ -1090,6 +1090,10 @@ export class SelfHealingManager {
   /**
    * FNXC:SelfHealingReclaim 2026-06-19-00:00:
    * FN-6736 requires self-healing to stop treating an in-memory `executor-active` binding as live when the owner is demonstrably dead. Preserve FN-4811 by requiring every live-owner signal to be absent, leave the FN-5219 missing-worktree path untouched, and avoid FN-5704 resume-limbo counters because this path only clears a stale binding and requeues once with progress/worktree preserved.
+   *
+   * FNXC:SelfHealingReclaim 2026-07-05-08:15:
+   * FN-7566: the FN-6736 liveness gate (`agentPresent` heartbeat, `checkedOutBy` lease, `hasRecentRunAudit`) is structurally blind to EPHEMERAL EXECUTOR agents (`agentId: "executor"`): they never emit heartbeat runs (so `activeHeartbeatTaskIds` never contains them), never acquire a checkout lease (`checkedOutBy` stays null), and normal execution activity (sandbox:run / task:log / verification) writes no `runAuditEvents` rows (so `getRecentRunAuditActivityAgeMs` stays null). With all three permanently false, the ONLY surviving gate was age > graceMs*3 (~30 min), so any ephemeral executor task running longer than 30 minutes — a heavy foreach workflow, a slow model — was killed mid-flight on the next self-healing sweep and hard-moved to `todo`, corrupting overlapping-worktree/task-link state.
+   * The fix adds the in-process live-session truth that DOES track ephemeral executors: a worktree path registered as active in `activeSessionRegistry` (the executor/step-session/workflow-step session holds it for the whole run), the `executingTaskLock`, or `isTaskActive`. This mirrors the canonical `isWorkspaceTaskLive` / `sessionDead` predicate. A genuinely leaked binding (FN-6736) still has an EMPTY registry / no lock / inactive task, so legitimate phantom recovery is preserved; a live ephemeral executor now vetoes the phantom verdict regardless of the durable-agent signals.
    */
   private isPhantomExecutorBinding(task: Task, options: {
     executionAgeMs: number | null;
@@ -1102,6 +1106,14 @@ export class SelfHealingManager {
     const checkedOutBy = typeof task.checkedOutBy === "string" && task.checkedOutBy.trim().length > 0 ? task.checkedOutBy : null;
     const worktreeExists = Boolean(task.worktree && existsSync(task.worktree));
     const hasRecentRunAudit = options.lastActivityMs !== null && options.lastActivityMs <= RUNNING_ON_INACTIVE_TASK_STALE_RUN_MS;
+    // FN-7566: in-process liveness that survives for ephemeral executors. The registered
+    // session path is the faithful proxy for the live session surfaces
+    // (`activeSessions`/`activeStepExecutors`/`activeWorkflowStepSessions`) that
+    // `clearPhantomExecutorBinding` itself refuses to detach.
+    const livePaths = activeSessionRegistry.pathsForTask(task.id).filter((path) => activeSessionRegistry.isPathActive(path));
+    const hasLiveInProcessSession = livePaths.length > 0
+      || executingTaskLock.has(task.id)
+      || this.options.isTaskActive?.(task.id) === true;
     const safeAgeMs = options.graceMs * PHANTOM_EXECUTOR_BINDING_AGE_MULTIPLIER;
     const metadata = {
       taskId: task.id,
@@ -1112,6 +1124,8 @@ export class SelfHealingManager {
       agentPresent,
       lastActivityMs: options.lastActivityMs,
       hasRecentRunAudit,
+      hasLiveInProcessSession,
+      liveSessionPaths: livePaths,
       worktree: task.worktree ?? null,
       branch: task.branch ?? null,
       worktreeExists,
@@ -1124,7 +1138,8 @@ export class SelfHealingManager {
         && options.executionAgeMs > safeAgeMs
         && !checkedOutBy
         && !agentPresent
-        && !hasRecentRunAudit,
+        && !hasRecentRunAudit
+        && !hasLiveInProcessSession,
       metadata,
     };
   }
@@ -3121,7 +3136,22 @@ export class SelfHealingManager {
               // FNXC:SelfHealingReclaim 2026-06-30-00:00: preserveWorktrees keeps the held worktree's
               // session-registry entry so the moveTask(preserveWorktree:true) re-dispatch reattaches to
               // the same worktree instead of orphaning it and acquiring a new one (FN-7249 regression).
-              this.options.clearPhantomExecutorBinding?.(task.id, { preserveWorktrees: true });
+              // FNXC:SelfHealingReclaim 2026-07-05-08:15: FN-7566 — honor clearPhantomExecutorBinding's
+              // live-session refusal (returns false when any session surface is still registered) as the
+              // last line of defense before the destructive moveTask(→todo), matching reapLeakedConcurrencySlots.
+              // Even if a future liveness signal slips past isPhantomExecutorBinding, a refused clear must NOT
+              // be followed by a hard-cancel of a live executor: fall through to the no-action audit instead.
+              const released = this.options.clearPhantomExecutorBinding?.(task.id, { preserveWorktrees: true });
+              if (released === false) {
+                await this.emitFalsePositiveRequeueNoAction(
+                  task,
+                  "reclaim-self-owned-branch-conflict",
+                  "task:reclaim-self-owned-branch-conflict-no-action",
+                  "phantom-clear-refused-live-session",
+                  { ...phantomBinding.metadata, signalReason: liveExecutionSignal.reason },
+                );
+                continue;
+              }
               await createRunAuditor(this.store, {
                 runId: generateSyntheticRunId("self-healing-phantom-executor-binding", task.id),
                 agentId: "self-healing",

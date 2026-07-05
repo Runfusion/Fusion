@@ -370,8 +370,23 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   /*
   FNXC:TaskDetail 2026-06-22-20:00:
   Priority chip and speed (execution-mode) toggle share one min-height token so they render at identical, equal height. Reduced from the old calc(space-2xl + space-xs) (~too tall) to a compact 30px that stays legible and tappable. Both controls also get trimmed vertical padding to match.
+
+  FNXC:TaskDetail 2026-07-05-00:00:
+  FN-7585 — Priority, Execution-mode, and Oversight (both the desktop chip and
+  the mobile overflow-trigger variant) previously diverged: Priority inherited
+  `.card-priority-badge`'s pill radius with a *transparent* border (so the
+  common `normal` level rendered as borderless text), while Execution-mode and
+  the Oversight mobile trigger are `.btn.btn-sm` pills with `--radius-md` and a
+      visible `--border` color. Add one shared `--detail-control-border-radius`
+  token here so all four controls resolve the same border-radius from a single
+  source; each control below also pins the same `--btn-border-width` width and
+  `--border` color so the cluster reads as one uniform control group. Only the
+  border/radius/size are unified — per-level tint backgrounds (priority
+  low/high/urgent, oversight observe/steer/autonomous/off, execution-mode
+  fast) are untouched.
   */
   --detail-priority-control-min-height: 30px;
+  --detail-control-border-radius: var(--radius-md);
 
   display: flex;
   align-items: stretch;
@@ -384,6 +399,16 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
+  /*
+  FNXC:TaskDetail 2026-07-05-00:00:
+  FN-7585 — override `.card-priority-badge`'s transparent border with a real,
+  visible border so the `normal` level (no `--low/--high/--urgent` tint) still
+  renders as a bordered box instead of borderless text, matching the
+  Execution-mode toggle and Oversight chip/trigger.
+  */
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--detail-control-border-radius);
 }
 
 .detail-priority-chip--saving {
@@ -425,6 +450,15 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
+  /*
+  FNXC:TaskDetail 2026-07-05-00:00:
+  FN-7585 — pin the same shared border/radius token set as the Priority and
+  Oversight controls even though `.btn` already applies a border, so a future
+  change to `.btn`'s defaults cannot silently desync this cluster.
+  */
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--detail-control-border-radius);
 }
 
 .detail-execution-mode-toggle svg {
@@ -461,12 +495,23 @@ already declares (see TaskCard.css) so oversight-level color stays a single
 semantic source, and the same `--detail-priority-control-min-height` chip
 height token as the priority/execution-mode controls above so the cluster
 renders at a uniform height.
+
+FNXC:TaskDetail 2026-07-05-00:00:
+FN-7585 — like `.detail-priority-chip`, override `.card-oversight-badge`'s
+transparent border with the shared `--btn-border-width`/`--border`/
+`--detail-control-border-radius` trio so every oversight level (including
+`--off`, which has a neutral tint) renders the same bordered box as Priority
+and Execution-mode. The mobile `.detail-oversight-menu-trigger` swap below
+gets the identical trio so both oversight variants match.
 */
 .detail-oversight-chip {
   gap: var(--space-xs);
   min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--detail-control-border-radius);
 }
 
 .detail-oversight-chip--saving {
@@ -613,6 +658,16 @@ since the trigger lives in the header cluster rather than the footer, unlike
   min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
+  /*
+  FNXC:TaskDetail 2026-07-05-00:00:
+  FN-7585 — mobile swap-in for `.detail-oversight-chip` (JS `isOversightMenuMobile`
+  swap in TaskDetailModal.tsx). Pin the same shared border/radius trio so the
+  mobile overflow-trigger variant matches the desktop chip and the
+  Priority/Execution-mode controls, per the FN-7585 surface enumeration.
+  */
+  border-width: var(--btn-border-width);
+  border-color: var(--border);
+  border-radius: var(--detail-control-border-radius);
 }
 
 .detail-oversight-menu-trigger svg {
@@ -1658,6 +1713,39 @@ FN-6500 fixes a tablet regression from FN-5599: the task-detail overlay offset a
     display: none;
   }
 
+}
+
+/*
+FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
+FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
+mobile list/modal/nested task-detail surface, layered purely on top of the unchanged
+FN-7583/FN-7586 dismissal routing (popstate / fusion:native-back / useNavigationHistory stack).
+Gated to mobile via `.task-detail-modal--mobile-transition` (TaskDetailModal.tsx local resize
+listener); desktop never receives this class. A true finger-tracked interactive predictive-back
+is not feasible from a Capacitor single-page WebView today — see task FN-7587 notes.
+*/
+@media (max-width: 768px) {
+  .task-detail-modal--mobile-transition {
+    animation: task-detail-modal-mobile-slide-fade-in var(--duration-normal) ease-out;
+  }
+}
+
+@keyframes task-detail-modal-mobile-slide-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--space-xl, 24px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-detail-modal--mobile-transition {
+    animation: none;
+  }
 }
 
 .detail-actions-menu-item-danger {
@@ -2888,6 +2976,17 @@ The original operator prompt is now rendered as Markdown (shared PROMPT.md rende
   color: var(--text-dim);
 }
 
+/*
+FNXC:PlanApproval 2026-07-04-21:35:
+FN-7559: truthful informational label shown instead of the manual Approve/Reject
+Plan affordance when a task's awaiting-approval hold is from release authorization
+(not the manual gate) — auto-approve-all does not bypass this gate.
+*/
+.modal-hold-reason {
+  font-size: 12px;
+  color: var(--triage);
+}
+
 .modal-edit-hint kbd {
   background: var(--card);
   border: 1px solid var(--border);
@@ -3039,6 +3138,19 @@ The body-portaled menu must paint above the owning task-detail modal/popup while
 }
 
 /*
+FNXC:PlannerOversight 2026-07-05-00:00:
+The Interventions Activity segment (FN-7571) renders no `.activity-expand-toggle--overlay`
+button, so it must not reserve the shared `.detail-activity` padding-inline-end that exists
+solely to keep that overlay toggle from covering Live/Feed content. Without this override the
+FN-7519 Intervention Timeline is inset from the right edge (worse on mobile, where the base
+reserved padding grows). FN-7581 zeroes the reserved padding for this segment only; Live/Feed/
+Raw keep the base rule unchanged.
+*/
+.detail-activity--interventions {
+  padding-inline-end: 0;
+}
+
+/*
 FNXC:TaskDetailActivity 2026-07-01-00:00:
 Live and Feed Activity expansion overlays the content instead of reserving a toolbar row. Feed keeps enough tokenized inline padding that the fixed affordance does not cover log text; Raw uses AgentLogViewer's fullscreen button and does not render this Activity toggle.
 */
@@ -3078,6 +3190,11 @@ Live and Feed Activity expansion overlays the content instead of reserving a too
 
   .detail-activity {
     padding-inline-end: calc(var(--space-2xl) + var(--space-lg));
+  }
+
+  /* FNXC:PlannerOversight 2026-07-05-00:00: mobile reserves more padding for the overlay toggle; neutralize it for Interventions too so FN-7519's timeline stays full width on mobile per FN-7581. */
+  .detail-activity--interventions {
+    padding-inline-end: 0;
   }
 
   .activity-expand-toggle {

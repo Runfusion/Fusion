@@ -1,5 +1,12 @@
 import type { InReviewStallSignal } from "./in-review-stall.js";
 import type { PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
+// FNXC:PlannerOversight 2026-07-04-18:00: FN-7563 needs `PlannerOverseerState`/
+// `PlannerOverseerRuntimeSnapshot` as TYPE-ONLY imports in the dashboard's pure
+// `plannerOverseerBadge.ts` helper. The dashboard's vite alias for "@fusion/core"
+// resolves only to this file (types.ts), not the package barrel, so the types must
+// be re-exported here (type-only — no engine/runtime code crosses into the browser
+// bundle) rather than requiring dashboard code to import the source module path.
+export type { PlannerOverseerState, PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
 import type { ModelPricing } from "./model-pricing.js";
 import type { InReviewStalledSignal } from "./in-review-stalled.js";
 import type { StalePausedReviewSignal } from "./stale-paused-review.js";
@@ -2462,6 +2469,35 @@ export interface Task {
    *  recovery retry. Scheduler and triage processor skip tasks whose
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */
   nextRecoveryAt?: string;
+  /*
+   * FNXC:PlanApproval 2026-07-04-21:35:
+   * FN-7559: release authorization (packages/engine/src/triage-release-authorization.ts)
+   * and the ordinary manual plan-approval gate (packages/core/src/plan-approval.ts,
+   * resolvePlanApprovalRequired) both park a task with status "awaiting-approval" and
+   * previously rendered an identical badge/Approve-Plan affordance in the dashboard.
+   * Project auto-approve-all (planApprovalMode: "auto-approve-all") bypasses ONLY the
+   * manual gate — release authorization is an independent safety gate it never skips —
+   * so an operator with auto-approve on could not tell a still-parked release hold from
+   * a (never-fired) manual hold and reasonably concluded auto-approve was broken.
+   * Set to "release-authorization" only by the release-authorization gate; the manual
+   * gate always writes it back to undefined/null so a stale reason from an earlier pass
+   * never survives past the manual gate's own awaiting-approval. Undefined means either
+   * no hold or an ordinary manual-approval hold.
+   */
+  awaitingApprovalReason?: "release-authorization";
+  /*
+   * FNXC:PlanApproval 2026-07-04-22:41:
+   * FN-7569 — records the computePlanApprovalFingerprint (packages/core/src/plan-approval.ts)
+   * hash of the exact PROMPT.md content an operator last approved via POST /tasks/:id/approve-plan.
+   * The manual plan-approval gate (packages/engine/src/triage.ts finalizeApprovedTask) compares this
+   * against the freshly written PROMPT.md on every re-specification (replan, plan-review retry,
+   * self-healing rebound to triage) and skips re-parking at "awaiting-approval" when they match, so an
+   * unchanged, already-approved plan is never re-asked. A genuine spec change produces a different
+   * fingerprint and still re-asks. POST /tasks/:id/reject-plan clears this field (null) alongside
+   * deleting PROMPT.md so the regenerated plan is treated as new. Stores only a hash, never plan text.
+   * Additive-only, nullable: legacy/never-approved rows stay NULL and behave exactly as before.
+   */
+  approvedPlanFingerprint?: string;
   /** Thinking level for AI agent sessions — controls reasoning effort (off/minimal/low/medium/high) */
   thinkingLevel?: ThinkingLevel;
   /** Execution mode for task implementation.
@@ -3637,6 +3673,20 @@ export interface ProjectSettings {
   /** Default custom workflow (WF-…) applied to newly created tasks when the
    *  caller does not specify enabledWorkflowSteps. Overridable per task. */
   defaultWorkflowId?: string;
+  /**
+   * FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
+   * Workflow selected for AI-undo board tasks (`createAiUndoTask`, engine
+   * `task-revert.ts`) — these tasks surgically reverse ALREADY-SHIPPED code
+   * while preserving unrelated later changes to the same files, so they
+   * warrant a stricter default review posture than ordinary new work.
+   * Defaults to `builtin:review-heavy` (see `DEFAULT_PROJECT_SETTINGS`).
+   * Empty/unset means AI-undo tasks inherit the project default workflow
+   * (today's pre-FN-7556 behavior). The route resolving this setting
+   * (`POST /api/tasks/:id/revert`) validates the configured id exists and
+   * falls back to inherit (undefined) on a blank/unknown value so a
+   * misconfigured id never breaks AI-undo task creation.
+   */
+  aiUndoTaskWorkflowId?: string;
   /** Built-in workflow ids visible/selectable in project workflow pickers.
    *  Undefined preserves the default of showing every built-in workflow. */
   enabledBuiltinWorkflowIds?: string[];

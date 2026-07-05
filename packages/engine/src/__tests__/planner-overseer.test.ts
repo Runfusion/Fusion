@@ -251,6 +251,32 @@ describe("PlannerOverseerMonitor.observeTask", () => {
     expect(store.logEntry).toHaveBeenCalledTimes(1);
   });
 
+  // FN-7577: an unchanged heartbeat (same stage/signal/reason) must not re-write
+  // the activity feed on every poll tick — only a CHANGE re-logs; clear() resets
+  // the dedup so a re-run re-logs its first observation.
+  it("dedupes consecutive identical feed entries, re-logs on signal change, resets on clear", async () => {
+    const store = { logEntry: vi.fn().mockResolvedValue(undefined) };
+    const monitor = new PlannerOverseerMonitor({ store });
+    const task = taskFixture({ column: "in-progress" });
+
+    // Three identical healthy ticks → a single feed entry.
+    await monitor.observeTask(task, "observe");
+    await monitor.observeTask(task, "observe");
+    await monitor.observeTask(task, "observe");
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+
+    // Signal flips (executor paused → "blocked") → re-logs once.
+    const paused = { ...task, paused: true, pausedReason: "gate" };
+    await monitor.observeTask(paused, "observe");
+    await monitor.observeTask(paused, "observe");
+    expect(store.logEntry).toHaveBeenCalledTimes(2);
+
+    // clear() drops the dedup key so the next identical observation re-logs.
+    monitor.clear(task.id);
+    await monitor.observeTask(paused, "observe");
+    expect(store.logEntry).toHaveBeenCalledTimes(3);
+  });
+
   it("bounds the per-task ring buffer to the configured cap, keeping the most recent N", async () => {
     const monitor = new PlannerOverseerMonitor({ maxObservationsPerTask: 3 });
     const task = taskFixture({ column: "in-progress" });

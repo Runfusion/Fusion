@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Play, Flag, MessageSquare, Terminal, Shield, GitMerge, PauseCircle, Split, Merge, AlertTriangle, Repeat, ClipboardCheck, ListChecks, Code2, Bell, ToggleRight } from "lucide-react";
+import { Play, Flag, MessageSquare, Terminal, Shield, GitMerge, PauseCircle, Split, Merge, AlertTriangle, Repeat, ClipboardCheck, ListChecks, Code2, Bell, ToggleRight, HelpCircle, DoorOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { nodeConfigSummary } from "./node-summary";
 import { useWorkflowEditorCatalogs } from "./WorkflowEditorCatalogContext";
@@ -34,7 +34,13 @@ export type WorkflowEditorNodeKind =
   | WorkflowNodeKindStepReview
   | WorkflowNodeKindParseSteps
   | "code"
-  | "notify";
+  | "notify"
+  // FN-7579: brainstorming / chat reach-out additions. `ask-user` parks the
+  // task awaiting a user reply (first-class surface over the await-input
+  // park/resume plumbing); `exit-gate` routes the walk early to the terminal
+  // `end` node.
+  | "ask-user"
+  | "exit-gate";
 
 export interface WorkflowFlowNodeData {
   kind: WorkflowEditorNodeKind;
@@ -80,6 +86,8 @@ const KIND_ICON: Record<WorkflowEditorNodeKind, typeof Play> = {
   [WORKFLOW_NODE_KIND_PARSE_STEPS]: ListChecks,
   code: Code2,
   notify: Bell,
+  "ask-user": HelpCircle,
+  "exit-gate": DoorOpen,
 };
 
 /** Shared error-state component (U10): one component renders both the
@@ -270,4 +278,6 @@ export const workflowNodeTypes = {
   "parse-steps": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="parse-steps" />,
   code: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="code" />,
   notify: ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="notify" />,
+  "ask-user": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="ask-user" />,
+  "exit-gate": ({ data }: NodeProps) => <NodeShell data={data as WorkflowFlowNodeData} kind="exit-gate" />,
 };

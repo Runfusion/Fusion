@@ -255,6 +255,21 @@ export class PlannerOverseerMonitor {
   private readonly maxObservationsPerTask: number;
   private readonly observations = new Map<string, OverseerStageObservation[]>();
 
+  /*
+  FNXC:PlannerOversight 2026-07-05-11:00:
+  The overseer logs one activity-feed entry per poll tick. On the healthy path an
+  executor task re-emits the identical `signal=progressing` heartbeat every tick,
+  which spammed the task feed (user report FN-7577) with no new information and no
+  lifecycle change. Dedup the feed write on the composite `stage|signal|reason`
+  key so a log entry is only written when the observed situation CHANGES — mirrors
+  the FN-7514 withheld-oversight dedup ("not re-emitted every poll while the reason
+  is unchanged"). The in-memory ring buffer and `onObservation` callback are left
+  intact (they are cheap / drive downstream emission façades); only the noisy feed
+  logEntry is gated. Cleared alongside the ring buffer in `clear()` so a re-run of
+  the same task re-logs its first observation.
+  */
+  private readonly lastLoggedKey = new Map<string, string>();
+
   constructor(options: PlannerOverseerMonitorOptions = {}) {
     this.store = options.store;
     this.onObservation = options.onObservation;
@@ -299,9 +314,16 @@ export class PlannerOverseerMonitor {
       }
 
       if (this.store?.logEntry) {
-        await this.store
-          .logEntry(task.id, `[planner-overseer] stage=${stage} signal=${signal}: ${reason}`)
-          .catch(() => undefined);
+        // FNXC:PlannerOversight 2026-07-05-11:00 — only write the feed entry when
+        // the observed (stage, signal, reason) differs from the last one logged
+        // for this task, so an unchanged heartbeat does not re-spam the feed.
+        const loggedKey = `${stage}|${signal}|${reason}`;
+        if (this.lastLoggedKey.get(task.id) !== loggedKey) {
+          this.lastLoggedKey.set(task.id, loggedKey);
+          await this.store
+            .logEntry(task.id, `[planner-overseer] stage=${stage} signal=${signal}: ${reason}`)
+            .catch(() => undefined);
+        }
       }
 
       return observation;
@@ -327,6 +349,9 @@ export class PlannerOverseerMonitor {
   /** Clear recorded observations for a task (e.g. on task completion). */
   clear(taskId: string): void {
     this.observations.delete(taskId);
+    // FNXC:PlannerOversight 2026-07-05-11:00 — drop the feed-dedup key too so a
+    // re-run of the same task re-logs its first observation.
+    this.lastLoggedKey.delete(taskId);
   }
 
   /** Task IDs that currently retain at least one recorded observation. Used

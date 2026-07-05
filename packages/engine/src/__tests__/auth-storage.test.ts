@@ -262,6 +262,56 @@ describe("createFusionAuthStorage", () => {
       expect(await authStorage.getApiKey("anthropic-subscription")).toBe("legacy-subscription-access-token");
     });
 
+    it("restores the subscription card when re-login writes the credential under the legacy anthropic id", async () => {
+      // Repro of FN: interactive subscription login persists OAuth under `anthropic`,
+      // but the settings card / status read is keyed on `anthropic-subscription`.
+      // After an in-session logout the subscription id is suppressed; a successful
+      // re-login must clear that suppression on BOTH aliases or the card is stuck
+      // reporting "Login did not complete" despite a valid stored credential.
+      const authStorage = createFusionAuthStorage();
+
+      authStorage.logout("anthropic-subscription");
+      expect(authStorage.hasAuth("anthropic-subscription")).toBe(false);
+
+      // `set` under the legacy id mirrors what interactive login persists.
+      authStorage.set("anthropic", {
+        type: "oauth",
+        access: "relogin-access-token",
+        refresh: "relogin-refresh-token",
+        expires: Date.now() + 3_600_000,
+      });
+
+      expect(authStorage.hasAuth("anthropic-subscription")).toBe(true);
+      expect(await authStorage.getApiKey("anthropic-subscription")).toBe("relogin-access-token");
+    });
+
+    it("restores the subscription card when re-auth writes under the subscription id", async () => {
+      const authStorage = createFusionAuthStorage();
+
+      authStorage.logout("anthropic-subscription");
+      expect(authStorage.hasAuth("anthropic-subscription")).toBe(false);
+
+      authStorage.set("anthropic-subscription", {
+        type: "oauth",
+        access: "subscription-relogin-token",
+        refresh: "subscription-relogin-refresh",
+        expires: Date.now() + 3_600_000,
+      });
+
+      expect(authStorage.hasAuth("anthropic-subscription")).toBe(true);
+    });
+
+    it("does not revive a logged-out subscription card from a raw anthropic API key", async () => {
+      // A raw `anthropic` API key belongs to its own card and must not alias into
+      // the subscription's logged-out state — only OAuth credentials do.
+      const authStorage = createFusionAuthStorage();
+
+      authStorage.logout("anthropic-subscription");
+      authStorage.set("anthropic", { type: "api_key", key: "sk-ant-api03-raw-key" });
+
+      expect(authStorage.hasAuth("anthropic-subscription")).toBe(false);
+    });
+
     it("refreshes legacy Anthropic OAuth in place for direct runtime auth", async () => {
       writeFusionAuth(homeDir, {
         anthropic: {
@@ -390,6 +440,66 @@ describe("createFusionAuthStorage", () => {
         scopes: ["user:profile", "org:create_api_key"],
       });
       expect(persisted.anthropic).toBeUndefined();
+    });
+
+    /*
+    FNXC:ClaudeOAuth 2026-07-05-00:00:
+    FN-7574 symptom verification: a healthy subscription OAuth credential that is still
+    within its validity window but nearing expiry must be refreshed proactively —
+    BEFORE it actually expires — the first time something reads it (e.g. the periodic
+    OAuthRefreshScheduler tick), not only reactively once it has already lapsed.
+    */
+    it("proactively refreshes subscription OAuth nearing expiry, ahead of actual expiration", async () => {
+      const now = Date.now();
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "soon-to-expire-access-token",
+          refresh: "subscription-refresh-token",
+          // Still valid for another 2 minutes — inside the widened proactive-refresh
+          // window, but not yet actually expired.
+          expires: now + 120_000,
+        },
+      });
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          access_token: "proactively-refreshed-access-token",
+          refresh_token: "rotated-refresh-token",
+          expires_in: 3600,
+        }),
+      } as Response);
+      globalThis.fetch = fetchMock as typeof fetch;
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic-subscription")).toBe("proactively-refreshed-access-token");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const refreshed = authStorage.get("anthropic-subscription");
+      expect(refreshed).toMatchObject({ access: "proactively-refreshed-access-token" });
+      expect((refreshed as { expires: number }).expires).toBeGreaterThan(now + 120_000);
+    });
+
+    it("does not proactively refresh subscription OAuth that is not yet within the refresh window", async () => {
+      const now = Date.now();
+      writeFusionAuth(homeDir, {
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "still-fresh-access-token",
+          refresh: "subscription-refresh-token",
+          // Comfortably outside the proactive-refresh buffer.
+          expires: now + 3_600_000,
+        },
+      });
+
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const authStorage = createFusionAuthStorage();
+
+      expect(await authStorage.getApiKey("anthropic-subscription")).toBe("still-fresh-access-token");
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("does not resurrect stale Anthropic subscription OAuth after failed refresh", async () => {

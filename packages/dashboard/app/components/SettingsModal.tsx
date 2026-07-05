@@ -1807,6 +1807,28 @@ export function SettingsModal({
     return () => clearInterval(interval);
   }, [activeSection, authProviders, loadAuthStatus]);
 
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  Interactive OAuth login finishes in the background after the auth URL/paste box is shown, so a failure (bad/expired pasted code, token-exchange rejection) only appears in the polled `/auth/status` as `loginError`. Surface that cause to the user once per distinct error instead of leaving login silently stuck, so paste-callback failures are diagnosable from the UI rather than only "it fails".
+  */
+  const shownLoginErrorsRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const provider of authProviders) {
+      const error = provider.loginError;
+      if (!error) {
+        if (provider.id in shownLoginErrorsRef.current) {
+          delete shownLoginErrorsRef.current[provider.id];
+        }
+        continue;
+      }
+      if (shownLoginErrorsRef.current[provider.id] === error) {
+        continue;
+      }
+      shownLoginErrorsRef.current[provider.id] = error;
+      addToast(`${provider.name} login failed: ${error}`, "error");
+    }
+  }, [authProviders, addToast]);
+
   const scrollSettingsToTop = useCallback(() => {
     settingsContentRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, []);

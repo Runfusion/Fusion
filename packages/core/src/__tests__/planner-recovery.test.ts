@@ -68,6 +68,31 @@ describe("decidePlannerRecovery", () => {
     expect(decision.action).toBe("inject_guidance");
   });
 
+  // FN-7577: a healthy or human-wait signal must NOT trigger autonomous
+  // steering on the executor/workflow-gate fall-through — steering a task that
+  // reports it is progressing flipped every card's badge to "recovering" and
+  // burned AI usage via a needless inject_guidance dispatch. Invariant across
+  // both fall-through stages and both problem/healthy signal classes.
+  it("returns none for healthy/human-wait signals on executor and workflow-gate stages", () => {
+    for (const stage of ["executor", "workflow-gate"] as const) {
+      for (const signal of ["progressing", "complete", "awaiting-human"] as const) {
+        const decision = decidePlannerRecovery({ snapshot: observation({ stage, signal }) });
+        expect(decision.action, `stage=${stage} signal=${signal}`).toBe("none");
+        expect(decision.exhausted, `stage=${stage} signal=${signal}`).toBe(false);
+        expect(decision.requiresConfirmation, `stage=${stage} signal=${signal}`).toBe(false);
+      }
+    }
+  });
+
+  it("still steers on problem signals (stuck/blocked) for executor and workflow-gate stages", () => {
+    for (const stage of ["executor", "workflow-gate"] as const) {
+      for (const signal of ["stuck", "blocked"] as const) {
+        const decision = decidePlannerRecovery({ snapshot: observation({ stage, signal }) });
+        expect(decision.action, `stage=${stage} signal=${signal}`).toBe("inject_guidance");
+      }
+    }
+  });
+
   it("gates merger and pull-request stages behind confirmation (FN-7513) instead of none", () => {
     for (const stage of ["merger", "pull-request"] as const) {
       const decision = decidePlannerRecovery({ snapshot: observation({ stage, signal: "failed" }) });

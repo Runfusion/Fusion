@@ -16,7 +16,19 @@ import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 
 type StoredCredential = StoredAuthCredential;
 
-const OAUTH_REFRESH_BUFFER_MS = 60_000;
+/*
+FNXC:ClaudeOAuth 2026-07-05-00:00:
+FN-7574: a 60s reactive refresh buffer meant a healthy Anthropic subscription token was
+only ever refreshed a few seconds before (or after) it actually expired — too late to
+reliably beat a slow/failed network round trip, so subscriptions routinely lapsed and
+forced a manual re-login even though the refresh token was still valid. Widen the
+proactive-refresh window to 5 minutes so both the reactive getApiKey() path AND the new
+background OAuthRefreshScheduler (see notification/oauth-refresh-scheduler.ts) renew the
+access token well ahead of expiry, without refreshing needlessly often (the scheduler
+runs on a multi-minute interval, and the in-flight dedupe + failure cooldown below still
+apply so a single stuck token doesn't get hammered).
+*/
+const OAUTH_REFRESH_BUFFER_MS = 5 * 60_000;
 const ANTHROPIC_PROVIDER_ID = "anthropic";
 const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
 const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
@@ -337,6 +349,26 @@ export function createFusionAuthStorage(): AuthStorage {
   // Cleared when the user re-authenticates via set().
   const loggedOutProviders = new Set<string>();
 
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  Re-authenticating a provider must clear its in-memory logged-out suppression so the settings card flips back to connected.
+  Anthropic subscription OAuth is aliased across the legacy `anthropic` row — where interactive login persists the credential — and the separated `anthropic-subscription` id, where the card's logged-out flag and status read are keyed. Because a re-login only writes `anthropic`, clearing just the written id left `anthropic-subscription` suppressed: a user who logged out of the subscription earlier in the same dashboard session saw every successful re-login reported as "Login did not complete. Please try again." until the process restarted (the credential was valid on disk the whole time). Clear BOTH aliases when either is re-authenticated. Only OAuth credentials alias this way; a raw `anthropic` API key stays scoped to its own card, so api_key writes never clear the subscription alias.
+  */
+  const clearReauthenticatedLogoutState = (
+    provider: string,
+    credentialType?: StoredCredential["type"],
+  ) => {
+    loggedOutProviders.delete(provider);
+    oauthRefreshCooldownUntil.delete(provider);
+    const isAnthropicAlias =
+      provider === ANTHROPIC_PROVIDER_ID || provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID;
+    const aliasesSubscriptionOAuth = credentialType === undefined || credentialType === "oauth";
+    if (isAnthropicAlias && aliasesSubscriptionOAuth) {
+      loggedOutProviders.delete(ANTHROPIC_PROVIDER_ID);
+      loggedOutProviders.delete(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+    }
+  };
+
   const syncSupplementalOauthCredentials = () => {
     for (const [provider, credential] of Object.entries(supplementalCredentials)) {
       if (loggedOutProviders.has(provider)) {
@@ -617,11 +649,29 @@ export function createFusionAuthStorage(): AuthStorage {
         };
       }
 
+      if (prop === "login") {
+        // Preserve the original invocation semantics (bind `this` to the proxy so
+        // any internal credential writes still flow through the set/logout traps),
+        // and only ADD the alias-aware logged-out clearing on top.
+        const originalLogin = Reflect.get(target, prop, receiver) as (
+          provider: string,
+          callbacks: unknown,
+        ) => Promise<void>;
+        return async (provider: string, callbacks: unknown) => {
+          const result = await originalLogin.call(receiver, provider, callbacks);
+          /*
+          FNXC:ProviderAuth 2026-07-05-00:00:
+          A completed interactive login means the user re-authenticated this provider, so lift its logged-out suppression (and the Anthropic subscription alias) even though the credential is persisted under `anthropic`. Without this, subscription re-login after an in-session logout stays invisible to the status card. See clearReauthenticatedLogoutState.
+          */
+          clearReauthenticatedLogoutState(provider);
+          return result;
+        };
+      }
+
       if (prop === "set") {
         return (provider: string, credential: AuthCredential) => {
           target.set(provider, credential);
-          loggedOutProviders.delete(provider);
-          oauthRefreshCooldownUntil.delete(provider);
+          clearReauthenticatedLogoutState(provider, (credential as StoredCredential | undefined)?.type);
         };
       }
 

@@ -29,7 +29,8 @@
     "showLess": "간략히 보기",
     "showMore": "더 보기",
     "update": "업데이트",
-    "yes": "예"
+    "yes": "예",
+    "clear": ""
   },
   "activityFeed": {
     "emptyHint": "",
@@ -5646,7 +5647,10 @@
       "languageAuto": "자동",
       "languageAutoHint": "브라우저 언어를 따릅니다",
       "suppressTheLdquoNeedsYourInputRdquoBanner": "",
-      "title": "모양"
+      "title": "모양",
+      "openTasksInRightSidebarHelp": "",
+      "openMobileTasksInPopupHelp": "",
+      "taskDetailChatFirstHelp": ""
     },
     "auth": {
       "apiKeyCleared": "API 키가 지워졌습니다",
@@ -5730,7 +5734,8 @@
       "view": "",
       "whenEnabledProjectAndAgentMemoryFilesAre": "",
       "whenEnabledTheDatabaseIsBackedUpAutomatically": "",
-      "createFailed": ""
+      "createFailed": "",
+      "memoryBackupScopeHint": ""
     },
     "clearToDefault": "",
     "cliAgents": {
@@ -5847,7 +5852,19 @@
       "warnOnTheBoardWhenTodoWorkExceeds": "",
       "whenEnabledDefaultFusionSpawnsShortLived": "",
       "whenEnabledFusionChecksOpenAndClosedIssues": "",
-      "workflowsOrChangelogModeWhenContributorsShouldUpdate": ""
+      "workflowsOrChangelogModeWhenContributorsShouldUpdate": "",
+      "aiUndoTaskWorkflow": "",
+      "aiUndoTaskWorkflowInherit": "",
+      "aiUndoTaskWorkflowHelp": "",
+      "workspaceModeHint": "",
+      "allowAbsoluteFileBrowserPathsHint": "",
+      "quickChatLauncherHint": "",
+      "showTaskChatsInCommonFeedHint": "",
+      "whenEnabledImportedGitHubIssuesUseTheirSource": "",
+      "gitLabEnabledHint": "",
+      "allowEphemeralAgentsToCreateTasksHint": "",
+      "quickChatCloseOnOutsideClickHint": "",
+      "disabledFusionWorkflowsAreHiddenFromWorkflow": ""
     },
     "globalGeneral": {
       "andShowsUpdateNoticesInTheCLIAnd": "",
@@ -5877,7 +5894,13 @@
       "whenDisabledToolRowsAreStillLoggedBut": "",
       "whenEnabledDefaultTheDashboardAutomaticallyReloadsWhen": "",
       "whenEnabledFusionChecksNpmForNewVersions": "",
-      "whenEnabledTheDashboardProbesForAGlobally": ""
+      "whenEnabledTheDashboardProbesForAGlobally": "",
+      "gitLabEnabledHint": "",
+      "gitLabInstanceUrlHint": "",
+      "gitLabApiBaseUrlHint": "",
+      "gitLabTokenTypeHint": "",
+      "gitLabAuthTokenHint": "",
+      "dismissModalsByClickingOutsideHint": ""
     },
     "globalModels": {
       "allow": "",
@@ -5922,7 +5945,14 @@
       "usedAutomaticallyIfThePrimaryDefaultModelHits": "",
       "useDefault": "",
       "whenEnabledStartupFetchesTheLatestAvailableModels": "",
-      "whenEnabledStartupRefreshesModelsThroughTheLocal": ""
+      "whenEnabledStartupRefreshesModelsThroughTheLocal": "",
+      "commaSeparatedValuesSentToOpenRouterModelSyncOutputModalities": "",
+      "openRouterRoutingOrderHint": "",
+      "openRouterRoutingIgnoreHint": "",
+      "openRouterRoutingOnlyHint": "",
+      "openRouterAllowFallbacksHint": "",
+      "openRouterRoutingSortHint": "",
+      "requireParametersHint": ""
     },
     "header": {
       "discord": "Discord",
@@ -6153,7 +6183,13 @@
       "planApprovalModeAutoApproveAll": "Auto-approve all tasks",
       "planApprovalModeHelp": "Project-wide override for the planning approval gate. Leave on workflow to use each workflow's Require plan approval setting, or force all approved specs to bypass or wait for manual approval.",
       "planApprovalModeRequireAll": "Require approval for all tasks",
-      "planApprovalModeWorkflow": "Use workflow setting"
+      "planApprovalModeWorkflow": "Use workflow setting",
+      "githubAuthTokenHint": "",
+      "gitLabAuthDetails": "",
+      "gitLabPersonalAccessToken": "",
+      "gitLabAuthTokenHint": "",
+      "includeTaskIdInCommitDefault": "",
+      "trailerEmail": ""
     },
     "mergeManually": "수동으로 병합",
     "mobileNav": {
@@ -6198,7 +6234,8 @@
       "selectedNode": "",
       "theseSettingsApplyAtTheProjectLevel": "",
       "unavailableNodePolicy": "",
-      "usedWhenATaskHasNoNodeOverride": ""
+      "usedWhenATaskHasNoNodeOverride": "",
+      "unavailableNodePolicyHint": ""
     },
     "nodeSync": {
       "alwaysAsk": "",
@@ -6216,7 +6253,9 @@
       "nodeSync": "",
       "syncInterval": "",
       "syncModelAuthCredentials": "",
-      "workflowSettingsNotSynced": ""
+      "workflowSettingsNotSynced": "",
+      "syncIntervalHint": "",
+      "conflictResolutionHint": ""
     },
     "notifications": {
       "accessTokenOptional": "",
@@ -6260,7 +6299,11 @@
       "webhook": "",
       "webhookNotifications": "",
       "webhookURL": "",
-      "yourNtfyShTopicName164Alphanumeric": ""
+      "yourNtfyShTopicName164Alphanumeric": "",
+      "ntfyEnabledHint": "",
+      "webhookEnabledHint": "",
+      "webhookUrlHint": "",
+      "webhookFormatHint": ""
     },
     "plugins": {
       "fusionPlugins": "",
@@ -6308,7 +6351,10 @@
       "useDefault": "",
       "useWorkflowDefault": "",
       "whenEnabledMergeCommitMessagesIncludeAnAI": "",
-      "whenEnabledTasksCreatedWithoutATitleBut": ""
+      "whenEnabledTasksCreatedWithoutATitleBut": "",
+      "autoSelectModelPresetHint": "",
+      "prTitlePromptInstructionsHelp": "",
+      "prDescriptionPromptInstructionsHelp": ""
     },
     "remote": {
       "acceptRoutes": "",
@@ -6376,7 +6422,10 @@
       "uRLNoHostnameOrPortConfigurationNeeded": "",
       "useExisting": "기존 사용",
       "usingQuickTunnel": "",
-      "installationFailed": ""
+      "installationFailed": "",
+      "acceptRoutesHint": "",
+      "shortLivedEnabledHint": "",
+      "shortLivedTtlMsHint": ""
     },
     "researchGlobal": {
       "advancedExternalSearchProviders": "",
@@ -6405,7 +6454,16 @@
       "searXNG": "",
       "searXNGURL": "",
       "tavily": "",
-      "webSearch": ""
+      "webSearch": "",
+      "searXNGURLHint": "",
+      "googleSearchCXHint": "",
+      "maxConcurrentRunsHint": "",
+      "maxSourcesPerRunHint": "",
+      "defaultMaxDurationMsHint": "",
+      "requestTimeoutMsHint": "",
+      "maxSynthesisRoundsHint": "",
+      "gitHubSourceHint": "",
+      "localDocsSourceHint": ""
     },
     "researchProject": {
       "alwaysOn": "",
@@ -6421,7 +6479,12 @@
       "projectResearchSettings": "",
       "requestTimeoutMs": "",
       "webSearch": "",
-      "webSearchIsAlwaysEnabledConfigureTheSearch": ""
+      "webSearchIsAlwaysEnabledConfigureTheSearch": "",
+      "enableResearchInThisProjectHint": "",
+      "maxConcurrentRunsHint": "",
+      "maxSourcesPerRunHint": "",
+      "maxDurationMsHint": "",
+      "requestTimeoutMsHint": ""
     },
     "resolveAllLocal": "모두 해결: 로컬 유지",
     "resolveAllRemote": "모두 해결: 원격 유지",
@@ -6446,7 +6509,12 @@
       "openai": "",
       "retentionDays": "",
       "scheduledEvals": "",
-      "suggestOnly": ""
+      "suggestOnly": "",
+      "enabledHint": "",
+      "intervalMsHint": "",
+      "evaluatorProviderHint": "",
+      "followUpPolicyHint": "",
+      "retentionDaysHint": ""
     },
     "scheduling": {
       "addIgnoredPath": "",
@@ -6500,7 +6568,9 @@
       "browseWorkspacePath": "",
       "overlapPickerNote": "",
       "ignoreHiddenDotPathsHelp": "",
-      "ignoreHiddenDotPathsInOverlapChecks": ""
+      "ignoreHiddenDotPathsInOverlapChecks": "",
+      "maxConcurrentTasksHint": "",
+      "pollIntervalMsHint": ""
     },
     "scope": {
       "globalBanner": "이 설정은 모든 Fusion 프로젝트에서 공유됩니다.",
@@ -6561,7 +6631,11 @@
       "worktrunkBinaryPath": "",
       "worktrunkFailureBehavior": "",
       "worktrunkIntegration": "",
-      "worktreesPickerNote": ""
+      "worktreesPickerNote": "",
+      "showWorktreeGroupingHelp": "",
+      "copyFilesHelp": "",
+      "namingStyleNotApplicableWhenRecycling": "",
+      "howToNameFreshWorktreeDirectories": ""
     },
     "fileBrowser": {
       "currentDirectory": "",
@@ -6571,7 +6645,35 @@
       "globalTitle": "Global MCP servers",
       "projectTitle": "Project MCP servers",
       "globalDescription": "Configure MCP servers shared by all projects. Project settings may override or disable these servers by name.",
-      "projectDescription": "Configure project-specific MCP servers, overrides, and disabled inherited servers."
+      "projectDescription": "Configure project-specific MCP servers, overrides, and disabled inherited servers.",
+      "enabledHint": ""
+    },
+    "search": {
+      "allSections": "",
+      "clear": "",
+      "label": "",
+      "navigationLabel": "",
+      "noMobileOptions": "",
+      "noResults": "",
+      "placeholder": "",
+      "resultCount": ""
+    },
+    "prompts": {
+      "surfaceExplanation": ""
+    },
+    "modelPricing": {
+      "description": ""
+    },
+    "reset": {
+      "button": "",
+      "buttonTitle": "",
+      "dialogAriaLabel": "",
+      "dialogTitle": "",
+      "dialogBody": "",
+      "resetMenuAction": "",
+      "resetAllProjectAction": "",
+      "menuResetSuccess": "",
+      "allProjectResetSuccess": ""
     }
   },
   "setup": {
@@ -7491,7 +7593,8 @@
       "rejected": "계획 거부됨 — {{id}}이(가) 재계획을 위해 Planning으로 반환됨",
       "rejectMessage": "이 계획을 거부하시겠습니까? 명세가 삭제되고 재생성됩니다.",
       "rejectTitle": "계획 거부",
-      "replanning": "{{id}} 재계획 중…"
+      "replanning": "{{id}} 재계획 중…",
+      "releaseAuthorizationHold": ""
     },
     "pr": {
       "awaitingChecks": "PR 검사 대기 중",
@@ -7519,7 +7622,9 @@
     "provenance": {
       "createdBy": "작성자",
       "createdVia": "생성 경로",
-      "parentTaskOf": ""
+      "parentTaskOf": "",
+      "createdToUndo": "",
+      "undoTask": ""
     },
     "recoveryState": "복구 상태",
     "refine": {
@@ -8128,7 +8233,22 @@
     "addressPrFeedbackFailed": "",
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
-    "addressingPrFeedback": ""
+    "addressingPrFeedback": "",
+    "awaitingReleaseAuthorization": "",
+    "revert": "",
+    "revertAiCreated": "",
+    "revertAlreadyOpen": "",
+    "revertAlreadyReverted": "",
+    "revertConflictMessage": "",
+    "revertConflictTitle": "",
+    "revertFailed": "",
+    "revertNeedsHuman": "",
+    "revertNeedsHumanDefault": "",
+    "reverted": "",
+    "revertTask": "",
+    "undoOf": "",
+    "undoOfTitle": "",
+    "undoTask": ""
   },
   "terminal": {
     "arrowKeysLabel": "",

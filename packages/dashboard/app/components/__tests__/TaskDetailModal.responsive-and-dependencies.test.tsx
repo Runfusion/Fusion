@@ -226,6 +226,33 @@ describe("TaskDetailModal", () => {
       expect(css).not.toMatch(/@media \(max-width: 640px\)\s*\{[^}]*\.detail-meta-inline-controls\s*\{[^}]*flex-direction:\s*column;/);
     });
 
+    it("unifies border/radius/height across the Priority, Execution-mode, and Oversight quick controls (FN-7585)", () => {
+      const css = readDashboardStylesSource();
+
+      const inlineControlsBlock = getStandaloneCssRuleBlock(css, ".detail-meta-inline-controls");
+      const priorityChipBlock = getExactCssRuleBlock(css, ".detail-priority-chip");
+      const executionToggleBlock = getExactCssRuleBlock(css, ".detail-execution-mode-toggle");
+      const oversightChipBlock = getExactCssRuleBlock(css, ".detail-oversight-chip");
+      const oversightTriggerBlock = getExactCssRuleBlock(css, ".detail-oversight-menu-trigger");
+
+      // The cluster declares one shared border-radius token; all four controls
+      // must reference it rather than four independent literal radii.
+      expect(inlineControlsBlock).toContain("--detail-control-border-radius: var(--radius-md);");
+      for (const block of [priorityChipBlock, executionToggleBlock, oversightChipBlock, oversightTriggerBlock]) {
+        expect(block).toContain("border-radius: var(--detail-control-border-radius);");
+        expect(block).toContain("border-width: var(--btn-border-width);");
+        expect(block).toContain("border-color: var(--border);");
+        // Same height token as the rest of the invariant.
+        expect(block).toContain("min-height: var(--detail-priority-control-min-height);");
+        expect(block).toContain("box-sizing: border-box;");
+      }
+
+      // Guard against regressing back to four independent literal radius values
+      // (e.g. reintroducing a bare `var(--radius-pill)` on only the chips).
+      expect(priorityChipBlock).not.toMatch(/border-radius:\s*var\(--radius-pill\)/);
+      expect(oversightChipBlock).not.toMatch(/border-radius:\s*var\(--radius-pill\)/);
+    });
+
     it("keeps grouped timestamp metadata inline on desktop and mobile", () => {
       const css = readDashboardStylesSource();
 

@@ -82,10 +82,33 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return undefined;
   }
 
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  FN-7574: an expired-and-unrefreshable subscription OAuth credential was reported as
+  `authenticated:true` on the settings card and never surfaced the re-login banner,
+  even though OAuthExpiryMonitor (engine side) had already fired the oauth-token-expired
+  notification for the same credential. Root cause enumerated in task notes: a stored
+  OAuth-typed credential with a missing/non-numeric `expires` field was previously
+  treated as "not expired" here, while `resolveOAuthApiKey`/`getApiKey` in
+  packages/engine/src/auth-storage.ts already treat a missing numeric `expires` as
+  unusable (never yields a runtime key). Make the status predicate fail-safe: a stored
+  OAuth credential without a usable numeric expiry now reports `expired:true` (shows as
+  not-connected) rather than silently claiming a live session it cannot actually use.
+  OAuthExpiryMonitor intentionally keeps its separate skip-and-don't-notify behavior for
+  unknown-expiry credentials (see oauth-expiry-monitor.ts) — the notification channel
+  should stay conservative about spamming, while this "are you logged in" status surface
+  should stay conservative about claiming a live session.
+  */
   function isExpiredOauthCredential(providerId: string, storage: AuthStorageLike): boolean {
     const credential = getOauthStatusCredential(providerId, storage);
-    if (!credential || typeof credential.expires !== "number") {
+    if (!credential) {
       return false;
+    }
+    if (typeof credential.expires !== "number" || !Number.isFinite(credential.expires)) {
+      // A stored OAuth credential with no usable expiry can never mint a runtime API
+      // key (see resolveOAuthApiKey in auth-storage.ts), so treat it as expired rather
+      // than authenticated.
+      return true;
     }
 
     return Date.now() >= credential.expires;
@@ -111,6 +134,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * Maps provider ID → pending interactive login state.
    */
   const loginInProgress = new Map<string, PendingLogin>();
+
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  Interactive OAuth login (e.g. Anthropic subscription paste-callback flow) resolves the auth URL to the client immediately, then the real login continues in the background. When the background `storage.login` rejects — bad/expired code, token-exchange rejection, redirect_uri mismatch — that error was previously dropped on the floor: `rejectAuthInfo` is a no-op once the auth URL has been sent, and nothing logged or surfaced it. The UI (which only polls `/auth/status`) then showed a generic "login failed" with no cause, making the failure undiagnosable for both users and maintainers.
+  Retain the last background login error per provider so `/auth/status` can report why it failed, and always log it server-side. Cleared when a fresh login for the same provider starts.
+  */
+  const lastLoginError = new Map<string, string>();
 
   const OAUTH_SESSION_TTL_MS = 5 * 60 * 1000;
   const oauthSessions = new Map<string, { port: number; path: string; originalRedirectUri: string; expiresAt: number }>();
@@ -251,6 +281,23 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return providerId === "github-copilot";
   }
 
+  function parseManualOAuthCallbackUrl(input: string): URL | undefined {
+    const trimmed = input.trim();
+    const candidates = [trimmed];
+    if (/^(?:localhost|127\.0\.0\.1|\[::1\])(?::|\/)/i.test(trimmed)) {
+      candidates.unshift(`http://${trimmed}`);
+    }
+
+    for (const candidate of candidates) {
+      try {
+        return new URL(candidate);
+      } catch {
+        // Try the next representation.
+      }
+    }
+    return undefined;
+  }
+
   function normalizeManualOAuthInputForProvider(providerId: string, input: string): string {
     if (providerId !== "anthropic" && providerId !== "openai-codex") {
       return input.trim();
@@ -262,10 +309,13 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     }
 
     try {
-      const url = new URL(trimmed);
+      const url = parseManualOAuthCallbackUrl(trimmed);
+      if (!url) {
+        throw new Error("not a URL");
+      }
       const searchCode = url.searchParams.get("code");
       if (searchCode) {
-        if (url.protocol === "http:" || url.protocol === "https:") {
+        if (providerId === "openai-codex" && (url.protocol === "http:" || url.protocol === "https:")) {
           return trimmed;
         }
         const normalized = new URLSearchParams();
@@ -291,6 +341,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       FNXC:ProviderAuth 2026-07-04-00:00:
       Anthropic subscription and Codex pasted-login flows must accept the exact browser address bar after redirect, including providers/browsers that place OAuth `code` and `state` in the URL fragment or omit the URL scheme.
       The upstream CLI parser treats a syntactically valid URL as search-only and schemeless localhost text as raw parameters, so normalize callback inputs to query-param text before resolving the pending manual-code prompt.
+      Also keep the raw callback URL parseable for server-side callback delivery when the browser cannot reach the local OAuth listener itself.
       */
       const normalized = new URLSearchParams();
       normalized.set("code", hashCode);
@@ -317,6 +368,33 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
       return trimmed;
+    }
+  }
+
+  async function deliverManualOAuthCallbackToLocalListener(providerId: string, input: string): Promise<void> {
+    if (providerId !== "anthropic") {
+      return;
+    }
+
+    const url = parseManualOAuthCallbackUrl(input);
+    if (!url || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+      return;
+    }
+
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    if (!code || !state || !url.port) {
+      return;
+    }
+
+    const callbackUrl = new URL(`http://127.0.0.1:${url.port}${url.pathname}`);
+    callbackUrl.searchParams.set("code", code);
+    callbackUrl.searchParams.set("state", state);
+
+    try {
+      await fetch(callbackUrl, { method: "GET", signal: AbortSignal.timeout(3_000) });
+    } catch {
+      // Fall back to resolving the pending manual-code prompt below.
     }
   }
 
@@ -403,6 +481,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         keyHint?: string;
         loginInProgress?: boolean;
         requiresManualCode?: boolean;
+        loginError?: string;
       }[] = await Promise.all(oauthProviders.map(async (p) => {
         const statusProvider = toAuthStatusProvider(p);
         const storageProviderId = toOauthCredentialProviderId(statusProvider.id);
@@ -430,6 +509,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           expired,
           loginInProgress: loginInProgress.has(statusProvider.id),
           requiresManualCode: getManualCodeConfig(toOauthLoginProviderId(statusProvider.id), origin) !== undefined || undefined,
+          loginError: lastLoginError.get(statusProvider.id),
         };
       }));
 
@@ -1011,6 +1091,9 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         throw conflict(`Login already in progress for ${provider}`);
       }
 
+      // Fresh login attempt clears any prior background failure for this provider.
+      lastLoginError.delete(provider);
+
       const storage = getAuthStorage();
       const oauthProviders = storage.getOAuthProviders();
       const found = oauthProviders.find((p) => p.id === provider || p.id === storageProvider);
@@ -1130,7 +1213,16 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         })
         .catch((err: unknown) => {
           // Login failed — also reject auth URL if not yet received
-          rejectAuthInfo(err instanceof Error ? err : new Error(String(err)));
+          const error = err instanceof Error ? err : new Error(String(err));
+          // Surface the real cause: reject the auth-URL promise if it hasn't
+          // resolved yet, and always retain + log the error. Once the auth URL
+          // is already sent, rejectAuthInfo is a no-op, so this retained error
+          // is the only channel by which the client learns why login failed.
+          rejectAuthInfo(error);
+          if (error.message !== "cancelled") {
+            lastLoginError.set(provider, error.message);
+            console.error(`[auth/login] background login failed for ${provider}: ${error.message}`);
+          }
         })
         .finally(() => {
           clearTimeout(timeout);
@@ -1206,7 +1298,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
    * Body: { provider: string, code: string }
    * Response: { success: true, submitted: boolean }
    */
-  router.post("/auth/manual-code", (req, res) => {
+  router.post("/auth/manual-code", async (req, res) => {
     try {
       const { provider, code } = req.body;
       if (!provider || typeof provider !== "string") {
@@ -1226,8 +1318,10 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         return;
       }
 
+      const storageProvider = toOauthLoginProviderId(provider);
       activeLogin.inputSubmitted = true;
-      activeLogin.resolveInput(normalizeManualOAuthInputForProvider(toOauthLoginProviderId(provider), code));
+      await deliverManualOAuthCallbackToLocalListener(storageProvider, code);
+      activeLogin.resolveInput(normalizeManualOAuthInputForProvider(storageProvider, code));
       res.json({ success: true, submitted: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

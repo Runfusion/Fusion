@@ -41,6 +41,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   TERMINAL_FONT_FAMILY_PRESETS,
   clampTerminalFontSize,
+  forceTerminalFontRemeasure,
   readTerminalPreferences,
   resolveTerminalFontFamily,
   resolveTerminalGlyphFontFamily,
@@ -1250,11 +1251,35 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         /*
         FNXC:Terminal 2026-06-18-07:23:
         FN-6638 recurrence #4 showed the previous symbols-last stack-order fix was inert: the supplied diagnostic measured AGENTS.md at the same 66.76px for symbols-first, symbols-last, and system-mono stacks while real iOS Safari still widened ASCII cells. xterm measures cell geometry at open() time, so after best-effort FontFaceSet settlement we must always reapply the active preset's font options, fit, resize, and refresh; that invalidates stale DOM/canvas metrics on real iOS when the full shorthand is rejected and keeps desktop WebGL using the same renderer-neutral metric refresh.
+
+        FNXC:Terminal 2026-07-04-09:35:
+        FN-7561 recurrence #3: reassigning `fontFamily` to the SAME already-resolved value (the common case, since preferences are unchanged) is a no-op against real xterm's OptionsService — no `onOptionChange` fires, so CharSizeService/DomRenderer never remeasure the web font that only just finished loading. Force a genuine value transition via `forceTerminalFontRemeasure` so the character/cell metrics and `_setDefaultSpacing()` letter-spacing compensation are recomputed against the settled font on every settle, not just when the preference itself changed.
+
+        FNXC:Terminal 2026-07-04-11:35:
+        FN-7567 recurrence #4: forcing the remeasure above is necessary but not
+        sufficient. Real xterm's `DomRenderer._setDefaultSpacing()` (the
+        letter-spacing compensation baked onto `.xterm-rows`, computed as
+        `dimensions.css.cell.width - widthCache.get('W')`) only recomputes from
+        `handleCharSizeChanged()` (wired to `CharSizeService.onCharSizeChange`,
+        i.e. exactly what `forceTerminalFontRemeasure` above triggers) and from
+        `handleDevicePixelRatioChange()` — NEVER from `handleResize()`, which is
+        what `fitAddon.fit()` -> `terminal.resize(cols, rows)` triggers. Calling
+        `forceTerminalFontRemeasure` BEFORE `fitAddon.fit()` bakes spacing
+        against the column count that predates the fit, so once fit() changes
+        the column count (and therefore the true cell width) the baked spacing
+        goes stale and stays wrong until an unrelated later event (DPR change,
+        orientation) coincidentally forces another genuine option/DPR-change
+        remeasure — exactly the reported "only repairs itself after an
+        incidental refit" symptom. Force a SECOND genuine remeasure AFTER
+        `fitAddon.fit()` settles the column count so the letter-spacing bake is
+        recomputed against the FINAL geometry, not the pre-fit one. See
+        `docs/solutions/ui-bugs/xterm-options-noop-remeasure-after-font-settle.md`.
         */
-        terminal.options.fontFamily = resolvedFontFamilyRef.current;
+        forceTerminalFontRemeasure(terminal, resolvedFontFamilyRef.current);
         terminal.options.fontSize = fontSizeRef.current;
         fitAddon.fit();
         resizeRef.current?.(terminal.cols, terminal.rows);
+        forceTerminalFontRemeasure(terminal, resolvedFontFamilyRef.current);
         terminal.refresh(0, Math.max(0, terminal.rows - 1));
       } catch {
         // Ignore fit/refresh errors during teardown or viewport transitions.
@@ -1753,7 +1778,22 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     // Defer fit until the next frame so layout reflects the new font metrics
     // before FitAddon measures rows/cols. Reuse pendingFitRef so font changes and
     // visualViewport-triggered fits are coalesced into a single scheduled fit.
-    const scheduleRefit = () => {
+    /*
+    FNXC:Terminal 2026-07-04-11:40:
+    FN-7567 recurrence #4: `rebakeSpacingAfterFit` is set only by the settled
+    (font-metrics-ready) call site below. Real xterm's `DomRenderer._setDefaultSpacing()`
+    letter-spacing bake only recomputes from a genuine option-change remeasure,
+    never from `handleResize()` (what `fitAddon.fit()` triggers), so a settle
+    that calls `forceTerminalFontRemeasure()` and THEN fits must force one more
+    genuine remeasure AFTER the fit to re-bake spacing against the FINAL
+    (post-fit) column count — otherwise the bake stays computed against the
+    stale pre-fit column count until an unrelated later event happens to force
+    another remeasure. The unsettled immediate frame intentionally does not
+    rebake: at that point the web font has not necessarily loaded yet, so
+    forcing another remeasure there would just re-bake against the same
+    (possibly still-fallback) metrics.
+    */
+    const scheduleRefit = (rebakeSpacingAfterFit = false) => {
       if (pendingFitRef.current !== null) {
         cancelAnimationFrame(pendingFitRef.current);
         pendingFitRef.current = null;
@@ -1766,6 +1806,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         }
         refitTerminal();
         xtermRef.current?.refresh?.(0, Math.max(0, xtermRef.current.rows - 1));
+        if (rebakeSpacingAfterFit && xtermRef.current) {
+          forceTerminalFontRemeasure(xtermRef.current, resolvedFontFamily);
+        }
       });
       pendingFitRef.current = frame;
       return frame;
@@ -1776,6 +1819,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     /*
     FNXC:Terminal 2026-06-30-13:18:
     The mobile screenshot recurrence happens at the visible 10px setting with the soft keyboard already open. A live font-size preference change must wait for the symbols-free measured stack to settle, then reapply xterm font options, refit, resize, and refresh; otherwise canvas/DOM metrics can keep the old wider cells until an unfold/orientation event forces a later measurement.
+
+    FNXC:Terminal 2026-07-04-09:35:
+    FN-7561 recurrence #3: the two equality checks below only guard against a STALE out-of-order settle (a newer preference change landed first); when the values already match the current snapshot (the common initial-load case: preferences did not actually change) a plain reassignment is a no-op against real xterm's OptionsService, so CharSizeService/DomRenderer never remeasure the font that just finished loading. Use `forceTerminalFontRemeasure` so a genuine value transition always occurs on settle, regardless of whether the resolved value already equals the terminal's current option value.
     */
     void waitForTerminalFontMetrics(terminalPreferences.fontSize, resolvedFontFamily).then(
       (fontMetricsSettled) => {
@@ -1788,9 +1834,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         ) {
           return;
         }
-        xtermRef.current.options.fontFamily = resolvedFontFamily;
+        forceTerminalFontRemeasure(xtermRef.current, resolvedFontFamily);
         xtermRef.current.options.fontSize = terminalPreferences.fontSize;
-        scheduleRefit();
+        scheduleRefit(true);
       },
       () => {
         // FontFaceSet failures are non-fatal; the immediate frame above still
@@ -2187,6 +2233,96 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       : {}),
   } as CSSProperties;
 
+  /*
+  FNXC:TerminalFooter 2026-07-04-20:00:
+  Single source of truth for the terminal action-control cluster (reconnect/restart,
+  font-size, Clear, Shortcuts toggle, Preferences toggle, connection status, exit code,
+  help text, and the desktop-only pin/pop-out toggles). Rendered in exactly ONE place
+  per breakpoint: inside the header `.terminal-actions` on desktop/floating/pinned-below
+  (FN-7502), or inside a dedicated bottom `.terminal-status-bar` footer on mobile (FN-7560)
+  so the narrow mobile header does not crowd the tab dropdown and close button. Do not
+  duplicate these handlers elsewhere — always render this fragment.
+  */
+  const terminalActionControls = (
+    <>
+      {connectionStatus === "disconnected" && activeTab && (
+        <button
+          className="terminal-reconnect-btn"
+          onClick={reconnect}
+          title={t("terminal.reconnect", "Reconnect")}
+          data-testid="terminal-reconnect-btn"
+        >
+          <RefreshCw size={14} />
+          <span className="terminal-action-label">{t("terminal.reconnect", "Reconnect")}</span>
+        </button>
+      )}
+      {exitCode !== null && (
+        <button
+          className="terminal-restart-btn"
+          onClick={handleRestart}
+          title={t("terminal.newSession", "New Session")}
+          data-testid="terminal-restart-btn"
+        >
+          <RefreshCw size={14} />
+          <span className="terminal-action-label">{t("terminal.newSession", "New Session")}</span>
+        </button>
+      )}
+      <span className="terminal-font-size-controls terminal-font-size-controls--header">
+        <button type="button" className="terminal-font-size-btn" onClick={handleDecreaseFontSize} data-testid="terminal-font-size-decrease" aria-label={t("terminal.decreaseFontSize", "Decrease terminal font size")}>
+          <Minus size={14} />
+        </button>
+        <span className="terminal-font-size-value" data-testid="terminal-font-size-value">{fontSize}{TERMINAL_KEY_LABELS.pxUnit}</span>
+        <button type="button" className="terminal-font-size-btn" onClick={handleIncreaseFontSize} data-testid="terminal-font-size-increase" aria-label={t("terminal.increaseFontSize", "Increase terminal font size")}>
+          <Plus size={14} />
+        </button>
+      </span>
+      <button className="terminal-clear-btn" onClick={handleClear} data-testid="terminal-clear-btn" title={t("terminal.clearTerminal", "Clear terminal")}>
+        <Trash2 size={14} />
+        <span className="terminal-action-label">{t("terminal.clear", "Clear")}</span>
+      </button>
+      <button className="terminal-clear-btn terminal-clear-btn--shortcut" onClick={() => setShowShortcuts((current) => !current)} data-testid="terminal-shortcut-toggle" title={t("terminal.shortcuts", "Shortcuts")} aria-pressed={showShortcuts}>
+        <Keyboard size={14} />
+        <span className="terminal-action-label">{t("terminal.shortcuts", "Shortcuts")}</span>
+      </button>
+      <button className="terminal-clear-btn terminal-clear-btn--shortcut" onClick={() => setShowPreferences((current) => !current)} data-testid="terminal-preferences-toggle" title={t("terminal.preferences", "Preferences")} aria-pressed={showPreferences}>
+        <Settings size={14} />
+        <span className="terminal-action-label">{t("terminal.preferences", "Preferences")}</span>
+      </button>
+      <span className={`terminal-connection-status ${connectionStatus}`}>
+        {connectionStatus === "connected" && t("terminal.statusConnected", "Connected")}
+        {connectionStatus === "connecting" && t("terminal.statusConnecting", "Connecting...")}
+        {connectionStatus === "reconnecting" && t("terminal.statusReconnecting", "Reconnecting...")}
+        {connectionStatus === "disconnected" && t("terminal.statusDisconnected", "Disconnected")}
+      </span>
+      {exitCode !== null && <span className="terminal-exit-code" data-testid="terminal-exit-code">{t("terminal.exitLabel", "Exit: {{code}}", { code: exitCode })}</span>}
+      <span className="terminal-shortcuts terminal-shortcuts--header">{t("terminal.helpText", "Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close")}</span>
+      {!isMobileTerminal && (
+        <button
+          className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
+          onClick={handleToggleBelowMode}
+          data-testid="terminal-pin-toggle"
+          title={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
+          aria-label={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
+          aria-pressed={isBelowMode}
+        >
+          {isBelowMode ? <PinOff size={14} /> : <Pin size={14} />}
+        </button>
+      )}
+      {!isMobileTerminal && (
+        <button
+          className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
+          onClick={handleToggleDisplayMode}
+          data-testid="terminal-popout-toggle"
+          title={displayMode === "floating" ? t("terminal.dockTerminal", "Dock terminal") : t("terminal.popOutTerminal", "Pop out terminal")}
+          aria-label={displayMode === "floating" ? t("terminal.dockTerminal", "Dock terminal") : t("terminal.popOutTerminal", "Pop out terminal")}
+          aria-pressed={displayMode === "floating"}
+        >
+          {displayMode === "floating" ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
+      )}
+    </>
+  );
+
   const terminalPanel = (
     <div
       ref={modalRef}
@@ -2421,107 +2557,60 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             </div>
           )}
           
-          {/* Status indicator */}
-          <div className="terminal-title" data-testid="terminal-title">
-            <TerminalIcon size={16} />
-            {getStatusIndicator()}
-          </div>
-          
-          {/* Actions — labels hidden on mobile via .terminal-action-label */}
-          <div className="terminal-actions" data-testid="terminal-actions">
-            {connectionStatus === "disconnected" && activeTab && (
-              <button
-                className="terminal-reconnect-btn"
-                onClick={reconnect}
-                title={t("terminal.reconnect", "Reconnect")}
-                data-testid="terminal-reconnect-btn"
-              >
-                <RefreshCw size={14} />
-                <span className="terminal-action-label">{t("terminal.reconnect", "Reconnect")}</span>
-              </button>
-            )}
-            {exitCode !== null && (
-              <button
-                className="terminal-restart-btn"
-                onClick={handleRestart}
-                title={t("terminal.newSession", "New Session")}
-                data-testid="terminal-restart-btn"
-              >
-                <RefreshCw size={14} />
-                <span className="terminal-action-label">{t("terminal.newSession", "New Session")}</span>
-              </button>
-            )}
-            {/*
-            FNXC:TerminalHeader 2026-07-04-19:16:
-            Footer controls live in the terminal header so docked, floating, pinned-below, and mobile layouts keep terminal actions reachable without spending a separate footer row. The pin button mirrors the right sidebar contract: aria-pressed means the persistent below-application push layout is active.
-            */}
-            <span className="terminal-font-size-controls terminal-font-size-controls--header">
-              <button type="button" className="terminal-font-size-btn" onClick={handleDecreaseFontSize} data-testid="terminal-font-size-decrease" aria-label={t("terminal.decreaseFontSize", "Decrease terminal font size")}>
-                <Minus size={14} />
-              </button>
-              <span className="terminal-font-size-value" data-testid="terminal-font-size-value">{fontSize}{TERMINAL_KEY_LABELS.pxUnit}</span>
-              <button type="button" className="terminal-font-size-btn" onClick={handleIncreaseFontSize} data-testid="terminal-font-size-increase" aria-label={t("terminal.increaseFontSize", "Increase terminal font size")}>
-                <Plus size={14} />
-              </button>
-            </span>
-            <button className="terminal-clear-btn" onClick={handleClear} data-testid="terminal-clear-btn" title={t("terminal.clearTerminal", "Clear terminal")}>
-              <Trash2 size={14} />
-              <span className="terminal-action-label">{t("terminal.clear", "Clear")}</span>
-            </button>
-            <button className="terminal-clear-btn terminal-clear-btn--shortcut" onClick={() => setShowShortcuts((current) => !current)} data-testid="terminal-shortcut-toggle" title={t("terminal.shortcuts", "Shortcuts")} aria-pressed={showShortcuts}>
-              <Keyboard size={14} />
-              <span className="terminal-action-label">{t("terminal.shortcuts", "Shortcuts")}</span>
-            </button>
-            <button className="terminal-clear-btn terminal-clear-btn--shortcut" onClick={() => setShowPreferences((current) => !current)} data-testid="terminal-preferences-toggle" title={t("terminal.preferences", "Preferences")} aria-pressed={showPreferences}>
-              <Settings size={14} />
-              <span className="terminal-action-label">{t("terminal.preferences", "Preferences")}</span>
-            </button>
-            <span className={`terminal-connection-status ${connectionStatus}`}>
-              {connectionStatus === "connected" && t("terminal.statusConnected", "Connected")}
-              {connectionStatus === "connecting" && t("terminal.statusConnecting", "Connecting...")}
-              {connectionStatus === "reconnecting" && t("terminal.statusReconnecting", "Reconnecting...")}
-              {connectionStatus === "disconnected" && t("terminal.statusDisconnected", "Disconnected")}
-            </span>
-            {exitCode !== null && <span className="terminal-exit-code" data-testid="terminal-exit-code">{t("terminal.exitLabel", "Exit: {{code}}", { code: exitCode })}</span>}
-            <span className="terminal-shortcuts terminal-shortcuts--header">{t("terminal.helpText", "Ctrl++/- zoom • ⌨ Shortcuts panel • Esc close")}</span>
-            {!isMobileTerminal && (
-              <button
-                className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
-                onClick={handleToggleBelowMode}
-                data-testid="terminal-pin-toggle"
-                title={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
-                aria-label={isBelowMode ? t("terminal.unpinTerminal", "Unpin terminal (overlay content)") : t("terminal.pinTerminal", "Pin terminal (push content)")}
-                aria-pressed={isBelowMode}
-              >
-                {isBelowMode ? <PinOff size={14} /> : <Pin size={14} />}
-              </button>
-            )}
-            {/*
-            FNXC:Terminal 2026-06-23-00:15:
-            Clear / Shortcuts / Preferences moved OUT of the header actions and DOWN into the bottom status bar (footer) next to the text-size control, so the header keeps only contextual reconnect/restart, the icon-only pop-out toggle, and close.
-            The pop-out/dock toggle is now ICON-ONLY (no visible "Pop out"/"Dock" text); the icon flips and the title/aria-label still announce the toggle target for accessibility.
-            */}
-            {!isMobileTerminal && (
-              <button
-                className="terminal-clear-btn terminal-clear-btn--shortcut terminal-clear-btn--icon"
-                onClick={handleToggleDisplayMode}
-                data-testid="terminal-popout-toggle"
-                title={displayMode === "floating" ? t("terminal.dockTerminal", "Dock terminal") : t("terminal.popOutTerminal", "Pop out terminal")}
-                aria-label={displayMode === "floating" ? t("terminal.dockTerminal", "Dock terminal") : t("terminal.popOutTerminal", "Pop out terminal")}
-                aria-pressed={displayMode === "floating"}
-              >
-                {displayMode === "floating" ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-              </button>
-            )}
+          {/*
+          FNXC:TerminalFooter 2026-07-04-20:00:
+          On desktop/floating/pinned-below the header keeps its FN-7502 shape:
+          status title + `.terminal-actions` (rendering the shared
+          `terminalActionControls` fragment) + close. On mobile (isMobileTerminal)
+          the header renders ONLY the close button here — no `.terminal-actions`
+          shell — because the mobile tab dropdown already occupies the header and
+          the action controls move into the `.terminal-status-bar` footer below
+          (FN-7560) so they don't crowd the dropdown/close. Both sites render the
+          SAME fragment, never a duplicated copy, so handlers cannot drift.
+
+          FNXC:TerminalHeader 2026-07-04-20:45:
+          FN-7565: on mobile, being a direct child of `.terminal-header` (not
+          nested in `.terminal-actions`) is necessary but not sufficient to land
+          in the top-right corner — flex items without an explicit `order` fall
+          back to `order: 0`, which sorts BEFORE `.terminal-mobile-tabs`
+          (`order: 1`) and `.terminal-workspace-picker` (`order: 2`), pushing the
+          close button to the far LEFT of the header instead of the corner users
+          expect for an app-sheet close control. The `terminal-close--corner`
+          class (CSS: highest `order` + `margin-inline-start: auto`) fixes this
+          so the X renders last in flex order and hugs the right edge regardless
+          of how wide the tab dropdown / workspace picker grow.
+          */}
+          {isMobileTerminal ? (
             <button
-              className="terminal-close"
+              className="terminal-close terminal-close--corner"
               onClick={onClose}
               data-testid="terminal-close-btn"
               title={t("terminal.closeTerminal", "Close terminal")}
             >
               <X size={20} />
             </button>
-          </div>
+          ) : (
+            <>
+              {/* Status indicator */}
+              <div className="terminal-title" data-testid="terminal-title">
+                <TerminalIcon size={16} />
+                {getStatusIndicator()}
+              </div>
+
+              {/* Actions — labels hidden on mobile via .terminal-action-label */}
+              <div className="terminal-actions" data-testid="terminal-actions">
+                {terminalActionControls}
+                <button
+                  className="terminal-close"
+                  onClick={onClose}
+                  data-testid="terminal-close-btn"
+                  title={t("terminal.closeTerminal", "Close terminal")}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Error message */}
@@ -2788,6 +2877,22 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
             >
               {t("terminal.resetPreferences", "Reset to defaults")}
             </button>
+          </div>
+        )}
+
+        {/*
+        FNXC:TerminalFooter 2026-07-04-20:00:
+        Mobile-only footer bar (FN-7560) restoring the pre-FN-7502 footer
+        ergonomics: the same `terminalActionControls` fragment used by the
+        desktop header renders here instead so font-size/Clear/Shortcuts/
+        Preferences/connection-status/exit-code stay reachable without
+        crowding the mobile header's tab dropdown and close button. Scrolls
+        horizontally (min-width: 0 + overflow-x: auto) if controls exceed the
+        viewport width, matching the .terminal-shortcut-panel (FN-7550) pattern.
+        */}
+        {isMobileTerminal && (
+          <div className="terminal-status-bar" data-testid="terminal-footer-actions">
+            {terminalActionControls}
           </div>
         )}
 

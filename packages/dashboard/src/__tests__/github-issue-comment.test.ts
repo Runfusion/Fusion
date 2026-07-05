@@ -1,7 +1,12 @@
 import { EventEmitter } from "node:events";
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { TaskStore } from "@fusion/core";
-import { DEFAULT_COMMENT_TEMPLATE, GitHubIssueCommentService } from "../github-issue-comment.js";
+import {
+  computeNextMinorVersion,
+  DEFAULT_COMMENT_TEMPLATE,
+  GitHubIssueCommentService,
+  isFusionSelfRepo,
+} from "../github-issue-comment.js";
 
 const { mockCommentOnIssue } = vi.hoisted(() => ({
   mockCommentOnIssue: vi.fn(),
@@ -30,6 +35,10 @@ class MockStore extends EventEmitter {
   setSettings(settings: Record<string, unknown>): void {
     this.settings = settings;
   }
+
+  getRootDir(): string {
+    return "/tmp/github-issue-comment-test";
+  }
 }
 
 function createTask(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -49,15 +58,65 @@ async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+describe("isFusionSelfRepo", () => {
+  it("matches the canonical slug", () => {
+    expect(isFusionSelfRepo("runfusion/fusion")).toBe(true);
+  });
+
+  it("matches case-insensitively and trims whitespace", () => {
+    expect(isFusionSelfRepo("Runfusion/Fusion")).toBe(true);
+    expect(isFusionSelfRepo("  runfusion/fusion  ")).toBe(true);
+    expect(isFusionSelfRepo("RUNFUSION/FUSION")).toBe(true);
+  });
+
+  it("does not match other repos", () => {
+    expect(isFusionSelfRepo("owner/repo")).toBe(false);
+    expect(isFusionSelfRepo("runfusion/other")).toBe(false);
+    expect(isFusionSelfRepo("other/fusion")).toBe(false);
+  });
+});
+
+describe("computeNextMinorVersion", () => {
+  it("bumps the minor version and resets patch to 0", () => {
+    expect(computeNextMinorVersion("0.55.0")).toBe("0.56.0");
+  });
+
+  it("resets patch to 0 for a non-zero patch", () => {
+    expect(computeNextMinorVersion("1.2.9")).toBe("1.3.0");
+  });
+
+  it("tolerates a leading v prefix", () => {
+    expect(computeNextMinorVersion("v0.55.0")).toBe("0.56.0");
+  });
+
+  it("ignores pre-release/build suffixes", () => {
+    expect(computeNextMinorVersion("0.55.0-beta.1")).toBe("0.56.0");
+  });
+
+  it("returns null for the unresolved 0.0.0 sentinel", () => {
+    expect(computeNextMinorVersion("0.0.0")).toBeNull();
+  });
+
+  it("returns null for unparseable input", () => {
+    expect(computeNextMinorVersion("not-a-version")).toBeNull();
+    expect(computeNextMinorVersion("")).toBeNull();
+  });
+});
+
 describe("GitHubIssueCommentService", () => {
   let store: MockStore;
   let service: GitHubIssueCommentService;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCommentOnIssue.mockResolvedValue(undefined);
     store = new MockStore({ githubCommentOnDone: true });
-    service = new GitHubIssueCommentService(store as unknown as TaskStore, () => "ghp_test");
+    service = new GitHubIssueCommentService(store as unknown as TaskStore, () => "ghp_test", () => "0.55.0");
     service.start();
+  });
+
+  afterEach(() => {
+    service.stop();
   });
 
   it("does nothing when setting is disabled", async () => {
@@ -105,7 +164,7 @@ describe("GitHubIssueCommentService", () => {
     expect(mockCommentOnIssue).not.toHaveBeenCalled();
   });
 
-  it("posts comment when setting enabled and task moved to done", async () => {
+  it("posts comment when setting enabled and task moved to done (non-self-repo, byte-for-byte unchanged)", async () => {
     mockCommentOnIssue.mockResolvedValue(undefined);
 
     store.emit("task:moved", { task: createTask(), from: "in-progress", to: "done" });
@@ -119,7 +178,7 @@ describe("GitHubIssueCommentService", () => {
     );
   });
 
-  it("uses custom template with placeholder substitution", async () => {
+  it("uses custom template with placeholder substitution for non-self-repo", async () => {
     store.setSettings({
       githubCommentOnDone: true,
       githubCommentTemplate: "Task {taskId}: {taskTitle} complete",
@@ -175,6 +234,79 @@ describe("GitHubIssueCommentService", () => {
       "Failed to post GitHub issue comment",
       "rate limited",
     );
+  });
+
+  it("appends current + target release version lines for the Fusion self-repo", async () => {
+    store.emit("task:moved", {
+      task: createTask({
+        sourceIssue: { provider: "github", repository: "runfusion/fusion", issueNumber: 42 },
+      }),
+      from: "in-progress",
+      to: "done",
+    });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledWith(
+      "runfusion",
+      "fusion",
+      42,
+      "✅ Task FN-2623 (Imported task) has been completed and resolved.\n\nCurrent version: v0.55.0\nTarget release: v0.56.0",
+    );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-2623",
+      "Posted GitHub issue completion comment",
+      "runfusion/fusion#42",
+    );
+  });
+
+  it("appends release version lines for a case-insensitive self-repo match", async () => {
+    store.emit("task:moved", {
+      task: createTask({
+        sourceIssue: { provider: "github", repository: "Runfusion/Fusion", issueNumber: 42 },
+      }),
+      from: "in-progress",
+      to: "done",
+    });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledWith(
+      "Runfusion",
+      "Fusion",
+      42,
+      "✅ Task FN-2623 (Imported task) has been completed and resolved.\n\nCurrent version: v0.55.0\nTarget release: v0.56.0",
+    );
+  });
+
+  it("falls back to the base comment with no version lines when the version is unresolved (0.0.0 sentinel)", async () => {
+    const unresolvedService = new GitHubIssueCommentService(
+      store as unknown as TaskStore,
+      () => "ghp_test",
+      () => "0.0.0",
+    );
+    unresolvedService.start();
+
+    store.emit("task:moved", {
+      task: createTask({
+        sourceIssue: { provider: "github", repository: "runfusion/fusion", issueNumber: 42 },
+      }),
+      from: "in-progress",
+      to: "done",
+    });
+    await flushAsync();
+
+    expect(mockCommentOnIssue).toHaveBeenCalledWith(
+      "runfusion",
+      "fusion",
+      42,
+      "✅ Task FN-2623 (Imported task) has been completed and resolved.",
+    );
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-2623",
+      "Posted GitHub issue completion comment",
+      "runfusion/fusion#42",
+    );
+
+    unresolvedService.stop();
   });
 
   it("stop unregisters listener", async () => {

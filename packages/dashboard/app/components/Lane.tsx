@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import type { Task, TaskDetail, Column as ColumnType, ColumnId, TaskCreateInput, GithubIssueAction } from "@fusion/core";
 import { Column } from "./Column";
 import { sortTasksForDisplayColumn } from "./taskSorting";
-import type { ModelInfo, BoardWorkflowDefinition } from "../api";
+import type { ModelInfo, BoardWorkflowDefinition, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ToastType } from "../hooks/useToast";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 
@@ -50,6 +50,8 @@ export interface LaneProps {
   onRetryTask?: (id: string) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
+  onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -199,6 +201,7 @@ function LaneComponent(props: LaneProps) {
               onRetryTask={props.onRetryTask}
               onArchiveTask={props.onArchiveTask}
               onUnarchiveTask={props.onUnarchiveTask}
+              onRevertTask={props.onRevertTask}
               onDeleteTask={props.onDeleteTask}
               availableModels={props.availableModels}
               onOpenDetailWithTab={props.onOpenDetailWithTab}

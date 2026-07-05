@@ -140,8 +140,19 @@ export interface DecidePlannerRecoveryInput {
  *  5. `executor` / `workflow-gate` stage with `signal === "failed"` →
  *     `"request_targeted_fix"` when a source link carries a specific
  *     fixable error (`failed-check` / `merge-error`), else `"retry_step"`.
- *  6. Any other `executor` / `workflow-gate` signal (stuck/blocked/
- *     progressing/awaiting-human) → `"inject_guidance"`.
+ *  6. `executor` / `workflow-gate` stage with a PROBLEM signal
+ *     (`stuck` / `blocked`) → `"inject_guidance"`.
+ *
+ * FNXC:PlannerOversight 2026-07-05-11:00:
+ * A HEALTHY signal (`progressing` / `complete`) or a human-wait signal
+ * (`awaiting-human`) yields `"none"` — steering a task that reports it is
+ * actively progressing is a misfire: it flips the card's overseer badge to
+ * "recovering", burns a bounded-attempt slot, and (because `inject_guidance`
+ * feeds the LIVE agent) consumes AI usage for no reason. Only a signal that
+ * actually indicates trouble may trigger autonomous steering (user report
+ * FN-7577: "recovering" badge on every healthy in-progress card). Previously
+ * this branch injected guidance on ANY non-`failed` signal, including
+ * `progressing`.
  */
 export function decidePlannerRecovery(input: DecidePlannerRecoveryInput): PlannerRecoveryDecision {
   const attemptCount = input?.attemptState?.attemptCount ?? 0;
@@ -252,7 +263,11 @@ export function decidePlannerRecovery(input: DecidePlannerRecoveryInput): Planne
       };
     }
 
-    {
+    // FNXC:PlannerOversight 2026-07-05-11:00: only PROBLEM signals warrant
+    // autonomous steering. Healthy (`progressing`/`complete`) and human-wait
+    // (`awaiting-human`) signals are a no-op so a fine, actively-progressing
+    // task is never "recovered" (FN-7577).
+    if (snapshot.signal === "stuck" || snapshot.signal === "blocked") {
       const proposedAction = "inject_guidance";
       const sideEffectClass = classifyPlannerActionSideEffect({ watchedStage: snapshot.stage, proposedAction });
       return {
@@ -267,6 +282,18 @@ export function decidePlannerRecovery(input: DecidePlannerRecoveryInput): Planne
         sideEffectClass,
       };
     }
+
+    return {
+      action: "none",
+      reason: `Stage "${snapshot.stage}" signal "${snapshot.signal}" is healthy or awaiting a human — no autonomous steering`,
+      attemptCount,
+      attemptLimit,
+      exhausted: false,
+      watchedStage,
+      sourceLinks,
+      requiresConfirmation: false,
+      sideEffectClass: "bounded_recovery",
+    };
   } catch {
     return {
       action: "none",

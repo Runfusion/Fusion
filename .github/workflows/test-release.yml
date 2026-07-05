@@ -19,18 +19,18 @@ jobs:
         include:
           - os: ubuntu-latest
             target: bun-linux-x64
-            binary: fn-linux-x64
+            binary: fn-cli-linux-x64
           - os: ubuntu-24.04-arm
             target: bun-linux-arm64
-            binary: fn-linux-arm64
+            binary: fn-cli-linux-arm64
           - os: macos-latest
             target: bun-darwin-arm64
-            binary: fn-darwin-arm64
+            binary: fn-cli-darwin-arm64
           # bun-darwin-x64 (Intel) dropped: macos-13 runner scarcity — CLI is
           # Apple-Silicon-only for macOS. Keep in sync with release.yml.
           - os: windows-latest
             target: bun-windows-x64
-            binary: fn-windows-x64.exe
+            binary: fn-cli-windows-x64.exe
 
     steps:
       - name: Checkout

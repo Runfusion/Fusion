@@ -189,6 +189,10 @@ const SAME_KIND_EDITOR_NODE_KINDS = new Set<WorkflowIrNodeKind>([
   "parse-steps",
   "code",
   "notify",
+  // FN-7579: brainstorming / chat reach-out node kinds round-trip IR ↔ editor
+  // like any other user-authored node.
+  "ask-user",
+  "exit-gate",
 ]);
 
 const GRAPH_ONLY_EDITOR_KIND: Partial<Record<WorkflowIrNodeKind, WorkflowEditorNodeKind>> = {

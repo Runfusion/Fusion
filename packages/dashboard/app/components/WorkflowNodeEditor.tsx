@@ -18,7 +18,7 @@ import {
 } from "@xyflow/react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2 } from "lucide-react";
+import { X, Plus, Trash2, Save, MessageSquare, Terminal, Shield, GitMerge, Loader2, HelpCircle, PauseCircle, Split, Merge, Repeat, ToggleRight, ClipboardCheck, ListChecks, Code2, Bell, LayoutGrid, Workflow, Download, Upload, ChevronDown, ChevronRight, ChevronLeft, Library, Sparkles, Maximize2, Minimize2, DoorOpen } from "lucide-react";
 import type { WorkflowDefinition, WorkflowIrColumn, TraitViolation, WorkflowStepTemplate, WorkflowIrNodeKind } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import {
@@ -263,7 +263,19 @@ const WORKFLOW_NOTIFY_MESSAGE_PLACEHOLDER = "Task {{taskId}} reached {{workflowN
 
 const PALETTE: Array<{ kind: WorkflowEditorNodeKind; label: string; icon: typeof MessageSquare; presetConfig?: Record<string, unknown> }> = [
   { kind: "prompt", label: "Prompt", icon: MessageSquare },
-  { kind: "prompt", label: "User input", icon: HelpCircle, presetConfig: { awaitInput: true } },
+  // FNXC:WorkflowAskUser 2026-07-05-00:00: FN-7579 promotes the formerly generic
+  // "User input" entry (a `prompt` node with a hidden `awaitInput: true` preset)
+  // into the first-class "Ask user question" node (`kind: "ask-user"`). The old
+  // `prompt` + `config.awaitInput: true` shape still validates and parks/resumes
+  // unchanged (back-compat alias) — it is just no longer offered from the
+  // palette, so there is one discoverable entry point, not two.
+  // FNXC:WorkflowAskUser 2026-07-05-01:30: no presetConfig here — an ask-user
+  // node's `config.question` key must be ABSENT (not an empty string) to fall
+  // back to the engine's default prompt; validateAskUserAndExitGateNodes
+  // rejects a present-but-empty question, so seeding `{ question: "" }` here
+  // would make every freshly dropped, untouched node fail to save.
+  { kind: "ask-user", label: "Ask user question", icon: HelpCircle },
+  { kind: "exit-gate", label: "Exit gate", icon: DoorOpen },
   { kind: "script", label: "Script", icon: Terminal },
   { kind: "gate", label: "Gate", icon: Shield },
   { kind: "merge", label: "Merge boundary", icon: GitMerge },
@@ -331,6 +343,8 @@ const USER_NODE_KINDS: ReadonlySet<WorkflowEditorNodeKind> = new Set<WorkflowEdi
   "parse-steps",
   "notify",
   "merge",
+  "ask-user",
+  "exit-gate",
 ]);
 
 /** A pickable creation template: "Blank" (id null) or a copyable source
@@ -4719,6 +4733,185 @@ function InnerEditor({
                         {t(
                           "workflowNodes.notifyNote",
                           "Templates may use {{taskTitle}}, {{taskId}}, {{workflowName}}, and {{context:key}}.",
+                        )}
+                      </p>
+                    </>
+                  );
+                })()
+              ) : null}
+
+              {/* FNXC:WorkflowAskUser 2026-07-05-00:00: the ask-user question is the only
+                  author-facing field; it reuses the same default-string fallback the
+                  engine's runAwaitInputNode applies when left blank. */}
+              {selectedNode.data.kind === "ask-user" ? (
+                <>
+                  <label className="wf-field">
+                    <span>{t("workflowNodes.askUserQuestion", "Question")}</span>
+                    <textarea
+                      rows={3}
+                      placeholder={t(
+                        "workflowNodes.askUserQuestionPlaceholder",
+                        "This workflow is waiting for your input.",
+                      )}
+                      value={String(selectedNode.data.config?.question ?? "")}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        // FNXC:WorkflowAskUser 2026-07-05-02:00: validateAskUserAndExitGateNodes
+                        // rejects a PRESENT-but-empty `question` (only an ABSENT question falls
+                        // back to the engine default). Clearing the textarea back to "" must
+                        // therefore delete the key, not persist `question: ""`, or the node
+                        // silently becomes unsavable the moment an author reverts to the
+                        // documented "leave blank for the default" behavior.
+                        updateSelectedData({
+                          config: (prev) => {
+                            const next = { ...prev };
+                            if (value.trim() === "") delete next.question;
+                            else next.question = value;
+                            return next;
+                          },
+                        });
+                      }}
+                    />
+                  </label>
+                  <p className="wf-inspector-note wf-inspector-note--info">
+                    {t(
+                      "workflowNodes.askUserNote",
+                      "Parks the task and surfaces this question in the task chat/detail. Resumes once the user replies and unpauses.",
+                    )}
+                  </p>
+                </>
+              ) : null}
+
+              {/* FNXC:WorkflowExitGate 2026-07-05-00:00: condition is optional — an
+                  unconditional exit-gate always routes to end; a conditional one checks
+                  a referenced node's published input (e.g. an ask-user reply). */}
+              {selectedNode.data.kind === "exit-gate" ? (
+                (() => {
+                  const hasCondition =
+                    selectedNode.data.config?.condition != null &&
+                    typeof selectedNode.data.config.condition === "object";
+                  const condition = hasCondition
+                    ? (selectedNode.data.config!.condition as Record<string, unknown>)
+                    : { type: "output-contains", value: "" };
+                  const condType = String(condition.type ?? "output-contains");
+                  const condText = condType === "output-matches" ? String(condition.pattern ?? "") : String(condition.value ?? "");
+                  return (
+                    <>
+                      <label className="wf-field wf-field--checkbox">
+                        <input
+                          type="checkbox"
+                          checked={hasCondition}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              updateSelectedData({
+                                config: { condition: { type: "output-contains", value: "" } },
+                              });
+                            } else {
+                              updateSelectedData({
+                                config: (prev) => {
+                                  const next = { ...prev };
+                                  delete next.condition;
+                                  return next;
+                                },
+                              });
+                            }
+                          }}
+                        />
+                        <span>{t("workflowNodes.exitGateConditional", "Exit conditionally")}</span>
+                      </label>
+                      {hasCondition ? (
+                        <>
+                          <label className="wf-field">
+                            <span>{t("workflowNodes.exitGateNodeId", "Watch node id")}</span>
+                            <input
+                              value={String(condition.nodeId ?? "")}
+                              placeholder={t("workflowNodes.exitGateNodeIdPlaceholder", "e.g. ask")}
+                              onChange={(e) => {
+                                const nodeId = e.target.value.trim();
+                                updateSelectedData({
+                                  config: (prev) => {
+                                    const current =
+                                      prev.condition && typeof prev.condition === "object"
+                                        ? (prev.condition as Record<string, unknown>)
+                                        : { type: "output-contains", value: "" };
+                                    const next = { ...current };
+                                    if (nodeId) next.nodeId = nodeId;
+                                    else delete next.nodeId;
+                                    return { ...prev, condition: next };
+                                  },
+                                });
+                              }}
+                            />
+                          </label>
+                          <label className="wf-field">
+                            <span>{t("workflowNodes.exitGateConditionType", "Exit when")}</span>
+                            <select
+                              value={condType}
+                              onChange={(e) => {
+                                const nextType = e.target.value;
+                                updateSelectedData({
+                                  config: (prev) => {
+                                    const current =
+                                      prev.condition && typeof prev.condition === "object"
+                                        ? (prev.condition as Record<string, unknown>)
+                                        : {};
+                                    const text =
+                                      nextType === "output-matches"
+                                        ? String(current.pattern ?? current.value ?? "")
+                                        : String(current.value ?? current.pattern ?? "");
+                                    const nextCondition: Record<string, unknown> = { ...current, type: nextType };
+                                    delete nextCondition.pattern;
+                                    delete nextCondition.value;
+                                    return {
+                                      ...prev,
+                                      condition:
+                                        nextType === "output-matches"
+                                          ? { ...nextCondition, pattern: text }
+                                          : { ...nextCondition, value: text },
+                                    };
+                                  },
+                                });
+                              }}
+                            >
+                              <option value="output-contains">{t("workflowNodes.loopOutputContains", "Output contains")}</option>
+                              <option value="output-matches">{t("workflowNodes.loopOutputMatches", "Output matches regex")}</option>
+                            </select>
+                          </label>
+                          <label className="wf-field">
+                            <span>
+                              {condType === "output-matches"
+                                ? t("workflowNodes.loopPattern", "Pattern")
+                                : t("workflowNodes.loopValue", "Value")}
+                            </span>
+                            <input
+                              value={condText}
+                              placeholder={condType === "output-matches" ? "looks good|approved" : "looks good"}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                updateSelectedData({
+                                  config: (prev) => {
+                                    const current =
+                                      prev.condition && typeof prev.condition === "object"
+                                        ? (prev.condition as Record<string, unknown>)
+                                        : {};
+                                    return {
+                                      ...prev,
+                                      condition:
+                                        condType === "output-matches"
+                                          ? { ...current, type: condType, pattern: value }
+                                          : { ...current, type: condType, value },
+                                    };
+                                  },
+                                });
+                              }}
+                            />
+                          </label>
+                        </>
+                      ) : null}
+                      <p className="wf-inspector-note wf-inspector-note--info">
+                        {t(
+                          "workflowNodes.exitGateNote",
+                          "Routes early to End (outcome:exit) when the condition matches, or unconditionally when none is set. Falls through (outcome:continue) otherwise.",
                         )}
                       </p>
                     </>

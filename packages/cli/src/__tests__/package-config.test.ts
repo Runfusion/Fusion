@@ -96,11 +96,11 @@ describe("CLI package.json publishing config", () => {
   it("does not include bare 'dist' entry or globs that would match Bun binaries", () => {
     const bunBinaryNames = [
       "fn",
-      "fn-linux-x64",
-      "fn-linux-arm64",
-      "fn-darwin-x64",
-      "fn-darwin-arm64",
-      "fn-windows-x64.exe",
+      "fn-cli-linux-x64",
+      "fn-cli-linux-arm64",
+      "fn-cli-darwin-x64",
+      "fn-cli-darwin-arm64",
+      "fn-cli-windows-x64.exe",
     ];
     // No bare "dist" entry that would include everything
     expect(pkg.files).not.toContain("dist");

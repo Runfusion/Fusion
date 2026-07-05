@@ -37,7 +37,10 @@ describe("useTaskHandlers", () => {
     vi.clearAllMocks();
   });
 
-  it("handleBoardQuickCreate calls createTask with triage column and returns task", async () => {
+  // FN-7591: handleBoardQuickCreate/handleModalCreate must NOT force column:"triage" — the store resolves the
+  // landing column from the (selected or default) workflow's intake column, so a manual-intake workflow
+  // (e.g. Coding (Ideas) → "ideas") parks the card instead of being auto-triaged.
+  it("handleBoardQuickCreate forwards createTask without forcing a column", async () => {
     const options = createOptions();
     const { result } = renderHook(() => useTaskHandlers(options));
     const input: TaskCreateInput = { description: "Do work" };
@@ -47,11 +50,27 @@ describe("useTaskHandlers", () => {
       created = await result.current.handleBoardQuickCreate(input);
     });
 
-    expect(options.createTask).toHaveBeenCalledWith({ description: "Do work", column: "triage", source: { sourceType: "dashboard_ui" } });
+    expect(options.createTask).toHaveBeenCalledWith({ description: "Do work", source: { sourceType: "dashboard_ui" } });
     expect(created).toEqual(CREATED_TASK);
   });
 
-  it("handleModalCreate calls createTask with triage column and returns task", async () => {
+  it("handleBoardQuickCreate forwards an explicit workflowId without forcing a column", async () => {
+    const options = createOptions();
+    const { result } = renderHook(() => useTaskHandlers(options));
+    const input: TaskCreateInput = { description: "Do work", workflowId: "builtin:coding-ideas" };
+
+    await act(async () => {
+      await result.current.handleBoardQuickCreate(input);
+    });
+
+    expect(options.createTask).toHaveBeenCalledWith({
+      description: "Do work",
+      workflowId: "builtin:coding-ideas",
+      source: { sourceType: "dashboard_ui" },
+    });
+  });
+
+  it("handleModalCreate forwards createTask without forcing a column", async () => {
     const options = createOptions();
     const { result } = renderHook(() => useTaskHandlers(options));
 
@@ -60,7 +79,7 @@ describe("useTaskHandlers", () => {
       created = await result.current.handleModalCreate({ description: "From modal" });
     });
 
-    expect(options.createTask).toHaveBeenCalledWith({ description: "From modal", column: "triage", source: { sourceType: "dashboard_ui" } });
+    expect(options.createTask).toHaveBeenCalledWith({ description: "From modal", source: { sourceType: "dashboard_ui" } });
     expect(created).toEqual(CREATED_TASK);
   });
 

@@ -36,6 +36,26 @@ describe("createTask intake-column wiring (Coding (Ideas))", () => {
     expect(task.column).toBe("ideas");
   });
 
+  it("lands a task explicitly selecting builtin:coding in triage even when the project default is coding-ideas", async () => {
+    const store = harness.store();
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    const task = await store.createTask({
+      description: "explicit default coding workflow task",
+      workflowId: "builtin:coding",
+    });
+    expect(task.column).toBe("triage");
+  });
+
+  it("does not throw and falls back to triage when workflowId is explicitly null (\"No workflow\")", async () => {
+    const store = harness.store();
+    await store.setDefaultWorkflowId("builtin:coding-ideas");
+    const task = await store.createTask({
+      description: "explicit no-workflow task",
+      workflowId: null,
+    });
+    expect(task.column).toBe("triage");
+  });
+
   it("writes a bootstrap PROMPT.md for an ideas-column task (unplanned)", async () => {
     const store = harness.store();
     const task: Task = await store.createTask({

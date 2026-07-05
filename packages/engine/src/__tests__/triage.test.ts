@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
-import { builtinSeamPrompt, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
+import { builtinSeamPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
   TriageProcessor,
   buildSpecificationPrompt,
@@ -751,6 +751,23 @@ describe("FN-5893 invariant regression wording", () => {
     expect(STANDARD_PLANNING_PROMPT).toBe(TRIAGE_POLICY_PROMPT);
     expect(FAST_PLANNING_PROMPT).not.toContain("## Review Level");
     expect(FAST_PLANNING_PROMPT).not.toContain("## Proactive Subtask Breakdown");
+  });
+
+  it("places Before → After Transformation at the top of the definition, ahead of Mission and Review Level (FN-7593)", () => {
+    const standardTransformationIdx = STANDARD_PLANNING_PROMPT.indexOf("## Before → After Transformation");
+    const standardReviewLevelIdx = STANDARD_PLANNING_PROMPT.indexOf("## Review Level");
+    const standardMissionIdx = STANDARD_PLANNING_PROMPT.indexOf("## Mission");
+    expect(standardTransformationIdx).toBeGreaterThan(-1);
+    expect(standardReviewLevelIdx).toBeGreaterThan(-1);
+    expect(standardMissionIdx).toBeGreaterThan(-1);
+    expect(standardTransformationIdx).toBeLessThan(standardReviewLevelIdx);
+    expect(standardTransformationIdx).toBeLessThan(standardMissionIdx);
+
+    const fastTransformationIdx = FAST_PLANNING_PROMPT.indexOf("## Before → After Transformation");
+    const fastMissionIdx = FAST_PLANNING_PROMPT.indexOf("## Mission");
+    expect(fastTransformationIdx).toBeGreaterThan(-1);
+    expect(fastMissionIdx).toBeGreaterThan(-1);
+    expect(fastTransformationIdx).toBeLessThan(fastMissionIdx);
   });
 
   it("requires invariant-level regression coverage in standard, fast, and core triage prompts", () => {
@@ -2664,7 +2681,13 @@ describe("requirePlanApproval setting", () => {
       { requirePlanApproval: false, planApprovalMode: "auto-approve-all" } as Settings,
     );
 
-    expect(store.updateTask).toHaveBeenCalledWith("FN-RELEASE", expect.objectContaining({ status: "awaiting-approval" }));
+    /*
+     * FN-7559: also assert the release gate stamps awaitingApprovalReason so
+     * the dashboard can distinguish this hold from a manual-approval hold that
+     * shares the same status — this is the actual fix for "tasks wait for
+     * approval even though auto-approve is on".
+     */
+    expect(store.updateTask).toHaveBeenCalledWith("FN-RELEASE", expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }));
     expect(store.moveTask).not.toHaveBeenCalled();
     expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({ type: "task:release-authorization-required" }));
     expect(store.logEntry).toHaveBeenCalledWith(
@@ -2672,6 +2695,236 @@ describe("requirePlanApproval setting", () => {
       "Release authorization required — leaving task in triage awaiting release authorization",
       expect.any(String),
     );
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-21:35:
+   * FN-7559 — root cause + fix regression test. Confirms all three symptom cases
+   * from the task's "Symptom Verification" section in one place: (a) a
+   * release-class hold still parks with a distinct awaitingApprovalReason even
+   * under auto-approve-all, (b) the manual gate's own awaiting-approval write
+   * always clears/omits that reason (never "release-authorization"), proving the
+   * operator can always tell the two holds apart from the persisted task state
+   * alone — not just from log text.
+   */
+  it("FN-7559: release-authorization hold carries a reason distinct from the manual gate's own awaiting-approval write", async () => {
+    const releaseTask = createTriageTask({
+      id: "FN-RELEASE2",
+      title: "Release @runfusion/fusion patch",
+      status: "planning",
+      sourceType: "agent_heartbeat",
+    } as Partial<Task>);
+    const releaseStore = createMockStore({
+      getTask: vi.fn().mockResolvedValue(releaseTask),
+    } as Partial<TaskStore>);
+    const releaseProcessor = new TriageProcessor(releaseStore, rootDir);
+    await (releaseProcessor as unknown as {
+      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+    }).finalizeApprovedTask(
+      releaseTask,
+      "# Task: FN-RELEASE2 - Release @runfusion/fusion patch\n\n## Mission\n\nRun pnpm release --yes.\n",
+      { requirePlanApproval: false, planApprovalMode: "auto-approve-all" } as Settings,
+    );
+    const releaseUpdateCall = (releaseStore.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => (call[1] as Record<string, unknown>)?.status === "awaiting-approval",
+    );
+    expect(releaseUpdateCall?.[1]).toMatchObject({ awaitingApprovalReason: "release-authorization" });
+
+    const manualTask = createTriageTask({
+      id: "FN-MANUAL2",
+      status: "planning",
+    } as Partial<Task>);
+    const manualStore = createMockStore({
+      getTask: vi.fn().mockResolvedValue(manualTask),
+    } as Partial<TaskStore>);
+    const manualProcessor = new TriageProcessor(manualStore, rootDir);
+    await (manualProcessor as unknown as {
+      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+    }).finalizeApprovedTask(
+      manualTask,
+      "# Task: FN-MANUAL2 - Ordinary task\n\n## Mission\n\nDo the thing.\n",
+      { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
+    );
+    const manualUpdateCall = (manualStore.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => (call[1] as Record<string, unknown>)?.status === "awaiting-approval",
+    );
+    expect(manualUpdateCall?.[1]).toMatchObject({ awaitingApprovalReason: null });
+  });
+
+  /*
+   * FNXC:PlanApproval 2026-07-04-22:41:
+   * FN-7569 — symptom repro + fix: manual plan approval must be idempotent against
+   * unchanged plan content. An operator approves a plan (approvedPlanFingerprint gets
+   * persisted on the task, mirroring POST /tasks/:id/approve-plan), then the SAME task
+   * re-enters finalizeApprovedTask (replan / plan-review retry / self-healing rebound)
+   * with byte-identical PROMPT.md. Today's code (pre-fix) would re-park at
+   * awaiting-approval a second time; the fix must move straight to todo instead.
+   */
+  describe("FN-7569: plan approval fingerprint idempotency", () => {
+    const planText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing.\n\n## File Scope\n\n- a.ts\n";
+    const changedPlanText = "# Task: FN-IDEMPOTENT - Idempotent plan\n\n## Mission\n\nDo the thing, differently.\n\n## File Scope\n\n- a.ts\n- b.ts\n";
+
+    it("re-specifying the SAME approved plan skips the manual gate and moves straight to todo", async () => {
+      const fingerprint = computePlanApprovalFingerprint(planText);
+      const task = createTriageTask({
+        id: "FN-IDEMPOTENT",
+        status: "planning",
+        approvedPlanFingerprint: fingerprint,
+      } as Partial<Task>);
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      } as Partial<TaskStore>);
+      const processor = new TriageProcessor(store, rootDir);
+
+      await (processor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        planText,
+        { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
+      );
+
+      expect(store.moveTask).toHaveBeenCalledWith("FN-IDEMPOTENT", "todo");
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-IDEMPOTENT", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.logEntry).toHaveBeenCalledWith(
+        "FN-IDEMPOTENT",
+        "Plan unchanged since prior approval — proceeding without re-approval",
+      );
+    });
+
+    it("re-specifying a CHANGED plan after prior approval still re-asks for approval", async () => {
+      const fingerprint = computePlanApprovalFingerprint(planText);
+      const task = createTriageTask({
+        id: "FN-IDEMPOTENT-CHANGED",
+        status: "planning",
+        approvedPlanFingerprint: fingerprint,
+      } as Partial<Task>);
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      } as Partial<TaskStore>);
+      const processor = new TriageProcessor(store, rootDir);
+
+      await (processor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        changedPlanText,
+        { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
+      );
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-IDEMPOTENT-CHANGED", expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: null }));
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("never-approved task (no fingerprint) still parks at awaiting-approval on first specify", async () => {
+      const task = createTriageTask({
+        id: "FN-NEVER-APPROVED",
+        status: "planning",
+      } as Partial<Task>);
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      } as Partial<TaskStore>);
+      const processor = new TriageProcessor(store, rootDir);
+
+      await (processor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        planText,
+        { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
+      );
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-NEVER-APPROVED", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("rejected plan (fingerprint cleared to undefined) re-asks even though the same content was approved before", async () => {
+      const task = createTriageTask({
+        id: "FN-REJECTED-THEN-RESPECIFIED",
+        status: "planning",
+        approvedPlanFingerprint: undefined,
+      } as Partial<Task>);
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      } as Partial<TaskStore>);
+      const processor = new TriageProcessor(store, rootDir);
+
+      await (processor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        planText,
+        { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
+      );
+
+      expect(store.updateTask).toHaveBeenCalledWith("FN-REJECTED-THEN-RESPECIFIED", expect.objectContaining({ status: "awaiting-approval" }));
+      expect(store.moveTask).not.toHaveBeenCalled();
+    });
+
+    it("auto-approve-all moves to todo regardless of fingerprint state (manual gate never reached)", async () => {
+      const task = createTriageTask({
+        id: "FN-AUTO-APPROVE-FINGERPRINT",
+        status: "planning",
+        approvedPlanFingerprint: computePlanApprovalFingerprint(changedPlanText),
+      } as Partial<Task>);
+      const store = createMockStore({
+        getTask: vi.fn().mockResolvedValue(task),
+      } as Partial<TaskStore>);
+      const processor = new TriageProcessor(store, rootDir);
+
+      await (processor as unknown as {
+        finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
+      }).finalizeApprovedTask(
+        task,
+        planText,
+        { requirePlanApproval: true, planApprovalMode: "auto-approve-all" } as Settings,
+      );
+
+      expect(store.moveTask).toHaveBeenCalledWith("FN-AUTO-APPROVE-FINGERPRINT", "todo");
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-AUTO-APPROVE-FINGERPRINT", expect.objectContaining({ status: "awaiting-approval" }));
+    });
+
+    /*
+     * FN-7569: exercise the recoverApprovedTask caller (planning-recovery self-heal),
+     * not just finalizeApprovedTask directly, so the fingerprint short-circuit is
+     * proven to reach every finalizeApprovedTask caller, not just a direct-call seam.
+     */
+    it("recoverApprovedTask (self-healing planning recovery) skips re-park for an unchanged already-approved plan", async () => {
+      const fingerprint = computePlanApprovalFingerprint(planText);
+      await mkdir(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT"), { recursive: true });
+      await writeFile(join(rootDir, ".fusion", "tasks", "FN-RECOVER-IDEMPOTENT", "PROMPT.md"), planText);
+      const store = createMockStore({
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 2,
+          maxWorktrees: 4,
+          pollIntervalMs: 10000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+          requirePlanApproval: true,
+        } as Settings),
+      });
+      const processor = new TriageProcessor(store, rootDir);
+
+      const recovered = await processor.recoverApprovedTask({
+        id: "FN-RECOVER-IDEMPOTENT",
+        description: "Recovered triage task",
+        column: "triage",
+        status: "planning",
+        approvedPlanFingerprint: fingerprint,
+        dependencies: [],
+        steps: [],
+        currentStep: 0,
+        log: [
+          { timestamp: "2026-01-01T00:00:00.000Z", action: "Spec review: APPROVE" },
+        ],
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:02:00.000Z",
+      });
+
+      expect(recovered).toBe(true);
+      expect(store.moveTask).toHaveBeenCalledWith("FN-RECOVER-IDEMPOTENT", "todo");
+      expect(store.updateTask).not.toHaveBeenCalledWith("FN-RECOVER-IDEMPOTENT", expect.objectContaining({ status: "awaiting-approval" }));
+    });
   });
 
   /*
@@ -3145,8 +3398,15 @@ Forbidden paths / non-goals:
 
     expect(recovered).toBe(true);
     expect(store.moveTask).not.toHaveBeenCalled();
+    /*
+     * FN-7559: the manual gate's own awaiting-approval write now explicitly
+     * clears awaitingApprovalReason (defense against a stale "release-authorization"
+     * reason surviving a replan) so this genuine manual hold is never mistaken
+     * for a release-authorization hold in the dashboard.
+     */
     expect(store.updateTask).toHaveBeenCalledWith("FN-001", {
       status: "awaiting-approval",
+      awaitingApprovalReason: null,
     });
     expect(store.logEntry).toHaveBeenCalledWith(
       "FN-001",

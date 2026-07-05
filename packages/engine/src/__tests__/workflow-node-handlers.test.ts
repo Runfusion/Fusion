@@ -125,4 +125,70 @@ describe("workflow node handlers", () => {
     expect(result.outcome).toBe("success");
     expect(runCustomNode).not.toHaveBeenCalled();
   });
+
+  // FN-7579: ask-user is registered on the SAME custom-node seam as prompt/script
+  // (no dedicated seam string) so it always falls through to the custom-node
+  // runner, which is where the engine special-cases node.kind === "ask-user"
+  // onto the await-input park/resume path (covered end-to-end in
+  // workflow-graph-executor-handlers.test.ts).
+  it("dispatches an ask-user node to the custom-node runner (no seam)", async () => {
+    const runCustomNode = vi.fn(async () => ({ outcome: "failure" as const, value: "awaiting-user-input" }));
+    const handlers = createDefaultNodeHandlers(noopSeams(), runCustomNode);
+
+    const askNode: WorkflowIrNode = { id: "ask", kind: "ask-user", config: { question: "Anything to refine?" } };
+    const result = await handlers["ask-user"](askNode, { task, settings: undefined, context: {} });
+
+    expect(runCustomNode).toHaveBeenCalledWith(askNode, task, {});
+    expect(result).toEqual({ outcome: "failure", value: "awaiting-user-input" });
+  });
+
+  describe("exit-gate handler", () => {
+    it("exits unconditionally when no condition is configured", async () => {
+      const handlers = createDefaultNodeHandlers(noopSeams());
+      const result = await handlers["exit-gate"](
+        { id: "exit", kind: "exit-gate", config: {} },
+        { task, settings: undefined, context: {} },
+      );
+      expect(result).toEqual({ outcome: "success", value: "exit" });
+    });
+
+    it("exits when an output-contains condition matches the referenced node's context value", async () => {
+      const handlers = createDefaultNodeHandlers(noopSeams());
+      const result = await handlers["exit-gate"](
+        {
+          id: "exit",
+          kind: "exit-gate",
+          config: { condition: { type: "output-contains", nodeId: "ask", value: "looks good" } },
+        },
+        { task, settings: undefined, context: { "input:ask": "yes, looks good to me" } },
+      );
+      expect(result).toEqual({ outcome: "success", value: "exit" });
+    });
+
+    it("falls through (does not exit) when the condition does not match", async () => {
+      const handlers = createDefaultNodeHandlers(noopSeams());
+      const result = await handlers["exit-gate"](
+        {
+          id: "exit",
+          kind: "exit-gate",
+          config: { condition: { type: "output-contains", nodeId: "ask", value: "looks good" } },
+        },
+        { task, settings: undefined, context: { "input:ask": "needs more work" } },
+      );
+      expect(result).toEqual({ outcome: "success", value: "continue" });
+    });
+
+    it("exits when an output-matches regex condition matches", async () => {
+      const handlers = createDefaultNodeHandlers(noopSeams());
+      const result = await handlers["exit-gate"](
+        {
+          id: "exit",
+          kind: "exit-gate",
+          config: { condition: { type: "output-matches", nodeId: "ask", pattern: "approve(d)?", flags: "i" } },
+        },
+        { task, settings: undefined, context: { "input:ask": "Approved!" } },
+      );
+      expect(result).toEqual({ outcome: "success", value: "exit" });
+    });
+  });
 });

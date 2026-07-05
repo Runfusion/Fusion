@@ -486,10 +486,10 @@ describe("Binary release workflow (.github/workflows/release.yml)", () => {
     expect(osMap["bun-windows-x64"]).toBe("windows-latest");
   });
 
-  it("maps bun-linux-arm64 to fn-linux-arm64 binary name", () => {
+  it("maps bun-linux-arm64 to fn-cli-linux-arm64 binary name", () => {
     const matrix = workflow.jobs["build-binaries"].strategy.matrix.include;
     const arm64Entry = matrix.find((m: any) => m.target === "bun-linux-arm64");
-    expect(arm64Entry?.binary).toBe("fn-linux-arm64");
+    expect(arm64Entry?.binary).toBe("fn-cli-linux-arm64");
   });
 
   it("uses softprops/action-gh-release", () => {
@@ -587,10 +587,10 @@ describe("Test-release workflow (.github/workflows/test-release.yml)", () => {
     expect(targets).not.toContain("bun-darwin-x64");
   });
 
-  it("maps bun-linux-arm64 to fn-linux-arm64 binary name", () => {
+  it("maps bun-linux-arm64 to fn-cli-linux-arm64 binary name", () => {
     const matrix = workflow.jobs["build-binaries"].strategy.matrix.include;
     const arm64Entry = matrix.find((m: any) => m.target === "bun-linux-arm64");
-    expect(arm64Entry?.binary).toBe("fn-linux-arm64");
+    expect(arm64Entry?.binary).toBe("fn-cli-linux-arm64");
   });
 
   it("includes smoke tests with --help", () => {

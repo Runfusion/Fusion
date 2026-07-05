@@ -265,6 +265,21 @@ export class PlannerRecoveryController {
       }
 
       const key = this.attemptKey(task.id, snapshot.stage);
+
+      // FNXC:PlannerOversight 2026-07-05-11:00:
+      // FN-7577: once a task's watched stage reports a HEALTHY (`progressing`/
+      // `complete`) or human-wait (`awaiting-human`) signal, it is no longer
+      // being recovered — drop any stale attempt / last-action records for the
+      // (taskId, stage) so the card badge falls back from "recovering" to
+      // "watching" on the next `GET /api/tasks` serialization, and a later
+      // genuine problem starts from a fresh bounded budget. A still-problematic
+      // signal (`stuck`/`blocked`/`failed`) keeps its attempts so the bound holds.
+      const signal = snapshot.signal;
+      if (signal === "progressing" || signal === "complete" || signal === "awaiting-human") {
+        this.attempts.delete(key);
+        this.lastActions.delete(key);
+      }
+
       const attemptCount = this.attempts.get(key) ?? 0;
 
       const decision = decidePlannerRecovery({

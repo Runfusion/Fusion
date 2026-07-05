@@ -585,4 +585,152 @@ describe("wrapAuthStorageWithApiKeyProviders", () => {
       expect(merged.has("anthropic")).toBe(false);
     });
   });
+
+  describe("anthropic-subscription getApiKey delegation (FN-7576)", () => {
+    /*
+    FNXC:ProviderAuth 2026-07-05-09:15:
+    These tests drive `wrapAuthStorageWithApiKeyProviders`/`mergeAuthStorageReads` directly against an instrumented fake engine `authStorage.getApiKey`, not a mocked dashboard/engine `AuthStorageLike`, per FN-7576's "fix the invariant, not the repro" requirement. They assert the wrapper actually DELEGATES the anthropic-subscription read to the real engine authStorage (so the refresh HTTP round trip in packages/engine/src/auth-storage.ts executes) rather than short-circuiting to a local static `Date.now() >= credential.expires` check.
+    */
+    const PAST_EXPIRY = Date.now() - 60_000;
+
+    it("delegates to the underlying engine authStorage.getApiKey and returns the refreshed key even when the stored credential is expired", async () => {
+      const fusionAuth = makeAuthStorage({
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "stale-oauth-access",
+          refresh: "stale-oauth-refresh",
+          expires: PAST_EXPIRY,
+        },
+      });
+      fusionAuth.getApiKey = vi.fn(async (provider: string) =>
+        provider === "anthropic-subscription" ? "refreshed-oauth-access" : undefined,
+      );
+      const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+      const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+      const apiKey = await wrapped.getApiKey("anthropic-subscription");
+
+      expect(fusionAuth.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+      expect(apiKey).toBe("refreshed-oauth-access");
+    });
+
+    it("delegates via the mergeAuthStorageReads proxy directly", async () => {
+      const fusionAuth = makeAuthStorage({
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "stale-oauth-access",
+          refresh: "stale-oauth-refresh",
+          expires: PAST_EXPIRY,
+        },
+      });
+      fusionAuth.getApiKey = vi.fn(async (provider: string) =>
+        provider === "anthropic-subscription" ? "refreshed-oauth-access" : undefined,
+      );
+
+      const merged = mergeAuthStorageReads(fusionAuth);
+      const apiKey = await merged.getApiKey("anthropic-subscription");
+
+      expect(fusionAuth.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+      expect(apiKey).toBe("refreshed-oauth-access");
+    });
+
+    it("delegates and returns the refreshed key when OAuth is stored under the legacy anthropic row", async () => {
+      const fusionAuth = makeAuthStorage({
+        anthropic: {
+          type: "oauth",
+          access: "legacy-stale-oauth-access",
+          refresh: "legacy-stale-oauth-refresh",
+          expires: PAST_EXPIRY,
+        },
+      });
+      fusionAuth.getApiKey = vi.fn(async (provider: string) =>
+        provider === "anthropic-subscription" ? "refreshed-oauth-access" : undefined,
+      );
+      const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+      const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+      const apiKey = await wrapped.getApiKey("anthropic-subscription");
+
+      expect(fusionAuth.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+      expect(apiKey).toBe("refreshed-oauth-access");
+    });
+
+    it("does not call the delegated engine getApiKey and returns undefined once the subscription is logged out", async () => {
+      const fusionAuth = makeAuthStorage({
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "oauth-access",
+          refresh: "oauth-refresh",
+          expires: Date.now() + 60_000,
+        },
+      });
+      fusionAuth.getApiKey = vi.fn(async (provider: string) =>
+        provider === "anthropic-subscription" ? "refreshed-oauth-access" : undefined,
+      );
+      const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+      const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+      wrapped.logout("anthropic-subscription");
+      fusionAuth.getApiKey.mockClear();
+
+      const apiKey = await wrapped.getApiKey("anthropic-subscription");
+
+      expect(apiKey).toBeUndefined();
+      expect(fusionAuth.getApiKey).not.toHaveBeenCalledWith("anthropic-subscription");
+    });
+
+    it("returns undefined when no credential is stored and the engine authStorage has nothing to refresh", async () => {
+      const fusionAuth = makeAuthStorage();
+      const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+      const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+      const apiKey = await wrapped.getApiKey("anthropic-subscription");
+
+      expect(apiKey).toBeUndefined();
+    });
+
+    it("falls back to a read-only fallback storage's local resolution only when the primary engine yields no key", async () => {
+      const fusionAuth = makeAuthStorage({
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "stale-oauth-access",
+          refresh: "stale-oauth-refresh",
+          expires: PAST_EXPIRY,
+        },
+      });
+      // Primary engine authStorage genuinely cannot refresh (e.g. refresh token invalid/absent upstream).
+      fusionAuth.getApiKey = vi.fn(async () => undefined);
+      const fallbackAuth = makeAuthStorage({
+        "anthropic-subscription": {
+          type: "oauth",
+          access: "fallback-still-valid-access",
+          refresh: "fallback-refresh",
+          expires: Date.now() + 60_000,
+        },
+      });
+      fallbackAuth.getApiKey = vi.fn(async (provider: string) =>
+        provider === "anthropic-subscription" ? "fallback-still-valid-access" : undefined,
+      );
+      const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+      const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry, [fallbackAuth]);
+      const apiKey = await wrapped.getApiKey("anthropic-subscription");
+
+      expect(fusionAuth.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+      expect(apiKey).toBe("fallback-still-valid-access");
+    });
+
+    it("still resolves non-subscription providers exactly as before (no regression)", async () => {
+      const fusionAuth = makeAuthStorage({
+        openrouter: { type: "api_key", key: "fusion-openrouter-key" },
+        anthropic: { type: "api_key", key: "sk-ant-api03-raw-key" },
+      });
+      const modelRegistry = { getAll: vi.fn(() => []) } as any;
+
+      const wrapped = wrapAuthStorageWithApiKeyProviders(fusionAuth, modelRegistry);
+
+      expect(await wrapped.getApiKey("openrouter")).toBe("fusion-openrouter-key");
+      expect(await wrapped.getApiKey("anthropic-api-key")).toBe("sk-ant-api03-raw-key");
+    });
+  });
 });

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye } from "lucide-react";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
@@ -20,7 +20,7 @@ import { resolveEffectiveAutoMerge } from "../../../core/src/task-merge";
 // resolver — like resolveEffectiveAutoMerge above — must be imported from its source module
 // directly rather than the package barrel.
 import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflow-settings-resolver";
-import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, rebuildTaskSpec, refreshPrStatus, fetchWorkflowSettingValues, type WorkflowFieldDefinition } from "../api";
+import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, rebuildTaskSpec, refreshPrStatus, fetchWorkflowSettingValues, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
 import { PrCreateModal } from "./PrCreateModal";
@@ -28,10 +28,12 @@ import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
 import { useBadgeWebSocket } from "../hooks/useBadgeWebSocket";
 import { useCoarsePointer } from "../hooks/useCoarsePointer";
+import { plannerOverseerBadgeTooltip, plannerOverseerStateLabel } from "./plannerOverseerBadge";
 import { getFreshBatchData } from "../hooks/useBatchBadgeFetch";
 import { useTaskDiffStats } from "../hooks/useTaskDiffStats";
 import { useAgentsMapCache } from "../hooks/useAgentsMapCache";
 import { isTaskStuck } from "../utils/taskStuck";
+import { getRevertOfId } from "../utils/taskRevert";
 import { getStalledReviewSignal } from "../utils/taskStalledReview";
 import { getInReviewStallCopy, shouldShowInReviewStallBadge } from "../utils/inReviewStallCopy";
 import { getStalePausedReviewCopy, shouldShowStalePausedReviewBadge } from "../utils/stalePausedReviewCopy";
@@ -487,6 +489,14 @@ interface TaskCardProps {
   ) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Threaded alongside onArchiveTask/onUnarchiveTask; the source task's column
+  is never mutated by the caller as a side effect. Absent when the parent
+  does not support revert (undefined -> no button rendered, mirroring the
+  onArchiveTask guard).
+  */
+  onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -708,6 +718,7 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previous.onUpdateTask === next.onUpdateTask &&
     previous.onArchiveTask === next.onArchiveTask &&
     previous.onUnarchiveTask === next.onUnarchiveTask &&
+    previous.onRevertTask === next.onRevertTask &&
     previous.onDeleteTask === next.onDeleteTask &&
     previous.onPauseTask === next.onPauseTask &&
     previous.onRetryTask === next.onRetryTask &&
@@ -791,6 +802,10 @@ function areTaskCardPropsEqual(previous: TaskCardProps, next: TaskCardProps): bo
     previousTask.sourceMetadata?.agentName === nextTask.sourceMetadata?.agentName &&
     previousTask.sourceMetadata?.nearDuplicateOf === nextTask.sourceMetadata?.nearDuplicateOf &&
     previousTask.sourceMetadata?.nearDuplicateDismissed === nextTask.sourceMetadata?.nearDuplicateDismissed &&
+    // FNXC:TaskRevert 2026-07-04-00:00: repaint the "Undo of <id>" footer chip
+    // (FN-7555) when the revert-of marker changes.
+    previousTask.sourceMetadata?.revertOf === nextTask.sourceMetadata?.revertOf &&
+    previousTask.sourceParentTaskId === nextTask.sourceParentTaskId &&
     previousTask.stalledReview?.reason === nextTask.stalledReview?.reason &&
     previousTask.stalledReview?.heuristic === nextTask.stalledReview?.heuristic &&
     previousTask.stalledReview?.matchCount === nextTask.stalledReview?.matchCount &&
@@ -845,6 +860,7 @@ function TaskCardComponent({
   onUpdateTask,
   onArchiveTask,
   onUnarchiveTask,
+  onRevertTask,
   onDeleteTask,
   onPauseTask,
   onRetryTask,
@@ -1253,6 +1269,15 @@ function TaskCardComponent({
   const hasTaskAgeStaleness = shouldShowTaskAgeStalenessBadge(task);
   const taskAgeStalenessCopy = getTaskAgeStalenessCopy(task.ageStaleness);
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
+  /*
+   * FNXC:PlanApproval 2026-07-04-21:35:
+   * FN-7559: release-authorization holds and manual plan-approval holds both use
+   * status "awaiting-approval" (auto-approve-all intentionally bypasses only the
+   * manual gate — see FNXC:PlanApproval in types.ts). Distinguish them for the
+   * operator via the awaitingApprovalReason discriminator instead of showing the
+   * generic manual-approval badge/label for both.
+   */
+  const isReleaseAuthorizationHold = isAwaitingApproval && task.awaitingApprovalReason === "release-authorization";
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && !isAwaitingInput && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
@@ -1303,6 +1328,17 @@ function TaskCardComponent({
     && task.column !== "archived"
     && task.column !== "done"
     && nearDuplicateCanonicalInactive !== true;
+  /**
+   * FNXC:TaskRevert 2026-07-04-00:00:
+   * FN-7555 forward affordance: an AI-undo task (`sourceMetadata.revertOf` set by
+   * `createAiUndoTask`) shows a compact "Undo of <sourceId>" footer chip regardless
+   * of this card's own column, mirroring the detail view's provenance line. The
+   * reverse ("source has an open undo task") chip is intentionally NOT rendered
+   * here — TaskCard does not receive the full `tasks` list, so a per-card reverse
+   * scan is unavailable; that direction is covered by TaskDetailModal only.
+   */
+  const revertOfId = getRevertOfId(task.sourceMetadata, task.sourceParentTaskId, task.sourceType);
+  const showUndoOfChip = Boolean(revertOfId);
   const branchMetadata = useMemo(() => getVisibleTaskCardBranches(task), [task.id, task.branch, task.baseBranch]);
   const hasBranchMetadata = Boolean(branchMetadata.branch || branchMetadata.baseBranch);
   const isAgentCreated = isAgentCreatedTask(task);
@@ -1835,6 +1871,83 @@ function TaskCardComponent({
     });
   }, [addToast, onUnarchiveTask, task.id]);
 
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Revertable guard: a card is only offered a Revert affordance when it sits in
+  done/archived AND it has a landed commit to revert. Absent `mergeDetails` (no
+  merge ever recorded, e.g. a no-op/no-commits-expected task) means there is
+  nothing to revert — treat it as not-revertable rather than erroring at click
+  time. This mirrors the parent FN-7501 issue's "undo a change" framing: only
+  tasks that actually changed the tree are revertable.
+  */
+  const isRevertable = (task.column === "done" || task.column === "archived")
+    && Boolean(task.mergeDetails?.commitSha);
+
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Revert click handler: calls the API in "auto" mode (git-first, AI-undo
+  fallback on conflict/unsupported). Never silently AI-forks a `needsHuman`
+  result (e.g. autoMerge-off) — that is surfaced as an informational toast so a
+  human can decide, per the FN-7524 route contract. The SOURCE task's column is
+  never mutated here as a side effect of a revert.
+  */
+  const handleRevertClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (!onRevertTask) return;
+
+    void onRevertTask(task.id, { mode: "auto" }).then(async (result) => {
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.revertAlreadyOpen", "An undo task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.revertAiCreated", "Created undo task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.alreadyReverted) {
+        addToast(t("tasks.revertAlreadyReverted", "{{taskId}} was already reverted", { taskId: task.id }), "info");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.revertNeedsHuman", "Cannot auto-revert {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean && result.revertCommitSha) {
+        addToast(t("tasks.reverted", "Reverted {{taskId}} in commit {{sha}}", { taskId: task.id, sha: result.revertCommitSha.slice(0, 12) }), "success");
+        return;
+      }
+
+      if (!result.clean || result.unsupported) {
+        const confirmed = await confirm({
+          title: t("tasks.revertConflictTitle", "Revert Conflict"),
+          message: t("tasks.revertConflictMessage", "Git revert conflicts with later changes. Create an AI task to undo this?"),
+        });
+        if (!confirmed) return;
+
+        try {
+          const aiResult = await onRevertTask(task.id, { mode: "ai" });
+          if (aiResult.mode === "ai") {
+            addToast(aiResult.alreadyOpen
+              ? t("tasks.revertAlreadyOpen", "An undo task is already open: {{id}}", { id: aiResult.createdTaskId })
+              : t("tasks.revertAiCreated", "Created undo task {{id}}", { id: aiResult.createdTaskId }), "success");
+          }
+        } catch (aiErr) {
+          addToast(getErrorMessage(aiErr), "error");
+        }
+        return;
+      }
+
+      addToast(t("tasks.revertFailed", "Failed to revert {{taskId}}", { taskId: task.id }), "error");
+    }).catch((err) => {
+      addToast(getErrorMessage(err), "error");
+    });
+  }, [addToast, confirm, onRevertTask, t, task.id]);
+
+  const handleTaskActionRevert = useCallback(() => {
+    handleRevertClick({ stopPropagation() {} } as React.MouseEvent<HTMLButtonElement>);
+  }, [handleRevertClick]);
+
   const handleDeleteClick = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (!onDeleteTask) return;
@@ -2218,7 +2331,7 @@ function TaskCardComponent({
     task.prInfo,
   ]);
   const contextMenuActions = useMemo<TaskMenuActionDescriptor[]>(() => {
-    if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onMoveTask && !onOpenRefine && !onUpdateTask) {
+    if (!onDeleteTask && !onArchiveTask && !onUnarchiveTask && !onRevertTask && !onDuplicateTask && !onRetryTask && !onResetTask && !onPauseTask && !onUnpauseTask && !onMergeTask && !onMoveTask && !onOpenRefine && !onUpdateTask) {
       return [];
     }
     const actions = [...taskActionMenuModel.actions];
@@ -2227,6 +2340,21 @@ function TaskCardComponent({
     }
     if (task.column === "archived" && onUnarchiveTask) {
       actions.push({ id: "unarchive", label: t("tasks.unarchive", "Unarchive"), onSelect: handleTaskActionUnarchive });
+    }
+    /*
+    FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+    Context-menu Revert entry for done/archived, mirroring the archive/unarchive
+    entries above. Disabled (rather than omitted) when the task lacks a landed
+    commit to revert, so the menu communicates WHY the affordance is inert
+    instead of silently hiding it.
+    */
+    if ((task.column === "done" || task.column === "archived") && onRevertTask) {
+      actions.push({
+        id: "revert",
+        label: t("tasks.revert", "Revert"),
+        disabled: !isRevertable,
+        onSelect: isRevertable ? handleTaskActionRevert : undefined,
+      });
     }
     if (taskActionMenuModel.reviewAction) {
       actions.push({ id: taskActionMenuModel.reviewAction.id, label: taskActionMenuModel.reviewAction.label, disabled: taskActionMenuModel.reviewAction.disabled, onSelect: taskActionMenuModel.reviewAction.onSelect });
@@ -2241,7 +2369,7 @@ function TaskCardComponent({
       }
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [handleTaskActionArchive, handleTaskActionMove, handleTaskActionUnarchive, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onMoveTask, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionMenuModel.actions, taskActionMenuModel.moveTransitions, taskActionMenuModel.reviewAction]);
+  }, [handleTaskActionArchive, handleTaskActionMove, handleTaskActionRevert, handleTaskActionUnarchive, isRevertable, onArchiveTask, onDeleteTask, onDuplicateTask, onMergeTask, onMoveTask, onOpenRefine, onPauseTask, onResetTask, onRetryTask, onRevertTask, onUnarchiveTask, onUnpauseTask, onUpdateTask, t, task.column, taskActionMenuModel.actions, taskActionMenuModel.moveTransitions, taskActionMenuModel.reviewAction]);
   const hasContextMenuActions = contextMenuActions.length > 0;
 
   const closeContextMenu = useCallback(() => {
@@ -2674,9 +2802,9 @@ function TaskCardComponent({
         )}
         {!isPaused && visualStatus && visualStatus !== "queued" && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isReleaseAuthorizationHold ? " awaiting-release-authorization" : ""}${isAwaitingInput ? " awaiting-input" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
           >
-            {isStuck ? t("tasks.stuck", "Stuck") : isAwaitingApproval ? t("tasks.awaitingApproval", "Awaiting Approval") : isAwaitingInput ? t("tasks.needsInput", "Needs input") : visualStatus === "merging-fix" ? t("tasks.statusMergingFix", "Merging fixes…") : getTaskStatusLabel(visualStatus, t)}
+            {isStuck ? t("tasks.stuck", "Stuck") : isReleaseAuthorizationHold ? t("tasks.awaitingReleaseAuthorization", "Awaiting Release Authorization") : isAwaitingApproval ? t("tasks.awaitingApproval", "Awaiting Approval") : isAwaitingInput ? t("tasks.needsInput", "Needs input") : visualStatus === "merging-fix" ? t("tasks.statusMergingFix", "Merging fixes…") : getTaskStatusLabel(visualStatus, t)}
           </span>
         )}
         {/*
@@ -2761,17 +2889,25 @@ function TaskCardComponent({
           board payload) plus a repaint-correct memo comparator; FN-7516 owns the styled
           badge/design and surface-by-surface rendering. This is a minimal, type-safe,
           guarded read only — nothing renders for an absent field or the "idle" state.
+
+          FNXC:PlannerOversight 2026-07-05-00:00:
+          FN-7592 replaces the uppercase text label with a small state-colored `Eye` icon so
+          the badge reads as a compact glyph. The readable label and composed tooltip stay
+          available for accessibility: `aria-label` carries the state name (screen readers)
+          and `title` keeps the existing tooltip (hover). Per-state color comes from the
+          `data-planner-overseer-state` attribute in TaskCard.css — do not fork the label
+          logic here; `plannerOverseerStateLabel`/`plannerOverseerBadgeTooltip` remain the
+          single source of truth.
         */}
         {task.plannerOverseerState && task.plannerOverseerState.state !== "idle" && (
           <span
             className="card-status-badge card-planner-overseer-state"
-            title={t("tasks.plannerOverseerStateTitle", "Planner overseer: {{state}}", {
-              state: task.plannerOverseerState.state,
-            })}
+            title={plannerOverseerBadgeTooltip(task.plannerOverseerState, t)}
+            aria-label={plannerOverseerStateLabel(task.plannerOverseerState.state, t)}
             data-testid="planner-overseer-state-badge"
             data-planner-overseer-state={task.plannerOverseerState.state}
           >
-            {task.plannerOverseerState.state}
+            <Eye aria-hidden="true" />
           </span>
         )}
         {showStalledReview && stalledReview && (
@@ -2944,6 +3080,25 @@ function TaskCardComponent({
               aria-label={t("tasks.unarchiveTask", "Unarchive task")}
             >
               {t("tasks.unarchive", "Unarchive")}
+            </button>
+          )}
+          {/*
+          FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+          Inline Revert affordance for done/archived cards (parent FN-7501). Rendered
+          only when the task actually has a landed commit to revert (`isRevertable`)
+          — omitted (not disabled) here to avoid an empty button shell on cards with
+          nothing to revert, matching the "omit inline / disable in menu" split called
+          out in the task spec. Reuses `card-archive-btn`'s tokenized styling via a
+          shared class so no new one-off CSS/colors are introduced.
+          */}
+          {(task.column === "done" || task.column === "archived") && onRevertTask && isRevertable && (
+            <button
+              className="card-archive-btn card-revert-btn"
+              onClick={handleRevertClick}
+              title={t("tasks.revertTask", "Revert this task's changes")}
+              aria-label={t("tasks.revertTask", "Revert this task's changes")}
+            >
+              {t("tasks.revert", "Revert")}
             </button>
           )}
           {task.column === "in-progress" && onMoveTask && (
@@ -3156,7 +3311,7 @@ function TaskCardComponent({
           </>
         );
       })()}
-      {(filesChangedButton || isGitHubImportedTask || timeIndicator || showNearDuplicateChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
+      {(filesChangedButton || isGitHubImportedTask || timeIndicator || showNearDuplicateChip || showUndoOfChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
         <div className={`card-footer-row${chipFarRight ? " card-footer-row--chip-far-right" : ""}`}>
           {filesChangedButton}
           {isGitHubImportedTask && !showLinkedIssueChipForImport && (
@@ -3168,8 +3323,17 @@ function TaskCardComponent({
               <ProviderIcon provider="github" size="sm" />
             </span>
           )}
-          {(timeIndicator || showNearDuplicateChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
+          {(timeIndicator || showNearDuplicateChip || showUndoOfChip || ((showTrackingIndicator || showLinkedIssueChipForImport) && githubTrackedIssue) || (task.retrySummary?.total ?? 0) > 0) && (
             <div className="card-footer-row-right">
+              {showUndoOfChip && (
+                <span
+                  className="card-undo-chip"
+                  title={t("tasks.undoOfTitle", "Created to undo {{id}}", { id: String(revertOfId) })}
+                  aria-label={t("tasks.undoOfTitle", "Created to undo {{id}}", { id: String(revertOfId) })}
+                >
+                  <span>{t("tasks.undoOf", "Undo of {{id}}", { id: String(revertOfId) })}</span>
+                </span>
+              )}
               {showNearDuplicateChip && (
                 <>
                   <span

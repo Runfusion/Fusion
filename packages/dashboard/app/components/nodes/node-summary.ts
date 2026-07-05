@@ -239,6 +239,34 @@ export function nodeConfigSummary(
       const message = truncate(firstLine(str(config.message)), COMMAND_TRUNCATE);
       return message ? `${event} · ${message}` : event;
     }
+    // FN-7579: ask-user surfaces its question (or the shared default prompt
+    // when omitted); exit-gate mirrors loop's exitWhen summary (unconditional
+    // when config.condition is absent).
+    case "ask-user": {
+      const question = str(config.question) || str(config.prompt);
+      return question
+        ? truncate(firstLine(question), COMMAND_TRUNCATE)
+        : t("workflowNodes.summaryAskUserDefault", "Waits for user input");
+    }
+    case "exit-gate": {
+      const condition = config.condition as unknown;
+      if (!condition || typeof condition !== "object") {
+        return t("workflowNodes.summaryExitGateUnconditional", "Always exits");
+      }
+      const c = condition as Record<string, unknown>;
+      const type = str(c.type);
+      if (type === "output-matches") {
+        return t("workflowNodes.summaryExitGateMatches", "Exits when matches /{{pattern}}/", {
+          pattern: str(c.pattern),
+        });
+      }
+      if (type === "output-contains") {
+        return t('workflowNodes.summaryExitGateContains', 'Exits when contains "{{value}}"', {
+          value: str(c.value),
+        });
+      }
+      return t("workflowNodes.summaryExitGateUnconditional", "Always exits");
+    }
     // No meaningful summary: structural/control nodes.
     case "start":
     case "end":

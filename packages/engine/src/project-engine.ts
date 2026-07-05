@@ -48,7 +48,7 @@ import type { PrNodeGithubOps } from "./pr-nodes.js";
 import { PrReconciler, type PrReconcileGithubOps } from "./pr-reconcile.js";
 import { PrCommentHandler } from "./pr-comment-handler.js";
 import { NtfyNotifier } from "./notifier.js";
-import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthValidityLogger } from "./notification/index.js";
+import { NotificationService, OAuthAlertStateStore, OAuthExpiryMonitor, OAuthRefreshScheduler, OAuthValidityLogger } from "./notification/index.js";
 import type { NotificationChatStore } from "./notification/notification-service.js";
 import { GridlockDetector } from "./gridlock-detector.js";
 import { createFusionAuthStorage, getFusionOAuthAlertStatePath } from "./auth-storage.js";
@@ -396,6 +396,7 @@ export class ProjectEngine {
   private notifier?: NtfyNotifier;
   private notificationService?: NotificationService;
   private oauthExpiryMonitor?: OAuthExpiryMonitor;
+  private oauthRefreshScheduler?: OAuthRefreshScheduler;
   private oauthValidityLogger?: OAuthValidityLogger;
   private gridlockDetector?: GridlockDetector;
   private cronRunner?: CronRunner;
@@ -747,6 +748,16 @@ export class ProjectEngine {
         alertState: oauthAlertState,
       });
       await this.oauthExpiryMonitor.start();
+      /*
+      FNXC:ClaudeOAuth 2026-07-05-00:00:
+      FN-7574: proactively refresh OAuth access tokens ahead of expiry (widened window,
+      see OAUTH_REFRESH_BUFFER_MS in auth-storage.ts) so a healthy subscription session
+      never lapses waiting for something else to request a runtime API key. Reuses the
+      same authStorage instance as OAuthExpiryMonitor above so detection/notification and
+      proactive refresh observe a consistent, single credential source.
+      */
+      this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage });
+      await this.oauthRefreshScheduler.start();
       this.oauthValidityLogger = new OAuthValidityLogger({
         authStorage,
         alertState: oauthAlertState,
@@ -985,6 +996,7 @@ export class ProjectEngine {
     this.prReconciler?.stopAll();
     this.prReconciler = undefined;
     this.oauthExpiryMonitor?.stop();
+    this.oauthRefreshScheduler?.stop();
     this.oauthValidityLogger?.stop();
     this.notificationService?.stop();
     this.notifier?.stop();

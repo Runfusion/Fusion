@@ -162,6 +162,16 @@ These appear in task activity history; run-audit entries are emitted where run c
 
 Recovery is reversible: restore archived tasks via dashboard **Unarchive** or `fn_task_unarchive`.
 
+#### Revert/Undo affordance (FN-7525)
+
+Done and Archived task cards (board card inline row + context menu, the detail view, and the list context menu) expose a **Revert** action alongside Archive/Unarchive when the task has a landed commit to revert. Clicking it calls `POST /tasks/:id/revert` in `"auto"` mode:
+
+- A clean git revert shows a success toast naming the created revert commit sha.
+- A conflicting/unsupported git result opens a confirm dialog offering to create an AI-undo task; confirming re-calls the route in `"ai"` mode and surfaces the created task id (or that an undo task is already open).
+- A `needsHuman` result (e.g. auto-merge is off) is surfaced as an informational/error toast, never silently forked into an AI task.
+
+The source task's column/lifecycle is never mutated as a side effect of a revert; the Revert affordance is absent when the task has no landed commit or when the hosting surface does not support it.
+
 ### 2) Plan Mode (AI interview)
 
 On desktop/tablet, open **Planning** from the left sidebar to start or resume a planning session. You can also hand a draft from the board quick-entry row or New Task dialog to Planning with the **Plan** action.
@@ -542,8 +552,8 @@ The task detail modal exposes multiple tabs:
 
 After planning, each task gets a structured `PROMPT.md` with sections like:
 
-- Mission
 - Before → after transformation summary
+- Mission
 - Dependencies
 - Context to read first
 - File scope
@@ -673,13 +683,23 @@ Recovery/backfill guidance:
 - If both the active row and archive snapshot were overwritten, Fusion cannot reconstruct lost attachments/comments automatically; recreate them from git history, branch/worktree contents, screenshots, or external issue trackers.
 - Record the incident in the replacement task so future audits understand why the task ID and commit history diverge.
 
-## Reverting Done/Archived tasks (git path)
+## Reverting Done/Archived tasks (git path + AI-undo fallback)
 
 - `POST /api/tasks/:id/revert` (FN-7523) reverts a **Done** or **Archived** task's landed work via git. Only `done`/`archived` tasks are revertable; the source task's column/status is never mutated as a side effect.
 - The engine resolves the task's attributable commit(s) (squash single-commit, rebase/cherry-pick trailer-filtered subset, or lineage-snapshot fallback), performs a non-committing dry-run to classify the outcome, and only writes a real commit when the dry-run is clean.
-- Response contract: `{ mode: "git", clean, revertCommitSha?, conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }`. A clean revert lands a `revert(FN-xxxx): ...` commit carrying a `Fusion-Task-Id` trailer on the resolved base branch. A conflicting result creates no commit and leaves the tree/HEAD untouched — this is where a future AI-undo fallback (sibling task) can take over.
-- Workspace (multi-repo) tasks and `autoMerge:false` projects are out of scope for the forced git write and return `unsupported`/`needsHuman` results instead.
-- This is the git path only; no dashboard UI affordance ships with it (see sibling follow-up tasks for the card action and the AI-undo fallback).
+- The route accepts an optional request body `{ mode?: "git" | "ai" | "auto" }` (default `"auto"`; unknown values reject with 400):
+  - `"git"` — the FN-7523 git-only behavior. The result (including a conflicting/unsupported result) is returned as-is and never creates a follow-up task.
+  - `"ai"` — skip git entirely and always create the AI-undo fallback task (FN-7524).
+  - `"auto"` — try git first. A clean/alreadyReverted/needsHuman result is returned unchanged. A conflicting or unsupported result falls back to creating the AI-undo task.
+- Also accepts an optional `{ granularity?: "squash" | "per-sha" }` field (FN-7548) that selects the git-path commit granularity: `"squash"` (default, unchanged) accumulates all attributable commits into one revert commit; `"per-sha"` creates one attributed revert commit per original sha (each with its own `Fusion-Task-Id` trailer and audit line), skipping no-op shas without empty commits. A mid-batch conflict in either mode rolls back the whole batch — no partially-landed per-sha commits. This field only affects the single-repo git path and is ignored when `mode` resolves to `"ai"` or the task is a workspace task.
+- Git-path response contract (additive only): `{ mode: "git", clean, revertCommitSha?, revertCommitShas?, conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }`. A clean revert lands a `revert(FN-xxxx): ...` commit carrying a `Fusion-Task-Id` trailer on the resolved base branch; `revertCommitShas` reports every commit created (all of them for `per-sha`, the single one for `squash`) alongside the existing `revertCommitSha`.
+- AI-undo response contract: `{ mode: "ai", createdTaskId: "FN-YYYY", alreadyOpen?: true }`. The created task is an ordinary `triage`-column board task (via the normal `store.createTask` path) that references the source task's id, mission, and landed files, and instructs undoing the source task's behavior while preserving unrelated later changes to the same files, using a `revert(FN-xxxx): ...` commit convention. It carries NO dependency on the (already done/archived) source task. A `sourceMetadata.revertOf` marker makes repeated fallback calls idempotent — while an AI-undo task for that source is still open, a further call returns the same `createdTaskId` with `alreadyOpen: true` instead of creating a duplicate; a prior undo task that itself reached `done`/`archived` does not suppress a fresh one.
+- **Workspace (multi-repo) tasks (FN-7547):** tasks with `workspaceWorktrees` populated (`isWorkspaceTask`) are revertable too — the route dispatches to a dedicated workspace path that reasons about every sub-repo's integration branch as ONE all-or-nothing unit. It resolves each sub-repo's attributable commit(s), dry-run classifies every sub-repo first, and only commits a `revert(FN-xxxx): ...` commit on EACH sub-repo when every sub-repo classifies clean/already-reverted; if any sub-repo conflicts, no sub-repo is committed and every touched sub-repo worktree is rolled back to its pre-call state. Response contract for workspace tasks: `{ mode: "git", clean, workspace: { repos: [{ repo, classification, revertCommitSha?, conflicts?, alreadyReverted? }] }, conflicts?: {repo, file, ...}[] }`. A conflicting workspace result still falls back to the AI-undo task under `"auto"` mode, same as a single-repo conflicting result.
+- **`autoMerge:false` PR-based revert (FN-7554):** for a single-repo task whose git revert classifies **clean**, `autoMerge:false` no longer dead-ends at `needsHuman`. The route prepares a dedicated `fusion/revert-<id>` branch off the resolved base branch (via the engine's `prepareRevertPrBranch`, which NEVER writes to the base branch itself), pushes it, and opens a GitHub PR through the same owner/repo resolution, `githubRateLimiter` gate, `findPrForBranch` idempotency, and `manual: true` handoff as `POST /tasks/:id/pr/create`. Response: `{ mode: "pr", clean: true, prUrl, prNumber, revertBranch, existingPr? }` — a second call while the PR is still open links the existing PR (`existingPr: true`) instead of re-pushing. GitHub unconfigured or rate-limited still degrades gracefully to `{ mode: "git", needsHuman: true, reason }`, and a conflicting/unsupported/already-reverted classification is unaffected (no PR is opened; `"auto"` mode still falls back to the AI-undo task on conflict/unsupported).
+- **`autoMerge:false` PR-based revert extended to workspace tasks (FN-7577):** a workspace task whose git revert classifies **clean across every sub-repo** also opens PRs instead of dead-ending at `needsHuman` under `autoMerge:false`. The engine's `prepareWorkspaceRevertPrBranches` mirrors the workspace all-or-nothing classify-all contract: it dry-run classifies EVERY sub-repo first, and only prepares one `fusion/revert-<id>` branch per sub-repo (never writing any sub-repo's integration branch) when every sub-repo classifies clean/already-reverted — a single conflicting sub-repo aborts the WHOLE preparation with no branch created anywhere. The route then resolves owner/repo and checks the rate limiter for EVERY sub-repo before pushing/creating any PR (so a GitHub-unconfigured or rate-limited sub-repo degrades the whole task to `needsHuman` rather than opening a partial subset), then opens one PR per sub-repo reusing FN-7554's per-sub-repo `findPrForBranch` idempotency and `manual: true` handoff. Response: `{ mode: "pr", clean: true, workspace: { repos: [{ repo, revertBranch, prUrl, prNumber, existingPr? }] } }`. Existing `{ mode: "git" | "ai" | "pr" }` shapes, the `autoMerge:true` workspace path, and FN-7554's single-repo path are unchanged.
+- **Dashboard auto-linking (FN-7555):** the AI-undo task's card shows an "Undo of FN-xxxx" chip and its detail view shows a clickable "Created to undo FN-xxxx" link back to the source task. The source task's detail view shows an "Undo task: FN-YYYY" link whenever an OPEN undo task referencing it exists in the loaded tasks (matching `TaskStore.findOpenRevertTaskForSource`'s open-only semantics — a `done`/`archived`/soft-deleted undo task is never surfaced as active). Both directions are derived client-side from `sourceMetadata.revertOf`; no new API. A dedicated Done/Archived card revert-trigger action is still a separate follow-up (see FN-7525).
+- **Configurable AI-undo workflow default (FN-7556, UI: FN-7578):** the project setting `aiUndoTaskWorkflowId` (default `builtin:review-heavy`) selects the workflow applied to every AI-undo task created above (`mode:"ai"` and the `auto`/workspace conflict fallbacks all share one creation seam, so all three inherit this default) — a stricter review posture is warranted because these tasks reverse already-shipped code. A blank/unset value means the created task inherits the project default workflow (pre-FN-7556 behavior); the route falls back to inherit (with a logged warning) if the configured id is blank or does not resolve to a real workflow, so a misconfigured id never breaks AI-undo task creation. Editable from **Settings → General → AI-undo task workflow** (choose "Inherit project default workflow" to store the blank/inherit sentinel). See [Settings Reference → Project Settings](./settings-reference.md#project-settings).
+
 
 ## GitHub Issue Import and PR Creation
 

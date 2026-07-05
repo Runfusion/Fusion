@@ -33,12 +33,21 @@ describe("terminal mobile header row CSS contract", () => {
     expect(mobileSelectorRule).not.toContain("min-width: 100%");
   });
 
-  it("keeps the action cluster reachable without a second-row divider", () => {
+  it("renders no .terminal-actions shell in the mobile header (FN-7560: actions moved to footer)", () => {
+    // FN-7560: on mobile the action-control cluster no longer lives in the
+    // header (`.terminal-actions`) at all — it moved to a bottom
+    // `.terminal-status-bar` footer so it doesn't crowd the tab dropdown and
+    // close button. The mobile media query must not define a `.terminal-actions`
+    // override any more.
     const ruleBody = findRuleBody(/\.terminal-actions/);
+    expect(ruleBody).toBe("");
+  });
 
-    expect(ruleBody).toContain("order: 3");
-    expect(ruleBody).toContain("flex: 0 0 auto");
-    expect(ruleBody).toContain("border-top: none");
+  it("gives the mobile footer action cluster the horizontal-scroll flex-scroll pattern (FN-7560)", () => {
+    const ruleBody = findRuleBody(/\.terminal-status-bar/);
+
+    expect(ruleBody).toContain("min-width: 0");
+    expect(ruleBody).toContain("overflow-x: auto");
     expect(ruleBody).not.toContain("flex: 1 1 100%");
   });
 

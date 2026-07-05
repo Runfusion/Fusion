@@ -219,6 +219,90 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     expect(cappedStore.moveTask).not.toHaveBeenCalled();
   });
 
+  /*
+   * FN-7561: the unbounded Plan Review replan default must still stop at a finite
+   * safety ceiling. Below the cap it keeps replanning; at the cap it halts with a
+   * loud log entry and leaves the task for a human instead of looping forever
+   * (FN-7525 ran 13+ attempts overnight with no operator visibility).
+   */
+  it("keeps replanning an unbounded Plan Review loop just below the safety cap", async () => {
+    const store = createMockStore();
+    const belowLog = Array.from({ length: 14 }, (_, i) => revisionLog("Plan Review", "plan-review", i + 1));
+    const loopingTask = task({ postReviewFixCount: 14, column: "in-progress", log: belowLog });
+    store.getTask.mockResolvedValue(loopingTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 }); // no planReviewMaxRevisions → unbounded
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(loopingTask.id, loopingTask, {
+      stepName: "Plan Review",
+      feedback: "one more disagreement",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      verdict: "REVISE",
+      nodeId: "plan-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(true);
+
+    expect(store.moveTask).toHaveBeenCalledWith("FN-7066", "triage");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-7066",
+      "Plan Review failed — moved to triage for automatic replan (attempt 15/unbounded)",
+      expect.anything(),
+      undefined,
+    );
+  });
+
+  it("halts the unbounded Plan Review replan loop at the safety cap and leaves the task for a human", async () => {
+    const store = createMockStore();
+    const cappedLog = Array.from({ length: 15 }, (_, i) => revisionLog("Plan Review", "plan-review", i + 1));
+    const loopingTask = task({ postReviewFixCount: 15, column: "in-progress", log: cappedLog });
+    store.getTask.mockResolvedValue(loopingTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 9 }); // unbounded default
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(loopingTask.id, loopingTask, {
+      stepName: "Plan Review",
+      feedback: "still disagreeing after fifteen tries",
+      phase: "pre-merge" as const,
+      status: "failed" as const,
+      verdict: "REVISE",
+      nodeId: "plan-review",
+      maxRevisions: "unbounded",
+    })).resolves.toBe(false);
+
+    // Halted: no replan side effects.
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-7066", { postReviewFixCount: 16 }, undefined);
+    // Loud, human-visible halt log.
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-7066",
+      expect.stringContaining("Plan Review replan safety cap reached (15/15)"),
+      expect.stringContaining("still disagreeing after fifteen tries"),
+      undefined,
+    );
+  });
+
+  it("does not replan a malformed (advisory_failure, no verdict) Plan Review result", async () => {
+    // FN-7561 invariant: a malformed reviewer response (no parseable verdict) is an
+    // infra/formatting failure, not a plan defect, and must never bounce the task to triage.
+    const store = createMockStore();
+    const liveTask = task({ column: "in-progress" });
+    store.getTask.mockResolvedValue(liveTask);
+    store.getSettings.mockResolvedValue({ maxPostReviewFixes: 3 });
+    const executor = new TaskExecutor(store, "/tmp/test");
+
+    await expect((executor as any).requestPreMergeOptionalStepFix(liveTask.id, liveTask, {
+      stepName: "Plan Review",
+      feedback: "unparseable reviewer output",
+      phase: "pre-merge" as const,
+      status: "advisory_failure" as const,
+      verdict: undefined,
+      nodeId: "plan-review",
+    })).resolves.toBe(false);
+
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("clears stale pause-abort provenance silently before a fresh unpaused execution dispatch", async () => {
     const store = createMockStore();
     const liveTask = task({ column: "todo", paused: false, userPaused: false });

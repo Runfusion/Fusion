@@ -384,6 +384,102 @@ describe("TaskDetailModal oversight controls — mobile overflow menu", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
+  /*
+  FNXC:PlannerOversight 2026-07-04-00:00:
+  FN-7562 regression coverage — the menu-open auto-focus effect used to
+  select `.detail-oversight-menu-item` generically, which matched the native
+  `<select>` FIRST (it carries that class too) and focused it. Focusing a
+  native `<select>` programmatically surfaces its OS option picker, which
+  rendered as a second menu overlapping the custom `role="menu"` popover.
+  These tests assert the fixed invariant: auto-focus lands on an actionable
+  button menuitem (never the select), and only one `role="menu"` surface is
+  ever present, across both the active-overseer state and the oversight-off
+  (level-only) state.
+  */
+  it("auto-focuses the first button menuitem (never the native select) when nudge/stop/explain are available", async () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-213", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    fireEvent.click(trigger);
+
+    const select = await screen.findByTestId("detail-oversight-level-select");
+    const nudgeBtn = await screen.findByTestId("detail-overseer-nudge");
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(nudgeBtn);
+    });
+    expect(document.activeElement).not.toBe(select);
+
+    // Exactly one menu surface renders — the custom popover — and the native
+    // select stays a closed control (jsdom/browsers do not spawn a second
+    // top-level popup unless the element is actually focused).
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+  });
+
+  it("does not fall back to focusing the native select when oversight is off and only the level control renders", async () => {
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-214", column: "todo", plannerOversightLevel: "off" })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    fireEvent.click(trigger);
+
+    const select = await screen.findByTestId("detail-oversight-level-select");
+    // No button menuitem exists in this state (nudge/stop/explain are all
+    // absent), so the auto-focus effect must not fall back to the select.
+    expect(screen.queryByTestId("detail-overseer-nudge")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-overseer-stop")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("detail-overseer-explain")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(document.activeElement).not.toBe(select);
+    });
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+  });
+
+  it("desktop inline oversight select is unaffected by the mobile auto-focus fix", async () => {
+    setViewportWidth(DESKTOP_WIDTH);
+
+    render(
+      <TaskDetailModal
+        task={makeTask({ id: "FN-215", column: "in-progress", plannerOversightLevel: "autonomous", plannerOverseerState: activeSnapshot })}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    // Desktop renders the inline native select directly (no overflow trigger,
+    // no custom popover) — confirm that surface is untouched by this fix.
+    expect(screen.queryByTestId("detail-oversight-menu-trigger")).not.toBeInTheDocument();
+    const select = await screen.findByTestId("detail-oversight-level-select");
+    expect(select).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+    setViewportWidth(MOBILE_WIDTH);
+  });
+
   it("click-outside closes the menu", async () => {
     render(
       <>

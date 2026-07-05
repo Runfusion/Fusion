@@ -354,11 +354,20 @@ export async function maybeCreateTrackingIssue(
   const title = formatTrackingIssueTitle(latestTask);
   const body = formatTrackingIssueBody(latestTask);
 
+  /*
+  FNXC:GithubTracking 2026-07-05-00:00:
+  Tracking-issue dedup was mis-linking new tasks to OLD/STALE issues (operator report: FN-7579 got an old issue id instead of a fresh one).
+  Two false-positive vectors, both fixed here:
+    1. Search included CLOSED issues (state: "all"), so a resolved tracking issue from an earlier, unrelated task could be reused. Dedup only exists to avoid opening a *second live* issue for the same active work — a closed/resolved issue must never be reused. We now search and accept OPEN issues only.
+    2. The accept filter allowed a keyword-only match (matchedKeywords >= 2 with zero file-path overlap). Symptom keywords are generic camelCase identifiers shared across many tasks (e.g. `githubTracking`, `trackingIssue`), so 2-3 shared tokens is a weak signal that routinely mis-matched. We now require at least one File-Scope path overlap before reusing an issue; keyword count only breaks ties / raises confidence.
+  Net effect: a task with no File-Scope paths (or no OPEN path-overlapping issue) always creates a fresh tracking issue rather than mis-linking. See docs/triage-duplicate-detection-postmortem.md.
+  */
   if (deps.projectSettings.githubTrackingDedupEnabled !== false) {
     try {
       const paths = extractFileScopePaths(latestTask as Task & { prompt?: string });
       const keywords = extractSymptomKeywords(latestTask, { max: 6 });
-      if (paths.length > 0 || keywords.length > 0) {
+      // FNXC:GithubTracking Path overlap is now mandatory for a dedup link — without File-Scope paths there is no strong-enough signal, so skip the search entirely and create fresh.
+      if (paths.length > 0) {
         const queries = buildIssueSearchQueries(paths, keywords);
         const byNumber = new Map<number, {
           number: number;
@@ -370,8 +379,10 @@ export async function maybeCreateTrackingIssue(
         }>();
 
         for (const query of queries) {
-          const candidates = await githubClient.searchIssues(repo.owner, repo.repo, query, { state: "all", limit: 10 });
+          const candidates = await githubClient.searchIssues(repo.owner, repo.repo, query, { state: "open", limit: 10 });
           for (const candidate of candidates) {
+            // FNXC:GithubTracking Defensive: never reuse a closed/resolved issue even if the API returns one.
+            if (candidate.state !== "open") continue;
             if (!byNumber.has(candidate.number)) {
               byNumber.set(candidate.number, candidate);
             }
@@ -380,7 +391,7 @@ export async function maybeCreateTrackingIssue(
           const scored = [...byNumber.values()]
             .map((candidate) => ({ candidate, ...scoreCandidateIssue(candidate, paths, keywords) }))
             .filter((entry) => entry.score >= DEDUP_MATCH_THRESHOLD)
-            .filter((entry) => entry.matchedPaths.length > 0 || entry.matchedKeywords.length >= 2)
+            .filter((entry) => entry.matchedPaths.length > 0)
             .sort((a, b) => b.score - a.score);
 
           const bestMatch = scored[0];

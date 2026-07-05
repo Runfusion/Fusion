@@ -6,7 +6,7 @@ import { Brain, Link, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Min
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type ResolvedWorkflowOptionalStep } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
-import { checkDuplicateTasks, fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents, selectTaskWorkflow, fetchWorkflowOptionalSteps, DuplicateCandidatesError } from "../api";
+import { checkDuplicateTasks, fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents, fetchWorkflowOptionalSteps, DuplicateCandidatesError } from "../api";
 import type { CreateTaskInput, ModelInfo, Agent, NodeInfo, DuplicateMatch } from "../api";
 import { useNodes } from "../hooks/useNodes";
 import { ModelSelectionModal } from "./ModelSelectionModal";
@@ -394,23 +394,14 @@ export function InlineCreateCard({
     });
   }, []);
 
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+  submitTask no longer applies the selected workflow post-create via selectTaskWorkflow — handleSubmit now forwards workflowId inside the CreateTaskInput so the store materializes the workflow and resolves the intake column (e.g. Coding (Ideas) → "ideas") atomically at create time. A post-create selectTaskWorkflow call would race the store's intake-column resolution and re-introduce the auto-triage bug this task fixes.
+  */
   const submitTask = useCallback(async (input: CreateTaskInput) => {
     setSubmitting(true);
     try {
       const task = await onSubmit(input);
-
-      // Apply custom workflow if selected (non-blocking — task already exists)
-      if (selectedWorkflowId) {
-        try {
-          await selectTaskWorkflow(task.id, selectedWorkflowId, projectId);
-        } catch (err) {
-          if (addToast) {
-            addToast(getErrorMessage(err) || "Failed to apply workflow", "error");
-          } else {
-            console.warn("Failed to apply workflow:", getErrorMessage(err));
-          }
-        }
-      }
 
       // Upload pending images as attachments
       if (pendingImages.length > 0) {
@@ -478,15 +469,18 @@ export function InlineCreateCard({
     onSubmit,
     addToast,
     projectId,
-    selectedWorkflowId,
   ]);
 
   const handleSubmit = useCallback(async () => {
     if (!description.trim() || submitting) return;
 
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+    Do not hard-code `column: "triage"` here — the store resolves the landing column from the forwarded (or project-default) workflow's intake column, e.g. Coding (Ideas) → "ideas". Forwarding `workflowId` at create time (instead of applying it post-create via selectTaskWorkflow) lets the store materialize the workflow and land the card in its resolved intake column atomically, so a manual-intake workflow parks the card for the operator instead of being auto-triaged.
+    */
     const input: CreateTaskInput = {
       description: description.trim(),
-      column: "triage",
+      ...(selectedWorkflowId ? { workflowId: selectedWorkflowId } : {}),
       dependencies: dependencies.length ? dependencies : undefined,
       ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),
       modelPresetId: selectedPresetId,
@@ -517,7 +511,7 @@ export function InlineCreateCard({
     }
 
     await submitTask(input);
-  }, [description, submitting, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
+  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
 
   const handleDuplicateProceed = useCallback(async () => {
     const matches = duplicateMatches;

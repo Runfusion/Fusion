@@ -193,6 +193,44 @@ export async function waitForTerminalFontMetrics(
   return true;
 }
 
+/*
+FNXC:Terminal 2026-07-04-09:30:
+FN-7561 (recurrence #3 of mobile inter-character spacing, after FN-7456's DOM
+glyph-fallback fix and FN-7460's `text-size-adjust: none`) root cause: real
+xterm.js's `OptionsService` setter is a strict no-op when a caller reassigns an
+option to a value that already strictly-equals its current value (no
+`onOptionChange` fires — see `@xterm/xterm` `common/services/OptionsService.ts`).
+Both terminal surfaces reapply `terminal.options.fontFamily`/`fontSize` with the
+SAME already-resolved value once `waitForTerminalFontMetrics()` settles, which is
+the common case (the user never touched terminal preferences). That reassignment
+never fires `onOptionChange`, so xterm's `CharSizeService` (canvas/DOM character
+measurement) and `DomRenderer._setDefaultSpacing()` (the letter-spacing
+compensation baked onto `.xterm-rows`) never recompute against the web font that
+finished loading AFTER xterm's initial pre-load (fallback-font) measurement. The
+stale pre-load cell metrics + compensation persist as visible excess
+inter-character gaps on the very first mobile layout until an unrelated event
+(resize/orientation/DPR change) happens to produce a genuine value change and
+incidentally force a real remeasure — exactly the "only repairs itself after
+keyboard toggle/orientation/reconnect" symptom reported for this recurrence.
+Force a genuine (distinct-value) transition through a sentinel font family
+before landing back on the resolved value so xterm's internal remeasure
+pipeline always runs at least once against the now-settled font, regardless of
+whether the resolved value already matches the terminal's current option value.
+*/
+const TERMINAL_FONT_REMEASURE_SENTINEL_FONT_FAMILY = "monospace";
+
+export function forceTerminalFontRemeasure(
+  terminal: { options: { fontFamily?: string } },
+  fontFamily: string,
+): void {
+  const sentinel =
+    fontFamily === TERMINAL_FONT_REMEASURE_SENTINEL_FONT_FAMILY
+      ? `${TERMINAL_FONT_REMEASURE_SENTINEL_FONT_FAMILY}, monospace`
+      : TERMINAL_FONT_REMEASURE_SENTINEL_FONT_FAMILY;
+  terminal.options.fontFamily = sentinel;
+  terminal.options.fontFamily = fontFamily;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

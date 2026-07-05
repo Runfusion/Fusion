@@ -823,6 +823,56 @@ describe("MissionExecutionLoop", () => {
       );
     });
 
+    it("skips validation when the feature's mission is not active", async () => {
+      missionStore._setMission(createMockMission({ id: "M-TEST1", status: "planning" }));
+      const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001" });
+      missionStore._setFeature(feature);
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      expect(missionStore.startValidatorRun).not.toHaveBeenCalled();
+      expect(missionStore.logMissionEvent).toHaveBeenCalledWith(
+        expect.any(String),
+        "warning",
+        expect.stringContaining("Validation skipped"),
+        expect.objectContaining({
+          code: "validation_skipped_mission_inactive",
+          featureId: "F-001",
+          taskId: "FN-001",
+          missionId: "M-TEST1",
+          missionStatus: "planning",
+        }),
+      );
+    });
+
+    it("validates when the feature's mission is active", async () => {
+      missionStore._setMission(createMockMission({ id: "M-TEST1", status: "active" }));
+      const feature = createMockFeature({ loopState: "implementing", taskId: "FN-001" });
+      missionStore._setFeature(feature);
+      missionStore.getFeatureByTaskId = vi.fn().mockReturnValue(feature);
+      taskStore._setTask({ id: "FN-001", title: "Test", description: "Test task", log: [] });
+
+      loop = new MissionExecutionLoop({
+        taskStore: taskStore as any,
+        missionStore: missionStore as any,
+        rootDir: "/tmp",
+      });
+      vi.spyOn(loop as any, "runValidation").mockResolvedValue({ status: "pass", summary: "ok" });
+      loop.start();
+
+      await loop.processTaskOutcome("FN-001");
+
+      expect(missionStore.startValidatorRun).toHaveBeenCalledWith("F-001", "task_completion");
+    });
+
     it("requeues needs_fix features back through validation", async () => {
       const assertions = makeAssertions(1);
       const response = JSON.stringify({

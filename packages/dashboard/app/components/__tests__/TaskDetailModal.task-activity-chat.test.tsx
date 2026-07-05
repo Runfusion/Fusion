@@ -26,6 +26,11 @@ function renderModal(props: Partial<ComponentProps<typeof TaskDetailModal>> = {}
       task={makeTask({
         id: "FN-7315",
         column: "in-progress" as any,
+        // FNXC:PlannerOversight 2026-07-04-19:00: explicitly off so these Activity/Chat-tab
+        // integration tests (unrelated to FN-7571 oversight/intervention coverage) don't pick
+        // up the always-active default oversight level (autonomous) and gain an unrelated
+        // "Interventions" dropdown option.
+        plannerOversightLevel: "off",
         log: [
           { timestamp: "2026-06-30T20:00:00.000Z", action: "Started work", outcome: "Executor checked out" },
           { timestamp: "2026-06-30T20:01:00.000Z", action: "Posted update" },
@@ -686,7 +691,7 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
       mockRawLogs([]);
       render(
         <TaskDetailContent
-          task={makeTask({ id: "FN-7315-DONE", column: "done" as any, log: [], steeringComments: [] })}
+          task={makeTask({ id: "FN-7315-DONE", column: "done" as any, log: [], steeringComments: [], plannerOversightLevel: "off" })}
           embedded
           onRequestClose={noop}
           onMoveTask={noopMove}

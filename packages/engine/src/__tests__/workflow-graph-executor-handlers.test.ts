@@ -424,4 +424,119 @@ describe("WorkflowGraphExecutor traversal", () => {
 
     await expect(executor.run(task, settingsOn(), ir)).rejects.toThrow("Cycle detected");
   });
+
+  // FN-7579: ask-user (chat reach-out) + exit-gate (early termination) end-to-end
+  // through the real registered handlers (no override), using deps.runCustomNode
+  // exactly as the ask-user node is dispatched in production.
+  describe("ask-user / exit-gate (FN-7579)", () => {
+    it("ask-user node parks the task awaiting-user-input via the custom-node runner", async () => {
+      const ir: WorkflowIr = {
+        version: "v1",
+        name: "ask-user",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "ask", kind: "ask-user", config: { question: "Looks good?" } },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "end", condition: "success" },
+        ],
+      };
+      const runCustomNode = vi.fn(async () => ({ outcome: "failure" as const, value: "awaiting-user-input" }));
+      const executor = new WorkflowGraphExecutor({ runCustomNode });
+
+      const result = await executor.run(task, settingsOn(), ir);
+      expect(runCustomNode).toHaveBeenCalledOnce();
+      expect(runCustomNode.mock.calls[0][0]).toMatchObject({ id: "ask", kind: "ask-user" });
+      expect(result.outcome).toBe("failure");
+      expect(result.visitedNodeIds).not.toContain("end");
+    });
+
+    it("unconditional exit-gate terminates early, skipping downstream nodes", async () => {
+      const ir: WorkflowIr = {
+        version: "v1",
+        name: "exit-gate-unconditional",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "exit", kind: "exit-gate" },
+          { id: "never", kind: "prompt" },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "exit" },
+          { from: "exit", to: "end", condition: "outcome:exit" },
+          { from: "exit", to: "never", condition: "outcome:continue" },
+        ],
+      };
+      const never = vi.fn(async () => ({ outcome: "success" as const }));
+      const executor = new WorkflowGraphExecutor({ handlers: { prompt: never } });
+
+      const result = await executor.run(task, settingsOn(), ir);
+      expect(never).not.toHaveBeenCalled();
+      expect(result.outcome).toBe("success");
+      expect(result.visitedNodeIds).toContain("exit");
+      expect(result.visitedNodeIds).not.toContain("never");
+    });
+
+    it("conditional exit-gate falls through to the next node when the condition does not match", async () => {
+      const ir: WorkflowIr = {
+        version: "v1",
+        name: "exit-gate-conditional",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "exit", kind: "exit-gate", config: { condition: { type: "output-contains", nodeId: "ask", value: "looks good" } } },
+          { id: "refine", kind: "prompt" },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "exit" },
+          { from: "exit", to: "end", condition: "outcome:exit" },
+          { from: "exit", to: "refine", condition: "outcome:continue" },
+        ],
+      };
+      const refine = vi.fn(async () => ({ outcome: "success" as const }));
+      const executor = new WorkflowGraphExecutor({
+        handlers: { prompt: refine },
+      });
+
+      const result = await executor.run(task, settingsOn(), ir);
+      expect(refine).toHaveBeenCalledOnce();
+      expect(result.visitedNodeIds).toContain("refine");
+    });
+
+    it("conditional exit-gate exits early when the referenced context value matches", async () => {
+      // Seed the ask-user answer via runCustomNode's contextPatch by running a
+      // graph that first visits an ask-user node, then the exit-gate reads its
+      // published `input:ask` context key.
+      const irWithAsk: WorkflowIr = {
+        version: "v1",
+        name: "exit-gate-conditional-match-full",
+        nodes: [
+          { id: "start", kind: "start" },
+          { id: "ask", kind: "ask-user", config: { question: "Anything to refine?" } },
+          { id: "exit", kind: "exit-gate", config: { condition: { type: "output-contains", nodeId: "ask", value: "looks good" } } },
+          { id: "refine", kind: "prompt" },
+          { id: "end", kind: "end" },
+        ],
+        edges: [
+          { from: "start", to: "ask" },
+          { from: "ask", to: "exit", condition: "success" },
+          { from: "exit", to: "end", condition: "outcome:exit" },
+          { from: "exit", to: "refine", condition: "outcome:continue" },
+        ],
+      };
+      const refine = vi.fn(async () => ({ outcome: "success" as const }));
+      const runCustomNode = vi.fn(async () => ({
+        outcome: "success" as const,
+        contextPatch: { "input:ask": "yes, looks good to me" },
+      }));
+      const executor2 = new WorkflowGraphExecutor({ runCustomNode, handlers: { prompt: refine } });
+
+      const result = await executor2.run(task, settingsOn(), irWithAsk);
+      expect(refine).not.toHaveBeenCalled();
+      expect(result.visitedNodeIds).toContain("exit");
+      expect(result.visitedNodeIds).not.toContain("refine");
+    });
+  });
 });

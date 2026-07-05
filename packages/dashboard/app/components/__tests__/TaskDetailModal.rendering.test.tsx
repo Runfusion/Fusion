@@ -474,6 +474,166 @@ describe("TaskDetailModal", () => {
       expect(screen.queryByText(/Created via/)).not.toBeInTheDocument();
     });
 
+    /**
+     * FNXC:TaskRevert 2026-07-04-00:00:
+     * FN-7555 bidirectional undo→source affordance coverage. Forward: an AI-undo
+     * task (`sourceMetadata.revertOf` set by `createAiUndoTask`) shows a clickable
+     * "Created to undo <id>" link. Reverse: a source task shows an "Undo task: <id>"
+     * link only when an OPEN undo task referencing it exists in the loaded `tasks`
+     * list — mirroring `TaskStore.findOpenRevertTaskForSource`'s open-only semantics
+     * (done/archived/soft-deleted undo tasks must not surface as an active link).
+     */
+    describe("undo/revert provenance", () => {
+      it("renders a clickable 'Created to undo <id>' link for an AI-undo task", async () => {
+        render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={makeTask({ id: "FN-200", sourceType: "recovery", sourceMetadata: { revertOf: "FN-100" } })}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        expect(screen.getByText(/Created to undo/)).toBeInTheDocument();
+        const link = screen.getByRole("button", { name: "FN-100" });
+        expect(link).toBeInTheDocument();
+        await userEvent.click(link);
+        await waitFor(() => {
+          expect(noopOpenDetail).toHaveBeenCalled();
+        });
+      });
+
+      it("renders nothing for the forward link when sourceMetadata.revertOf is absent", () => {
+        render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={makeTask({ id: "FN-200", sourceType: "recovery", sourceMetadata: {} })}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        expect(screen.queryByText(/Created to undo/)).not.toBeInTheDocument();
+      });
+
+      it("does not throw and renders nothing for malformed revertOf metadata", () => {
+        render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={makeTask({ id: "FN-200", sourceMetadata: { revertOf: 999 as any } })}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        expect(screen.queryByText(/Created to undo/)).not.toBeInTheDocument();
+      });
+
+      it("renders an 'Undo task: <id>' link when an OPEN undo task references this source task", async () => {
+        const sourceTask = makeTask({ id: "FN-100", column: "done" });
+        const undoTask = makeTask({ id: "FN-201", column: "todo", sourceType: "recovery", sourceMetadata: { revertOf: "FN-100" }, createdAt: "2026-07-04T00:00:00.000Z" });
+
+        render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={sourceTask}
+            tasks={[sourceTask, undoTask]}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        const link = screen.getByRole("button", { name: "FN-201" });
+        expect(link).toBeInTheDocument();
+        await userEvent.click(link);
+        await waitFor(() => {
+          expect(noopOpenDetail).toHaveBeenCalled();
+        });
+      });
+
+      it("renders no reverse link when the only undo task for this source is done/archived (open-only invariant)", () => {
+        const sourceTask = makeTask({ id: "FN-100", column: "done" });
+        const doneUndoTask = makeTask({ id: "FN-202", column: "done", sourceType: "recovery", sourceMetadata: { revertOf: "FN-100" } });
+        const archivedUndoTask = makeTask({ id: "FN-203", column: "archived", sourceType: "recovery", sourceMetadata: { revertOf: "FN-100" } });
+
+        render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={sourceTask}
+            tasks={[sourceTask, doneUndoTask, archivedUndoTask]}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        expect(screen.queryByRole("button", { name: "FN-202" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "FN-203" })).not.toBeInTheDocument();
+      });
+
+      it("renders no reverse link and no empty shell when no undo task exists for this source", () => {
+        const sourceTask = makeTask({ id: "FN-100", column: "done" });
+
+        const { container } = render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={sourceTask}
+            tasks={[sourceTask]}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        expect(container.querySelector(".detail-undo-task-row")).toBeNull();
+      });
+
+      it("picks the most recently created open undo task when multiple exist", async () => {
+        const sourceTask = makeTask({ id: "FN-100", column: "done" });
+        const olderUndo = makeTask({ id: "FN-204", column: "todo", sourceMetadata: { revertOf: "FN-100" }, createdAt: "2026-07-01T00:00:00.000Z" });
+        const newerUndo = makeTask({ id: "FN-205", column: "todo", sourceMetadata: { revertOf: "FN-100" }, createdAt: "2026-07-03T00:00:00.000Z" });
+
+        render(
+          <TaskDetailModal
+            initialTab="definition"
+            task={sourceTask}
+            tasks={[sourceTask, olderUndo, newerUndo]}
+            onClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />,
+        );
+
+        expect(screen.getByRole("button", { name: "FN-205" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "FN-204" })).not.toBeInTheDocument();
+      });
+    });
+
     it("FN-3755 renders provenance before created-updated timestamps", () => {
       const { container } = render(
         <TaskDetailModal

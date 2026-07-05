@@ -751,6 +751,25 @@ export function useTasks(options?: UseTasksOptions) {
     return task;
   }, [projectId]);
 
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Client-side `revertTask` op. Deliberately does NOT patch the source task's
+  column/status in local state — the git/AI-undo route never moves the
+  source task backward (see the `FNXC:TaskRevert` route contract). On success
+  (either a clean git revert producing a new commit, or an AI-undo task being
+  created) we re-fetch via `refreshTasksRef` so the board picks up the new
+  AI-undo task / any lineage changes without us guessing at the shape of the
+  update ourselves.
+  */
+  const revertTask = useCallback(async (
+    id: string,
+    body?: api.RevertTaskOptions,
+  ): Promise<api.RevertTaskResult> => {
+    const result = await api.revertTask(id, projectId, body);
+    void refreshTasksRef.current?.();
+    return result;
+  }, [projectId]);
+
   const archiveAllDone = useCallback(async (): Promise<Task[]> => {
     const archived = await api.archiveAllDone(projectId);
     const normalized = archived.map(normalizeTask);
@@ -804,5 +823,5 @@ export function useTasks(options?: UseTasksOptions) {
     lastFetchTimeMs.current = Date.now();
   }, []);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, archiveAllDone, loadArchivedTasks, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

@@ -4210,6 +4210,11 @@ export class TaskExecutor {
     const liveTask = await this.store.getTask(taskId).catch(() => fallbackTask);
     const isPlanReview = info.nodeId === "plan-review" || info.stepName === "Plan Review";
     if (isPlanReview) {
+      /*
+       * FNXC:PlanReviewReplan 2026-07-05-17:32:
+       * FN-7561: a malformed reviewer response arrives as `advisory_failure` with NO parsed verdict. That is an infra/formatting failure (e.g. the reviewer could not locate the spec, or fumbled its trailing JSON), not a plan defect — it must NEVER bounce the task to a triage replan. The graph already excludes malformed advisories from the fix handoff (shouldRequestPreMergeFix); this guard defends the explicit remediation-node path and any future caller so a malformed advisory can never drive the replan loop. A genuine REVISE (verdict === "REVISE", also carried as advisory_failure) still replans below.
+       */
+      if (info.status === "advisory_failure" && info.verdict !== "REVISE") return false;
       if (info.verdict !== undefined && info.verdict !== "REVISE") return false;
       /*
        * FNXC:PlanReviewReplan 2026-06-29-00:41:
@@ -4232,6 +4237,21 @@ export class TaskExecutor {
       const revisionKey = optionalStepRevisionKey(info.nodeId ?? "plan-review", info.stepName);
       const currentCount = countOptionalStepRevisionAttempts(liveTask, revisionKey, info.stepName);
       if (!budget.unbounded && currentCount >= budget.max) return false;
+      /*
+       * FNXC:PlanReviewReplanCap 2026-07-05-17:28:
+       * FN-7561: an unset Plan Review revision budget resolves to "unbounded" (see FNXC:WorkflowRevisionBudget above), which by design skips the ceiling check — so a task whose planner and reviewer persistently disagree, or whose reviewer keeps hard-failing, replans triage↔plan-review forever, silently burning a triage + review LLM call every cycle (FN-7525 ran 13+ attempts overnight with zero operator visibility). Enforce a finite safety ceiling even when unbounded: once hit, emit a loud halting log entry and STOP replanning (return false) so the gate falls through to a visible failed/parked state a human can act on, instead of looping indefinitely. Explicit numeric operator budgets are still honored as-is above; this only backstops the unbounded DEFAULT.
+       */
+      const PLAN_REVIEW_REPLAN_HARD_CAP = 15;
+      if (budget.unbounded && currentCount >= PLAN_REVIEW_REPLAN_HARD_CAP) {
+        await this.store.logEntry(
+          taskId,
+          `Plan Review replan safety cap reached (${currentCount}/${PLAN_REVIEW_REPLAN_HARD_CAP}) — halting automatic replan and leaving the task for human review`,
+          `Plan Review requested another planning revision but the unbounded replan loop hit its safety ceiling of ${PLAN_REVIEW_REPLAN_HARD_CAP} attempts. This usually means the reviewer and planner disagree persistently, or the reviewer keeps failing to produce a verdict. The task is being left in place for a human to inspect rather than looping further. Latest feedback:\n${feedback}`,
+          this.getRunContextFor(taskId),
+        );
+        executorLog.warn(`${taskId}: Plan Review replan safety cap (${PLAN_REVIEW_REPLAN_HARD_CAP}) reached after ${currentCount} attempts — halting automatic replan`);
+        return false;
+      }
       const nextCount = currentCount + 1;
       const totalFixCount = (liveTask.postReviewFixCount ?? 0) + 1;
       const budgetLabel = budget.unbounded ? "unbounded" : String(budget.max);
@@ -6648,9 +6668,21 @@ export class TaskExecutor {
    * placement re-walks earlier read-only nodes until CU-U5 checkpoints land.
    */
   private async runAwaitInputNode(node: WorkflowIrNode, live: TaskDetail): Promise<WorkflowNodeResult> {
-    const question = typeof node.config?.prompt === "string" && node.config.prompt.trim()
-      ? node.config.prompt.trim()
-      : "This workflow is waiting for your input.";
+    /*
+    FNXC:WorkflowAskUser 2026-07-05-00:00:
+    FN-7579's `ask-user` node is the first-class discoverable surface over this
+    SAME park/resume plumbing that a `prompt` node with `config.awaitInput: true`
+    already used. Question resolution order: `config.question` (the ask-user
+    node's dedicated field) first, then `config.prompt` (back-compat with the
+    original awaitInput alias), then the shared default string. Nothing below
+    this line branches on node.kind — both node kinds share one pause/resume
+    contract so behavior can never drift between them.
+    */
+    const question = typeof node.config?.question === "string" && node.config.question.trim()
+      ? node.config.question.trim()
+      : typeof node.config?.prompt === "string" && node.config.prompt.trim()
+        ? node.config.prompt.trim()
+        : "This workflow is waiting for your input.";
     const marker = `workflow-input:${node.id}`;
 
     const steering = Array.isArray(live.steeringComments) ? live.steeringComments : [];
@@ -7188,7 +7220,10 @@ export class TaskExecutor {
     if (staleInput === "clear") live = await this.store.getTask(nodeTask.id);
 
     // Await-input nodes never run a session — they pause for the user.
-    if (cfg.awaitInput === true) {
+    // FNXC:WorkflowAskUser 2026-07-05-00:00: `ask-user` is the dedicated,
+    // discoverable node kind for this same pause; `prompt` + `config.awaitInput:
+    // true` remains a back-compat alias (both route to the identical runner).
+    if (cfg.awaitInput === true || node.kind === "ask-user") {
       return this.runAwaitInputNode(node, live);
     }
 
@@ -14532,14 +14567,22 @@ ${scopeGuard}
     const requireExternalIntegrationEvidence =
       workflowStepMetadata.requireExternalIntegrationEvidence === true;
 
+    /*
+     * FNXC:PlanReviewSpecInjection 2026-07-05-17:20:
+     * FN-7561: the Plan Review reviewer runs readonly with cwd=worktree, but the spec artifact lives at the project root under `.fusion/tasks/<id>/PROMPT.md` — OUTSIDE the task worktree. Instructing the agent to "Read PROMPT.md" therefore had it search the worktree, fail to find the file, and emit "no PROMPT.md file was found / task data lives in a DB" prose instead of a parseable verdict. That malformed/hard-failed output fed the unbounded triage↔plan-review replan loop (FN-7525 looped 13+ times overnight; FN-7575 too). Load the spec text from the store (document layer → on-disk PROMPT.md) ONCE and inject it directly into the reviewer prompt so the verdict never depends on the agent locating the file. Read from the store, not fs, so it is correct regardless of worktree vs project-root layout.
+     */
+    const planReviewSpecArtifact = isPlanReviewStep
+      ? await this.readTaskArtifact(task.id, "PROMPT.md")
+      : undefined;
+    const planReviewSpecText = typeof planReviewSpecArtifact === "string" ? planReviewSpecArtifact : "";
+
     if (isPlanReviewStep && requireExternalIntegrationEvidence) {
       /*
        * FNXC:PlanValidation 2026-06-30-09:03:
        * Coding (per-step review) intentionally keeps external-integration evidence as a Plan Review gate. Enforce it here, not in triage, so only workflows that set `requireExternalIntegrationEvidence` block and failures route through the graph's normal plan-replan loop.
        */
-      const promptContent = await this.readTaskArtifact(task.id, "PROMPT.md");
       const evidenceGaps = detectExternalIntegrationEvidenceGaps({
-        promptContent: typeof promptContent === "string" ? promptContent : "",
+        promptContent: planReviewSpecText,
       });
       if (evidenceGaps.length > 0) {
         const diagnostic = formatExternalIntegrationEvidenceDiagnostic(evidenceGaps);
@@ -14594,9 +14637,14 @@ ${scopeGuard}
      */
     const scopeBlock = isPlanReviewStep
       ? `Plan Review Scope:
-- Review the task plan artifact (PROMPT.md) and task metadata only.
+- Review the task plan artifact (PROMPT.md), reproduced verbatim below, and task metadata only.
+- The plan is embedded in this prompt — do NOT go looking for a PROMPT.md file in the worktree; it lives at the project root (\`.fusion/tasks/${task.id}/PROMPT.md\`), outside this worktree, so review the embedded copy.
 - Do NOT judge current implementation diffs, uncommitted worktree changes, or unrelated repository changes.
-- If PROMPT.md is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.`
+- If the plan is internally consistent, complete, scoped, and verifiable, approve even when the worktree contains unrelated changes from another task.
+
+--- BEGIN PROMPT.md ---
+${planReviewSpecText || `(The plan artifact could not be loaded into this prompt. Read it read-only from the project root at .fusion/tasks/${task.id}/PROMPT.md before judging; do not treat an unavailable artifact as a plan defect.)`}
+--- END PROMPT.md ---`
       : `Diff Scope (files changed by THIS task vs base):
 ${scopeFileBlock}${diffShortstat ? `\nDiff stat: ${diffShortstat}` : ""}
 
@@ -15053,6 +15101,21 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     if (!primaryOutcome.timedOut && !primaryMalformed) return primaryOutcome;
 
     if (!fallback) {
+      /*
+       * FNXC:ReviewLeniency 2026-07-05-17:24:
+       * FN-7561: when NO fallback model is configured, a MALFORMED primary (unparseable verdict — a single fumbled response) still deserves one retry so a transient formatting fumble does not feed the plan-review replan loop. Self-retry once on the SAME primary model. Timeouts are NOT self-retried — they would likely just time out again and burn another full budget. If the self-retry is still malformed it is returned as a non-blocking advisory downstream.
+       */
+      if (primaryMalformed && !primaryOutcome.timedOut) {
+        executorLog.log(`${task.id}: workflow step '${workflowStep.name}' produced malformed output and no fallback is configured — retrying once on the primary model`);
+        const retryOutcome = await runOnce(primaryProvider, primaryModelId, "primary-retry");
+        const retryMalformed = (retryOutcome as { malformed?: boolean }).malformed === true;
+        if (!retryMalformed) return retryOutcome;
+        await this.store.logEntry(
+          task.id,
+          `Workflow step '${workflowStep.name}' produced malformed output on both the primary attempt and one self-retry — no fallback model configured (set settings.validatorFallbackProvider/Id or fallbackProvider/Id)`,
+        );
+        return retryOutcome;
+      }
       const reason = primaryOutcome.timedOut ? "timed out" : "produced malformed output";
       executorLog.warn(`${task.id}: workflow step '${workflowStep.name}' ${reason} and no fallback model is configured`);
       await this.store.logEntry(

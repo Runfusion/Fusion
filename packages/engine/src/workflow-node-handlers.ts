@@ -25,6 +25,7 @@ import {
   createMergeAttemptHandler,
   createMergeGateHandler,
 } from "./workflow-node-runners/merge-runner.js";
+import { createExitGateHandler } from "./workflow-node-runners/exit-gate-runner.js";
 
 export { createGateHandler } from "./workflow-node-runners/gate-runner.js";
 export {
@@ -40,6 +41,10 @@ export {
   createNotifyHandler,
   type WorkflowNotifyDispatch,
 } from "./workflow-node-runners/notify-runner.js";
+export {
+  createExitGateHandler,
+  type WorkflowExitGateConfig,
+} from "./workflow-node-runners/exit-gate-runner.js";
 
 // FNXC:WorkflowExecution 2026-06-25-00:00: U4 (KTD-2) — the `workflow-step` seam
 // was removed. Workflow quality gates run as the graph's own optional-group /
@@ -592,7 +597,9 @@ export function createDefaultNodeHandlers(
   | "branch-group-promotion"
   | "pr-create"
   | "pr-respond"
-  | "pr-merge",
+  | "pr-merge"
+  | "ask-user"
+  | "exit-gate",
   WorkflowNodeHandler
 > {
   const promptLike = deps?.primitives
@@ -626,6 +633,15 @@ export function createDefaultNodeHandlers(
   return {
     prompt: promptLike,
     script: promptLike,
+    // FNXC:WorkflowAskUser 2026-07-05-00:00: `ask-user` is a first-class node
+    // kind over the SAME custom-node seam as prompt/script — it carries no
+    // seam config, so it always falls through to the injected custom-node
+    // runner (runGraphCustomNode in executor.ts), which special-cases
+    // `node.kind === "ask-user"` onto the existing await-input park/resume path.
+    "ask-user": promptLike,
+    // FNXC:WorkflowExitGate 2026-07-05-00:00: dedicated small runner (mirrors
+    // notify-runner's shape) — no legacy seam, no custom-node execution.
+    "exit-gate": createExitGateHandler(),
     gate,
     "step-review": deps?.primitives
       ? createPrimitiveStepReviewHandler(deps.primitives)

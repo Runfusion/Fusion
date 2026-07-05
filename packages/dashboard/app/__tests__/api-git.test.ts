@@ -15,6 +15,7 @@ import {
   fetchAgentTasks,
   archiveTask,
   unarchiveTask,
+  revertTask,
   deleteTask,
   ApiRequestError,
   moveTask,
@@ -547,6 +548,56 @@ describe("Git Management API", () => {
       globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task not in archived" }, 400));
 
       await expect(unarchiveTask("FN-001")).rejects.toThrow("Task not in archived");
+    });
+  });
+
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Client-shape coverage for `revertTask` — the `POST /tasks/:id/revert` route
+  (FN-7523/FN-7524) contract. Asserts the JSON body is forwarded verbatim and
+  the parsed discriminated-union result (git or ai path) is returned as-is,
+  plus standard error propagation on a non-2xx response.
+  */
+  describe("revertTask", () => {
+    it("sends POST with the JSON mode body and returns the parsed git-path result", async () => {
+      const gitResult = { mode: "git", clean: true, revertCommitSha: "deadbeef1234" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, gitResult));
+
+      const response = await revertTask("FN-001", undefined, { mode: "auto" });
+
+      expect(response).toEqual(gitResult);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/revert", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({ mode: "auto" }),
+      });
+    });
+
+    it("returns the parsed ai-path result", async () => {
+      const aiResult = { mode: "ai", createdTaskId: "FN-999" };
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, aiResult));
+
+      const response = await revertTask("FN-001", undefined, { mode: "ai" });
+
+      expect(response).toEqual(aiResult);
+    });
+
+    it("defaults to an empty JSON body when no options are provided", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(true, { mode: "git", clean: true }));
+
+      await revertTask("FN-001");
+
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/tasks/FN-001/revert", {
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    });
+
+    it("throws on error propagation", async () => {
+      globalThis.fetch = vi.fn().mockReturnValue(mockFetchResponse(false, { error: "Task is in column \"todo\"" }, 409));
+
+      await expect(revertTask("FN-001")).rejects.toThrow('Task is in column "todo"');
     });
   });
 

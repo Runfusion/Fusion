@@ -221,6 +221,9 @@ Keep the prompt lean, but preserve mandatory planning contracts: duplicate searc
 
 FNXC:FastPlanning 2026-07-04-16:25:
 Fast mode skips heavyweight planning ceremony, but every generated task still needs the same glanceable Before → After Transformation section as standard planning so operators can validate intent quickly.
+
+FNXC:FastPlanning 2026-07-05-12:00:
+Per FN-7593, the transformation summary must sit at the top of the PROMPT.md (before Mission), matching the standard-mode placement, so operators get the same glance-first ordering in fast mode.
 */
 const FAST_TRIAGE_PROMPT_TEXT = `You are a task specification agent for "fn". This task is running in **fast mode**.
 
@@ -235,7 +238,7 @@ Write a lean, executable PROMPT.md quickly. Preserve safety gates, but skip heav
 Before writing a spec, call \`fn_task_list\` for active work, then call \`fn_task_search\` with 2-4 targeted keyword phrases from the title/description, such as file paths, symptoms, and symbols. For any likely match in \`done\` or \`archived\`, call \`fn_task_show\` and inspect it before deciding. If an existing task covers the same work, do not write PROMPT.md; write exactly \`DUPLICATE: {existing-task-id}\`.
 
 ## Required PROMPT.md shape
-Write PROMPT.md with Mission, Before → After Transformation, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Include \`## Before → After Transformation\` after Mission with concise Before and After bullets stating current state, target state, and why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (for example, \`### Step 1: Preflight\`); Do not write bare \`### Preflight\` / \`### Implementation\` headings. Do not add review-level, triage subtask, or proactive subtask headings.
+Write PROMPT.md with Before → After Transformation, Mission, Dependencies, Context to Read First, File Scope, Steps, Documentation Requirements, Completion Criteria, Git Commit Convention, and Do NOT. Put \`## Before → After Transformation\` at the top, before \`## Mission\`, with concise Before/After bullets: current state, target state, why it satisfies the user's request at a glance. In \`## Steps\`, every executable heading MUST use \`### Step N: <name>\` (e.g. \`### Step 1: Preflight\`). Do not write bare \`### Preflight\` / \`### Implementation\` headings, and do not add review-level, triage subtask, or proactive subtask headings.
 
 ## Surface Enumeration
 For bug fixes and UI-affordance add/remove tasks, the spec MUST include a \`## Surface Enumeration\` section. The workflow Plan Review gate validates this before execution when plan review is enabled.
@@ -297,6 +300,11 @@ Follow this structure exactly:
 **Created:** {YYYY-MM-DD}
 **Size:** {S | M | L}
 
+## Before → After Transformation
+
+- **Before:** {Briefly describe the current state, missing capability, broken behavior, or operator pain point}
+- **After:** {Briefly describe the target state and how it satisfies the user's request at a glance}
+
 ## Review Level: {0-3} ({None | Plan Only | Plan and Code | Full})
 
 **Assessment:** {1-2 sentences explaining the score}
@@ -305,11 +313,6 @@ Follow this structure exactly:
 ## Mission
 
 {One paragraph: what you're building and why it matters}
-
-## Before → After Transformation
-
-- **Before:** {Briefly describe the current state, missing capability, broken behavior, or operator pain point}
-- **After:** {Briefly describe the target state and how it satisfies the user's request at a glance}
 
 ## Surface Enumeration
 
@@ -437,11 +440,14 @@ If this task REMOVES existing functionality (deleting modules, settings, API end
 
 ## Transformation summary requirement
 
-Every normal implementation, documentation, or decision task definition MUST include \`## Before → After Transformation\` after \`## Mission\`. Keep it concise: use brief Before and After bullets (or equivalent short prose) that name the current state, the target state, and why that target satisfies the user's request at a glance.
+Every normal implementation, documentation, or decision task definition MUST include \`## Before → After Transformation\` at the top of the definition, immediately after the \`# Task\` title and \`Created\`/\`Size\` metadata, before \`## Review Level\` and \`## Mission\`. Keep it concise: use brief Before and After bullets (or equivalent short prose) that name the current state, the target state, and why that target satisfies the user's request at a glance.
 
 <!--
 FNXC:TriagePromptStructure 2026-07-04-16:20:
 Task definitions now carry a glanceable before-to-after transformation summary near the top so operators and reviewers can confirm the intended outcome before reading the full specification.
+
+FNXC:TriagePromptStructure 2026-07-05-12:00:
+Per FN-7593, the transformation summary now sits at the very top of the definition — before Review Level and Mission — so operators can validate intent at a glance without scrolling past triage bookkeeping and Mission prose first.
 -->
 
 ## Testing requirements

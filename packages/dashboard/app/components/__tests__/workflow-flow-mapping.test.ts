@@ -490,6 +490,53 @@ describe("workflow-flow-mapping v2 round-trip", () => {
       config: { event: "workflow-notify", title: "{{taskTitle}}", message: "Task {{taskId}}" },
     });
   });
+
+  // FN-7579: ask-user and exit-gate round-trip like any other first-class editor node.
+  it("round-trips ask-user and exit-gate nodes (brainstorming composition) losslessly", () => {
+    const brainstormIr: WorkflowDefinition["ir"] = {
+      version: "v2",
+      name: "brainstorm-wf",
+      columns: [{ id: "todo", name: "Todo", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start", column: "todo" },
+        { id: "ask", kind: "ask-user", column: "todo", config: { question: "Anything to refine?" } },
+        {
+          id: "exit",
+          kind: "exit-gate",
+          column: "todo",
+          config: { condition: { type: "output-contains", nodeId: "ask", value: "looks good" } },
+        },
+        { id: "end", kind: "end", column: "todo" },
+      ],
+      edges: [
+        { from: "start", to: "ask", condition: "success" },
+        { from: "ask", to: "exit", condition: "success" },
+        { from: "exit", to: "end", condition: "outcome:exit" },
+      ],
+    };
+
+    const { nodes, edges } = irToFlow(v2Def(brainstormIr));
+    const askNode = nodes.find((node) => node.id === "ask");
+    expect(askNode?.type).toBe("ask-user");
+    expect(askNode?.data.kind).toBe("ask-user");
+    const exitNode = nodes.find((node) => node.id === "exit");
+    expect(exitNode?.type).toBe("exit-gate");
+    expect(exitNode?.data.kind).toBe("exit-gate");
+
+    const { ir: out } = flowToIr("brainstorm-wf", nodes, edges, columnsOf(v2Def(brainstormIr)));
+    expect(out.version).toBe("v2");
+    if (out.version !== "v2") return;
+    expect(out.nodes.find((node) => node.id === "ask")).toMatchObject({
+      kind: "ask-user",
+      column: "todo",
+      config: { question: "Anything to refine?" },
+    });
+    expect(out.nodes.find((node) => node.id === "exit")).toMatchObject({
+      kind: "exit-gate",
+      column: "todo",
+      config: { condition: { type: "output-contains", nodeId: "ask", value: "looks good" } },
+    });
+  });
 });
 
 describe("workflow-flow-mapping validation helpers", () => {
@@ -605,6 +652,8 @@ const VALID_EDITOR_NODE_KINDS: readonly WorkflowEditorNodeKind[] = [
   "parse-steps",
   "code",
   "notify",
+  "ask-user",
+  "exit-gate",
 ];
 
 const IR_ONLY_EDITOR_KIND = {

@@ -446,7 +446,9 @@ describe("TodoView", () => {
     expect(mockCreateTask).not.toHaveBeenCalled();
   });
 
-  it("clicking Create Task button calls createTask with item text", async () => {
+  // FN-7591: TodoView create handlers must not force column:"triage" — the store resolves the landing
+  // column from the project-default workflow's intake column instead.
+  it("clicking Create Task button calls createTask with item text and without forcing column:triage", async () => {
     const onTaskCreated = vi.fn();
     mockCreateTask.mockResolvedValueOnce({ id: "FN-123" });
     render(<TodoView addToast={addToast} projectId="project-1" onTaskCreated={onTaskCreated} />);
@@ -455,7 +457,7 @@ describe("TodoView", () => {
 
     await waitFor(() => {
       expect(mockCreateTask).toHaveBeenCalledWith(
-        { description: "Buy groceries", column: "triage", source: { sourceType: "dashboard_ui" } },
+        { description: "Buy groceries", source: { sourceType: "dashboard_ui" } },
         "project-1",
       );
     });
@@ -474,7 +476,7 @@ describe("TodoView", () => {
     expect(screen.getByText("Builder")).toBeInTheDocument();
   });
 
-  it("selecting an agent creates task assigned to that agent", async () => {
+  it("selecting an agent creates task assigned to that agent without forcing column:triage", async () => {
     const onTaskCreated = vi.fn();
     mockCreateTask.mockResolvedValueOnce({ id: "FN-234" });
     render(<TodoView addToast={addToast} projectId="project-1" onTaskCreated={onTaskCreated} />);
@@ -486,7 +488,7 @@ describe("TodoView", () => {
 
     await waitFor(() => {
       expect(mockCreateTask).toHaveBeenCalledWith(
-        { description: "Buy groceries", column: "triage", assignedAgentId: "agent-1", source: { sourceType: "dashboard_ui" } },
+        { description: "Buy groceries", assignedAgentId: "agent-1", source: { sourceType: "dashboard_ui" } },
         "project-1",
       );
     });

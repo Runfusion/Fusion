@@ -1,6 +1,6 @@
 import React from "react";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { TaskCard, formatElapsedDurationDone, __test_areTaskCardPropsEqual } from "../TaskCard";
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import { useOverlayDismiss } from "../../hooks/useOverlayDismiss";
@@ -26,7 +26,9 @@ vi.mock("lucide-react", () => ({
   Zap: () => <svg data-testid="icon-zap" />,
   AlertTriangle: () => null,
   ArrowUpRight: () => null,
-  Eye: () => null,
+  // FN-7592: the overseer badge now renders an icon child instead of a text label,
+  // so tests must see a real SVG (like Zap) rather than a no-op render.
+  Eye: () => <svg data-testid="icon-eye" />,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -293,6 +295,91 @@ describe("TaskCard", () => {
 
     rerender(<TaskCard task={watchingTask} onOpenDetail={noop} addToast={noop} />);
     expect(screen.getByTestId("planner-overseer-state-badge")).toBeInTheDocument();
+  });
+
+  // FN-7563: the badge used to print the raw kebab-case state (e.g.
+  // "awaiting-confirmation") with a bare "Planner overseer: awaiting-confirmation"
+  // tooltip. This reproduces the reported in-review symptom and asserts the badge
+  // is now human-readable and self-explanatory.
+  it("explains an in-review awaiting-confirmation badge with a readable label and a reason-bearing tooltip", () => {
+    const task = makeTask({
+      column: "in-review",
+      plannerOverseerState: {
+        state: "awaiting-confirmation",
+        oversightLevel: "autonomous",
+        watchedStage: "executor",
+        signal: "stalled",
+        attemptCount: 2,
+        attemptLimit: 3,
+        pendingConfirmation: true,
+        observedAt: 1700000000000,
+        reason: "Retry limit reached; waiting for an operator decision",
+      },
+    });
+
+    render(<TaskCard task={task} onOpenDetail={noop} addToast={noop} />);
+
+    // FN-7592: the badge is now an icon-only glyph. The readable label moved from
+    // textContent to aria-label; the composed tooltip is unchanged on title.
+    const badge = screen.getByTestId("planner-overseer-state-badge");
+    expect(badge.querySelector("svg")).toBeInTheDocument();
+    expect(badge.getAttribute("aria-label")).not.toBe("awaiting-confirmation");
+    expect(badge.getAttribute("aria-label")).toBe("Awaiting confirmation");
+    expect(badge.getAttribute("data-planner-overseer-state")).toBe("awaiting-confirmation");
+
+    const title = badge.getAttribute("title") ?? "";
+    expect(title).not.toBe("Planner overseer: awaiting-confirmation");
+    expect(title).toContain("Retry limit reached; waiting for an operator decision");
+    expect(title).toMatch(/human decision/i);
+    expect(title).not.toMatch(/undefined/);
+  });
+
+  it("renders readable labels for in-progress watching and recovering overseer states", () => {
+    const watchingTask = makeTask({
+      column: "in-progress",
+      plannerOverseerState: {
+        state: "watching",
+        oversightLevel: "autonomous",
+        watchedStage: "executor",
+        signal: "progressing",
+        attemptCount: 0,
+        attemptLimit: 3,
+        pendingConfirmation: false,
+        observedAt: 1700000000000,
+      },
+    });
+    const { unmount } = render(<TaskCard task={watchingTask} onOpenDetail={noop} addToast={noop} />);
+    // FN-7592: icon-only badge — assert the accessible name via aria-label and the
+    // per-state color hook via data-planner-overseer-state, not raw text content.
+    let badge = screen.getByTestId("planner-overseer-state-badge");
+    expect(badge.querySelector("svg")).toBeInTheDocument();
+    expect(badge.getAttribute("aria-label")).toBe("Overseer watching");
+    expect(badge.getAttribute("data-planner-overseer-state")).toBe("watching");
+    expect(badge.getAttribute("title")).not.toMatch(/undefined/);
+    unmount();
+
+    const recoveringTask = makeTask({
+      column: "in-progress",
+      plannerOverseerState: {
+        state: "recovering",
+        oversightLevel: "autonomous",
+        attemptCount: 1,
+        attemptLimit: 3,
+        pendingConfirmation: false,
+        observedAt: 1700000000000,
+      },
+    });
+    render(<TaskCard task={recoveringTask} onOpenDetail={noop} addToast={noop} />);
+    badge = screen.getByTestId("planner-overseer-state-badge");
+    expect(badge.querySelector("svg")).toBeInTheDocument();
+    expect(badge.getAttribute("aria-label")).toBe("Overseer recovering");
+    // Distinct states expose distinct data-planner-overseer-state values, which is the
+    // hook TaskCard.css keys per-state color off of (jsdom cannot compute color-mix()).
+    expect(badge.getAttribute("data-planner-overseer-state")).toBe("recovering");
+    expect(badge.getAttribute("data-planner-overseer-state")).not.toBe("watching");
+    const title = badge.getAttribute("title") ?? "";
+    expect(title).not.toMatch(/undefined/);
+    expect(title.length).toBeGreaterThan(0);
   });
 
   it("shows an Answer-questions button when awaiting user input and opens the workflow tab", async () => {
@@ -1060,6 +1147,157 @@ describe("TaskCard", () => {
     expect(screen.getByLabelText("Unarchive task")).toBeDefined();
   });
 
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Coverage for the Revert affordance: presence/absence on done + archived
+  cards (inline row + context menu), the disabled/omitted no-commit-to-revert
+  guard, the auto→clean-success path, and the auto→conflict→confirm→AI-undo
+  fallback path.
+  */
+  describe("Revert affordance", () => {
+    it("renders the inline Revert button for a done card with a landed commit", () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      expect(screen.getByLabelText("Revert this task's changes")).toBeDefined();
+    });
+
+    it("renders the inline Revert button for an archived card with a landed commit", () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "archived", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      expect(screen.getByLabelText("Revert this task's changes")).toBeDefined();
+    });
+
+    it("omits the Revert button when onRevertTask is not provided", () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByLabelText("Revert this task's changes")).toBeNull();
+    });
+
+    it("omits the inline Revert button when the task has no landed commit", () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: undefined })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      expect(screen.queryByLabelText("Revert this task's changes")).toBeNull();
+    });
+
+    it("shows a disabled Revert context-menu entry when the task has no landed commit", () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: undefined })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      const menuItem = screen.getByRole("menuitem", { name: "Revert" });
+      expect(menuItem).toBeDisabled();
+    });
+
+    it("shows the Revert context-menu entry for done and archived cards", () => {
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={noop}
+          onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+        />,
+      );
+
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      expect(screen.getByRole("menuitem", { name: "Revert" })).toBeDefined();
+    });
+
+    it("calls onRevertTask in auto mode and toasts the revert commit sha on a clean result", async () => {
+      const addToast = vi.fn();
+      const onRevertTask = vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef1234" }) as any);
+
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={addToast}
+          onRevertTask={onRevertTask}
+        />,
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText("Revert this task's changes"));
+      });
+
+      await waitFor(() => {
+        expect(onRevertTask).toHaveBeenCalledWith("FN-001", { mode: "auto" });
+      });
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith(
+          expect.stringContaining("deadbeef1234"),
+          "success",
+        );
+      });
+    });
+
+    it("opens a confirm dialog on conflict and falls back to mode: ai, surfacing the created task id", async () => {
+      const addToast = vi.fn();
+      const onRevertTask = vi.fn()
+        .mockResolvedValueOnce({ mode: "git", clean: false, conflicts: [{}] } as any)
+        .mockResolvedValueOnce({ mode: "ai", createdTaskId: "FN-999" } as any);
+      mockConfirm.mockResolvedValueOnce(true);
+
+      render(
+        <TaskCard
+          task={makeTask({ column: "done", mergeDetails: { commitSha: "abc123def456" } as any })}
+          onOpenDetail={noop}
+          addToast={addToast}
+          onRevertTask={onRevertTask}
+        />,
+      );
+
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText("Revert this task's changes"));
+      });
+
+      await waitFor(() => {
+        expect(mockConfirm).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(onRevertTask).toHaveBeenNthCalledWith(2, "FN-001", { mode: "ai" });
+      });
+      await waitFor(() => {
+        expect(addToast).toHaveBeenCalledWith(
+          expect.stringContaining("FN-999"),
+          "success",
+        );
+      });
+    });
+  });
+
   it("keeps two-button delete flow for non-done task", async () => {
     const onDeleteTask = vi.fn(async () => makeTask());
     mockConfirm.mockResolvedValueOnce(false);
@@ -1693,6 +1931,39 @@ describe("TaskCard", () => {
       <TaskCard task={makeTask({ status: undefined as any })} onOpenDetail={noop} addToast={noop} />,
     );
     expect(container.querySelector(".card-status-badge")).toBeNull();
+  });
+
+  /*
+   * FN-7559: release-authorization holds and manual plan-approval holds both
+   * use status "awaiting-approval" (auto-approve-all intentionally bypasses
+   * only the manual gate), so the card badge must render a distinct label and
+   * class for a release-authorization hold instead of the generic "Awaiting
+   * Approval" manual-gate badge.
+   */
+  it("renders a distinct badge for a release-authorization hold vs a manual approval hold", () => {
+    const { container: manualContainer, unmount: unmountManual } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "awaiting-approval" })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(within(manualContainer).getByText("Awaiting Approval")).toBeDefined();
+    const manualBadge = manualContainer.querySelector(".card-status-badge") as HTMLElement;
+    expect(manualBadge.className).not.toContain("awaiting-release-authorization");
+    unmountManual();
+
+    const { container: releaseContainer } = render(
+      <TaskCard
+        task={makeTask({ column: "triage", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" } as any)}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+    expect(within(releaseContainer).getByText("Awaiting Release Authorization")).toBeDefined();
+    expect(within(releaseContainer).queryByText("Awaiting Approval")).toBeNull();
+    const releaseBadge = releaseContainer.querySelector(".card-status-badge") as HTMLElement;
+    expect(releaseBadge.className).toContain("awaiting-release-authorization");
   });
 
   it("renders stalled badge with visible reason when stalledReview is set", () => {
@@ -5258,6 +5529,52 @@ describe("TaskCard near-duplicate chip", () => {
     await waitFor(() => {
       expect(onUpdateTask).toHaveBeenCalledWith("FN-001", { dismissNearDuplicate: true });
     });
+  });
+});
+
+/**
+ * FNXC:TaskRevert 2026-07-04-00:00:
+ * FN-7555 forward affordance coverage. Mirrors the near-duplicate chip test shape
+ * above: an AI-undo task (`sourceMetadata.revertOf` set by `createAiUndoTask`) shows
+ * an "Undo of <id>" footer chip; an ordinary task without that marker renders no chip
+ * and no empty footer shell.
+ */
+describe("TaskCard undo-of chip", () => {
+  it("renders undo-of chip when sourceMetadata.revertOf is present", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceMetadata: { revertOf: "FN-1234" } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.getByText("Undo of FN-1234")).toBeInTheDocument();
+  });
+
+  it("renders no undo-of chip and no empty footer shell for an ordinary task", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceMetadata: undefined })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText(/Undo of/)).toBeNull();
+    expect(document.querySelector(".card-undo-chip")).toBeNull();
+  });
+
+  it("does not throw and renders nothing for malformed sourceMetadata.revertOf", () => {
+    render(
+      <TaskCard
+        task={makeTask({ sourceMetadata: { revertOf: 12345 as any } })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(screen.queryByText(/Undo of/)).toBeNull();
   });
 });
 

@@ -1373,7 +1373,9 @@ describe("QuickEntryBox", () => {
     });
   });
 
-  it("creates task on Enter key with TaskCreateInput", async () => {
+  // FN-7591: QuickEntryBox must not force column:"triage" — the store resolves the landing column from
+  // the (selected or default) workflow's intake column, so a manual-intake workflow parks the card instead.
+  it("creates task on Enter key with TaskCreateInput and without forcing column:triage", async () => {
     const { props } = renderQuickEntryBox({});
     const textarea = screen.getByTestId("quick-entry-input");
 
@@ -1384,9 +1386,10 @@ describe("QuickEntryBox", () => {
       expect(props.onCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           description: "New task description",
-          column: "triage",
         }),
       );
+      const submitted = vi.mocked(props.onCreate).mock.calls[0][0];
+      expect(submitted.column).toBeUndefined();
     });
   });
 
@@ -1639,6 +1642,8 @@ describe("QuickEntryBox", () => {
       fireEvent.change(screen.getByTestId("quick-entry-input"), { target: { value: "Create in selected workflow" } });
       clickSave();
       await waitFor(() => expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ workflowId: "wf-default" })));
+      // FN-7591: forwarding workflowId at create time must not carry a hard-coded column:"triage".
+      expect(vi.mocked(onCreate).mock.calls[0][0].column).toBeUndefined();
 
       expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(onPlanningMode).not.toHaveBeenCalled();
@@ -3722,7 +3727,7 @@ describe("QuickEntryBox", () => {
       expect(localStorage.getItem(QUICK_ENTRY_STORAGE_KEY)).toBeNull();
     });
 
-    it("clicking save action creates the task", async () => {
+    it("clicking save action creates the task without forcing column:triage", async () => {
       const { props } = renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -3734,9 +3739,10 @@ describe("QuickEntryBox", () => {
         expect(props.onCreate).toHaveBeenCalledWith(
           expect.objectContaining({
             description: "Task to save",
-            column: "triage",
           }),
         );
+        const submitted = vi.mocked(props.onCreate).mock.calls[0][0];
+        expect(submitted.column).toBeUndefined();
       });
     });
 

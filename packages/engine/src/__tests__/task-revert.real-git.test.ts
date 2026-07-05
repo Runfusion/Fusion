@@ -245,4 +245,128 @@ describeIfGit("task-revert real-git scenarios", { timeout: 30_000 }, () => {
     expect(result).toMatchObject({ mode: "git", needsHuman: true });
     expect(git(repo, "git rev-parse HEAD")).toBe(preHead);
   });
+
+  // FN-7548: per-sha revert commit granularity — one attributed revert commit
+  // per original sha instead of a single squashed commit, with the default
+  // ("squash") staying byte-for-byte unchanged.
+  function twoCommitRebaseFixture() {
+    const repo = repoFixture();
+    const rebaseBase = git(repo, "git rev-parse HEAD");
+    writeFileSync(join(repo, "foo.ts"), "line1\nfeature-a\n");
+    git(repo, "git commit -am 'feat(FN-901): part 1' -m 'Fusion-Task-Id: FN-901'");
+    const shaA = git(repo, "git rev-parse HEAD");
+    writeFileSync(join(repo, "bar.ts"), "bar-feature\n");
+    git(repo, "git add bar.ts && git commit -m 'feat(FN-901): part 2' -m 'Fusion-Task-Id: FN-901'");
+    const shaB = git(repo, "git rev-parse HEAD");
+    return { repo, rebaseBase, shaA, shaB };
+  }
+
+  it("per-sha granularity: creates one attributed revert commit per original sha", async () => {
+    const { repo, rebaseBase, shaA, shaB } = twoCommitRebaseFixture();
+
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { commitSha: shaB, rebaseBaseSha: rebaseBase, mergeTargetBranch: "main" },
+    });
+    const result = await performTaskRevert({ task, worktreePath: repo, baseBranch: "main", granularity: "per-sha" });
+
+    expect(result).toMatchObject({ mode: "git", clean: true });
+    if (result.mode === "git" && result.clean && "revertCommitShas" in result) {
+      expect(result.revertCommitShas.length).toBe(2);
+      expect(result.revertCommitSha).toBe(result.revertCommitShas[0]);
+    }
+
+    const subjects = git(repo, "git log --format=%s -n 5").split("\n");
+    const revertSubjects = subjects.filter((s) => s.startsWith("revert(FN-901):"));
+    expect(revertSubjects.length).toBe(2);
+
+    // Two distinct new commits, both carrying the Fusion-Task-Id trailer and
+    // each referencing a DIFFERENT original sha in its audit line.
+    const bodyHead = git(repo, "git log -1 --format=%B HEAD");
+    const bodyHeadMinus1 = git(repo, "git log -1 --format=%B HEAD~1");
+    expect(bodyHead).toContain("Fusion-Task-Id: FN-901");
+    expect(bodyHeadMinus1).toContain("Fusion-Task-Id: FN-901");
+    expect(bodyHead).toContain(shaA.slice(0, 8));
+    expect(bodyHeadMinus1).toContain(shaB.slice(0, 8));
+
+    expect(git(repo, "git show HEAD:foo.ts")).toBe("line1");
+    expect(() => git(repo, "git show HEAD:bar.ts")).toThrow();
+    expect(git(repo, "git status --porcelain")).toBe("");
+  });
+
+  it("default stays squashed: the same two-commit task without granularity produces exactly one revert commit", async () => {
+    const { repo, rebaseBase, shaB } = twoCommitRebaseFixture();
+
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { commitSha: shaB, rebaseBaseSha: rebaseBase, mergeTargetBranch: "main" },
+    });
+    const result = await performTaskRevert({ task, worktreePath: repo, baseBranch: "main" });
+
+    expect(result).toMatchObject({ mode: "git", clean: true });
+    if (result.mode === "git" && result.clean && "revertCommitShas" in result) {
+      expect(result.revertCommitShas.length).toBe(1);
+      expect(result.revertCommitSha).toBe(result.revertCommitShas[0]);
+    }
+
+    const subjects = git(repo, "git log --format=%s -n 5").split("\n");
+    const revertSubjects = subjects.filter((s) => s.startsWith("revert(FN-901):"));
+    expect(revertSubjects.length).toBe(1);
+
+    expect(git(repo, "git show HEAD:foo.ts")).toBe("line1");
+    expect(() => git(repo, "git show HEAD:bar.ts")).toThrow();
+  });
+
+  it("per-sha granularity: no-op shas are skipped without creating empty commits", async () => {
+    const { repo, rebaseBase, shaB } = twoCommitRebaseFixture();
+
+    // Pre-revert shaB manually so it is already reverted at HEAD before the real call.
+    git(repo, `git revert --no-edit ${shaB}`);
+
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { commitSha: shaB, rebaseBaseSha: rebaseBase, mergeTargetBranch: "main" },
+    });
+    const result = await performTaskRevert({ task, worktreePath: repo, baseBranch: "main", granularity: "per-sha" });
+
+    expect(result).toMatchObject({ mode: "git", clean: true });
+    if (result.mode === "git" && result.clean && "revertCommitShas" in result) {
+      expect(result.revertCommitShas.length).toBe(1);
+    }
+
+    // foo.ts (shaA's change) should now be reverted; bar.ts was already gone from the manual revert.
+    expect(git(repo, "git show HEAD:foo.ts")).toBe("line1");
+    expect(() => git(repo, "git show HEAD:bar.ts")).toThrow();
+    expect(git(repo, "git status --porcelain")).toBe("");
+  });
+
+  it("per-sha granularity: a conflicting batch rolls back entirely — no partially-landed per-sha commits", async () => {
+    const { repo, rebaseBase, shaB } = twoCommitRebaseFixture();
+
+    // Task C later modifies the same region touched by shaA (foo.ts), so reverting shaA conflicts.
+    writeFileSync(join(repo, "foo.ts"), "line1\nfeature-a-modified-by-c\n");
+    git(repo, "git commit -am 'feat(FN-903): modify same region as part 1'");
+
+    const preCallHead = git(repo, "git rev-parse HEAD");
+    const preCallStatus = git(repo, "git status --porcelain");
+
+    const task = makeTask({
+      column: "done",
+      mergeDetails: { commitSha: shaB, rebaseBaseSha: rebaseBase, mergeTargetBranch: "main" },
+    });
+    const result = await performTaskRevert({ task, worktreePath: repo, baseBranch: "main", granularity: "per-sha" });
+
+    expect(result).toMatchObject({ mode: "git", clean: false });
+    if (result.mode === "git" && !result.clean && "conflicts" in result) {
+      expect(result.conflicts.length).toBeGreaterThan(0);
+    }
+
+    // No partial per-sha commits landed — tree/HEAD byte-identical to the pre-call state,
+    // proving the whole batch (including any earlier per-sha commit) is rolled back.
+    const postCallHead = git(repo, "git rev-parse HEAD");
+    const postCallStatus = git(repo, "git status --porcelain");
+    expect(postCallHead).toBe(preCallHead);
+    expect(postCallStatus).toBe(preCallStatus);
+    expect(postCallStatus).toBe("");
+  });
 });

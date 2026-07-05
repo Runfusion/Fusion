@@ -791,10 +791,13 @@ export function NewTaskModal({ isOpen, onClose, projectId, tasks, onCreateTask, 
     const validatorSlashIdx = validatorModel.indexOf("/");
     const planningSlashIdx = planningModel.indexOf("/");
 
+    /*
+    FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+    Do not hard-code `column: "triage"` — the store resolves the landing column from the (materialized) workflowId below, so a manual-intake workflow (e.g. Coding (Ideas) → "ideas") parks the card for the operator instead of being auto-triaged.
+    */
     const createInput: NewTaskCreateInput = {
       title: undefined,
       description: trimmedDesc,
-      column: "triage",
       dependencies: dependencies.length ? dependencies : undefined,
       // U6/R3: forward the workflow selection only when the user changed it.
       //  - undefined → omit (store inherits the project default, today's behavior)

@@ -25,7 +25,7 @@ function hasKnownBunSqliteLimitation(result: { stdout: string; stderr: string })
 function expectedBinaryName(target: string): string {
   const suffix = target.replace(/^bun-/, "");
   const isWindows = target.includes("windows");
-  return `fn-${suffix}${isWindows ? ".exe" : ""}`;
+  return `fn-cli-${suffix}${isWindows ? ".exe" : ""}`;
 }
 
 /**
@@ -51,7 +51,7 @@ const SHOULD_RUN_BUILD_EXE =
 
 describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: single target", () => {
   beforeAll(() => {
-    const bin = join(distDir, "fn-linux-x64");
+    const bin = join(distDir, "fn-cli-linux-x64");
     if (existsSync(bin)) return;
     execSync("bun run build.ts --target bun-linux-x64", {
       cwd: cliRoot,
@@ -60,8 +60,8 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: single target", () => {
     });
   }, 180_000);
 
-  it("produces dist/fn-linux-x64", () => {
-    const bin = join(distDir, "fn-linux-x64");
+  it("produces dist/fn-cli-linux-x64", () => {
+    const bin = join(distDir, "fn-cli-linux-x64");
     expect(existsSync(bin)).toBe(true);
     expect(statSync(bin).size).toBeGreaterThan(0);
   });
@@ -73,7 +73,7 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: single target", () => {
 
 describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: windows target has .exe extension", () => {
   beforeAll(() => {
-    const bin = join(distDir, "fn-windows-x64.exe");
+    const bin = join(distDir, "fn-cli-windows-x64.exe");
     if (existsSync(bin)) return;
     execSync("bun run build.ts --target bun-windows-x64", {
       cwd: cliRoot,
@@ -82,8 +82,8 @@ describe.skipIf(!SHOULD_RUN_BUILD_EXE)("build-exe-cross: windows target has .exe
     });
   }, 180_000);
 
-  it("produces dist/fn-windows-x64.exe", () => {
-    const bin = join(distDir, "fn-windows-x64.exe");
+  it("produces dist/fn-cli-windows-x64.exe", () => {
+    const bin = join(distDir, "fn-cli-windows-x64.exe");
     expect(existsSync(bin)).toBe(true);
     expect(statSync(bin).size).toBeGreaterThan(0);
   });

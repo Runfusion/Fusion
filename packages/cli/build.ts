@@ -108,13 +108,19 @@ function targetToPrebuildName(target: BunTarget): string {
 
 /**
  * Map a Bun target identifier to the output binary name.
- * e.g. "bun-linux-x64" → "fn-linux-x64", "bun-windows-x64" → "fn-windows-x64.exe"
+ * e.g. "bun-linux-x64" → "fn-cli-linux-x64", "bun-windows-x64" → "fn-cli-windows-x64.exe"
+ *
+ * FNXC:Release 2026-07-04-00:00:
+ * GitHub Release CLI assets use the `fn-cli-` base name (not `fn-`) so the
+ * downloadable binary doesn't collide with other well-known `fn` tools on a
+ * user's PATH. The local dev binary (defaultBinaryName) intentionally stays
+ * `fn`/`fn.exe` — this rename only affects cross-compiled release assets.
  */
 function binaryNameForTarget(target: BunTarget): string {
   // "bun-linux-x64" → "linux-x64"
   const suffix = target.replace(/^bun-/, "");
   const isWindows = target.includes("windows");
-  return `fn-${suffix}${isWindows ? ".exe" : ""}`;
+  return `fn-cli-${suffix}${isWindows ? ".exe" : ""}`;
 }
 
 /**

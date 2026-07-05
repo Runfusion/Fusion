@@ -22,6 +22,19 @@ const config: CapacitorConfig = {
       detectViewportFitCoverChanges: false,
       initialViewportFitCover: false,
     },
+    // FNXC:TaskDetailAndroidBack 2026-07-05-11:40:
+    // FN-7583: keep the @capacitor/app native backButton handler ENABLED (the default,
+    // pinned explicitly below). `AndroidBackButtonManager` in `src/plugins/native-shell.ts`
+    // relies on the plugin's "backButton" event to dispatch the shared `fusion:native-back`
+    // event that the dashboard's nav-history stack consumes for both the hardware Back
+    // button and the Android 13+ predictive-back GESTURE (once the gesture is actually
+    // delivered — see `scripts/patch-android-manifest.ts` for the manifest opt-in that
+    // makes that so). Setting `disableBackButtonHandler: true` would stop the plugin from
+    // emitting "backButton" entirely, breaking BOTH the button and the gesture routing —
+    // never flip this without replacing `AndroidBackButtonManager`'s dispatch seam too.
+    App: {
+      disableBackButtonHandler: false,
+    },
   },
   server: {
     url: liveReloadEnabled

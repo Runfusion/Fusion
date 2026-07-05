@@ -82,6 +82,7 @@ Use this inventory as the documentation map for current workflow behavior:
 | Routing boundary | Agents may select/change a workflow only for explicit user requests or tasks they created; no-commit markers do not imply Quick fix or any other workflow. | This page, [Selecting workflows](#selecting-workflows); [Agents](./agents.md#interactive-cli-chat). |
 | Dashboard board/list/graph selection | Board/List/Header/Graph share durable per-project workflow selection; stale saved ids fall back to a valid workflow. Board adds a dashboard-only **All workflows** aggregate and task workflow-name badges; Graph uses **All workflows** for the full active graph. | [Dashboard Guide → Board View](./dashboard-guide.md#board-view), [Graph View](./dashboard-guide.md#graph-view), and [Workflow Selection and Editor](./dashboard-guide.md#workflow-selection-and-editor). |
 | Create/planning forwarding | Quick-create task creation, Planning Mode, Subtask Breakdown, and the New Task dialog forward the active real workflow id when creating tasks; **All workflows** quick-create chooses a real workflow intake/default column instead of saving a synthetic aggregate id. | [Dashboard Guide → Planning Mode](./dashboard-guide.md#planning-mode). |
+| Manual-intake column parking | Dashboard create surfaces never send an explicit `column`; the store resolves the landing column from the (selected or project-default) workflow's intake column. A workflow whose intake column sets `autoTriage: false` (e.g. built-in Coding (Ideas)'s `ideas` column) parks new cards there instead of auto-planning them, until an operator promotes the card. | [Dashboard Guide → Create/Planning Forwarding](./dashboard-guide.md#planning-mode). |
 
 ### Skill-backed workflow steps
 
@@ -211,6 +212,10 @@ The default built-in catalog entry `builtin:coding` is backed by a Stepwise-deri
 If the Plan Review reviewer is unavailable before producing a verdict, the task stays in triage as `status: "plan-review-unavailable"` with a short backoff. That retry state is not a replan: Fusion rereads the existing non-empty `PROMPT.md`, preserves it unchanged, and reruns only Plan Review/finalization while holding a global agent concurrency slot for the reviewer lane. A reviewer revision verdict moves the task to `needs-replan`; missing/empty/invalid prompt content fails clearly instead of restarting the planner.
 
 Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes; it does not disable Plan Review, release authorization, or other explicit safety gates.
+
+**FN-7559 — telling the three holds apart:** Plan Review parks a task with its own distinct statuses (`needs-replan` for a revision verdict, `plan-review-unavailable` for a reviewer-outage retry), so it never renders identically to a plan-approval hold. The release-authorization gate and the manual plan-approval gate, however, both use `status: "awaiting-approval"` — auto-approve-all bypasses the manual gate but never the release-authorization gate, so a release-class task (or a user-authored task missing the explicit authorization marker) still parks even with auto-approve-all on. To make that unambiguous to the operator, the task carries `awaitingApprovalReason: "release-authorization"` only when the release-authorization gate is the one holding it; the dashboard renders a distinct "Awaiting Release Authorization" label and hides the Approve/Reject Plan buttons for that hold instead of showing the generic manual-approval affordance.
+
+**FN-7569 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the exact approved `PROMPT.md`. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — and produces byte-identical `PROMPT.md` content, the manual gate detects the match and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`. A genuinely revised plan still produces a different fingerprint and re-asks as before, and using Reject Plan clears the fingerprint so the regenerated plan is always treated as new. This idempotency check runs only inside the manual gate, strictly after release authorization and Plan Review have already made their independent decisions, and never applies under `planApprovalMode: "auto-approve-all"` (which bypasses the manual gate entirely).
 
 `builtin:legacy-coding` is backed by the original monolithic `BUILTIN_CODING_WORKFLOW_IR`: `planning` → `execute` → optional quality gates → `review` → merge region.
 
@@ -351,6 +356,34 @@ Parallelism is opt-in *per step by the planner*, not asserted by the workflow au
 `notify` (`{ event, title?, message? }`) dispatches a notification through Fusion's active notification service and then always continues on the normal success path. `event` may be one of the standard notification events (for example `in-review`, `merged`, or `failed`), the built-in workflow-authored event `workflow-notify`, or a provider-specific custom event string. `title` and `message` are optional templates; the engine interpolates `{{taskTitle}}`, `{{taskId}}`, `{{workflowName}}`, and `{{context:key}}` from the workflow walk context.
 
 Notification delivery is intentionally best-effort: a missing/unconfigured notification service, an empty `event`, or a provider delivery failure is logged/audited but does not fail the workflow node. Providers receive the rendered title/message in notification metadata so ntfy and webhook notifications can show workflow-specific copy. `workflow-notify` is **not** part of the default ntfy event allowlist; add it to `ntfyEvents` or the provider `events` filter when you want workflow-authored notifications delivered.
+
+#### `ask-user` node — chat reach-out (FN-7579)
+
+`ask-user` (`{ question? }`) reaches out to the user from inside a running task: it parks the task with `status: "awaiting-user-input"`, `paused: true`, and `pausedReason` carrying a `workflow-input:<nodeId>@<pauseEpochMs>: <question>` marker; the question surfaces in the task chat/detail (and via the `planning-awaiting-input` notification). Once the user replies (a steering comment at/after the pause watermark) and unpauses the task, the node resumes, clears its marker, and publishes the answer downstream at context key `input:<nodeId>` (readable by, for example, a downstream `exit-gate`'s condition). `question` falls back to `config.prompt`, then the shared default string ("This workflow is waiting for your input.") when both are omitted.
+
+`ask-user` is a first-class, discoverable promotion of plumbing that already existed: a `prompt` node with `config.awaitInput: true` pauses/resumes identically (`runAwaitInputNode`). That shape remains a **fully supported back-compat alias** — existing workflows using it are unaffected — `ask-user` is simply the dedicated palette entry and IR node kind for new authoring.
+
+#### `exit-gate` node — early workflow termination (FN-7579)
+
+`exit-gate` (`{ condition? }`) lets a workflow route directly to the terminal `end` node instead of always walking the full graph. It is validated to always have a (transitive, non-rework) path to `end` so it can never strand the graph, but it is **not** itself an `end` node — only a router onto one.
+
+With no `condition`, an exit-gate always exits (`outcome:exit`). With a `condition` (the same shape as a `loop` node's `exitWhen`: `{ type: "output-contains", nodeId?, value }` or `{ type: "output-matches", nodeId?, pattern, flags? }`), the gate reads `context["input:<nodeId>"]` — the same key an `ask-user` node's answer is published under — and exits (`outcome:exit`) when it matches, or falls through (`outcome:continue`) otherwise. Route `outcome:exit` to `end` and `outcome:continue` back into the loop (or onward) as needed. A malformed condition (bad regex, missing referenced value) degrades to "no match" rather than throwing.
+
+#### Brainstorming / chat reach-out composition
+
+Compose `ask-user` + `exit-gate` for a brainstorming phase that loops until the user approves, then proceeds:
+
+```
+start → ask (ask-user: "Anything to refine?")
+     → exit (exit-gate: condition { type: "output-contains", nodeId: "ask", value: "looks good" })
+         ── outcome:exit ──→ end   (or onward into the normal plan/execute path)
+         ── outcome:continue ──→ ask   (rework edge back to the ask-user node; mark the ask-user
+                                       node `config.reworkRegion: true` and the edge `kind: "rework"`,
+                                       mirroring the top-level rework-region convention U6 uses for
+                                       the PR review loop)
+```
+
+Each turn, the user is asked to refine; once they reply "looks good" (or whatever the condition matches), the exit-gate routes the task out of the brainstorm loop. This composition is also available as a discoverable built-in: `builtin:brainstorming` (FN-7584) registers exactly this shape — `ask-user` → a refine prompt step → `exit-gate`-on-approval — ahead of the unmodified default Coding plan/execute/review/merge spine, selectable directly from the workflow picker. Copy the shape into a custom workflow's IR via `fn_workflow_create`/`fn_workflow_update` when you need a different downstream pipeline than the standard coding one.
 
 #### Workflow-defined custom task fields
 

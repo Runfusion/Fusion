@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Settings, Task, TaskStore } from "@fusion/core";
 import { SelfHealingManager, STALE_ACTIVE_BRANCH_EXECUTION_GRACE_MS } from "../../self-healing.js";
-import { activeSessionRegistry } from "../../active-session-registry.js";
+import { activeSessionRegistry, executingTaskLock } from "../../active-session-registry.js";
 import * as branchConflictModule from "../../branch-conflicts.js";
 import * as worktreePoolModule from "../../worktree-pool.js";
 
@@ -84,6 +84,12 @@ function makeHarness(overrides: Partial<Task> = {}, options: {
   recentAuditRows?: AuditRow[];
   activeHeartbeat?: boolean;
   missingWorktree?: boolean;
+  // FN-7566: liveness signals that DO track ephemeral executors (agentId: "executor"),
+  // which never emit heartbeat runs, never take a checkout lease, and write no runAuditEvents.
+  liveSessionPath?: boolean;
+  executingTaskLockHeld?: boolean;
+  isTaskActive?: boolean;
+  clearReturns?: boolean;
 } = {}): Harness {
   const rootDir = mkdtempSync(join(tmpdir(), "fn-6736-"));
   const worktree = join(rootDir, ".worktrees", "crisp-lotus");
@@ -92,15 +98,24 @@ function makeHarness(overrides: Partial<Task> = {}, options: {
   }
   const task = makeTask({ worktree, ...overrides });
   const store = makeStore(task, { recentAuditRows: options.recentAuditRows });
-  const clearPhantomExecutorBinding = vi.fn();
+  const clearPhantomExecutorBinding = options.clearReturns === undefined
+    ? vi.fn()
+    : vi.fn(() => options.clearReturns);
   const agentStore = options.activeHeartbeat
     ? { listActiveHeartbeatRuns: vi.fn(async () => [{ startedAt: new Date(NOW.getTime() - 60_000).toISOString(), contextSnapshot: { taskId: task.id } }]) }
     : { listActiveHeartbeatRuns: vi.fn(async () => []) };
+  if (options.liveSessionPath) {
+    activeSessionRegistry.registerPath(worktree, { taskId: task.id, kind: "executor", ownerKey: task.id });
+  }
+  if (options.executingTaskLockHeld) {
+    executingTaskLock.tryClaim(task.id);
+  }
   const manager = new SelfHealingManager(store as any, {
     rootDir,
     getExecutingTaskIds: () => new Set([task.id]),
     clearPhantomExecutorBinding,
     agentStore,
+    ...(options.isTaskActive !== undefined ? { isTaskActive: () => options.isTaskActive } : {}),
   } as any);
   return {
     rootDir,
@@ -126,12 +141,14 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     vi.setSystemTime(NOW);
     vi.restoreAllMocks();
     activeSessionRegistry.clear();
+    executingTaskLock._clearForTest();
     vi.spyOn(worktreePoolModule, "isUsableTaskWorktree").mockResolvedValue(true);
     vi.spyOn(branchConflictModule, "inspectBranchConflict").mockResolvedValue({ kind: "stale" } as any);
   });
 
   afterEach(() => {
     activeSessionRegistry.clear();
+    executingTaskLock._clearForTest();
     vi.useRealTimers();
   });
 
@@ -227,6 +244,72 @@ describe("FN-6736: phantom executor binding reclaim", () => {
     expect(h.clearPhantomExecutorBinding).not.toHaveBeenCalled();
     expect(h.store.moveTask).not.toHaveBeenCalled();
     expect(findAudit(h.store, "task:reclaim-self-owned-branch-conflict-no-action")?.metadata).toEqual(expect.objectContaining({ reason: "executor-active" }));
+    h.cleanup();
+  });
+
+  // FN-7566: the FN-6736 durable-agent liveness gate (heartbeat/checkout/runAudit) is
+  // structurally blind to ephemeral executors. A live ephemeral executor keeps its worktree
+  // registered in activeSessionRegistry / holds the executing lock / reports isTaskActive — those
+  // are the in-process signals that MUST veto the phantom verdict even past the age multiplier,
+  // otherwise any ephemeral executor task running >30 min is killed mid-flight. Surface
+  // enumeration: all three live-session signals + the clearPhantomExecutorBinding refusal path.
+  it("does NOT reclaim a live ephemeral executor whose worktree is registered as an active session", async () => {
+    const h = makeHarness({}, { liveSessionPath: true });
+    expect(existsSync(h.worktree)).toBe(true);
+
+    const recovered = await h.manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(recovered).toBe(0);
+    expect(h.clearPhantomExecutorBinding).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(findAudit(h.store, "task:reclaim-phantom-executor-binding")).toBeUndefined();
+    expect(findAudit(h.store, "task:reclaim-self-owned-branch-conflict-no-action")?.metadata).toEqual(
+      expect.objectContaining({ reason: "executor-active" }),
+    );
+    expect(h.task.column).toBe("in-progress");
+    h.cleanup();
+  });
+
+  it("does NOT reclaim a live ephemeral executor that still holds the executing lock", async () => {
+    const h = makeHarness({}, { executingTaskLockHeld: true });
+
+    await h.manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(h.clearPhantomExecutorBinding).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(findAudit(h.store, "task:reclaim-phantom-executor-binding")).toBeUndefined();
+    expect(h.task.column).toBe("in-progress");
+    h.cleanup();
+  });
+
+  it("does NOT reclaim a live ephemeral executor that reports isTaskActive", async () => {
+    const h = makeHarness({}, { isTaskActive: true });
+
+    await h.manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(h.clearPhantomExecutorBinding).not.toHaveBeenCalled();
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(findAudit(h.store, "task:reclaim-phantom-executor-binding")).toBeUndefined();
+    expect(h.task.column).toBe("in-progress");
+    h.cleanup();
+  });
+
+  it("honors clearPhantomExecutorBinding's live-session refusal instead of hard-cancelling to todo", async () => {
+    // Defense-in-depth: even if the phantom verdict slips past isPhantomExecutorBinding, a clear that
+    // refuses (returns false — a live session surface is still registered) must NOT be followed by the
+    // destructive moveTask(→todo). Mirrors reapLeakedConcurrencySlots' `released !== true` guard.
+    const h = makeHarness({}, { clearReturns: false });
+
+    const recovered = await h.manager.reclaimSelfOwnedBranchConflicts();
+
+    expect(recovered).toBe(0);
+    expect(h.clearPhantomExecutorBinding).toHaveBeenCalledWith(h.task.id, { preserveWorktrees: true });
+    expect(h.store.moveTask).not.toHaveBeenCalled();
+    expect(h.task.column).toBe("in-progress");
+    expect(findAudit(h.store, "task:reclaim-phantom-executor-binding")).toBeUndefined();
+    expect(findAudit(h.store, "task:reclaim-self-owned-branch-conflict-no-action")?.metadata).toEqual(
+      expect.objectContaining({ reason: "phantom-clear-refused-live-session" }),
+    );
     h.cleanup();
   });
 

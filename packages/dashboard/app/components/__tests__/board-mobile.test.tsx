@@ -418,6 +418,69 @@ describe("TaskCard mobile", () => {
     expectRuleToContain(mobileSection, ".card-delete-btn", "height: 28px;");
   });
 
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Mobile coverage for the Revert affordance (FN-5893 Surface Enumeration —
+  mobile breakpoint): the button renders on done/archived cards at mobile
+  width and, critically, leaves NO empty/orphaned button shell when it is
+  hidden (no landed commit, or onRevertTask undefined).
+  */
+  it("sets .card-revert-btn opacity: 1 in the mobile media block alongside archive/unarchive", () => {
+    const css = loadAllAppCss();
+    const mobileSection = getMainMobileSection(css);
+
+    expectRuleToContain(mobileSection, ".card-revert-btn", "opacity: 1;");
+  });
+
+  it("renders the Revert affordance on a done card at the mobile breakpoint", () => {
+    const task = createTask({ id: "FN-201", column: "done", mergeDetails: { commitSha: "abc123def456" } as any });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+      />,
+    );
+
+    expect(container.querySelector(".card-revert-btn")).toBeTruthy();
+  });
+
+  it("renders the Revert affordance on an archived card at the mobile breakpoint", () => {
+    const task = createTask({ id: "FN-202", column: "archived", mergeDetails: { commitSha: "abc123def456" } as any });
+
+    const { container } = render(
+      <TaskCard
+        task={task}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+      />,
+    );
+
+    expect(container.querySelector(".card-revert-btn")).toBeTruthy();
+  });
+
+  it("leaves no empty/orphaned Revert button shell when not revertable or onRevertTask is undefined", () => {
+    const notRevertableTask = createTask({ id: "FN-203", column: "done", mergeDetails: undefined });
+    const { container: containerA } = render(
+      <TaskCard
+        task={notRevertableTask}
+        onOpenDetail={vi.fn()}
+        addToast={vi.fn()}
+        onRevertTask={vi.fn(async () => ({ mode: "git", clean: true, revertCommitSha: "deadbeef" }) as any)}
+      />,
+    );
+    expect(containerA.querySelector(".card-revert-btn")).toBeNull();
+
+    const revertableTask = createTask({ id: "FN-204", column: "done", mergeDetails: { commitSha: "abc123def456" } as any });
+    const { container: containerB } = render(
+      <TaskCard task={revertableTask} onOpenDetail={vi.fn()} addToast={vi.fn()} />,
+    );
+    expect(containerB.querySelector(".card-revert-btn")).toBeNull();
+  });
+
   it("opens task detail on quick tap", async () => {
     const task = createTask({ id: "FN-200", column: "todo" });
 

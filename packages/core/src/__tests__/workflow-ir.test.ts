@@ -439,6 +439,126 @@ describe("parseWorkflowIr — notify nodes", () => {
   });
 });
 
+describe("parseWorkflowIr — ask-user / exit-gate nodes (FN-7579)", () => {
+  const cols = [{ id: "c", name: "C", traits: [] }];
+
+  it("accepts a well-formed graph using both new kinds", () => {
+    const ir = v2(
+      cols,
+      [
+        { id: "start", kind: "start", column: "c" },
+        { id: "ask", kind: "ask-user", column: "c", config: { question: "Looks good?" } },
+        { id: "exit", kind: "exit-gate", column: "c" },
+        { id: "end", kind: "end", column: "c" },
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "exit" },
+        { from: "exit", to: "end" },
+      ],
+    );
+    expect(() => parseWorkflowIr(ir)).not.toThrow();
+  });
+
+  it("keeps v2 when ask-user/exit-gate nodes are present (v2-only, not in V1_NODE_KINDS)", () => {
+    const ir = v2(
+      cols,
+      [
+        { id: "start", kind: "start", column: "c" },
+        { id: "ask", kind: "ask-user", column: "c" },
+        { id: "exit", kind: "exit-gate", column: "c" },
+        { id: "end", kind: "end", column: "c" },
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "exit" },
+        { from: "exit", to: "end" },
+      ],
+    );
+    const parsed = parseWorkflowIr(ir);
+    expect(downgradeIrToV1IfPure(parsed).version).toBe("v2");
+  });
+
+  it("rejects an ask-user node with an empty question", () => {
+    const ir = v2(
+      cols,
+      [
+        { id: "start", kind: "start", column: "c" },
+        { id: "ask", kind: "ask-user", column: "c", config: { question: "   " } },
+        { id: "end", kind: "end", column: "c" },
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "end" },
+      ],
+    );
+    expect(() => parseWorkflowIr(ir)).toThrow(/ask-user node 'ask' question must be a non-empty string/);
+  });
+
+  it("accepts an ask-user node with no question (falls back to the default prompt)", () => {
+    const ir = v2(
+      cols,
+      [
+        { id: "start", kind: "start", column: "c" },
+        { id: "ask", kind: "ask-user", column: "c" },
+        { id: "end", kind: "end", column: "c" },
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "end" },
+      ],
+    );
+    expect(() => parseWorkflowIr(ir)).not.toThrow();
+  });
+
+  it("rejects an exit-gate node that cannot reach the terminal end node (stranded)", () => {
+    const ir = v2(
+      cols,
+      [
+        { id: "start", kind: "start", column: "c" },
+        { id: "exit", kind: "exit-gate", column: "c" },
+        { id: "dead", kind: "prompt", column: "c" },
+        { id: "end", kind: "end", column: "c" },
+      ],
+      [
+        { from: "start", to: "exit" },
+        { from: "exit", to: "dead" },
+        { from: "start", to: "end" },
+      ],
+    );
+    expect(() => parseWorkflowIr(ir)).toThrow(/exit-gate node 'exit' must have a path to the terminal 'end' node/);
+  });
+
+  it("accepts a brainstorming loop composition: ask-user -> exit-gate (approved) or back to ask-user (refine)", () => {
+    const ir = v2(
+      cols,
+      [
+        { id: "start", kind: "start", column: "c" },
+        {
+          id: "ask",
+          kind: "ask-user",
+          column: "c",
+          config: { question: "Anything to refine?", reworkRegion: true },
+        },
+        {
+          id: "exit",
+          kind: "exit-gate",
+          column: "c",
+          config: { condition: { type: "output-contains", value: "looks good" } },
+        },
+        { id: "end", kind: "end", column: "c" },
+      ],
+      [
+        { from: "start", to: "ask" },
+        { from: "ask", to: "exit" },
+        { from: "exit", to: "end" },
+        { from: "exit", to: "ask", kind: "rework" },
+      ],
+    );
+    expect(() => parseWorkflowIr(ir)).not.toThrow();
+  });
+});
+
 describe("parseWorkflowIr — hold release kinds", () => {
   const holdCols = [{ id: "c", name: "C", traits: [] }];
   function holdIr(release: unknown): WorkflowIrV2 {

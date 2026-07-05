@@ -84,6 +84,35 @@ describe("PlannerRecoveryController.tick", () => {
     expect(retryStep).toHaveBeenCalledTimes(PLANNER_RECOVERY_MAX_ATTEMPTS);
   });
 
+  // FN-7577: a stale recovery attempt must not keep a recovered task badged
+  // "recovering" — a healthy/human-wait signal on the next tick clears the
+  // per-(taskId, stage) attempt + last-action records, restoring a fresh budget.
+  it("clears stale attempt records once the stage reports a healthy signal", async () => {
+    const retryStep = vi.fn().mockResolvedValue(undefined);
+    let current: OverseerStageObservation = observation({ signal: "failed" });
+    const controller = new PlannerRecoveryController({
+      snapshotProvider: { getSnapshot: () => current },
+      handlers: { retryStep },
+    });
+
+    await controller.tick(task());
+    expect(controller.getAttemptCount("FN-1", "executor")).toBe(1);
+    expect(controller.getLastAction("FN-1", "executor")).toBe("retry_step");
+
+    // Task recovers → healthy signal on the next tick clears the registry.
+    current = observation({ signal: "progressing" });
+    const healthy = await controller.tick(task());
+    expect(healthy?.action).toBe("none");
+    expect(controller.getAttemptCount("FN-1", "executor")).toBe(0);
+    expect(controller.getLastAction("FN-1", "executor")).toBeUndefined();
+
+    // A later genuine failure starts from a fresh budget and dispatches again.
+    current = observation({ signal: "failed" });
+    await controller.tick(task());
+    expect(retryStep).toHaveBeenCalledTimes(2);
+    expect(controller.getAttemptCount("FN-1", "executor")).toBe(1);
+  });
+
   it("is inert when effectiveLevel/oversightLevel is off/observe/steer", async () => {
     for (const level of ["off", "observe", "steer"] as const) {
       const retryStep = vi.fn().mockResolvedValue(undefined);

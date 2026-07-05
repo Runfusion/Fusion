@@ -14,3 +14,6 @@ export { OAuthExpiryMonitor } from "./oauth-expiry-monitor.js";
 export type { AuthStorageLike as OAuthExpiryAuthStorageLike, OAuthExpiryMonitorOptions } from "./oauth-expiry-monitor.js";
 
 export { OAuthValidityLogger } from "./oauth-validity-logger.js";
+
+export { OAuthRefreshScheduler } from "./oauth-refresh-scheduler.js";
+export type { OAuthRefreshAuthStorageLike, OAuthRefreshSchedulerOptions } from "./oauth-refresh-scheduler.js";

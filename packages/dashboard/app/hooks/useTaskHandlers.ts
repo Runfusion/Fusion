@@ -32,16 +32,20 @@ export function useTaskHandlers(options: UseTaskHandlersOptions): UseTaskHandler
     addToast,
   } = options;
 
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+  These wrappers previously forced `column: "triage"` (handleBoardQuickCreate defaulted to it when the caller omitted column; handleModalCreate hard-coded it unconditionally), which overrode InlineCreateCard/NewTaskModal even after those callers stopped sending an explicit column. Both must now forward the caller's `column` untouched (usually omitted) so the store resolves the landing column from the (selected or default) workflow's intake column — e.g. Coding (Ideas) → "ideas" — instead of always forcing legacy triage.
+  */
   const handleBoardQuickCreate = useCallback(
     async (input: TaskCreateInput): Promise<Task> => {
-      return createTask({ ...input, column: input.column ?? "triage", source: { sourceType: "dashboard_ui" } });
+      return createTask({ ...input, source: { sourceType: "dashboard_ui" } });
     },
     [createTask],
   );
 
   const handleModalCreate = useCallback(
     async (input: TaskCreateInput): Promise<Task> => {
-      const task = await createTask({ ...input, column: "triage", source: { sourceType: "dashboard_ui" } });
+      const task = await createTask({ ...input, source: { sourceType: "dashboard_ui" } });
       return task;
     },
     [createTask],

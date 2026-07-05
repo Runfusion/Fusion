@@ -3958,3 +3958,38 @@ The panel and its body must be width-bounded (width:100%; min-width:0; max-width
   overflow-x: hidden;
   overflow-y: auto;
 }
+
+/*
+FNXC:TaskDetailSwipeBack 2026-07-05-12:30:
+FN-7587 — non-interactive predictive-back polish: a short slide/fade enter animation for the
+mobile full-panel task detail, layered purely on top of the unchanged FN-7583/FN-7586 dismissal
+routing (popstate / fusion:native-back / useNavigationHistory stack). Mobile-only (gated by the
+existing `isMobile` prop in MainContent.tsx); desktop never receives this class. A true
+finger-tracked interactive predictive-back is not feasible from a Capacitor single-page WebView
+on either platform today (WKWebView exposes no interactive-progress callback to JS; Android's
+system predictive-back preview is not driveable from the in-page DOM) — see task FN-7587 notes
+and the filed interactive-predictive-back follow-up task.
+*/
+@media (max-width: 768px) {
+  .task-detail-main-panel--mobile-transition {
+    animation: task-detail-mobile-slide-fade-in var(--duration-normal) ease-out;
+  }
+}
+
+@keyframes task-detail-mobile-slide-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(var(--space-xl, 24px));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-detail-main-panel--mobile-transition {
+    animation: none;
+  }
+}

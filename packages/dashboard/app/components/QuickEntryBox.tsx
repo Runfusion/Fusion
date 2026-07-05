@@ -715,9 +715,12 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     const originalDescription = description;
     setDescription("");
     try {
+      /*
+      FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+      Do not hard-code `column: "triage"` — the store resolves the landing column from the forwarded (or project-default) workflow's intake column, so a manual-intake workflow (e.g. Coding (Ideas) → "ideas") parks the card for the operator instead of being auto-triaged.
+      */
       const createdTask = await onCreate({
         description: trimmed,
-        column: "triage",
         ...(selectedWorkflowForCreate !== undefined ? { workflowId: selectedWorkflowForCreate } : {}),
         dependencies: dependencies.length ? dependencies : undefined,
         ...(selectedAgentId ? { assignedAgentId: selectedAgentId } : {}),

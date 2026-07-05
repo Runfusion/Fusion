@@ -43,4 +43,35 @@ describe("mobile pipeline scripts", () => {
     expect(packageJson.scripts?.["mobile:ios"] ?? "").toContain("ios");
     expect(packageJson.scripts?.["mobile:android"] ?? "").toContain("android");
   });
+
+  /*
+  FNXC:TaskDetailIOSSwipeBack 2026-07-05-12:10:
+  FN-7586: `WKWebView.allowsBackForwardNavigationGestures` defaults to false and no
+  capacitor.config toggle exists for it (confirmed against the installed @capacitor/cli
+  declarations), so the fix is a tracked post-`cap sync` patch script
+  (`packages/mobile/scripts/patch-ios-webview.ts`) wired into Capacitor's own
+  `capacitor:sync:after` npm hook — mirroring FN-7583's Android manifest-patch precedent —
+  so `cap sync` regeneration of the git-ignored `ios/` project can never silently drop the
+  gesture opt-in. This asserts the patch/wiring is present in tracked source; it fails on the
+  pre-fix tree (no patch script, no hook) and passes after.
+  */
+  describe("iOS edge-swipe-back gesture patch wiring (FN-7586)", () => {
+    const mobilePackagePath = resolve(__dirname, "../../../mobile/package.json");
+    const patchScriptPath = resolve(__dirname, "../../../mobile/scripts/patch-ios-webview.ts");
+
+    it("ships a tracked post-cap-sync iOS WKWebView patch script", () => {
+      const source = readFileSync(patchScriptPath, "utf8");
+
+      expect(source).toContain("allowsBackForwardNavigationGestures");
+      expect(source).toContain("CAPBridgeViewController");
+    });
+
+    it("wires the iOS webview patch into a Capacitor sync hook so cap sync cannot drop it", () => {
+      const mobilePackageJson = JSON.parse(readFileSync(mobilePackagePath, "utf8")) as WorkspacePackageJson;
+      const scripts = mobilePackageJson.scripts ?? {};
+
+      const syncAfterHook = scripts["capacitor:sync:after"] ?? "";
+      expect(syncAfterHook).toContain("patch-ios-webview");
+    });
+  });
 });

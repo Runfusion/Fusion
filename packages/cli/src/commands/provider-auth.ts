@@ -415,7 +415,17 @@ export function mergeAuthStorageReads(
             return credential?.type === "api_key" ? resolveStoredApiKey(credential.key) : undefined;
           }
           if (providerId === ANTHROPIC_SUBSCRIPTION_STORAGE_PROVIDER_ID && credential) {
-            return resolveStoredCredentialApiKey(providerId, credential);
+            /*
+            FNXC:ProviderAuth 2026-07-05-09:10:
+            Reading `anthropic-subscription` through this merge proxy must delegate to the underlying real engine `authStorage.getApiKey(...)` (the `target` primary storage) so the refresh-token HTTP round trip in packages/engine/src/auth-storage.ts actually runs. The prior local static `Date.now() >= credential.expires` check (`resolveStoredCredentialApiKey`/`resolveOAuthApiKey`) never called the real engine and silently no-oped the refresh in production, e.g. the dashboard status route's best-effort refresh-on-expiry read (register-auth-routes.ts). `target.getApiKey` internally handles both the separated `anthropic-subscription` row and the legacy `anthropic` OAuth row, so this single delegated call covers both storage permutations without duplicating that logic here. Only fall back to the read-only fallback storages' local (non-refreshing) resolution when the primary engine yields no key; a logged-out subscription is already excluded above and must never reach this delegated call.
+            */
+            const engineApiKey = await target.getApiKey(providerId);
+            if (engineApiKey) return engineApiKey;
+            for (const fallbackStorage of readFallbackAuthStorages) {
+              const fallbackApiKey = await fallbackStorage.getApiKey(providerId);
+              if (fallbackApiKey) return fallbackApiKey;
+            }
+            return undefined;
           }
           for (const storage of readAuthStorages) {
             const apiKey = await storage.getApiKey(providerId);

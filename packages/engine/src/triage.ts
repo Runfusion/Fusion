@@ -28,6 +28,7 @@ import {
   compareTaskIdNumeric,
   resolveAgentMemoryInclusionMode,
   resolvePlanApprovalRequired,
+  computePlanApprovalFingerprint,
   extractIntentSignature,
   findNearDuplicates,
   isNearDuplicateCanonicalInactive,
@@ -2499,7 +2500,14 @@ export class TriageProcessor {
         promptText: written,
       });
       if (releaseGateDecision.action === "block") {
-        const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };
+        /*
+         * FNXC:ReleaseAuthorizationGate 2026-07-04-21:35:
+         * FN-7559: stamp awaitingApprovalReason so the dashboard can tell this
+         * release-authorization hold apart from the (independently gated, never
+         * bypassed by auto-approve-all) manual plan-approval hold, which shares
+         * the same status: "awaiting-approval". See FNXC:PlanApproval in types.ts.
+         */
+        const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval", awaitingApprovalReason: "release-authorization" };
         if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
           approvalUpdates.title = promptDeclaredTitle;
         }
@@ -2566,17 +2574,50 @@ export class TriageProcessor {
     FN-7526 re-verified this invariant end to end: every finalizeApprovedTask caller (specifyTask, recoverApprovedTask, retryUnavailablePlanReview, tryFinalizeExplicitDuplicateMarker) already derives `settings` from mergeEffectiveSettings so planApprovalMode (never a MOVED_SETTINGS_KEYS/workflow-owned key) survives any stored workflow requirePlanApproval overlay untouched. No production defect was found; regression tests were added across every surface to lock the invariant so a future bare-settings call site (e.g. `{ requirePlanApproval }` without planApprovalMode) is caught immediately instead of silently reintroducing the reported parking behavior.
     */
     if (resolvePlanApprovalRequired(settings)) {
-      const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval" };
-      if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
-        approvalUpdates.title = promptDeclaredTitle;
+      /*
+       * FNXC:PlanApproval 2026-07-04-22:41:
+       * FN-7569 — idempotency short-circuit. Compare the freshly written PROMPT.md against
+       * the fingerprint recorded when the operator last approved a plan for this task
+       * (POST /tasks/:id/approve-plan, packages/core/src/plan-approval.ts). If they match,
+       * this is a re-specification of an already-approved, unchanged plan (replan,
+       * plan-review reviewer-outage retry, self-healing rebound to triage, duplicate-marker
+       * retry) and must proceed straight through like an approved task rather than re-parking
+       * at awaiting-approval and asking the operator to re-approve. A genuinely changed plan
+       * (or one whose approval was cleared by reject-plan) produces a different/absent
+       * fingerprint and falls through to the ordinary park below. This check lives strictly
+       * inside the manual-gate branch, after release authorization and Plan Review have
+       * already made their independent decisions, so it never weakens either of those gates
+       * or auto-approve-all (which never reaches this branch at all).
+       */
+      const priorFingerprint = latestTransitionTask?.approvedPlanFingerprint ?? task.approvedPlanFingerprint;
+      const currentFingerprint = computePlanApprovalFingerprint(written);
+      if (priorFingerprint && priorFingerprint === currentFingerprint) {
+        await this.store.logEntry(
+          task.id,
+          "Plan unchanged since prior approval — proceeding without re-approval",
+        );
+        planLog.log(`${task.id} plan unchanged since prior approval — proceeding without re-approval`);
+      } else {
+        /*
+         * FNXC:PlanApproval 2026-07-04-21:35:
+         * FN-7559: explicitly clear awaitingApprovalReason on the manual gate's own
+         * awaiting-approval write so a stale "release-authorization" reason left over
+         * from an earlier pass on this same task (e.g. a replan after the release
+         * gate parked it, now passing the release gate but still requiring manual
+         * approval) never survives into this genuinely-manual hold.
+         */
+        const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval", awaitingApprovalReason: null };
+        if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
+          approvalUpdates.title = promptDeclaredTitle;
+        }
+        await this.store.updateTask(task.id, approvalUpdates);
+        await this.store.logEntry(
+          task.id,
+          options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval",
+        );
+        planLog.log(`✓ ${task.id} specified and awaiting manual approval`);
+        return;
       }
-      await this.store.updateTask(task.id, approvalUpdates);
-      await this.store.logEntry(
-        task.id,
-        options.recoveryLogAction ?? "Specification approved by AI — awaiting manual approval",
-      );
-      planLog.log(`✓ ${task.id} specified and awaiting manual approval`);
-      return;
     }
 
     if (shouldClearWorkflowRunStepInstances) {

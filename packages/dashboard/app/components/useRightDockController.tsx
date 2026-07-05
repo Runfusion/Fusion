@@ -4,6 +4,7 @@ import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplica
 import type { ToastType } from "../hooks/useToast";
 import type { DetailTaskTab } from "../hooks/useModalManager";
 import { fetchTaskDetail } from "../api";
+import type { RevertTaskOptions, RevertTaskResult } from "../api";
 import { getScopedItem } from "../utils/projectStorage";
 import { DOCK_FILES_CURRENT_KEY } from "./DockFilesView";
 import { TaskCard } from "./TaskCard";
@@ -29,6 +30,8 @@ export interface RightDockControllerInput {
   onMoveTask: (id: string, column: ColumnId, optionsOrPosition?: { preserveProgress?: boolean } | number) => Promise<Task>;
   onDeleteTask: (id: string, options?: { removeDependencyReferences?: boolean; removeLineageReferences?: boolean; githubIssueAction?: GithubIssueAction; allowResurrection?: boolean }) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
+  /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask; never mutates the source task's column. */
+  onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
   onResetTask?: (id: string) => Promise<Task>;
@@ -233,6 +236,7 @@ export function useRightDockController(input: RightDockControllerInput): RightDo
       onMoveTask={input.onMoveTask}
       onDeleteTask={input.onDeleteTask}
       onArchiveTask={input.onArchiveTask}
+      onRevertTask={input.onRevertTask}
       onMergeTask={input.onMergeTask}
       onRetryTask={input.onRetryTask}
       onResetTask={input.onResetTask}

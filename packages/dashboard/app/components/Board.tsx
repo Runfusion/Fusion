@@ -7,7 +7,7 @@ import "./Board.css";
 import type { ToastType } from "../hooks/useToast";
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn } from "../api";
+import { promoteTask, type ModelInfo, type BoardWorkflowsPayload, type BoardWorkflowColumn, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { useBlockerFanout } from "../hooks/useBlockerFanout";
 import { MOBILE_MEDIA_QUERY, useViewportMode } from "../hooks/useViewportMode";
 import { recordResumeEvent } from "../utils/resumeInstrumentation";
@@ -55,6 +55,8 @@ interface BoardProps {
   onRetryTask?: (id: string) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
+  onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -158,7 +160,7 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
   );
 }
 
-export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
   FNXC:DoneColumnSorting 2026-06-29-16:57:
@@ -838,6 +840,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   onRetryTask={onRetryTask}
                   onArchiveTask={onArchiveTask}
                   onUnarchiveTask={onUnarchiveTask}
+                  onRevertTask={onRevertTask}
                   onDeleteTask={onDeleteTask}
                   allTasks={tasks}
                   availableModels={availableModels}
@@ -920,6 +923,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 onRetryTask={onRetryTask}
                 onArchiveTask={onArchiveTask}
                 onUnarchiveTask={onUnarchiveTask}
+                onRevertTask={onRevertTask}
                 onDeleteTask={onDeleteTask}
                 availableModels={availableModels}
                 onOpenDetailWithTab={onOpenDetailWithTab}
@@ -976,6 +980,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               onRetryTask={onRetryTask}
               onArchiveTask={onArchiveTask}
               onUnarchiveTask={onUnarchiveTask}
+              onRevertTask={onRevertTask}
               onDeleteTask={onDeleteTask}
               availableModels={availableModels}
               onOpenDetailWithTab={onOpenDetailWithTab}
@@ -1027,6 +1032,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
             onRetryTask={onRetryTask}
             onArchiveTask={onArchiveTask}
             onUnarchiveTask={onUnarchiveTask}
+            onRevertTask={onRevertTask}
             onDeleteTask={onDeleteTask}
             allTasks={tasks}
             availableModels={availableModels}

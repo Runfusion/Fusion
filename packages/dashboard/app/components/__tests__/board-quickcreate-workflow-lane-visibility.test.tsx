@@ -94,6 +94,22 @@ const CUSTOM_WORKFLOW = {
   ],
 };
 
+/*
+FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+A task created under the Coding (Ideas) workflow (manual "ideas" intake, autoTriage:false) must render in the board's
+"ideas" lane, not "triage" — mirrors the real builtin:coding-ideas workflow's intake column id/flag shape.
+*/
+const CODING_IDEAS_WORKFLOW = {
+  id: "builtin:coding-ideas",
+  name: "Coding (Ideas)",
+  columns: [
+    { id: "ideas", name: "Ideas", flags: { intake: true } },
+    { id: "todo", name: "Todo", flags: { hold: true } },
+    { id: "done", name: "Done", flags: { complete: true } },
+    { id: "archived", name: "Archived", flags: { archived: true } },
+  ],
+};
+
 function mkTask(overrides: Partial<Task> & { id: string }): Task {
   return {
     title: overrides.id,
@@ -113,7 +129,7 @@ function workflowPayload(taskWorkflowIds: Record<string, string>, flagEnabled = 
   return {
     flagEnabled,
     defaultWorkflowId: DEFAULT_WORKFLOW.id,
-    workflows: flagEnabled ? [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW] : [],
+    workflows: flagEnabled ? [DEFAULT_WORKFLOW, CUSTOM_WORKFLOW, CODING_IDEAS_WORKFLOW] : [],
     taskWorkflowIds,
   };
 }
@@ -267,6 +283,33 @@ describe("workflow lane quick-create visibility", () => {
     });
 
     expect(screen.getByText(title)).toBeTruthy();
+  });
+
+  it("Board renders a task created under the Coding (Ideas) workflow in the ideas lane", async () => {
+    const refetch = deferred<BoardWorkflowsPayload>();
+    fetchBoardWorkflowsMock
+      .mockResolvedValueOnce(workflowPayload({}))
+      .mockResolvedValueOnce(workflowPayload({}))
+      .mockReturnValueOnce(refetch.promise);
+
+    render(<BoardHarness />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow(CODING_IDEAS_WORKFLOW.id);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("quick-create-ideas"));
+    });
+
+    const ideasColumn = screen.getByTestId("column-ideas");
+    expect(within(ideasColumn).getByText("Created builtin:coding-ideas")).toBeTruthy();
+    expect(JSON.parse(ideasColumn.getAttribute("data-task-ids") ?? "[]")).toContain("FN-new");
+
+    await act(async () => {
+      refetch.resolve(workflowPayload({ "FN-new": CODING_IDEAS_WORKFLOW.id }));
+      await refetch.promise;
+    });
+
+    expect(within(screen.getByTestId("column-ideas")).getByText("Created builtin:coding-ideas")).toBeTruthy();
   });
 
   it("leaves the legacy flag-off Board quick-create path unchanged", async () => {

@@ -27,6 +27,8 @@ import type {
   NodeInfo,
   ProjectInfo,
   ProjectInfoWithSource,
+  RevertTaskOptions,
+  RevertTaskResult,
 } from "../../api";
 import type { FusionShellApi } from "../../types/native-shell";
 import type { DetailTaskOpenOptions, DetailTaskTab, ModalManager } from "../../hooks/useModalManager";
@@ -177,6 +179,12 @@ export interface MainContentProps {
   retryTask: (id: string) => Promise<Task>;
   archiveTask: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   unarchiveTask: (id: string) => Promise<Task>;
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  Threaded alongside archiveTask/unarchiveTask; never mutates the source
+  task's column as a side effect (see route + client contract comments).
+  */
+  revertTask: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   deleteTask: (
     id: string,
     options?: {

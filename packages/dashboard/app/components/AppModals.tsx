@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from "react";
-import type { ProjectInfo } from "../api";
+import type { ProjectInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import type { ColorTheme, Column, MergeResult, Task, TaskCreateInput, ThemeMode, GithubIssueAction } from "@fusion/core";
 import type { UseProjectActionsResult } from "../hooks/useProjectActions";
 import type { ModalManager } from "../hooks/useModalManager";
@@ -62,6 +62,8 @@ interface AppModalsProps {
     }) => Promise<Task>;
     mergeTask: (taskId: string) => Promise<MergeResult>;
     archiveTask: (taskId: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
+    /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside archiveTask; never mutates the source task's column. */
+    revertTask?: (taskId: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
     retryTask: (taskId: string) => Promise<Task>;
     resetTask: (taskId: string) => Promise<Task>;
     duplicateTask: (taskId: string) => Promise<Task>;
@@ -320,6 +322,7 @@ export function AppModals({
             onDeleteTask={taskOperations.deleteTask}
             onMergeTask={taskOperations.mergeTask}
             onArchiveTask={taskOperations.archiveTask}
+            onRevertTask={taskOperations.revertTask}
             onRetryTask={taskOperations.retryTask}
             onResetTask={taskOperations.resetTask}
             onDuplicateTask={taskOperations.duplicateTask}

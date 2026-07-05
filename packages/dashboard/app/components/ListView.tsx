@@ -12,7 +12,7 @@ import { sortTasksForDisplayColumn } from "./taskSorting";
 import { batchUpdateTaskModels, fetchNodes, fetchTaskDetail, rebuildTaskSpec, refreshPrStatus, updateTask } from "../api";
 import { TaskDetailContent } from "./TaskDetailModal";
 import { PrCreateModal } from "./PrCreateModal";
-import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo } from "../api";
+import type { BoardWorkflowColumn, BoardWorkflowsPayload, ModelInfo, NodeInfo, RevertTaskOptions, RevertTaskResult } from "../api";
 import { QuickEntryBox } from "./QuickEntryBox";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { NodeHealthDot } from "./NodeHealthDot";
@@ -221,6 +221,8 @@ interface ListViewProps {
   onPauseTask?: (id: string) => Promise<Task>;
   onUnpauseTask?: (id: string) => Promise<Task>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
+  /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask; never mutates the source task's column. */
+  onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onResetTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
@@ -313,6 +315,7 @@ export function ListView({
   onPauseTask,
   onUnpauseTask,
   onArchiveTask,
+  onRevertTask,
   onMergeTask,
   onResetTask,
   onDuplicateTask,
@@ -1532,6 +1535,64 @@ export function ListView({
     }
   }, [addToast, confirm, onArchiveTask, t]);
 
+  /*
+  FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+  List-view Revert action, mirroring TaskCard's `handleRevertClick`: auto mode
+  first, clean-git success toast with the revert commit sha, an info toast for
+  `alreadyReverted`, an error toast (never a silent AI fork) for `needsHuman`,
+  and a confirm-gated AI-undo fallback on conflict/unsupported. The source
+  task's column is never mutated as a side effect.
+  */
+  const handleListTaskRevert = useCallback(async (task: Task) => {
+    if (!onRevertTask) return;
+    try {
+      const result = await onRevertTask(task.id, { mode: "auto" });
+
+      if (result.mode === "ai") {
+        addToast(result.alreadyOpen
+          ? t("tasks.revertAlreadyOpen", "An undo task is already open: {{id}}", { id: result.createdTaskId })
+          : t("tasks.revertAiCreated", "Created undo task {{id}}", { id: result.createdTaskId }), "success");
+        return;
+      }
+
+      if (result.alreadyReverted) {
+        addToast(t("tasks.revertAlreadyReverted", "{{taskId}} was already reverted", { taskId: task.id }), "info");
+        return;
+      }
+
+      if (result.needsHuman) {
+        addToast(t("tasks.revertNeedsHuman", "Cannot auto-revert {{taskId}}: {{reason}}", { taskId: task.id, reason: result.reason || t("tasks.revertNeedsHumanDefault", "human review required") }), "error");
+        return;
+      }
+
+      if (result.clean && result.revertCommitSha) {
+        addToast(t("tasks.reverted", "Reverted {{taskId}} in commit {{sha}}", { taskId: task.id, sha: result.revertCommitSha.slice(0, 12) }), "success");
+        return;
+      }
+
+      if (!result.clean || result.unsupported) {
+        const confirmed = await confirm({
+          title: t("tasks.revertConflictTitle", "Revert Conflict"),
+          message: t("tasks.revertConflictMessage", "Git revert conflicts with later changes. Create an AI task to undo this?"),
+          cancelLabel: t("common.cancel", "Cancel"),
+        });
+        if (!confirmed) return;
+
+        const aiResult = await onRevertTask(task.id, { mode: "ai" });
+        if (aiResult.mode === "ai") {
+          addToast(aiResult.alreadyOpen
+            ? t("tasks.revertAlreadyOpen", "An undo task is already open: {{id}}", { id: aiResult.createdTaskId })
+            : t("tasks.revertAiCreated", "Created undo task {{id}}", { id: aiResult.createdTaskId }), "success");
+        }
+        return;
+      }
+
+      addToast(t("tasks.revertFailed", "Failed to revert {{taskId}}", { taskId: task.id }), "error");
+    } catch (err) {
+      addToast(getErrorMessage(err), "error");
+    }
+  }, [addToast, confirm, onRevertTask, t]);
+
   const handleListContextMove = useCallback(async (task: Task, column: ColumnId) => {
     try {
       const hasStepProgress = task.steps.some((step) => step.status !== "pending");
@@ -1704,6 +1765,21 @@ export function ListView({
     if (task.column === "done" && onArchiveTask) {
       actions.push({ id: "archive", label: t("tasks.archive", "Archive"), onSelect: () => void handleListTaskArchive(task) });
     }
+    /*
+    FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+    List-view Revert menu entry for done/archived rows, mirroring the `archive`
+    entry above. Disabled (rather than omitted) when the task lacks a landed
+    commit to revert.
+    */
+    if ((task.column === "done" || task.column === "archived") && onRevertTask) {
+      const isRevertable = Boolean(task.mergeDetails?.commitSha);
+      actions.push({
+        id: "revert",
+        label: t("tasks.revert", "Revert"),
+        disabled: !isRevertable,
+        onSelect: isRevertable ? () => void handleListTaskRevert(task) : undefined,
+      });
+    }
     for (const transition of model.moveTransitions) {
       actions.push({
         id: `move-${transition.column}`,
@@ -1715,7 +1791,7 @@ export function ListView({
       actions.push({ id: model.reviewAction.id, label: model.reviewAction.label, disabled: model.reviewAction.disabled, onSelect: model.reviewAction.onSelect });
     }
     return actions.filter((action) => action.tone === "note" || action.disabled === true || Boolean(action.onSelect));
-  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onTasksUpdated, projectId, t]);
+  }, [addToast, autoMerge, columnFlagsById, confirm, getListColumnLabel, handleListContextCheckPrStatus, handleListContextEnableGithubTracking, handleListContextMove, handleListTaskArchive, handleListTaskDelete, handleListTaskRevert, isMobile, listContextMenuColumns, mergeStrategy, onDuplicateTask, onMergeTask, onOpenDetail, onPauseTask, onResetTask, onRetryTask, onUnpauseTask, onArchiveTask, onRevertTask, onTasksUpdated, projectId, t]);
 
   const contextMenuActions = useMemo(
     () => (contextMenuState ? buildListContextMenuActions(contextMenuState.task) : []),

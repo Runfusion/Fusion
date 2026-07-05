@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type {
   TaskStore,
   Task,
@@ -14,6 +14,7 @@ import type {
   DuplicateMatch,
   RunAuditEvent,
   ArtifactType,
+  PrInfo,
 } from "@fusion/core";
 import {
   COLUMNS,
@@ -44,15 +45,30 @@ import {
   isWorkflowColumnsEnabled,
   TransitionRejectionError,
   getPlannerInterventionTimeline,
+  isBuiltinWorkflowId,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
+import { githubRateLimiter } from "../github-poll.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
-import { planTaskWorktreePath, promoteHeldTask, performTaskRevert, TaskRevertError } from "@fusion/engine";
+import {
+  planTaskWorktreePath,
+  promoteHeldTask,
+  performTaskRevert,
+  revertWorkspaceTask,
+  TaskRevertError,
+  createAiUndoTask,
+  prepareRevertPrBranch,
+  prepareWorkspaceRevertPrBranches,
+  type AiUndoTaskResult,
+  type PrepareRevertPrBranchResult,
+  type PrepareWorkspaceRevertPrBranchesResult,
+  type WorkspaceRepoRevertPrBranch,
+} from "@fusion/engine";
 import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
-import type { RunAuditEventInput } from "@fusion/core";
+import { computePlanApprovalFingerprint, isWorkspaceTask, type RunAuditEventInput } from "@fusion/core";
 import { ApiError, badRequest, conflict, notFound } from "../api-error.js";
 import type { ApiRoutesContext } from "./types.js";
 import { deriveAutoTaskBranch, derivePerTaskBranch, getBranchSelectionMode, resolveBranchSelection } from "./branch-selection.js";
@@ -1672,16 +1688,43 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   });
 
   /*
-  FNXC:TaskRevert 2026-07-04-00:00:
-  POST /tasks/:id/revert — intelligent git-revert for Done/Archived tasks (FN-7523, foundation
-  for FN-7501). Guard rails (enforced here AND in the engine service):
+  FNXC:TaskRevert 2026-07-04-00:00 (FN-7524 mode contract; FN-7547 workspace dispatch; FN-7548 granularity contract):
+  POST /tasks/:id/revert — intelligent git-revert for Done/Archived tasks (FN-7523), with an
+  AI-undo fallback (FN-7524, foundation for FN-7501), workspace (multi-repo) task support
+  (FN-7547), and per-sha revert-commit granularity (FN-7548). Guard rails (enforced here AND in
+  the engine service):
     - only done/archived tasks are revertable (400/409 otherwise);
-    - autoMerge-off is a needsHuman result, not a forced write;
-    - the source task's column/status is NEVER mutated as a side effect of a revert.
-  Response contract: `{ mode: "git", clean, revertCommitSha?, conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }`.
-  On conflict, this route does NOT create the AI-undo follow-up task — that is sibling FN-7524's
-  job; the UI/caller decides what to do with the conflict result. This route also never moves the
-  source task backward through its lifecycle.
+    - autoMerge-off is a needsHuman result, not a forced write, and NEVER triggers the AI fallback
+      (leave that for a human / sibling FN-7525 to decide);
+    - the source task's column/status is NEVER mutated as a side effect of a revert (git OR AI path).
+
+  Optional request body:
+    - `mode?: "git" | "ai" | "auto"` (default `"auto"`; unknown values reject with 400). Semantics:
+      - `"git"`  — FN-7523 behavior only; the git result (incl. a conflict/unsupported result) is
+        returned as-is and the AI-undo path is NEVER invoked.
+      - `"ai"`   — skip git entirely; always take the AI-undo fallback.
+      - `"auto"` — attempt git first. A clean/alreadyReverted/needsHuman git result is returned
+        unchanged (NO AI task created). A conflicting or unsupported git result falls through to
+        the AI-undo fallback.
+    - `granularity?: "squash" | "per-sha"` (FN-7548, default `"squash"`) — commit granularity for the
+      single-repo git-path revert only; forwarded verbatim to `performTaskRevert`. `"squash"`
+      preserves the unchanged FN-7523 single-commit behavior; `"per-sha"` creates one attributed
+      revert commit per original sha (see `performTaskRevert`'s per-sha apply path). Ignored when
+      `mode` resolves to `"ai"` or the task is a workspace task.
+
+  Response contract is ADDITIVE over FN-7523: `{ mode: "git", clean, revertCommitSha?, revertCommitShas?,
+  conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }` OR, for workspace tasks (FN-7547),
+  `{ mode: "git", clean, workspace: { repos: [{ repo, classification, revertCommitSha?, conflicts?,
+  alreadyReverted? }] }, conflicts?: {repo, file, ...}[] }` OR
+  `{ mode: "ai", createdTaskId: "FN-YYYY", alreadyOpen?: true }` OR, for a single-repo task under
+  `autoMerge:false` (FN-7554), `{ mode: "pr", clean: true, prUrl, prNumber, revertBranch, existingPr? }`
+  OR, for a WORKSPACE task under `autoMerge:false` (FN-7577 — additive over FN-7554/FN-7547),
+  `{ mode: "pr", clean: true, workspace: { repos: [{ repo, revertBranch, prUrl, prNumber, existingPr? }] } }`
+  — one revert PR opened per sub-repo, all-or-nothing at the branch-prep phase
+  (`prepareWorkspaceRevertPrBranches`), never force-writing any sub-repo integration branch. The
+  AI-undo task is created via `createAiUndoTask` (engine) + `TaskStore.findOpenRevertTaskForSource`
+  (core) for the idempotency guard — a second call while an undo task is still open returns the
+  SAME `createdTaskId` with `alreadyOpen: true` rather than creating a duplicate.
   */
   router.post("/tasks/:id/revert", async (req, res) => {
     try {
@@ -1694,8 +1737,277 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
       }
 
-      const rootDir = scopedStore.getRootDir();
+      const requestedMode = (req.body as { mode?: unknown } | undefined)?.mode;
+      if (requestedMode !== undefined && requestedMode !== "git" && requestedMode !== "ai" && requestedMode !== "auto") {
+        throw badRequest(`Invalid revert mode "${String(requestedMode)}"; expected "git", "ai", or "auto"`);
+      }
+      const mode: "git" | "ai" | "auto" = (requestedMode as "git" | "ai" | "auto" | undefined) ?? "auto";
+
+      /*
+      FNXC:TaskRevert 2026-07-04-12:00 (FN-7548):
+      Optional `granularity` request-body field selects the commit granularity
+      of the revert: `"squash"` (default, unchanged FN-7523 behavior — one
+      combined revert commit) or `"per-sha"` (one attributed revert commit per
+      original sha, see `performTaskRevert`'s per-sha apply path). An absent/
+      empty value defaults to `"squash"`; any other value is a 400 naming the
+      allowed values. Only relevant to the single-repo git path — ignored when
+      `mode` resolves to `"ai"` or the task is a workspace task.
+      */
+      const requestedGranularity = (req.body as { granularity?: unknown } | undefined)?.granularity;
+      let granularity: "squash" | "per-sha" = "squash";
+      if (requestedGranularity !== undefined && requestedGranularity !== null && requestedGranularity !== "") {
+        if (requestedGranularity !== "squash" && requestedGranularity !== "per-sha") {
+          throw badRequest(`granularity must be one of: "squash", "per-sha"`);
+        }
+        granularity = requestedGranularity;
+      }
+
+      /*
+      FNXC:TaskRevert 2026-07-05-00:00 (FN-7556):
+      `settings` is fetched HERE (before `createAiUndoResult` is defined/used)
+      because the `mode === "ai"` early-return path below uses the closure
+      before the git-path `settings` fetch that used to follow it. AI-undo
+      tasks default to the `aiUndoTaskWorkflowId` project setting (default
+      `builtin:review-heavy` — a stricter review posture than ordinary new
+      work, since these tasks reverse already-shipped code). A blank/whitespace
+      value means inherit the project default workflow; a non-blank value that
+      does not resolve to a real workflow (custom or builtin) is logged and
+      falls back to inherit too — a misconfigured id must never break AI-undo
+      task creation.
+      */
       const settings = await scopedStore.getSettingsFast();
+      const configuredAiUndoWorkflowId = settings.aiUndoTaskWorkflowId?.trim();
+      let aiUndoWorkflowId: string | undefined;
+      if (configuredAiUndoWorkflowId) {
+        const exists =
+          isBuiltinWorkflowId(configuredAiUndoWorkflowId) || Boolean(await scopedStore.getWorkflowDefinition(configuredAiUndoWorkflowId));
+        if (exists) {
+          aiUndoWorkflowId = configuredAiUndoWorkflowId;
+        } else {
+          console.warn(
+            `[task-revert] aiUndoTaskWorkflowId "${configuredAiUndoWorkflowId}" does not resolve to a known workflow; AI-undo task will inherit the project default workflow instead`,
+          );
+        }
+      }
+
+      const createAiUndoResult = async (): Promise<AiUndoTaskResult> =>
+        createAiUndoTask({
+          createTask: (input) => scopedStore.createTask(input),
+          findOpenRevertTaskForSource: (id) => scopedStore.findOpenRevertTaskForSource(id),
+          sourceTask: task,
+          workflowId: aiUndoWorkflowId,
+        });
+
+      if (mode === "ai") {
+        res.json(await createAiUndoResult());
+        return;
+      }
+
+      const rootDir = scopedStore.getRootDir();
+
+      /*
+      FNXC:TaskRevert 2026-07-04-00:00 (FN-7547 — workspace dispatch):
+      Workspace tasks (`isWorkspaceTask(task)`) land commits across MULTIPLE
+      sub-repo integration branches under `rootDir` (each sub-repo lives at
+      `join(rootDir, repoRel)`, mirroring `landWorkspaceTask`) — there is no
+      single `baseBranch`/`rootDir`-is-a-git-repo assumption to check here.
+      Route straight to `revertWorkspaceTask`, which resolves + branch-checks
+      + dry-run classifies + commits EACH sub-repo itself, enforcing the
+      whole-task all-or-nothing contract. The single-repo path below is
+      UNCHANGED. `granularity` does not apply to the workspace path.
+      */
+      if (isWorkspaceTask(task)) {
+        /*
+        FNXC:TaskRevert 2026-07-05-00:00 (FN-7577 — workspace mode:"pr" dispatch,
+        additive over FN-7554/FN-7547): `revertWorkspaceTask` refuses
+        (`needsHuman`) whenever autoMerge is effectively off, the same dead end
+        `performTaskRevert` hits for single-repo tasks. Instead of stopping
+        there, take the multi-PR path: `prepareWorkspaceRevertPrBranches`
+        classifies EVERY sub-repo first and only prepares one dedicated
+        `fusion/revert-<id>` branch per sub-repo (never writing any sub-repo
+        integration branch) when every sub-repo is clean/already-reverted; this
+        route then opens ONE revert PR per prepared sub-repo branch, reusing
+        FN-7554's per-repo owner/repo resolution, rate-limiter gate,
+        `findPrForBranch` idempotency, and `manual:true` handoff. The
+        `autoMerge:true` workspace path below (the existing `revertWorkspaceTask`
+        call) is UNCHANGED.
+        */
+        const effectiveAutoMerge = task.autoMerge ?? settings.autoMerge ?? true;
+
+        if (effectiveAutoMerge === false) {
+          const revertBranch = `fusion/revert-${task.id.toLowerCase()}`;
+
+          const prepared: PrepareWorkspaceRevertPrBranchesResult = await prepareWorkspaceRevertPrBranches({
+            task,
+            workspaceRootDir: rootDir,
+            settings,
+            revertBranch,
+            commitAssociationSource: {
+              getTaskCommitAssociationsByLineageId: (lineageId: string) =>
+                scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
+            },
+          });
+
+          if (!prepared.eligible) {
+            if ("classification" in prepared && prepared.classification === "conflicting") {
+              if (mode === "auto") {
+                res.json(await createAiUndoResult());
+                return;
+              }
+              res.json({ mode: "git", clean: false, workspace: { repos: prepared.repos }, conflicts: prepared.conflicts });
+              return;
+            }
+            if ("unsupported" in prepared && prepared.unsupported) {
+              if (mode === "auto") {
+                res.json(await createAiUndoResult());
+                return;
+              }
+              res.json({ mode: "git", unsupported: true, reason: prepared.reason });
+              return;
+            }
+          }
+
+          if (prepared.eligible) {
+            // prepared.eligible === true
+            if (prepared.repos.length === 0) {
+              // Every sub-repo was already-reverted — nothing to PR.
+              res.json({ mode: "git", clean: true, workspace: { repos: [] } });
+              return;
+            }
+
+            /*
+            FNXC:TaskRevert 2026-07-05-00:00 (FN-7577 — atomic pre-check ordering):
+            Resolve owner/repo AND check the rate limiter for EVERY prepared
+            sub-repo BEFORE pushing/creating any PR, so the two common degrade
+            cases (GitHub unconfigured / rate-limited) never leave a partial
+            subset of PRs open across sub-repos. Nothing has been pushed to any
+            remote yet at this point, so degrading here only needs to delete the
+            purely-local prepared branches.
+            */
+            const cleanupPreparedBranches = async (): Promise<void> => {
+              for (const repoBranch of prepared.repos) {
+                const repoRootDir = join(rootDir, repoBranch.repo);
+                await runGitCommand(["checkout", repoBranch.integrationBranch], repoRootDir, 10_000).catch(() => undefined);
+                await runGitCommand(["branch", "-D", revertBranch], repoRootDir, 10_000).catch(() => undefined);
+              }
+            };
+
+            const targets: { repoBranch: WorkspaceRepoRevertPrBranch; owner: string; repo: string }[] = [];
+            for (const repoBranch of prepared.repos) {
+              const gitRepo = getCurrentRepo(join(rootDir, repoBranch.repo));
+              if (!gitRepo) {
+                await cleanupPreparedBranches();
+                res.json({
+                  mode: "git",
+                  needsHuman: true,
+                  reason: "autoMerge is disabled and one or more sub-repos have no GitHub repository configured; cannot open revert PRs",
+                });
+                return;
+              }
+              targets.push({ repoBranch, owner: gitRepo.owner, repo: gitRepo.repo });
+            }
+
+            for (const target of targets) {
+              const repoKey = `${target.owner}/${target.repo}`;
+              if (!githubRateLimiter.canMakeRequest(repoKey)) {
+                await cleanupPreparedBranches();
+                res.json({
+                  mode: "git",
+                  needsHuman: true,
+                  reason: "GitHub API rate limit exceeded; try again later",
+                });
+                return;
+              }
+            }
+
+            /*
+            FNXC:TaskRevert 2026-07-05-00:00 (FN-7577 — idempotent multi-PR
+            recovery contract): from this point on, a thrown error (network down,
+            push rejected, GitHub 5xx, etc.) is surfaced via the shared `catch`
+            below rather than a graceful needsHuman degrade, because an earlier
+            sub-repo in this loop may already have an open remote PR by the time a
+            later sub-repo fails — this route NEVER attempts to close/delete an
+            already-created remote PR. A re-run of this endpoint is safe:
+            `findPrForBranch` links any already-created sub-repo PR instead of
+            re-creating it, and `prepareWorkspaceRevertPrBranches`'s `checkout -B`
+            re-preps local branches for any sub-repo not yet pushed.
+            */
+            const resultRepos: { repo: string; revertBranch: string; prUrl: string; prNumber: number; existingPr?: boolean }[] = [];
+            const persistPrInfo = async (prInfo: PrInfo): Promise<void> => {
+              const existingPrs = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
+              if (existingPrs.length > 0) {
+                await scopedStore.addPrInfo(task.id, prInfo);
+              } else {
+                await scopedStore.updatePrInfo(task.id, prInfo);
+              }
+            };
+
+            for (const target of targets) {
+              const client = new GitHubClient();
+              const existingPr = await client.findPrForBranch({ head: revertBranch, state: "all", owner: target.owner, repo: target.repo });
+
+              if (existingPr) {
+                // Idempotency — never re-push/re-create when an open (or all-state)
+                // PR already exists for this sub-repo's branch, just link it.
+                const prInfo: PrInfo = { ...existingPr, manual: true };
+                await persistPrInfo(prInfo);
+                await scopedStore.logEntry(task.id, "Linked existing revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`);
+                resultRepos.push({ repo: target.repoBranch.repo, revertBranch, prUrl: prInfo.url, prNumber: prInfo.number, existingPr: true });
+                continue;
+              }
+
+              await runGitCommand(["push", "-u", "origin", revertBranch], join(rootDir, target.repoBranch.repo), 60_000);
+              const prTitle = `revert(${task.id}): undo landed work (${target.repoBranch.repo})`;
+              const prBody =
+                `This PR reverts the work landed by task ${task.id} in sub-repo \`${target.repoBranch.repo}\`.\n\n` +
+                `See \`GET /api/tasks/${task.id}/diff\` for the full landed diff being reverted.\n`;
+              const created = await client.createPr({
+                owner: target.owner,
+                repo: target.repo,
+                title: prTitle,
+                body: prBody,
+                head: revertBranch,
+                base: target.repoBranch.integrationBranch,
+              });
+              const prInfo: PrInfo = { ...created, manual: true };
+              await persistPrInfo(prInfo);
+              await scopedStore.logEntry(task.id, "Created revert PR", `${target.repoBranch.repo}: PR #${prInfo.number}: ${prInfo.url}`);
+              resultRepos.push({ repo: target.repoBranch.repo, revertBranch, prUrl: prInfo.url, prNumber: prInfo.number });
+            }
+
+            res.json({ mode: "pr", clean: true, workspace: { repos: resultRepos } });
+            return;
+          }
+        }
+
+        const workspaceResult = await revertWorkspaceTask({
+          task,
+          workspaceRootDir: rootDir,
+          settings,
+          commitAssociationSource: {
+            getTaskCommitAssociationsByLineageId: (lineageId: string) =>
+              scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
+          },
+          effectiveAutoMerge: settings.autoMerge,
+        });
+
+        if (mode === "git") {
+          res.json(workspaceResult);
+          return;
+        }
+
+        // mode === "auto": fall back to the AI-undo task on a conflicting workspace
+        // result, same as the single-repo conflicting-result contract below.
+        const workspaceShouldFallBackToAi = workspaceResult.mode === "git" && "clean" in workspaceResult && workspaceResult.clean === false;
+        if (workspaceShouldFallBackToAi) {
+          res.json(await createAiUndoResult());
+          return;
+        }
+
+        res.json(workspaceResult);
+        return;
+      }
+
       const baseBranch = task.mergeDetails?.mergeTargetBranch || await resolveIntegrationBranch(rootDir, settings);
 
       /*
@@ -1720,6 +2032,184 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         });
       }
 
+      /*
+      FNXC:TaskRevert 2026-07-05-00:00 (FN-7554 — mode:"pr" contract, additive over FN-7523/24/47/48):
+      `performTaskRevert` refuses (`needsHuman`) whenever autoMerge is
+      effectively off, because it would otherwise force-write a revert commit
+      directly onto `baseBranch` — a branch this project has opted out of
+      automated writes to. Instead of stopping at that dead end, open a real
+      revert PR: `prepareRevertPrBranch` (engine) applies the revert commit(s)
+      onto a DEDICATED `fusion/revert-<id>` branch off `baseBranch` HEAD
+      (never mutating `baseBranch` itself), then this route pushes that branch
+      and opens a PR via `GitHubClient.createPr` — reusing the exact
+      owner/repo resolution, `githubRateLimiter` gate, `findPrForBranch`
+      idempotency, and `manual: true` handoff that `/pr/create` already uses.
+      This ONLY applies to the single-repo git path (workspace tasks already
+      returned above) and ONLY for `mode !== "ai"` (the `mode === "ai"` case
+      already returned earlier in this handler). Every existing
+      `{ mode: "git" | "ai", ... }` result shape is unchanged — this adds a
+      new `{ mode: "pr", ... }` variant. Graceful `needsHuman` degrade (NOT a
+      thrown error) covers: GitHub unconfigured, and GitHub rate-limited —
+      both leave the caller with the same actionable `needsHuman` contract
+      the `autoMerge:true` code path never has to think about.
+      PR-based revert of WORKSPACE (multi-repo) tasks under autoMerge:false is
+      explicitly deferred (would require per-sub-repo branches + multiple
+      PRs) — see the FN-7554 follow-up task; workspace tasks above still get
+      the existing `needsHuman` result from `revertWorkspaceTask`.
+      */
+      const effectiveAutoMerge = task.autoMerge ?? settings.autoMerge ?? true;
+      if (effectiveAutoMerge === false) {
+        let owner: string;
+        let repo: string;
+        const envRepo = process.env.GITHUB_REPOSITORY;
+        if (envRepo) {
+          const [o, r] = envRepo.split("/");
+          owner = o;
+          repo = r;
+        } else {
+          const gitRepo = getCurrentRepo(rootDir);
+          if (!gitRepo) {
+            res.json({
+              mode: "git",
+              needsHuman: true,
+              reason: "autoMerge is disabled and no GitHub repository is configured; cannot open a revert PR",
+            });
+            return;
+          }
+          owner = gitRepo.owner;
+          repo = gitRepo.repo;
+        }
+
+        const repoKey = `${owner}/${repo}`;
+        if (!githubRateLimiter.canMakeRequest(repoKey)) {
+          res.json({
+            mode: "git",
+            needsHuman: true,
+            reason: "GitHub API rate limit exceeded; try again later",
+          });
+          return;
+        }
+
+        const revertBranch = `fusion/revert-${task.id.toLowerCase()}`;
+        const client = new GitHubClient();
+        let existingPr: Awaited<ReturnType<typeof client.findPrForBranch>>;
+        try {
+          existingPr = await client.findPrForBranch({ head: revertBranch, state: "all", owner, repo });
+        } catch (error) {
+          // FNXC:TaskRevert 2026-07-05-00:00 (FN-7554): GitHub reachability failure
+          // (network down, auth rejected, 5xx, etc.) degrades to needsHuman with an
+          // explicit reason rather than bubbling up as a 500 — mirrors the
+          // no-remote-configured / rate-limited degrade paths above.
+          res.json({
+            mode: "git",
+            needsHuman: true,
+            reason: `GitHub is unavailable; could not check for an existing revert PR (${error instanceof Error ? error.message : String(error)})`,
+          });
+          return;
+        }
+
+        const persistPrInfo = async (prInfo: PrInfo): Promise<void> => {
+          const existingPrs = task.prInfos ?? (task.prInfo ? [task.prInfo] : []);
+          if (existingPrs.length > 0) {
+            await scopedStore.addPrInfo(task.id, prInfo);
+          } else {
+            await scopedStore.updatePrInfo(task.id, prInfo);
+          }
+        };
+
+        if (existingPr) {
+          // Idempotency — mirrors `/pr/create`: never re-prepare/re-push when an
+          // open (or all-state) PR already exists for this branch, just link it.
+          const prInfo: PrInfo = { ...existingPr, manual: true };
+          await persistPrInfo(prInfo);
+          await scopedStore.logEntry(task.id, "Linked existing revert PR", `PR #${prInfo.number}: ${prInfo.url}`);
+          res.json({
+            mode: "pr",
+            clean: true,
+            prUrl: prInfo.url,
+            prNumber: prInfo.number,
+            revertBranch,
+            existingPr: true,
+          });
+          return;
+        }
+
+        const prepared: PrepareRevertPrBranchResult = await prepareRevertPrBranch({
+          task,
+          worktreePath: rootDir,
+          baseBranch,
+          revertBranch,
+          commitAssociationSource: {
+            getTaskCommitAssociationsByLineageId: (lineageId: string) =>
+              scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
+          },
+        });
+
+        if (!prepared.eligible) {
+          if ("alreadyReverted" in prepared && prepared.alreadyReverted) {
+            res.json({ mode: "git", clean: true, alreadyReverted: true });
+            return;
+          }
+          if ("classification" in prepared && prepared.classification === "conflicting") {
+            if (mode === "auto") {
+              res.json(await createAiUndoResult());
+              return;
+            }
+            res.json({ mode: "git", clean: false, conflicts: prepared.conflicts });
+            return;
+          }
+          if ("unsupported" in prepared && prepared.unsupported) {
+            if (mode === "auto") {
+              res.json(await createAiUndoResult());
+              return;
+            }
+            res.json({ mode: "git", unsupported: true, reason: prepared.reason });
+            return;
+          }
+        }
+
+        if (prepared.eligible) {
+          // FNXC:TaskRevert 2026-07-05-00:00 (FN-7554): push/create-PR failures
+          // (network down, auth rejected, remote rejects push, GitHub 5xx, etc.)
+          // degrade to needsHuman with an explicit reason instead of a thrown 500 —
+          // the revert branch/commit(s) already prepared locally are left in place
+          // (never force-written to `baseBranch`) so a retry can reuse them.
+          try {
+            await runGitCommand(["push", "-u", "origin", prepared.revertBranch], rootDir, 60_000);
+            const prTitle = `revert(${task.id}): undo landed work`;
+            const prBody =
+              `This PR reverts the work landed by task ${task.id}.\n\n` +
+`See \`GET /api/tasks/${task.id}/diff\` for the landed diff being reverted.\n`;
+            const created = await client.createPr({
+              owner,
+              repo,
+              title: prTitle,
+              body: prBody,
+              head: prepared.revertBranch,
+              base: baseBranch,
+            });
+            const prInfo: PrInfo = { ...created, manual: true };
+            await persistPrInfo(prInfo);
+            await scopedStore.logEntry(task.id, "Created revert PR", `PR #${prInfo.number}: ${prInfo.url}`);
+            res.json({
+              mode: "pr",
+              clean: true,
+              prUrl: prInfo.url,
+              prNumber: prInfo.number,
+              revertBranch: prepared.revertBranch,
+            });
+            return;
+          } catch (error) {
+            res.json({
+              mode: "git",
+              needsHuman: true,
+              reason: `GitHub is unavailable; could not push the revert branch or open the PR (${error instanceof Error ? error.message : String(error)})`,
+            });
+            return;
+          }
+        }
+      }
+
       const result = await performTaskRevert({
         task,
         worktreePath: rootDir,
@@ -1729,7 +2219,25 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
             scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
         },
         effectiveAutoMerge: settings.autoMerge,
+        granularity,
       });
+
+      if (mode === "git") {
+        res.json(result);
+        return;
+      }
+
+      // mode === "auto": fall back to the AI-undo task ONLY on conflict or an
+      // unsupported git result. Clean/alreadyReverted/needsHuman results are
+      // returned as-is — needsHuman (autoMerge-off) NEVER triggers AI.
+      const shouldFallBackToAi =
+        (result.mode === "git" && "clean" in result && result.clean === false) ||
+        (result.mode === "git" && "unsupported" in result && result.unsupported === true);
+
+      if (shouldFallBackToAi) {
+        res.json(await createAiUndoResult());
+        return;
+      }
 
       res.json(result);
     } catch (err: unknown) {
@@ -1737,7 +2245,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw err;
       }
       if (err instanceof TaskRevertError) {
-        const status = err.code === "dirty-working-tree" ? 409 : 500;
+        const status = err.code === "dirty-working-tree" || err.code === "branch-mismatch" ? 409 : 500;
         throw new ApiError(status, err.message, { code: err.code });
       }
       rethrowAsApiError(err);
@@ -2620,15 +3128,51 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to approve plan");
       }
+      // FNXC:ReleaseAuthorizationGate 2026-07-04-22:30:
+      // FN-6481 requires a release-class task to carry an explicit
+      // "**Release Authorized By User:** yes" marker before it can dispatch.
+      // FN-7559 parks such tasks with awaitingApprovalReason === "release-authorization"
+      // (distinct from an ordinary manual plan-approval hold) and hides the
+      // Approve/Reject Plan buttons in the dashboard UI, but a direct API call bypasses
+      // that UI protection. Enforce the gate here too so no client can dispatch a
+      // release-class task without the authorization marker.
+      if (task.awaitingApprovalReason === "release-authorization") {
+        throw badRequest(
+          "This task is held for release authorization. Add the **Release Authorized By User:** yes marker to its PROMPT.md and resubmit the spec instead of approving the plan.",
+        );
+      }
 
       // Log the approval
       await scopedStore.logEntry(task.id, "Plan approved by user");
 
+      /*
+       * FNXC:PlanApproval 2026-07-04-22:41:
+       * FN-7569 — persist a fingerprint of the exact PROMPT.md the operator just approved
+       * so a later re-specification (replan, plan-review retry, self-healing rebound) that
+       * produces the identical plan can skip re-parking at awaiting-approval. Read the
+       * on-disk PROMPT.md directly (best-effort) since the task row does not always carry
+       * full prompt text; a missing/unreadable file leaves the fingerprint unset and the
+       * manual gate falls back to today's always-re-park behavior for this task.
+       */
+      let approvedPlanFingerprint: string | undefined;
+      try {
+        const { readFile } = await import("node:fs/promises");
+        const { join } = await import("node:path");
+        const promptPath = join(scopedStore.getRootDir(), ".fusion", "tasks", task.id, "PROMPT.md");
+        const promptText = await readFile(promptPath, "utf8");
+        approvedPlanFingerprint = computePlanApprovalFingerprint(promptText);
+      } catch {
+        // No PROMPT.md to fingerprint (unusual for an awaiting-approval task) — leave unset.
+      }
+
       // Move to todo and clear status
       const updated = await scopedStore.moveTask(task.id, "todo");
-      await scopedStore.updateTask(task.id, { status: undefined });
+      await scopedStore.updateTask(task.id, {
+        status: undefined,
+        ...(approvedPlanFingerprint ? { approvedPlanFingerprint } : {}),
+      });
 
-      res.json({ ...updated, status: undefined });
+      res.json({ ...updated, status: undefined, ...(approvedPlanFingerprint ? { approvedPlanFingerprint } : {}) });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;
@@ -2652,12 +3196,28 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to reject plan");
       }
+      // FNXC:ReleaseAuthorizationGate 2026-07-04-22:30:
+      // Mirror of the approve-plan guard above: a release-authorization hold
+      // (FN-7559's awaitingApprovalReason discriminator) must not be rejectable
+      // through the API either, since rejecting would wipe/regenerate the spec
+      // without the operator ever acknowledging the FN-6481 authorization gate.
+      if (task.awaitingApprovalReason === "release-authorization") {
+        throw badRequest(
+          "This task is held for release authorization. Add the **Release Authorized By User:** yes marker to its PROMPT.md and resubmit the spec instead of rejecting the plan.",
+        );
+      }
 
       // Log the rejection
       await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");
 
       // Clear status to return to normal triage state
-      await scopedStore.updateTask(task.id, { status: undefined });
+      /*
+       * FNXC:PlanApproval 2026-07-04-22:41:
+       * FN-7569 — clear any previously-recorded approval fingerprint alongside the status
+       * clear and PROMPT.md removal, so the regenerated plan is always treated as new and
+       * requires fresh manual approval (it must never inherit the rejected plan's fingerprint).
+       */
+      await scopedStore.updateTask(task.id, { status: undefined, approvedPlanFingerprint: null });
 
       // Remove PROMPT.md to force regeneration
       const { rm } = await import("node:fs/promises");

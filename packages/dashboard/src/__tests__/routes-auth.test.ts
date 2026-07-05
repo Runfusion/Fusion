@@ -1184,6 +1184,82 @@ describe("GET /auth/status", () => {
     expect(anthropic).toMatchObject({ authenticated: false, expired: true });
   });
 
+  /*
+  FNXC:ProviderAuth 2026-07-05-00:00:
+  FN-7574 symptom verification: an expired, unrefreshable Anthropic Subscription OAuth
+  credential must report authenticated:false/expired:true across BOTH the legacy
+  pre-split `anthropic`-row storage permutation and the separated `anthropic-subscription`-
+  row permutation, so the settings card and OAuthReloniBanner never show a lapsed
+  subscription as connected. Covers the exact reproduction from the task's Symptom
+  Verification section.
+  */
+  it("FN-7574: reports expired-and-unrefreshable subscription OAuth as not-connected (separated anthropic-subscription row)", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "expired-token",
+      refresh: "revoked-refresh-token",
+      expires: now - 60_000,
+    }) : undefined);
+    // Simulate a revoked refresh token: the best-effort refresh attempt inside the
+    // status route fails (non-200 from the OAuth token endpoint), so getApiKey resolves
+    // to undefined without throwing.
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+  });
+
+  it("FN-7574: reports expired-and-unrefreshable subscription OAuth as not-connected (legacy anthropic row)", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic" ? ({
+      type: "oauth",
+      access: "expired-legacy-token",
+      refresh: "revoked-refresh-token",
+      expires: now - 60_000,
+    }) : undefined);
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(authStorage.getApiKey).toHaveBeenCalledWith("anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+  });
+
+  it("FN-7574: treats an oauth credential missing a numeric expires as expired, not authenticated", async () => {
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "token-without-expiry",
+      refresh: "refresh",
+      // expires intentionally omitted — a partially-hydrated/corrupted credential.
+    }) : undefined);
+    (authStorage.getApiKey as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+  });
+
   it("reports loginInProgress for oauth providers with active logins", async () => {
     let releaseLogin: (() => void) | undefined;
     (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(
@@ -2189,6 +2265,7 @@ describe("POST /auth/login", () => {
   });
 
   it.each([
+    ["http query", "http://localhost:53692/callback?code=http-code&state=expected-state", "code=http-code&state=expected-state"],
     ["fragment", "http://localhost:53692/callback#code=fragment-code&state=expected-state", "code=fragment-code&state=expected-state"],
     ["schemeless", "localhost:53692/callback?code=schemeless-code&state=expected-state", "code=schemeless-code&state=expected-state"],
   ])("normalizes Anthropic subscription pasted callback URLs with %s parameters", async (_case, callbackUrl, expectedInput) => {
@@ -2494,6 +2571,55 @@ describe("POST /auth/manual-code", () => {
     await vi.waitFor(() => {
       expect(submittedCode).toBe("http://localhost:1455/auth/callback?code=test-code&state=test-state");
     });
+  });
+
+  it("delivers pasted Anthropic callback URLs to the local OAuth listener", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "ok" });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    let submittedCode: string | undefined;
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(
+      async (_provider: string, callbacks: {
+        onAuth: (info: { url: string; instructions?: string }) => void;
+        onManualCodeInput?: () => Promise<string>;
+      }) => {
+        callbacks.onAuth({
+          url: "https://claude.ai/oauth/authorize?state=anthropic-state&redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback",
+        });
+        submittedCode = await callbacks.onManualCodeInput?.();
+      },
+    );
+
+    try {
+      const app = buildApp();
+      const loginRes = await REQUEST(
+        app,
+        "POST",
+        "/api/auth/login",
+        JSON.stringify({ provider: "anthropic-subscription", origin: "https://remote.example.com" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(loginRes.status).toBe(200);
+
+      const submitRes = await REQUEST(
+        app,
+        "POST",
+        "/api/auth/manual-code",
+        JSON.stringify({ provider: "anthropic-subscription", code: "http://localhost:53692/callback?code=anthropic-code&state=anthropic-state" }),
+        { "Content-Type": "application/json" },
+      );
+
+      expect(submitRes.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:53692/callback?code=anthropic-code&state=anthropic-state");
+      expect(fetchMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ method: "GET" }));
+      await vi.waitFor(() => {
+        expect(submittedCode).toBe("code=anthropic-code&state=anthropic-state");
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("submits pasted manual code for anthropic login", async () => {

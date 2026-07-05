@@ -5,6 +5,7 @@ import { isNearDuplicateCanonicalInactive } from "../../../core/src/near-duplica
 import { ClipboardList, GitBranch } from "lucide-react";
 import { TaskCard } from "./TaskCard";
 import type { ToastType } from "../hooks/useToast";
+import type { RevertTaskOptions, RevertTaskResult } from "../api";
 import type { BlockerFanoutEntry } from "../hooks/useBlockerFanout";
 import type { TaskContextMenuColumnMetadata } from "./TaskContextMenu";
 
@@ -31,6 +32,8 @@ interface WorktreeGroupProps {
   onMergeTask?: (id: string) => Promise<MergeResult>;
   onArchiveTask?: (id: string, options?: { removeLineageReferences?: boolean }) => Promise<Task>;
   onUnarchiveTask?: (id: string) => Promise<Task>;
+  /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside onArchiveTask/onUnarchiveTask. */
+  onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onDeleteTask?: (id: string, options?: {
     removeDependencyReferences?: boolean;
     removeLineageReferences?: boolean;
@@ -81,6 +84,7 @@ function WorktreeGroupComponent({
   onMergeTask,
   onArchiveTask,
   onUnarchiveTask,
+  onRevertTask,
   onDeleteTask,
   onOpenDetailWithTab,
   taskStuckTimeoutMs,
@@ -135,6 +139,7 @@ function WorktreeGroupComponent({
           onMergeTask={onMergeTask}
           onArchiveTask={onArchiveTask}
           onUnarchiveTask={onUnarchiveTask}
+          onRevertTask={onRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           taskStuckTimeoutMs={taskStuckTimeoutMs}
@@ -171,6 +176,7 @@ function WorktreeGroupComponent({
           onMergeTask={onMergeTask}
           onArchiveTask={onArchiveTask}
           onUnarchiveTask={onUnarchiveTask}
+          onRevertTask={onRevertTask}
           onDeleteTask={onDeleteTask}
           onOpenDetailWithTab={onOpenDetailWithTab}
           taskStuckTimeoutMs={taskStuckTimeoutMs}

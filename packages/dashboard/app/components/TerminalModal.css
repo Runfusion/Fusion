@@ -1420,6 +1420,22 @@ Android folded Chrome can keep a wide layout viewport while visualViewport is th
 }
 
 /*
+FNXC:TerminalHeader 2026-07-04-20:45:
+FN-7565: pin the mobile close (X) button to the top-right corner of the header.
+Without an explicit order, the close button (a direct .terminal-header child)
+defaults to order:0 and sorts BEFORE .terminal-mobile-tabs (order:1) /
+.terminal-workspace-picker (order:2), landing at the far left instead of the
+corner. Giving it the highest order plus margin-inline-start:auto renders it
+last and flush against the right edge, matching where users expect an
+app-sheet close control. Covers the folded-Android visualViewport path (this
+selector applies even when the max-width media query below does not).
+*/
+.modal.terminal-modal.terminal-modal--mobile .terminal-close--corner {
+  order: 3;
+  margin-inline-start: auto;
+}
+
+/*
 FNXC:Terminal 2026-07-02-12:30:
 The Android keyboard-open recurrence can start with a touch-primary visualViewport narrower than the layout viewport, so `terminal-modal--mobile` must apply the same keyboard-constrained height and current visual viewport width even when CSS media queries still see the wider layout viewport. This keeps xterm's initial 10px fit on contiguous monospace cells instead of a stale wide box that spaces filenames like `AGENTS.md` apart.
 */
@@ -1485,6 +1501,20 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     border-left: none;
   }
 
+  /*
+  FNXC:TerminalHeader 2026-07-04-20:45:
+  FN-7565: same corner-pin rationale as the non-media `.terminal-modal--mobile`
+  rule above — the close button needs an explicit order higher than
+  .terminal-mobile-tabs (1) and .terminal-workspace-picker (2) plus
+  margin-inline-start:auto so it renders last in flex order and hugs the right
+  edge of the (non-wrapping) top header row, instead of falling back to its
+  default order:0 and landing on the left.
+  */
+  .terminal-close--corner {
+    order: 3;
+    margin-inline-start: auto;
+  }
+
   .terminal-workspace-picker-trigger {
     width: clamp(92px, 28vw, 132px);
     max-width: 132px;
@@ -1507,19 +1537,15 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     max-width: 150px;
   }
 
-  /* Hide the redundant title/status indicator on mobile — .terminal-status-bar shows connection state */
+  /*
+  FNXC:TerminalFooter 2026-07-04-20:00:
+  On mobile the header no longer renders .terminal-title or .terminal-actions at
+  all (FN-7560) — the header keeps only the tab dropdown and close button, and
+  the action controls (incl. connection state) render in the .terminal-status-bar
+  footer at the bottom of the panel instead, so they don't crowd the dropdown.
+  */
   .terminal-title {
     display: none;
-  }
-
-  /* Actions stay reachable at the end of the header row and wrap as a unit after the selector/picker when space is exhausted. */
-  .terminal-actions {
-    order: 3;
-    flex: 0 0 auto;
-    justify-content: flex-end;
-    border-top: none;
-    padding: 0 var(--space-xs) 0 0;
-    min-height: 36px;
   }
 
   /* Hide text labels on action buttons to save space */
@@ -1694,9 +1720,31 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     display: none;
   }
 
-  .terminal-actions {
-    flex-wrap: wrap;
-    justify-content: flex-end;
+  /*
+  FNXC:TerminalFooter 2026-07-04-20:00:
+  FN-7560: on mobile the terminal action controls (font-size, Clear, Shortcuts,
+  Preferences, connection status, exit code) render in this bottom footer bar
+  instead of the header, restoring pre-FN-7502 footer ergonomics so the narrow
+  header only has to fit the tab dropdown and close button. Reuses the same
+  min-width: 0 + overflow-x: auto flex-scroll pattern as .terminal-actions and
+  .terminal-shortcut-panel (FN-7550) so a crowded footer scrolls horizontally
+  instead of clipping/wrapping. padding-bottom composes with the iOS safe-area
+  inset so the bar clears the home indicator; it stays in-flow at the bottom of
+  the panel's flex column, so the .terminal-modal[style*="--keyboard-overlap"]
+  height clamp shrinks .terminal-container (flex: 1) rather than the footer.
+  */
+  .terminal-status-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-xs);
+    border-top: 1px solid var(--border);
+    padding: var(--space-xs);
+    padding-bottom: max(var(--space-xs), env(safe-area-inset-bottom, 0));
+    min-height: 36px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   .terminal-shortcuts--header,

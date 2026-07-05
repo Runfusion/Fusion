@@ -312,6 +312,26 @@ describe("resolveAgentPrompt", () => {
     }
   });
 
+  it("places the Before → After Transformation section at the top of the definition, ahead of Mission and Review Level (FN-7593)", () => {
+    const standardPrompt = resolveAgentPrompt("triage");
+    const fastPrompt = builtinSeamPrompt("planning-fast");
+
+    const standardTransformationIdx = standardPrompt.indexOf("## Before → After Transformation");
+    const standardReviewLevelIdx = standardPrompt.indexOf("## Review Level");
+    const standardMissionIdx = standardPrompt.indexOf("## Mission");
+    expect(standardTransformationIdx).toBeGreaterThan(-1);
+    expect(standardReviewLevelIdx).toBeGreaterThan(-1);
+    expect(standardMissionIdx).toBeGreaterThan(-1);
+    expect(standardTransformationIdx).toBeLessThan(standardReviewLevelIdx);
+    expect(standardTransformationIdx).toBeLessThan(standardMissionIdx);
+
+    const fastTransformationIdx = fastPrompt.indexOf("## Before → After Transformation");
+    const fastMissionIdx = fastPrompt.indexOf("## Mission");
+    expect(fastTransformationIdx).toBeGreaterThan(-1);
+    expect(fastMissionIdx).toBeGreaterThan(-1);
+    expect(fastTransformationIdx).toBeLessThan(fastMissionIdx);
+  });
+
   it("triage planning prompt is sourced from workflow IR without an engine duplicate", () => {
     const corePrompt = resolveAgentPrompt("triage");
     const planningPrompt = resolvePlanningPromptFromIr(BUILTIN_CODING_WORKFLOW_IR);

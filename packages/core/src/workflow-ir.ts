@@ -1034,6 +1034,52 @@ function validateNotifyNodes(nodes: WorkflowIrNode[]): void {
   }
 }
 
+/*
+FNXC:WorkflowAskUserExitGate 2026-07-05-00:00:
+FN-7579 adds two brainstorming/chat reach-out node kinds. `ask-user` reuses the
+existing await-input park/resume plumbing (runAwaitInputNode) rather than a new
+runner: it must carry a non-empty `config.question` (falling back to
+`config.prompt`) OR omit both, in which case the engine's existing default
+question string is used — validation only rejects a present-but-empty/non-string
+value so authors cannot ship a blank prompt. `exit-gate` terminates the walk
+early toward the terminal `end` node: it must have at least one outgoing edge
+that (transitively, ignoring rework edges) reaches `end`, so an exit-gate can
+never strand the graph. It is NOT itself an `end` node (the one-start/one-end
+invariant is unaffected) — it only routes to one.
+*/
+function validateAskUserAndExitGateNodes(
+  nodes: WorkflowIrNode[],
+  outgoing: Map<string, WorkflowIrEdge[]>,
+): void {
+  const endNode = nodes.find((n) => n.kind === "end");
+
+  for (const node of nodes) {
+    if (node.kind === "ask-user") {
+      const cfg = node.config as { question?: unknown; prompt?: unknown } | undefined;
+      if (cfg?.question !== undefined && (typeof cfg.question !== "string" || cfg.question.trim() === "")) {
+        throw new WorkflowIrError(
+          `ask-user node '${node.id}' question must be a non-empty string when present`,
+        );
+      }
+      if (cfg?.prompt !== undefined && (typeof cfg.prompt !== "string" || cfg.prompt.trim() === "")) {
+        throw new WorkflowIrError(
+          `ask-user node '${node.id}' prompt must be a non-empty string when present`,
+        );
+      }
+    }
+
+    if (node.kind === "exit-gate") {
+      if (!endNode) continue; // exactly-one-end invariant already failed elsewhere.
+      const reachable = reachableFrom(node.id, outgoing);
+      if (!reachable.has(endNode.id)) {
+        throw new WorkflowIrError(
+          `exit-gate node '${node.id}' must have a path to the terminal 'end' node`,
+        );
+      }
+    }
+  }
+}
+
 /** Validate `fields` declarations (KTD-13). */
 function validateFields(fields: WorkflowFieldDefinition[] | undefined): void {
   if (fields === undefined) return;
@@ -1432,6 +1478,7 @@ function validateV2(ir: WorkflowIrV2): void {
   validateParseStepsNodes(ir);
   validateCodeNodes(ir.nodes);
   validateNotifyNodes(ir.nodes);
+  validateAskUserAndExitGateNodes(ir.nodes, outgoing);
   validateFields(ir.fields);
   validateSettings(ir.settings);
   // FNXC:WorkflowOptionalGroup 2026-06-21-18:00:

@@ -299,9 +299,12 @@ export function TodoView({
 
   const handleCreateTaskFromItem = useCallback(async (item: TodoItem) => {
     try {
+      /*
+      FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+      Do not hard-code `column: "triage"` — this surface has no workflow picker, so it inherits the project-default workflow, and the store resolves the landing column from that workflow's intake column (e.g. Coding (Ideas) → "ideas") instead of forcing triage.
+      */
       const input: TaskCreateInput = {
         description: item.text,
-        column: "triage",
         source: { sourceType: "dashboard_ui" },
       };
       const task: Task = await createTask(input, projectId);
@@ -314,9 +317,9 @@ export function TodoView({
 
   const handleCreateTaskAndAssign = useCallback(async (item: TodoItem, agentId: string) => {
     try {
+      // FNXC:CodingIdeasWorkflow 2026-07-05-00:00: same rationale as handleCreateTaskFromItem above — omit column so the project-default workflow's intake column resolves it.
       const input: TaskCreateInput = {
         description: item.text,
-        column: "triage",
         assignedAgentId: agentId,
         source: { sourceType: "dashboard_ui" },
       };

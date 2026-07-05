@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { InlineCreateCard } from "../InlineCreateCard";
 import type { Task, Column } from "@fusion/core";
-import { fetchModels, fetchSettings, fetchAgents, checkDuplicateTasks, fetchWorkflows, fetchWorkflowOptionalSteps } from "../../api";
+import { fetchModels, fetchSettings, fetchAgents, checkDuplicateTasks, fetchWorkflows, fetchWorkflowOptionalSteps, selectTaskWorkflow } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import type { ModelInfo } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -1770,6 +1770,63 @@ describe("InlineCreateCard node override", () => {
     fireEvent.click(screen.getByRole("button", { name: /Node Two/i }));
 
     expect(screen.getByTestId("inline-create-node-button")).toHaveTextContent("Node Two");
+  });
+});
+
+/*
+FN-7591: InlineCreateCard must forward a selected workflow inside the create-time CreateTaskInput
+(so the store materializes it and resolves the workflow's intake column atomically) instead of hard-coding
+column:"triage" and applying the workflow post-create via selectTaskWorkflow.
+*/
+describe("InlineCreateCard workflow selection at create time (FN-7591)", () => {
+  beforeEach(() => {
+    vi.mocked(fetchWorkflows).mockResolvedValue([
+      { id: "wf-a", name: "Workflow A" },
+      { id: "builtin:coding-ideas", name: "Coding (Ideas)" },
+    ]);
+  });
+
+  it("submits workflowId in the create input and omits column:triage when a workflow is selected", async () => {
+    const { props } = renderCard();
+    expandCard();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Idea for later" } });
+    const select = await screen.findByLabelText("Workflow") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "builtin:coding-ideas" } });
+
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => expect(props.onSubmit).toHaveBeenCalled());
+    const submitted = vi.mocked(props.onSubmit).mock.calls[0][0];
+    expect(submitted.workflowId).toBe("builtin:coding-ideas");
+    expect(submitted.column).toBeUndefined();
+  });
+
+  it("omits workflowId when no workflow is explicitly selected (inherits project default)", async () => {
+    const { props } = renderCard();
+    expandCard();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Plain task" } });
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => expect(props.onSubmit).toHaveBeenCalled());
+    const submitted = vi.mocked(props.onSubmit).mock.calls[0][0];
+    expect(submitted.workflowId).toBeUndefined();
+    expect(submitted.column).toBeUndefined();
+  });
+
+  it("does not call the redundant post-create selectTaskWorkflow for the create path", async () => {
+    const { props } = renderCard();
+    expandCard();
+
+    fireEvent.change(screen.getByPlaceholderText("What needs to be done?"), { target: { value: "Idea for later" } });
+    const select = await screen.findByLabelText("Workflow") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "builtin:coding-ideas" } });
+
+    fireEvent.click(screen.getByTestId("save-button"));
+
+    await waitFor(() => expect(props.onSubmit).toHaveBeenCalled());
+    expect(selectTaskWorkflow).not.toHaveBeenCalled();
   });
 });
 

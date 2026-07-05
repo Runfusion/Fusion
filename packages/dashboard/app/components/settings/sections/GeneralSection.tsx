@@ -38,6 +38,37 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
             cancelled = true;
         };
     }, [projectId]);
+    /*
+    FNXC:TaskRevert 2026-07-05-00:00:
+    AI-undo (revert) board tasks default to the stricter builtin:review-heavy workflow
+    (FN-7556) so reversals of already-shipped code get extra review scrutiny. This picker
+    surfaces that choice: the empty-string option means "inherit project default workflow"
+    (the revert route treats blank/whitespace as inherit), an unset form value displays the
+    effective builtin:review-heavy default, and any other value is the concrete workflow id
+    to use for AI-undo tasks. Loaded separately from builtinWorkflows above because this list
+    includes custom workflows too (builtinWorkflows is deliberately builtin-only, used for the
+    enable/disable checkboxes).
+    */
+    const [aiUndoWorkflowOptions, setAiUndoWorkflowOptions] = useState<WorkflowDefinition[]>([]);
+    useEffect(() => {
+        let cancelled = false;
+        fetchWorkflows(projectId)
+            .then((workflows) => {
+            if (!cancelled) {
+                setAiUndoWorkflowOptions(workflows.filter((workflow) => workflow.kind !== "fragment"));
+            }
+        })
+            .catch(() => {
+            if (!cancelled)
+                setAiUndoWorkflowOptions([]);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [projectId]);
+    const aiUndoTaskWorkflowValue = form.aiUndoTaskWorkflowId ?? "builtin:review-heavy";
+    const aiUndoWorkflowHasStoredValue = aiUndoTaskWorkflowValue === "" ||
+        aiUndoWorkflowOptions.some((workflow) => workflow.id === aiUndoTaskWorkflowValue);
     const enabledBuiltinWorkflowIds = useMemo(() => {
         const configured = Array.isArray(form.enabledBuiltinWorkflowIds) ? form.enabledBuiltinWorkflowIds : undefined;
         return new Set(configured ?? builtinWorkflows.map((workflow) => workflow.id));
@@ -108,6 +139,17 @@ export function GeneralSection({ scopeBanner, form, setForm, projectId, addToast
           </div>
           <small>{t("settings.general.disabledFusionWorkflowsAreHiddenFromWorkflow", "Disabled Fusion workflows are hidden from workflow pickers. Existing tasks that already use one continue to resolve. Default: all built-in workflows enabled (unset).")}</small>
         </div>)}
+      <div className="form-group">
+        <label htmlFor="aiUndoTaskWorkflowId">{t("settings.general.aiUndoTaskWorkflow", "AI-undo task workflow")}</label>
+        <select id="aiUndoTaskWorkflowId" className="select" data-testid="ai-undo-workflow-select" value={aiUndoTaskWorkflowValue} onChange={(e) => setForm((f) => ({ ...f, aiUndoTaskWorkflowId: e.target.value }))}>
+          <option value="">{t("settings.general.aiUndoTaskWorkflowInherit", "Inherit project default workflow")}</option>
+          {aiUndoWorkflowOptions.map((workflow) => (<option key={workflow.id} value={workflow.id}>
+              {workflow.name}
+            </option>))}
+          {!aiUndoWorkflowHasStoredValue && (<option value={aiUndoTaskWorkflowValue}>{aiUndoTaskWorkflowValue}</option>)}
+        </select>
+        <small>{t("settings.general.aiUndoTaskWorkflowHelp", "Workflow assigned to AI-undo (revert) tasks, which reverse already-shipped code and warrant stricter review. Choose \"Inherit project default workflow\" to leave them on the project default. Default: review-heavy.")}</small>
+      </div>
       <div className="form-group">
         <label htmlFor="ephemeralAgentsEnabled" className="checkbox-label">
           <input id="ephemeralAgentsEnabled" type="checkbox" checked={form.ephemeralAgentsEnabled !== false} onChange={(e) => setForm((f) => ({ ...f, ephemeralAgentsEnabled: e.target.checked }))}/>{t("settings.general.useEphemeralTaskWorkerAgents", " Use ephemeral task-worker agents ")}</label>

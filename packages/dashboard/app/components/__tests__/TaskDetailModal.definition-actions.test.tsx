@@ -445,6 +445,38 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Reject Plan")).toBeTruthy();
     });
 
+    /*
+     * FN-7559: release-authorization holds share status "awaiting-approval" with
+     * the manual gate (auto-approve-all intentionally does not bypass release
+     * authorization), so the plain Approve/Reject affordance must never render
+     * for them — clicking Approve would let a release-class spec bypass the
+     * FN-6481 explicit-marker requirement via a button click. Instead a distinct,
+     * truthful reason is shown and no leftover empty button shell remains.
+     */
+    it("shows a distinct release-authorization reason instead of Approve/Reject Plan buttons", () => {
+      render(
+        <TaskDetailModal
+          task={makeTask({
+            column: "triage",
+            status: "awaiting-approval",
+            awaitingApprovalReason: "release-authorization",
+            prompt: "# Task Spec",
+          })}
+          initialTab="definition"
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      expect(screen.queryByText("Approve Plan")).toBeNull();
+      expect(screen.queryByText("Reject Plan")).toBeNull();
+      expect(screen.getByText(/Awaiting release authorization/i)).toBeTruthy();
+    });
+
     it("does not show approval buttons when task is not in triage", () => {
       render(
         <TaskDetailModal

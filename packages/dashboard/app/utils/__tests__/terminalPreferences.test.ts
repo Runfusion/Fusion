@@ -4,6 +4,7 @@ import {
   LEGACY_TERMINAL_FONT_SIZE_KEY,
   TERMINAL_PREFERENCES_KEY,
   XTERM_FONT_FAMILY,
+  forceTerminalFontRemeasure,
   readTerminalPreferences,
   waitForTerminalFontMetrics,
   writeTerminalPreferences,
@@ -113,5 +114,59 @@ describe("terminalPreferences", () => {
     expect(load).toHaveBeenCalledWith("12px \"MesloLGS NF\"");
     expect(load).not.toHaveBeenCalledWith("12px \"Fusion Terminal Nerd Font Symbols\"");
     expect(readyAwaited).toBe(true);
+  });
+
+  /*
+  FNXC:Terminal 2026-07-04-09:55:
+  FN-7561 root cause: xterm's real OptionsService setter is a no-op when a
+  caller reassigns an option to its already-current value, so simply
+  reassigning the resolved fontFamily after a web font settles never forces
+  xterm's internal CharSizeService/DomRenderer remeasure. Model that exact
+  no-op-on-unchanged-value contract and assert `forceTerminalFontRemeasure`
+  always produces at least one genuine (distinct-value) transition, even when
+  the resolved value already equals the terminal's current option value.
+  */
+  describe("forceTerminalFontRemeasure", () => {
+    function createXtermLikeOptions(initialFontFamily: string) {
+      let current = initialFontFamily;
+      let changeCount = 0;
+      const terminal = {
+        options: {
+          get fontFamily(): string {
+            return current;
+          },
+          set fontFamily(value: string) {
+            if (value !== current) {
+              current = value;
+              changeCount += 1;
+            }
+          },
+        },
+      };
+      return { terminal, getChangeCount: () => changeCount };
+    }
+
+    it("forces a genuine value transition even when the resolved value already matches the current option", () => {
+      const { terminal, getChangeCount } = createXtermLikeOptions(XTERM_FONT_FAMILY);
+
+      // A naive reassignment to the identical value would be a no-op against
+      // real xterm and is what let FN-7561 recur; assert the baseline first.
+      terminal.options.fontFamily = XTERM_FONT_FAMILY;
+      expect(getChangeCount()).toBe(0);
+
+      forceTerminalFontRemeasure(terminal, XTERM_FONT_FAMILY);
+
+      expect(getChangeCount()).toBeGreaterThan(0);
+      expect(terminal.options.fontFamily).toBe(XTERM_FONT_FAMILY);
+    });
+
+    it("lands on a genuinely different resolved value too", () => {
+      const { terminal, getChangeCount } = createXtermLikeOptions(XTERM_FONT_FAMILY);
+
+      forceTerminalFontRemeasure(terminal, "system-mono, monospace");
+
+      expect(getChangeCount()).toBeGreaterThan(0);
+      expect(terminal.options.fontFamily).toBe("system-mono, monospace");
+    });
   });
 });

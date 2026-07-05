@@ -380,10 +380,61 @@ Workflow badges need a slight token-based gap between icon and label so compact 
   color: var(--triage);
 }
 
+/*
+FNXC:PlanApproval 2026-07-04-21:35:
+FN-7559: release-authorization holds share the awaiting-approval status/badge
+base styling with the manual gate but get a subtle border so the distinct
+"Awaiting Release Authorization" label reads as a genuinely different hold,
+not a restyle of the ordinary manual-approval badge.
+*/
+.card-status-badge.awaiting-release-authorization {
+  border: 1px solid color-mix(in srgb, var(--triage) 55%, transparent);
+}
+
 .card-status-badge.awaiting-input {
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);
   border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+/*
+FNXC:PlannerOversight 2026-07-05-00:00:
+FN-7592 replaces the overseer badge's uppercase text label with a small `Eye` icon so it
+reads as a compact glyph rather than a wide pill. Size the badge to the icon (no min-width,
+tight padding) and color it per `PlannerOverseerState` via the `data-planner-overseer-state`
+attribute so operators can distinguish watching/steering/recovering/awaiting-confirmation at
+a glance without reading text. Colors reuse existing semantic tokens: neutral/info for the
+passive "watching" state, warning for the more active "steering"/"recovering" states, and the
+triage token for "awaiting-confirmation" (a human-decision hold), matching the hue conventions
+used elsewhere in this file (e.g. .card-oversight-badge--*, .card-status-badge--triage).
+*/
+.card-planner-overseer-state {
+  padding: calc(var(--space-xs) / 2);
+  line-height: 0;
+}
+
+.card-planner-overseer-state svg {
+  width: 12px;
+  height: 12px;
+}
+
+.card-planner-overseer-state[data-planner-overseer-state="watching"] {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+  border-color: color-mix(in srgb, var(--color-info) 40%, transparent);
+}
+
+.card-planner-overseer-state[data-planner-overseer-state="steering"],
+.card-planner-overseer-state[data-planner-overseer-state="recovering"] {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, transparent);
+}
+
+.card-planner-overseer-state[data-planner-overseer-state="awaiting-confirmation"] {
+  background: color-mix(in srgb, var(--triage) 18%, transparent);
+  color: var(--triage);
+  border-color: color-mix(in srgb, var(--triage) 45%, transparent);
 }
 
 .card.awaiting-input {
@@ -1028,6 +1079,43 @@ The execution-time badge is part of the footer's bottom-right chip cluster, so i
   .card-duplicate-chip {
     max-width: 100%;
   }
+
+  .card-undo-chip {
+    max-width: 100%;
+  }
+}
+
+/*
+FNXC:TaskRevert 2026-07-04-00:00:
+FN-7555's "Undo of <id>" chip is purely informational (not a warning/error), so it
+reuses the neutral `.card-time-indicator` token pair instead of the near-duplicate
+chip's `--color-warning` tokens. Layout (padding/height/radius/font) still matches
+`.card-duplicate-chip` for visual consistency in the footer row.
+*/
+.card-undo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+  padding: var(--space-xs) var(--space-sm);
+  height: var(--card-chip-height);
+  min-height: var(--card-chip-height);
+  border: var(--btn-border-width) solid color-mix(in srgb, var(--text-muted) 30%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.card-undo-chip > span {
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  transform: translateY(1px);
 }
 
 .card-github-tracking-chip .provider-icon svg {
@@ -1398,9 +1486,17 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
   opacity: 1;
 }
 
-/* Archive/Unarchive buttons */
+/* Archive/Unarchive/Revert buttons */
+/*
+FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+.card-revert-btn shares the .card-archive-btn/.card-unarchive-btn tokenized
+look (no one-off px/hex) — it's applied alongside .card-archive-btn on the
+markup so no separate ruleset was strictly required, but it's declared here
+too so future divergence doesn't have to rediscover the shared selector group.
+*/
 .card-archive-btn,
-.card-unarchive-btn {
+.card-unarchive-btn,
+.card-revert-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1420,19 +1516,22 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
 }
 
 .card:hover .card-archive-btn,
-.card:hover .card-unarchive-btn {
+.card:hover .card-unarchive-btn,
+.card:hover .card-revert-btn {
   opacity: 1;
 }
 
 .card-archive-btn:hover,
-.card-unarchive-btn:hover {
+.card-unarchive-btn:hover,
+.card-revert-btn:hover {
   background: var(--card-hover);
   color: var(--text);
   border-color: color-mix(in srgb, var(--border) 70%, var(--text) 30%);
 }
 
 .card-archive-btn:focus,
-.card-unarchive-btn:focus {
+.card-unarchive-btn:focus,
+.card-revert-btn:focus {
   opacity: 1;
   outline: 1px solid var(--todo);
   outline-offset: 1px;
@@ -1610,7 +1709,8 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
 
   /* FN-4351/FN-3965: keep secondary actions visible on touch, but compact per WCAG 2.5.8 because the card tap surface is the primary target for opening task detail. */
   .card-archive-btn,
-  .card-unarchive-btn {
+  .card-unarchive-btn,
+  .card-revert-btn {
     opacity: 1;
   }
 

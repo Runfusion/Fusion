@@ -876,6 +876,57 @@ export function unarchiveTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/unarchive`, projectId), { method: "POST" });
 }
 
+/*
+FNXC:TaskRevert 2026-07-05-00:00 (FN-7525):
+Client-side contract for `POST /tasks/:id/revert` (route owned by FN-7523/
+FN-7524/FN-7547/FN-7548 — see the `FNXC:TaskRevert` block in
+`register-task-workflow-routes.ts`). This is a discriminated union, NOT a
+`Task` — the source task's column/status is never mutated by this call; the
+caller (useTasks' `revertTask` op) refreshes the task list afterward so any
+newly-created revert commit / AI-undo task becomes visible, without patching
+the source task's column directly.
+*/
+export interface RevertTaskWorkspaceRepoResult {
+  repo: string;
+  classification?: string;
+  revertCommitSha?: string;
+  conflicts?: unknown;
+  alreadyReverted?: boolean;
+}
+
+export interface RevertTaskGitResult {
+  mode: "git";
+  clean: boolean;
+  revertCommitSha?: string;
+  revertCommitShas?: string[];
+  conflicts?: unknown;
+  alreadyReverted?: boolean;
+  unsupported?: boolean;
+  needsHuman?: boolean;
+  reason?: string;
+  workspace?: { repos: RevertTaskWorkspaceRepoResult[] };
+}
+
+export interface RevertTaskAiResult {
+  mode: "ai";
+  createdTaskId: string;
+  alreadyOpen?: boolean;
+}
+
+export type RevertTaskResult = RevertTaskGitResult | RevertTaskAiResult;
+
+export interface RevertTaskOptions {
+  mode?: "git" | "ai" | "auto";
+  granularity?: "squash" | "per-sha";
+}
+
+export function revertTask(id: string, projectId?: string, body?: RevertTaskOptions): Promise<RevertTaskResult> {
+  return api<RevertTaskResult>(withProjectId(`/tasks/${id}/revert`, projectId), {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
 export function archiveAllDone(projectId?: string): Promise<Task[]> {
   return api<{ archived: Task[] }>(withProjectId("/tasks/archive-all-done", projectId), { method: "POST" }).then(
     (response) => response.archived
@@ -1773,6 +1824,15 @@ export interface AuthProvider {
   expired?: boolean;
   /** True when the redirect cannot reach this dashboard host and the user must paste the URL/code back manually. */
   requiresManualCode?: boolean;
+  /**
+   * Reason the most recent background OAuth login attempt failed, if any.
+   * Interactive logins resolve the auth URL immediately and finish in the
+   * background; when that background flow rejects (bad/expired code, token
+   * exchange rejection, redirect_uri mismatch) this carries the cause so the
+   * UI can show why login failed instead of a generic error. Cleared when a
+   * fresh login for the provider starts.
+   */
+  loginError?: string;
   /**
    * How this provider authenticates / is activated.
    * - "oauth": OAuth flow (user clicks Login → redirect)
