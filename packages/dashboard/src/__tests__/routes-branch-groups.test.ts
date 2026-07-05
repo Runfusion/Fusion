@@ -575,4 +575,49 @@ describe("branch group list N+1 elimination (Fix #6)", () => {
     expect(byId["BG-B"].completion).toEqual({ landed: 1, total: 1, complete: true });
     expect(byId["BG-C"].completion).toEqual({ landed: 0, total: 0, complete: false });
   });
+
+  /*
+  FNXC:BranchGroupCompletion 2026-07-04-00:00:
+  FN-7532 archived-member semantics: the list route fetches membership via
+  `listTasks({ includeArchived: false, slim: true })`, so an archived member
+  drops out of BOTH `landed` and `total` uniformly — archiving a LANDED member
+  preserves the ratio (both counts drop by one, `complete` is unaffected when it
+  was already complete), matching every other completion-reading surface (CLI,
+  PR-body checklist, engine promotion gate) which all resolve membership through
+  the same includeArchived:false path. This is intentional, consistent behavior
+  (no cross-surface divergence), asserted here so a future change to the fetch
+  option on only one surface would be caught as a regression.
+  */
+  it("drops an archived member from both landed and total uniformly (no ratio distortion when the archived member was landed)", async () => {
+    const groups = buildGroups();
+    const archivedLandedMember = memberTask("FN-A3", "BG-A", "feature/a", true);
+    // listTasks with includeArchived:false never returns this row — simulate
+    // the store contract precisely rather than assuming.
+    const nonArchivedTasks: Task[] = [
+      memberTask("FN-A1", "BG-A", "feature/a", true),
+      memberTask("FN-A2", "BG-A", "feature/a", true),
+    ];
+    const allTasksIncludingArchived = [...nonArchivedTasks, { ...archivedLandedMember, column: "archived" as const }];
+    const listTasks = vi.fn(async (opts?: { includeArchived?: boolean }) =>
+      opts?.includeArchived ? allTasksIncludingArchived : nonArchivedTasks,
+    );
+    const store = {
+      getRootDir: vi.fn(() => "/tmp/project"),
+      listBranchGroups: vi.fn(() => [groups[0]]),
+      getBranchGroup: vi.fn((id: string) => groups.find((g) => g.id === id) ?? null),
+      listTasks,
+      listTasksByBranchGroup: vi.fn(),
+    } as unknown as TaskStore;
+
+    const app = express();
+    app.use(express.json());
+    app.use("/branch-groups", createBranchGroupsRouter(store));
+    attachErrorHandler(app);
+
+    const res = await REQUEST(app, "GET", "/branch-groups");
+    expect(res.status).toBe(200);
+    // Both members landed, both counted — the archived 3rd (also landed) member
+    // is invisible to the route entirely: 2/2 complete, not 2/3 incomplete.
+    expect(res.body.groups[0].completion).toEqual({ landed: 2, total: 2, complete: true });
+  });
 });

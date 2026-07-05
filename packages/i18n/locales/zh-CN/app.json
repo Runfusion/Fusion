@@ -1362,8 +1362,6 @@
     "sendMessageFailed": "发送消息失败",
     "sendRoomMessageFailed": "发送频道消息失败",
     "sessionsGroupLabel": "会话",
-    "showPlainText": "显示纯文本",
-    "showRenderedMarkdown": "显示渲染后的 Markdown",
     "skillSuggestions": "技能建议",
     "startNewChat": "开始新聊天",
     "startNewConversation": "开始新对话",

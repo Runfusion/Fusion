@@ -179,9 +179,222 @@ export class AgentReflectionService {
     }
   }
 
+  /**
+   * FNXC:AgentReflection 2026-07-04-00:00:
+   * FN-7528: deterministic, non-LLM post-task performance capture. Runs once per completed task
+   * (executor completion seam), producing a compact structured `ReflectionMetrics` snapshot without
+   * calling the model provider — no createFnAgent/promptWithFallback in this path. Sources data only
+   * from the completed Task record; any field whose source is unavailable is OMITTED rather than
+   * fabricated. Telemetry emitted via `reflection:captured`/`reflection:skipped` stays ids/counts/
+   * outcomes-only (FN-7158): verificationScopeReason and summary text never reach run-audit metadata.
+   */
+  async captureTaskPerformance(
+    agentId: string,
+    taskId: string,
+    options: { triggerDetail?: string } = {},
+  ): Promise<AgentReflection | null> {
+    const trigger: ReflectionTrigger = "post-task";
+    const runContext: EngineRunContext = {
+      runId: generateSyntheticRunId("reflection-capture", agentId),
+      agentId,
+      taskId,
+      phase: "reflection",
+      source: trigger,
+    };
+    const auditor = createRunAuditor(this.taskStore, runContext);
+
+    try {
+      const task = await this.taskStore.getTask(taskId);
+      if (!task) {
+        await this.emitReflectionAudit(auditor, "reflection:skipped", agentId, trigger, { taskId, ...options }, {
+          reason: "no-history",
+        });
+        return null;
+      }
+
+      const outcome = this.classifyOutcome(task);
+      if (!outcome || outcome === "stuck") {
+        await this.emitReflectionAudit(auditor, "reflection:skipped", agentId, trigger, { taskId, ...options }, {
+          reason: "not-completed",
+        });
+        return null;
+      }
+
+      const metrics = this.buildCapturedMetrics(taskId, task, outcome);
+
+      const reflection = await this.reflectionStore.createReflection({
+        agentId,
+        trigger,
+        triggerDetail: options.triggerDetail,
+        taskId,
+        metrics,
+        insights: [],
+        suggestedImprovements: [],
+        summary: this.buildCapturedSummary(task, outcome, metrics),
+      });
+
+      await this.emitReflectionAudit(auditor, "reflection:captured", agentId, trigger, { taskId, ...options }, {
+        reflectionId: reflection.id,
+        ...(metrics.retryReworkCount !== undefined ? { retryReworkCount: metrics.retryReworkCount } : {}),
+        ...(metrics.filesTouchedCount !== undefined ? { filesTouchedCount: metrics.filesTouchedCount } : {}),
+        ...(metrics.packagesTouched !== undefined ? { packagesTouchedCount: metrics.packagesTouched.length } : {}),
+        ...(metrics.verificationFileScoped !== undefined ? { verificationFileScoped: metrics.verificationFileScoped } : {}),
+        ...(metrics.durationMs !== undefined ? { durationMs: metrics.durationMs } : {}),
+      });
+
+      return reflection;
+    } catch (error) {
+      await this.emitReflectionAudit(auditor, "reflection:failed", agentId, trigger, { taskId, ...options }, {
+        errorClass: error instanceof Error ? error.name : typeof error,
+      });
+      reflectionLog.error(`Failed to capture task performance for ${agentId}/${taskId}: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Build the deterministic structured metrics snapshot for a single completed task. Omits fields
+   * whose source data is unavailable rather than fabricating values.
+   *
+   * FNXC:AgentReflection 2026-07-04-00:00:
+   * Code review (FN-7528) flagged that `retryReworkCount` only reflected `Task.recoveryRetryCount`,
+   * silently dropping workflow step RETHINK/rework cycles tracked per-step-instance
+   * (`WorkflowRunStepInstance.reworkCount`, keyed by taskId+runId). `captureTaskPerformance` has no
+   * real runId threaded through, so we probe the same `${taskId}:run` fallback literal the executor
+   * itself falls back to when no runId is threaded (see executor.ts loadWorkflowRunStepInstances call
+   * sites) and sum reworkCount across every persisted instance row for that task. `retryReworkCount`
+   * is now `recoveryRetryCount + workflowReworkCount`; either driver is surfaced individually in
+   * `durationDrivers` (`retries:N` / `rework:N`) so the two causes stay distinguishable.
+   */
+  private buildCapturedMetrics(taskId: string, task: Task, outcome: "completed" | "failed"): ReflectionMetrics {
+    const durationMs = this.calculateDurationMs(task);
+    const recoveryRetryCount = task.recoveryRetryCount ?? 0;
+    const workflowReworkCount = this.sumWorkflowStepReworkCount(taskId);
+    const retryReworkCount = recoveryRetryCount + workflowReworkCount;
+
+    const touchedFiles = task.mergeDetails?.landedFiles ?? task.modifiedFiles;
+    const filesTouchedCount = touchedFiles ? touchedFiles.length : undefined;
+    const packagesTouched = touchedFiles ? this.derivePackagesTouched(touchedFiles) : undefined;
+
+    const verification = this.deriveVerificationInfo(task);
+
+    const durationDrivers: string[] = [];
+    if (recoveryRetryCount > 0) durationDrivers.push(`retries:${recoveryRetryCount}`);
+    if (workflowReworkCount > 0) durationDrivers.push(`rework:${workflowReworkCount}`);
+    if (verification?.fileScoped === false) durationDrivers.push("verification-broad");
+
+    const metrics: ReflectionMetrics = {
+      tasksCompleted: outcome === "completed" ? 1 : 0,
+      tasksFailed: outcome === "failed" ? 1 : 0,
+      ...(durationMs !== undefined ? { durationMs } : {}),
+      ...(durationDrivers.length > 0 ? { durationDrivers } : {}),
+      ...(packagesTouched && packagesTouched.length > 0 ? { packagesTouched } : {}),
+      ...(filesTouchedCount !== undefined ? { filesTouchedCount } : {}),
+      ...(retryReworkCount > 0 ? { retryReworkCount } : {}),
+      ...(verification?.commands ? { verificationCommands: verification.commands } : {}),
+      ...(verification?.fileScoped !== undefined ? { verificationFileScoped: verification.fileScoped } : {}),
+      ...(verification?.scopeReason ? { verificationScopeReason: verification.scopeReason } : {}),
+    };
+
+    return metrics;
+  }
+
+  /** Deterministic one-line summary describing the captured snapshot (no LLM involvement). */
+  private buildCapturedSummary(task: Task, outcome: "completed" | "failed", metrics: ReflectionMetrics): string {
+    const parts: string[] = [`Task ${task.id} ${outcome}`];
+    if (metrics.durationMs !== undefined) {
+      parts.push(`in ${Math.round(metrics.durationMs / 1000)}s`);
+    }
+    if (metrics.retryReworkCount) {
+      parts.push(`with ${metrics.retryReworkCount} retry/rework cycle(s)`);
+    }
+    return `${parts.join(" ")}.`;
+  }
+
+  /**
+   * Sum `reworkCount` across every persisted `WorkflowRunStepInstance` row for this task (KTD-6),
+   * under the same `${taskId}:run` fallback runId literal used elsewhere when no real runId is
+   * threaded. Returns 0 (never fabricated) when the store lacks the method or the table/rows don't
+   * exist — additive bookkeeping, degrades silently like its call sites in executor.ts.
+   */
+  private sumWorkflowStepReworkCount(taskId: string): number {
+    const store = this.taskStore as unknown as {
+      loadWorkflowRunStepInstances?: (taskId: string, runId: string) => Array<{ reworkCount?: number }>;
+    };
+    if (typeof store.loadWorkflowRunStepInstances !== "function") return 0;
+    try {
+      const rows = store.loadWorkflowRunStepInstances(taskId, `${taskId}:run`);
+      if (!Array.isArray(rows) || rows.length === 0) return 0;
+      return rows.reduce((sum, row) => sum + (row.reworkCount ?? 0), 0);
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Map touched file paths to package identifiers (e.g. "packages/core/src/x.ts" -> "packages/core"). */
+  private derivePackagesTouched(files: string[]): string[] {
+    const packages = new Set<string>();
+    for (const file of files) {
+      const match = /^packages\/([^/]+)\//.exec(file);
+      if (match) {
+        packages.add(`packages/${match[1]}`);
+      }
+    }
+    return Array.from(packages).sort();
+  }
+
+  /**
+   * Derive verification command(s) and file-scoped-vs-broader classification from the task's
+   * deterministic post-merge verification log entries (`[verification] Running deterministic
+   * verification (...)`, written by the executor). Returns undefined when no such entry exists —
+   * capture omits the field rather than guessing.
+   */
+  private deriveVerificationInfo(task: Task): { commands: string[]; fileScoped?: boolean; scopeReason?: string } | undefined {
+    const entry = [...task.log].reverse().find((logEntry) =>
+      /\[verification\] running deterministic verification/i.test(logEntry.action),
+    );
+    if (!entry) {
+      return undefined;
+    }
+
+    const match = /\(([^)]*)\)/.exec(entry.action);
+    if (!match || !match[1].trim()) {
+      return undefined;
+    }
+
+    const commands = match[1]
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (commands.length === 0) {
+      return undefined;
+    }
+
+    const broadPatterns = [
+      /\btest:full\b/i,
+      /\bverify:workspace\b/i,
+      /\btest:workspace\b/i,
+    ];
+    const isBroad = commands.some((command) => broadPatterns.some((pattern) => pattern.test(command)));
+
+    if (isBroad) {
+      return {
+        commands,
+        fileScoped: false,
+        scopeReason: "configured test/build command runs the broader workspace suite rather than a file-scoped target",
+      };
+    }
+
+    // FNXC:AgentReflection 2026-07-04-00:00: Code review (FN-7528) flagged that non-broad commands
+    // left `verificationFileScoped` undefined instead of recording the positive classification;
+    // captured records must state true/false explicitly whenever a verification command is known.
+    return { commands, fileScoped: true };
+  }
+
   private async emitReflectionAudit(
     auditor: RunAuditor,
-    type: "reflection:generated" | "reflection:skipped" | "reflection:failed",
+    type: "reflection:generated" | "reflection:skipped" | "reflection:failed" | "reflection:captured",
     agentId: string,
     trigger: ReflectionTrigger,
     options: { taskId?: string; triggerDetail?: string },

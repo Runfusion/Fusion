@@ -96,14 +96,17 @@ export function MergeSection({ scopeBanner, form, setForm, integrationBranchOpti
         {/*
           FNXC:PlanApproval 2026-06-26-00:00:
           Operators need one project-scoped control beside review/merge policy to force all tasks to auto-approve or require manual plan approval without editing each workflow.
+
+          FNXC:PlanApproval 2026-07-04-00:00:
+          FN-7557: auto-approve-all is now the project default (previously workflow), so the select fallback and "(default)" label marker move to the auto-approve option to keep the dropdown truthful.
         */}
         <label htmlFor="planApprovalMode">{t("settings.merge.planApprovalMode", "Plan approval mode")}</label>
-        <select id="planApprovalMode" className="select" value={form.planApprovalMode ?? "workflow"} onChange={(e) => {
+        <select id="planApprovalMode" className="select" value={form.planApprovalMode ?? "auto-approve-all"} onChange={(e) => {
             const nextMode = e.target.value as Settings["planApprovalMode"];
             setForm((f) => ({ ...f, planApprovalMode: nextMode }));
         }} data-testid="plan-approval-mode-select">
-          <option value="workflow">{t("settings.merge.planApprovalModeWorkflow", "Use workflow setting (default)")}</option>
-          <option value="auto-approve-all">{t("settings.merge.planApprovalModeAutoApproveAll", "Auto-approve all tasks")}</option>
+          <option value="workflow">{t("settings.merge.planApprovalModeWorkflow", "Use workflow setting")}</option>
+          <option value="auto-approve-all">{t("settings.merge.planApprovalModeAutoApproveAll", "Auto-approve all tasks (default)")}</option>
           <option value="require-all">{t("settings.merge.planApprovalModeRequireAll", "Require approval for all tasks")}</option>
         </select>
         <details className="settings-option-details">

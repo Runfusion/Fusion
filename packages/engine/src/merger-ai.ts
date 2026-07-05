@@ -50,6 +50,7 @@ import {
   resolveValidatorSettingsModel,
   type MergeDetails,
   type MergeResult,
+  type MergeTargetResolution,
   type Settings,
   type Task,
   type TaskStore,
@@ -66,7 +67,8 @@ import { checkSessionError } from "./usage-limit-detector.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
 import { createRunAuditor, generateSyntheticRunId, type RunAuditor } from "./run-audit.js";
 import { createLogger } from "./logger.js";
-import { captureSingleCommitLandedMetadata, type MergerOptions } from "./merger.js";
+import { captureSingleCommitLandedMetadata, syncGroupPrOnLanding, type MergerOptions } from "./merger.js";
+import { resolveBranchGroupMergeRouting, type BranchGroupMergeRouting, type SyncGroupPrFn } from "./group-merge-coordinator.js";
 import { DEFAULT_COMMIT_AUTHOR_EMAIL, DEFAULT_COMMIT_AUTHOR_NAME } from "./worktree-hooks.js";
 import { installWorktreeDependencies } from "./merge-dependency-sync.js";
 import { activeSessionRegistry } from "./active-session-registry.js";
@@ -818,7 +820,26 @@ export async function runAiMerge(
   // integration branch. The local checkout is only synced if it is on this same
   // target branch (see syncLocalCheckout).
   const projectDefaultBranch = await resolveIntegrationBranch(projectRootDir, settings);
-  const mergeTarget = resolveTaskMergeTarget(task, { projectDefaultBranch });
+  /*
+  FNXC:BranchGroupCompletion 2026-07-04-00:00:
+  FN-7532: runAiMerge is the SOLE merge path (master-plan U0 FNXC:MergerUnification), but it never
+  consulted branch-group routing, so a shared-branch-group member's mergeDetails never got
+  mergeTargetBranch/mergeTargetSource stamped. isBranchGroupMemberLanded requires
+  mergeTargetSource === "branch-group-integration" AND a matching mergeTargetBranch (merge-target
+  safety, see branch-group-completion.ts) — with both fields permanently undefined, every shared
+  member landed via the production path was reported as NOT landed forever (the branch-group
+  checklist/PR body "x/N landed" never advanced and promotion never became eligible). Route through
+  the same resolveBranchGroupMergeRouting used by the legacy merger.ts executeMergeAttempt so a
+  shared member's actual merge target is the group's branch (never a sibling/mismatched branch) and
+  the persisted mergeDetails correctly attribute the landing.
+  */
+  const groupRouting = await resolveBranchGroupMergeRouting({
+    task,
+    store,
+    projectDefaultBranch,
+    rootDir: projectRootDir,
+  });
+  const mergeTarget = groupRouting?.mergeTarget ?? resolveTaskMergeTarget(task, { projectDefaultBranch });
   const integrationBranch = mergeTarget.branch;
   const audit = createRunAuditor(store, {
     runId: generateSyntheticRunId("ai-merge", taskId),
@@ -951,10 +972,10 @@ export async function runAiMerge(
       };
     }
     await log(`AI merge: ${branch} had no net changes vs ${integrationBranch} — finalizing as no-op`);
-    return await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.tipSha, audit, log, { empty: true });
+    return await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.tipSha, audit, log, { empty: true }, mergeTarget, groupRouting, options.syncGroupPr);
   }
 
-  return await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.squashSha, audit, log, { empty: false });
+  return await finalizeMerged(store, projectRootDir, taskId, task, branch, integrationBranch, landResult.squashSha, audit, log, { empty: false }, mergeTarget, groupRouting, options.syncGroupPr);
 }
 
 // ---------------------------------------------------------------------------
@@ -1511,7 +1532,20 @@ async function finalizeMerged(
   audit: RunAuditor,
   log: (message: string) => Promise<void>,
   opts: { empty: boolean },
+  mergeTarget?: MergeTargetResolution,
+  groupRouting?: BranchGroupMergeRouting | null,
+  syncGroupPr?: SyncGroupPrFn,
 ): Promise<MergeResult> {
+  /*
+  FNXC:BranchGroupCompletion 2026-07-04-00:00:
+  FN-7532: stamp mergeTargetBranch/mergeTargetSource on every finalize path (landed AND no-op),
+  not only the landed one — isBranchGroupMemberLanded needs both fields regardless of whether the
+  landing produced a real commit, otherwise a no-op-finalized shared-group member would also be
+  reported as not-landed forever.
+  */
+  const mergeTargetPatch: Pick<MergeDetails, "mergeTargetBranch" | "mergeTargetSource"> | undefined = mergeTarget
+    ? { mergeTargetBranch: mergeTarget.branch, mergeTargetSource: mergeTarget.source }
+    : undefined;
   let mergeDetails: MergeDetails | undefined;
   let modifiedFiles: string[] | undefined;
   if (!opts.empty && landedSha) {
@@ -1531,6 +1565,7 @@ async function finalizeMerged(
       mergedAt,
       mergeConfirmed: true,
       prNumber: getPrimaryPrInfo(task)?.number,
+      ...mergeTargetPatch,
     };
     modifiedFiles = landedFiles.length > 0 ? landedFiles : undefined;
     await store.updateTask(taskId, { mergeDetails, modifiedFiles });
@@ -1549,6 +1584,10 @@ async function finalizeMerged(
         deletions,
       }).catch(() => undefined);
     }
+  } else if (mergeTargetPatch) {
+    mergeDetails = { ...(task.mergeDetails ?? {}), ...mergeTargetPatch };
+    await store.updateTask(taskId, { mergeDetails });
+    task.mergeDetails = mergeDetails;
   }
   let branchDeleted = false;
   // NEVER delete the integration branch itself — a task whose branch name
@@ -1585,6 +1624,49 @@ async function finalizeMerged(
   await log(opts.empty ? `AI merge: finalized ${taskId} (no-op), finalizing task row` : `AI merge: landed ${short(landedSha)}, finalizing task row`);
   const finalized = await finalizeTask(store, taskId, result, audit, log, projectRootDir);
   await log(opts.empty ? `AI merge: finalized ${taskId} (no-op) → done` : `AI merge: landed ${short(landedSha)}, task → done`);
+
+  /*
+  FNXC:BranchGroupCompletion 2026-07-04-00:00:
+  FN-7532: mirror the legacy merger.ts executeMergeAttempt's shared-group landing bookkeeping so a
+  member merged via the (now sole) runAiMerge path also updates the group row (worktreePath/status)
+  and pushes the up-to-date checklist body onto any already-open managed group PR. Both are
+  best-effort — a failure here must never fail an otherwise-successful merge.
+  */
+  if (groupRouting) {
+    try {
+      await Promise.resolve((store as { recordBranchGroupMemberLanded?: TaskStore["recordBranchGroupMemberLanded"] }).recordBranchGroupMemberLanded?.(groupRouting.branchGroup.id, {
+        worktreePath: task.worktree ?? null,
+        status: "open",
+      }));
+    } catch {
+      // best-effort persistence
+    }
+    if (syncGroupPr) {
+      try {
+        await syncGroupPrOnLanding({
+          store,
+          groupId: groupRouting.branchGroup.id,
+          cwd: projectRootDir,
+          syncGroupPr,
+        });
+      } catch (err) {
+        try {
+          store.recordRunAuditEvent?.({
+            taskId,
+            agentId: "merger",
+            runId: `merge-${taskId}`,
+            domain: "git",
+            mutationType: "merge:branch-group-pr-sync-failed",
+            target: groupRouting.branchGroup.id,
+            metadata: { groupId: groupRouting.branchGroup.id, error: err instanceof Error ? err.message : String(err) },
+          });
+        } catch {
+          // best-effort audit
+        }
+      }
+    }
+  }
+
   return finalized;
 }
 

@@ -68,6 +68,15 @@ vi.mock("../../api", async (importOriginal) => {
     ensureTaskPlannerChatSession: vi.fn().mockResolvedValue({ session: { id: "chat-task-planner", agentId: "task-planner:FN-099", title: "FN-099 planner chat", status: "active", projectId: null, modelProvider: null, modelId: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z", cliSessionFile: null, cliExecutorAdapterId: null, inFlightGeneration: null } }),
     fetchChatMessages: vi.fn().mockResolvedValue({ messages: [] }),
     streamChatResponse: vi.fn(),
+    // FNXC:PlannerOversight 2026-07-04-17:00: FN-7517 default overseer-control
+    // mocks so every existing TaskDetailModal suite gets deterministic
+    // no-op behavior for the new quick oversight-level-change resolution
+    // fetch and the nudge/stop/explain controls, rather than falling through
+    // to the auto-synthesized `undefined`-resolving fallback.
+    fetchWorkflowSettingValues: vi.fn().mockResolvedValue({ stored: {}, effective: {}, defaults: {} }),
+    nudgeOverseer: vi.fn().mockResolvedValue({ applied: false, reason: "oversight-off" }),
+    stopOverseer: vi.fn().mockResolvedValue({ applied: true, reason: "stopped" }),
+    explainOverseer: vi.fn().mockResolvedValue({ snapshot: null }),
   });
 });
 
@@ -92,6 +101,8 @@ vi.mock("lucide-react", () => ({
   Minimize2: () => null,
   Loader2: (props: any) => React.createElement("svg", { "data-testid": "loader2-icon", ...props }),
   Send: (props: any) => React.createElement("svg", { "data-testid": "send-icon", ...props }),
+  Square: (props: any) => React.createElement("svg", { "data-testid": "square-icon", ...props }),
+  Info: (props: any) => React.createElement("svg", { "data-testid": "info-icon", ...props }),
   Bot: () => null,
   CircleDot: () => null,
   XCircle: () => null,
@@ -117,6 +128,8 @@ vi.mock("lucide-react", () => ({
   Code2: () => null,
   Cpu: () => null,
   Bell: () => null,
+  // FNXC:PlannerOversight 2026-07-04-19:00: FN-7545 mobile oversight overflow-menu trigger icon.
+  MoreVertical: (props: any) => React.createElement("svg", { "data-testid": "more-vertical-icon", ...props }),
 }));
 
 vi.mock("../../hooks/useAgentLogs", () => ({

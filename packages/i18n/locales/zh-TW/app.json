@@ -1362,8 +1362,6 @@
     "sendMessageFailed": "傳送訊息失敗",
     "sendRoomMessageFailed": "傳送頻道訊息失敗",
     "sessionsGroupLabel": "工作階段",
-    "showPlainText": "顯示純文字",
-    "showRenderedMarkdown": "顯示渲染後的 Markdown",
     "skillSuggestions": "技能建議",
     "startNewChat": "開始新聊天",
     "startNewConversation": "開始新對話",

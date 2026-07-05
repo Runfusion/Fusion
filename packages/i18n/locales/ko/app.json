@@ -1362,8 +1362,6 @@
     "sendMessageFailed": "메시지 전송 실패",
     "sendRoomMessageFailed": "방 메시지 전송 실패",
     "sessionsGroupLabel": "세션",
-    "showPlainText": "모든 메시지를 일반 텍스트로 표시",
-    "showRenderedMarkdown": "모든 메시지를 렌더링된 Markdown으로 표시",
     "skillSuggestions": "스킬 제안",
     "startNewChat": "새 채팅 시작",
     "startNewConversation": "새 대화 시작",

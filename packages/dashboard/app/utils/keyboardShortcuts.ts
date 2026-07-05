@@ -1,16 +1,59 @@
-export type DashboardShortcutAction = "quickChat" | "terminal";
+/*
+FNXC:DashboardShortcuts 2026-07-04-00:00:
+FN-7553 adds four more configurable actions (openFiles, openSettings, openCommandCenter, newTask) on top of the FN-7494/FN-7507 base (quickChat, terminal). Every helper below (resolve/conflict/validate) derives its action list from DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS' keys instead of a hardcoded pair, so future actions only need an entry in the three maps below plus a category assignment.
+*/
+export type DashboardShortcutAction =
+  | "quickChat"
+  | "terminal"
+  | "openFiles"
+  | "openSettings"
+  | "openCommandCenter"
+  | "newTask";
 
 export type DashboardKeyboardShortcutMap = Partial<Record<DashboardShortcutAction, string>>;
 
+/*
+FNXC:DashboardShortcuts 2026-07-04-00:00:
+New defaults were chosen to avoid colliding with the existing Space/Ctrl+` bindings and with each other: Ctrl+E (open Files), Ctrl+, (open Settings, mirrors the common OS/app "preferences" comma-accelerator), Ctrl+K (open Command Center, the conventional command-palette binding), Ctrl+Shift+N (new Task, avoids the browser-reserved plain Ctrl+N "new window").
+*/
 export const DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS: Required<DashboardKeyboardShortcutMap> = {
   quickChat: "Space",
   terminal: "Ctrl+`",
+  openFiles: "Ctrl+E",
+  openSettings: "Ctrl+,",
+  openCommandCenter: "Ctrl+K",
+  newTask: "Ctrl+Shift+N",
 };
 
 const ACTION_LABELS: Record<DashboardShortcutAction, string> = {
   quickChat: "Quick Chat",
   terminal: "Terminal",
+  openFiles: "Open Files",
+  openSettings: "Open Settings",
+  openCommandCenter: "Open Command Center",
+  newTask: "New Task",
 };
+
+export interface DashboardShortcutCategory {
+  id: string;
+  label: string;
+  actions: DashboardShortcutAction[];
+}
+
+/*
+FNXC:DashboardShortcuts 2026-07-04-00:00:
+Category grouping backs the dedicated Keyboard Shortcuts settings section (FN-7553) so actions render under headings instead of one flat list. This is UI-only metadata; resolution/conflict/validation logic never depends on category membership.
+*/
+export const SHORTCUT_CATEGORIES: DashboardShortcutCategory[] = [
+  { id: "communication", label: "Communication", actions: ["quickChat"] },
+  { id: "workspace", label: "Workspace", actions: ["terminal", "openFiles"] },
+  { id: "navigation", label: "Navigation", actions: ["openCommandCenter", "openSettings"] },
+  { id: "tasks", label: "Tasks", actions: ["newTask"] },
+];
+
+export function getShortcutActionLabel(action: DashboardShortcutAction): string {
+  return ACTION_LABELS[action];
+}
 
 const MODIFIER_ORDER = ["Ctrl", "Alt", "Shift", "Meta"] as const;
 type ShortcutModifier = (typeof MODIFIER_ORDER)[number];
@@ -106,10 +149,11 @@ export function normalizeKeyboardShortcut(value: unknown): NormalizedShortcut {
 }
 
 export function resolveDashboardKeyboardShortcuts(settings: DashboardKeyboardShortcutMap | null | undefined): Required<DashboardKeyboardShortcutMap> {
-  return {
-    quickChat: settings?.quickChat ?? DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS.quickChat,
-    terminal: settings?.terminal ?? DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS.terminal,
-  };
+  const resolved = {} as Required<DashboardKeyboardShortcutMap>;
+  (Object.keys(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS) as DashboardShortcutAction[]).forEach((action) => {
+    resolved[action] = settings?.[action] ?? DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS[action];
+  });
+  return resolved;
 }
 
 export function findShortcutConflicts(shortcuts: DashboardKeyboardShortcutMap): ShortcutConflict[] {

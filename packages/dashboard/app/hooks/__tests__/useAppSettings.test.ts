@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { DEFAULT_PROJECT_SETTINGS } from "@fusion/core";
 import { useAppSettings } from "../useAppSettings";
 import * as api from "../../api";
+
+// FN-7557: locks the project-default plan-approval posture so an accidental revert to
+// "workflow" fails this test instead of silently reintroducing the manual approval gate.
+describe("DEFAULT_PROJECT_SETTINGS.planApprovalMode", () => {
+  it("defaults to auto-approve-all", () => {
+    expect(DEFAULT_PROJECT_SETTINGS.planApprovalMode).toBe("auto-approve-all");
+  });
+});
 
 vi.mock("../../api", () => ({
   fetchConfig: vi.fn(),
@@ -32,7 +41,6 @@ describe("useAppSettings", () => {
       staleHighFanoutBlockerAgeThresholdMs: 7200000,
       showQuickChatFAB: false,
       capacityRiskBannerEnabled: false,
-      planApprovalMode: "workflow",
     } as never);
 
     mockUpdateSettings.mockResolvedValue({} as never);
@@ -57,8 +65,8 @@ describe("useAppSettings", () => {
       expect(result.current.quickChatCloseOnOutsideClick).toBe(true);
       expect(result.current.capacityRiskBannerEnabled).toBe(false);
       expect(result.current.capacityRiskTodoThreshold).toBe(20);
-      expect(result.current.planApprovalMode).toBe("workflow");
-      expect(result.current.planAutoApproveEnabled).toBe(false);
+      expect(result.current.planApprovalMode).toBe("auto-approve-all");
+      expect(result.current.planAutoApproveEnabled).toBe(true);
     });
 
     expect(mockFetchConfig).toHaveBeenCalledWith("proj_123");
@@ -66,7 +74,7 @@ describe("useAppSettings", () => {
   });
 
   it.each([
-    [undefined, "workflow", false],
+    [undefined, "auto-approve-all", true],
     ["workflow", "workflow", false],
     ["auto-approve-all", "auto-approve-all", true],
     ["require-all", "require-all", false],
@@ -90,6 +98,16 @@ describe("useAppSettings", () => {
   });
 
   it("optimistically enables plan auto-approval and persists to API", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      autoMerge: false,
+      globalPause: true,
+      enginePaused: false,
+      prAuthAvailable: true,
+      taskStuckTimeoutMs: 600000,
+      showQuickChatFAB: false,
+      planApprovalMode: "workflow",
+    } as never);
+
     const { result } = renderHook(() => useAppSettings("proj_123"));
 
     await waitFor(() => {
@@ -158,6 +176,15 @@ describe("useAppSettings", () => {
   });
 
   it("rolls back optimistic plan auto-approval state when toggle update fails", async () => {
+    mockFetchSettings.mockResolvedValueOnce({
+      autoMerge: false,
+      globalPause: true,
+      enginePaused: false,
+      prAuthAvailable: true,
+      taskStuckTimeoutMs: 600000,
+      showQuickChatFAB: false,
+      planApprovalMode: "workflow",
+    } as never);
     mockUpdateSettings.mockRejectedValueOnce(new Error("network"));
 
     const { result } = renderHook(() => useAppSettings("proj_123"));

@@ -1097,6 +1097,7 @@ Mesh configuration and post-provision managed-node operations are registered sep
 ### Run Audit API
 The run-audit system records every mutation performed by the engine across four domains:
 - **Database** — task:create, task:update, task:move, etc. Node handoff/recovery emits structured events: `node:handoff:parked` (handoff denied/parked), `node:handoff:reassign-local` (local takeover approved), `node:handoff:reassign-any` (any-healthy takeover approved), and `node:lease:recovered` (abandoned lease cleared and task requeued).
+- **Database / `overseer:intervention`** (FN-7519, emission façade FN-7520, runtime wiring FN-7551) — the planner-overseer intervention timeline's single canonical mutation type. `target` is the task ID; metadata carries the six intervention field groups (`stage`, `reason`, `action`, `outcome`, optional `attemptCount`/`attemptLimit`, optional `sourceLinks`). Written only via `recordPlannerIntervention` and read via `getPlannerInterventionTimeline`/`parseInterventionEntry` (`packages/core/src/planner-intervention.ts`) so no parallel audit store or timeline-mapping exists; surfaced read-only in the task-detail Intervention Timeline (`GET /tasks/:id/overseer/interventions`). FN-7520 adds the canonical `emitOverseerObservation` / `emitOverseerSteering` / `emitOverseerRecoveryAttempt` / `emitOverseerRetry` / `emitOverseerConfirmation` / `emitOverseerEscalation` emission façade (`packages/core/src/planner-overseer-events.ts`) that fixes each decision-point category's `action`/default `outcome` and funnels through `recordPlannerIntervention` — the single seam FN-7511/FN-7512/FN-7513 call rather than emitting `overseer:intervention` events inline. FN-7551 wires this façade to the LIVE runtime: `ProjectEngine`'s `PlannerOverseerMonitor#onObservation` callback (deduped per `(taskId, stage:signal)`), `buildPlannerRecoveryHandlers` (steering/retry/targeted-fix/confirmation-request, plus `PlannerRecoveryController`'s new optional `onConfirmationResolved` hook for the approve/deny resolution), and `pollPlannerOverseer`'s bounded-recovery-exhaustion escalation (deduped per `(taskId, stage)`) — so the intervention timeline now reflects real engine activity, not only synthetic unit-test entries.
 - **Git** — worktree:create, worktree:remove, `worktree:remove-fallback` (metadata `{ fallback: "filesystem-non-empty", error }` when native git removal falls back to filesystem removal + admin prune), commit:create, merge:resolve, merge:audit-failure, `worktree:reanchored`, and worktrunk lifecycle events (`worktree:worktrunk-install|create|sync|prune|remove`, plus `worktree:worktrunk-fallback`, `worktree:worktrunk-failure`, and `worktree:worktrunk-fallback-native`). Worktrunk events share metadata `{ op, binaryPath?, worktreePath?, durationMs?, exitCode?, stderrPreview?, installSource?, prunedCount? }` with `installSource` (`"release-binary" | "cargo"`) limited to successful `worktree:worktrunk-install` events and `prunedCount` limited to successful prune events when known. `worktree:worktrunk-install` is emitted only for true install actions; cache hits, configured `worktrunk.binaryPath` overrides, and `$PATH` resolutions intentionally remain silent. Dirty post-merge audit outcomes emit `merge:audit-failure` with metadata `{ mode, strategy, action, reason, issueCount, duplicateSubjectCount, touchedFileOverlapCount, verificationPassed, auditTargetLabel }`. FN-5279 adds `merge:reuse-handoff-acquired`, `merge:reuse-handoff-refused`, `merge:reuse-handoff-released`, and `merge:reuse-handoff-deferred-to-worktrunk` for task-worktree auto-merge handoff visibility. FN-5351 adds `merge:integration-worktree-state` (pre-handoff checkout/dirty snapshot for resolved integration branch), `merge:cwd-integration-fallback-refused` (terminal refusal park event), and `merge:integration-ref-advance` (integration ref advance outcome telemetry).
 - **Git / `merge:file-scope-violation`** — emitted by the merger when `FileScopeViolationError` aborts a squash. `target` is the task ID; metadata includes `stagedFiles`, `declaredScope`, `resetLabel`, `stagedFileCount`, and `declaredScopeCount`. Consumed by `fileScopeInvariantFailuresPerDay` in `GET /api/health/reliability` (FN-4360).
 - **Git / `merge:no-op-attribution-mismatch`** — emitted by the rebase landed-files attribution guard (FN-5304) when `<rebaseBaseSha>..HEAD` has zero attributable own commits but the source `fusion/<id>` tip still carries attributable own commits. `target` is the task ID; metadata includes `recordedSha`, `rebaseMergeBaseSha`, `sourceBranchRef`, `sourceBranchOwnCommitCount`, and `sourceBranchOwnCommitShas`.
@@ -1559,6 +1560,42 @@ same settings self-healing already gates lifecycle mutation on.
 
 **Downstream ownership (not this layer):** the dashboard UI/badges surfacing withheld state (FN-7515+),
 a persisted intervention timeline (FN-7519), and richer run-audit/activity presentation (FN-7520).
+
+### Planner overseer runtime-state exposure (FN-7531)
+
+/*
+FNXC:PlannerOversight 2026-07-04-00:00:
+FN-7531 closes the data-exposure gap FN-7516 needed: the planner overseer's runtime state (FN-7511's
+`PlannerOverseerMonitor` observations, FN-7512/FN-7513's `PlannerRecoveryController` attempt/pending-
+confirmation registries) was engine-side and in-memory only. This task adds a lightweight, serializable
+snapshot and surfaces it on the `GET /api/tasks` payload so task cards can render an indicator without
+a second round-trip.
+*/
+
+`packages/core/src/planner-overseer-state.ts` declares the externally-meaningful five-value enum
+`PLANNER_OVERSEER_STATES` (`idle | watching | steering | recovering | awaiting-confirmation`), the
+serializable `PlannerOverseerRuntimeSnapshot` interface (`state`, `oversightLevel`, `watchedStage?`,
+`signal?`, `attemptCount?`, `attemptLimit?`, `pendingConfirmation?`, `observedAt?` — `watchedStage`/
+`signal` are kept as bare `string` so the engine's stage taxonomy is not pulled into `@fusion/core`),
+and the pure, never-throw `derivePlannerOverseerState(input)`. Precedence: `oversightLevel === "off"`
+or no active observation → `"idle"`; a pending confirmation → `"awaiting-confirmation"` (wins over an
+in-flight recovery attempt); a recorded recovery attempt → `"recovering"`; `"steer"` level → `"steering"`;
+otherwise (`observe`/`autonomous` watching, no attempts/pending) → `"watching"`.
+
+`ProjectEngine.getPlannerOverseerRuntimeSnapshot(taskId)` (delegating to the pure
+`assemblePlannerOverseerRuntimeSnapshot` helper in `packages/engine/src/planner-overseer-runtime-snapshot.ts`
+for testability) reads the latest observation from `PlannerOverseerMonitor.getObservations(taskId)` plus
+`PlannerRecoveryController.getPendingConfirmations(taskId)`/`getAttemptCount(taskId, stage)`, and returns
+`null` (never throws) when there is no active observation for the task. `GET /tasks`
+(`register-task-workflow-routes.ts`) additively enriches each returned task with `plannerOverseerState`
+when the engine snapshot is non-null — best-effort, mirroring the existing `branchProgress` enrichment
+block right beside it: any engine error is swallowed and the un-enriched list is returned, and tasks with
+no active observation omit the field entirely (byte-identical payload). `Task.plannerOverseerState?` is a
+transient field — engine-populated at serialization time, never persisted to the store or task.json.
+
+FN-7516's `TaskCard` renders the badge/affordance; this task only provides the field, the engine
+accessor, and (since FN-7516 had not yet landed consumption) a minimal guarded read plus a
+memo-comparator entry so the card repaints on state change.
 
 ---
 

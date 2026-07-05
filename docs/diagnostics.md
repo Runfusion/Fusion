@@ -19,11 +19,21 @@ Agent reflection generation emits one run-audit event for every `AgentReflection
 
 - Run-audit events (`database` domain, target `agentId`):
   - `reflection:generated` metadata: `{ agentId, trigger, taskId?, reflectionId, tasksCompleted?, tasksFailed?, avgDurationMs?, commonErrorCount, insightCount, suggestedImprovementCount }`.
-  - `reflection:skipped` metadata: `{ agentId, trigger, taskId?, reason: "no-history" }`.
+  - `reflection:skipped` metadata: `{ agentId, trigger, taskId?, reason: "no-history" | "not-completed" }`.
   - `reflection:failed` metadata: `{ agentId, trigger, taskId?, errorClass }`.
 - Trigger taxonomy is preserved from `ReflectionTrigger`: `manual`, `periodic`, `post-task`, and `user-requested`.
 - The events use synthetic run context with phase `reflection` and source equal to the trigger so they correlate in the run-audit stream without requiring caller-specific wiring.
 - Guardrail: reflection diagnostics persist IDs, counts, reasons, and error classes only; never prompt text, reflection summaries, insight strings, suggested-improvement text, or free-form trigger details.
+
+### Post-task performance capture (`reflection:captured`, FN-7528)
+
+`AgentReflectionService.captureTaskPerformance` is a deterministic, non-LLM counterpart to `generateReflection`: it runs once per completed task at the executor completion seam (`TaskExecutor.signalTaskComplete`), guarded by `reflectionService` presence, `settings.reflectionEnabled`, and an assigned agent id. It never calls the model provider and persists a compact structured `post-task` `ReflectionMetrics` record — duration, packages/files touched, verification command(s) + file-scoped-vs-broader classification, and retry/rework count — sourced only from the completed `Task` record. Fields whose source is unavailable are omitted, never fabricated.
+
+- Run-audit event (`database` domain, target `agentId`):
+  - `reflection:captured` metadata: `{ agentId, trigger: "post-task", taskId?, reflectionId, retryReworkCount?, filesTouchedCount?, packagesTouchedCount?, verificationFileScoped?, durationMs? }`.
+  - Skipped/failed captures reuse the existing `reflection:skipped` (`reason: "no-history" | "not-completed"`) and `reflection:failed` (`errorClass`) event types above.
+- Guardrail: capture telemetry stays ids/counts/outcomes-only — `verificationScopeReason` free-text, the deterministic one-line `summary`, and any prompt/reflection prose never reach run-audit metadata (they are stored only in the `ReflectionMetrics`/`AgentReflection` record itself).
+- Capture is best-effort and fire-and-forget: a capture failure never blocks or fails task completion, and an in-memory per-taskId guard prevents duplicate captures across the executor's several completion call sites (fresh completion, duplicate in-review re-entry, auto-recovery, paused-after-completion finalize, retry-completed).
 
 ## Insight run sweeper (`[insight-sweeper]`)
 

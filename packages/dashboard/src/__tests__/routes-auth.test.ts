@@ -2188,6 +2188,34 @@ describe("POST /auth/login", () => {
     expect(observedPromptInput).toBe("manual-code");
   });
 
+  it.each([
+    ["fragment", "http://localhost:53692/callback#code=fragment-code&state=expected-state", "code=fragment-code&state=expected-state"],
+    ["schemeless", "localhost:53692/callback?code=schemeless-code&state=expected-state", "code=schemeless-code&state=expected-state"],
+  ])("normalizes Anthropic subscription pasted callback URLs with %s parameters", async (_case, callbackUrl, expectedInput) => {
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([{ id: "anthropic", name: "Anthropic" }]);
+
+    let observedManualInput: string | undefined;
+    (authStorage.login as ReturnType<typeof vi.fn>).mockImplementation(async (_provider: string, callbacks: any) => {
+      callbacks.onAuth({ url: "https://claude.ai/oauth/authorize?state=expected-state&redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback" });
+      observedManualInput = await callbacks.onManualCodeInput();
+    });
+
+    const app = buildApp();
+    const loginReq = REQUEST(app, "POST", "/api/auth/login", JSON.stringify({ provider: "anthropic-subscription", origin: "https://remote.example.com" }), {
+      "Content-Type": "application/json",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const submitRes = await REQUEST(app, "POST", "/api/auth/manual-code", JSON.stringify({ provider: "anthropic-subscription", code: callbackUrl }), {
+      "Content-Type": "application/json",
+    });
+    expect(submitRes.status).toBe(200);
+
+    await loginReq;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observedManualInput).toBe(expectedInput);
+  });
+
   it("prefers browser login for openai-codex multi-option prompts", async () => {
     let selectedOption: string | undefined;
     (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([{ id: "openai-codex", name: "OpenAI Codex" }]);

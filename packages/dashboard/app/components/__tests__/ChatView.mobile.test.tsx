@@ -286,7 +286,6 @@ describe("ChatView mobile behavior", () => {
       const headerTitle = viewHeader.querySelector(".view-header__title") as HTMLElement;
       const backButton = screen.getByTestId("chat-back-btn");
       const sessionTrigger = screen.getByTestId("chat-mobile-session-trigger");
-      const renderToggle = screen.getByTestId("chat-thread-render-toggle");
 
       expect(viewHeader).toContainElement(backButton);
       expect(viewHeader).toContainElement(sessionTrigger);
@@ -301,8 +300,9 @@ describe("ChatView mobile behavior", () => {
       expect(sessionTrigger).not.toHaveTextContent("MiniMax M3");
       expect(within(sessionTrigger).getByTestId("minimax-icon")).toBeInTheDocument();
       expect(sessionTrigger.querySelector(".chat-model-tag")).not.toBeInTheDocument();
-      expect(viewHeader).not.toContainElement(renderToggle);
-      expect(renderToggle).toHaveClass("chat-thread-header-render-toggle--floating");
+      // FNXC:ChatRenderToggle 2026-07-04-00:00: the floating markdown/plain
+      // toggle was removed per FN-7541; confirm no such control remains.
+      expect(screen.queryByTestId("chat-thread-render-toggle")).not.toBeInTheDocument();
       expect(screen.getAllByTestId("chat-back-btn")).toHaveLength(1);
       expect(screen.getAllByTestId("chat-mobile-session-trigger")).toHaveLength(1);
       expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
@@ -343,7 +343,11 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
-  it("mobile mode: floating render toggle flips persisted and streaming assistant output", async () => {
+  // FNXC:ChatRenderToggle 2026-07-04-00:00: the floating markdown/plain
+  // toggle was removed per FN-7541; mobile chat always renders Markdown
+  // now (forcePlain={false}), so this regression test asserts the toggle
+  // is absent and persisted + streaming bubbles both still render Markdown.
+  it("mobile mode: has no floating render toggle and still renders persisted and streaming assistant output as Markdown", async () => {
     const restoreMatchMedia = mockMobileViewport();
     try {
       setupMockChat({
@@ -355,19 +359,13 @@ describe("ChatView mobile behavior", () => {
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
 
-      const toggle = screen.getByTestId("chat-thread-render-toggle");
       const persistedBubble = screen.getByTestId("chat-message-msg-001");
       const streamingBubble = document.querySelector(".chat-message--streaming") as HTMLElement;
 
-      expect(toggle).toHaveClass("chat-thread-header-render-toggle--floating");
+      expect(screen.queryByTestId("chat-thread-render-toggle")).not.toBeInTheDocument();
       expect(screen.queryAllByTestId("chat-message-render-toggle")).toHaveLength(0);
       expect(within(persistedBubble).getByText("Persisted", { selector: "strong" })).toBeInTheDocument();
       expect(within(streamingBubble).getByText("Live", { selector: "strong" })).toBeInTheDocument();
-
-      await userEvent.click(toggle);
-
-      expect(within(persistedBubble).getByText(/\*\*Persisted\*\* reply/)).toBeInTheDocument();
-      expect(within(streamingBubble).getByText(/\*\*Live\*\* reply/)).toBeInTheDocument();
     } finally {
       restoreMatchMedia.mockRestore();
     }
@@ -2212,7 +2210,6 @@ describe("ChatView mobile CSS contract", () => {
     const actionsRule = css.match(/\.chat-view--mobile-direct-thread\s*>\s*\.view-header\s+\.view-header__actions\s*\{([^}]*)\}/)?.[1] ?? "";
     const menuRule = css.match(/\.chat-view--mobile-direct-thread\s+\.chat-mobile-session-menu\s*\{([^}]*)\}/)?.[1] ?? "";
     const triggerRule = css.match(/\.chat-mobile-session-trigger\s*\{([^}]*)\}/)?.[1] ?? "";
-    const floatingToggleRule = css.match(/\.chat-thread-header-render-toggle--floating\s*\{([^}]*)\}/)?.[1] ?? "";
 
     expect(headerRule).toContain("flex-wrap: nowrap");
     expect(directTitleRule).toContain("position: absolute");
@@ -2227,12 +2224,8 @@ describe("ChatView mobile CSS contract", () => {
     expect(triggerRule).toContain("min-width: 0");
     expect(triggerRule).toContain("gap: var(--space-sm)");
     expect(triggerRule).not.toMatch(/#[0-9a-fA-F]{3,8}|rgb\(/);
-    expect(floatingToggleRule).toContain("position: absolute");
-    expect(floatingToggleRule).toContain("right: var(--space-md)");
-    expect(floatingToggleRule).toContain("bottom: calc((var(--space-lg) * 2.5) + (var(--space-md) * 2) + var(--space-sm))");
-    expect(floatingToggleRule).toContain("min-width: calc(var(--space-lg) * 2.25)");
-    expect(floatingToggleRule).toContain("min-height: calc(var(--space-lg) * 2.25)");
-    expect(floatingToggleRule).toContain("box-shadow: var(--shadow-md)");
+    // FNXC:ChatRenderToggle 2026-07-04-00:00: the floating render-toggle
+    // button and its CSS were removed per FN-7541; no rule to assert here.
   });
 
   it("FN-4352: response copy action stays compact on mobile", async () => {

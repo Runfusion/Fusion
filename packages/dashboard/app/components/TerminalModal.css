@@ -1152,6 +1152,11 @@ The shortcut bar (modifier keys + arrow keys) must sit on ONE line, not stack in
   touch-action: pan-x;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
+  /*
+  FNXC:Terminal 2026-07-04-00:00:
+  FN-7550: on mobile the panel did not actually scroll — as a flex item its automatic min-width defaults to its min-content size (the sum of all nowrap buttons), which overrides the modal-width constraint so overflow-x: auto never engaged; the overflow was instead clipped by the terminal modal's overflow: hidden. min-width: 0 defeats this classic flexbox min-width:auto trap, constraining the panel to the modal/viewport width so overflow-x: auto produces a real horizontal scroll reaching every button. Same pattern already used by .terminal-mobile-tabs, .terminal-workspace-picker-menu, and .terminal-actions in this file.
+  */
+  min-width: 0;
 }
 
 .terminal-shortcut-modifier-row,

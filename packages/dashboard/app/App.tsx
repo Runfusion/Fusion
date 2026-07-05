@@ -941,6 +941,14 @@ function AppInner() {
     handleTaskViewChange("settings");
   }, [modalManager, handleTaskViewChange]);
 
+  /*
+  FNXC:DashboardShortcuts 2026-07-04-00:00:
+  FN-7553's openCommandCenter shortcut reuses the same handleTaskViewChange nav-history owner as openSettingsWithNav/openPlanningWithNav above, so Command Center never gets a second/duplicate nav destination beyond the existing Header/LeftSidebarNav/MobileNavBar "command-center" view entries.
+  */
+  const openCommandCenterWithNav = useCallback(() => {
+    handleTaskViewChange("command-center");
+  }, [handleTaskViewChange]);
+
   const openNewTaskWithNav = useCallback(() => {
     modalManager.openNewTask();
     pushNav({ type: "modal", close: modalManager.closeNewTask });
@@ -1035,17 +1043,25 @@ function AppInner() {
     );
   }, [closePoppedOutTask, closeTerminalWithNav, modalManager, poppedOutTasks, quickChatOpen]);
 
+  const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
+    modalManager.openFiles(workspace, initialFile);
+    pushNav({ type: "modal", close: modalManager.closeFiles });
+  }, [modalManager, pushNav]);
+
+  /*
+  FNXC:DashboardShortcuts 2026-07-04-00:00:
+  FN-7553 wires openFiles/openSettings/openCommandCenter/newTask into the same global listener as the base quickChat/terminal actions (FN-7494/FN-7507), reusing openFilesWithNav, openSettingsWithNav, openCommandCenterWithNav, and openNewTaskWithNav so no second nav destination is introduced.
+  */
   useDashboardKeyboardShortcuts({
     shortcuts: dashboardKeyboardShortcuts,
     openQuickChat: () => setQuickChatOpen(true),
     toggleTerminal: toggleTerminalWithNav,
     closeTopmostPopup: closeTopmostPopupForShortcut,
+    openFiles: () => openFilesWithNav(),
+    openSettings: () => openSettingsWithNav(),
+    openCommandCenter: openCommandCenterWithNav,
+    openNewTask: openNewTaskWithNav,
   });
-
-  const openFilesWithNav = useCallback((workspace?: string, initialFile?: string | null) => {
-    modalManager.openFiles(workspace, initialFile);
-    pushNav({ type: "modal", close: modalManager.closeFiles });
-  }, [modalManager, pushNav]);
 
   const openFileInBrowser = useCallback((path: string, opts?: { workspace?: string; line?: number; col?: number }) => {
     modalManager.openFiles(opts?.workspace, path);

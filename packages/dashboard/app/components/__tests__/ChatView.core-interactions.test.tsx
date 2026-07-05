@@ -1223,7 +1223,10 @@ describe("ChatView core interactions", () => {
     expect(headerModelTag).toBeNull();
   });
 
-  it("keeps provider identity text grouped in header while render toggle stays on the same row", async () => {
+  // FNXC:ChatRenderToggle 2026-07-04-00:00: the render toggle previously
+  // asserted here was removed per FN-7541; keep the identity-grouping
+  // assertions and add a regression check that no toggle remains.
+  it("keeps provider identity text grouped in header with no render toggle present", async () => {
     setupMockChat({
       activeSession: {
         id: "session-001",
@@ -1243,7 +1246,6 @@ describe("ChatView core interactions", () => {
 
     const header = document.querySelector(".chat-thread-header") as HTMLElement | null;
     const identity = screen.getByTestId("chat-thread-header-identity");
-    const toggle = screen.getByTestId("chat-thread-render-toggle");
     const providerIcon = identity.querySelector(".provider-icon");
     const modelTag = identity.querySelector(".chat-model-tag");
     const newChatButton = screen.getByTestId("chat-new-btn");
@@ -1254,8 +1256,7 @@ describe("ChatView core interactions", () => {
     expect(within(identity).getByText("Agent Chat")).toBeInTheDocument();
     expect(modelTag).toBeInTheDocument();
     expect(modelTag).toHaveTextContent("Claude Sonnet 4.5");
-    expect(toggle).toBeInTheDocument();
-    expect(header?.children[header.children.length - 1]).toBe(toggle);
+    expect(screen.queryByTestId("chat-thread-render-toggle")).not.toBeInTheDocument();
     expect(document.querySelectorAll(".chat-thread-header .chat-model-tag")).toHaveLength(1);
   });
 

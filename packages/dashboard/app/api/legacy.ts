@@ -96,6 +96,8 @@ import type {
   CommitAssociationDiffBackfillReport,
 } from "@fusion/core";
 import type { PlanningQuestion, PlanningSummary } from "@fusion/core";
+import type { PlannerOverseerRuntimeSnapshot } from "@fusion/core";
+import type { PlannerInterventionEntry } from "@fusion/core";
 import type { GithubIssueAction, ScheduledTask, ScheduledTaskCreateInput, ScheduledTaskUpdateInput, AutomationRunResult, Routine, RoutineCreateInput, RoutineUpdateInput, RoutineExecutionResult } from "@fusion/core";
 import type { DiscoveredSkill, CatalogEntry, CatalogFetchResult, ToggleSkillResult, SkillContent, SkillFileEntry, SkillFileContent } from "@fusion/dashboard";
 import type { MilestoneValidationTelemetry, MissionInterviewDraftSummary } from "../components/mission-types";
@@ -816,6 +818,48 @@ export function pauseTask(id: string, projectId?: string): Promise<Task> {
 
 export function unpauseTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/unpause`, projectId), { method: "POST" });
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-17:00:
+FN-7517 task-detail planner-overseer controls. `nudgeOverseer` asks the
+engine to inject one steering-guidance comment into the task's currently
+watched stage right now (guidance-only — never a merge/PR/destructive side
+effect); `stopOverseer` disables active oversight for the task (writes the
+per-task `plannerOversightLevel: "off"` override); `explainOverseer` is a
+read of the current overseer runtime state (watched stage, reason, last
+action, attempt count/limit) for the "explain current action" panel. Each
+returns an `applied: false`/`snapshot: null` style result rather than
+throwing when oversight is off/inactive or the engine runtime is
+unavailable — callers should treat that as a normal disabled state, not an
+error toast.
+*/
+export interface OverseerControlResult {
+  applied: boolean;
+  reason: string;
+  task?: Task;
+}
+
+export function nudgeOverseer(id: string, projectId?: string): Promise<OverseerControlResult> {
+  return api<OverseerControlResult>(withProjectId(`/tasks/${id}/overseer/nudge`, projectId), { method: "POST" });
+}
+
+export function stopOverseer(id: string, projectId?: string): Promise<OverseerControlResult> {
+  return api<OverseerControlResult>(withProjectId(`/tasks/${id}/overseer/stop`, projectId), { method: "POST" });
+}
+
+export function explainOverseer(id: string, projectId?: string): Promise<{ snapshot: PlannerOverseerRuntimeSnapshot | null }> {
+  return api<{ snapshot: PlannerOverseerRuntimeSnapshot | null }>(withProjectId(`/tasks/${id}/overseer/explain`, projectId), { method: "GET" });
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-18:00:
+FN-7519 read-only client fetch for the planner-intervention timeline. Mirrors
+`explainOverseer`'s pattern; never mutates state and resolves to an empty
+array when the task has no recorded interventions.
+*/
+export function fetchPlannerInterventionTimeline(id: string, projectId?: string): Promise<{ entries: PlannerInterventionEntry[] }> {
+  return api<{ entries: PlannerInterventionEntry[] }>(withProjectId(`/tasks/${id}/overseer/interventions`, projectId), { method: "GET" });
 }
 
 export function archiveTask(id: string, projectId?: string, options?: ArchiveTaskOptions): Promise<Task> {

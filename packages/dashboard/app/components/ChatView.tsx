@@ -10,8 +10,6 @@ import {
   Pencil,
   ChevronLeft,
   Bot,
-  Eye,
-  EyeOff,
   Paperclip,
   ChevronDown,
   Copy,
@@ -545,11 +543,9 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
   const [mentionPopupVisible, setMentionPopupVisible] = useState(false);
   const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
   const [mentionStartPos, setMentionStartPos] = useState(-1);
-  // Single thread-wide toggle: when true, all assistant content (including the
-  // streaming bubble) renders as plain text instead of Markdown. Replaces the
-  // earlier per-message toggle so the chat header owns this control instead
-  // of every reply having its own button.
-  const [showAllAsPlain, setShowAllAsPlain] = useState(false);
+  // FNXC:ChatRenderToggle 2026-07-04-00:00: The markdown/plain eye toggle
+  // (showAllAsPlain / toggleAllAsPlain) was removed per FN-7541. Chat always
+  // renders Markdown now; forcePlain is hardcoded to false everywhere below.
   // Attachment state mirrors QuickEntryBox: pending files selected before send.
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -2179,17 +2175,12 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
 
   // In model-only chats (no real agent picked) the agent identity *is* the
   // model name, which is already in the thread header. Repeating it on every
-  // assistant bubble is noise. Hide the per-message identity row entirely;
-  // the render-mode toggle still appears in a slim toolbar.
+  // assistant bubble is noise. Hide the per-message identity row entirely.
   const hideAssistantIdentity = activeSession?.agentId === FN_AGENT_ID;
 
   const getPendingPreview = (message: string) => message.length > 50
     ? `${message.slice(0, 50)}…`
     : message;
-
-  const toggleAllAsPlain = useCallback(() => {
-    setShowAllAsPlain((value) => !value);
-  }, []);
 
   useEffect(() => {
     if (!mobileSessionMenuOpen) {
@@ -2336,7 +2327,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             <StandardChatMessageItem
               key={message.id}
               message={message}
-              forcePlain={showAllAsPlain}
+              forcePlain={false}
               agentName={agentName}
               hideAssistantIdentity={hideAssistantIdentity}
               showAssistantModelTag={showAssistantModelTag}
@@ -2356,7 +2347,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             streamingText={streamingText}
             streamingThinking={streamingThinking}
             streamingToolCalls={streamingToolCalls}
-            forcePlain={showAllAsPlain}
+            forcePlain={false}
             agentName={agentName}
             hideAssistantIdentity={hideAssistantIdentity}
             showAssistantModelTag={showAssistantModelTag}
@@ -2378,7 +2369,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             <StandardChatMessageItem
               key={message.id}
               message={message}
-              forcePlain={showAllAsPlain}
+              forcePlain={false}
               agentName={agentName}
               hideAssistantIdentity={hideAssistantIdentity}
               showAssistantModelTag={showAssistantModelTag}
@@ -3234,7 +3225,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                       <StandardChatMessageItem
                         key={message.id}
                         message={roomMessage}
-                        forcePlain={showAllAsPlain}
+                        forcePlain={false}
                         agentName={senderName}
                         hideAssistantIdentity={false}
                         showAssistantModelTag={false}
@@ -3377,6 +3368,10 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       ) : (
       <div ref={chatThreadRef} className="chat-thread">
         {/* Header - desktop/tablet keeps the thread identity row; mobile direct-thread controls move into ViewHeader. */}
+        {/* FNXC:ChatRenderToggle 2026-07-04-00:00: The markdown/plain eye toggle
+            button (desktop `.chat-thread-header-render-toggle` and the mobile
+            floating `--floating` variant) was removed per FN-7541. Chat now
+            always renders Markdown (forcePlain is hardcoded to false). */}
         {!isChatMobile && (hasThreadInView || !isChatMobile) && (
           <div className="chat-thread-header">
             <div className="chat-thread-header-identity" data-testid="chat-thread-header-identity">
@@ -3394,30 +3389,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                 </span>
               ) : null}
             </div>
-            {hasThreadInView && (
-              <button
-                type="button"
-                className={`chat-thread-header-render-toggle${showAllAsPlain ? " chat-thread-header-render-toggle--plain" : ""}`}
-                data-testid="chat-thread-render-toggle"
-                aria-label={showAllAsPlain ? t("chat.showRenderedMarkdown", "Show all messages as rendered Markdown") : t("chat.showPlainText", "Show all messages as plain text")}
-                onClick={toggleAllAsPlain}
-              >
-                {showAllAsPlain ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-            )}
           </div>
-        )}
-
-        {isChatMobile && hasThreadInView && (
-          <button
-            type="button"
-            className={`chat-thread-header-render-toggle chat-thread-header-render-toggle--floating${showAllAsPlain ? " chat-thread-header-render-toggle--plain" : ""}`}
-            data-testid="chat-thread-render-toggle"
-            aria-label={showAllAsPlain ? t("chat.showRenderedMarkdown", "Show all messages as rendered Markdown") : t("chat.showPlainText", "Show all messages as plain text")}
-            onClick={toggleAllAsPlain}
-          >
-            {showAllAsPlain ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
         )}
 
         {/* Messages + composer. CLI-backed chat sessions delegate this

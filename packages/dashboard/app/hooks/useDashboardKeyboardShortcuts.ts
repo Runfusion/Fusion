@@ -11,6 +11,14 @@ export interface DashboardKeyboardShortcutHandlers {
   openQuickChat: () => void;
   toggleTerminal: () => void;
   closeTopmostPopup?: () => boolean;
+  /*
+  FNXC:DashboardShortcuts 2026-07-04-00:00:
+  FN-7553 adds four more configurable actions. Each handler reuses an existing App nav callback (openFilesWithNav, openSettingsWithNav, a thin command-center nav wrapper, openNewTaskWithNav) so this hook never introduces a second/duplicate nav destination — it only dispatches to whatever the caller already uses for its header/sidebar entry points.
+  */
+  openFiles: () => void;
+  openSettings: () => void;
+  openCommandCenter: () => void;
+  openNewTask: () => void;
 }
 
 export interface UseDashboardKeyboardShortcutsOptions extends DashboardKeyboardShortcutHandlers {
@@ -28,6 +36,10 @@ export function useDashboardKeyboardShortcuts({
   openQuickChat,
   toggleTerminal,
   closeTopmostPopup,
+  openFiles,
+  openSettings,
+  openCommandCenter,
+  openNewTask,
 }: UseDashboardKeyboardShortcutsOptions): void {
   useEffect(() => {
     if (!enabled || typeof document === "undefined") return;
@@ -57,10 +69,34 @@ export function useDashboardKeyboardShortcuts({
       if (shortcutMatchesEvent(resolved.terminal, event)) {
         event.preventDefault();
         toggleTerminal();
+        return;
+      }
+
+      if (shortcutMatchesEvent(resolved.openFiles, event)) {
+        event.preventDefault();
+        openFiles();
+        return;
+      }
+
+      if (shortcutMatchesEvent(resolved.openSettings, event)) {
+        event.preventDefault();
+        openSettings();
+        return;
+      }
+
+      if (shortcutMatchesEvent(resolved.openCommandCenter, event)) {
+        event.preventDefault();
+        openCommandCenter();
+        return;
+      }
+
+      if (shortcutMatchesEvent(resolved.newTask, event)) {
+        event.preventDefault();
+        openNewTask();
       }
     };
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeTopmostPopup, enabled, openQuickChat, shortcuts, toggleTerminal]);
+  }, [closeTopmostPopup, enabled, openCommandCenter, openFiles, openNewTask, openQuickChat, openSettings, shortcuts, toggleTerminal]);
 }

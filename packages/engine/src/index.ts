@@ -267,6 +267,20 @@ export {
   __resetIntegrationBranchCacheForTests,
 } from "./integration-branch.js";
 export {
+  resolveTaskRevertCommits,
+  classifyTaskRevert,
+  performTaskRevert,
+  TaskRevertError,
+  type TaskRevertCommitSource,
+  type ResolvedTaskRevertCommits,
+  type UnsupportedTaskRevert,
+  type TaskRevertClassification,
+  type TaskRevertConflict,
+  type ClassifyTaskRevertResult,
+  type TaskRevertResult,
+  type TaskCommitAssociationSource,
+} from "./task-revert.js";
+export {
   resolveBranchGroupMergeRouting,
   evaluateBranchGroupPromotion,
   evaluateBranchGroupCompletion,
@@ -647,6 +661,14 @@ export {
   type OverseerLogStore,
   type PlannerOverseerMonitorOptions,
 } from "./planner-overseer.js";
+// FN-7531: re-export the core planner-overseer state types for engine consumers
+// (e.g. `ProjectEngine.getPlannerOverseerRuntimeSnapshot`).
+export {
+  PLANNER_OVERSEER_STATES,
+  derivePlannerOverseerState,
+  type PlannerOverseerState,
+  type PlannerOverseerRuntimeSnapshot,
+} from "@fusion/core";
 export {
   PlannerRecoveryController,
   type PlannerRecoveryContext,
@@ -704,7 +726,7 @@ export {
 // ── Notification Service ──────────────────────────────────────
 export { NtfyNotificationProvider, NotificationService, WebhookNotificationProvider } from "./notification/index.js";
 export type { NtfyProviderConfig, NotificationServiceOptions, WebhookProviderConfig } from "./notification/index.js";
-export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor } from "./cron-runner.js";
+export { CronRunner, type CronRunnerOptions, type AiPromptExecutor, createAiPromptExecutor, isInProcessBackupCommand, isInProcessMemoryBackupCommand, formatInProcessBackupError } from "./cron-runner.js";
 export { RoutineRunner, type RoutineRunnerOptions } from "./routine-runner.js";
 export { RoutineScheduler, type RoutineSchedulerOptions } from "./routine-scheduler.js";
 export { StuckTaskDetector, type StuckTaskDetectorOptions, type DisposableSession } from "./stuck-task-detector.js";

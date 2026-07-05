@@ -501,7 +501,12 @@ describe("ChatView", () => {
     expect(screen.queryByTestId("chat-render-mode-plain")).not.toBeInTheDocument();
   });
 
-  it("thread-header toggle flips every assistant bubble between rendered Markdown and plain text", async () => {
+  // FNXC:ChatRenderToggle 2026-07-04-00:00: The thread-header markdown/plain
+  // toggle was removed per FN-7541. Chat now always renders Markdown
+  // (forcePlain={false} everywhere), so these regression tests assert the
+  // toggle is gone and Markdown rendering stays intact for both persisted
+  // and streaming assistant bubbles, on the desktop surface.
+  it("has no thread-header render toggle and still renders assistant Markdown", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [
@@ -514,27 +519,14 @@ describe("ChatView", () => {
 
     const firstBubble = screen.getByTestId("chat-message-msg-001");
     const secondBubble = screen.getByTestId("chat-message-msg-002");
-    const headerToggle = screen.getByTestId("chat-thread-render-toggle");
 
-    // Per-message toggles were intentionally removed; only the single
-    // thread-level toggle should exist.
+    expect(screen.queryByTestId("chat-thread-render-toggle")).not.toBeInTheDocument();
     expect(screen.queryAllByTestId("chat-message-render-toggle")).toHaveLength(0);
-    expect(within(firstBubble).getByText("First", { selector: "strong" })).toBeInTheDocument();
-    expect(within(secondBubble).getByText("Second", { selector: "strong" })).toBeInTheDocument();
-
-    await userEvent.click(headerToggle);
-
-    expect(within(firstBubble).getByText(/\*\*First\*\* item/)).toBeInTheDocument();
-    expect(within(firstBubble).queryByText("First", { selector: "strong" })).toBeNull();
-    expect(within(secondBubble).getByText(/\*\*Second\*\* item/)).toBeInTheDocument();
-    expect(within(secondBubble).queryByText("Second", { selector: "strong" })).toBeNull();
-
-    await userEvent.click(headerToggle);
     expect(within(firstBubble).getByText("First", { selector: "strong" })).toBeInTheDocument();
     expect(within(secondBubble).getByText("Second", { selector: "strong" })).toBeInTheDocument();
   });
 
-  it("thread-header toggle also drives the streaming bubble", async () => {
+  it("has no thread-header render toggle and still renders the streaming bubble as Markdown", async () => {
     setupMockChat({
       activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
       messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "**Persisted**", createdAt: "2026-04-08T00:00:00.000Z" }],
@@ -546,17 +538,8 @@ describe("ChatView", () => {
 
     const persistedBubble = screen.getByTestId("chat-message-msg-001");
     const streamingBubble = document.querySelector(".chat-message--streaming") as HTMLElement;
-    const headerToggle = screen.getByTestId("chat-thread-render-toggle");
 
-    expect(within(streamingBubble).getByText("Live", { selector: "strong" })).toBeInTheDocument();
-    expect(within(persistedBubble).getByText("Persisted", { selector: "strong" })).toBeInTheDocument();
-
-    await userEvent.click(headerToggle);
-
-    expect(within(streamingBubble).getByText(/\*\*Live\*\* stream/)).toBeInTheDocument();
-    expect(within(persistedBubble).getByText(/\*\*Persisted\*\*/)).toBeInTheDocument();
-
-    await userEvent.click(headerToggle);
+    expect(screen.queryByTestId("chat-thread-render-toggle")).not.toBeInTheDocument();
     expect(within(streamingBubble).getByText("Live", { selector: "strong" })).toBeInTheDocument();
     expect(within(persistedBubble).getByText("Persisted", { selector: "strong" })).toBeInTheDocument();
   });

@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { closeTopmostDashboardPopupForShortcut } from "../App";
 import { useDashboardKeyboardShortcuts } from "../hooks/useDashboardKeyboardShortcuts";
 
+function baseHandlers() {
+  return {
+    openFiles: vi.fn(),
+    openSettings: vi.fn(),
+    openCommandCenter: vi.fn(),
+    openNewTask: vi.fn(),
+  };
+}
+
 /*
 FNXC:DashboardShortcuts 2026-07-04-12:02:
 FN-7507 closes the FN-7494 Code Review gap by proving the dashboard shortcut/Escape invariants at the App-owned seam without rendering every lazy dashboard surface. The hook assertions cover settings-to-document key handling, while closeTopmostDashboardPopupForShortcut covers the App shell's one-popup Escape ordering.
@@ -17,7 +26,8 @@ describe("App dashboard keyboard shortcuts", () => {
   it("opens Quick Chat with the default Space binding from document focus", () => {
     const openQuickChat = vi.fn();
 
-    renderHook(() => useDashboardKeyboardShortcuts({ openQuickChat, toggleTerminal: vi.fn() }));
+    renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(), openQuickChat, toggleTerminal: vi.fn() }));
     const event = press({ key: " " });
 
     expect(openQuickChat).toHaveBeenCalledTimes(1);
@@ -29,6 +39,7 @@ describe("App dashboard keyboard shortcuts", () => {
     const toggleTerminal = vi.fn();
 
     renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
       shortcuts: { quickChat: "", terminal: "Alt+T" },
       openQuickChat,
       toggleTerminal,
@@ -50,6 +61,7 @@ describe("App dashboard keyboard shortcuts", () => {
     document.body.append(input);
 
     renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
       openQuickChat,
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
@@ -72,6 +84,7 @@ describe("App dashboard keyboard shortcuts", () => {
     const closeTopmostPopup = vi.fn(() => true);
 
     renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
       openQuickChat,
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
@@ -143,6 +156,7 @@ describe("App dashboard keyboard shortcuts", () => {
       .mockReturnValueOnce(false);
 
     renderHook(() => useDashboardKeyboardShortcuts({
+      ...baseHandlers(),
       openQuickChat: vi.fn(),
       toggleTerminal: vi.fn(),
       closeTopmostPopup,
@@ -154,5 +168,36 @@ describe("App dashboard keyboard shortcuts", () => {
     expect(closeTopmostPopup).toHaveBeenCalledTimes(2);
     expect(handled.defaultPrevented).toBe(true);
     expect(unhandled.defaultPrevented).toBe(false);
+  });
+  it("dispatches the FN-7553 openFiles/openSettings/openCommandCenter/newTask actions and ignores editable targets", () => {
+    const openFiles = vi.fn();
+    const openSettings = vi.fn();
+    const openCommandCenter = vi.fn();
+    const openNewTask = vi.fn();
+    const input = document.createElement("input");
+    document.body.append(input);
+
+    renderHook(() => useDashboardKeyboardShortcuts({
+      openQuickChat: vi.fn(),
+      toggleTerminal: vi.fn(),
+      openFiles,
+      openSettings,
+      openCommandCenter,
+      openNewTask,
+    }));
+
+    press({ key: "e", ctrlKey: true });
+    press({ key: ",", ctrlKey: true });
+    press({ key: "k", ctrlKey: true });
+    press({ key: "n", ctrlKey: true, shiftKey: true });
+    expect(openFiles).toHaveBeenCalledTimes(1);
+    expect(openSettings).toHaveBeenCalledTimes(1);
+    expect(openCommandCenter).toHaveBeenCalledTimes(1);
+    expect(openNewTask).toHaveBeenCalledTimes(1);
+
+    input.focus();
+    press({ key: "e", ctrlKey: true }, input);
+    expect(openFiles).toHaveBeenCalledTimes(1);
+    input.remove();
   });
 });

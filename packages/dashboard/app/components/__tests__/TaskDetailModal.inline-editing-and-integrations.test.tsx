@@ -403,8 +403,8 @@ describe("TaskDetailModal", () => {
   });
 
   describe("Plan tab original prompt", () => {
-    it("shows the exact original prompt beside the generated plan in the modal", () => {
-      const originalPrompt = "Exact user prompt\nwith **markdown** and `code`\n```ts\nconst answer = 42;\n```\nhttps://example.com/task";
+    it("is collapsed by default and expands to render the original prompt as markdown", () => {
+      const originalPrompt = "# Heading\n\n- item\n\n`code`";
       const generatedPrompt = "# FN-TEST\n\n## Mission\nGenerated plan";
       const { container } = render(
         <TaskDetailModal
@@ -425,12 +425,24 @@ describe("TaskDetailModal", () => {
       );
 
       expect(screen.getByRole("heading", { name: "Original prompt" })).toBeTruthy();
-      const originalPromptNode = screen.getByTestId("task-detail-original-prompt");
-      expect(originalPromptNode.textContent).toBe(originalPrompt);
-      expect(originalPromptNode.innerHTML).toContain("**markdown**");
-      expect(originalPromptNode.querySelector("strong, code, pre, a")).toBeNull();
+      const toggle = screen.getByRole("button", { name: "Expand original prompt" });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      // Collapsed by default: the prompt body is not in the DOM until expanded.
+      expect(screen.queryByTestId("task-detail-original-prompt")).toBeNull();
       expect(screen.getByRole("heading", { name: "Mission" })).toBeTruthy();
       expect(screen.getByText("Generated plan")).toBeTruthy();
+
+      fireEvent.click(toggle);
+
+      const expandedToggle = screen.getByRole("button", { name: "Collapse original prompt" });
+      expect(expandedToggle.getAttribute("aria-expanded")).toBe("true");
+      const originalPromptNode = screen.getByTestId("task-detail-original-prompt");
+      expect(originalPromptNode.className).toContain("markdown-body");
+      // Rendered as markdown, not raw source: a real heading/list/code element exists,
+      // and the raw markdown characters are gone.
+      expect(originalPromptNode.querySelector("h1, li, code")).toBeTruthy();
+      expect(originalPromptNode.textContent).not.toContain("# Heading");
+      expect(originalPromptNode.textContent).not.toContain("`code`");
 
       const originalSection = container.querySelector(".detail-section--original-prompt");
       const planSection = container.querySelector(".detail-section--plan-prompt");
@@ -440,7 +452,7 @@ describe("TaskDetailModal", () => {
       expect(originalPromptNode.textContent).not.toBe("Title must not replace description");
     });
 
-    it("renders a non-boxed empty fallback without hiding the generated plan", () => {
+    it("renders a non-boxed empty fallback with no toggle, without hiding the generated plan", () => {
       const { container } = render(
         <TaskDetailModal
           initialTab="definition"
@@ -460,11 +472,12 @@ describe("TaskDetailModal", () => {
 
       expect(screen.getByText("No original prompt recorded.")).toBeTruthy();
       expect(screen.queryByTestId("task-detail-original-prompt")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Expand original prompt" })).toBeNull();
       expect(container.querySelector(".detail-section--original-prompt .detail-original-prompt-text")).toBeNull();
       expect(screen.getByText("Generated plan still visible")).toBeTruthy();
     });
 
-    it("shows the same original prompt section in embedded task detail content", () => {
+    it("shows the same collapsible original prompt section in embedded task detail content", () => {
       const originalPrompt = "Embedded prompt\nwith a second line";
       const { container } = render(
         <TaskDetailContent
@@ -484,32 +497,31 @@ describe("TaskDetailModal", () => {
       );
 
       expect(container.querySelector(".task-detail-content--embedded")).toBeTruthy();
+      expect(screen.queryByTestId("task-detail-original-prompt")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Expand original prompt" }));
       expect(screen.getByTestId("task-detail-original-prompt").textContent).toBe(originalPrompt);
       expect(screen.getByText("Embedded generated plan")).toBeTruthy();
     });
 
-    it("applies wrapping and mobile CSS contracts to the original prompt section", () => {
+    it("applies wrapping and mobile CSS contracts to the expanded original prompt section", () => {
       const css = readDashboardStylesSource();
-      const promptTextBlock = getRuleBlock(css, ".detail-original-prompt-text");
+      const markdownBodyBlock = getRuleBlock(css, ".detail-section--original-prompt .markdown-body");
       const emptyBlock = getRuleBlock(css, ".detail-original-prompt-empty");
       const mobileBlock = getMediaBlocks(css, "@media (max-width: 768px)").find((block) =>
         block.includes(".detail-section--original-prompt"),
       ) ?? "";
 
       expect(css).toContain(".detail-section--original-prompt,\n.detail-section--plan-prompt");
-      expect(promptTextBlock).toContain("box-sizing: border-box;");
-      expect(promptTextBlock).toContain("width: 100%;");
-      expect(promptTextBlock).toContain("min-width: 0;");
-      expect(promptTextBlock).toContain("max-width: 100%;");
-      expect(promptTextBlock).toContain("padding: var(--space-md);");
-      expect(promptTextBlock).toContain("border: var(--btn-border-width) solid var(--border);");
-      expect(promptTextBlock).toContain("white-space: pre-wrap;");
-      expect(promptTextBlock).toContain("overflow-wrap: anywhere;");
-      expect(promptTextBlock).not.toMatch(/#[0-9a-fA-F]{3,8}|rgb\(/);
+      expect(markdownBodyBlock).toContain("box-sizing: border-box;");
+      expect(markdownBodyBlock).toContain("width: 100%;");
+      expect(markdownBodyBlock).toContain("min-width: 0;");
+      expect(markdownBodyBlock).toContain("max-width: 100%;");
+      expect(markdownBodyBlock).toContain("overflow-wrap: anywhere;");
+      expect(markdownBodyBlock).not.toMatch(/#[0-9a-fA-F]{3,8}|rgb\(/);
       expect(emptyBlock).toContain("margin: 0;");
       expect(emptyBlock).toContain("color: var(--text-muted);");
       expect(mobileBlock).toContain(".detail-section--original-prompt,");
-      expect(mobileBlock).toContain(".detail-section--original-prompt .detail-original-prompt-text");
+      expect(mobileBlock).toContain(".detail-section--original-prompt .markdown-body");
       expect(mobileBlock).toContain("max-width: 100%;");
     });
   });

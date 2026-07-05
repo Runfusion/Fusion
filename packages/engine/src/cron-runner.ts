@@ -1074,8 +1074,13 @@ export async function createAiPromptExecutor(cwd: string, store?: TaskStore): Pr
 /*
 FNXC:DatabaseBackup 2026-06-26-12:00:
 Cron-runner in-process backups feed automation run history and step errors. Normalize empty thrown values and empty command output before they become operator-visible Database Backup failures.
+
+FNXC:DatabaseBackup 2026-07-04-00:00:
+FN-7537: exported (was module-private) so the dashboard's manual automation/schedule run path
+(packages/dashboard/src/routes.ts executeSingleCommand) can format in-process backup failures with the
+same message shape cron/routine-runner already use, instead of diverging on manual runs.
 */
-function formatInProcessBackupError(err: unknown, fusionDir: string): string {
+export function formatInProcessBackupError(err: unknown, fusionDir: string): string {
   const message = err instanceof Error ? err.message.trim() : String(err ?? "").trim();
   const cause = message || "unknown error";
   if (cause.includes("project DB") || cause.includes("central DB")) {

@@ -108,6 +108,7 @@ function createMockDeps() {
   const taskStore = {
     listTasks: vi.fn().mockResolvedValue([makeTask()]),
     recordRunAuditEvent: vi.fn(),
+    getTask: vi.fn().mockResolvedValue(makeTask()),
   } as any;
 
   const reflectionStore = {
@@ -532,6 +533,207 @@ describe("AgentReflectionService", () => {
       expect(reflection?.trigger).toBe("user-requested");
       expect(reflectionStore.createReflection).toHaveBeenCalledTimes(1);
       expect(taskStore.recordRunAuditEvent).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // FNXC:AgentReflection 2026-07-04-00:00:
+  // FN-7528 exercises the deterministic, non-LLM post-task capture path: no createFnAgent/promptWithFallback
+  // call, a `post-task` record with structured metrics, and ids/counts/outcomes-only `reflection:captured`
+  // telemetry (never verificationScopeReason free-text, summary prose, or prompt text).
+  describe("captureTaskPerformance", () => {
+    it("persists a post-task record with structured fields sourced from the completed task, without calling the model provider", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({
+        id: "FN-7528",
+        column: "done",
+        assignedAgentId: "agent-1",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:45.000Z",
+        recoveryRetryCount: 2,
+        modifiedFiles: ["packages/core/src/foo.ts", "packages/engine/src/bar.ts"],
+        log: [
+          {
+            timestamp: "2026-04-08T00:00:40.000Z",
+            action: "[verification] Running deterministic verification (test: pnpm --filter @fusion/core exec vitest run src/foo.test.ts, build: pnpm build)",
+          },
+        ],
+      }));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7528");
+
+      expect(reflection).not.toBeNull();
+      expect(mockedCreateFnAgent).not.toHaveBeenCalled();
+      expect(mockedPromptWithFallback).not.toHaveBeenCalled();
+      expect(reflectionStore.createReflection).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: "agent-1",
+        trigger: "post-task",
+        taskId: "FN-7528",
+        insights: [],
+        suggestedImprovements: [],
+        metrics: expect.objectContaining({
+          tasksCompleted: 1,
+          tasksFailed: 0,
+          durationMs: 45_000,
+          retryReworkCount: 2,
+          filesTouchedCount: 2,
+          packagesTouched: ["packages/core", "packages/engine"],
+          verificationCommands: [
+            "test: pnpm --filter @fusion/core exec vitest run src/foo.test.ts",
+            "build: pnpm build",
+          ],
+        }),
+      }));
+      expect(reflection?.metrics.verificationFileScoped).toBe(true);
+      expect(reflection?.metrics.verificationScopeReason).toBeUndefined();
+    });
+
+    it("aggregates workflow step rework cycles (RETHINK/rework) alongside recoveryRetryCount into retryReworkCount and durationDrivers", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({
+        id: "FN-7528-rework",
+        column: "done",
+        recoveryRetryCount: 1,
+      }));
+      taskStore.loadWorkflowRunStepInstances = vi.fn().mockReturnValue([
+        { taskId: "FN-7528-rework", runId: "FN-7528-rework:run", foreachNodeId: "n1", stepIndex: 0, reworkCount: 2 },
+        { taskId: "FN-7528-rework", runId: "FN-7528-rework:run", foreachNodeId: "n1", stepIndex: 1, reworkCount: 1 },
+      ]);
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7528-rework");
+
+      expect(taskStore.loadWorkflowRunStepInstances).toHaveBeenCalledWith("FN-7528-rework", "FN-7528-rework:run");
+      // recoveryRetryCount(1) + workflowReworkCount(2+1=3) = 4
+      expect(reflection?.metrics.retryReworkCount).toBe(4);
+      expect(reflection?.metrics.durationDrivers).toContain("retries:1");
+      expect(reflection?.metrics.durationDrivers).toContain("rework:3");
+    });
+
+    it("classifies a broad/whole-suite verification command as not file-scoped, with a reason", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({
+        id: "FN-7529",
+        column: "done",
+        log: [
+          {
+            timestamp: "2026-04-08T00:00:40.000Z",
+            action: "[verification] Running deterministic verification (test: pnpm test:full)",
+          },
+        ],
+      }));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7529");
+
+      expect(reflection?.metrics.verificationFileScoped).toBe(false);
+      expect(reflection?.metrics.verificationScopeReason).toBeTruthy();
+      expect(reflection?.metrics.durationDrivers).toContain("verification-broad");
+    });
+
+    it("omits fields whose source is unavailable rather than fabricating values", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({
+        id: "FN-7530",
+        column: "done",
+        modifiedFiles: undefined,
+        log: [],
+      }));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7530");
+
+      expect(reflection).not.toBeNull();
+      expect(reflection?.metrics.packagesTouched).toBeUndefined();
+      expect(reflection?.metrics.filesTouchedCount).toBeUndefined();
+      expect(reflection?.metrics.verificationCommands).toBeUndefined();
+      expect(reflection?.metrics.verificationFileScoped).toBeUndefined();
+      expect(reflection?.metrics.verificationScopeReason).toBeUndefined();
+      expect(reflection?.metrics.retryReworkCount).toBeUndefined();
+    });
+
+    it("returns null and emits reflection:skipped with not-completed when the task is not resolvable to a terminal outcome", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({ id: "FN-7531", column: "in-progress" }));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7531");
+
+      expect(reflection).toBeNull();
+      expect(reflectionStore.createReflection).not.toHaveBeenCalled();
+      expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "reflection:skipped",
+        metadata: expect.objectContaining({ reason: "not-completed" }),
+      }));
+    });
+
+    it("returns null and emits reflection:skipped with no-history when the task cannot be found", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(null);
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-missing");
+
+      expect(reflection).toBeNull();
+      expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "reflection:skipped",
+        metadata: expect.objectContaining({ reason: "no-history" }),
+      }));
+    });
+
+    it("emits ids/counts/outcomes-only reflection:captured telemetry (no prose, reason free-text, or prompt text)", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({
+        id: "FN-7532",
+        column: "done",
+        recoveryRetryCount: 1,
+        modifiedFiles: ["packages/core/src/foo.ts"],
+        log: [
+          {
+            timestamp: "2026-04-08T00:00:40.000Z",
+            action: "[verification] Running deterministic verification (test: pnpm test:full)",
+          },
+        ],
+      }));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      await service.captureTaskPerformance("agent-1", "FN-7532");
+
+      expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "reflection:captured",
+        agentId: "agent-1",
+        taskId: "FN-7532",
+        metadata: expect.objectContaining({
+          agentId: "agent-1",
+          trigger: "post-task",
+          taskId: "FN-7532",
+          retryReworkCount: 1,
+          filesTouchedCount: 1,
+          packagesTouchedCount: 1,
+          verificationFileScoped: false,
+        }),
+      }));
+
+      const metadata = taskStore.recordRunAuditEvent.mock.calls[0][0].metadata;
+      expect(metadata).not.toHaveProperty("verificationScopeReason");
+      expect(metadata).not.toHaveProperty("summary");
+      expect(metadata).not.toHaveProperty("verificationCommands");
+      expectNoReflectionProse(metadata);
+    });
+
+    it("stays best-effort: emits reflection:failed and returns null when reflectionStore.createReflection throws", async () => {
+      const { agentStore, taskStore, reflectionStore } = createMockDeps();
+      taskStore.getTask.mockResolvedValue(makeTask({ id: "FN-7533", column: "done" }));
+      reflectionStore.createReflection.mockRejectedValue(new Error("disk unavailable"));
+
+      const service = new AgentReflectionService({ agentStore, taskStore, reflectionStore, rootDir: tempRoot });
+      const reflection = await service.captureTaskPerformance("agent-1", "FN-7533");
+
+      expect(reflection).toBeNull();
+      expect(taskStore.recordRunAuditEvent).toHaveBeenCalledWith(expect.objectContaining({
+        mutationType: "reflection:failed",
+        metadata: expect.objectContaining({ errorClass: "Error" }),
+      }));
     });
   });
 

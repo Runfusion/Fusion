@@ -30,6 +30,14 @@
  * once per (taskId, watchedStage, reason) — repeated `tick()`s for the same
  * still-withheld reason do not re-emit until the reason changes or the task
  * leaves the withheld state, so the audit trail isn't spammed every poll.
+ *
+ * FNXC:PlannerOversight 2026-07-04-19:45:
+ * FN-7551 adds the optional `onConfirmationResolved` handler, invoked from
+ * `resolveConfirmation` for both "approved" and "denied" outcomes so the
+ * engine wiring (`project-engine.ts`) can emit a matching
+ * `emitOverseerConfirmation({..., outcome: "succeeded"|"skipped"})`
+ * resolution entry through the FN-7520 façade. Purely additive/audit-only —
+ * it does not change the approve/deny execution semantics above.
  */
 
 import type { PlannerConfirmationRequest, PlannerRecoveryDecision, PlannerRecoveryObservation, Settings, Task } from "@fusion/core";
@@ -105,6 +113,24 @@ export interface PlannerRecoveryHandlers {
     decision: OverseerHumanControlDecision & { reason: OverseerHumanControlWithholdReason },
     ctx: PlannerRecoveryContext,
   ) => Promise<void>;
+  /**
+   * FNXC:PlannerOversight 2026-07-04-19:45:
+   * FN-7551: audit-only notification invoked from `resolveConfirmation` for
+   * BOTH `"approved"` and `"denied"` resolutions, mirroring the optional/
+   * never-throw contract of `recordHumanControlWithheld`. This handler must
+   * NOT perform (or influence) the approve/deny execution path itself —
+   * that remains `executeMergePrAction`/`executeDestructiveExternalAction`,
+   * invoked separately from `executeApproved`. Callers wire this to
+   * `emitOverseerConfirmation({..., outcome: resolution === "approved" ?
+   * "succeeded" : "skipped"})` so the intervention timeline shows both the
+   * request and its resolution. Optional; a missing handler is a pure no-op.
+   */
+  onConfirmationResolved?: (
+    taskId: string,
+    request: PlannerConfirmationRequest,
+    resolution: "approved" | "denied",
+    ctx: PlannerRecoveryContext,
+  ) => Promise<void>;
 }
 
 /** Minimal seam for fetching the current watched-stage observation for a task. */
@@ -174,6 +200,15 @@ export class PlannerRecoveryController {
    * on every subsequent poll while it remains withheld for the same reason.
    */
   private readonly lastWithheldReason = new Map<string, OverseerHumanControlWithholdReason>();
+  /**
+   * FNXC:PlannerOversight 2026-07-04-17:00:
+   * FN-7517 addition: last dispatched bounded-recovery action OR manually
+   * recorded operator action (see `recordManualAction`) per
+   * `(taskId, watchedStage)`, surfaced via `getLastAction` for the
+   * task-detail "explain current action" control. Purely additive
+   * inspection state — never read by `tick()`'s decision logic.
+   */
+  private readonly lastActions = new Map<string, { action: string; at: number }>();
 
   constructor(options: PlannerRecoveryControllerOptions) {
     this.snapshotProvider = normalizeProvider(options.snapshotProvider);
@@ -253,6 +288,7 @@ export class PlannerRecoveryController {
       const dispatched = await this.dispatch(decision, task, ctx);
       if (dispatched) {
         this.attempts.set(key, attemptCount + 1);
+        this.lastActions.set(key, { action: decision.action, at: ctx.now?.() ?? Date.now() });
       }
       return decision;
     } catch (err) {
@@ -451,6 +487,16 @@ export class PlannerRecoveryController {
         }
       }
 
+      // FN-7551: audit-only resolution notification, additive to the
+      // approve/deny execution above — never influences it. Best-effort.
+      if (this.handlers.onConfirmationResolved) {
+        try {
+          await this.handlers.onConfirmationResolved(taskId, resolved, resolution, ctx);
+        } catch (err) {
+          this.logger.warn(`onConfirmationResolved handler failed for ${taskId}: ${(err as Error)?.message ?? String(err)}`);
+        }
+      }
+
       return resolved;
     } catch (err) {
       this.logger.warn(`resolveConfirmation failed for ${taskId}: ${(err as Error)?.message ?? String(err)}`);
@@ -489,10 +535,40 @@ export class PlannerRecoveryController {
       }
     }
     this.lastWithheldReason.delete(taskId);
+    for (const key of [...this.lastActions.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.lastActions.delete(key);
+      }
+    }
   }
 
   /** Test/inspection seam: current attempt count for a `(taskId, watchedStage)` pair. */
   getAttemptCount(taskId: string, stage: string): number {
     return this.attempts.get(this.attemptKey(taskId, stage)) ?? 0;
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-04-17:00:
+   * FN-7517: the last dispatched bounded-recovery action label, or a
+   * manually recorded operator action (see `recordManualAction`), for a
+   * `(taskId, watchedStage)` pair. Read by the task-detail "explain current
+   * action" control via `ProjectEngine.explainOverseerTask`.
+   */
+  getLastAction(taskId: string, stage: string): string | undefined {
+    return this.lastActions.get(this.attemptKey(taskId, stage))?.action;
+  }
+
+  /**
+   * FNXC:PlannerOversight 2026-07-04-17:00:
+   * FN-7517: records a manual operator action (e.g. "manual_nudge" from the
+   * task-detail nudge button, "manual_stop" from the stop-oversight button)
+   * against a `(taskId, watchedStage)` pair so `getLastAction`/`explain`
+   * reflects operator-driven actions, not only autonomous bounded-recovery
+   * dispatches. Never mutates the attempt-budget registry — manual actions
+   * are guidance-only and do not consume/gate the autonomous recovery
+   * attempt budget.
+   */
+  recordManualAction(taskId: string, stage: string, action: string, now: () => number = Date.now): void {
+    this.lastActions.set(this.attemptKey(taskId, stage), { action, at: now() });
   }
 }

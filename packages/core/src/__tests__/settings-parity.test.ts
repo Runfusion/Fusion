@@ -425,7 +425,7 @@ describe("settings key parity", () => {
 
     expect(projectKeys).not.toContain("dashboardKeyboardShortcuts");
     expect(globalKeys).toContain("dashboardKeyboardShortcuts");
-    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ quickChat: "Space", terminal: "Ctrl+`" });
+    expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({ quickChat: "Space", terminal: "Ctrl+`", openFiles: "Ctrl+E", openSettings: "Ctrl+,", openCommandCenter: "Ctrl+K", newTask: "Ctrl+Shift+N" });
     expect((DEFAULT_PROJECT_SETTINGS as Record<string, unknown>).dashboardKeyboardShortcuts).toBeUndefined();
   });
 

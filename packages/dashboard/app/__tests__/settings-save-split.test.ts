@@ -268,6 +268,68 @@ describe("splitSettingsSave", () => {
     expect(projectPatch).toEqual({ gitlabEnabled: false, gitlabAuthToken: "project-token", gitlabAuthTokenType: "project" });
   });
 
+  /*
+  FNXC:GitLabEnablement 2026-07-04-00:00:
+  FN-7535 regression repro: scoped global initials omit `gitlabEnabled` (the operator has never
+  saved a global value before) while the merged/project-effective `initialValues` happens to equal
+  the new edited value. Before the fix, the changed-only comparison fell back to `initialValues`
+  when the scoped global object lacked the key, so this genuine global edit was misclassified as
+  "unchanged" and dropped from the global patch entirely.
+  */
+  it("persists an explicit global GitLab edit when scoped global initials omit the key but merged initialValues matches the new value", () => {
+    const initialScopedValues = {
+      global: {}, // operator has never saved global GitLab settings before; key is absent, not `undefined`
+      project: { gitlabEnabled: false },
+    } as never;
+
+    const { globalPatch, projectPatch } = splitSettingsSave({
+      payload: { gitlabEnabled: true },
+      // The merged/project-effective initialValues happens to already be `true`
+      // (e.g. inherited default or a stale merge) — this must NOT suppress a
+      // genuine global edit.
+      initialValues: { gitlabEnabled: true } as never,
+      initialScopedValues,
+      activeSection: "global-general",
+    });
+
+    expect(globalPatch).toEqual({ gitlabEnabled: true });
+    expect(projectPatch).toEqual({});
+  });
+
+  it("does not emit a spurious global GitLab write when the scoped global initial already matches the unchanged value", () => {
+    const initialScopedValues = {
+      global: { gitlabEnabled: true },
+      project: { gitlabEnabled: false },
+    } as never;
+
+    const { globalPatch } = splitSettingsSave({
+      payload: { gitlabEnabled: true },
+      initialValues: { gitlabEnabled: true } as never,
+      initialScopedValues,
+      activeSection: "global-general",
+    });
+
+    expect(globalPatch).toEqual({});
+  });
+
+  it("treats a present-but-undefined scoped global GitLab key as unset, not as the merged fallback", () => {
+    const initialScopedValues = {
+      global: { gitlabEnabled: undefined },
+      project: { gitlabEnabled: true },
+    } as never;
+
+    const { globalPatch } = splitSettingsSave({
+      payload: { gitlabEnabled: true },
+      // Merged initialValues also happens to be true, but the scoped global key
+      // is explicitly present-but-undefined (unset) — the edit must still land.
+      initialValues: { gitlabEnabled: true } as never,
+      initialScopedValues,
+      activeSection: "global-general",
+    });
+
+    expect(globalPatch).toEqual({ gitlabEnabled: true });
+  });
+
   it("clears a project GitLab token with null-as-delete while preserving selected token type", () => {
     const initialScopedValues = {
       global: {},

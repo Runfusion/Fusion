@@ -163,7 +163,8 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   memoryBackendType: "memory.agentsGetMemorySearchMemoryGetAndMemory",
   // MergeSection
   autoMerge: "merge.whenEnabledTasksThatPassReviewAreAutomatically",
-  planApprovalMode: "merge.planApprovalModeWorkflow",
+  // FN-7557: planApprovalMode defaults to auto-approve-all; the "(default)" marker moved to the auto-approve option.
+  planApprovalMode: "merge.planApprovalModeAutoApproveAll",
   maxAutoMergeRetries: "merge.positiveIntegerRetryCapForAutoMergeConflict",
   merger: "merge.dangerousCompatibilityEscapeHatchLeaveOffUnlessYou",
   testMode: "merge.forcesAllAILanesToUseTheDeterministic",

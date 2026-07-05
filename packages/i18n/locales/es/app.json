@@ -1362,8 +1362,6 @@
     "sendMessageFailed": "Error al enviar el mensaje",
     "sendRoomMessageFailed": "Error al enviar el mensaje al canal",
     "sessionsGroupLabel": "Sesiones",
-    "showPlainText": "Mostrar texto sin formato",
-    "showRenderedMarkdown": "Mostrar markdown renderizado",
     "skillSuggestions": "Sugerencias de habilidades",
     "startNewChat": "Iniciar un nuevo chat",
     "startNewConversation": "Iniciar una nueva conversación",

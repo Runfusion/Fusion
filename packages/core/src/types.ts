@@ -1,4 +1,5 @@
 import type { InReviewStallSignal } from "./in-review-stall.js";
+import type { PlannerOverseerRuntimeSnapshot } from "./planner-overseer-state.js";
 import type { ModelPricing } from "./model-pricing.js";
 import type { InReviewStalledSignal } from "./in-review-stalled.js";
 import type { StalePausedReviewSignal } from "./stale-paused-review.js";
@@ -2473,6 +2474,17 @@ export interface Task {
    *  "inherit workflow default" — see `resolveEffectivePlannerOversightLevel` in
    *  workflow-settings-resolver.ts for precedence. */
   plannerOversightLevel?: PlannerOversightLevel;
+  /**
+   * FNXC:PlannerOversight 2026-07-04-00:00:
+   * FN-7531 transient, engine-populated snapshot of the planner overseer's
+   * current runtime state (idle/watching/steering/recovering/awaiting-
+   * confirmation), assembled from the FN-7511 `PlannerOverseerMonitor` +
+   * FN-7512/FN-7513 `PlannerRecoveryController` registries. Attached
+   * best-effort to the `GET /api/tasks` payload (mirroring the additive
+   * `branchProgress` board-payload convention) — NEVER written to the
+   * store or task.json. Consumed by FN-7516's `TaskCard` badge.
+   */
+  plannerOverseerState?: PlannerOverseerRuntimeSnapshot;
   /** Explicitly assigned agent ID for task-agent linking. Distinct from Agent.taskId active execution state. */
   assignedAgentId?: string;
   /** Per-task node override. When set, this task routes to the specified node instead of the project's default node. Undefined means use the project default. Use empty string to explicitly clear. */
@@ -3029,11 +3041,23 @@ export interface McpServersSettings {
   servers?: McpServerDefinition[];
 }
 
+/*
+FNXC:DashboardShortcuts 2026-07-04-00:00:
+FN-7553 adds four more configurable actions on top of the FN-7494/FN-7507 base (quickChat, terminal), each reusing an existing App navigation handler (no new nav destinations). All fields share blank-to-disable semantics: an empty string disables that action's runtime listener.
+*/
 export interface DashboardKeyboardShortcuts {
   /** Opens the dashboard Quick Chat surface. Empty string disables this shortcut. Default: "Space". */
   quickChat?: string;
   /** Opens or toggles the dashboard Terminal surface. Empty string disables this shortcut. Default: "Ctrl+`". */
   terminal?: string;
+  /** Opens the dashboard Files browser. Empty string disables this shortcut. Default: "Ctrl+E". */
+  openFiles?: string;
+  /** Opens the dashboard Settings view. Empty string disables this shortcut. Default: "Ctrl+,". */
+  openSettings?: string;
+  /** Opens the dashboard Command Center view. Empty string disables this shortcut. Default: "Ctrl+K". */
+  openCommandCenter?: string;
+  /** Opens the New Task modal. Empty string disables this shortcut. Default: "Ctrl+Shift+N". */
+  newTask?: string;
 }
 
 export interface GlobalSettings {
@@ -4123,6 +4147,9 @@ export interface ProjectSettings {
   /**
    * FNXC:PlanApproval 2026-06-26-00:00:
    * Per-project setting to control plan approval for every task: workflow defers to the per-workflow requirePlanApproval setting, auto-approve-all bypasses approval for all tasks, and require-all parks every approved spec for manual approval.
+   *
+   * FNXC:PlanApproval 2026-07-04-00:00:
+   * FN-7557: default is now "auto-approve-all" (previously deferred to workflow via "workflow"). Unset/new projects bypass the manual awaiting-approval gate by default; projects with an explicit stored value are unaffected.
    */
   planApprovalMode?: "workflow" | "auto-approve-all" | "require-all";
   /** Controls task-worker execution mode.
@@ -4982,6 +5009,17 @@ export interface ArchivedTaskEntry {
   error?: string;
   /** User assigned to review this task (used during review handoff) */
   assigneeUserId?: string;
+  /**
+   * FNXC:BranchGroupCompletion 2026-07-04-00:00:
+   * FN-7534: frozen merge-confirmation snapshot, captured at archive time. Previously
+   * dropped entirely on archival, which meant a branch-group member that had already
+   * landed before being archived could never be told apart from one that never landed —
+   * both looked identical (mergeDetails undefined) to isBranchGroupMemberLanded once
+   * archived. Persisting it here lets an archived-but-already-landed member keep
+   * counting as landed for branch-group completion instead of regressing to "pending"
+   * and permanently deadlocking an otherwise-complete group.
+   */
+  mergeDetails?: MergeDetails;
 }
 
 /** Type of planning question presented to the user */
@@ -6357,6 +6395,7 @@ export type RunAuditMutationType =
   | "mergeQueue:lease-expired"
   | "task:handoff"
   | "task:handoff-invariant-violation"
+  | "overseer:intervention"
   | (string & {});
 
 /** Input for recording a run-audit event. */
@@ -6420,6 +6459,72 @@ export interface RunAuditEventFilter {
   /** Maximum number of events to return. */
   limit?: number;
 }
+
+// ── Planner Intervention Timeline Types ─────────────────────────────────────
+
+/**
+ * FNXC:PlannerOversight 2026-07-04-18:00:
+ * FN-7519 introduces a structured intervention-timeline entry so operators can
+ * see, per task, exactly why and how the planner overseer stepped in. Each
+ * entry records six field groups: the watched STAGE (executor / reviewer /
+ * merger / pull-request / workflow-gate), the REASON for intervention, the
+ * ACTION taken, the OUTCOME, the bounded-recovery ATTEMPT count/limit, and
+ * SOURCE LINKS to supporting evidence (agent logs, review comments, failed
+ * checks, merge errors, or PR state). Entries persist as run-audit events
+ * under the canonical `overseer:intervention` mutation type (see
+ * `OVERSEER_INTERVENTION_MUTATION` and `packages/core/src/planner-intervention.ts`)
+ * so no parallel audit store is introduced. This task owns the entry SHAPE
+ * and its record/read helpers only — FN-7511/FN-7512 produce interventions
+ * and FN-7520 wires the emission call-sites at overseer decision points.
+ */
+export type PlannerOversightStage = "executor" | "reviewer" | "merger" | "pull-request" | "workflow-gate";
+
+export type PlannerInterventionAction =
+  | "observe"
+  | "inject-guidance"
+  | "retry"
+  | "request-fix"
+  | "escalate"
+  | "request-confirmation";
+
+export type PlannerInterventionOutcome = "succeeded" | "failed" | "pending" | "awaiting-confirmation" | "skipped";
+
+/** A single piece of evidence backing an intervention entry (agent log, review comment, failed check, merge error, or PR state; `url` is a generic fallback). */
+export interface PlannerInterventionSourceLink {
+  kind: "agent-log" | "review-comment" | "failed-check" | "merge-error" | "pr-state" | "url";
+  /** Human-readable label for the link (e.g. "Agent log", "Review comment #3"). */
+  label: string;
+  /** Opaque identifier for the target evidence (run ID, comment ID, check name, etc). Optional — the UI degrades gracefully when absent. */
+  target?: string;
+  /** Direct URL to the evidence, when available. Optional. */
+  url?: string;
+}
+
+/** A single planner-overseer intervention timeline entry (see FNXC note above for the six field groups). */
+export interface PlannerInterventionEntry {
+  id: string;
+  taskId: string;
+  /** ISO-8601 timestamp when the intervention occurred. */
+  timestamp: string;
+  stage: PlannerOversightStage;
+  /** Why the overseer intervened (free-text, operator-facing). */
+  reason: string;
+  action: PlannerInterventionAction;
+  outcome: PlannerInterventionOutcome;
+  /** Current attempt count for bounded recovery. Present only for recovery-style actions (e.g. retry/request-fix). */
+  attemptCount?: number;
+  /** Attempt limit for bounded recovery. Present only alongside `attemptCount`. */
+  attemptLimit?: number;
+  /** Evidence links supporting this intervention (agent logs, review comments, failed checks, merge errors, PR state). */
+  sourceLinks?: PlannerInterventionSourceLink[];
+  /** Heartbeat run ID that produced this intervention, if applicable. */
+  runId?: string;
+  /** Agent ID that produced this intervention, if applicable. */
+  agentId?: string;
+}
+
+/** Canonical run-audit mutation type used to persist planner-intervention entries. Single writer: `recordPlannerIntervention` (see `packages/core/src/planner-intervention.ts`); FN-7520 reuses this helper rather than emitting `overseer:intervention` events directly. */
+export const OVERSEER_INTERVENTION_MUTATION = "overseer:intervention" as const;
 
 // ── Agent Permission Types ──────────────────────────────────────────────────
 
@@ -7319,7 +7424,17 @@ export interface AgentStats {
 /** Trigger source for an agent self-reflection run */
 export type ReflectionTrigger = "periodic" | "post-task" | "manual" | "user-requested";
 
-/** Quantitative snapshot captured by a reflection */
+/**
+ * FNXC:AgentReflection 2026-07-04-00:00:
+ * FN-7528 adds a deterministic, non-LLM post-task performance capture that runs on every
+ * completed task (guarded by settings.reflectionEnabled), distinct from the LLM-backed
+ * generateReflection path. These extra fields are a compact structured snapshot — duration
+ * drivers, packages/files touched, verification command(s)/scope, and retry/rework count.
+ * All fields are optional (backward-compatible with existing JSONL records) and outcome-only:
+ * no free-form prose, prompt text, or reflection narrative is ever stored here or emitted to
+ * run-audit (FN-7158 ids/counts/outcomes-only contract). Omit a field rather than fabricate it
+ * when its source data is unavailable.
+ */
 export interface ReflectionMetrics {
   /** Tasks completed in the analysis window */
   tasksCompleted?: number;
@@ -7333,6 +7448,22 @@ export interface ReflectionMetrics {
   errorCount?: number;
   /** Recurring error patterns */
   commonErrors?: string[];
+  /** Single task's wall-clock duration in milliseconds (distinct from the aggregate avgDurationMs) */
+  durationMs?: number;
+  /** Short deterministic labels describing what drove the duration (e.g. "retries:2", "rework:1", "verification-broad") — never free-form prose */
+  durationDrivers?: string[];
+  /** Package names derived from touched file paths (e.g. "@fusion/core" or "packages/core") */
+  packagesTouched?: string[];
+  /** Count of files touched, when available */
+  filesTouchedCount?: number;
+  /** Verification command(s) recorded for the task */
+  verificationCommands?: string[];
+  /** reworkCount + retry/recovery count */
+  retryReworkCount?: number;
+  /** True when verification was file-scoped, false when broader/full-suite */
+  verificationFileScoped?: boolean;
+  /** Short reason label when verification scope was broader (e.g. "whole-package test script has no file-scoped filter"); omitted when file-scoped */
+  verificationScopeReason?: string;
 }
 
 /** A persisted self-reflection generated by an agent */

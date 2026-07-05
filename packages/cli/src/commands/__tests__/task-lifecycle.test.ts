@@ -1462,6 +1462,35 @@ describe("syncGroupPrCallback (U6)", () => {
     const sync = syncGroupPrCallback(github as never);
     await expect(sync({ cwd: "/tmp/project", group: { ...group, prNumber: undefined } as never, members })).rejects.toThrow(/no persisted prNumber/);
   });
+
+  /*
+  FNXC:BranchGroupCompletion 2026-07-04-00:00:
+  FN-7532 surface-parity regression: the PR-body checklist must use the SAME
+  isBranchGroupMemberLanded predicate as the dashboard route and CLI serializer —
+  a landed member ticks [x] and counts toward "Completion: x/N landed", while a
+  member merge-confirmed against a sibling/mismatched branch (merge-target-safety)
+  must NOT tick or count, even though it is otherwise "merge confirmed".
+  */
+  it("ticks landed members and counts only genuinely-landed ones toward the completion line", async () => {
+    const landedMembers = [
+      { id: "FN-A", title: "Alpha", mergeDetails: { mergeConfirmed: true, mergeTargetSource: "branch-group-integration", mergeTargetBranch: group.branchName } },
+      { id: "FN-B", title: "Beta", mergeDetails: { mergeConfirmed: true, mergeTargetSource: "branch-group-integration", mergeTargetBranch: "fusion/fn-sibling" } },
+      { id: "FN-C", title: "Gamma" },
+    ] as never[];
+    const github = {
+      getPrStatus: vi.fn(async () => ({ number: 42, url: "https://github.com/owner/repo/pull/42", status: "open", title: "T", headBranch: "h", baseBranch: "main", commentCount: 0 })),
+      updatePr: vi.fn(async () => ({ number: 42, url: "https://github.com/owner/repo/pull/42", status: "open", title: "T2", headBranch: "h", baseBranch: "main", commentCount: 0 })),
+    };
+    const sync = syncGroupPrCallback(github as never);
+    await sync({ cwd: "/tmp/project", group: group as never, members: landedMembers });
+    const body = (github.updatePr.mock.calls[0][0] as { body: string }).body;
+    // Only FN-A landed (matching branch); FN-B (sibling-branch mismatch) and
+    // FN-C (no merge details) must NOT count, even though FN-B is mergeConfirmed.
+    expect(body).toContain("Completion: 1/3 landed");
+    expect(body).toContain("- [x] FN-A: Alpha");
+    expect(body).toContain("- [ ] FN-B: Beta");
+    expect(body).toContain("- [ ] FN-C: Gamma");
+  });
 });
 
 describe("createGroupPrCallback", () => {

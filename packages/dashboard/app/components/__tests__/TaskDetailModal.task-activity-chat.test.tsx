@@ -338,6 +338,167 @@ describe("TaskDetailModal Activity and planner Chat tab integration", () => {
     }
   });
 
+  // FN-7536 regression: Android/mobile Chrome can fire a `window` resize/scroll as an echo of the
+  // SAME tap that opens the Activity menu (URL-bar collapse, tapped-element auto-scroll-into-view),
+  // distinct from the iOS visualViewport echo above. Before the fix this unguarded window listener
+  // closed the menu the instant it opened; now it must be guarded the same way visualViewport is,
+  // while a later, real resize/scroll still closes the menu.
+  it("keeps the mobile Android Activity menu usable through the opening window resize/scroll echo", () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const performanceNowSpy = vi.spyOn(performance, "now").mockReturnValue(100);
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.classList.contains("detail-tab--activity")) {
+        return { x: 24, y: 96, top: 96, right: 116, bottom: 132, left: 24, width: 92, height: 36, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      mockRawLogs([]);
+      renderModal();
+      const activityButton = screen.getByRole("button", { name: "Activity" });
+
+      fireEvent.click(activityButton);
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+
+      // Same-gesture echo: still inside the opening guard window, so it must reposition, not close.
+      performanceNowSpy.mockReturnValue(120);
+      act(() => {
+        fireEvent.scroll(window);
+        fireEvent(window, new Event("resize"));
+      });
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+      expect(activityButton).toHaveAttribute("aria-expanded", "true");
+
+      // A later, real resize (well past the opening guard window) is a true viewport change and
+      // must still close the menu.
+      performanceNowSpy.mockReturnValue(10_000);
+      act(() => {
+        fireEvent(window, new Event("resize"));
+      });
+      expect(screen.queryByRole("menu", { name: "Activity views" })).not.toBeInTheDocument();
+      expect(activityButton).toHaveAttribute("aria-expanded", "false");
+
+      // Orientation change follows the same guarded path.
+      fireEvent.click(activityButton);
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+      performanceNowSpy.mockReturnValue(20_000);
+      act(() => {
+        fireEvent(window, new Event("orientationchange"));
+      });
+      expect(screen.queryByRole("menu", { name: "Activity views" })).not.toBeInTheDocument();
+    } finally {
+      performanceNowSpy.mockRestore();
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
+  // FN-7536 regression: `.detail-tabs` is an intentional horizontal overflow scroller. Scrolling it
+  // (e.g. a mobile drag that brings the Activity tab further into view while the menu is open) must
+  // reposition the menu, never close it — only a genuine page/viewport scroll outside the tab
+  // scroller is a "true viewport change".
+  it("repositions instead of closing the Activity menu when the .detail-tabs scroller itself scrolls", () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const performanceNowSpy = vi.spyOn(performance, "now").mockReturnValue(100);
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.classList.contains("detail-tab--activity")) {
+        return { x: 24, y: 96, top: 96, right: 116, bottom: 132, left: 24, width: 92, height: 36, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      mockRawLogs([]);
+      renderModal();
+      const activityButton = screen.getByRole("button", { name: "Activity" });
+
+      fireEvent.click(activityButton);
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+
+      // Move well past the opening guard window so only the scroll-origin exemption is under test.
+      performanceNowSpy.mockReturnValue(10_000);
+      const tabsScroller = document.querySelector(".detail-tabs");
+      expect(tabsScroller).not.toBeNull();
+      act(() => {
+        fireEvent.scroll(tabsScroller as Element);
+      });
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+      expect(activityButton).toHaveAttribute("aria-expanded", "true");
+
+      // A real page scroll (not originating in the tab scroller) still closes the menu.
+      act(() => {
+        fireEvent.scroll(window);
+      });
+      expect(screen.queryByRole("menu", { name: "Activity views" })).not.toBeInTheDocument();
+    } finally {
+      performanceNowSpy.mockRestore();
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
+  // FN-7536 regression: the .floating-window--task-detail popup host must ALSO honor the opening
+  // guard — a same-gesture window scroll/resize echo while the menu is opening inside a popup must
+  // not close it, matching the fixed-modal-host behavior above.
+  it("keeps the Activity menu open through an opening-tap window scroll echo inside the popup host", () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    const performanceNowSpy = vi.spyOn(performance, "now").mockReturnValue(100);
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.classList.contains("detail-tab--activity")) {
+        return { x: 144, y: 90, top: 90, right: 236, bottom: 126, left: 144, width: 92, height: 36, toJSON: () => ({}) } as DOMRect;
+      }
+      return originalGetBoundingClientRect.call(this);
+    };
+
+    try {
+      mockRawLogs([]);
+      render(
+        <FloatingWindow
+          windowKey="task-detail-FN-7536"
+          title="FN-7536"
+          onClose={noop}
+          hideHeader
+          dragHandleSelector=".task-detail-content--embedded > .modal-header"
+          className="floating-window--task-detail"
+          layer="task-detail"
+        >
+          <TaskDetailContent
+            task={makeTask({ id: "FN-7536", column: "in-progress" as any, log: [], steeringComments: [] })}
+            embedded
+            onRequestClose={noop}
+            onMoveTask={noopMove}
+            onDeleteTask={noopDelete}
+            onMergeTask={noopMerge}
+            onOpenDetail={noopOpenDetail}
+            addToast={noop}
+          />
+        </FloatingWindow>,
+      );
+
+      const activityButton = screen.getByRole("button", { name: "Activity" });
+      fireEvent.click(activityButton);
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+      const menu = screen.getByRole("menu", { name: "Activity views" });
+      expect(menu.parentElement).toBe(document.body);
+
+      // Same-gesture echo inside the popup host: must reposition, not close.
+      performanceNowSpy.mockReturnValue(150);
+      act(() => {
+        fireEvent.scroll(window);
+      });
+      expect(screen.getByRole("menu", { name: "Activity views" })).toBeInTheDocument();
+
+      // A later real scroll still closes it.
+      performanceNowSpy.mockReturnValue(10_000);
+      act(() => {
+        fireEvent.scroll(window);
+      });
+      expect(screen.queryByRole("menu", { name: "Activity views" })).not.toBeInTheDocument();
+    } finally {
+      performanceNowSpy.mockRestore();
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+    }
+  });
+
   // FN-7375 regression: the position:fixed Activity menu is anchored to the layout viewport, so a
   // diverging window.visualViewport (pinch-zoom / open mobile keyboard: smaller width, nonzero
   // offsetLeft) must NOT shift the menu away from the trigger. Symptom was the popup rendering

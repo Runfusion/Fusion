@@ -19,6 +19,7 @@ const EXPECTED_KEY_OWNING_SECTIONS: Record<string, "global" | "project"> = {
   notifications: "global",
   experimental: "global",
   "global-general": "global",
+  "keyboard-shortcuts": "global",
   "global-models": "global",
   "node-sync": "global",
   "research-global": "global",

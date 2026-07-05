@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS,
+  SHORTCUT_CATEGORIES,
   describeShortcutValidation,
   findShortcutConflicts,
+  getShortcutActionLabel,
   isEditableShortcutTarget,
   isTextEntryShortcutTarget,
   normalizeKeyboardShortcut,
@@ -16,7 +18,14 @@ function keydown(init: KeyboardEventInit): KeyboardEvent {
 
 describe("keyboard shortcut utilities", () => {
   it("normalizes defaults, Space, Escape, modifiers, and disabled values", () => {
-    expect(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS).toEqual({ quickChat: "Space", terminal: "Ctrl+`" });
+    expect(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS).toEqual({
+      quickChat: "Space",
+      terminal: "Ctrl+`",
+      openFiles: "Ctrl+E",
+      openSettings: "Ctrl+,",
+      openCommandCenter: "Ctrl+K",
+      newTask: "Ctrl+Shift+N",
+    });
     expect(normalizeKeyboardShortcut(" ").disabled).toBe(true);
     expect(normalizeKeyboardShortcut("Space")).toMatchObject({ valid: true, normalized: "Space", key: "Space" });
     expect(normalizeKeyboardShortcut("Esc")).toMatchObject({ valid: true, normalized: "Escape", key: "Escape" });
@@ -51,7 +60,31 @@ describe("keyboard shortcut utilities", () => {
 
   it("resolves missing settings to documented defaults", () => {
     expect(resolveDashboardKeyboardShortcuts(undefined)).toEqual(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS);
-    expect(resolveDashboardKeyboardShortcuts({ quickChat: "", terminal: "Alt+T" })).toEqual({ quickChat: "", terminal: "Alt+T" });
+    expect(resolveDashboardKeyboardShortcuts({ quickChat: "", terminal: "Alt+T" })).toEqual({
+      ...DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS,
+      quickChat: "",
+      terminal: "Alt+T",
+    });
+  });
+
+  it("covers every action in categories, labels, and default-conflict-free bindings (FN-7553)", () => {
+    const categorizedActions = SHORTCUT_CATEGORIES.flatMap((category) => category.actions).sort();
+    const allActions = Object.keys(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS).sort();
+    expect(categorizedActions).toEqual(allActions);
+    allActions.forEach((action) => {
+      expect(getShortcutActionLabel(action as keyof typeof DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS)).toBeTruthy();
+    });
+    expect(findShortcutConflicts(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS)).toEqual([]);
+    expect(describeShortcutValidation(DEFAULT_DASHBOARD_KEYBOARD_SHORTCUTS)).toBeNull();
+  });
+
+  it("resolves, matches, and validates each new FN-7553 action", () => {
+    expect(resolveDashboardKeyboardShortcuts({ openFiles: "" })).toMatchObject({ openFiles: "" });
+    expect(shortcutMatchesEvent("Ctrl+E", keydown({ key: "e", ctrlKey: true }))).toBe(true);
+    expect(shortcutMatchesEvent("Ctrl+,", keydown({ key: ",", ctrlKey: true }))).toBe(true);
+    expect(shortcutMatchesEvent("Ctrl+K", keydown({ key: "k", ctrlKey: true }))).toBe(true);
+    expect(shortcutMatchesEvent("Ctrl+Shift+N", keydown({ key: "n", ctrlKey: true, shiftKey: true }))).toBe(true);
+    expect(describeShortcutValidation({ openFiles: "" })).toBeNull();
   });
 
   it("identifies editable and interactive targets that should not be captured by global shortcuts", () => {

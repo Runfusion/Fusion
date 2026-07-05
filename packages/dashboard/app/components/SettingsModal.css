@@ -2528,21 +2528,59 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 
 /*
 FNXC:DashboardShortcuts 2026-07-04-00:00:
-Keyboard shortcut fields need to sit as a compact pair on desktop while wrapping naturally in the Settings modal and embedded Settings view on mobile. Use token spacing and existing input styling so validation states do not create orphaned labels or button shells.
+FN-7553's dedicated Keyboard Shortcuts section groups every action under a category heading and gives each row a press-to-record capture control (input + Record + Clear) instead of the old bare text input. Token spacing/colors only; wraps to a single column under 768px so the record/clear buttons never overflow the row on mobile.
 */
-.settings-keyboard-shortcuts__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-md);
+.shortcut-category {
+  margin-top: var(--space-lg);
 }
 
-.settings-keyboard-shortcuts__grid > .form-group {
+.shortcut-category:first-of-type {
   margin-top: 0;
-  padding: 0;
+}
+
+.shortcut-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.shortcut-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-capture {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.shortcut-capture__input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.shortcut-capture__input--invalid {
+  border-color: var(--color-error);
+}
+
+.shortcut-capture__record--active {
+  color: var(--color-warning);
+}
+
+.shortcut-conflict-banner {
+  color: var(--color-error);
 }
 
 @media (max-width: 768px) {
-  .settings-keyboard-shortcuts__grid {
-    grid-template-columns: 1fr;
+  .shortcut-capture {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .shortcut-capture__input {
+    width: 100%;
   }
 }

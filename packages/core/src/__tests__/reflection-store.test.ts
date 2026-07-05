@@ -421,6 +421,102 @@ describe("ReflectionStore", () => {
     });
   });
 
+  // FNXC:AgentReflection 2026-07-04-00:00:
+  // FN-7528 adds a compact structured post-task ReflectionMetrics snapshot (duration, packages/files
+  // touched, verification command/scope, retry/rework count). The store persists `metrics` verbatim,
+  // so these tests assert the extended fields survive a create -> read round-trip untouched, and that
+  // a single captured record is enough to make getLatestReflection/getPerformanceSummary meaningful.
+  describe("extended post-task metrics (FN-7528)", () => {
+    it("round-trips the extended structured metrics fields through createReflection/getReflections", async () => {
+      const created = await store.createReflection({
+        agentId: "agent-structured",
+        trigger: "post-task",
+        taskId: "FN-7528",
+        metrics: {
+          tasksCompleted: 1,
+          tasksFailed: 0,
+          durationMs: 45_000,
+          durationDrivers: ["retries:1", "verification-broad"],
+          packagesTouched: ["@fusion/core", "@fusion/engine"],
+          filesTouchedCount: 3,
+          verificationCommands: ["pnpm --filter @fusion/core exec vitest run src/foo.test.ts"],
+          retryReworkCount: 1,
+          verificationFileScoped: false,
+          verificationScopeReason: "whole-package test script has no file-scoped filter",
+        },
+        insights: [],
+        suggestedImprovements: [],
+        summary: "Completed FN-7528 in 45s with one retry.",
+      });
+
+      expect(created.metrics).toEqual({
+        tasksCompleted: 1,
+        tasksFailed: 0,
+        durationMs: 45_000,
+        durationDrivers: ["retries:1", "verification-broad"],
+        packagesTouched: ["@fusion/core", "@fusion/engine"],
+        filesTouchedCount: 3,
+        verificationCommands: ["pnpm --filter @fusion/core exec vitest run src/foo.test.ts"],
+        retryReworkCount: 1,
+        verificationFileScoped: false,
+        verificationScopeReason: "whole-package test script has no file-scoped filter",
+      });
+
+      const [reflection] = await store.getReflections("agent-structured", 1);
+      expect(reflection.metrics).toEqual(created.metrics);
+    });
+
+    it("yields a non-null, meaningful getLatestReflection/getPerformanceSummary from a single captured record", async () => {
+      const agentId = "agent-structured-meaningful";
+      await store.createReflection({
+        agentId,
+        trigger: "post-task",
+        taskId: "FN-9001",
+        metrics: {
+          tasksCompleted: 1,
+          tasksFailed: 0,
+          durationMs: 12_000,
+          retryReworkCount: 0,
+          verificationFileScoped: true,
+        },
+        insights: [],
+        suggestedImprovements: [],
+        summary: "Completed FN-9001 in 12s with no retries.",
+      });
+
+      const latest = await store.getLatestReflection(agentId);
+      expect(latest).not.toBeNull();
+      expect(latest?.metrics.durationMs).toBe(12_000);
+
+      const summary = await store.getPerformanceSummary(agentId);
+      expect(summary.totalTasksCompleted).toBe(1);
+      expect(summary.totalTasksFailed).toBe(0);
+      expect(summary.successRate).toBe(1);
+      expect(summary.recentReflectionCount).toBe(1);
+    });
+
+    it("omits unavailable fields rather than persisting fabricated placeholders", async () => {
+      const agentId = "agent-structured-omitted";
+      const created = await store.createReflection({
+        agentId,
+        trigger: "post-task",
+        taskId: "FN-9002",
+        metrics: {
+          tasksCompleted: 1,
+          tasksFailed: 0,
+          // packagesTouched/verificationCommands intentionally omitted (source unavailable)
+        },
+        insights: [],
+        suggestedImprovements: [],
+        summary: "Completed FN-9002; verification source unavailable.",
+      });
+
+      expect(created.metrics.packagesTouched).toBeUndefined();
+      expect(created.metrics.verificationCommands).toBeUndefined();
+      expect(created.metrics.verificationScopeReason).toBeUndefined();
+    });
+  });
+
   describe("deleteReflections", () => {
     it("removes the agent reflection file", async () => {
       const agentId = "agent-delete";

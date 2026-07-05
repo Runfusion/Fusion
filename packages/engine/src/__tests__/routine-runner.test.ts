@@ -9,10 +9,26 @@ import type {
   Settings,
 } from "@fusion/core";
 import type { HeartbeatMonitor } from "../agent-heartbeat.js";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+
+/**
+ * Write a real SQLite database file so the production backup path's `PRAGMA quick_check`
+ * verification passes (mirrors packages/core/src/__tests__/backup.test.ts's fixture helper).
+ * Falls back to a placeholder file when the `sqlite3` CLI is unavailable — in that case
+ * verification also no-ops so the backup still succeeds.
+ */
+function writeTestDb(path: string): void {
+  const result = spawnSync("sqlite3", [path, "CREATE TABLE IF NOT EXISTS t(x); INSERT INTO t VALUES (1);"], {
+    encoding: "utf-8",
+  });
+  if (result.error || result.status !== 0) {
+    writeFileSync(path, "dummy database content");
+  }
+}
 
 // Default settings inline to avoid @fusion/core build dependency during tests
 const DEFAULT_SETTINGS: Settings = {
@@ -348,6 +364,84 @@ describe("RoutineRunner", () => {
 
       // After an error, the routine should not be in the in-flight map
       expect(runner.isRoutineRunning("routine-error-cleanup")).toBe(false);
+    });
+  });
+
+  /*
+  FNXC:DatabaseBackup 2026-07-04-00:00:
+  FN-7537 Symptom Verification: the reported bug was "Database Backup" succeeding on cron but failing on a
+  manual dashboard run. Both triggers share this exact RoutineRunner.executeCommand in-process backup
+  branch (guarded by `isInProcessBackupCommand(command) && this.options.taskStore`), so these tests assert
+  the invariant directly on the shared code path for both trigger kinds ("cron" and "api", the latter being
+  what `triggerManual` uses) rather than only the originally-reported reproduction.
+  */
+  describe("manual/cron backup parity and live output (FN-7537)", () => {
+    it("runs the in-process backup for both cron and manual (api) triggers, never shelling out", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "routine-backup-parity-"));
+      const fusionDir = join(tempDir, ".fusion");
+      await mkdir(fusionDir, { recursive: true });
+      writeTestDb(join(fusionDir, "fusion.db"));
+
+      try {
+        for (const triggerType of ["cron", "api"] as const) {
+          const routine = createMockRoutine({
+            id: `routine-backup-${triggerType}`,
+            command: "fn backup --create",
+            agentId: "",
+          });
+          const routineStore = createMockRoutineStore([routine]);
+          const runner = createRoutineRunner({
+            routineStore,
+            taskStore: createMockTaskStore({ fusionDir }),
+          });
+
+          const result = triggerType === "api"
+            ? await runner.triggerManual(`routine-backup-${triggerType}`)
+            : await runner.executeRoutine(`routine-backup-${triggerType}`, "cron");
+
+          expect(result.success).toBe(true);
+          expect(result.output).toContain("Backup created");
+        }
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("emits a step-start live event before the terminal output for a manual command/backup run", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "routine-backup-live-"));
+      const fusionDir = join(tempDir, ".fusion");
+      await mkdir(fusionDir, { recursive: true });
+      writeTestDb(join(fusionDir, "fusion.db"));
+
+      try {
+        const routine = createMockRoutine({
+          id: "routine-backup-live",
+          command: "fn backup --create",
+          agentId: "",
+        });
+        const routineStore = createMockRoutineStore([routine]);
+        const runner = createRoutineRunner({
+          routineStore,
+          taskStore: createMockTaskStore({ fusionDir }),
+        });
+
+        const events: Array<{ kind: string; data?: unknown }> = [];
+        const result = await runner.triggerManual("routine-backup-live", {
+          onStep: (data) => events.push({ kind: "step", data }),
+          onText: (delta) => events.push({ kind: "text", data: delta }),
+        });
+
+        expect(result.success).toBe(true);
+        expect(events[0]).toEqual(expect.objectContaining({ kind: "step", data: expect.objectContaining({ status: "started" }) }));
+        const completedStepIndex = events.findIndex((e) => e.kind === "step" && (e.data as { status?: string }).status === "completed");
+        expect(completedStepIndex).toBeGreaterThan(0);
+        // A step-start (and, once available, output) event must be observed before any terminal signal;
+        // RoutineRunner itself has no "complete" event type, so the invariant here is simply that
+        // incremental events fired at all — not only the returned final result.
+        expect(events.some((e) => e.kind === "step" && (e.data as { status?: string }).status === "started")).toBe(true);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
     });
   });
 

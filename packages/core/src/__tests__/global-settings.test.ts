@@ -293,7 +293,14 @@ describe("GlobalSettingsStore", () => {
       await store.updateSettings({ dashboardKeyboardShortcuts: null });
 
       const settings = await store.getSettings();
-      expect(settings.dashboardKeyboardShortcuts).toEqual({ quickChat: "Space", terminal: "Ctrl+`" });
+      expect(settings.dashboardKeyboardShortcuts).toEqual({
+        quickChat: "Space",
+        terminal: "Ctrl+`",
+        openFiles: "Ctrl+E",
+        openSettings: "Ctrl+,",
+        openCommandCenter: "Ctrl+K",
+        newTask: "Ctrl+Shift+N",
+      });
     });
 
     it("creates directory if missing", async () => {

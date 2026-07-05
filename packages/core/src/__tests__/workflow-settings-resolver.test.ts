@@ -150,6 +150,7 @@ describe("resolveEffectiveSettings (per-task)", () => {
       }
     }
     expect(eff.plannerOversightLevel).toBe("autonomous");
+    expect(eff.plannerOversightNotificationLevel).toBe("important");
   });
 
   it("a stored value for (workflow, project) is returned over the default", async () => {
@@ -294,6 +295,20 @@ describe("resolveEffectivePlannerOversightLevel", () => {
 
   it("uses workflow effective value when no task override", () => {
     expect(resolveEffectivePlannerOversightLevel(undefined, "observe")).toBe("observe");
+  });
+
+  // FN-7521: exercise every PlannerOversightLevel enum value as a winning task
+  // override (not just "steer"), so all four settable values are covered.
+  it("task override 'off' wins over a workflow effective value of 'autonomous'", () => {
+    expect(resolveEffectivePlannerOversightLevel("off", "autonomous")).toBe("off");
+  });
+
+  it("task override 'observe' wins over a workflow effective value of 'steer'", () => {
+    expect(resolveEffectivePlannerOversightLevel("observe", "steer")).toBe("observe");
+  });
+
+  it("task override 'autonomous' wins over a workflow effective value of 'off'", () => {
+    expect(resolveEffectivePlannerOversightLevel("autonomous", "off")).toBe("autonomous");
   });
 
   it("falls back to 'autonomous' when task override is an unknown/invalid string", () => {

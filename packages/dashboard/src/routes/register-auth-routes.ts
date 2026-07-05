@@ -251,6 +251,75 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return providerId === "github-copilot";
   }
 
+  function normalizeManualOAuthInputForProvider(providerId: string, input: string): string {
+    if (providerId !== "anthropic" && providerId !== "openai-codex") {
+      return input.trim();
+    }
+
+    const trimmed = input.trim();
+    if (!trimmed) {
+      return trimmed;
+    }
+
+    try {
+      const url = new URL(trimmed);
+      const searchCode = url.searchParams.get("code");
+      if (searchCode) {
+        if (url.protocol === "http:" || url.protocol === "https:") {
+          return trimmed;
+        }
+        const normalized = new URLSearchParams();
+        normalized.set("code", searchCode);
+        const searchState = url.searchParams.get("state");
+        if (searchState) {
+          normalized.set("state", searchState);
+        }
+        return normalized.toString();
+      }
+
+      const hash = url.hash.replace(/^#/, "").replace(/^\?/, "");
+      if (!hash) {
+        return trimmed;
+      }
+      const hashParams = new URLSearchParams(hash);
+      const hashCode = hashParams.get("code");
+      if (!hashCode) {
+        return trimmed;
+      }
+
+      /*
+      FNXC:ProviderAuth 2026-07-04-00:00:
+      Anthropic subscription and Codex pasted-login flows must accept the exact browser address bar after redirect, including providers/browsers that place OAuth `code` and `state` in the URL fragment or omit the URL scheme.
+      The upstream CLI parser treats a syntactically valid URL as search-only and schemeless localhost text as raw parameters, so normalize callback inputs to query-param text before resolving the pending manual-code prompt.
+      */
+      const normalized = new URLSearchParams();
+      normalized.set("code", hashCode);
+      const hashState = hashParams.get("state");
+      if (hashState) {
+        normalized.set("state", hashState);
+      }
+      return normalized.toString();
+    } catch {
+      const queryStart = trimmed.indexOf("?");
+      if (queryStart >= 0) {
+        const queryEnd = trimmed.indexOf("#", queryStart);
+        const query = trimmed.slice(queryStart + 1, queryEnd >= 0 ? queryEnd : undefined);
+        const params = new URLSearchParams(query);
+        const code = params.get("code");
+        if (code) {
+          const normalized = new URLSearchParams();
+          normalized.set("code", code);
+          const state = params.get("state");
+          if (state) {
+            normalized.set("state", state);
+          }
+          return normalized.toString();
+        }
+      }
+      return trimmed;
+    }
+  }
+
   function selectOauthOption(
     providerId: string,
     prompt: { options: Array<{ id: string; label?: string }> },
@@ -1158,7 +1227,7 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
       }
 
       activeLogin.inputSubmitted = true;
-      activeLogin.resolveInput(code.trim());
+      activeLogin.resolveInput(normalizeManualOAuthInputForProvider(toOauthLoginProviderId(provider), code));
       res.json({ success: true, submitted: true });
     } catch (err: unknown) {
       if (err instanceof ApiError) {

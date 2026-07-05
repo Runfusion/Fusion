@@ -100,6 +100,33 @@ describe("PlannerRecoveryController — human-control guard (FN-7514)", () => {
     expect(withheldDecision.reason).toBe("auto-merge-off-human-review");
   });
 
+  // FN-7521: Move-Task hard-cancel contract (AGENTS.md "Move-Task contract") —
+  // `moveTask(in-progress -> todo)` is a hard cancel. `resolveWatchedStage`
+  // (packages/engine/src/planner-overseer.ts, covered in planner-overseer.test.ts)
+  // already proves `todo` is a non-monitorable column that yields a `null`
+  // observation. This test proves the OTHER half of the composition end to
+  // end through the recovery controller: once a task is back in `todo` and
+  // its snapshot provider reports no observation (exactly what a real
+  // `PlannerOverseerMonitor.observeTask()` call returns post hard-cancel),
+  // `tick()` takes no action of any kind — not even a human-control-withheld
+  // notification, since there's nothing pending to withhold.
+  it("is inert with no action and no withheld-notification for a hard-cancelled task back in todo (obs: null)", async () => {
+    const handlers = allHandlers();
+    const controller = makeController(null, handlers);
+
+    const decision = await controller.tick(task({ column: "todo", userPaused: false }));
+
+    expect(decision).toBeNull();
+    expect(handlers.injectGuidance).not.toHaveBeenCalled();
+    expect(handlers.retryStep).not.toHaveBeenCalled();
+    expect(handlers.requestTargetedFix).not.toHaveBeenCalled();
+    expect(handlers.requestConfirmation).not.toHaveBeenCalled();
+    expect(handlers.executeMergePrAction).not.toHaveBeenCalled();
+    expect(handlers.executeDestructiveExternalAction).not.toHaveBeenCalled();
+    expect(handlers.recordHumanControlWithheld).not.toHaveBeenCalled();
+    expect(controller.getPendingConfirmations("FN-1")).toEqual([]);
+  });
+
   it("holds the guard across every watched stage the seam exposes, not only in-review/merger", async () => {
     for (const stage of WATCHED_STAGES) {
       const handlers = allHandlers();

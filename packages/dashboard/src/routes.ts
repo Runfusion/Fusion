@@ -372,6 +372,9 @@ import {
   resolveMcpServersForRuntime,
   resolveMcpServersForStore,
   validateMcpServer,
+  isInProcessBackupCommand,
+  isInProcessMemoryBackupCommand,
+  formatInProcessBackupError,
 } from "@fusion/engine";
 
 interface McpValidateRequestBody {
@@ -2411,8 +2414,13 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         result = await executeScheduleSteps(schedule, startedAt, scopedStore, liveCallbacks);
       } else {
         // Legacy single-command execution
+        // FNXC:Automations 2026-07-04-00:00:
+        // FN-7537: command/backup runs (including the new in-process backup branch inside
+        // executeSingleCommand) stream through the same onStep/onText live-run callbacks as every other
+        // step type, so the live-output panel populates during the run (step-start immediately, output once
+        // available) rather than only at the terminal `complete` event.
         liveCallbacks.onStep?.({ stepIndex: 0, stepId: "command", stepName: schedule.name, stepType: "command", status: "started" });
-        result = await executeSingleCommand(schedule.command, schedule.timeoutMs, startedAt);
+        result = await executeSingleCommand(schedule.command, schedule.timeoutMs, startedAt, scopedStore);
         liveCallbacks.onStep?.({ stepIndex: 0, stepId: "command", stepName: schedule.name, stepType: "command", status: "completed", success: result.success, error: result.error });
         if (result.output) liveCallbacks.onText?.(result.output);
       }
@@ -5151,12 +5159,73 @@ function createAutomationLiveRunCallbacks(runId: string): AutomationLiveRunCallb
 
 /**
  * Execute a single shell command (used by manual run endpoint).
+ *
+ * FNXC:DatabaseBackup 2026-07-04-00:00:
+ * FN-7537: the dashboard's manual automation/schedule run path (legacy single-command schedules and
+ * `command`-type steps in `executeScheduleSteps`) previously always shelled the command out via `exec()`,
+ * unlike the scheduler (`CronRunner`) and routine runner (`RoutineRunner.executeCommand`), which both
+ * intercept the auto-backup command and run it in-process via the engine's already-open `TaskStore`. On
+ * hosts without a global `fn`/`runfusion.ai` binary on PATH this made a manual "Database Backup" run fail
+ * while the identical cron-triggered run succeeded. Mirror the cron/routine-runner interception here so a
+ * manual run behaves identically: when a `taskStore` is available and the command matches
+ * `isInProcessBackupCommand`/`isInProcessMemoryBackupCommand`, run the backup in-process instead of
+ * shelling out, using the same `formatInProcessBackupError` message shape on failure (parity with FN-7095).
  */
 async function executeSingleCommand(
   command: string,
   timeoutMs: number | undefined,
   startedAt: string,
+  taskStore?: TaskStore,
 ): Promise<import("@fusion/core").AutomationRunResult> {
+  if (taskStore && isInProcessBackupCommand(command)) {
+    const fusionDir = taskStore.getFusionDir();
+    try {
+      const { runBackupCommand } = await import("@fusion/core");
+      const settings = await taskStore.getSettings();
+      const result = await runBackupCommand(fusionDir, settings);
+      const output = truncateAutomationOutput(result.output ?? "", "");
+      return {
+        success: result.success,
+        output,
+        error: result.success ? undefined : formatInProcessBackupError(output, fusionDir),
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: formatInProcessBackupError(err, fusionDir),
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  if (taskStore && isInProcessMemoryBackupCommand(command)) {
+    const fusionDir = taskStore.getFusionDir();
+    try {
+      const { runMemoryBackupCommand } = await import("@fusion/core");
+      const settings = await taskStore.getSettings();
+      const result = await runMemoryBackupCommand(fusionDir, settings);
+      return {
+        success: result.success,
+        output: truncateAutomationOutput(result.output ?? "", ""),
+        error: result.success ? undefined : result.output,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: err instanceof Error ? err.message : String(err),
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+  }
+
   const { exec } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const execAsyncFn = promisify(exec);
@@ -5377,7 +5446,7 @@ async function executeScheduleSteps(
     liveCallbacks?.onStep?.({ stepIndex: i, stepId: step.id, stepName: step.name, stepType: step.type, status: "started" });
 
     if (step.type === "command") {
-      const cmdResult = await executeSingleCommand(step.command ?? "", timeoutMs, stepStartedAt);
+      const cmdResult = await executeSingleCommand(step.command ?? "", timeoutMs, stepStartedAt, taskStore);
       stepResult = {
         stepId: step.id,
         stepName: step.name,

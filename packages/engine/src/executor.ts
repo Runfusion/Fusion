@@ -1667,6 +1667,14 @@ export class TaskExecutor {
   private resumingUnpaused = new Set<string>();
   /** Completed orphan recovery tasks currently running during startup. */
   private recoveringCompleted = new Set<string>();
+  /**
+   * FNXC:AgentReflection 2026-07-04-00:00:
+   * FN-7528: taskIds for which a non-LLM post-task performance capture has already been fired via
+   * `signalTaskComplete`. `onComplete` fires from several completion call sites (fresh completion,
+   * duplicate in-review re-entry, auto-recovery, paused-after-completion finalize, retry-completed),
+   * so this in-memory guard keeps capture to once per completion instead of once per call site.
+   */
+  private capturedReflectionTaskIds = new Set<string>();
   /** Tracks tasks whose workflow-rerun bounce is in flight (todo→in-progress).
    *  Prevents the task:moved handler from dispatching execute() before the
    *  bounce finishes its own dispatch. */
@@ -3404,6 +3412,43 @@ export class TaskExecutor {
     this.completedTaskWatchdogs.delete(taskId);
   }
 
+  /**
+   * FNXC:AgentReflection 2026-07-04-00:00:
+   * FN-7528: single seam for every `onComplete` call site. Fires the deterministic, non-LLM
+   * post-task performance capture (best-effort, fire-and-forget — a capture failure must never
+   * block or fail task completion) before forwarding to the configured `onComplete` callback.
+   * Capture is completion-gated: only runs once per taskId (see `capturedReflectionTaskIds`),
+   * guarded by `reflectionService` presence, `settings.reflectionEnabled`, and an assigned agent id
+   * mirroring the existing in-session reflection-tool guard.
+   */
+  private signalTaskComplete(task: Task): void {
+    this.triggerPostTaskReflectionCapture(task);
+    this.options.onComplete?.(task);
+  }
+
+  private triggerPostTaskReflectionCapture(task: Task): void {
+    const reflectionService = this.options.reflectionService;
+    if (!reflectionService) return;
+
+    const assignedAgentId = task.assignedAgentId?.trim();
+    if (!assignedAgentId) return;
+
+    if (this.capturedReflectionTaskIds.has(task.id)) return;
+    this.capturedReflectionTaskIds.add(task.id);
+
+    void (async () => {
+      try {
+        const settings = await this.store.getSettings();
+        if (!settings.reflectionEnabled) return;
+        await reflectionService.captureTaskPerformance(assignedAgentId, task.id);
+      } catch (error) {
+        executorLog.warn(
+          `${task.id}: post-task performance capture failed (best-effort, non-blocking): ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    })();
+  }
+
   private clearWorkflowRerunWatchdog(taskId: string): void {
     const handle = this.workflowRerunWatchdogs.get(taskId);
     if (!handle) return;
@@ -3727,14 +3772,14 @@ export class TaskExecutor {
 
     if (liveTask.column === "in-review") {
       this.clearCompletedTaskWatchdog(task.id);
-      this.options.onComplete?.(liveTask);
+      this.signalTaskComplete(liveTask);
       return true;
     }
 
     const refreshedTask = await this.store.getTask(task.id);
     await this.handoffTaskToReview(refreshedTask ?? liveTask, "post-done-noncontinuable");
     this.clearCompletedTaskWatchdog(task.id);
-    this.options.onComplete?.(refreshedTask ?? liveTask);
+    this.signalTaskComplete(refreshedTask ?? liveTask);
     return true;
   }
 
@@ -4126,7 +4171,7 @@ export class TaskExecutor {
       this.clearCompletedTaskWatchdog(task.id);
       await this.store.logEntry(task.id, `Auto-recovered: task work was complete but stranded in ${originColumn} — moved to in-review`);
       executorLog.log(`✓ ${task.id} auto-recovered completed task → in-review`);
-      this.options.onComplete?.(task);
+      this.signalTaskComplete(task);
       return true;
     } catch (err: unknown) {
       this.recoveringCompleted.delete(task.id);
@@ -9906,7 +9951,7 @@ export class TaskExecutor {
             await this.handoffTaskToReview(task, "step-session-completed");
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} completed (step-session) → in-review`);
-            this.options.onComplete?.(task);
+            this.signalTaskComplete(task);
           } else {
             const failedSteps = results.filter(r => !r.success);
             const errorSummary = failedSteps.map(r => `Step ${r.stepIndex}: ${r.error || "unknown error"}`).join("; ");
@@ -10633,7 +10678,7 @@ export class TaskExecutor {
               this.markCompletionFinalized(task.id);
               await this.handoffTaskToReview(task, "paused-after-completion");
               this.clearCompletedTaskWatchdog(task.id);
-              this.options.onComplete?.(task);
+              this.signalTaskComplete(task);
             } else {
               executorLog.log(`${task.id} paused (graceful session exit) — moving to todo`);
               await this.store.logEntry(task.id, "Execution paused — session preserved for resume, moved to todo");
@@ -10728,7 +10773,7 @@ export class TaskExecutor {
             await this.handoffTaskToReview(task, "fn_task_done");
             this.clearCompletedTaskWatchdog(task.id);
             executorLog.log(`✓ ${task.id} completed → in-review`);
-            this.options.onComplete?.(task);
+            this.signalTaskComplete(task);
           } else {
             let taskDoneSessionRetries = 0;
             let retryAbortedDueToReclaim = false;
@@ -11004,7 +11049,7 @@ export class TaskExecutor {
               await this.handoffTaskToReview(task, "fn_task_done-retry-completed");
               this.clearCompletedTaskWatchdog(task.id);
               executorLog.log(`✓ ${task.id} completed on retry → in-review`);
-              this.options.onComplete?.(task);
+              this.signalTaskComplete(task);
             } else if (retryAbortedDueToReclaim) {
               // FN-4806: Worktree/branch was reclaimed mid-retry by an engine-side housekeeping path
               // (e.g. FN-4546 stale-active-branch reclaim, FN-4742 self-healing removals). This is NOT
@@ -11133,7 +11178,7 @@ export class TaskExecutor {
           }
         }
         // Task finished successfully (just already moved), so call onComplete
-        this.options.onComplete?.(task);
+        this.signalTaskComplete(task);
       } else if (this.pausedAborted.has(task.id)) {
         // Task was paused mid-execution — clean up worktree and move to todo
         if (this.userCanceledTaskIds.has(task.id)) {
@@ -11175,7 +11220,7 @@ export class TaskExecutor {
           */
           this.markCompletionFinalized(task.id);
           await this.handoffTaskToReview(task, "paused-after-completion");
-          this.options.onComplete?.(task);
+          this.signalTaskComplete(task);
         } else {
           executorLog.log(`${task.id} paused — moving to todo`);
           if (worktreePath && existsSync(worktreePath)) {

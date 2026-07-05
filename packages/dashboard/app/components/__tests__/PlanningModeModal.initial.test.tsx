@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, renderHook, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import * as api from "../../api";
 import { PlanningModeModal } from "../PlanningModeModal";
@@ -181,6 +181,18 @@ describe("PlanningModeModal", () => {
         isConnected: vi.fn().mockReturnValue(true),
       };
     });
+  });
+
+  /*
+  FNXC:PlanningMode 2026-07-04-17:04:
+  The draft-creation debounce tests assert a NEGATIVE (a 300ms debounce interval elapsing without spawning a duplicate
+  createPlanningDraft). They previously did this with real-time `setTimeout(350)` sleeps, burning ~2.1s of wall-clock per
+  run for zero added signal (FN-5048: do not add slow tests). Those tests now drive fake timers via
+  `vi.advanceTimersByTimeAsync`, which advances the debounce deterministically and flushes the mock's promise
+  microtasks between timers. This afterEach restores real timers so the remaining real-timer + waitFor tests are unaffected.
+  */
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("Initial view", () => {
@@ -539,6 +551,9 @@ describe("PlanningModeModal", () => {
     });
 
     it("auto-creates a draft after typing and reuses it when starting", async () => {
+      // FNXC:PlanningMode 2026-07-04-17:04: fake timers drive the 300ms create-draft debounce deterministically
+      // (advanceTimersByTimeAsync flushes the mock promise between timers), replacing real-time sleeps.
+      vi.useFakeTimers();
       render(
         <PlanningModeModal
           isOpen={true}
@@ -552,9 +567,10 @@ describe("PlanningModeModal", () => {
       const textarea = screen.getByPlaceholderText(/e.g., Build a user authentication/);
       fireEvent.change(textarea, { target: { value: "Build a detailed auth system plan" } });
 
-      await waitFor(() => {
-        expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
       });
+      expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
       expect(mockCreatePlanningDraft).toHaveBeenCalledWith(
         "Build a detailed auth system plan",
         undefined,
@@ -569,28 +585,35 @@ describe("PlanningModeModal", () => {
       expect(sidebarItem?.textContent).toBe("Build a detailed auth system plan");
 
       fireEvent.change(textarea, { target: { value: "Build a detailed auth system plan with extras" } });
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      // Let the debounce interval elapse; the existing draft must be reused, not re-created.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
+      });
       expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
 
       fireEvent.click(screen.getByText("Start Planning"));
-      await waitFor(() => {
-        expect(mockStartPlanningStreaming).toHaveBeenCalledWith(
-          "Build a detailed auth system plan with extras",
-          undefined,
-          undefined,
-          {
-            planningDepth: "medium",
-            customQuestionCount: undefined,
-          },
-          "draft-123",
-        );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
       });
+      expect(mockStartPlanningStreaming).toHaveBeenCalledWith(
+        "Build a detailed auth system plan with extras",
+        undefined,
+        undefined,
+        {
+          planningDepth: "medium",
+          customQuestionCount: undefined,
+        },
+        "draft-123",
+      );
     });
 
     // FNXC:PlanningMode 2026-07-01-00:00: regression — deliberate typing must not spawn one draft per keystroke.
     // Original symptom: each character created a new draft while the create-draft request was in flight, because
     // the create-suppression guard only checked draftSessionIdRef, which is populated after the round-trip resolves.
     it("creates exactly one draft when keystrokes arrive while the create request is still in flight", async () => {
+      // FNXC:PlanningMode 2026-07-04-17:04: fake timers drive the 300ms debounce deterministically; the in-flight
+      // create stays unresolved (resolveCreate) so the suppression sentinel is what collapses keystrokes to one create.
+      vi.useFakeTimers();
       let resolveCreate: ((value: { sessionId: string; title: string }) => void) | undefined;
       mockCreatePlanningDraft.mockImplementation(
         () =>
@@ -613,28 +636,38 @@ describe("PlanningModeModal", () => {
 
       // First keystroke → debounce (300ms) fires the create; it stays in flight (unresolved).
       fireEvent.change(textarea, { target: { value: "Build" } });
-      await waitFor(() => {
-        expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
       });
+      expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
 
       // Subsequent keystrokes while the create is still in flight must be suppressed by the
       // synchronous in-flight sentinel — not each spawn another draft.
       fireEvent.change(textarea, { target: { value: "Build a" } });
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
+      });
       fireEvent.change(textarea, { target: { value: "Build an" } });
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
+      });
       fireEvent.change(textarea, { target: { value: "Build an auth" } });
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
+      });
 
       expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
 
       // Once the create resolves and further edits arrive, they patch the single draft — no new create.
       resolveCreate?.({ sessionId: "draft-123", title: "New planning session" });
-      await waitFor(() => {
-        expect(document.querySelector(".planning-sidebar-item-title")).not.toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
       });
+      expect(document.querySelector(".planning-sidebar-item-title")).not.toBeNull();
       fireEvent.change(textarea, { target: { value: "Build an auth system" } });
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(350);
+      });
       expect(mockCreatePlanningDraft).toHaveBeenCalledTimes(1);
     });
 

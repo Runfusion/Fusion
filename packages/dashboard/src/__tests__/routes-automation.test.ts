@@ -110,7 +110,17 @@ vi.mock("@fusion/core", async (importOriginal) => {
 
 vi.mock("@fusion/engine", async () => {
   const { createEngineMock } = await import("../test/mockCoreEngine.js");
+  // FNXC:DatabaseBackup 2026-07-04-00:00:
+  // FN-7537: route.ts's manual-run in-process backup interception statically imports
+  // isInProcessBackupCommand/isInProcessMemoryBackupCommand/formatInProcessBackupError from
+  // @fusion/engine. This module mock has no real `actual` behind it (see mockCoreEngine.js), so those
+  // three must be the REAL implementations (via vi.importActual) rather than the default vi.fn()
+  // fallback, or the interception would never match any command in these route tests.
+  const actualEngine = await vi.importActual<typeof import("@fusion/engine")>("@fusion/engine");
   return createEngineMock({
+  isInProcessBackupCommand: actualEngine.isInProcessBackupCommand,
+  isInProcessMemoryBackupCommand: actualEngine.isInProcessMemoryBackupCommand,
+  formatInProcessBackupError: actualEngine.formatInProcessBackupError,
   createFnAgent: vi.fn(async (options?: { onText?: (delta: string) => void; onToolStart?: (name: string, args?: Record<string, unknown>) => void; onToolEnd?: (name: string, isError: boolean, result?: unknown) => void }) => ({
     session: {
       state: {
@@ -1175,6 +1185,167 @@ describe("Automation routes", () => {
       const { app } = buildApp(mockStore);
       const res = await REQUEST(app, "POST", "/api/automations/missing/run");
       expect(res.status).toBe(404);
+    });
+
+    /*
+    FNXC:DatabaseBackup 2026-07-04-00:00:
+    FN-7537 Symptom Verification: the reported symptom was the "Database Backup" automation failing on a
+    manual dashboard run while succeeding via cron. These tests drive the exact manual endpoint
+    (POST /automations/:id/run) that previously always shelled out via exec() for every command —
+    including the persisted `fn backup --create` command — and assert it now intercepts the in-process
+    backup (matching the cron path's CronRunner.executeBackupInProcess result) instead of failing on hosts
+    without a global `fn`/`runfusion.ai` binary.
+    */
+    describe("manual backup run parity (FN-7537)", () => {
+      function writeTestDb(path: string): void {
+        try {
+          execFileSync("sqlite3", [path, "CREATE TABLE IF NOT EXISTS t(x); INSERT INTO t VALUES (1);"]);
+        } catch {
+          writeFileSync(path, "dummy database content");
+        }
+      }
+
+      it("intercepts the in-process backup for a legacy single-command schedule and does not shell out", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "routes-automation-backup-"));
+        const fusionDir = join(tempDir, ".fusion");
+        mkdirSync(fusionDir, { recursive: true });
+        writeTestDb(join(fusionDir, "fusion.db"));
+
+        try {
+          const mockStore = createMockAutomationStore();
+          mockStore.getSchedule.mockResolvedValue({
+            ...FAKE_SCHEDULE,
+            command: "fn backup --create",
+          });
+          const store = createMockStore({ getFusionDir: vi.fn().mockReturnValue(fusionDir) } as any);
+          const app = express();
+          app.use(express.json());
+          app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));
+          mockExecFile.mockClear();
+
+          const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+          expect(res.status).toBe(200);
+          expect(res.body.result.success).toBe(true);
+          expect(res.body.result.output).toContain("Backup created");
+          // A shelled-out command would have gone through node:child_process exec — assert it did not.
+          expect(mockExecFile).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.arrayContaining([expect.stringContaining("backup")]),
+            expect.anything(),
+            expect.anything(),
+          );
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
+
+      it("intercepts the in-process backup for a command-type schedule step", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "routes-automation-backup-step-"));
+        const fusionDir = join(tempDir, ".fusion");
+        mkdirSync(fusionDir, { recursive: true });
+        writeTestDb(join(fusionDir, "fusion.db"));
+
+        try {
+          const mockStore = createMockAutomationStore();
+          mockStore.getSchedule.mockResolvedValue({
+            ...FAKE_SCHEDULE,
+            command: "",
+            steps: [
+              {
+                id: "step-backup",
+                type: "command",
+                name: "Run backup",
+                command: "fn backup --create",
+              },
+            ],
+          });
+          const store = createMockStore({ getFusionDir: vi.fn().mockReturnValue(fusionDir) } as any);
+          const app = express();
+          app.use(express.json());
+          app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));
+
+          const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+          expect(res.status).toBe(200);
+          expect(res.body.result.stepResults[0]).toEqual(
+            expect.objectContaining({ stepName: "Run backup", success: true, output: expect.stringContaining("Backup created") }),
+          );
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
+
+      it("streams a step-start live event before the terminal complete event for a manual backup run", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "routes-automation-backup-live-"));
+        const fusionDir = join(tempDir, ".fusion");
+        mkdirSync(fusionDir, { recursive: true });
+        writeTestDb(join(fusionDir, "fusion.db"));
+
+        try {
+          const mockStore = createMockAutomationStore();
+          mockStore.getSchedule.mockResolvedValue({
+            ...FAKE_SCHEDULE,
+            command: "fn backup --create",
+          });
+          const store = createMockStore({ getFusionDir: vi.fn().mockReturnValue(fusionDir) } as any);
+          const app = express();
+          app.use(express.json());
+          app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));
+
+          const runRes = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+          expect(runRes.status).toBe(200);
+          expect(runRes.body.result.success).toBe(true);
+
+          const streamRes = await performRequest(app, "GET", `/api/automations/sched-001/run/stream?runId=${runRes.body.liveRunId}`);
+          expect(streamRes.status).toBe(200);
+          const body = String(streamRes.body);
+          const stepIndex = body.indexOf("event: step");
+          const completeIndex = body.indexOf("event: complete");
+          expect(stepIndex).toBeGreaterThanOrEqual(0);
+          expect(completeIndex).toBeGreaterThan(stepIndex);
+          expect(body).toContain("\"status\":\"started\"");
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
+
+      it("keeps memory-backup command parity on the manual run path", async () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "routes-automation-membackup-"));
+        const fusionDir = join(tempDir, ".fusion");
+        mkdirSync(fusionDir, { recursive: true });
+
+        try {
+          const mockStore = createMockAutomationStore();
+          mockStore.getSchedule.mockResolvedValue({
+            ...FAKE_SCHEDULE,
+            command: "fn memory-backup --create",
+          });
+          const store = createMockStore({
+            getFusionDir: vi.fn().mockReturnValue(fusionDir),
+            getSettings: vi.fn().mockResolvedValue({ memoryEnabled: false }),
+          } as any);
+          const app = express();
+          app.use(express.json());
+          app.use("/api", createApiRoutes(store, { automationStore: mockStore as any }));
+          mockExecFile.mockClear();
+
+          const res = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+
+          expect(res.status).toBe(200);
+          // Memory backups are a no-op success when memory is disabled; the important assertion is that
+          // the in-process path ran (not a shell-out to a missing global binary).
+          expect(typeof res.body.result.success).toBe("boolean");
+          expect(mockExecFile).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.arrayContaining([expect.stringContaining("memory-backup")]),
+            expect.anything(),
+            expect.anything(),
+          );
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
     });
   });
 

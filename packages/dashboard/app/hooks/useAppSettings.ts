@@ -63,7 +63,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
   const [rootDir, setRootDir] = useState<string>(".");
   const [autoMerge, setAutoMerge] = useState(true);
   const [mergeStrategy, setMergeStrategy] = useState("direct");
-  const [planApprovalMode, setPlanApprovalMode] = useState<PlanApprovalMode>("workflow");
+  /*
+  FNXC:PlanApproval 2026-07-04-00:00:
+  FN-7557: plan auto-approval is the default project posture; the pre-hydration state and any genuinely unset/invalid server value fall back to "auto-approve-all" instead of "workflow". Explicit server values ("workflow", "auto-approve-all", "require-all") are preserved during hydration below.
+  */
+  const [planApprovalMode, setPlanApprovalMode] = useState<PlanApprovalMode>("auto-approve-all");
   const [showWorktreeGrouping, setShowWorktreeGrouping] = useState(false);
   const [testMode, setTestMode] = useState(false);
   const [isTestMode, setIsTestMode] = useState(false);
@@ -118,9 +122,11 @@ export function useAppSettings(projectId?: string): UseAppSettingsResult {
       */
       setMergeStrategy(typeof settings.mergeStrategy === "string" ? settings.mergeStrategy : "direct");
       const nextPlanApprovalMode: PlanApprovalMode =
-        settings.planApprovalMode === "auto-approve-all" || settings.planApprovalMode === "require-all"
+        settings.planApprovalMode === "auto-approve-all" ||
+        settings.planApprovalMode === "require-all" ||
+        settings.planApprovalMode === "workflow"
           ? settings.planApprovalMode
-          : "workflow";
+          : "auto-approve-all";
       planApprovalModeRef.current = nextPlanApprovalMode;
       setPlanApprovalMode(nextPlanApprovalMode);
       setShowWorktreeGrouping(settings.showWorktreeGrouping === true);

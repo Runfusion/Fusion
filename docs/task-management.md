@@ -673,6 +673,14 @@ Recovery/backfill guidance:
 - If both the active row and archive snapshot were overwritten, Fusion cannot reconstruct lost attachments/comments automatically; recreate them from git history, branch/worktree contents, screenshots, or external issue trackers.
 - Record the incident in the replacement task so future audits understand why the task ID and commit history diverge.
 
+## Reverting Done/Archived tasks (git path)
+
+- `POST /api/tasks/:id/revert` (FN-7523) reverts a **Done** or **Archived** task's landed work via git. Only `done`/`archived` tasks are revertable; the source task's column/status is never mutated as a side effect.
+- The engine resolves the task's attributable commit(s) (squash single-commit, rebase/cherry-pick trailer-filtered subset, or lineage-snapshot fallback), performs a non-committing dry-run to classify the outcome, and only writes a real commit when the dry-run is clean.
+- Response contract: `{ mode: "git", clean, revertCommitSha?, conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }`. A clean revert lands a `revert(FN-xxxx): ...` commit carrying a `Fusion-Task-Id` trailer on the resolved base branch. A conflicting result creates no commit and leaves the tree/HEAD untouched — this is where a future AI-undo fallback (sibling task) can take over.
+- Workspace (multi-repo) tasks and `autoMerge:false` projects are out of scope for the forced git write and return `unsupported`/`needsHuman` results instead.
+- This is the git path only; no dashboard UI affordance ships with it (see sibling follow-up tasks for the card action and the AI-undo fallback).
+
 ## GitHub Issue Import and PR Creation
 
 GitLab enablement, instance/API URL, and access-token configuration are available in Settings for GitLab.com and self-managed GitLab (`gitlabEnabled`, `gitlabInstanceUrl`, optional `gitlabApiBaseUrl`, `gitlabAuthToken`, `gitlabAuthTokenType`). Fusion accepts personal, project, and group access tokens for GitLab HTTP API import tasks; read-only project issue, group issue, and merge request imports require `read_api` or `api`, while later write actions such as comments and auto-close require `api`.

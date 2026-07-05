@@ -940,61 +940,9 @@ In the narrow/mobile chat layout there is no room for an expand/maximize afforda
 }
 
 /*
-FNXC:ChatRenderMode 2026-07-02-00:00:
-Chat keeps one thread-wide Markdown/plain control: desktop/tablet anchors it in the thread identity header, while mobile direct-thread view floats the same button above the transcript/composer so it does not reintroduce a second header row or per-message toggles.
+FNXC:ChatRenderToggle 2026-07-04-00:00:
+The thread-wide Markdown/plain render toggle (`.chat-thread-header-render-toggle*`, desktop + mobile floating variants) was removed per FN-7541. Chat always renders Markdown now; the button and its CSS shells no longer exist.
 */
-.chat-thread-header-render-toggle {
-  margin-left: auto;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: calc(var(--space-md) * 3);
-  height: calc(var(--space-md) * 3);
-  min-width: calc(var(--space-md) * 3);
-  min-height: calc(var(--space-md) * 3);
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  background: transparent;
-  cursor: pointer;
-  outline: none;
-  transition: background var(--transition-fast), color var(--transition-fast);
-}
-
-.chat-thread-header-render-toggle:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.chat-thread-header-render-toggle:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring-strong);
-}
-
-.chat-thread-header-render-toggle--plain {
-  color: var(--text);
-}
-
-.chat-thread-header-render-toggle--floating {
-  position: absolute;
-  right: var(--space-md);
-  bottom: calc((var(--space-lg) * 2.5) + (var(--space-md) * 2) + var(--space-sm));
-  z-index: 3;
-  width: calc(var(--space-lg) * 2.25);
-  height: calc(var(--space-lg) * 2.25);
-  min-width: calc(var(--space-lg) * 2.25);
-  min-height: calc(var(--space-lg) * 2.25);
-  border: var(--btn-border-width) solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  box-shadow: var(--shadow-md);
-}
-
-.chat-thread-header-render-toggle--floating:hover {
-  background: var(--surface-hover);
-}
 
 /* Messages */
 .chat-messages {
@@ -2236,10 +2184,6 @@ Queued-message banners stack above the composer input with a capped scroll area,
   .chat-thread-header-identity .chat-model-tag {
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .chat-thread-header-render-toggle {
-    flex-shrink: 0;
   }
 
   .chat-thread-header-context {

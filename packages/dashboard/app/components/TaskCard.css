@@ -469,6 +469,59 @@ FN-6774 removes the saturated stuck-task edge stripe from board cards. Keep the 
   color: var(--color-warning);
 }
 
+/*
+FNXC:PlannerOversight 2026-07-04-00:00:
+FN-7516 read-only effective-oversight-level badge, shown only for an explicit
+non-"off" per-task planner-oversight override. Mirrors the .card-status-badge/
+.card-priority-badge chip sizing so it participates in the same wrap/height
+invariants as the rest of .card-meta-badges. Level modifiers use existing
+semantic status tokens (info/warning/error family) rather than new hex values.
+*/
+.card-oversight-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: calc(var(--space-xs) / 2) var(--space-sm);
+  border: var(--btn-border-width) solid transparent;
+  border-radius: var(--radius-pill);
+}
+
+.card-oversight-badge--observe {
+  background: color-mix(in srgb, var(--color-info) 15%, transparent);
+  color: var(--color-info);
+}
+
+.card-oversight-badge--steer {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.card-oversight-badge--autonomous {
+  background: color-mix(in srgb, var(--triage) 15%, transparent);
+  color: var(--triage);
+}
+
+/*
+FNXC:PlannerOversight 2026-07-04-17:00:
+FN-7517 addition: the task-detail quick oversight-level-change control (see
+TaskDetailModal.tsx/.css) renders this badge class even for the "off" level
+(unlike the card-surface read-only badge, which never shows for "off") so the
+select control has a neutral, token-based chip background rather than
+falling through to an unstyled transparent shell.
+*/
+.card-oversight-badge--off {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+}
+
 .card.failed {
   border-left: 3px solid var(--color-error-dark);
 }
@@ -1617,7 +1670,10 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
   /* Card: smaller status badges for 280px width */
   .card-status-badge,
   .card-priority-badge,
-  .card-size-badge {
+  .card-size-badge,
+  /* FNXC:PlannerOversight 2026-07-04-00:00: mobile-scale the FN-7516 oversight
+     badge alongside the other .card-meta-badges chips at narrow widths. */
+  .card-oversight-badge {
     font-size: 0.5625rem;
     padding: calc(var(--space-xs) / 4) calc((var(--space-xs) * 3) / 2);
   }

@@ -16,13 +16,20 @@ import {
   getResetIneligibleReason,
   getSectionKeyEntry,
 } from "./settings/section-keys";
-import { describeShortcutValidation, normalizeKeyboardShortcut } from "../utils/keyboardShortcuts";
+import {
+  describeShortcutValidation,
+  normalizeKeyboardShortcut,
+  resolveDashboardKeyboardShortcuts,
+  type DashboardShortcutAction,
+} from "../utils/keyboardShortcuts";
+import type { DashboardKeyboardShortcutMap } from "../utils/keyboardShortcuts";
 import type { SectionSaveHandler } from "./settings/sections/context";
 import { AppearanceSection } from "./settings/sections/AppearanceSection";
 import { ExperimentalSection } from "./settings/sections/ExperimentalSection";
 import { NodeSyncSection } from "./settings/sections/NodeSyncSection";
 import { NotificationsSection } from "./settings/sections/NotificationsSection";
 import { GlobalGeneralSection } from "./settings/sections/GlobalGeneralSection";
+import { KeyboardShortcutsSection } from "./settings/sections/KeyboardShortcutsSection";
 import { ResearchGlobalSection } from "./settings/sections/ResearchGlobalSection";
 import { RemoteSection } from "./settings/sections/RemoteSection";
 import { GlobalMcpSection } from "./settings/sections/GlobalMcpSection";
@@ -292,12 +299,47 @@ function resolveFirstSelectableSettingsSection(sections: SettingsSection[], fall
   return sections.find((section) => !section.isGroupHeader)?.id ?? fallback;
 }
 
+/*
+FNXC:SettingsNavigation 2026-07-04-00:00:
+The mobile Settings section picker (`<select>` on narrow viewports) prefixes every
+section option with its owning group (`Global — `/`Project — `) so entries are
+unambiguous when labels collide across scopes (e.g. "MCP Servers" exists in both
+Global and Project). The Authentication section is intentionally `scope: undefined`
+(it is not backed by settings storage — see SETTINGS_SECTIONS), but it still lives
+under the Global group header in SETTINGS_SECTIONS, so its mobile option rendered as
+bare "Authentication" instead of "Global — Authentication", inconsistent with its
+Global-group siblings (FN-7552). SETTINGS_SECTION_GROUP_LABEL_BY_ID maps every
+non-header section id to the label of the most recent group-header row preceding it
+in SETTINGS_SECTIONS, so resolveSettingsSectionOptionLabel can fall back to a
+group-derived "Global — " prefix for storage-less sections that belong to the Global
+group — without changing behavior for any section that already declares a scope
+(Runtimes entries keep their existing scope:"global" path) or for undefined-scope
+group-header rows themselves (which are never rendered as selectable options).
+*/
+function buildSettingsSectionGroupLabelMap(sections: SettingsSection[]): Map<string, string> {
+  const map = new Map<string, string>();
+  let currentGroupLabel: string | undefined;
+  for (const section of sections) {
+    if (section.isGroupHeader) {
+      currentGroupLabel = section.label;
+      continue;
+    }
+    if (currentGroupLabel !== undefined) {
+      map.set(section.id, currentGroupLabel);
+    }
+  }
+  return map;
+}
+
 function resolveSettingsSectionOptionLabel(section: SettingsSection, label: string): string {
   if (section.scope === "global") {
     return `Global — ${label}`;
   }
   if (section.scope === "project") {
     return `Project — ${label}`;
+  }
+  if (SETTINGS_SECTION_GROUP_LABEL_BY_ID.get(section.id) === "Global") {
+    return `Global — ${label}`;
   }
   return label;
 }
@@ -311,6 +353,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   // Global group (shared across all Fusion projects)
   { id: "__global_header", label: "Global", labelKey: "settings.nav.globalHeader", scope: undefined, isGroupHeader: true },
   { id: "global-general", label: "General", labelKey: "settings.nav.globalGeneral", scope: "global", searchableText: ["global defaults", "modal outside dismiss", "agent logs", "persist tool output", "thinking logs", "GitLab instance URL", "global tracking repo"] },
+  { id: "keyboard-shortcuts", label: "Keyboard Shortcuts", labelKey: "settings.nav.keyboardShortcuts", scope: "global", searchableText: ["keyboard shortcuts", "hotkeys", "quick chat shortcut", "terminal shortcut", "open files", "open settings", "command center", "new task shortcut", "record shortcut"] },
   { id: "authentication", label: "Authentication", labelKey: "settings.nav.authentication", scope: undefined, icon: Globe, searchableText: ["login", "OAuth", "API key", "custom providers", "Anthropic", "OpenAI", "provider credentials"] },
   { id: "appearance", label: "Appearance", labelKey: "settings.nav.appearance", scope: "global", searchableText: ["theme", "color", "sidebar", "dock", "task popup", "open tasks as popups", "quick chat"] },
   { id: "notifications", label: "Notifications", labelKey: "settings.nav.notifications", scope: "global", searchableText: ["ntfy", "webhook", "events", "failure notifications", "sticky", "toast"] },
@@ -383,6 +426,11 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "prompts", label: "Prompts", labelKey: "settings.nav.prompts", scope: "project", searchableText: ["prompt instructions", "PR title prompt", "PR description prompt", "custom prompts"] },
   { id: "plugins", label: "Plugins", labelKey: "settings.nav.plugins", scope: "project", searchableText: ["Fusion plugins", "Pi extensions", "plugin manager", "extension marketplace"] },
 ];
+
+// FNXC:SettingsNavigation 2026-07-04-00:00: sectionId -> owning group label ("Global"/"Runtimes"/"Project"),
+// derived once from SETTINGS_SECTIONS order. Used by resolveSettingsSectionOptionLabel to prefix
+// storage-less (scope: undefined) sections like "authentication" that belong to the Global group (FN-7552).
+const SETTINGS_SECTION_GROUP_LABEL_BY_ID = buildSettingsSectionGroupLabelMap(SETTINGS_SECTIONS);
 
 /** Well-known experimental feature flags with display labels.
  *  These always appear in the Experimental Features settings tab,
@@ -845,7 +893,8 @@ export function SettingsModal({
     overlapIgnorePaths: [],
     allowAbsoluteFileBrowserPaths: false,
     autoMerge: true,
-    planApprovalMode: "workflow",
+    // FNXC:PlanApproval 2026-07-04-00:00: FN-7557: local fallback mirrors DEFAULT_PROJECT_SETTINGS — auto-approve-all is now the default project posture.
+    planApprovalMode: "auto-approve-all",
     mergeStrategy: "direct",
     maxAutoMergeRetries: 3,
     mergeIntegrationWorktree: "reuse-task-worktree",
@@ -2693,10 +2742,14 @@ export function SettingsModal({
         maxAutoMergeRetries: resolveMaxAutoMergeRetriesForSettingsForm(form),
         taskPrefix: form.taskPrefix?.trim() || undefined,
         githubTrackingDefaultRepo: form.githubTrackingDefaultRepo?.trim() || undefined,
-        dashboardKeyboardShortcuts: {
-          quickChat: normalizeKeyboardShortcut(form.dashboardKeyboardShortcuts?.quickChat ?? "").normalized,
-          terminal: normalizeKeyboardShortcut(form.dashboardKeyboardShortcuts?.terminal ?? "").normalized,
-        },
+        /*
+        FNXC:DashboardShortcuts 2026-07-04-00:00:
+        FN-7553 normalizes every declared shortcut action (derived from resolveDashboardKeyboardShortcuts' key set) on save, not just quickChat/terminal, so newly-added actions get the same trim/normalize-before-persist treatment.
+        */
+        dashboardKeyboardShortcuts: Object.fromEntries(
+          (Object.entries(resolveDashboardKeyboardShortcuts(form.dashboardKeyboardShortcuts)) as [DashboardShortcutAction, string][])
+            .map(([action, shortcut]) => [action, normalizeKeyboardShortcut(shortcut).normalized]),
+        ) as DashboardKeyboardShortcutMap,
         gitlabEnabled: gitlabFormForSave.gitlabEnabled,
         gitlabInstanceUrl: gitlabFormForSave.gitlabInstanceUrl?.trim() || undefined,
         gitlabApiBaseUrl: gitlabFormForSave.gitlabApiBaseUrl?.trim() || undefined,
@@ -3103,6 +3156,14 @@ export function SettingsModal({
             globalTrackingRepoOptions={globalTrackingRepoOptions}
             globalTrackingRepoLoading={globalTrackingRepoLoading}
             globalTrackingRepoError={globalTrackingRepoError}
+          />
+        );
+      case "keyboard-shortcuts":
+        return (
+          <KeyboardShortcutsSection
+            scopeBanner={renderScopeBanner()}
+            form={form}
+            setForm={setForm}
           />
         );
       case "global-models":

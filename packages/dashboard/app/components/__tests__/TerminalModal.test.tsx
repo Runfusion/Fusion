@@ -1285,6 +1285,24 @@ describe("TerminalModal", () => {
   });
 
   describe("shortcut panel", () => {
+    it("constrains the panel to the modal width so it scrolls horizontally instead of overflowing (FN-7550)", () => {
+      // FN-7550: the base rule must declare min-width: 0 to defeat the flex
+      // min-width:auto trap — without it the panel's automatic minimum equals
+      // the sum of all nowrap buttons, which overrides overflow-x: auto and
+      // lets the modal's overflow: hidden clip the rightmost shortcuts on mobile.
+      const panelRule = terminalModalCss.match(/\.terminal-shortcut-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+      expect(panelRule).toContain("min-width: 0;");
+      expect(panelRule).toContain("overflow-x: auto;");
+      expect(panelRule).toContain("flex-wrap: nowrap;");
+
+      // The mobile override (max-height clamp) must still exist and must not
+      // reintroduce a conflicting min-width.
+      const mobilePanelRule =
+        terminalModalCss.match(/@media \(max-width: 768px\) \{[\s\S]*?\.terminal-shortcut-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+      expect(mobilePanelRule).toContain("max-height");
+      expect(mobilePanelRule).not.toContain("min-width");
+    });
+
     it("is hidden by default and toggles from header action", async () => {
       render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
 

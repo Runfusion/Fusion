@@ -624,10 +624,39 @@ export type DatabaseMutationType =
    *   errorClass: string;
    * }
    * ```
+   *
+   * FNXC:AgentReflection 2026-07-04-00:00:
+   * FN-7528 adds a deterministic, non-LLM post-task performance capture (AgentReflectionService.captureTaskPerformance),
+   * distinct from the LLM-backed generateReflection above. `reflection:captured` fires once per completed task and stays
+   * ids/counts/outcomes-only: no free-form verificationScopeReason text, insight/summary prose, or prompt text.
+   * Metadata shape for `reflection:captured`:
+   * ```ts
+   * {
+   *   agentId: string;
+   *   trigger: "post-task";
+   *   taskId?: string;
+   *   reflectionId: string;
+   *   retryReworkCount?: number;
+   *   filesTouchedCount?: number;
+   *   packagesTouchedCount?: number;
+   *   verificationFileScoped?: boolean;
+   *   durationMs?: number;
+   * }
+   * ```
+   * Metadata shape for a skipped capture (emitted via `reflection:skipped` with `reason: "not-completed"` or `"no-history"`):
+   * ```ts
+   * {
+   *   agentId: string;
+   *   trigger: "post-task";
+   *   taskId?: string;
+   *   reason: "no-history" | "not-completed";
+   * }
+   * ```
    */
   | "reflection:generated"
   | "reflection:skipped"
   | "reflection:failed"
+  | "reflection:captured"
   | "task:in-review-stall-deadlock-disposed"
   | "task:in-review-stall-terminal-provider-error"
   | "task:finalize-unproven-blocked"

@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
@@ -163,5 +163,123 @@ describe("artifacts route integration", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
+  });
+
+  /*
+   * FNXC:ArtifactRegistry 2026-07-04-20:10:
+   * FN-7544 surface enumeration: a task-less agent-authored registry artifact (no taskId) must appear
+   * in the global GET /api/artifacts listing exactly like task-scoped ones.
+   */
+  it("a task-less agent-authored artifact appears in the global artifacts listing", async () => {
+    const artifact = await store.registerArtifact({
+      type: "document",
+      title: "Registry-only note",
+      content: "# Task-less artifact",
+      authorId: "agent-registry",
+      authorType: "agent",
+    });
+
+    const res = await REQUEST(app, "GET", "/api/artifacts");
+
+    expect(res.status).toBe(200);
+    const body = res.body as ArtifactWithTask[];
+    expect(body.map((a) => a.id)).toContain(artifact.id);
+    const found = body.find((a) => a.id === artifact.id);
+    expect(found?.authorType).toBe("agent");
+    expect(found?.taskId).toBeFalsy();
+  });
+
+  /*
+   * FNXC:ArtifactRegistry 2026-07-04-20:10:
+   * FN-7544 surface enumeration: GET /api/artifacts?taskId= must scope strictly to the requested task —
+   * artifacts from a different task or task-less registry rows must not leak in (project/task-scope
+   * isolation), while multiple artifacts for the SAME task must all be returned.
+   */
+  it("?taskId= scopes strictly to the requested task and returns all of its artifacts", async () => {
+    const { task: taskA, artifact: artifactA } = await createTaskImageArtifact();
+    const taskB = await store.createTask({ title: "Other task", description: "A different task" });
+    const artifactB = await store.registerArtifact({
+      type: "document",
+      title: "Other task note",
+      content: "# Belongs to task B",
+      authorId: "agent-7125",
+      authorType: "agent",
+      taskId: taskB.id,
+    });
+    const registryArtifact = await store.registerArtifact({
+      type: "document",
+      title: "Task-less note",
+      content: "# No task",
+      authorId: "agent-7125",
+      authorType: "agent",
+    });
+    const artifactA2 = await store.registerArtifact({
+      type: "document",
+      title: "Second note for task A",
+      content: "# Also task A",
+      authorId: "agent-7125",
+      authorType: "agent",
+      taskId: taskA.id,
+    });
+
+    const res = await REQUEST(app, "GET", `/api/artifacts?taskId=${encodeURIComponent(taskA.id)}`);
+
+    expect(res.status).toBe(200);
+    const ids = (res.body as ArtifactWithTask[]).map((a) => a.id).sort();
+    expect(ids).toEqual([artifactA.id, artifactA2.id].sort());
+    expect(ids).not.toContain(artifactB.id);
+    expect(ids).not.toContain(registryArtifact.id);
+  });
+
+  /*
+   * FNXC:ArtifactRegistry 2026-07-04-20:10:
+   * FN-7544: a SECOND TaskStore instance against the same DB (mirroring the dashboard-vs-engine or
+   * two-process scenario) must observe artifact:registered for a write it did not perform once its poll
+   * cycle runs, and must serve the row through its own listArtifacts/GET /api/artifacts — not just the
+   * originating instance. This is the store-level fix under test, exercised through the HTTP route.
+   */
+  it("a live-registered artifact is served by a second polling store instance's route", async () => {
+    /*
+     * FNXC:ArtifactRegistry 2026-07-04-20:10:
+     * The beforeEach `store` uses inMemoryDb:true, which cannot be shared across two TaskStore
+     * instances, so this scenario needs its own file-backed pair of stores against the same rootDir to
+     * reproduce two real processes polling the same on-disk DB.
+     */
+    const crossRootDir = mkdtempSync(join(tmpdir(), "artifacts-route-cross-root-"));
+    const crossGlobalDir = mkdtempSync(join(tmpdir(), "artifacts-route-cross-global-"));
+    const writerStore = new TaskStore(crossRootDir, crossGlobalDir);
+    await writerStore.init();
+    const observerStore = new TaskStore(crossRootDir, crossGlobalDir);
+    await observerStore.init();
+    await observerStore.watch();
+    const observerApp = express();
+    observerApp.use(express.json());
+    observerApp.use("/api", createApiRoutes(observerStore));
+
+    try {
+      const registered = vi.fn();
+      observerStore.on("artifact:registered", registered);
+
+      const artifact = await writerStore.registerArtifact({
+        type: "document",
+        title: "Cross-instance route artifact",
+        content: "# Cross-instance",
+        authorId: "agent-cross-instance",
+        authorType: "agent",
+      });
+
+      await (observerStore as unknown as { checkForChanges: () => Promise<void> }).checkForChanges();
+
+      expect(registered).toHaveBeenCalledTimes(1);
+
+      const res = await REQUEST(observerApp, "GET", "/api/artifacts");
+      expect(res.status).toBe(200);
+      expect((res.body as ArtifactWithTask[]).map((a) => a.id)).toContain(artifact.id);
+    } finally {
+      observerStore.close();
+      writerStore.close();
+      rmSync(crossRootDir, { recursive: true, force: true });
+      rmSync(crossGlobalDir, { recursive: true, force: true });
+    }
   });
 });

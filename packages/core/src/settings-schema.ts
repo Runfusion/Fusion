@@ -77,11 +77,15 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   dashboardFontScalePct: 100,
   /*
   FNXC:DashboardShortcuts 2026-07-04-00:00:
-  Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. Empty strings are preserved so operators can disable an action.
+  Global dashboard shortcuts must hydrate with documented safe defaults even when old settings files are missing the object. Space opens Quick Chat; Ctrl+` opens Terminal without colliding with common browser find/search accelerators. FN-7553 adds openFiles (Ctrl+E), openSettings (Ctrl+,), openCommandCenter (Ctrl+K), and newTask (Ctrl+Shift+N) — chosen to avoid colliding with the base two or each other. Empty strings are preserved so operators can disable an action.
   */
   dashboardKeyboardShortcuts: {
     quickChat: "Space",
     terminal: "Ctrl+`",
+    openFiles: "Ctrl+E",
+    openSettings: "Ctrl+,",
+    openCommandCenter: "Ctrl+K",
+    newTask: "Ctrl+Shift+N",
   },
   /*
   FNXC:ModalDismissal 2026-06-29-00:00:
@@ -317,7 +321,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   */
   allowAbsoluteFileBrowserPaths: false,
   autoMerge: true,
-  planApprovalMode: "workflow",
+  /*
+  FNXC:PlanApproval 2026-07-04-00:00:
+  FN-7557: plan auto-approval is the default project posture; unset projects bypass the manual awaiting-approval gate. Previously defaulted to "workflow" (deferring to each workflow's requirePlanApproval); projects with an explicit stored value are unaffected.
+  */
+  planApprovalMode: "auto-approve-all",
   // U18 (R15): the Review-response loop is default-on. Independent of `autoMerge` —
   // with this on but auto-merge off, review threads are resolved but the PR is not merged.
   autoResolveReviewComments: true,

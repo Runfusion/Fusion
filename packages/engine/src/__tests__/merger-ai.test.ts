@@ -72,7 +72,12 @@ function initRepoWithBranch(opts: { branch: string; conflict?: boolean } = { bra
   return { dir };
 }
 
-function makeStore(_dir: string, taskOverrides: Record<string, unknown> = {}, settingsOverrides: Record<string, unknown> = {}) {
+function makeStore(
+  _dir: string,
+  taskOverrides: Record<string, unknown> = {},
+  settingsOverrides: Record<string, unknown> = {},
+  branchGroup?: any,
+) {
   const task: any = {
     id: "FN-1",
     column: "in-review",
@@ -86,6 +91,7 @@ function makeStore(_dir: string, taskOverrides: Record<string, unknown> = {}, se
   };
   const emitted: Array<{ event: string; payload: unknown }> = [];
   const logs: string[] = [];
+  const group = branchGroup ? { ...branchGroup } : undefined;
   const store: any = {
     getTask: vi.fn(async () => task),
     getSettings: vi.fn(async () => ({ merger: { mode: "ai", maxReviewPasses: 1 }, ...settingsOverrides })),
@@ -94,8 +100,19 @@ function makeStore(_dir: string, taskOverrides: Record<string, unknown> = {}, se
     emit: vi.fn((event: string, payload: unknown) => { emitted.push({ event, payload }); }),
     logEntry: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
     appendAgentLog: vi.fn(async (_id: string, m: string) => { logs.push(m); }),
+    getBranchGroup: vi.fn((id: string) => (group && id === group.id ? group : null)),
+    recordBranchGroupMemberLanded: vi.fn(async (id: string, patch: Record<string, unknown>) => {
+      if (group && id === group.id) Object.assign(group, patch);
+      return group;
+    }),
+    updateBranchGroup: vi.fn((id: string, patch: Record<string, unknown>) => {
+      if (group && id === group.id) Object.assign(group, patch);
+      return group;
+    }),
+    listTasksByBranchGroup: vi.fn(async () => [task]),
+    recordRunAuditEvent: vi.fn(),
   };
-  return { store, task, emitted, logs };
+  return { store, task, emitted, logs, group };
 }
 
 // A merge agent that actually performs the squash merge with git.
@@ -572,6 +589,53 @@ describe("runAiMerge", () => {
     // release advanced, main did not.
     expect(git(dir, "rev-parse release")).not.toBe(releaseBefore);
     expect(git(dir, "rev-parse main")).toBe(mainBefore);
+  });
+
+  /*
+  FNXC:BranchGroupCompletion 2026-07-04-00:00:
+  FN-7532 regression: runAiMerge is the SOLE merge path, so a shared-branch-group
+  member landed through it must come out with mergeDetails.mergeTargetBranch/
+  mergeTargetSource stamped to the group's own branch via "branch-group-integration" —
+  exactly what isBranchGroupMemberLanded requires — not merged straight onto the
+  project default branch mislabeled (or unlabeled).
+  */
+  it("routes a shared-branch-group member onto the group's branch and stamps mergeTargetSource: branch-group-integration", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const groupBranch = "fusion/groups/shared-x";
+    const branchGroup = { id: "BG-1", branchName: groupBranch, sourceType: "planning", sourceId: "PS-1", status: "open", prState: "none" };
+    const { store, task, group } = makeStore(
+      dir,
+      { branchContext: { assignmentMode: "shared", groupId: "BG-1" } },
+      {},
+      branchGroup,
+    );
+    const mainBefore = git(dir, "rev-parse main");
+
+    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+      mergeAgent: realMergeAgent("fusion/fn-1"),
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    });
+
+    expect(result.merged).toBe(true);
+    // Landed onto the GROUP's branch, not the project default.
+    expect(git(dir, `rev-parse ${groupBranch}`)).not.toBe(git(dir, "rev-parse main"));
+    expect(git(dir, "rev-parse main")).toBe(mainBefore);
+    expect(task.mergeDetails).toEqual(
+      expect.objectContaining({
+        mergeConfirmed: true,
+        mergeTargetBranch: groupBranch,
+        mergeTargetSource: "branch-group-integration",
+      }),
+    );
+
+    // The exact invariant the checklist/PR-body/dashboard/CLI serializers all
+    // read from — prove the shared predicate now agrees the member landed.
+    const { isBranchGroupMemberLanded } = await import("@fusion/core");
+    expect(isBranchGroupMemberLanded(task, { branchName: groupBranch })).toBe(true);
+
+    // Group-row landing bookkeeping (worktreePath/status) was updated best-effort.
+    expect(store.recordBranchGroupMemberLanded).toHaveBeenCalledWith("BG-1", expect.objectContaining({ status: "open" }));
+    expect(group?.status).toBe("open");
   });
 });
 

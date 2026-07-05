@@ -435,6 +435,9 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
 /**
  * FNXC:PlannerOversight 2026-07-04-00:00:
  * Workflows declare a default planner oversight level before per-task override and engine reader support land in FN-7509/FN-7510. The workflow-native enum stays out of project settings and `MOVED_SETTINGS_KEYS`; its schema default is `autonomous` so built-in workflows preserve full steering/control until operators choose Off, Observe, or Steer.
+ *
+ * FNXC:PlannerOversight 2026-07-04-12:00:
+ * FN-7518 adds `plannerOversightNotificationLevel`, a sibling workflow-native enum letting operators configure how noisy planner-overseer notifications are: Silent suppresses all, Errors only notifies on failures/escalations, Important (the default) notifies on interventions/recovery actions plus errors, and All notifies on every observation. Default is `important` (not `all`) to avoid noisy-by-default behavior. This setting stays workflow-native (out of project/global settings schemas and `MOVED_SETTINGS_KEYS`) and resolves through the generic `resolveEffectiveSettings` default path with no special-casing. This task only declares the setting — the emission gating that reads it lands downstream in FN-7519 (intervention timeline) and FN-7520 (run-audit/activity events).
  */
 export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
   {
@@ -450,6 +453,20 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
     ],
     description:
       "Workflow planner oversight mode: Off disables oversight; Observe watches only; Steer injects guidance or suggests revisions; Autonomous recovery enables bounded retry and targeted-fix recovery.",
+  },
+  {
+    id: "plannerOversightNotificationLevel",
+    name: "Planner oversight notification level",
+    type: "enum",
+    default: "important",
+    options: [
+      { value: "silent", label: "Silent" },
+      { value: "errors", label: "Errors only" },
+      { value: "important", label: "Important" },
+      { value: "all", label: "All" },
+    ],
+    description:
+      "Planner overseer notification verbosity: Silent suppresses overseer notifications; Errors only notifies on failures/escalations; Important notifies on interventions/recovery actions and errors; All notifies on every observation. Notification-emission gating that reads this value is follow-up work (FN-7519/FN-7520).",
   },
 ];
 

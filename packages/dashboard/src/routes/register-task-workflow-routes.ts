@@ -43,12 +43,13 @@ import {
   parseExplicitDuplicateMarker,
   isWorkflowColumnsEnabled,
   TransitionRejectionError,
+  getPlannerInterventionTimeline,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 import { GitHubClient } from "../github.js";
 import { createTrackingIssueForTask } from "../github-tracking-hook.js";
 import { parseGitHubBadgeUrl } from "./register-git-github.js";
-import { planTaskWorktreePath, promoteHeldTask } from "@fusion/engine";
+import { planTaskWorktreePath, promoteHeldTask, performTaskRevert, TaskRevertError } from "@fusion/engine";
 import { buildBoardWorkflowsPayload } from "./board-workflows.js";
 import { isBackwardMoveBlockedByOpenPr, PR_OPEN_BLOCKS_MOVE_BACK_MESSAGE } from "./register-pull-requests-routes.js";
 import type { RunAuditEventInput } from "@fusion/core";
@@ -859,7 +860,7 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
 
   router.get("/tasks", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
       const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
       const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
       const q = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
@@ -918,6 +919,27 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         // Branch-progress enrichment is best-effort and must never fail the
         // board load — fall through with the un-enriched task list.
       }
+
+      // FNXC:PlannerOversight 2026-07-04-00:00:
+      // FN-7531 additively attaches the transient `plannerOverseerState`
+      // snapshot for each task with an active planner-overseer observation,
+      // mirroring the `branchProgress` enrichment block directly above: it
+      // is best-effort, never fails the board load on any engine error, and
+      // omits the field entirely (rather than attaching `null`) for tasks
+      // with no active observation — the payload stays byte-identical for
+      // those tasks. Consumed by FN-7516's TaskCard badge.
+      try {
+        if (engine && tasks.length > 0) {
+          tasks = tasks.map((task) => {
+            const plannerOverseerState = engine.getPlannerOverseerRuntimeSnapshot(task.id);
+            return plannerOverseerState ? { ...task, plannerOverseerState } : task;
+          });
+        }
+      } catch {
+        // Planner-overseer-state enrichment is best-effort and must never
+        // fail the board load — fall through with the un-enriched task list.
+      }
+
       res.json(tasks);
     } catch (err: unknown) {
       if (err instanceof ApiError) {
@@ -1646,6 +1668,79 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         : (err instanceof Error ? err.message : String(err)).includes("conflict") ? 409
         : 500;
       throw new ApiError(status, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  /*
+  FNXC:TaskRevert 2026-07-04-00:00:
+  POST /tasks/:id/revert — intelligent git-revert for Done/Archived tasks (FN-7523, foundation
+  for FN-7501). Guard rails (enforced here AND in the engine service):
+    - only done/archived tasks are revertable (400/409 otherwise);
+    - autoMerge-off is a needsHuman result, not a forced write;
+    - the source task's column/status is NEVER mutated as a side effect of a revert.
+  Response contract: `{ mode: "git", clean, revertCommitSha?, conflicts?, alreadyReverted?, unsupported?, needsHuman?, reason? }`.
+  On conflict, this route does NOT create the AI-undo follow-up task — that is sibling FN-7524's
+  job; the UI/caller decides what to do with the conflict result. This route also never moves the
+  source task backward through its lifecycle.
+  */
+  router.post("/tasks/:id/revert", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const task = await scopedStore.getTask(req.params.id);
+      if (!task) {
+        throw notFound(`Task ${req.params.id} not found`);
+      }
+      if (task.column !== "done" && task.column !== "archived") {
+        throw conflict(`Task ${task.id} is in column "${task.column}"; only done/archived tasks can be reverted`);
+      }
+
+      const rootDir = scopedStore.getRootDir();
+      const settings = await scopedStore.getSettingsFast();
+      const baseBranch = task.mergeDetails?.mergeTargetBranch || await resolveIntegrationBranch(rootDir, settings);
+
+      /*
+      FNXC:TaskRevert 2026-07-04-00:00:
+      `rootDir` (`scopedStore.getRootDir()`) is the SHARED user checkout, not a
+      dedicated per-task worktree — `computeExtendedGitStatus`'s `isOnIntegrationBranch`
+      handling and `pullGitBranch`'s integration-worktree branch-mismatch guard both
+      document that this checkout can legitimately be on any branch at any time (e.g.
+      a user mid-review on a feature branch). `performTaskRevert` mutates `worktreePath`
+      in place (dry-run revert + real commit on "the appropriate base branch"), so
+      without this check a revert requested while rootDir sits on a different branch
+      would silently apply/commit the revert onto THAT branch instead of `baseBranch` —
+      committing to the wrong branch is worse than refusing. Mirror `pullGitBranch`'s
+      `branch-mismatch` 409 contract here rather than assuming the caller pre-checked out.
+      */
+      const currentBranch = (await runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], rootDir, 5_000)).trim();
+      if (currentBranch !== baseBranch) {
+        throw new ApiError(409, `Checkout is on "${currentBranch}", not the task's base branch "${baseBranch}"; switch to "${baseBranch}" before reverting`, {
+          code: "branch-mismatch",
+          currentBranch,
+          baseBranch,
+        });
+      }
+
+      const result = await performTaskRevert({
+        task,
+        worktreePath: rootDir,
+        baseBranch,
+        commitAssociationSource: {
+          getTaskCommitAssociationsByLineageId: (lineageId: string) =>
+            scopedStore.getTaskCommitAssociationsByLineageId(lineageId),
+        },
+        effectiveAutoMerge: settings.autoMerge,
+      });
+
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if (err instanceof TaskRevertError) {
+        const status = err.code === "dirty-working-tree" ? 409 : 500;
+        throw new ApiError(status, err.message, { code: err.code });
+      }
+      rethrowAsApiError(err);
     }
   });
 
@@ -2385,6 +2480,97 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       await scopedStore.getTask(req.params.id);
       const updated = await scopedStore.pauseTask(req.params.id, false);
       res.json(updated);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:PlannerOversight 2026-07-04-17:00:
+  FN-7517 task-detail planner-overseer control endpoints. Nudge is
+  guidance-only — it must NOT trigger merge/PR/destructive side effects; it
+  reuses ProjectEngine.nudgeOverseerTask, which itself only ever posts a
+  steering comment through the existing FN-7512 guidance channel and is
+  gated by the FN-7514 human-control guard (user-paused / autoMerge:false
+  human-review) plus the effective oversight level. Stop disables active
+  oversight for this task (per-task override -> "off") via
+  ProjectEngine.stopOverseerTask. Explain is a pure READ of the current
+  overseer runtime state (watched stage, reason, last action, attempt
+  count/limit) via ProjectEngine.explainOverseerTask — never mutates
+  anything. All three degrade to a 200 "not applicable" style payload
+  (rather than a 5xx) when the engine/overseer runtime is unavailable for
+  this project, since a missing in-memory runtime is an expected
+  (non-error) state, e.g. right after an engine restart.
+  */
+  router.post("/tasks/:id/overseer/nudge", async (req, res) => {
+    try {
+      const { store: scopedStore, engine } = await getProjectContext(req);
+      await scopedStore.getTask(req.params.id);
+      if (!engine) {
+        return res.json({ applied: false, reason: "engine-unavailable" });
+      }
+      const result = await engine.nudgeOverseerTask(req.params.id);
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.post("/tasks/:id/overseer/stop", async (req, res) => {
+    try {
+      const { store: scopedStore, engine } = await getProjectContext(req);
+      await scopedStore.getTask(req.params.id);
+      if (!engine) {
+        return res.json({ applied: false, reason: "engine-unavailable" });
+      }
+      const result = await engine.stopOverseerTask(req.params.id);
+      res.json(result);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/tasks/:id/overseer/explain", async (req, res) => {
+    try {
+      const { store: scopedStore, engine } = await getProjectContext(req);
+      await scopedStore.getTask(req.params.id);
+      if (!engine) {
+        return res.json({ snapshot: null });
+      }
+      const snapshot = engine.explainOverseerTask(req.params.id);
+      res.json({ snapshot });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:PlannerOversight 2026-07-04-18:00:
+  FN-7519 read-only intervention-timeline endpoint. Reuses the existing
+  run-audit store via `getPlannerInterventionTimeline` (built on top of
+  `TaskStore.getRunAuditEvents`) rather than a parallel audit store; never
+  mutates state and returns an empty array (not an error) when the task has
+  no recorded interventions. This is a pure READ path — FN-7520 owns wiring
+  `recordPlannerIntervention` calls at overseer decision points.
+  */
+  router.get("/tasks/:id/overseer/interventions", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      await scopedStore.getTask(req.params.id);
+      const entries = getPlannerInterventionTimeline(scopedStore, req.params.id);
+      res.json({ entries });
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

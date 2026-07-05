@@ -86,7 +86,10 @@ describe("workflow-native built-in workflow settings", () => {
     const movedIds = new Set(BUILTIN_MOVED_WORKFLOW_SETTINGS.map((setting) => setting.id));
     const movedKeyIds = new Set(MOVED_SETTINGS_KEYS);
 
-    expect(BUILTIN_OVERSIGHT_SETTINGS.map((setting) => setting.id)).toEqual(["plannerOversightLevel"]);
+    expect(BUILTIN_OVERSIGHT_SETTINGS.map((setting) => setting.id)).toEqual([
+      "plannerOversightLevel",
+      "plannerOversightNotificationLevel",
+    ]);
     const oversight = BUILTIN_OVERSIGHT_SETTINGS[0];
     expect(oversight).toMatchObject({
       type: "enum",
@@ -109,6 +112,37 @@ describe("workflow-native built-in workflow settings", () => {
     expect(
       movedKeyIds.has("plannerOversightLevel"),
       "plannerOversightLevel should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+
+    const notificationLevel = BUILTIN_OVERSIGHT_SETTINGS[1];
+    expect(notificationLevel).toMatchObject({
+      id: "plannerOversightNotificationLevel",
+      type: "enum",
+      default: "important",
+    });
+    expect(notificationLevel.options?.map((option) => option.value)).toEqual([
+      "silent",
+      "errors",
+      "important",
+      "all",
+    ]);
+    expect(notificationLevel.options?.map((option) => option.label)).toEqual([
+      "Silent",
+      "Errors only",
+      "Important",
+      "All",
+    ]);
+    expect(
+      fullIds.has("plannerOversightNotificationLevel"),
+      "plannerOversightNotificationLevel should be in the full built-in catalog",
+    ).toBe(true);
+    expect(
+      movedIds.has("plannerOversightNotificationLevel"),
+      "plannerOversightNotificationLevel should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerOversightNotificationLevel"),
+      "plannerOversightNotificationLevel should not be in MOVED_SETTINGS_KEYS",
     ).toBe(false);
   });
 

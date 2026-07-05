@@ -32,6 +32,10 @@ describe("settings defaults invariants", () => {
     expect(DEFAULT_GLOBAL_SETTINGS.dashboardKeyboardShortcuts).toEqual({
       quickChat: "Space",
       terminal: "Ctrl+`",
+      openFiles: "Ctrl+E",
+      openSettings: "Ctrl+,",
+      openCommandCenter: "Ctrl+K",
+      newTask: "Ctrl+Shift+N",
     });
     expect(GLOBAL_SETTINGS_KEYS).toContain("dashboardKeyboardShortcuts");
     expect(PROJECT_SETTINGS_KEYS).not.toContain("dashboardKeyboardShortcuts");
