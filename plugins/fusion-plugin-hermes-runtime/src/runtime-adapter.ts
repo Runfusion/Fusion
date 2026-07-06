@@ -84,14 +84,23 @@ export class HermesRuntimeAdapter implements AgentRuntime {
     const promptWithContext = resumeId
       ? prompt
       : `${session.fusedSystemPrompt}\n\nUser request:\n${prompt}`;
-    session.messages.push({ role: "user", content: prompt });
-    const result = await invokeHermesCli(promptWithContext, this.settings, resumeId);
+    const userMessage = { role: "user", content: prompt };
+    session.messages.push(userMessage);
+    let result: Awaited<ReturnType<typeof invokeHermesCli>>;
+    try {
+      result = await invokeHermesCli(promptWithContext, this.settings, resumeId);
+      session.state.errorMessage = undefined;
+    } catch (err) {
+      session.messages.pop();
+      session.state.errorMessage = err instanceof Error ? err.message : String(err);
+      throw err;
+    }
 
     session.sessionId = result.sessionId;
     session.lastModelDescription = this.describeFromSettings();
 
+    session.messages.push({ role: "assistant", content: result.body });
     if (result.body) {
-      session.messages.push({ role: "assistant", content: result.body });
       session.callbacks.onText?.(result.body);
     }
   }

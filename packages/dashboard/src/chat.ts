@@ -1075,6 +1075,14 @@ export class ChatManager {
     private taskStore?: TaskStore,
   ) {}
 
+  /**
+   * FNXC:ProjectChatRuntime 2026-07-05-18:10:
+   * Project chat managers can be created before a project engine finishes booting. Refreshing the plugin runner after construction prevents early requests from permanently binding Hermes/runtime hints to the global fallback runner; callers must only refresh from a confirmed project runner so transient engine unavailability cannot downgrade a scoped manager.
+   */
+  setPluginRunner(pluginRunner: ChatManager["pluginRunner"] | undefined): void {
+    this.pluginRunner = pluginRunner;
+  }
+
   private getPluginRunnerForSkillSelection(): Parameters<typeof buildSessionSkillContextSync>[3] {
     return this.pluginRunner?.getPluginSkills
       ? (this.pluginRunner as unknown as Parameters<typeof buildSessionSkillContextSync>[3])

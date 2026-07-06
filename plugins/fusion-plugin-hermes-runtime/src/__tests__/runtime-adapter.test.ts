@@ -68,6 +68,12 @@ describe("HermesRuntimeAdapter — promptWithFallback", () => {
     expect(onText).toHaveBeenCalledWith("hello from hermes");
     // Session id is captured for next call
     expect(session.sessionId).toBe("20260427_120000_abc123");
+    expect(session.messages).toEqual([
+      { role: "user", content: "first prompt" },
+      { role: "assistant", content: "hello from hermes" },
+    ]);
+    expect(session.state.messages).toBe(session.messages);
+    expect(session.state.errorMessage).toBeUndefined();
   });
 
   it("passes captured session id as --resume on subsequent calls", async () => {
@@ -94,6 +100,8 @@ describe("HermesRuntimeAdapter — promptWithFallback", () => {
     await expect(adapter.promptWithFallback(session, "p")).rejects.toThrow(
       /missing session_id/,
     );
+    expect(session.messages).toEqual([]);
+    expect(session.state.errorMessage).toBe("hermes: missing session_id");
   });
 
   it("does NOT call onText when body is empty", async () => {
@@ -110,6 +118,11 @@ describe("HermesRuntimeAdapter — promptWithFallback", () => {
     });
     await adapter.promptWithFallback(session, "p");
     expect(onText).not.toHaveBeenCalled();
+    expect(session.messages).toEqual([
+      { role: "user", content: "p" },
+      { role: "assistant", content: "" },
+    ]);
+    expect(session.state.errorMessage).toBeUndefined();
   });
 });
 

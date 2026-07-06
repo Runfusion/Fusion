@@ -90,10 +90,16 @@ export function getOrCreateScopedChatManager(
   store: TaskStore,
   chatStore: ChatStore,
   pluginRunner?: ConstructorParameters<typeof ChatManager>[3],
+  refreshPluginRunner = false,
 ): ChatManager {
   const key = store.getFusionDir();
   const cached = scopedChatManagerCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    if (refreshPluginRunner && pluginRunner) {
+      cached.setPluginRunner(pluginRunner);
+    }
+    return cached;
+  }
   const agentStore = new AgentStore({ rootDir: store.getFusionDir() });
   const manager = new ChatManager(
     chatStore,
