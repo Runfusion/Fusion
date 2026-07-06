@@ -1185,6 +1185,80 @@ describe("GET /auth/status", () => {
   });
 
   /*
+  FNXC:ClaudeOAuth 2026-07-05-19:10:
+  A present, unexpired Anthropic subscription OAuth token whose scopes lack an inference
+  capability (e.g. profile-only grant, or one a buggy refresh narrowed to user:profile)
+  authenticates identity but 403s every model call. /auth/status must report it as
+  not-connected (authenticated:false, expired:true so the re-login banner fires) with a
+  scope-specific loginError — not as a healthy session. The complementary test below
+  guards against a false negative: a token that DOES carry user:inference stays connected.
+  */
+  it("reports an unexpired Anthropic subscription OAuth token that lacks the inference scope as not-connected", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "profile-only-token",
+      refresh: "refresh",
+      expires: now + 3_600_000,
+      scopes: ["user:profile"],
+    }) : undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: false, expired: true });
+    expect(anthropic.loginError).toMatch(/inference/i);
+  });
+
+  it("keeps an unexpired Anthropic subscription OAuth token that carries user:inference connected", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "inference-capable-token",
+      refresh: "refresh",
+      expires: now + 3_600_000,
+      scopes: ["user:profile", "user:inference"],
+    }) : undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: true, expired: false });
+    expect(anthropic.loginError).toBeUndefined();
+  });
+
+  it("does not penalize an unexpired Anthropic subscription OAuth token that records no scopes", async () => {
+    const now = Date.now();
+    (authStorage.getOAuthProviders as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: "anthropic", name: "Anthropic" },
+    ]);
+    (authStorage.hasAuth as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription");
+    (authStorage.get as ReturnType<typeof vi.fn>).mockImplementation((provider: string) => provider === "anthropic-subscription" ? ({
+      type: "oauth",
+      access: "fresh-login-token",
+      refresh: "refresh",
+      expires: now + 3_600_000,
+      // Fresh pi-ai login persists no `scopes` field — must be treated as usable.
+    }) : undefined);
+
+    const res = await GET(app, "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    const anthropic = res.body.providers.find((p: any) => p.id === "anthropic-subscription");
+    expect(anthropic).toMatchObject({ authenticated: true, expired: false });
+  });
+
+  /*
   FNXC:ProviderAuth 2026-07-05-00:00:
   FN-7574 symptom verification: an expired, unrefreshable Anthropic Subscription OAuth
   credential must report authenticated:false/expired:true across BOTH the legacy

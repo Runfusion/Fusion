@@ -114,6 +114,47 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
     return Date.now() >= credential.expires;
   }
 
+  /*
+  FNXC:ClaudeOAuth 2026-07-05-19:10:
+  An Anthropic subscription OAuth token can be present AND unexpired yet still be unable to run models — e.g. a profile-only grant, or a token that a buggy refresh narrowed to `user:profile` (root cause fixed in packages/engine/src/auth-storage.ts). Such a token proves identity but 403s on every model call ("OAuth token does not meet scope requirement any_of(user:inference, ...)"), which is exactly how the status card came to claim "logged in" while all inference failed. So /auth/status must treat an inference-incapable token as not-connected, not authenticated.
+  Mirror the API's any_of inference set. Only penalize when scopes ARE recorded and none is inference-capable: a fresh pi-ai login persists NO `scopes` field, so absent/empty scopes are treated as unknown-but-usable to avoid falsely reporting a good login as disconnected.
+  */
+  const ANTHROPIC_INFERENCE_SCOPES = new Set([
+    "user:inference",
+    "user:developer",
+    "user:ccr_inference",
+    "user:voice",
+    "org:service_key_inference",
+    "workspace:developer",
+    "workspace:inference",
+  ]);
+
+  function isAnthropicOauthProviderId(providerId: string): boolean {
+    return providerId === ANTHROPIC_OAUTH_PROVIDER_ID || providerId === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID;
+  }
+
+  function isInferenceIncapableAnthropicOauth(providerId: string, storage: AuthStorageLike): boolean {
+    // Scope semantics are Anthropic-specific — never apply this to github-copilot,
+    // openai-codex, or other OAuth providers whose scope sets are unrelated.
+    if (!isAnthropicOauthProviderId(providerId)) {
+      return false;
+    }
+    const credential = getOauthStatusCredential(providerId, storage);
+    if (!credential) {
+      return false;
+    }
+    const rawScopes = (credential as { scopes?: unknown }).scopes;
+    if (!Array.isArray(rawScopes)) {
+      return false;
+    }
+    const scopes = rawScopes.filter((scope): scope is string => typeof scope === "string" && scope.trim().length > 0);
+    if (scopes.length === 0) {
+      // Unknown scopes (e.g. fresh login that records none) — assume usable.
+      return false;
+    }
+    return !scopes.some((scope) => ANTHROPIC_INFERENCE_SCOPES.has(scope));
+  }
+
   type ManualCodeConfig = {
     prompt: string;
     placeholder?: string;
@@ -501,15 +542,25 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
           hasAuth = storage.hasAuth(storageProviderId);
           expired = hasAuth && isExpiredOauthCredential(storageProviderId, storage);
         }
+        /*
+        FNXC:ClaudeOAuth 2026-07-05-19:10:
+        A present, unexpired Anthropic OAuth token that lacks an inference scope cannot run models, so it must report as not-connected with the same remediation as an expired session (re-login). Fold it into `expired` so the existing OAuthReloginBanner (which keys on `expired===true`) prompts re-authentication, and set a specific `loginError` so SettingsModal explains the cause rather than showing a bare "expired". Evaluated only when the token is otherwise live (has auth and not already expired) to avoid redundant messaging.
+        */
+        const missingInferenceScope = hasAuth
+          && !expired
+          && isInferenceIncapableAnthropicOauth(storageProviderId, storage);
+        const scopeLoginError = missingInferenceScope
+          ? "This Anthropic login is missing the model-access (inference) scope, so model calls will fail. Re-login to grant full access."
+          : undefined;
         return {
           id: statusProvider.id,
           name: statusProvider.name,
-          authenticated: hasAuth && !expired,
+          authenticated: hasAuth && !expired && !missingInferenceScope,
           type: "oauth" as const,
-          expired,
+          expired: expired || missingInferenceScope,
           loginInProgress: loginInProgress.has(statusProvider.id),
           requiresManualCode: getManualCodeConfig(toOauthLoginProviderId(statusProvider.id), origin) !== undefined || undefined,
-          loginError: lastLoginError.get(statusProvider.id),
+          loginError: lastLoginError.get(statusProvider.id) ?? scopeLoginError,
         };
       }));
 
