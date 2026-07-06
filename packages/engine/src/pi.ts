@@ -1958,13 +1958,27 @@ export function wrapToolsWithActionGate(
           );
         }
 
+        /*
+        FNXC:AgentGating 2026-07-05-00:00:
+        FN-7608: pauseForApproval (which pauses the task AND suspends the
+        in-flight session — see executor.ts buildActionGateContext) must run
+        for BOTH the newly-created-request sub-case and the reused-pending
+        sub-case. Previously it only ran when a fresh approval request was
+        minted, so a second identical gated call that resolved to an already-
+        pending request (dedupe working as designed) never paused/suspended
+        the session — the agent's turn kept going and it hunted for ungated
+        workarounds instead of stopping. resolveGateOutcome() already
+        guarantees no duplicate request is created on the reused-pending path
+        (gateOutcome.approvalRequestId is set from the existing pending row),
+        so this only ever pauses once per distinct approval request.
+        */
         let approvalRequestId = gateOutcome.approvalRequestId;
         if (!approvalRequestId) {
           const created = await gateContext.createApprovalRequest(decision, params) as { id?: string } | null;
           approvalRequestId = created?.id;
-          if (approvalRequestId) {
-            await gateContext.pauseForApproval?.({ approvalRequestId, decision });
-          }
+        }
+        if (approvalRequestId) {
+          await gateContext.pauseForApproval?.({ approvalRequestId, decision });
         }
 
         return buildGateRejection(
@@ -1976,7 +1990,7 @@ export function wrapToolsWithActionGate(
               dedupeKey: decision.approvalDedupeKey,
             },
           },
-          `Action requires approval (request ${approvalRequestId ?? "pending"}). Agent and task have been paused; will resume once a decision is made.`,
+          `Action requires approval (request ${approvalRequestId ?? "pending"}). Task paused and session suspended awaiting decision; do not attempt alternatives.`,
         );
       },
     };

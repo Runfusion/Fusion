@@ -129,6 +129,17 @@ export async function requireSandboxProvisioningApproval(input: {
   }
 
   if (gateOutcome.approvalRequestId) {
+    /*
+    FNXC:AgentGating 2026-07-05-00:20:
+    FN-7608: a reused-pending approval must also re-run pauseForApproval, not
+    just the newly-created path below -- otherwise a repeated identical
+    provisioning request after the first pause (e.g. task/agent resumed some
+    other way) would silently re-block without re-pausing, mirroring the same
+    gap fixed in wrapToolsWithActionGate (pi.ts).
+    */
+    if (context.pauseForApproval) {
+      await context.pauseForApproval({ approvalRequestId: gateOutcome.approvalRequestId, decision });
+    }
     throw new SandboxProvisioningPendingError({
       message: "Sandbox provisioning approval pending",
       approvalRequestId: gateOutcome.approvalRequestId,

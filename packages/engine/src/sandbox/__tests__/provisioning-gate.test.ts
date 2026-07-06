@@ -83,6 +83,35 @@ describe("requireSandboxProvisioningApproval", () => {
     expect(result).toEqual({ outcome: "execute-once-then-complete", approvalRequestId: "apr-1" });
   });
 
+  /*
+  FNXC:AgentGating 2026-07-05-00:22:
+  FN-7608 parity coverage: a reused-PENDING approval (dedupe hit) must also
+  re-invoke pauseForApproval, mirroring the same fix applied to
+  wrapToolsWithActionGate (pi.ts) — previously only the newly-created path
+  called pauseForApproval here.
+  */
+  it("re-invokes pauseForApproval when reusing an existing pending approval", async () => {
+    const pauseForApproval = vi.fn(async () => undefined);
+    await expect(
+      requireSandboxProvisioningApproval({
+        backendId: "bubblewrap",
+        operation: "install",
+        description: "Install bubblewrap",
+        context: {
+          taskId: "FN-4641",
+          requester: { actorId: "agent-1", actorType: "agent", actorName: "Executor" },
+          settings: undefined,
+          createApprovalRequest: vi.fn(async () => null),
+          findApprovalByDedupeKey: vi.fn(async () => ({ id: "apr-1", status: "pending" as const })),
+          pauseForApproval,
+        },
+      }),
+    ).rejects.toBeInstanceOf(SandboxProvisioningPendingError);
+
+    expect(pauseForApproval).toHaveBeenCalledTimes(1);
+    expect(pauseForApproval).toHaveBeenCalledWith(expect.objectContaining({ approvalRequestId: "apr-1" }));
+  });
+
   it("throws block when prior approval was denied", async () => {
     await expect(
       requireSandboxProvisioningApproval({

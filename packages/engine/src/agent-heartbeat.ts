@@ -1200,6 +1200,19 @@ export class HeartbeatMonitor {
         const latest = this.getApprovalRequestStore().findLatestByDedupeKey({ requesterActorId: agent.id, taskId, dedupeKey });
         return latest?.status === "pending" ? { id: latest.id } : null;
       },
+      /*
+      FNXC:AgentGating 2026-07-05-00:15:
+      FN-7608: unlike TaskExecutor.buildActionGateContext, HeartbeatMonitor has
+      no `activeSessions`/session-abort surface of its own -- permanent-agent
+      heartbeat ticks are short stateless request/response cycles (each tick
+      runs one bounded pi turn and returns; there is no long-lived in-flight
+      session object to synchronously abort mid-turn). Pausing the task and
+      agent here already prevents the NEXT heartbeat tick from running (the
+      scheduler skips paused agents/tasks), so there is nothing further to
+      suspend -- this closure intentionally has no session-abort call. If
+      HeartbeatMonitor ever grows a persistent in-flight session surface, wire
+      awaitAbortInFlightTaskWork-equivalent suspension here too.
+      */
       pauseForApproval: async ({ approvalRequestId, decision }) => {
         if (taskId && this.taskStore) {
           await this.taskStore.pauseTask(taskId, true, undefined, { pausedByAgentId: agent.id });

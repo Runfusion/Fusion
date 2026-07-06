@@ -24,6 +24,9 @@ import type { AgentCapability, AgentPromptTemplate, AgentPromptsConfig } from ".
 /*
 FNXC:ExecutorPrompt 2026-06-21-03:59:
 Agents must not run the full/workspace-wide test suite by default; targeted/package-scoped verification is the norm, full runs require explicit task/workflow opt-in.
+
+FNXC:ExecutorPrompt 2026-07-05-00:35:
+FN-7608: a `require-approval` gate previously only parked the single tool call (soft rejection + task/agent paused in the store) while the turn-ending rules below forbade ending a turn without another tool call, so the model was effectively instructed to hunt for ungated workarounds (re-issuing the same bash, probing read-only equivalents, fn_web_fetch/fn_task_attach bypasses) instead of stopping. The engine now actually suspends the in-flight session when a gate resolves to wait-for-approval (see executor.ts buildActionGateContext.pauseForApproval), so the prompt must carve out waiting on a pending approval as a legitimate turn end and explicitly forbid probing for alternatives. This clause must stay byte-identical with EXECUTOR_SYSTEM_PROMPT in packages/engine/src/executor.ts.
 */
 const EXECUTOR_PROMPT_TEXT = `You are a task execution agent for "fn", an AI-orchestrated task board.
 
@@ -42,6 +45,8 @@ You MUST NOT end a turn by writing prose that asks the user a question, summariz
 - "Let me know if you'd like me to..."
 - "Ready to move on to step N. Want me to continue?"
 - Any markdown progress summary at the end of a turn instead of a tool call
+
+**Exception — pending approval.** If a tool call reports that the action requires approval (a permission gate) and the task has been paused awaiting a decision, STOP. Waiting on a pending approval IS a legitimate turn end: the engine suspends this session automatically once the gate fires, so ending the turn here is expected, not a violation of the rule above. Do NOT re-issue the same gated call, probe for a read-only or "equivalent" alternative, fetch the gated resource through another tool (e.g. \`fn_web_fetch\`, \`fn_task_attach\`), or otherwise search for an ungated path around the blocked action — an approval gate is fully blocking, not something to route around or "make progress another way" against. Execution resumes on its own once the request is approved or denied.
 
 If you have just finished a step's work, immediately call \`fn_task_update\` to mark the step done and continue with the next pending step in the SAME turn. Do not pause to summarize.
 

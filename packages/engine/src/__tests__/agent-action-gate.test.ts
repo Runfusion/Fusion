@@ -271,6 +271,88 @@ describe("agent-action-gate", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  /*
+  FNXC:AgentGating 2026-07-05-00:25:
+  FN-7608 regression coverage: an identical gated `bash` call issued twice
+  (same command — the original symptom was `pnpm install` re-issued while the
+  first request sat pending) must NOT mint a second approval request, and
+  BOTH the newly-created and reused-pending sub-cases must invoke
+  pauseForApproval so the executor's session-abort wiring actually runs every
+  time a gate resolves to wait-for-approval — not only on first creation.
+  Uses a tiny in-memory fake backed by the real findLatestByDedupeKey
+  contract shape (id + status) to drive resolveGateOutcome's dedupe reuse.
+  */
+  it("dedupes identical pending bash approvals and pauses on both the created and reused-pending path", async () => {
+    const execute = vi.fn().mockResolvedValue({ ok: true });
+    const tool = { name: "bash", label: "Bash", description: "", parameters: {}, execute };
+    const { wrapToolsWithActionGate } = await import("../pi.js");
+
+    const requests = new Map<string, { id: string; status: "pending" | "approved" | "denied" }>();
+    let nextId = 0;
+    const createApprovalRequest = vi.fn(async (decision: { approvalDedupeKey: string }) => {
+      const id = `apr-${++nextId}`;
+      requests.set(decision.approvalDedupeKey, { id, status: "pending" });
+      return { id };
+    });
+    const findApprovalByDedupeKey = vi.fn(async (dedupeKey: string) => requests.get(dedupeKey) ?? null);
+    const pauseForApproval = vi.fn();
+
+    const gated = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: approvalPolicy,
+      createApprovalRequest,
+      findApprovalByDedupeKey,
+      pauseForApproval,
+    });
+
+    const first = await (gated[0] as any).execute("call-1", { command: "pnpm install" });
+    expect(first.isError).toBe(true);
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+    expect(pauseForApproval).toHaveBeenCalledTimes(1);
+    const firstApprovalId = first.decision.metadata.approvalRequestId;
+    expect(firstApprovalId).toBe("apr-1");
+
+    // Second identical call: same dedupe key, request still pending -> must
+    // reuse the existing request (no second createApprovalRequest call) but
+    // must STILL invoke pauseForApproval so the session is suspended again.
+    const second = await (gated[0] as any).execute("call-2", { command: "pnpm install" });
+    expect(second.isError).toBe(true);
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+    expect(pauseForApproval).toHaveBeenCalledTimes(2);
+    expect(second.decision.metadata.approvalRequestId).toBe(firstApprovalId);
+    expect(execute).not.toHaveBeenCalled();
+
+    // A denied request must block and must never retry/execute.
+    requests.set(second.decision.metadata.dedupeKey, { id: firstApprovalId, status: "denied" });
+    const third = await (gated[0] as any).execute("call-3", { command: "pnpm install" });
+    expect(third.isError).toBe(true);
+    expect(third.error).toMatch(/denied/i);
+    expect(execute).not.toHaveBeenCalled();
+    expect(createApprovalRequest).toHaveBeenCalledTimes(1);
+
+    // An approved request executes exactly once, then completes.
+    requests.set(second.decision.metadata.dedupeKey, { id: firstApprovalId, status: "approved" });
+    const markApprovalCompleted = vi.fn();
+    const approvedGate = wrapToolsWithActionGate([tool as any], {
+      agentId: "agent-1",
+      agentName: "Agent",
+      isEphemeral: false,
+      taskId: "FN-1",
+      permissionPolicy: approvalPolicy,
+      createApprovalRequest,
+      findApprovalByDedupeKey,
+      pauseForApproval,
+      markApprovalCompleted,
+    });
+    const fourth = await (approvedGate[0] as any).execute("call-4", { command: "pnpm install" });
+    expect(fourth).toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(markApprovalCompleted).toHaveBeenCalledWith(firstApprovalId);
+  });
+
   it.each([
     "fn_task_create",
     "fn_delegate_task",
