@@ -330,7 +330,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .select()
           .from(cliPressServices)
           .orderBy(desc(cliPressServices.createdAt));
-        return rows.map(mapService);
+        return (rows as ServiceRow[]).map(mapService);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_services ORDER BY createdAt DESC").all() as unknown as ServiceRow[];
       return rows.map(mapService);
@@ -343,7 +343,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressServices)
           .where(eq(cliPressServices.id, id))
           .limit(1);
-        return rows[0] ? mapService(rows[0]) : undefined;
+        return rows[0] ? mapService(rows[0] as ServiceRow) : undefined;
       }
       const row = syncDb().prepare("SELECT * FROM cli_press_services WHERE id = ?").get(id) as unknown as ServiceRow | undefined;
       return row ? mapService(row) : undefined;
@@ -412,7 +412,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressSpecs)
           .where(eq(cliPressSpecs.serviceId, serviceId))
           .orderBy(desc(cliPressSpecs.createdAt));
-        return rows.map(mapSpec);
+        return (rows as CliSpecRow[]).map(mapSpec);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_cli_specs WHERE serviceId = ? ORDER BY createdAt DESC").all(serviceId) as unknown as CliSpecRow[];
       return rows.map(mapSpec);
@@ -425,7 +425,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressSpecs)
           .where(eq(cliPressSpecs.id, id))
           .limit(1);
-        return rows[0] ? mapSpec(rows[0]) : undefined;
+        return rows[0] ? mapSpec(rows[0] as CliSpecRow) : undefined;
       }
       const row = syncDb().prepare("SELECT * FROM cli_press_cli_specs WHERE id = ?").get(id) as unknown as CliSpecRow | undefined;
       return row ? mapSpec(row) : undefined;
@@ -495,7 +495,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressArtifacts)
           .where(eq(cliPressArtifacts.cliSpecId, specId))
           .orderBy(desc(cliPressArtifacts.createdAt));
-        return rows.map(mapArtifact);
+        return (rows as CliArtifactRow[]).map(mapArtifact);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_artifacts WHERE cliSpecId = ? ORDER BY createdAt DESC").all(specId) as unknown as CliArtifactRow[];
       return rows.map(mapArtifact);
@@ -531,7 +531,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressArtifacts)
           .where(eq(cliPressArtifacts.id, id))
           .limit(1);
-        const existing = rows[0];
+        const existing = rows[0] as CliArtifactRow | undefined;
         if (!existing) throw new Error(`Artifact ${id} not found`);
         const updated: CliArtifact = {
           ...mapArtifact(existing),
@@ -575,7 +575,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressCredentials)
           .where(eq(cliPressCredentials.serviceId, serviceId))
           .orderBy(desc(cliPressCredentials.createdAt));
-        return rows.map(mapCredential);
+        return (rows as CredentialRow[]).map(mapCredential);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_credentials WHERE serviceId = ? ORDER BY createdAt DESC").all(serviceId) as unknown as CredentialRow[];
       return rows.map(mapCredential);
@@ -612,7 +612,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressCredentials)
           .where(eq(cliPressCredentials.id, id))
           .limit(1);
-        const existing = rows[0];
+        const existing = rows[0] as CredentialRow | undefined;
         if (!existing) throw new Error(`Credential ${id} not found`);
         const mapped = mapCredential(existing);
         const updated: Credential = {
@@ -670,7 +670,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressSettings)
           .where(eq(cliPressSettings.serviceId, serviceId))
           .orderBy(desc(cliPressSettings.createdAt));
-        return rows.map(mapSetting);
+        return (rows as ServiceSettingRow[]).map(mapSetting);
       }
       const rows = syncDb().prepare("SELECT * FROM cli_press_service_settings WHERE serviceId = ? ORDER BY createdAt DESC").all(serviceId) as unknown as ServiceSettingRow[];
       return rows.map(mapSetting);
@@ -684,7 +684,7 @@ export function createCliPressStore(db: Database | null, asyncLayer?: AsyncDataL
           .from(cliPressSettings)
           .where(and(eq(cliPressSettings.serviceId, input.serviceId), eq(cliPressSettings.key, input.key), eq(cliPressSettings.scope, input.scope)))
           .limit(1);
-        const existing = rows[0];
+        const existing = rows[0] as ServiceSettingRow | undefined;
         if (existing) {
           await asyncLayer.db.update(cliPressSettings).set({ value: input.value, updatedAt: now }).where(eq(cliPressSettings.id, existing.id));
           return mapSetting({ ...existing, value: input.value, updatedAt: now });

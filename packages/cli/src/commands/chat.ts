@@ -1,7 +1,7 @@
 import { AgentStore } from "@fusion/core";
 import type { Message } from "@fusion/core";
 import { createMessageStore, formatParticipant, formatTime, CLI_USER_ID } from "./message.js";
-import { resolveProject } from "../project-context.js";
+import { resolveAgentStoreBase } from "../project-context.js";
 import { createInterface } from "node:readline/promises";
 
 const MAX_MESSAGE_LENGTH = 8192;
@@ -18,23 +18,15 @@ export interface ChatInteractiveOptions {
   output?: NodeJS.WritableStream;
 }
 
-async function getProjectPath(projectName?: string): Promise<string> {
-  if (projectName) {
-    const context = await resolveProject(projectName);
-    return context.projectPath;
-  }
-
-  try {
-    const context = await resolveProject(undefined);
-    return context.projectPath;
-  } catch {
-    return process.cwd();
-  }
-}
-
+/*
+FNXC:PostgresCutover 2026-07-05-12:00:
+Borrow the PostgreSQL AsyncDataLayer from the resolved project store so the
+chat AgentStore runs in backend mode (the SQLite runtime was removed under
+VAL-REMOVAL-005), mirroring agent.ts/extension.ts createAgentStore.
+*/
 async function createAgentStore(projectName?: string): Promise<AgentStore> {
-  const projectPath = await getProjectPath(projectName);
-  const store = new AgentStore({ rootDir: `${projectPath}/.fusion` });
+  const { rootDir, asyncLayer } = await resolveAgentStoreBase(projectName);
+  const store = new AgentStore({ rootDir: `${rootDir}/.fusion`, asyncLayer: asyncLayer ?? undefined });
   await store.init();
   return store;
 }

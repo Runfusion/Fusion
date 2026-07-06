@@ -275,7 +275,7 @@ export function clearStoreCache(): void {
   storeCache.clear();
 }
 
-async function createLocalStore(
+export async function createLocalStore(
   projectPath: string,
   globalSettingsDir?: string,
 ): Promise<TaskStore> {
@@ -284,6 +284,10 @@ async function createLocalStore(
   // of the removed SQLite runtime. The factory returns null only on the
   // FUSION_NO_EMBEDDED_PG=1 opt-out; in that case fall back to the legacy
   // TaskStore, which still needs an explicit init().
+  // FNXC:PostgresCutover 2026-07-05-12:00: exported so CLI command
+  // catch-fallbacks (task/pr/backup/memory-backup/branch-group/mcp) boot their
+  // cwd-rooted store through the same factory instead of constructing a legacy
+  // SQLite TaskStore directly (its runtime throws in backend mode).
   const boot = await createTaskStoreForBackend({ rootDir: projectPath, globalSettingsDir });
   if (boot) {
     return boot.taskStore;

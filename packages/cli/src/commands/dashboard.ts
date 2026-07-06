@@ -982,7 +982,11 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   let tuiRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Per-project task stores for the BoardView's scoped stats. Shared with the
-  // interactiveData wiring below so we don't re-init SQLite on each refresh.
+  // interactiveData wiring below so we don't re-boot a backend on each refresh.
+  // FNXC:PostgresCutover 2026-07-05-12:00: non-cwd project stores must boot
+  // through the PostgreSQL startup factory; bare `new TaskStore` throws in
+  // backend mode (SQLite runtime removed under VAL-REMOVAL-005). Stores are
+  // cached for the TUI process lifetime; pools are released at process exit.
   const projectStores = new Map<string, TaskStore>();
   async function getProjectStore(projectPath: string): Promise<TaskStore> {
     const cached = projectStores.get(projectPath);
@@ -992,8 +996,13 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
       if (!store) throw new Error("cwd TaskStore not yet initialized");
       projectStore = store;
     } else {
-      projectStore = new TaskStore(projectPath);
-      await projectStore.init();
+      const boot = await createTaskStoreForBackend({ rootDir: projectPath });
+      if (boot) {
+        projectStore = boot.taskStore;
+      } else {
+        projectStore = new TaskStore(projectPath);
+        await projectStore.init();
+      }
     }
     projectStores.set(projectPath, projectStore);
     return projectStore;

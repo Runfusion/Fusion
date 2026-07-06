@@ -334,9 +334,14 @@ export async function runProjectAdd(
         rl.close();
 
         if (init.trim().toLowerCase() !== "n") {
-          // Initialize the project
-          const store = new TaskStore(absolutePath);
+          // Initialize the project.
+          // FNXC:PostgresCutover 2026-07-05-12:00: boot through the PostgreSQL
+          // startup factory; bare `new TaskStore` throws in backend mode. The
+          // boot shutdown releases the pool for this one-shot init.
+          const boot = await createTaskStoreForBackend({ rootDir: absolutePath });
+          const store = boot ? boot.taskStore : new TaskStore(absolutePath);
           await store.init();
+          if (boot) await boot.shutdown().catch(() => {});
           console.log(`  ✓ Initialized fn at ${absolutePath}`);
         } else {
           console.log("\n  Cancelled. Run `fn init` to initialize a project first.\n");

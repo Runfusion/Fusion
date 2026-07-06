@@ -3,7 +3,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   GlobalSettingsStore,
-  TaskStore,
   exportMcpServersJson,
   importMcpServersJson,
   isMcpSecretRef,
@@ -18,7 +17,7 @@ import {
   type SecretScope,
   type Settings,
 } from "@fusion/core";
-import { resolveProject, type ProjectContext } from "../project-context.js";
+import { resolveProject, createLocalStore, type ProjectContext } from "../project-context.js";
 
 export type McpScope = "global" | "project";
 export type McpTransportInput = "stdio" | "sse" | "http" | "streamable-http";
@@ -148,8 +147,9 @@ function assertNoPlaintextSensitiveOptions(opts: McpSensitiveInputOptions): void
 
 async function getSecretsStore(context: McpContext) {
   const project = context.project;
-  const store = project?.store ?? new TaskStore(process.cwd());
-  if (!project) await store.init();
+  // FNXC:PostgresCutover 2026-07-05-12:00: boot the cwd fallback through the
+  // PostgreSQL startup factory; bare `new TaskStore` throws in backend mode.
+  const store = project?.store ?? (await createLocalStore(process.cwd()));
   return store.getSecretsStore();
 }
 

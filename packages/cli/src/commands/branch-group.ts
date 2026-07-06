@@ -1,7 +1,7 @@
 import { TaskStore, isBranchGroupComplete, isBranchGroupMemberLanded, filterTasksByBranchGroup, type BranchGroup, type Settings, type Task } from "@fusion/core";
 import { promoteBranchGroup, resolveIntegrationBranch } from "@fusion/engine";
 import { GitHubClient, closeGroupPullRequest } from "@fusion/dashboard";
-import { resolveProject } from "../project-context.js";
+import { resolveProject, createLocalStore } from "../project-context.js";
 import { createGroupPrCallback } from "./task-lifecycle.js";
 
 /**
@@ -38,8 +38,9 @@ async function getBranchGroupContext(projectName?: string): Promise<BranchGroupC
   if (projectName) {
     throw new Error(`Project ${projectName} not found`);
   }
-  const store = new TaskStore(process.cwd());
-  await store.init();
+  // FNXC:PostgresCutover 2026-07-05-12:00: boot the cwd fallback through the
+  // PostgreSQL startup factory; bare `new TaskStore` throws in backend mode.
+  const store = await createLocalStore(process.cwd());
   return { store, projectPath: process.cwd() };
 }
 

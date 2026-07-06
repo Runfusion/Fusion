@@ -4,15 +4,16 @@ import {
   runBackupCommand,
   TaskStore,
 } from "@fusion/core";
-import { resolveProject } from "../project-context.js";
+import { resolveProject, createLocalStore } from "../project-context.js";
 
 async function resolveBackupStore(projectName?: string): Promise<TaskStore> {
   try {
     return (await resolveProject(projectName)).store;
   } catch {
-    const store = new TaskStore(process.cwd());
-    await store.init();
-    return store;
+    // FNXC:PostgresCutover 2026-07-05-12:00: the cwd fallback must boot through
+    // the PostgreSQL startup factory (createLocalStore); a bare `new TaskStore`
+    // resolves to the removed SQLite runtime, which throws on first DB access.
+    return createLocalStore(process.cwd());
   }
 }
 

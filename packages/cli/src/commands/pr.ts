@@ -9,7 +9,7 @@ import {
 import { classifyGhError, getGhErrorMessage, getCurrentRepo, isGhAuthenticated, isGhAvailable } from "@fusion/core/gh-cli";
 import { releaseHeldTaskByEvent } from "@fusion/engine";
 import * as dashboard from "@fusion/dashboard";
-import { resolveProject } from "../project-context.js";
+import { resolveProject, createLocalStore } from "../project-context.js";
 
 /**
  * Agent-native parity (R13, U8): expose the SAME unified-PR-entity surface and
@@ -56,8 +56,9 @@ async function getPrContext(projectName?: string): Promise<PrCommandContext> {
   if (projectName) {
     throw new Error(`Project ${projectName} not found`);
   }
-  const store = new TaskStore(process.cwd());
-  await store.init();
+  // FNXC:PostgresCutover 2026-07-05-12:00: boot the cwd fallback through the
+  // PostgreSQL startup factory; bare `new TaskStore` throws in backend mode.
+  const store = await createLocalStore(process.cwd());
   return { store, projectPath: process.cwd() };
 }
 

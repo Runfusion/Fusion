@@ -1,4 +1,5 @@
 import { definePlugin } from "@fusion/plugin-sdk";
+import type { AsyncDataLayer } from "@fusion/core";
 import { createCliPrintingPressRoutes } from "./routes/wizard-routes.js";
 import { buildExecutorRuntimeEnv } from "./runtime/executor-runtime-env.js";
 import { createCliPressStore, ensureCliPressSchema, type CliPressStore } from "./store/cli-press-store.js";
@@ -7,7 +8,7 @@ import { CLI_PRINTING_PRESS_WORKFLOW_STEPS } from "./workflow-steps.js";
 interface TaskStoreLike {
   getDatabase(): object;
   isBackendMode(): boolean;
-  getAsyncLayer(): { db: unknown } | null;
+  getAsyncLayer(): AsyncDataLayer | null;
 }
 
 // Cache keyed by the SQLite db object (legacy mode). In backend mode the store

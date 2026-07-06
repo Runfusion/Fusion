@@ -23,6 +23,7 @@ const {
   mockGetSettings,
   mockRunBackupCommand,
   mockResolveProject,
+  mockCreateLocalStore,
 } = vi.hoisted(() => ({
   mockListBackups: vi.fn(),
   mockListBackupPairs: vi.fn(),
@@ -31,6 +32,7 @@ const {
   mockGetSettings: vi.fn(),
   mockRunBackupCommand: vi.fn(),
   mockResolveProject: vi.fn(),
+  mockCreateLocalStore: vi.fn(),
 }));
 
 vi.mock("@fusion/core", () => ({
@@ -51,6 +53,9 @@ vi.mock("@fusion/core", () => ({
 
 vi.mock("../../project-context.js", () => ({
   resolveProject: mockResolveProject,
+  // FNXC:PostgresCutover 2026-07-05-12:00: cwd fallback now boots through
+  // createLocalStore (PostgreSQL startup factory) instead of `new TaskStore`.
+  createLocalStore: mockCreateLocalStore,
 }));
 
 import { TaskStore } from "@fusion/core";
@@ -132,18 +137,26 @@ describe("backup commands", () => {
   it("runBackupList without project falls back to current cwd task store when resolution fails", async () => {
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/local/project");
     mockResolveProject.mockRejectedValueOnce(new Error("No fn project found"));
+    mockCreateLocalStore.mockResolvedValueOnce({
+      getSettings: mockGetSettings,
+      fusionDir: "/local/project/.fusion",
+    });
     await runBackupList();
     expect(mockResolveProject).toHaveBeenCalledWith(undefined);
-    expect(TaskStore).toHaveBeenCalledWith("/local/project");
+    expect(mockCreateLocalStore).toHaveBeenCalledWith("/local/project");
     cwdSpy.mockRestore();
   });
 
   it("falls back to current cwd task store when project resolution fails for project-targeted commands", async () => {
     const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue("/fallback/project");
     mockResolveProject.mockRejectedValue(new Error("Project 'missing' not found. Run 'fn project list' to see registered projects."));
+    mockCreateLocalStore.mockResolvedValueOnce({
+      getSettings: mockGetSettings,
+      fusionDir: "/fallback/project/.fusion",
+    });
 
     await runBackupList("missing");
-    expect(TaskStore).toHaveBeenCalledWith("/fallback/project");
+    expect(mockCreateLocalStore).toHaveBeenCalledWith("/fallback/project");
     cwdSpy.mockRestore();
   });
 });
