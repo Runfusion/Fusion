@@ -57,6 +57,28 @@ export interface LocalRuntimeManagerOptions {
   getExternalPort?: () => number | undefined;
   createStore?: (rootDir: string) => Promise<TaskStoreLike>;
   createDashboardServer?: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
+  /**
+   * FNXC:DesktopRuntime 2026-07-05-00:00:
+   * Total attempts (including the first) for embedded startup. Field reports (FN-7617)
+   * show Windows first-launch embedded starts intermittently throw once (during store
+   * init/watch or dashboard-server boot) and then succeed immediately on a manual
+   * Retry (a renderer reload that re-invokes startLocal()). Default 3 total attempts
+   * so that self-heal happens inside the manager before the operator ever sees the
+   * "Couldn't start local Fusion" error screen. Only applies to the embedded-start
+   * path (never external-cli / already-running). Overridable so tests can drive
+   * deterministic attempt counts with zero delay.
+   */
+  startupRetries?: number;
+  /** Delay between failed embedded-start attempts, in ms. Overridable (use 0 in tests). */
+  startupRetryDelayMs?: number;
+}
+
+const DEFAULT_STARTUP_RETRIES = 3;
+const DEFAULT_STARTUP_RETRY_DELAY_MS = 150;
+
+function delay(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
@@ -167,11 +189,15 @@ export class LocalRuntimeManager {
   private readonly getExternalPort: () => number | undefined;
   private readonly createStore: (rootDir: string) => Promise<TaskStoreLike>;
   private readonly createDashboardServer: (store: TaskStoreLike, rootDir: string) => Promise<Server | { server: Server; cleanup?: RuntimeCleanup }>;
+  private readonly startupRetries: number;
+  private readonly startupRetryDelayMs: number;
 
   constructor(private readonly options: LocalRuntimeManagerOptions) {
     this.getExternalPort = options.getExternalPort ?? (() => parsePort(process.env.FUSION_SERVER_PORT));
     this.createStore = options.createStore ?? createStoreDefault;
     this.createDashboardServer = options.createDashboardServer ?? createDashboardServerDefault;
+    this.startupRetries = Math.max(1, options.startupRetries ?? DEFAULT_STARTUP_RETRIES);
+    this.startupRetryDelayMs = options.startupRetryDelayMs ?? DEFAULT_STARTUP_RETRY_DELAY_MS;
   }
 
   getStatus(): DesktopRuntimeStatus {
@@ -233,7 +259,52 @@ export class LocalRuntimeManager {
     }
   }
 
+  /*
+   * FNXC:DesktopRuntime 2026-07-05-00:00:
+   * Windows first-launch field report (FN-7617): the embedded runtime start intermittently
+   * throws on its very first attempt (store init/watch or dashboard-server boot), but a
+   * manual Retry (a renderer reload that re-invokes startLocal()) always succeeds — proving
+   * the failure is transient rather than a hard misconfiguration. Rather than surface that
+   * transient to the renderer (which renders the scary "Couldn't start local Fusion"
+   * local-error phase in DesktopLaunchGate.tsx), retry the embedded attempt internally,
+   * bounded and with full cleanup between attempts, so a healthy install self-heals before
+   * the operator ever sees an error screen. `status.state` stays "starting" across retries;
+   * only the LAST attempt's real error sets state "error" and is thrown, so genuine failures
+   * (e.g. a bad dashboard import) still surface their real message unchanged.
+   */
   private async startEmbedded(): Promise<DesktopRuntimeStatus> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= this.startupRetries; attempt++) {
+      strace(`startEmbedded: attempt ${attempt}/${this.startupRetries}`);
+      try {
+        return await this.startEmbeddedAttempt();
+      } catch (error) {
+        lastError = error;
+        strace(
+          `startEmbedded: attempt ${attempt}/${this.startupRetries} FAILED — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        if (attempt < this.startupRetries) {
+          // Keep reporting "starting" while a retry is still pending — the operator/gate
+          // must not see "error" for a transient attempt that self-heals.
+          this.status = { source: "embedded-local", state: "starting" };
+          if (this.startupRetryDelayMs > 0) {
+            await delay(this.startupRetryDelayMs);
+          }
+        }
+      }
+    }
+
+    this.runtime = null;
+    this.status = {
+      source: "embedded-local",
+      state: "error",
+      error: lastError instanceof Error ? lastError.message : String(lastError),
+    };
+    strace(`startEmbedded: all ${this.startupRetries} attempts failed — surfacing final error`);
+    throw lastError;
+  }
+
+  private async startEmbeddedAttempt(): Promise<DesktopRuntimeStatus> {
     let store: TaskStoreLike | null = null;
     let server: Server | null = null;
     let cleanup: RuntimeCleanup | undefined;
@@ -275,11 +346,6 @@ export class LocalRuntimeManager {
         store.close();
       }
       this.runtime = null;
-      this.status = {
-        source: "embedded-local",
-        state: "error",
-        error: error instanceof Error ? error.message : String(error),
-      };
       strace(`startEmbedded: CATCH/ERROR ${error instanceof Error ? error.stack : String(error)}`);
       throw error;
     }
