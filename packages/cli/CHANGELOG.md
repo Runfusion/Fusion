@@ -1,5 +1,325 @@
 # @runfusion/fusion
 
+## 0.56.0
+
+### Minor Changes
+
+- d16c8b4: summary: Expand first-run AI provider quick-start choices beyond Anthropic.
+  category: feature
+  dev: Moves advanced/all-provider onboarding controls under the quick-start provider section.
+- 315f3bc: summary: Show Git prerequisite guidance during first-run GitHub onboarding.
+  category: feature
+  dev: Adds bounded server-host git availability to auth status and onboarding.
+- 50cdab1: summary: Add GitHub OAuth and CLI setup actions to first-run onboarding.
+  category: feature
+  dev: GitHub onboarding now shows in-flow OAuth connect, gh auth login, and gh install guidance.
+- 2f23d22: summary: Add configurable dashboard keyboard shortcuts for Quick Chat and Terminal.
+  category: feature
+  dev: Global dashboardKeyboardShortcuts settings, guarded document-level key handling, and Escape topmost-popup dismissal.
+- efa8105: summary: Add search in Settings so operators can find settings faster.
+  category: feature
+  dev: Dashboard Settings filters visible sections by setting labels and keywords.
+- 7d8a1b8: summary: Add a pinned below-application layout option for the dashboard terminal.
+  category: feature
+  dev: Terminal display mode now supports persisted docked, floating, and below layouts, with header controls replacing the footer shell.
+- 87a700c: summary: Add a Reset Settings button to restore a menu's or all project settings to defaults.
+  category: feature
+  dev: New tested section→keys (scope-aware) registry (packages/dashboard/app/components/settings/section-keys.ts) drives per-menu reset via updateSettings/updateGlobalSettings with null-as-delete; non-blob sections (secrets, MCP, plugins, memory, auth, prompts, CLI agents, runtimes) are excluded with a documented reason.
+- 68f5153: summary: Add a per-workflow planner oversight level setting (Off, Observe, Steer, Autonomous recovery).
+  category: feature
+  dev: New workflow setting `plannerOversightLevel` declared in BUILTIN_OVERSIGHT_SETTINGS; default `autonomous`. Per-task override and engine behavior land in follow-up tasks.
+- aa757bc: summary: Tasks can override the workflow planner oversight level (Off, Observe, Steer, Autonomous recovery).
+  category: feature
+  dev: New nullable Task.plannerOversightLevel field (migration 137, SCHEMA_VERSION 137) mirroring executionMode; NULL inherits the workflow setting. Adds resolveEffectivePlannerOversightLevel precedence helper. Dashboard UI/API threading and engine behavior land in follow-up tasks.
+- 0689250: summary: Planner oversight now defaults to full steering/control for every workflow unless explicitly changed.
+  category: feature
+  dev: Confirms the `plannerOversightLevel` workflow-setting default is the highest (autonomous) level; unset workflow value and unset per-task override both resolve to full steering via `resolveEffectivePlannerOversightLevel` (task override → workflow effective value → autonomous), adding dedicated regression coverage for the "unless explicitly disabled" precedence.
+- 12a6d1b: summary: Planner oversight now monitors tasks across executor, reviewer, merger, pull-request, and workflow-gate stages.
+  category: feature
+  dev: Adds records-only PlannerOverseerMonitor + resolveWatchedStage + OverseerStageObservation in @fusion/engine, gated by resolveEffectivePlannerOversightLevel (off = no observation) and wired into ProjectEngine via a bounded poll. Steering/recovery and UI land in FN-7512/FN-7515+.
+- 81f2053: summary: Planner oversight can autonomously inject guidance, retry stuck/failed steps, and request fixes within bounded limits.
+  category: feature
+  dev: Adds pure `decidePlannerRecovery` + recovery types (core) and `PlannerRecoveryController` with injected guidance/retry/targeted-fix handlers (engine), consuming the FN-7511 observation. Acts only at effective level `autonomous`, caps attempts per (task, stage) via `PLANNER_RECOVERY_MAX_ATTEMPTS`, skips user-paused tasks, and excludes merge/PR/destructive actions (deferred to FN-7513) and comprehensive human-control safeguards (FN-7514).
+- 2cc84b5: summary: Planner oversight now requires confirmation before merge/PR actions and destructive/external side effects.
+  category: feature
+  dev: Adds `PlannerActionSideEffectClass` + `PlannerConfirmationRequest` and `classifyPlannerActionSideEffect`/`requiresPlannerConfirmation` (core), extends `decidePlannerRecovery` with an `await_confirmation` action, and adds `requestConfirmation`/`resolveConfirmation` gating to `PlannerRecoveryController` (engine). Merge/PR and destructive/external actions never execute without a recorded approval; bounded recovery (guidance/retry/targeted-fix) is unchanged. UX rendering, human-control safeguards, timeline, and run-audit land in follow-up tasks.
+- 79ab367: summary: Planner overseer now stays fully hands-off for paused tasks and auto-merge-off / human-review tasks.
+  category: feature
+  dev: Adds the pure `evaluateOverseerHumanControl` policy (packages/engine/src/overseer-human-control-policy.ts), consulted at the top of `PlannerRecoveryController.tick()` before any action classification, confirmation gating, steering, retry, or dispatch — so a user-paused or `autoMerge:false`/human-review task never even records a pending confirmation. Reuses `allowsAutoMergeProcessing` from `@fusion/core` verbatim (never re-derives the auto-merge/human-review predicate). Distinguishes explicit user pause (`task.userPaused===true`, or `task.paused===true` with no `pausedReason`) from engine/self-healing parks (which always stamp a `pausedReason`). Emits a bounded `overseer:oversight-withheld-human-control` run-audit no-action event (metadata: `{ taskId, reason, stage, oversightLevel }`), deduped per (taskId, reason) so it does not spam every poll.
+- c16cc9e: summary: Configure planner oversight level per task and per project in the workflow editor and task create/detail.
+  category: feature
+  dev: Per-task `plannerOversightLevel` override exposed via TaskForm (Inherit/off/observe/steer/autonomous), threaded through createTask/updateTask; workflow-editor Values tab gets a first-class display entry. Workflow-native setting; not a project setting.
+- aae603b: summary: Add a configurable planner-overseer notification verbosity level (Silent/Errors/Important/All).
+  category: feature
+  dev: New workflow-native enum setting `plannerOversightNotificationLevel` in BUILTIN_OVERSIGHT_SETTINGS; default `important`. Resolves via resolveEffectiveSettings; emission gating that reads it lands in FN-7519/FN-7520.
+- d10ea9a: summary: Add a task-detail planner-overseer intervention timeline (stage, reason, action, outcome, attempts, links).
+  category: feature
+  dev: New core `PlannerInterventionEntry` model + `recordPlannerIntervention`/`getPlannerInterventionTimeline` helpers persisting via the run-audit store under the `overseer:intervention` mutation, plus a `PlannerInterventionTimeline` component rendered in the task-detail Planner Oversight cluster. Emission call-sites land in FN-7520.
+- bf68839: summary: Emit planner-overseer run-audit events for observations, steering, retries, recovery, confirmations, and escalations.
+  category: feature
+  dev: New core emitters (emitOverseerObservation/Steering/RecoveryAttempt/Retry/Confirmation/Escalation) in planner-overseer-events.ts, each mapping its decision-point to the correct intervention action/outcome and delegating to FN-7519's recordPlannerIntervention under the overseer:intervention mutation. Producer call-sites land in FN-7511/FN-7512/FN-7513.
+- c4d81fe: summary: Add an AI-undo fallback task when reverting a done task via git conflicts or is unsupported.
+  category: feature
+  dev: `POST /api/tasks/:id/revert` now accepts `{ mode?: "git" | "ai" | "auto" }` (default `"auto"`). `"auto"` tries the FN-7523 git-revert path first and falls back to creating an AI-undo board task (`{ mode: "ai", createdTaskId, alreadyOpen? }`) on a conflicting or unsupported (e.g. workspace) git result; `needsHuman` (autoMerge-off) never triggers the fallback. `"ai"` always creates the AI-undo task; `"git"` keeps the FN-7523 git-only contract, which is otherwise unchanged. New engine exports: `createAiUndoTask`, `buildAiUndoTaskDescription`, `REVERT_OF_METADATA_KEY`. New core store method `TaskStore.findOpenRevertTaskForSource` backs the idempotency guard (an open undo task suppresses a duplicate; a closed one does not).
+- e7cb2f1: summary: Add a Revert action to Done/Archived task cards to undo landed changes.
+  category: feature
+  dev: Wires onRevertTask through Board/List/Detail surfaces; calls POST /tasks/:id/revert in "auto" mode with a conflict-confirm AI-undo fallback (mode: "ai").
+- 5ad8ec8: summary: Capture a structured performance snapshot when an agent task completes.
+  category: feature
+  dev: New AgentReflectionService.captureTaskPerformance persists a non-LLM post-task ReflectionMetrics record (duration, packages/files touched, verification command + scope, retry/rework count) and emits ids/counts-only `reflection:captured` run-audit telemetry; populates performanceSummary/latestReflection.
+- 726cbf8: summary: Task cards can now show the planner overseer's active state (idle/watching/steering/recovering/awaiting-confirmation).
+  category: feature
+  dev: Adds a serializable `PlannerOverseerRuntimeSnapshot` + pure `derivePlannerOverseerState` (core), a read-only `ProjectEngine.getPlannerOverseerRuntimeSnapshot(taskId)` accessor assembling it from the FN-7511 monitor + FN-7512/7513 recovery controller, and a best-effort additive `plannerOverseerState` enrichment on `GET /api/tasks` (mirrors the `branchProgress` pattern; never persisted, never fails the board load). Consumed by FN-7516's TaskCard.
+- 2ed06f9: summary: Support reverting multi-repo workspace tasks via git, all-or-nothing across sub-repos.
+  category: feature
+  dev: Extends `packages/engine/src/task-revert.ts` with `resolveWorkspaceTaskRevertCommits`/`revertWorkspaceTask` and wires `POST /api/tasks/:id/revert` to dispatch workspace tasks (`isWorkspaceTask`) to the new path; returns `{ mode: "git", clean, workspace: { repos: [...] }, conflicts? }`. Single-repo `performTaskRevert` path is unchanged.
+- 8c6f76c: summary: Add per-sha revert commit granularity to the task revert API and service.
+  category: feature
+  dev: `performTaskRevert` and `POST /api/tasks/:id/revert` accept an optional `granularity: "squash" | "per-sha"` (default `"squash"`, unchanged FN-7523 behavior). `"per-sha"` creates one attributed `revert(FN-xxxx)` commit per original sha (each with its own `Fusion-Task-Id` trailer and audit line), skipping no-op shas without empty commits. A mid-batch conflict in either mode rolls back the whole batch to the pre-call HEAD — no partially-landed per-sha commits. The clean result now reports `revertCommitShas: string[]` (all created commits) alongside the existing `revertCommitSha` (kept for backward compatibility).
+- f992e6a: summary: Add a dedicated Keyboard Shortcuts settings section with click-to-record capture and more configurable actions.
+  category: feature
+  dev: Relocates dashboardKeyboardShortcuts into its own settings section, adds a ShortcutCaptureInput recorder, and extends DashboardShortcutAction with openFiles/openSettings/openCommandCenter/newTask actions wired into existing App nav handlers.
+- 2df6c35: summary: Open a revert PR for done/archived tasks when autoMerge is disabled instead of refusing.
+  category: feature
+  dev: `POST /api/tasks/:id/revert` gains an additive `{ mode: "pr", clean: true, prUrl, prNumber, revertBranch, existingPr? }` result for clean single-repo reverts under `autoMerge:false`, reusing `GitHubClient.createPr`, `findPrForBranch` idempotency, and the `manual:true` PR handoff. New engine export `prepareRevertPrBranch` (packages/engine/src/task-revert.ts) prepares the dedicated `fusion/revert-<id>` branch without ever mutating the base branch. Existing `{ mode: "git" | "ai", ... }` shapes and the `autoMerge:true` path are unchanged.
+- 94e9d15: summary: AI-undo tasks now default to a configurable, stricter review workflow.
+  category: feature
+  dev: New project setting `aiUndoTaskWorkflowId` (default `builtin:review-heavy`) selects the workflow for AI-undo board tasks created by `POST /api/tasks/:id/revert` (`mode: "ai"`, the `auto` conflict fallback, and the workspace conflict fallback all share the `createAiUndoResult()` closure, so all three inherit this default). A blank/unset value means the created task inherits the project default workflow (pre-FN-7556 behavior). The route validates the configured id via `getWorkflowDefinition`/`isBuiltinWorkflowId` and falls back to inherit (with a logged warning) on a blank or unknown value, so a misconfigured id never breaks AI-undo task creation. The engine's `createAiUndoTask` helper stays pure — it only forwards a `workflowId` it is given, never resolves the setting itself. The Settings Modal UI field for this setting is a deliberate follow-up task; the value is settable today only via the settings API.
+- 3dd227b: summary: Plan auto-approval is now the default; specified tasks skip manual approval unless you opt into workflow/require-all.
+  category: feature
+  dev: `DEFAULT_PROJECT_SETTINGS.planApprovalMode` flips `workflow` → `auto-approve-all`; existing projects with an explicit stored value are unchanged; consumed by `resolvePlanApprovalRequired` at the triage gating sites.
+- 78d4db9: summary: Fusion self-repo issue-close comments now show current and target release versions.
+  category: feature
+  dev: GitHubIssueCommentService appends "Current version: v{current}" and "Target release: v{next-minor}" lines when the linked source issue is runfusion/fusion; other repos unchanged. Version resolved via getCliPackageVersion.
+- 7435849: summary: Open one revert PR per sub-repo for workspace tasks when autoMerge is disabled.
+  category: feature
+  dev: `POST /api/tasks/:id/revert` gains an additive workspace `{ mode: "pr", clean: true, workspace: { repos: [{ repo, revertBranch, prUrl, prNumber, existingPr? }] } }` result for clean multi-repo reverts under `autoMerge:false`, extending FN-7554's single-repo `mode:"pr"` path. New engine export `prepareWorkspaceRevertPrBranches` (packages/engine/src/task-revert.ts) classifies every sub-repo first and only prepares a dedicated `fusion/revert-<id>` branch per sub-repo when all are clean/already-reverted (all-or-nothing at the branch-prep phase), never force-writing any sub-repo integration branch. The route resolves owner/repo and checks the rate limiter for every sub-repo before pushing/creating any PR, so GitHub-unconfigured/rate-limited cases degrade the whole task to `needsHuman` rather than opening a partial subset of PRs. Existing `{ mode: "git" | "ai" | "pr", ... }` shapes, the `autoMerge:true` workspace path, and FN-7554's single-repo path are unchanged.
+- 73b38ba: summary: Add a Settings → General picker to choose the workflow used for AI-undo (revert) tasks.
+  category: feature
+  dev: Surfaces `aiUndoTaskWorkflowId` (default `builtin:review-heavy`) in GeneralSection; empty selection means "inherit project default workflow", matching the revert route's blank-is-inherit behavior from FN-7556.
+- 42bbe58: summary: Add "Ask user question" and "Exit gate" workflow nodes for mid-flow chat reach-out and early exit.
+  category: feature
+  dev: New IR node kinds `ask-user` (reuses await-input park/resume; surfaces the question in the task chat) and `exit-gate` (terminates the workflow early, optional condition). Editor palette + summaries + help updated; `prompt`+`awaitInput` remains a back-compat alias.
+- 53fe0d7: summary: Add a built-in "Brainstorming" workflow that talks to you before planning.
+  category: feature
+  dev: Registers `builtin:brainstorming` (non-default, default-enabled) composing FN-7579's `ask-user` → refine → `exit-gate`-on-approval phase ahead of the normal coding plan/execute/review/merge spine. Parity suite (`builtin-workflows.test.ts`) extended for the new entry.
+- ecbbb29: summary: Add a "Coding (Ideas)" workflow with a manual Ideas intake and a merged Todo planner column.
+  category: feature
+  dev: New `builtin:coding-ideas` clones the default stepwise pipeline with an `ideas` intake (autoTriage:false) in front of a merged `todo` planner+capacity column. createTask lands cards in the workflow's intake column; the triage service plans unplanned todo tasks in place; the scheduler skips bootstrap-prompt todo tasks; TaskCard gains a Start button and a Ready badge.
+
+### Patch Changes
+
+- 8668a05: summary: Add a workflow setting to disable automatic large-task triage splitting.
+  category: feature
+  dev: Adds triageProactiveSubtaskSplittingEnabled while preserving explicit breakIntoSubtasks requests.
+- 978cdda: summary: Show active Plan Review progress on triage task cards.
+  category: fix
+  dev: TaskCard now renders the existing progress affordance for Triage only when unified progress has active workflow work.
+- 635fca2: summary: Remove the eye icon markdown/plain toggle from chat; messages always render as Markdown.
+  category: breaking
+  dev: Removed ChatView `chat-thread-header-render-toggle` (desktop + mobile), `showAllAsPlain` state, and `chat.showRenderedMarkdown`/`chat.showPlainText` i18n keys (FN-7541).
+- 3d55102: summary: Clarify task-detail oversight Nudge/Explain controls: visible label, disabled reason, always-openable Explain panel.
+  category: fix
+  dev: TaskDetailModal now renders a `detail-oversight-controls-label` group label and `detail-overseer-nudge-disabled-reason` helper text (both gated by the existing oversight-cluster visibility condition); Explain no longer disables on `!canExplainOverseer` since it is read-only. Nudge's `canNudgeOverseer` gate and Stop's confirm dialog are unchanged.
+- 0f1cd0a: summary: Unify border, radius, and height of the task-detail Priority/Execution/Oversight controls.
+  category: fix
+  dev: Adds a shared --detail-control-border-radius token alongside --detail-priority-control-min-height so .detail-priority-chip, .detail-execution-mode-toggle, .detail-oversight-chip, and .detail-oversight-menu-trigger all resolve the same border-width/color/radius/height.
+- b42ba9f: summary: Keep the task-detail Activity view menu open during mobile iOS taps.
+  category: fix
+  dev: Guards the Activity views dropdown against iOS visualViewport resize/scroll echoes during menu opening.
+- a7559b0: summary: Fix Anthropic subscription login when pasted callback URLs contain fragment OAuth parameters.
+  category: fix
+  dev: Normalizes pasted OAuth callback fragments before resolving dashboard manual-code login prompts.
+- 4b530a6: summary: Fix Claude/Anthropic subscription re-login showing "Login did not complete" after logging out.
+  category: fix
+  dev: Anthropic subscription OAuth is aliased across the legacy `anthropic` row (where interactive login persists the credential) and the `anthropic-subscription` id (where the settings card's in-memory logged-out suppression and status read are keyed). Re-login wrote only `anthropic`, so `loggedOutProviders` kept suppressing `anthropic-subscription` and the card reported failure despite a valid stored credential until process restart. auth-storage's proxy now clears the logged-out state on both aliases when either is re-authenticated (new `login` trap + hardened `set` trap via `clearReauthenticatedLogoutState`; raw api_key writes stay scoped to their own card). Also surfaces background OAuth login failures on `GET /auth/status` (`loginError`) + server logs so future paste-callback failures are diagnosable instead of a generic error.
+- a5ac3c3: summary: Stop self-healing from killing actively-running tasks after ~30 minutes.
+  category: fix
+  dev: FN-7566. isPhantomExecutorBinding's liveness gate (heartbeat/checkout/runAudit) was blind to ephemeral executor agents, leaving only the age>graceMs\*3 threshold, so any ephemeral-executor task running longer than ~30 min was reclaimed to `todo` mid-flight. Adds the in-process live-session veto (activeSessionRegistry path / executingTaskLock / isTaskActive), mirroring the isWorkspaceTaskLive/sessionDead predicate, and honors clearPhantomExecutorBinding's live-session refusal in reclaimSelfOwnedBranchConflicts.
+- 8912399: summary: Stop Windows Terminal version dialogs from popping up when opening the dashboard or Settings on Windows.
+  category: fix
+  dev: Root cause was the worktrunk integration, not the embedded terminal: worktrunk's CLI is named `wt`, which collides with Windows Terminal (`wt.exe`) on PATH, so probing it with `wt --version` launched Windows Terminal. Fixed by (1) `useWorktrunkInstallStatus` only auto-fetching `/api/worktrunk/status` when the integration is enabled (user opt-in) instead of on every Settings/dashboard mount, and (2) an engine-level guard in `probeWorktrunk` that refuses to exec a resolved `wt` that is the Windows Terminal alias (under `WindowsApps` / a `WindowsTerminal` package dir), covering all resolution surfaces.
+- b800f7d: summary: Select newly created folders automatically during project setup.
+  category: fix
+  dev: Adds DirectoryPicker opt-in selection for project-registration surfaces while preserving default picker behavior.
+- 9dc248e: summary: Prevent Desktop update banners from using 0.0.0 as the current version.
+  category: fix
+  dev: Dashboard update checks now resolve packaged @fusion/desktop metadata and fail closed for unresolved versions.
+- 52dbc0e: summary: Quit Fusion Desktop on Windows when the window is closed.
+  category: fix
+  dev: Updates Electron close lifecycle so Windows shutdown reaches embedded runtime cleanup.
+- ced783e: summary: Open desktop Anthropic Subscription OAuth logins in the system browser.
+  category: fix
+  dev: Adds Electron window-open policy coverage and preserves Settings auth polling completion paths.
+- 50786f2: summary: Delay GitHub setup warnings for one day and add a dashboard connect action.
+  category: fix
+  dev: Dashboard setup warnings now gate GitHub prompts per project and route the CTA to Settings → Authentication.
+- b4b1f6d: summary: Fix a false AI engine not running banner in desktop mode.
+  category: fix
+  dev: Distinguishes transient embedded desktop engine startup from true dashboard-only mode.
+- e8b7362: summary: Clarify the desktop Connection Manager add-remote flow.
+  category: fix
+  dev: Desktop Connection Manager now separates Local Server context from saved remote profiles and collapses the remote editor until add/edit.
+- 0900a38: summary: Restore Local Server in the desktop Switch server list.
+  category: fix
+  dev: Desktop Connection Manager now lists local and saved remote destinations together.
+- a2b09f2: summary: Make right-dock task list clicks respect the task popup setting.
+  category: fix
+  dev: Threads openMobileTasksInPopup through the right-dock Tasks list route while preserving embedded dock detail when disabled.
+- 0f05156: summary: Auto-retry retryable Code Review remediation failures.
+  category: fix
+  dev: Prevents retryable code-review-remediation graph failures from stranding tasks in in-review.
+- 20184ac: summary: Fix no-op task branch recovery after a previously landed task.
+  category: fix
+  dev: Merge/recovery ownership classification now checks no-diff branches before foreign trailer rejection.
+- 82493e0: summary: Allow documented source-free task-artifact deliveries to finish without commits.
+  category: fix
+  dev: fn_task_done now recognizes explicit gitignored .fusion/tasks artifact contracts while preserving source-change no-commit guards.
+- 5689346: summary: Fix direct merges so Push to remote after merge honors the configured remote and branch.
+  category: fix
+  dev: Resolves remote-only push targets from the merge integration branch and preserves non-fatal push errors on done tasks.
+- b42be87: summary: Keep task popups on the board layer with Activity menus above them.
+  category: fix
+  dev: Task-detail FloatingWindow callers use a lower layer band, and Activity view menus reposition after popup geometry changes.
+- 61c8bdc: summary: Keep accepted chat requests waiting instead of showing false first-event timeout failures.
+  category: fix
+  dev: Dashboard chat POST streams no longer abort accepted-but-silent responses on the client first-event timer.
+- e8dc2ae: summary: Show each task's original prompt in the Plan tab alongside the generated plan.
+  category: fix
+  dev: Adds a read-only Task Detail original-prompt section backed by task.description.
+- d2e3134: summary: Add before-to-after transformation summaries to generated task definitions.
+  category: feature
+  dev: Built-in standard and fast triage prompts now require a `## Before → After Transformation` section.
+- b0208c1: summary: Restore terminal Ctrl/Cmd copy and paste shortcuts.
+  category: fix
+  dev: Integrated and embedded terminals now own physical clipboard paste to avoid swallowed or duplicate input.
+- 2797803: summary: Show first-token and tool processing durations in task agent logs.
+  category: feature
+  dev: Adds optional agent-log timing fields `timeToFirstTokenMs` and `durationMs`.
+- a2d6349: summary: Fix mobile Chat composer being hidden behind the keyboard accessory bar.
+  category: fix
+  dev: Adds keyboard-open bottom clearance in ChatView so the composer clears the iOS input-assistant/autofill bar without a persistent .chat-thread transform or Android reserved-gap.
+- 4baa4c4: summary: Settings descriptions now show each setting's default value.
+  category: feature
+  dev: Appended default-value copy to settings.\* i18n descriptions across Global, Runtimes, and Project Settings sections, sourced from DEFAULT_GLOBAL_SETTINGS/DEFAULT_PROJECT_SETTINGS in settings-schema.ts; added settings-default-descriptions.test.tsx guarding that every surfaced setting states a default (or explicit "inherits"/"no default \u2014 unset") and that every DEFAULT_SETTINGS key is documented or allowlisted as not surfaced.
+- 53d7b7e: summary: Add an intelligent git-revert engine service and POST /api/tasks/:id/revert route.
+  category: feature
+  dev: New `packages/engine/src/task-revert.ts` exports `resolveTaskRevertCommits`, `classifyTaskRevert`, and `performTaskRevert` (squash/rebase/lineage attribution precedence, dry-run classification, guaranteed-clean rollback). Route enforces done/archived-only and autoMerge-off guard rails; conflicting results are returned unresolved for sibling FN-7524 (AI-undo) to act on. Workspace tasks return `unsupported`.
+- 4707eb5: summary: Auto-approve now reliably sends specified plans to the board without a manual approval stop.
+  category: fix
+  dev: FN-7526 — investigated the reported "plans still park at awaiting-approval when auto-approve is on" symptom; resolvePlanApprovalRequired, mergeEffectiveSettings/applyWorkflowSettingsOverlay, and every finalizeApprovedTask call site (specifyTask, recoverApprovedTask, retryUnavailablePlanReview, tryFinalizeExplicitDuplicateMarker) already honored project planApprovalMode: "auto-approve-all" over a stored workflow requirePlanApproval value — no production defect reproduced. Added end-to-end regression coverage across every enumerated surface (Plan Review reviewer-outage retry, refinement routing, self-healing starved-refinement recovery) using the real mergeEffectiveSettings pipeline instead of isolated bare-settings unit calls, plus explicit assertions that the independent release-authorization and Workflow Plan Review gates remain intact under auto-approve-all, so a future bare-settings call site is caught immediately instead of silently reintroducing the reported behavior.
+- 3b52a4d: summary: Fix the in-dashboard Switch server menu not switching desktop local/remote.
+  category: fix
+  dev: The desktop shell's redirect effects in App.tsx read a dead `localServer` field that the preload never populates; extracted `resolveDesktopShellRedirectTarget` in appLifecycle.ts now derives the navigation target from the live `localRuntime`/`activeProfileId` state for both directions, and the unused `localServer` field was removed from `ShellConnectionState`.
+- 36bd74e: summary: Fix branch group completion checklists to show accurate landed/finished counts.
+  category: fix
+  dev: runAiMerge (the sole merge path since master-plan U0) never resolved branch-group routing or stamped mergeDetails.mergeTargetBranch/mergeTargetSource, so isBranchGroupMemberLanded permanently reported shared-group members as not landed. Routes through resolveBranchGroupMergeRouting (matching the legacy merger.ts pattern) and stamps the target fields on both the landed and no-op finalize paths; preserves merge-target-safety in isBranchGroupMemberLanded (a sibling/mismatched-branch member still never counts as landed).
+- df0be88: summary: Branch groups no longer report complete (or become promotable) when an unlanded member is archived.
+  category: fix
+  dev: listTasksByBranchGroup membership now scans with includeArchived:true so an archived-but-unlanded member stays counted in total instead of silently dropping out; mergeDetails is now persisted on ArchivedTaskEntry so an archived member that had already landed keeps counting as landed. evaluateBranchGroupCompletion / promoteBranchGroup gate correctly; merge-target-safety in isBranchGroupMemberLanded is unchanged.
+- ec9ac61: summary: Fix the global GitLab integration setting not persisting when saved.
+  category: fix
+  dev: splitSettingsSave now diffs the five global GitLab keys (gitlabEnabled, gitlabInstanceUrl, gitlabApiBaseUrl, gitlabAuthToken, gitlabAuthTokenType) against scoped global initials only, never the project-effective merged initialValues, so a project override no longer suppresses a real global save.
+- 8d36b99: summary: Fix task-detail Activity view dropdown not opening reliably on mobile.
+  category: fix
+  dev: Guards the Activity menu's window resize/orientationchange/scroll close-listener with the same opening-tap timing guard already used for visualViewport, and exempts scroll events originating in the `.detail-tabs` scroller, so a same-gesture mobile tap echo (Android/iOS, fixed modal or `.floating-window--task-detail` popup) no longer closes the menu the instant it opens.
+- ad744aa: summary: Manual "Run now" for the Database Backup automation now runs in-process like the scheduler, matching cron behavior.
+  category: fix
+  dev: The legacy single-command and command-step manual automation run path (`executeSingleCommand` in packages/dashboard/src/routes.ts) now intercepts `isInProcessBackupCommand`/`isInProcessMemoryBackupCommand` via the scoped TaskStore, mirroring `RoutineRunner.executeCommand`/`CronRunner`, instead of always shelling out via `exec()`. `formatInProcessBackupError`, `isInProcessBackupCommand`, and `isInProcessMemoryBackupCommand` are now exported from `@fusion/engine` for reuse. Existing onStep/onText live-run callbacks already stream incremental output for command/backup runs; added regression coverage confirming this holds for the new interception branch.
+- 5c3d58a: summary: Task cards no longer show the "Auto-recovery" oversight badge unless oversight is explicitly configured.
+  category: fix
+  dev: `TaskCard.tsx`'s `showOversightBadge` gate now also suppresses the badge when the effective level equals `DEFAULT_PLANNER_OVERSIGHT_LEVEL` ("autonomous") and there is no explicit per-task `plannerOversightLevel` override; an explicit per-task override of "autonomous" still renders the badge.
+- b4be515: summary: Remove the per-card overseer-state ("Executor") badge from task cards.
+  category: fix
+  dev: Deleted the FN-7516 `card-overseer-state-badge` render, its card-local `deriveOverseerCardWatchedStage` helper/label maps, and its CSS; the sibling oversight-level badge (`card-oversight-badge`) is unaffected.
+- 62ddb19: summary: Original task prompt now renders as Markdown and is collapsed by default in the task Plan tab.
+  category: feature
+  dev: Task Detail Plan/Definition tab original-prompt section reuses the existing `.detail-source-toggle`/`.detail-source-chevron--expanded` collapse pattern and the shared `ReactMarkdown` pipeline (`remarkGfm`, `sharedRehypePlugins`, `markdownLinkifyComponents`); backed by read-only `task.description`, no change to the generated `PROMPT.md` editor/revision flow.
+- 883c73e: summary: Fix agent-created artifacts not appearing live in the dashboard artifacts view.
+  category: fix
+  dev: Root cause was cross-instance artifact-registration replication, not the route/hook/render path (all already correct). `TaskStore.registerArtifact()` never bumped `lastModified`, and `checkForChanges()` (the polling replicator that lets a second TaskStore instance on the same project — e.g. the dashboard's cached store vs. the engine's own store — mirror events it did not write itself) only ever diffed the `tasks` table, never `artifacts`. A store instance that did not perform the write could therefore never observe or re-emit `artifact:registered`, leaving an already-open Documents/task Artifacts gallery stale until a full reload. Fixed by bumping `lastModified` on artifact writes and adding a strictly-increasing `rowid`-cursor poll over the `artifacts` table in `checkForChanges()`. See `packages/core/src/__tests__/artifacts.test.ts` and `packages/dashboard/src/routes/__tests__/artifacts-route-integration.test.ts` for regression coverage.
+- d09b57f: summary: Fix the mobile terminal shortcut bar so it scrolls horizontally to reach every key.
+  category: fix
+  dev: Added `min-width: 0` to `.terminal-shortcut-panel` to defeat the flex min-width:auto trap that clipped overflow instead of engaging `overflow-x: auto`.
+- 3d58260: summary: Planner-oversight intervention timeline now populates from real engine activity.
+  category: fix
+  dev: Wires PlannerOverseerMonitor/PlannerRecoveryController decision points to the FN-7520 emitOverseer\* façade with the real TaskStore; observation/escalation emission deduped per (task, stage[, signal]).
+- 052a277: summary: Show the "Global" prefix on the Authentication entry in the mobile Settings picker.
+  category: fix
+  dev: resolveSettingsSectionOptionLabel now derives the Global-group prefix for storage-less (scope: undefined) sections in SettingsModal.tsx (FN-7552).
+- 6e4c207: summary: Tasks held for release authorization or Plan Review are now shown distinctly, so auto-approve no longer looks broken.
+  category: fix
+  dev: FN-7559 — auto-approve-all bypasses only the manual plan-approval gate (unchanged, FN-7526). Release-authorization holds are surfaced with a new distinct status reason (`Task.awaitingApprovalReason: "release-authorization"`) and no longer render the generic manual Approve/Reject affordance in TaskCard/TaskDetailModal; Workflow Plan Review already used distinct statuses (`needs-replan`/`plan-review-unavailable`) and is unaffected. Both gates remain independent and intact — this is UI/data disambiguation only.
+- 6d364fc: summary: Move mobile terminal controls into a bottom footer so they no longer crowd the header, with a scrollable shortcut bar.
+  category: fix
+  dev: On the ≤768px terminal, the `.terminal-actions` cluster now renders in a `terminal-footer-actions` bar (with `min-width:0; overflow-x:auto`) instead of the header; desktop/floating/pinned-below keep the FN-7502 header layout. Preserves the FN-7550 shortcut-panel scroll fix.
+- b471aec: summary: Stop the release-authorization gate from holding tasks that merely disclaim releasing.
+  category: fix
+  dev: classifyReleaseTask now strips negated release-disclaimer clauses (e.g. "this task performs no release/publish; releases are owned by scripts/release.mjs") before signal matching in packages/engine/src/triage-release-authorization.ts, so revert/undo/UI specs are no longer false-flagged as release-class. Genuine "run pnpm release"/"publish @runfusion/fusion" intent still trips the gate.
+- 9d4a45b: summary: Fix mobile terminal text still rendering with excess inter-character gaps after font-load settle.
+  category: fix
+  dev: Root cause: xterm's OptionsService setter is a no-op when reassigning an already-current fontFamily/fontSize, so post-settle reapply never forced CharSizeService/DomRenderer to remeasure. Added `forceTerminalFontRemeasure()` in `terminalPreferences.ts`, used by both `TerminalModal.tsx` and `SessionTerminal.tsx` at every post-`waitForTerminalFontMetrics()` settle site.
+- 72b77bf: summary: Stop Plan Review from looping tasks forever and fix its "can't find the plan" reviews.
+  category: fix
+  dev: FN-7561 — Plan Review pre-merge gate hardening in packages/engine/src/executor.ts. (1) The reviewer ran readonly with cwd=worktree but the spec lives at project-root .fusion/tasks/<id>/PROMPT.md, so "Read PROMPT.md" produced "no PROMPT.md found / data is in a DB" non-verdicts; the spec text is now injected into the reviewer prompt via readTaskArtifact. (2) A malformed reviewer response now self-retries once on the primary model when no fallback is configured. (3) A malformed (advisory_failure, no verdict) plan-review result can never trigger a triage replan. (4) The unbounded plan-review replan default is capped at 15 attempts with a loud halting log entry, so a persistently-disagreeing planner/reviewer no longer burns LLM calls indefinitely (FN-7525 ran 13+ attempts overnight).
+- c08498e: summary: Planner-overseer task badge now shows a readable label and explains what it is waiting on.
+  category: fix
+  dev: TaskCard badge renders plannerOverseerStateLabel + plannerOverseerBadgeTooltip built from the existing PlannerOverseerRuntimeSnapshot (reason/watchedStage/signal/pendingConfirmation); presentation-only, no engine changes.
+- 24b27e8: summary: Plan approve/reject API now blocks release-authorization holds, requiring the authorization marker first.
+  category: fix
+  dev: FN-7564 — POST /tasks/:id/approve-plan and /reject-plan now return 400 when task.awaitingApprovalReason === "release-authorization" (FN-7559 discriminator), enforcing the FN-6481 release-authorization gate at the API layer regardless of client. Manual-approval holds are unaffected.
+- fb45157: summary: Pin the mobile terminal close (X) button to the top-right corner so it is easy to find and tap.
+  category: fix
+  dev: On the ≤768px terminal, the `terminal-close` button now carries a `terminal-close--corner` class (order:3 + margin-inline-start:auto) so it renders last in flex order and hugs the right edge next to the tab dropdown, instead of falling back to order:0 (far left). Desktop/floating/pinned-below placement inside `.terminal-actions` is unchanged.
+- 7c0be53: summary: Fix mobile terminal excess character spacing that survived earlier font-remeasure fixes.
+  category: fix
+  dev: `TerminalModal`/`SessionTerminal` re-bake xterm's `DomRenderer` letter-spacing compensation AFTER `fitAddon.fit()` settles the post-fit column count (not just before it), since `handleResize()` never re-bakes spacing itself. See `docs/solutions/ui-bugs/xterm-options-noop-remeasure-after-font-settle.md` recurrence #4.
+- 71dfd3a: summary: Rename downloadable CLI release binaries to the fn-cli-<platform> base name.
+  category: internal
+  dev: `binaryNameForTarget` in `packages/cli/build.ts` and the `release.yml` / `test-release.yml` matrices now emit `fn-cli-<suffix>`; the local dev binary stays `fn`/`fn.exe`.
+- 9592e3a: summary: Manual plan approval no longer re-asks you to approve a plan you already approved when it hasn't changed.
+  category: fix
+  dev: FN-7569 — approving a plan records a fingerprint of the approved PROMPT.md (new nullable Task.approvedPlanFingerprint, migration 139). The manual plan-approval gate skips re-parking at awaiting-approval when a re-specification (replan, plan-review retry, self-healing rebound) produces the same plan; a changed plan or reject-plan still requires fresh approval. Release authorization, Workflow Plan Review, and auto-approve-all are unchanged.
+- c31f9ef: summary: Move the planner intervention timeline into the task Activity view dropdown.
+  category: feature
+  dev: Removes the inline `PlannerInterventionTimeline` mount from the FN-7517 oversight cluster in `TaskDetailModal.tsx` and adds a fourth `interventions` `ActivitySegment`, shown in the Activity dropdown only when planner oversight is active for the task; falls back to Live if oversight turns off while Interventions is selected.
+- ce9df29: summary: Expired Claude subscription logins now show disconnected with a re-login prompt; tokens auto-refresh before expiry.
+  category: fix
+  dev: Unifies OAuth expiry detection between OAuthExpiryMonitor and /api/auth/status, and adds an engine-side proactive OAuth refresh scheduler wired in project-engine (guarded by skipNotifier). No token material logged.
+- 196abb5: summary: Anthropic subscription reads now refresh the OAuth token automatically instead of silently failing when expired.
+  category: fix
+  dev: mergeAuthStorageReads getApiKey("anthropic-subscription") now delegates to the underlying engine authStorage.getApiKey (the only refresh-token HTTP round trip) instead of a local static expiry check; regression tests drive the wrapper directly. No token material logged.
+- 45e5a26: summary: Stop GitHub tracking-issue creation from linking new tasks to old/closed issues.
+  category: fix
+  dev: github-tracking dedup now only reuses OPEN issues and requires a File-Scope path overlap (keyword-only matches no longer link). Prevents mis-linking a fresh task to a stale/resolved tracking issue (FN-7579). Setting `githubTrackingDedupEnabled` unchanged.
+- a1a6b09: summary: Clarify the oversight "Nudge unavailable" guideline so it no longer reads as an overseer fault.
+  category: fix
+  dev: TaskDetailModal oversight controls — reworded taskDetail.oversight.nudgeDisabledTitle and added taskDetail.oversight.nudgeSuppressedTitle to differentiate periodic-observation vs. manual-control states. No enablement/engine logic changed.
+- cf3fe8b: summary: New tasks created under the Coding (Ideas) workflow now land in the Ideas column and wait for you to promote them.
+  category: fix
+  dev: Dashboard create surfaces (InlineCreateCard, QuickEntryBox, NewTaskModal, insight/todo → task) no longer hard-code column:"triage"; the store now resolves the selected/default workflow's intake column. InlineCreateCard forwards workflowId at create time instead of applying it post-create. Also fixed a glue-layer regression in `useTaskHandlers.ts` (`handleBoardQuickCreate`/`handleModalCreate`) that re-forced column:"triage" even after the UI surfaces stopped sending it.
+- 8b4e522: summary: Fix tasks vanishing from the board after being added to a workflow like Coding (Ideas).
+  category: fix
+  dev: Board.tsx forces a board-workflows refetch (deferred one tick, signature-guarded) whenever a rendered task is missing from the taskWorkflowIds map, so its real workflow and intake column resolve regardless of which create surface added it; the single-workflow grouping also re-homes a task whose column its workflow no longer declares into the intake lane instead of dropping it. Fixes the FN-7591 regression where intake-column cards (column "ideas") fell back to the default workflow, which has no such column, and were filtered out until a manual reload.
+- f30d55f: summary: Move the Before → After transformation summary to the top of generated task definitions.
+  category: fix
+  dev: Reorders the standard and fast triage `PROMPT.md` templates in packages/core/src/agent-prompts.ts so `## Before → After Transformation` is the first content section, ahead of `## Review Level` and `## Mission`, matching FN-7499's glance-verification intent.
+- 20379e8: summary: Task-detail Priority dropdown now matches the Oversight dropdown's size, border, and typography.
+  category: fix
+  dev: Removed the Priority-only forced select/option uppercase, added a neutral chip background scoped to `.detail-priority-chip.card-priority-badge--normal` for the untinted `normal` level, and reused the FN-7585 shared `--btn-border-width`/`--border`/`--detail-control-border-radius`/`--detail-priority-control-min-height` tokens so both dropdowns render as one control style across desktop and the mobile oversight-overflow surface.
+- e0f3d3d: summary: Default workflow boards now label the intake column "Planning" instead of "Triage".
+  category: fix
+  dev: Renamed the `name` of the `id: "triage"` intake column to "Planning" in builtin-coding, builtin-stepwise-coding, and builtin-pr workflow IRs (column id unchanged; linear built-ins inherit via canonicalBuiltinWorkflowColumns). COLUMN_LABELS.triage was already "Planning".
+- 5b193d2: summary: Fix the task-detail Nudge control staying disabled when the overseer is actively watching.
+  category: fix
+  dev: GET /api/tasks/:id now attaches the transient plannerOverseerState snapshot (mirrors the list route); TaskDetailModal reads the snapshot from workingTask so detail refetches no longer drop it.
+- 546ef16: summary: Honor mission branchStrategy when triage omits branchAssignment; skip validation for inactive missions.
+  category: fix
+  dev: resolveBranchAssignmentContext returns undefined for absent mode so triage falls back to mission.branchStrategy; processTaskOutcome gates on mission.status === "active" like recoverActiveMissions.
+- b173f76: summary: Planner overseer no longer marks healthy in-progress tasks as "recovering" or steers them.
+  category: fix
+  dev: `decidePlannerRecovery` now returns `none` for healthy (`progressing`/`complete`) and `awaiting-human` executor/workflow-gate signals instead of falling through to `inject_guidance`; only `stuck`/`blocked`/`failed` trigger autonomous steering. Also dedupes the `PlannerOverseerMonitor` activity-feed heartbeat so an unchanged `(stage, signal, reason)` observation is logged once per change, not every poll tick. Fixes the "overseer recovering" badge appearing on every autonomous card and the needless AI-consuming guidance injections (FN-7577).
+
 ## 0.55.0
 
 ### Minor Changes

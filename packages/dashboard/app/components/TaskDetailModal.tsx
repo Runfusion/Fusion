@@ -3183,7 +3183,19 @@ export function TaskDetailContent({
   copy-only, selected via the already-computed `overseerHumanControlSuppressed`
   / `overseerActive` booleans below.
   */
-  const overseerSnapshot = task.plannerOverseerState ?? null;
+  /*
+  FNXC:PlannerOversight 2026-07-05-00:00:
+  FN-7600: this used to read `task.plannerOverseerState` — the transient
+  snapshot enrichment from `GET /api/tasks` (list) — but the modal is
+  frequently opened via `fetchTaskDetail` (dependency chips, Documents view,
+  logs, or the post-open detail refetch) where the parent `task` prop never
+  carries the snapshot, so `overseerActive`/`canNudgeOverseer` were almost
+  always false and Nudge showed the periodic-observation copy even while the
+  overseer was actively watching. `GET /api/tasks/:id` now attaches the same
+  snapshot (mirrors the list route), so read it from `workingTask` — the
+  full-detail-backed merged object — instead of the raw prop.
+  */
+  const overseerSnapshot = workingTask.plannerOverseerState ?? null;
   const overseerActive = Boolean(overseerSnapshot);
   const isDoneOrArchivedColumn = task.column === "done" || task.column === "archived";
   const isOverseerHumanReviewTerminal = task.column === "in-review" && !effectiveAutoMerge;

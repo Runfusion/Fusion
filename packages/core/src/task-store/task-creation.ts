@@ -97,15 +97,33 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
       : undefined;
 
     let pendingWorkflowSelection: { workflowId: string; stepIds: string[] } | undefined;
-    const explicitWorkflowId =
-      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    /*
+    FNXC:WorkflowCreation 2026-07-05-14:30:
+    User-facing task creation can submit a selected workflowId and optional-group
+    toggles together. The visible workflow selection is operator intent and must
+    persist as task_workflow_selection; enabledWorkflowSteps only overrides that
+    workflow's default optional-group seed. Mirrors the SQLite-path fix
+    (FNXC:WorkflowCreation 2026-06-28-23:09) that these PostgreSQL-cutover copies
+    predated: previously a create submitting BOTH workflowId and
+    enabledWorkflowSteps silently skipped the selection row.
+    */
+    const explicitWorkflowId = input.workflowId;
     if (explicitWorkflowId !== undefined) {
       if (explicitWorkflowId === null) {
+        // Explicit "No workflow": skip default materialization entirely.
         resolvedWorkflowSteps = undefined;
       } else {
+        // Compile + materialize up front so unknown/fragment ids throw BEFORE
+        // the task row is created (no orphaned steps, no half-created task).
         const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        resolvedWorkflowSteps = selected.stepIds;
-        pendingWorkflowSelection = selected;
+        const explicitStepIds = input.enabledWorkflowSteps !== undefined
+          ? (resolvedWorkflowSteps ?? [])
+          : undefined;
+        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+        pendingWorkflowSelection = {
+          workflowId: selected.workflowId,
+          stepIds: explicitStepIds ?? selected.stepIds,
+        };
       }
     } else if (input.enabledWorkflowSteps === undefined) {
       try {
@@ -140,7 +158,9 @@ export async function createTaskBackendImpl(store: TaskStore, input: TaskCreateI
         }
       }
     } else if (input.enabledWorkflowSteps.length === 0) {
-      resolvedWorkflowSteps = undefined;
+      // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
+      // optional-step selection must hydrate back as [], not undefined.
+      resolvedWorkflowSteps = [];
     }
 
     // FNXC:RuntimeTaskOrchestrationAsync 2026-06-24-13:20:
@@ -459,8 +479,17 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
     // `null` is an explicit opt-out (no workflow), `string` materializes that
     // workflow, `undefined` falls through to the default-workflow behavior below.
     // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
-    const explicitWorkflowId =
-      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    /*
+    FNXC:WorkflowCreation 2026-07-05-14:30:
+    User-facing task creation can submit a selected workflowId and optional-group
+    toggles together. The visible workflow selection is operator intent and must
+    persist as task_workflow_selection; enabledWorkflowSteps only overrides that
+    workflow's default optional-group seed. Mirrors the SQLite-path fix
+    (FNXC:WorkflowCreation 2026-06-28-23:09) that these PostgreSQL-cutover copies
+    predated: previously a create submitting BOTH workflowId and
+    enabledWorkflowSteps silently skipped the selection row.
+    */
+    const explicitWorkflowId = input.workflowId;
     if (explicitWorkflowId !== undefined) {
       if (explicitWorkflowId === null) {
         // Explicit "No workflow": skip default materialization entirely.
@@ -469,8 +498,14 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
         // Compile + materialize up front so unknown/fragment ids throw BEFORE
         // the task row is created (no orphaned steps, no half-created task).
         const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        resolvedWorkflowSteps = selected.stepIds;
-        pendingWorkflowSelection = selected;
+        const explicitStepIds = input.enabledWorkflowSteps !== undefined
+          ? (resolvedWorkflowSteps ?? [])
+          : undefined;
+        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+        pendingWorkflowSelection = {
+          workflowId: selected.workflowId,
+          stepIds: explicitStepIds ?? selected.stepIds,
+        };
       }
     } else if (input.enabledWorkflowSteps === undefined) {
       try {
@@ -505,7 +540,9 @@ export async function createTaskImpl(store: TaskStore, input: TaskCreateInput, o
         }
       }
     } else if (input.enabledWorkflowSteps.length === 0) {
-      resolvedWorkflowSteps = undefined;
+      // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
+      // optional-step selection must hydrate back as [], not undefined.
+      resolvedWorkflowSteps = [];
     }
 
     let task: Task;
@@ -645,8 +682,17 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
     // mirroring createTask(). `null` is an explicit opt-out, `string` materializes
     // that workflow, `undefined` falls through to the default-workflow behavior.
     // Explicit enabledWorkflowSteps still wins over workflowId for trusted callers.
-    const explicitWorkflowId =
-      input.enabledWorkflowSteps === undefined ? input.workflowId : undefined;
+    /*
+    FNXC:WorkflowCreation 2026-07-05-14:30:
+    User-facing task creation can submit a selected workflowId and optional-group
+    toggles together. The visible workflow selection is operator intent and must
+    persist as task_workflow_selection; enabledWorkflowSteps only overrides that
+    workflow's default optional-group seed. Mirrors the SQLite-path fix
+    (FNXC:WorkflowCreation 2026-06-28-23:09) that these PostgreSQL-cutover copies
+    predated: previously a create submitting BOTH workflowId and
+    enabledWorkflowSteps silently skipped the selection row.
+    */
+    const explicitWorkflowId = input.workflowId;
     if (explicitWorkflowId !== undefined) {
       if (explicitWorkflowId === null) {
         // Explicit "No workflow": skip default materialization entirely.
@@ -655,8 +701,14 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
         // Compile + materialize up front so unknown/fragment ids throw BEFORE
         // the task row is created (no orphaned steps, no half-created task).
         const selected = await store.materializeExplicitWorkflowSteps(explicitWorkflowId);
-        resolvedWorkflowSteps = selected.stepIds;
-        pendingWorkflowSelection = selected;
+        const explicitStepIds = input.enabledWorkflowSteps !== undefined
+          ? (resolvedWorkflowSteps ?? [])
+          : undefined;
+        resolvedWorkflowSteps = explicitStepIds ?? selected.stepIds;
+        pendingWorkflowSelection = {
+          workflowId: selected.workflowId,
+          stepIds: explicitStepIds ?? selected.stepIds,
+        };
       }
     } else if (input.enabledWorkflowSteps === undefined && options.applyDefaultWorkflowSteps !== false) {
       // Mirror createTask: a configured project default workflow takes
@@ -693,7 +745,9 @@ export async function createTaskWithReservedIdImpl(store: TaskStore, input: Task
         }
       }
     } else if (Array.isArray(input.enabledWorkflowSteps) && input.enabledWorkflowSteps.length === 0) {
-      resolvedWorkflowSteps = undefined;
+      // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty
+      // optional-step selection must hydrate back as [], not undefined.
+      resolvedWorkflowSteps = [];
     }
 
     let createdTask: Task;

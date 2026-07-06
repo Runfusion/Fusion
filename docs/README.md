@@ -43,11 +43,14 @@ For a full walkthrough (installation, onboarding, first task, and daily workflow
 | [Multi-Project](./multi-project.md) | Central registry architecture, project management, isolation modes, and migration paths |
 
 ### Configuration & Agents
-| Guide | Description |
-|---|---|
+<!--
+FNXC:DocsIndex 2026-07-05-00:00:
+Planner oversight (FN-7508 → FN-7583) is fully documented in Settings Reference, Dashboard Guide, and Architecture but had no index entry, so it was undiscoverable from the docs hub. Add a labeled pointer row rather than a new doc, since the existing reference docs already cover the feature end to end (FN-7598).
+-->
 | [Settings Reference](./settings-reference.md) | Global/project settings, workflow setting values, model/fallback lane hierarchy, defaults, and API endpoints |
 | [MCP](./mcp.md) | Model Context Protocol server configuration, secret references, validation, CLI, dashboard, and import/export workflows |
 | [Agents](./agents.md) | Agent management, presets, prompts, heartbeat behavior, spawning, and mailbox workflows |
+| Planner Oversight (see [Settings Reference](./settings-reference.md#workflow-settings), [Dashboard Guide](./dashboard-guide.md), [Architecture](./architecture.md)) | Workflow-native oversight levels (`off`/`observe`/`steer`/`autonomous`), per-task overrides, notification verbosity, the human-confirmation gate on merge/PR and destructive actions, and the Task Detail overseer controls/Intervention Timeline |
 
 ### Architecture & Development
 | Guide | Description |
@@ -151,5 +154,5 @@ FN-7088 links previously-unlinked first-class testing and baseline docs here so 
 
 - **New user:** Getting Started → Dashboard Guide → Task Management
 - **Workflow author:** Dashboard Guide → Workflow Editor → Workflow Steps → Settings Reference
-- **Power user / automation owner:** Settings Reference → Workflow Steps → Agents
+- **Power user / automation owner:** Settings Reference → Workflow Steps → Agents → Planner Oversight (Settings Reference § Workflow Settings)
 - **Maintainer / contributor:** Architecture → Multi-Project → Contributing

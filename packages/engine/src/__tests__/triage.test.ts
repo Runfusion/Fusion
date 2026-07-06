@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { TaskStore, Task, TaskDetail, Settings } from "@fusion/core";
-import { builtinSeamPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
+import { builtinSeamPrompt, buildBootstrapPrompt, computePlanApprovalFingerprint, MAX_TASK_LIST_TEXT_CHARS, renderTriagePolicyPlaceholders, resolveAgentPrompt } from "@fusion/core";
 import {
   TriageProcessor,
   buildSpecificationPrompt,
@@ -2388,6 +2388,123 @@ describe("TriageProcessor", () => {
       ]);
       for (const task of tasks) {
         expect(triageStore.updateTask).toHaveBeenCalledWith(task.id, { status: "planning" });
+      }
+    });
+  });
+
+  /*
+  FNXC:CodingIdeasWorkflow 2026-07-05-00:00:
+  FN-7596 pins the Coding (Ideas) manual-intake lifecycle at the poll-dispatch boundary: an `ideas`-column card must stay parked (never auto-dispatched via `eligibleTriageTasks`, which only matches `column === "triage"`), while a promoted `todo`-column card whose PROMPT.md is still the bootstrap stub must be discovered and specified via `eligibleTodoTasks`'s bootstrap-prompt file check. A `todo` card with a real (non-bootstrap) spec must NOT be re-dispatched, guarding against double-specifying an already-planned card.
+  */
+  describe("Coding (Ideas) manual-intake discovery (FN-7596)", () => {
+    it("excludes a parked ideas-column task from the poll's specify-dispatch set", async () => {
+      const tasks: Task[] = [
+        createTriageTask({ id: "FN-IDEAS-PARKED", column: "ideas" as any, priority: "urgent" }),
+      ];
+
+      const triageStore = createMockStore({
+        listTasks: vi.fn().mockResolvedValue(tasks),
+        getSettings: vi.fn().mockResolvedValue({
+          maxConcurrent: 10,
+          maxTriageConcurrent: 10,
+          pollIntervalMs: 10_000,
+          groupOverlappingFiles: false,
+          autoMerge: true,
+        }),
+      });
+      const triageProcessor = new TriageProcessor(triageStore, rootDir);
+      const specifySpy = vi
+        .spyOn(triageProcessor, "specifyTask")
+        .mockResolvedValue(undefined);
+
+      (triageProcessor as any).running = true;
+      await (triageProcessor as any).poll();
+
+      expect(specifySpy).not.toHaveBeenCalled();
+    });
+
+    it("discovers a promoted todo-column task whose PROMPT.md is still the bootstrap stub", async () => {
+      const tempRoot = await createTriageFixtureRoot("fusion-triage-ideas-discovery-");
+      const promotedId = "FN-IDEAS-PROMOTED";
+      try {
+        const promotedTask = createTriageTask({
+          id: promotedId,
+          title: "Promoted from Ideas intake",
+          description: "Promoted intake task",
+          column: "todo",
+          priority: "urgent",
+        });
+        await mkdir(join(tempRoot, ".fusion", "tasks", promotedId), { recursive: true });
+        await writeFile(
+          join(tempRoot, ".fusion", "tasks", promotedId, "PROMPT.md"),
+          buildBootstrapPrompt(promotedId, promotedTask.title, promotedTask.description),
+          "utf-8",
+        );
+
+        const triageStore = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([promotedTask]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 10,
+            maxTriageConcurrent: 10,
+            pollIntervalMs: 10_000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+          }),
+        });
+        const triageProcessor = new TriageProcessor(triageStore, tempRoot);
+        const specifySpy = vi
+          .spyOn(triageProcessor, "specifyTask")
+          .mockResolvedValue(undefined);
+
+        (triageProcessor as any).running = true;
+        await (triageProcessor as any).poll();
+
+        expect(specifySpy).toHaveBeenCalledTimes(1);
+        expect(specifySpy).toHaveBeenCalledWith(expect.objectContaining({ id: promotedId }));
+      } finally {
+        await cleanupTriageFixtureRoot(tempRoot);
+      }
+    });
+
+    it("does not re-dispatch a todo-column task whose PROMPT.md already carries a real (non-bootstrap) spec", async () => {
+      const tempRoot = await createTriageFixtureRoot("fusion-triage-ideas-planned-");
+      const plannedId = "FN-IDEAS-PLANNED";
+      try {
+        const plannedTask = createTriageTask({
+          id: plannedId,
+          title: "Already planned todo task",
+          description: "Already planned intake task",
+          column: "todo",
+          priority: "urgent",
+        });
+        await mkdir(join(tempRoot, ".fusion", "tasks", plannedId), { recursive: true });
+        await writeFile(
+          join(tempRoot, ".fusion", "tasks", plannedId, "PROMPT.md"),
+          `# Task: ${plannedId} - Already planned todo task\n\n## Mission\n\nThis task carries a real spec, not the bootstrap stub.\n`,
+          "utf-8",
+        );
+
+        const triageStore = createMockStore({
+          listTasks: vi.fn().mockResolvedValue([plannedTask]),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 10,
+            maxTriageConcurrent: 10,
+            pollIntervalMs: 10_000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+          }),
+        });
+        const triageProcessor = new TriageProcessor(triageStore, tempRoot);
+        const specifySpy = vi
+          .spyOn(triageProcessor, "specifyTask")
+          .mockResolvedValue(undefined);
+
+        (triageProcessor as any).running = true;
+        await (triageProcessor as any).poll();
+
+        expect(specifySpy).not.toHaveBeenCalled();
+      } finally {
+        await cleanupTriageFixtureRoot(tempRoot);
       }
     });
   });

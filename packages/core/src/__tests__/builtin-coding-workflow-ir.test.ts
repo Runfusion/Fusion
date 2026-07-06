@@ -107,6 +107,13 @@ describe("builtin coding workflow ir", () => {
     expect(ids).toEqual(["triage", "todo", "in-progress", "in-review", "done", "archived"]);
   });
 
+  // FNXC:Workflows 2026-07-05-00:00: FN-7599 — the intake column displays as "Planning" while its id stays "triage" for lifecycle/DB/type stability.
+  it("labels the intake column 'Planning' while keeping the 'triage' id (FN-7599)", () => {
+    if (BUILTIN_CODING_WORKFLOW_IR.version !== "v2") throw new Error("expected v2");
+    const byId = new Map(BUILTIN_CODING_WORKFLOW_IR.columns.map((c) => [c.id, c]));
+    expect(byId.get("triage")).toEqual({ id: "triage", name: "Planning", traits: [{ trait: "intake" }] });
+  });
+
   it("maps default-workflow traits to columns verbatim (R12)", () => {
     if (BUILTIN_CODING_WORKFLOW_IR.version !== "v2") throw new Error("expected v2");
     const byId = new Map(BUILTIN_CODING_WORKFLOW_IR.columns.map((c) => [c.id, c]));

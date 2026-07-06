@@ -183,6 +183,9 @@ function BoardHarness({ createdTaskId = "FN-new", createReturnsTask = true, onCr
       onNewTask={vi.fn()}
       autoMerge
       onToggleAutoMerge={vi.fn()}
+      showWorktreeGrouping={false}
+      planAutoApproveEnabled={false}
+      onTogglePlanAutoApprove={vi.fn()}
       workflowColumnsEnabled
       settingsLoaded
     />
@@ -358,5 +361,114 @@ describe("workflow lane quick-create visibility", () => {
 
     expect(within(screen.getByTestId("column-intake")).queryByText("Created wf-custom")).toBeNull();
     expect(readWorkflowCache()?.taskWorkflowIds["FN-new"]).toBe(DEFAULT_WORKFLOW.id);
+  });
+});
+
+/*
+FNXC:WorkflowBoard 2026-07-05-14:20:
+Regression coverage for the disappearing intake-column card (Coding (Ideas) → "ideas", FN-7591 fallout).
+Surface enumeration:
+ - Create-path independence: tasks that arrive via the `tasks` prop (SSE / QuickEntryBox / NewTaskModal / InlineCreateCard→TodoView / insight→task) — i.e. NOT the board's own optimistic-seeding quick-create — must still resolve their real workflow. Invariant: an unmapped rendered task forces one board-workflows refetch (Part A), and once mapped renders in its intake lane instead of being dropped.
+ - No infinite loop: if the refetch never maps the task, the signature guard fires the refetch at most once per distinct unmapped-id set.
+ - Orphan column safety net (Part B): a task that belongs to the selected workflow but whose stored column the workflow no longer declares renders in the intake lane, never vanishing.
+*/
+function boardProps(tasks: Task[]) {
+  return {
+    tasks,
+    projectId: PROJECT_ID,
+    maxConcurrent: 2,
+    onMoveTask: vi.fn(),
+    onOpenDetail: vi.fn(),
+    addToast: vi.fn(),
+    onQuickCreate: vi.fn(),
+    onNewTask: vi.fn(),
+    autoMerge: true,
+    onToggleAutoMerge: vi.fn(),
+    showWorktreeGrouping: false,
+    planAutoApproveEnabled: false,
+    onTogglePlanAutoApprove: vi.fn(),
+    workflowColumnsEnabled: true as const,
+    settingsLoaded: true as const,
+  };
+}
+
+describe("workflow lane visibility for externally-arriving tasks (FN-7591 disappearing-card fix)", () => {
+  it("force-refetches board-workflows and renders an intake-column task that arrives via the tasks prop (non-board create surface)", async () => {
+    // Model the server: board-workflows derives taskWorkflowIds from the current store tasks,
+    // so once the ideas task exists it maps to Coding (Ideas) on the next fetch.
+    const serverMappedIds = new Set<string>();
+    fetchBoardWorkflowsMock.mockImplementation(() => {
+      const map: Record<string, string> = {};
+      for (const id of serverMappedIds) map[id] = CODING_IDEAS_WORKFLOW.id;
+      return Promise.resolve(workflowPayload(map));
+    });
+
+    const { rerender } = render(<Board {...boardProps([])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow(CODING_IDEAS_WORKFLOW.id);
+
+    const callsBeforeArrival = fetchBoardWorkflowsMock.mock.calls.length;
+
+    // A card lands in the "ideas" intake column via a surface that does NOT optimistically
+    // seed taskWorkflowIds (the store already persisted its workflow selection).
+    serverMappedIds.add("FN-ext");
+    const ideasTask = mkTask({ id: "FN-ext", title: "Ext ideas card", column: "ideas" });
+    await act(async () => {
+      rerender(<Board {...boardProps([ideasTask])} />);
+    });
+
+    // Part A: an unmapped rendered task forces a fresh board-workflows fetch.
+    await waitFor(() => expect(fetchBoardWorkflowsMock.mock.calls.length).toBeGreaterThan(callsBeforeArrival));
+
+    // Once mapped, the card renders in the ideas lane instead of being dropped.
+    await waitFor(() => {
+      const ideasColumn = screen.getByTestId("column-ideas");
+      expect(within(ideasColumn).getByText("Ext ideas card")).toBeTruthy();
+    });
+  });
+
+  it("fires a bounded number of refetches for a persistently-unmapped task (no infinite loop)", async () => {
+    // The server never maps FN-ext, so it stays unmapped after every refetch.
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({}));
+
+    const { rerender } = render(<Board {...boardProps([])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow(CODING_IDEAS_WORKFLOW.id);
+
+    const ideasTask = mkTask({ id: "FN-ext", title: "Ext ideas card", column: "ideas" });
+    await act(async () => {
+      rerender(<Board {...boardProps([ideasTask])} />);
+    });
+
+    // Let the single deferred refetch fire; the signature guard blocks reschedules for the same set.
+    await waitFor(() => expect(fetchBoardWorkflowsMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+    const settled = fetchBoardWorkflowsMock.mock.calls.length;
+
+    // Extra renders with the SAME unmapped-id set must not schedule further refetches.
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        rerender(<Board {...boardProps([ideasTask])} />);
+      });
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    expect(fetchBoardWorkflowsMock.mock.calls.length).toBe(settled);
+  });
+
+  it("renders a selected-workflow task whose column the workflow no longer declares in the intake lane (never dropped)", async () => {
+    // FN-orphan is correctly mapped to Coding (Ideas) but sits in a column the workflow does not declare.
+    fetchBoardWorkflowsMock.mockResolvedValue(workflowPayload({ "FN-orphan": CODING_IDEAS_WORKFLOW.id }));
+    const orphan = mkTask({ id: "FN-orphan", title: "Orphan column card", column: "removed-column" });
+
+    render(<Board {...boardProps([orphan])} />);
+    await screen.findByTestId("workflow-switcher");
+    selectWorkflow(CODING_IDEAS_WORKFLOW.id);
+
+    // Part B safety net: re-homed for display into the intake ("ideas") lane, not dropped.
+    await waitFor(() => {
+      const ideasColumn = screen.getByTestId("column-ideas");
+      expect(within(ideasColumn).getByText("Orphan column card")).toBeTruthy();
+    });
   });
 });

@@ -137,6 +137,9 @@ Most tasks can use the default **Coding** workflow. When the workflow selector i
 
 Built-ins include task-selectable Coding, Legacy coding, Quick fix, Review-heavy, plugin-gated Compound engineering, Coding (per-step review), and Design workflows, plus PR lifecycle fragments for workflow authors. For the full catalog and runtime behavior, see [Workflow Steps](./workflow-steps.md#workflow-overview). To inspect built-ins or author custom workflows, open the dashboard [Workflow Editor](./workflow-editor.md).
 
+<!-- FNXC:PlannerOversight 2026-07-05-00:00: shipped planner-oversight feature (FN-7508 → FN-7583) had no getting-started pointer, so new operators could not discover per-task/workflow oversight controls; add a one-line pointer to the reference docs (FN-7598). -->
+Workflows (and individual tasks) also have a **Planner oversight** level (`off`/`observe`/`steer`/`autonomous`) that controls how closely a planner overseer watches and can intervene; see [Settings Reference](./settings-reference.md#workflow-settings) for the setting semantics and [Dashboard Guide](./dashboard-guide.md) for the UI controls.
+
 ## Understand the Task Lifecycle
 
 Fusion uses six default lifecycle columns:

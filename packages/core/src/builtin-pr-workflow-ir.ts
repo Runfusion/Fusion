@@ -60,7 +60,7 @@ const RAW_BUILTIN_PR_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
   name: "builtin-pr",
   columns: [
-    { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+    { id: "triage", name: "Planning", traits: [{ trait: "intake" }] },
     {
       id: "in-progress",
       name: "In progress",

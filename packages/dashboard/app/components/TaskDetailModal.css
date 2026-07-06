@@ -415,13 +415,27 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   opacity: 0.75;
 }
 
+/*
+FNXC:TaskDetail 2026-07-05-12:00:
+FN-7597 — the untinted `normal` priority level has no `--low/--high/--urgent`
+tint, so without this rule it renders as a bordered-but-empty shell while the
+Oversight chip's `--off` level always gets a neutral, token-based background
+(`.card-oversight-badge--off` in TaskCard.css). Give `.detail-priority-chip`'s
+`normal` state the SAME neutral `color-mix(... var(--text-muted) ...)`
+treatment so the two dropdowns read as one consistent control style. Scoped
+to the detail chip (not a global `.card-priority-badge--normal` rule) so the
+read-only TaskCard priority badge (out of scope) is untouched.
+*/
+.detail-priority-chip.card-priority-badge--normal {
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+}
+
 .detail-priority-select {
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
-  text-transform: uppercase;
-  letter-spacing: inherit;
   cursor: pointer;
   padding: 0;
   min-height: inherit;
@@ -437,10 +451,17 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
   cursor: wait;
 }
 
+/*
+FNXC:TaskDetail 2026-07-05-12:00:
+FN-7597 — drop the Priority-only forced uppercase on the select/option so its
+typography matches `.detail-oversight-select` exactly (which relies on the
+ancestor `.card-*-badge` label's own `text-transform: uppercase` instead of
+redeclaring it here). Visual case is unchanged since the label already
+uppercases its content; this only removes a duplicated, drift-prone override.
+*/
 .detail-priority-select option {
   color: var(--text);
   background: var(--surface);
-  text-transform: uppercase;
 }
 
 .detail-execution-mode-toggle {

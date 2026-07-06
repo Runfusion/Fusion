@@ -136,6 +136,7 @@ Every task shows its plan, its reviews, its diffs, and its file changes in real 
 |---|---|
 | 🧠 **AI planning** | Describe a task in plain language. Planning agents turn it into a `PROMPT.md` plan with steps, file scope, and acceptance criteria. |
 | 🔁 **Selectable workflows** | Built-ins cover coding, quick fixes, review-heavy work, stepwise execution, plugin-gated Compound Engineering, and PR lifecycle fragments. Pick a workflow per task or author custom ones in the [Workflow Editor](./docs/workflow-editor.md). |
+| 🛡️ **Planner oversight** | Per-task or per-workflow oversight level (`off` / `observe` / `steer` / `autonomous`) governs how closely a planner overseer watches and intervenes — merge/PR and destructive actions always require explicit human confirmation. See [Settings Reference](./docs/settings-reference.md#workflow-settings) and [Dashboard Guide](./docs/dashboard-guide.md). |
 | 🌳 **Worktree isolation** | Each task runs in its own branch and worktree (`fusion/{task-id}`). Parallel tasks. Zero conflicts. Optional [worktrunk](https://github.com/max-sixty/worktrunk) delegation via [`worktrunk.enabled`](./docs/settings-reference.md#worktree-backend-settings) (see [WorktreeBackend abstraction](./docs/architecture.md#worktreebackend-abstraction)). |
 | ⚡ **Smart merge controls** | Passing every gate? Fusion squash-merges and moves on. Opt into manual approval anywhere, inherit the live global auto-merge default, or set explicit per-task auto/manual overrides. |
 | 🛰️ **Multi-node mesh** | Laptop, Mac mini, Linux server, cloud VM, phone — all synced. Desktop, mobile, web. |
@@ -385,6 +386,15 @@ Fusion workflows define how a task moves from idea to delivery. The default codi
 
 Read [Workflow Steps](./docs/workflow-steps.md) for runtime semantics, built-in workflow behavior, and workflow-step templates; read [Workflow Editor](./docs/workflow-editor.md) for the dashboard authoring guide.
 
+<!--
+FNXC:PlannerOversight 2026-07-05-00:00:
+The planner-oversight feature (FN-7508 → FN-7583) shipped fully documented in internal/reference docs (architecture.md, settings-reference.md, dashboard-guide.md, workflow-steps.md) but had no front-door entry point in README.md, so a new operator could not discover it. Add a short overview here that links out to the canonical docs instead of duplicating engine internals (FN-7598).
+-->
+
+### Planner oversight
+
+Each workflow (and optionally each task) can set a **planner oversight** level — `off`, `observe`, `steer`, or `autonomous` (default) — controlling how closely a planner overseer watches and intervenes in that task's execution. Even at `autonomous`, merge/PR progression and any destructive or external-service side effect always require an explicit, recorded human confirmation before they run. Notification verbosity is controlled separately. Set the default in the **Workflow Editor → Values** tab, or override per task from the New Task dialog / Task Detail edit form. Read [Settings Reference](./docs/settings-reference.md#workflow-settings) for the full setting semantics and [Dashboard Guide](./docs/dashboard-guide.md) for the UI controls.
+
 ---
 
 ## Multi-node. One board. Every platform.
@@ -504,6 +514,7 @@ npx companies.sh add paperclipai/companies/gstack
 - **Visual Workflow Editor** — Inspect read-only built-ins, duplicate/customize workflows, and edit graph nodes, columns, task fields, typed settings, and per-project values ([Workflow Editor](./docs/workflow-editor.md))
 - **Workflow Steps** — Configurable quality gates (pre-merge: blocks merge; post-merge: informational), plus workflow-declared optional steps such as opt-in [Browser Verification](./docs/workflow-steps.md#workflow-declared-optional-steps)
 - **Workflow-native policy** — Fast-mode planning (`leanPlanning` / `autoApproveSpec`), typed triage thresholds, review/approval, step execution, and model/fallback lanes are workflow settings, not hard-coded engine constants ([Settings Reference](./docs/settings-reference.md#workflow-native-triage-policy-settings); [workflow settings](./docs/settings-reference.md#workflow-settings))
+- **Planner oversight** — Workflow-native `plannerOversightLevel` (`off`/`observe`/`steer`/`autonomous`), with an optional per-task override and a separate notification-verbosity setting; merge/PR progression and destructive actions always require explicit human confirmation, even at `autonomous` ([overview](#planner-oversight); [Settings Reference](./docs/settings-reference.md#workflow-settings))
 - **GitHub + PR lifecycle** — Import issues, create PRs, display real-time PR/issue badges, and use workflow-mode PR lifecycle graph fragments where enabled
 - **Dashboard** — Real-time kanban/list/graph views, agent management, terminal, git manager, mission planner, chat, workflow editor, custom provider setup, and one-click update action
 - **Missions** — Hierarchical planning (Mission → Milestone → Slice → Feature → Task) with autopilot, validation contracts, fix-feature retries, mission-goal linking, and blocked-handoff semantics

@@ -253,6 +253,57 @@ describe("TaskDetailModal", () => {
       expect(oversightChipBlock).not.toMatch(/border-radius:\s*var\(--radius-pill\)/);
     });
 
+    it("renders the Priority dropdown chip like the Oversight dropdown chip, on every surface (FN-7597)", () => {
+      const css = readDashboardStylesSource();
+
+      const priorityChipBlock = getExactCssRuleBlock(css, ".detail-priority-chip");
+      const oversightChipBlock = getExactCssRuleBlock(css, ".detail-oversight-chip");
+      const oversightTriggerBlock = getExactCssRuleBlock(css, ".detail-oversight-menu-trigger");
+      const prioritySelectBlock = getExactCssRuleBlock(css, ".detail-priority-select");
+      const oversightSelectBlock = getExactCssRuleBlock(css, ".detail-oversight-select");
+      const prioritySelectOptionBlock = getExactCssRuleBlock(css, ".detail-priority-select option");
+      const oversightSelectOptionBlock = getExactCssRuleBlock(css, ".detail-oversight-select option");
+
+      // Same box size AND same border source for the desktop Priority chip vs.
+      // BOTH oversight surfaces (desktop chip and the mobile overflow trigger).
+      for (const block of [priorityChipBlock, oversightChipBlock, oversightTriggerBlock]) {
+        expect(block).toContain("min-height: var(--detail-priority-control-min-height);");
+        expect(block).toContain("border-width: var(--btn-border-width);");
+        expect(block).toContain("border-color: var(--border);");
+        expect(block).toContain("border-radius: var(--detail-control-border-radius);");
+        expect(block).toContain("box-sizing: border-box;");
+      }
+
+      // Same select typography: neither select force-uppercases its own text
+      // or options; both rely on the ancestor chip label's uppercase transform,
+      // so a regression re-adding a Priority-only override fails this.
+      expect(prioritySelectBlock).not.toMatch(/text-transform\s*:/);
+      expect(oversightSelectBlock).not.toMatch(/text-transform\s*:/);
+      expect(prioritySelectOptionBlock).not.toMatch(/text-transform\s*:/);
+      expect(oversightSelectOptionBlock).not.toMatch(/text-transform\s*:/);
+      expect(prioritySelectBlock).toContain("font: inherit;");
+      expect(oversightSelectBlock).toContain("font: inherit;");
+
+      // The untinted `normal` priority level must resolve a real, non-transparent
+      // neutral chip background (not a borderless/background-less shell), just
+      // like the Oversight chip's neutral `--off` background.
+      const priorityNormalBlock = getExactCssRuleBlock(css, ".detail-priority-chip.card-priority-badge--normal");
+      const oversightOffBlock = getExactCssRuleBlock(css, ".card-oversight-badge--off");
+      expect(priorityNormalBlock).toMatch(/background:\s*color-mix\(in srgb, var\(--text-muted\)/);
+      expect(oversightOffBlock).toMatch(/background:\s*color-mix\(in srgb, var\(--text-muted\)/);
+
+      // The semantic priority tints (info/warning/error family) must survive —
+      // this task must not flatten low/high/urgent to the same neutral tone.
+      expect(css).toMatch(/\.card-priority-badge--low\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--color-info\)/);
+      expect(css).toMatch(/\.card-priority-badge--high\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--color-warning\)/);
+      expect(css).toMatch(/\.card-priority-badge--urgent\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--color-error\)/);
+
+      // `--saving` only dims opacity; it must never change box size/border.
+      const prioritySavingBlock = getExactCssRuleBlock(css, ".detail-priority-chip--saving");
+      expect(prioritySavingBlock.replace(/\s+/g, "")).toBe("opacity:0.75;");
+      expect(prioritySavingBlock).not.toMatch(/border|min-height|padding/);
+    });
+
     it("keeps grouped timestamp metadata inline on desktop and mobile", () => {
       const css = readDashboardStylesSource();
 

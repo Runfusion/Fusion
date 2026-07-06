@@ -218,7 +218,10 @@ export function rowToTask(row: TaskRow): Task {
     })(),
     breakIntoSubtasks: row.breakIntoSubtasks ? true : undefined,
     noCommitsExpected: row.noCommitsExpected ? true : undefined,
-    enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return e && e.length > 0 ? e : undefined; })(),
+    // FNXC:WorkflowOptionalSteps 2026-06-29-02:55: an explicit empty optional-step
+    // selection must hydrate back as [], not undefined — "all disabled" and "not
+    // materialized" are different states (mirrors main's SQLite-path fix).
+    enabledWorkflowSteps: (() => { const e = fromJson<string[]>(row.enabledWorkflowSteps); return Array.isArray(e) ? e : undefined; })(),
     modifiedFiles: (() => { const m = fromJson<string[]>(row.modifiedFiles); return m && m.length > 0 ? m : undefined; })(),
     missionId: row.missionId || undefined,
     sliceId: row.sliceId || undefined,

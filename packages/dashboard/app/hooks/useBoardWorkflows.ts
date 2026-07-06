@@ -54,8 +54,9 @@ export interface UseBoardWorkflowsResult {
   /** True when the dashboard-only aggregate workflow view is selected. */
   isAllWorkflowsSelected: boolean;
   setSelectedWorkflowId: Dispatch<SetStateAction<string | null>>;
-  /** Force a fresh fetch (used on switcher open, since task assignment changes emit no workflow SSE). */
-  refreshBoardWorkflows: () => void;
+  /** Force a fresh fetch (used on switcher open, and when the board detects a rendered
+   *  task missing from `taskWorkflowIds`, since task→workflow assignment emits no workflow SSE). */
+  refreshBoardWorkflows: (options?: { forceFresh?: boolean }) => void;
   /**
    * Raw state setter, exposed so Board can apply optimistic task→workflow assignment.
    * Planning does not use this.

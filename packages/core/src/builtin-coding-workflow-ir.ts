@@ -45,7 +45,8 @@ const RAW_BUILTIN_CODING_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
   name: "builtin-coding-workflow",
   columns: [
-    { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+    // FNXC:Workflows 2026-07-05-00:00: Default-workflow intake column now displays as "Planning" while keeping the `triage` id for lifecycle/DB/type stability (FN-7599).
+    { id: "triage", name: "Planning", traits: [{ trait: "intake" }] },
     {
       id: "todo",
       name: "Todo",

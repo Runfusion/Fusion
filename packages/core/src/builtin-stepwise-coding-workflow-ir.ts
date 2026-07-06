@@ -60,7 +60,7 @@ const RAW_BUILTIN_STEPWISE_CODING_WORKFLOW_IR: WorkflowIr = {
   version: "v2",
   name: "builtin-stepwise-coding",
   columns: [
-    { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+    { id: "triage", name: "Planning", traits: [{ trait: "intake" }] },
     {
       id: "todo",
       name: "Todo",

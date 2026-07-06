@@ -454,6 +454,46 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       : boardWorkflows.defaultWorkflowId;
   }, [boardWorkflows, knownWorkflowIds]);
 
+  /*
+  FNXC:WorkflowBoard 2026-07-05-14:20:
+  Invariant: every rendered task must resolve to its REAL workflow, or the board silently drops it.
+  A task created into a workflow whose intake column differs from the default (e.g. Coding (Ideas) → "ideas", per FN-7591) disappears until the next mount/focus/workflow-CRUD refetch. Cause: the task list (SSE) updates before the board-workflows `taskWorkflowIds` map, so getEffectiveTaskWorkflowId falls back to `defaultWorkflowId` (plain Coding), whose columns do not declare the intake column; the aggregate grouping then `continue`-skips the card and the single-workflow grouping files it into a never-rendered phantom bucket. The board's own quick-create handlers dodge this via applyOptimisticTaskWorkflow, but the shared create surfaces (QuickEntryBox / NewTaskModal / InlineCreateCard→TodoView / insight→task) route through useTaskHandlers and never seed the map. Fix at the invariant, not the create surface: whenever a rendered task is absent from taskWorkflowIds, force ONE board-workflows refetch so its persisted workflow selection (and intake column) resolves. Signature-guarded on the sorted unmapped-id set so we never spin an infinite refetch loop, and only run in workflow mode once the payload has loaded.
+
+  The refetch is deferred by one macrotask and re-checked against the latest state at fire time: the board's own quick-create commits the new task one microtask before applyOptimisticTaskWorkflow seeds it, so a synchronous refetch here would double-fire alongside the optimistic path. Deferring lets the seed land first — an already-mapped task is then skipped — so this only fetches for tasks that truly arrived without a workflow mapping.
+  */
+  const boardWorkflowsRef = useRef(boardWorkflows);
+  boardWorkflowsRef.current = boardWorkflows;
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const lastUnmappedTaskSignatureRef = useRef<string | null>(null);
+  const unmappedRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!boardWorkflows || !workflowMode) return;
+    const unmapped = tasks
+      .filter((task) => boardWorkflows.taskWorkflowIds[task.id] === undefined)
+      .map((task) => task.id)
+      .sort();
+    if (unmapped.length === 0) {
+      lastUnmappedTaskSignatureRef.current = null;
+      return;
+    }
+    const signature = unmapped.join(",");
+    if (signature === lastUnmappedTaskSignatureRef.current) return;
+    lastUnmappedTaskSignatureRef.current = signature;
+    if (unmappedRefetchTimerRef.current) clearTimeout(unmappedRefetchTimerRef.current);
+    unmappedRefetchTimerRef.current = setTimeout(() => {
+      unmappedRefetchTimerRef.current = null;
+      const latestWorkflows = boardWorkflowsRef.current;
+      if (!latestWorkflows) return;
+      const stillUnmapped = tasksRef.current.some((task) => latestWorkflows.taskWorkflowIds[task.id] === undefined);
+      if (stillUnmapped) refreshBoardWorkflows({ forceFresh: true });
+    }, 0);
+  }, [boardWorkflows, refreshBoardWorkflows, tasks, workflowMode]);
+
+  useEffect(() => () => {
+    if (unmappedRefetchTimerRef.current) clearTimeout(unmappedRefetchTimerRef.current);
+  }, []);
+
   const resolveWorkflowQuickCreateTarget = useCallback((targetWorkflowId: string, preferredColumnId?: string | null): ColumnId | undefined => {
     if (targetWorkflowId === ALL_WORKFLOWS_BOARD_VIEW_ID) return undefined;
     const workflow = boardWorkflows?.workflows.find((candidate) => candidate.id === targetWorkflowId);
@@ -578,8 +618,15 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
     const grouped: Record<string, Task[]> = {};
     if (!selectedWorkflow) return grouped;
     for (const column of selectedWorkflow.columns) grouped[column.id] = [];
+    /*
+    FNXC:WorkflowBoard 2026-07-05-14:20:
+    Safety net (defense in depth for the taskWorkflowIds refetch above): a card that passed the selected-workflow membership filter genuinely belongs on THIS board, so it must always land in a rendered lane. If its stored `column` is not one this workflow declares (a workflow edited to drop a column, or a create/refetch race that lands an intake-column card before its lane is known), re-home it for DISPLAY into the workflow's intake/first visible column instead of a `??=`-created bucket that is never rendered. Display-only — the task's stored column is untouched.
+    */
     for (const task of selectedWorkflowTasks) {
-      (grouped[task.column] ??= []).push(task);
+      const columnId = grouped[task.column] !== undefined
+        ? task.column
+        : (selectedWorkflowCreateColumnId ?? task.column);
+      (grouped[columnId] ??= []).push(task);
     }
     for (const column of selectedWorkflow.columns) {
       /*
@@ -592,7 +639,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
         : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType);
     }
     return grouped;
-  }, [doneSortMode, selectedWorkflow, selectedWorkflowTasks]);
+  }, [doneSortMode, selectedWorkflow, selectedWorkflowCreateColumnId, selectedWorkflowTasks]);
 
   // Card-placed field defs grouped by workflow id (U13/KTD-14). Only recomputes
   // when the board-workflows payload changes, not on every SSE task tick.
