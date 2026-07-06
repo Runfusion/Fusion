@@ -2933,11 +2933,32 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
   // Get single task with prompt content
   router.get("/tasks/:id", async (req, res) => {
     try {
-      const { store: scopedStore } = await getProjectContext(req);
+      const { store: scopedStore, engine } = await getProjectContext(req);
       const task = await scopedStore.getTask(req.params.id, {
         activityLogLimit: TASK_DETAIL_ACTIVITY_LOG_LIMIT,
       });
-      res.json(trimTaskDetailActivityLog(task));
+      let enrichedTask = task;
+      // FNXC:PlannerOversight 2026-07-05-00:00:
+      // FN-7600: the Task Detail modal's Overseer/Nudge controls read
+      // `plannerOverseerState` from the merged full-detail object, but this
+      // detail route previously never attached it (only the list route did,
+      // per FN-7531 above) — so opening the modal via fetchTaskDetail
+      // (dependency chips, Documents view, logs, or the post-open detail
+      // refetch) always lost the snapshot and the Nudge button showed the
+      // periodic-observation disabled copy even when the overseer was
+      // actively watching. Mirror the list-route contract exactly: best-
+      // effort, never throws, and omits the key (not `null`) when the
+      // accessor returns no active observation.
+      try {
+        const plannerOverseerState = engine?.getPlannerOverseerRuntimeSnapshot(task.id);
+        if (plannerOverseerState) {
+          enrichedTask = { ...task, plannerOverseerState };
+        }
+      } catch {
+        // Planner-overseer-state enrichment is best-effort and must never
+        // fail the task-detail load — fall through with the un-enriched task.
+      }
+      res.json(trimTaskDetailActivityLog(enrichedTask));
     } catch (err: unknown) {
       if (err instanceof ApiError) {
         throw err;

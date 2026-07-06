@@ -408,6 +408,137 @@ describe("TaskDetailModal oversight controls", () => {
 });
 
 /*
+FNXC:PlannerOversight 2026-07-05-00:00:
+FN-7600 regression coverage: the modal previously read `overseerSnapshot` from
+the raw `task` prop, which loses the snapshot whenever the modal is opened via
+`fetchTaskDetail` (dependency chips, Documents view, logs) because those call
+sites pass a slim `Task` (no `prompt` key) that never carries
+`plannerOverseerState` — only the full-detail fetch response does. These
+tests reproduce that exact path: a slim task prop with NO snapshot, plus a
+mocked `fetchTaskDetail` resolving a full TaskDetail WITH an active snapshot,
+and assert Nudge enables (helper absent) once the fetched detail lands — at
+both the desktop inline site and the mobile overflow-menu site.
+*/
+describe("TaskDetailModal oversight controls — snapshot delivered via fetched full detail (FN-7600)", () => {
+  const originalInnerWidth = window.innerWidth;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mockConfirm.mockResolvedValue(true);
+    const api = await import("../../api");
+    vi.mocked(api.fetchBoardWorkflows).mockResolvedValue({ flagEnabled: false, defaultWorkflowId: "", workflows: [], taskWorkflowIds: {} });
+    vi.mocked(api.fetchWorkflowSettingValues).mockResolvedValue({ stored: {}, effective: {}, defaults: {} });
+    vi.mocked(api.nudgeOverseer).mockResolvedValue({ applied: false, reason: "oversight-off" });
+    vi.mocked(api.stopOverseer).mockResolvedValue({ applied: true, reason: "stopped" });
+    vi.mocked(api.explainOverseer).mockResolvedValue({ snapshot: null });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { value: originalInnerWidth, configurable: true });
+  });
+
+  function makeSlimTaskWithoutSnapshot(overrides: Record<string, unknown> = {}) {
+    // Omit `prompt`/`log`/`steps` so the modal treats this as a slim `Task`
+    // (not a `TaskDetail`) and triggers the `fetchTaskDetail` fetch-on-open
+    // path instead of using the prop directly as `fullDetail`.
+    const { prompt: _prompt, log: _log, steps: _steps, plannerOverseerState: _snap, ...task } = makeTask({
+      id: "FN-220",
+      column: "in-progress",
+      plannerOversightLevel: "autonomous",
+      ...overrides,
+    });
+    return task;
+  }
+
+  it("desktop: enables Nudge and hides the disabled-reason helper once the fetched full detail carries an active snapshot", async () => {
+    const api = await import("../../api");
+    vi.mocked(api.fetchTaskDetail).mockResolvedValueOnce(makeTask({
+      id: "FN-220",
+      column: "in-progress",
+      plannerOversightLevel: "autonomous",
+      plannerOverseerState: activeSnapshot,
+    }));
+
+    render(
+      <TaskDetailModal
+        task={makeSlimTaskWithoutSnapshot() as any}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const nudgeBtn = await screen.findByTestId("detail-overseer-nudge");
+    await waitFor(() => {
+      expect(nudgeBtn).not.toBeDisabled();
+    });
+    expect(screen.queryByTestId("detail-overseer-nudge-disabled-reason")).not.toBeInTheDocument();
+  });
+
+  it("desktop: still shows the periodic-observation copy while the fetched full detail carries no snapshot", async () => {
+    const api = await import("../../api");
+    vi.mocked(api.fetchTaskDetail).mockResolvedValueOnce(makeTask({
+      id: "FN-221",
+      column: "in-progress",
+      plannerOversightLevel: "autonomous",
+    }));
+
+    render(
+      <TaskDetailModal
+        task={makeSlimTaskWithoutSnapshot({ id: "FN-221" }) as any}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const nudgeBtn = await screen.findByTestId("detail-overseer-nudge");
+    expect(nudgeBtn).toBeDisabled();
+    const reason = await screen.findByTestId("detail-overseer-nudge-disabled-reason");
+    expect(reason).toHaveTextContent("Nudge becomes available once the overseer is observing this task's current stage");
+  });
+
+  it("mobile: enables Nudge and hides the disabled-reason helper behind the overflow menu once the fetched full detail carries an active snapshot", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 375, configurable: true });
+
+    const api = await import("../../api");
+    vi.mocked(api.fetchTaskDetail).mockResolvedValueOnce(makeTask({
+      id: "FN-222",
+      column: "in-progress",
+      plannerOversightLevel: "autonomous",
+      plannerOverseerState: activeSnapshot,
+    }));
+
+    render(
+      <TaskDetailModal
+        task={makeSlimTaskWithoutSnapshot({ id: "FN-222" }) as any}
+        onClose={noop}
+        onMoveTask={noopMove}
+        onDeleteTask={noopDelete}
+        onMergeTask={noopMerge}
+        onOpenDetail={noopOpenDetail}
+        addToast={noop}
+      />,
+    );
+
+    const trigger = await screen.findByTestId("detail-oversight-menu-trigger");
+    fireEvent.click(trigger);
+
+    const nudgeBtn = await screen.findByTestId("detail-overseer-nudge");
+    await waitFor(() => {
+      expect(nudgeBtn).not.toBeDisabled();
+    });
+    expect(screen.queryByTestId("detail-overseer-nudge-disabled-reason")).not.toBeInTheDocument();
+  });
+});
+
+/*
  * FNXC:PlannerOversight 2026-07-04-20:30 (FN-7558):
  * FN-7521's original mobile suite asserted the oversight quick-controls
  * cluster rendered its FLAT inline testids at a narrow `window.innerWidth`,
