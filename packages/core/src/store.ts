@@ -7676,11 +7676,22 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         !sourceIsLegacy &&
         (COLUMNS as readonly string[]).includes(toColumn);
       if (!isEvacuation) {
-        // Legacy flag-OFF branch (useWorkflow === false): both columns are
-        // guaranteed legacy ids here — a non-legacy `toColumn` returns `?? []`
-        // and rejects below, and flag-OFF tasks never hold custom column ids.
-        // The `as Column` is provably safe within this branch (#1403).
-        const validTargets = VALID_TRANSITIONS[task.column as Column] ?? [];
+        /*
+        FNXC:WorkflowColumns 2026-07-05-19:30:
+        Workflow columns graduated to always-on (no experimental flag emitted), so this "flag-OFF"
+        branch is the DEFAULT move path for nearly every project — the strict compat flag reads false
+        because nothing sets it. Legacy columns (triage/todo/in-progress/in-review/done/archived) are
+        validated verbatim by VALID_TRANSITIONS, preserving the legacy bare-Error contract. But a task
+        can legitimately sit in a NON-legacy workflow column now (e.g. Coding (Ideas) → "ideas"), which
+        VALID_TRANSITIONS cannot key — the old code returned `?? []` and rejected EVERY move out of it
+        ("Invalid transition: 'ideas' → 'todo'. Valid targets: none"). Resolve a non-legacy source
+        column's targets from the task's own workflow adjacency instead, still throwing the same
+        legacy-style bare Error (not TransitionRejectionError) so the flag-OFF characterization contract
+        holds for legacy columns.
+        */
+        const validTargets = sourceIsLegacy
+          ? (VALID_TRANSITIONS[task.column as Column] ?? [])
+          : resolveAllowedColumns(this.resolveTaskWorkflowIrSync(id), task.column);
         if (!validTargets.includes(toColumn as Column)) {
           throw new Error(
             `Invalid transition: '${task.column}' → '${toColumn}'. ` +
