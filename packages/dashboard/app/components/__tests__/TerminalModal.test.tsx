@@ -83,13 +83,40 @@ CSS-property or call-count check.
 const MOCK_CONTAINER_WIDTH_PX = 728;
 const MOCK_FALLBACK_CHAR_WIDTH_PX = 9;
 const MOCK_SETTLED_CHAR_WIDTH_PX = 7;
+/*
+FNXC:Terminal 2026-07-05-12:45:
+FN-7603 recurrence #5: real xterm's `CharSizeService` picks ONE of two
+measurement strategies at `terminal.open()` time — Canvas/OffscreenCanvas
+(`ctx.measureText("W")`, chosen whenever `OffscreenCanvas` + the required
+`TextMetrics` fields are available, i.e. virtually every real mobile browser)
+or a DOM fallback (`offsetWidth` of a hidden repeated-"W" span, chosen only if
+the canvas strategy's constructor throws). Separately, `DomRenderer.
+_setDefaultSpacing()`/`DomRendererRowFactory` ALWAYS measure via `WidthCache`,
+which is ALWAYS DOM-based (`offsetWidth`), regardless of which strategy
+CharSizeService picked. The FN-7567 mock above (and prior recurrences) modeled
+both as the SAME shared width, hiding this divergence. Model them
+independently: `mockCanvasCharWidthPx` (drives `FitAddon.fit()`'s column
+count, mirroring `dimensions.css.cell.width`) can diverge from
+`mockDomCharWidthPx` (mirrors `WidthCache.get('W')`) whenever
+`window.OffscreenCanvas` is defined at the moment the mock's `open()` runs —
+exactly mirroring the real `CharSizeService` constructor's
+`try { new OffscreenCanvasStrategy } catch { new DomFallbackStrategy }`
+selection. The production fix (`withDomBasedTerminalCharacterMeasurement`)
+hides `window.OffscreenCanvas` for the synchronous duration of `open()`, which
+this mock's `open()` observes to decide which strategy was "selected".
+*/
+const MOCK_CANVAS_DOM_DIVERGENCE_PX = 0.7;
 let mockFontsSettledForCharSize = false;
-let mockMeasuredCharWidthPx = MOCK_FALLBACK_CHAR_WIDTH_PX;
+let mockDomCharWidthPx = MOCK_FALLBACK_CHAR_WIDTH_PX;
+let mockCanvasCharWidthPx = MOCK_FALLBACK_CHAR_WIDTH_PX;
+let mockCharSizeServiceUsesCanvasStrategy = true;
 let mockBakedLetterSpacingPx = 0;
 
 function resetMockTerminalGeometry(): void {
   mockFontsSettledForCharSize = false;
-  mockMeasuredCharWidthPx = MOCK_FALLBACK_CHAR_WIDTH_PX;
+  mockDomCharWidthPx = MOCK_FALLBACK_CHAR_WIDTH_PX;
+  mockCanvasCharWidthPx = MOCK_FALLBACK_CHAR_WIDTH_PX;
+  mockCharSizeServiceUsesCanvasStrategy = true;
   mockBakedLetterSpacingPx = 0;
   mockTerminalInstance.cols = 80;
 }
@@ -104,27 +131,48 @@ function getMockBakedLetterSpacingPx(): number {
   return mockBakedLetterSpacingPx;
 }
 
+/**
+ * Mirrors real xterm's `CharSizeService` constructor picking its measurement
+ * strategy the moment `terminal.open()` runs: Canvas/OffscreenCanvas when
+ * `window.OffscreenCanvas` is present, DOM fallback otherwise.
+ */
+function mockSelectCharSizeServiceStrategyAtOpen(): void {
+  mockCharSizeServiceUsesCanvasStrategy =
+    typeof (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas !== "undefined";
+}
+
 // Mirrors xterm's CharSizeService.measure() -> onCharSizeChange ->
 // DomRenderer.handleCharSizeChanged() -> _updateDimensions() +
 // _setDefaultSpacing(): runs on every GENUINE fontFamily/fontSize option
 // transition, using the CURRENT (possibly stale, pre-fit) column count.
+//
+// `mockDomCharWidthPx` mirrors `WidthCache.get('W')` (always DOM-based).
+// `mockCanvasCharWidthPx` mirrors `CharSizeService.width`: identical to the
+// DOM value when the DOM strategy was selected at open(), but offset by a
+// fixed divergence when the Canvas strategy was selected — modeling the real
+// cross-pipeline (Canvas 2D vs DOM layout) measurement discrepancy that
+// `_setDefaultSpacing()`'s `dimensions.css.cell.width - widthCache.get('W')`
+// formula depends on both operands agreeing to correctly converge to zero.
 function mockHandleCharSizeChanged(): void {
-  mockMeasuredCharWidthPx = mockFontsSettledForCharSize
+  mockDomCharWidthPx = mockFontsSettledForCharSize
     ? MOCK_SETTLED_CHAR_WIDTH_PX
     : MOCK_FALLBACK_CHAR_WIDTH_PX;
+  mockCanvasCharWidthPx = mockCharSizeServiceUsesCanvasStrategy
+    ? mockDomCharWidthPx + MOCK_CANVAS_DOM_DIVERGENCE_PX
+    : mockDomCharWidthPx;
   const cols = (mockTerminalInstance.cols as number) || 1;
   const cellWidthPx = MOCK_CONTAINER_WIDTH_PX / cols;
-  mockBakedLetterSpacingPx = cellWidthPx - mockMeasuredCharWidthPx;
+  mockBakedLetterSpacingPx = cellWidthPx - mockDomCharWidthPx;
 }
 
-// Mirrors FitAddon.fit() -> terminal.resize(cols, rows) ->
-// DomRenderer.handleResize(): recomputes cols/cell-width from the CURRENT
-// measured char width but deliberately does NOT touch letter-spacing (real
-// xterm's handleResize() never calls _setDefaultSpacing()).
+// Mirrors FitAddon.proposeDimensions(): cols = floor(availableWidth /
+// renderService.dimensions.css.cell.width) — the CANVAS-strategy-derived
+// value when that strategy is active, matching the installed
+// @xterm/addon-fit@0.10.0 source (`t.css.cell.width`).
 const mockFitAddonFit = vi.fn(() => {
   mockTerminalInstance.cols = Math.max(
     1,
-    Math.floor(MOCK_CONTAINER_WIDTH_PX / mockMeasuredCharWidthPx),
+    Math.floor(MOCK_CONTAINER_WIDTH_PX / mockCanvasCharWidthPx),
   );
 });
 
@@ -183,7 +231,11 @@ function createMockTerminalOptions(): Record<string, unknown> {
 
 const mockTerminalInstance = {
   loadAddon: vi.fn(),
-  open: vi.fn(),
+  // FN-7603: mirror the real CharSizeService constructor's strategy
+  // selection, which happens synchronously inside terminal.open().
+  open: vi.fn(() => {
+    mockSelectCharSizeServiceStrategyAtOpen();
+  }),
   onData: vi.fn((cb: (data: string) => void) => {
     terminalDataHandler = cb;
     return { dispose: vi.fn() };
@@ -7638,6 +7690,297 @@ describe("TerminalModal — FN-7567 mobile inter-character spacing (stale post-f
 
     await waitFor(() => {
       expect(getFontRemeasureCount()).toBeGreaterThan(0);
+    });
+
+    await waitFor(() => {
+      expect(getMockBakedLetterSpacingPx()).toBeCloseTo(0, 5);
+    });
+  });
+});
+
+/*
+FNXC:Terminal 2026-07-05-12:50:
+FN-7603 (recurrence #5 of mobile terminal inter-character spacing, after
+FN-7456's DOM glyph-fallback fix, FN-7460's `text-size-adjust: none`,
+FN-7561's `forceTerminalFontRemeasure`, and FN-7567's post-fit re-bake) root
+cause, grounded against the installed `@xterm/xterm@5.5.0` source (see task
+document key="xterm-source-audit" on FN-7603): xterm's `CharSizeService`
+selects ONE of two independent measurement strategies the moment
+`terminal.open()` runs — a Canvas/`OffscreenCanvas` strategy (chosen whenever
+`OffscreenCanvas` + the required `TextMetrics` fields are available, i.e.
+virtually every real modern mobile browser) or a DOM fallback strategy (only
+selected if the canvas strategy's constructor throws). `dimensions.css.cell.width`
+(which feeds `FitAddon.fit()`'s column count AND `DomRenderer.
+_setDefaultSpacing()`'s baked letter-spacing) derives from whichever strategy
+CharSizeService picked. Separately, `WidthCache` (used by both
+`_setDefaultSpacing()` and `DomRendererRowFactory`'s per-glyph override) is
+ALWAYS DOM-based. Real glyphs are painted 100% through the DOM, so
+`_setDefaultSpacing()`'s `cell.width - widthCache.get('W')` formula only
+converges to zero — i.e. tight, contiguous monospace cells — when BOTH
+operands are measured through the SAME pipeline. Canvas 2D text measurement
+and DOM/CSS text layout are two different browser rendering pipelines that can
+disagree by a small but visible amount for the same font on the same device —
+a divergence none of FN-7456/FN-7460/FN-7561/FN-7567 (or their test doubles)
+ever modeled, because all four assumed a single unified character-width
+measurement. This is why the reported symptom survived every prior remedy:
+none of them touched WHICH measurement pipeline xterm's cell geometry is
+computed from, only WHEN it recomputes.
+
+The fix (`withDomBasedTerminalCharacterMeasurement` in terminalPreferences.ts)
+makes `window.OffscreenCanvas` transiently unavailable for the synchronous
+duration of `terminal.open()`, forcing `CharSizeService`'s constructor
+try-block to throw and self-select its own DOM fallback strategy — unifying
+`dimensions.css.cell.width` and `WidthCache.get('W')` onto the SAME
+measurement pipeline instead of adding any hardcoded letter-spacing
+compensation.
+
+This suite extends the FN-7567 geometry-accurate mock
+(`mockHandleCharSizeChanged`/`mockFitAddonFit`) to model the Canvas-vs-DOM
+divergence explicitly (`mockCanvasCharWidthPx` vs `mockDomCharWidthPx`, gated
+on `window.OffscreenCanvas` availability observed at the mock's `open()` call
+— exactly mirroring the real CharSizeService constructor's strategy
+selection), which the FN-7567 double could not represent (it modeled both
+measurements as a single shared value). It fails on pre-fix code — where
+`window.OffscreenCanvas` stays available throughout `open()`, so the mock
+selects its "Canvas strategy" and the baked letter-spacing settles to a
+persistent NONZERO value even after the full settle + pre/post-fit remeasure
+sequence FN-7561/FN-7567 added — and passes once the fix hides
+`OffscreenCanvas` around `open()`, converging the bake to exactly zero.
+See `docs/solutions/ui-bugs/xterm-options-noop-remeasure-after-font-settle.md`
+recurrence-#5 section.
+*/
+describe("TerminalModal — FN-7603 mobile inter-character spacing (Canvas vs DOM CharSizeService measurement divergence)", () => {
+  const mockOnClose = vi.fn();
+  const mockSendInput = vi.fn();
+  const mockResize = vi.fn();
+  const mockReconnect = vi.fn();
+
+  const createMockTerminalState = (overrides = {}) => ({
+    connectionStatus: "connected" as const,
+    sendInput: mockSendInput,
+    resize: mockResize,
+    onData: vi.fn(() => vi.fn()),
+    onExit: vi.fn(() => vi.fn()),
+    onConnect: vi.fn(() => vi.fn()),
+    onScrollback: vi.fn(() => vi.fn()),
+    reconnect: mockReconnect,
+    onSessionInvalid: vi.fn(() => vi.fn()),
+    ...overrides,
+  });
+
+  let previousInnerWidth: number;
+  let previousOntouchstart: unknown;
+  let previousOffscreenCanvas: unknown;
+  let hadOwnOffscreenCanvas: boolean;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetFontRemeasureCount();
+    resetMockTerminalGeometry();
+    vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    previousInnerWidth = window.innerWidth;
+    previousOntouchstart = window.ontouchstart;
+    hadOwnOffscreenCanvas = Object.prototype.hasOwnProperty.call(window, "OffscreenCanvas");
+    previousOffscreenCanvas = (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas;
+    // Real reported device: a narrow touch-primary mobile viewport with a
+    // modern engine that supports OffscreenCanvas (true on essentially every
+    // real mobile Safari/Chrome), so xterm's CharSizeService would pick its
+    // Canvas measurement strategy absent the fix.
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+    Object.defineProperty(window, "ontouchstart", { value: null, configurable: true });
+    Object.defineProperty(window, "OffscreenCanvas", {
+      value: class MockOffscreenCanvas {},
+      writable: true,
+      configurable: true,
+    });
+    window.localStorage.removeItem(TERMINAL_FONT_SIZE_KEY);
+    window.localStorage.removeItem(TERMINAL_PREFERENCES_KEY);
+    mockTerminalInstance.options.fontFamily = XTERM_FONT_FAMILY;
+    mockTerminalInstance.options.fontSize = 12;
+    mockTerminalInstance.options.cursorStyle = "block";
+    mockTerminalInstance.options.cursorBlink = true;
+    resetFontRemeasureCount();
+    resetMockTerminalGeometry();
+    mockUseTerminal.mockReturnValue(createMockTerminalState());
+    mockUseTerminalSessions.mockReturnValue(defaultSessionState);
+    mockUseWorkspaces.mockReturnValue({
+      projectName: "kb",
+      workspaces: [],
+      loading: false,
+      error: null,
+    });
+    mockCreateTerminalSession.mockResolvedValue({
+      sessionId: "test-session-123",
+      shell: "/bin/bash",
+      cwd: "/project",
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+    if (previousOntouchstart === undefined) {
+      delete (window as unknown as { ontouchstart?: unknown }).ontouchstart;
+    } else {
+      Object.defineProperty(window, "ontouchstart", { value: previousOntouchstart, configurable: true });
+    }
+    if (hadOwnOffscreenCanvas) {
+      Object.defineProperty(window, "OffscreenCanvas", {
+        value: previousOffscreenCanvas,
+        writable: true,
+        configurable: true,
+      });
+    } else {
+      delete (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas;
+    }
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("converges baked letter-spacing to exactly zero by forcing xterm off its Canvas character-measurement strategy during open()", async () => {
+    let resolveLoad: (() => void) | undefined;
+    let resolveReady: (() => void) | undefined;
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              resolveLoad = resolve;
+            }),
+        ),
+        ready: new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        }),
+      },
+      configurable: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+    resetFontRemeasureCount();
+
+    settleMockTerminalFontForCharSize();
+
+    await act(async () => {
+      resolveLoad?.();
+      resolveReady?.();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(getFontRemeasureCount()).toBeGreaterThan(0);
+    });
+
+    /*
+     * The decisive geometry assertion for this recurrence: on pre-fix code,
+     * `window.OffscreenCanvas` stays defined throughout `terminal.open()`, so
+     * the mock's CharSizeService strategy selects "Canvas" and
+     * `mockCanvasCharWidthPx` diverges from `mockDomCharWidthPx` by
+     * `MOCK_CANVAS_DOM_DIVERGENCE_PX`. Even after the full FN-7561/FN-7567
+     * settle + pre/post-fit remeasure sequence runs to completion, the baked
+     * letter-spacing does NOT converge to zero — it settles at a persistent,
+     * nonzero residual driven purely by the Canvas-vs-DOM measurement
+     * mismatch, exactly matching "still spaced apart even after every prior
+     * fix ran correctly". This assertion fails on HEAD before this task's fix
+     * and passes once `withDomBasedTerminalCharacterMeasurement` hides
+     * `OffscreenCanvas` around `open()`.
+     */
+    await waitFor(() => {
+      expect(getMockBakedLetterSpacingPx()).toBeCloseTo(0, 5);
+    });
+  });
+
+  it("also converges to zero with the mobile keyboard already open and a persisted 10px font", async () => {
+    window.localStorage.setItem(TERMINAL_FONT_SIZE_KEY, "10");
+
+    const mockVV = {
+      width: 375,
+      height: 300,
+      offsetTop: 0,
+      offsetLeft: 0,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    };
+    Object.defineProperty(window, "visualViewport", {
+      value: mockVV,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(window, "innerHeight", { value: 300, writable: true, configurable: true });
+
+    let resolveLoad: (() => void) | undefined;
+    let resolveReady: (() => void) | undefined;
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              resolveLoad = resolve;
+            }),
+        ),
+        ready: new Promise<void>((resolve) => {
+          resolveReady = resolve;
+        }),
+      },
+      configurable: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+    resetFontRemeasureCount();
+    settleMockTerminalFontForCharSize();
+
+    await act(async () => {
+      resolveLoad?.();
+      resolveReady?.();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(getFontRemeasureCount()).toBeGreaterThan(0);
+    });
+
+    await waitFor(() => {
+      expect(getMockBakedLetterSpacingPx()).toBeCloseTo(0, 5);
+    });
+
+    Object.defineProperty(window, "visualViewport", { value: undefined, writable: true, configurable: true });
+  });
+
+  it("does not regress when the real browser has no OffscreenCanvas support (xterm already self-selects the DOM strategy)", async () => {
+    window.localStorage.removeItem(TERMINAL_FONT_SIZE_KEY);
+    delete (window as unknown as { OffscreenCanvas?: unknown }).OffscreenCanvas;
+    settleMockTerminalFontForCharSize();
+
+    Object.defineProperty(document, "fonts", {
+      value: {
+        load: vi.fn(() => Promise.resolve()),
+        ready: Promise.resolve(),
+      },
+      configurable: true,
+    });
+
+    render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+    await waitFor(() => expect(mockTerminalInstance.open).toHaveBeenCalled());
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     await waitFor(() => {

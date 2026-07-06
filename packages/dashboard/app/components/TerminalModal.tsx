@@ -46,6 +46,7 @@ import {
   resolveTerminalFontFamily,
   resolveTerminalGlyphFontFamily,
   waitForTerminalFontMetrics,
+  withDomBasedTerminalCharacterMeasurement,
   writeTerminalPreferences,
   type TerminalPreferences,
   type TerminalRenderer,
@@ -1406,7 +1407,20 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         }
 
         // Open terminal in container
-        terminal.open(terminalRef.current);
+        /*
+        FNXC:Terminal 2026-07-05-12:40:
+        FN-7603 recurrence #5: force xterm's CharSizeService to self-select its
+        DOM-based measurement strategy (instead of its default Canvas/
+        OffscreenCanvas strategy) for the synchronous duration of open(), so the
+        cell-width measurement that feeds FitAddon.fit() and
+        DomRenderer._setDefaultSpacing()'s baked letter-spacing uses the SAME
+        pipeline as WidthCache's DOM-based per-glyph measurement. See
+        `withDomBasedTerminalCharacterMeasurement` and
+        docs/solutions/ui-bugs/xterm-options-noop-remeasure-after-font-settle.md.
+        */
+        withDomBasedTerminalCharacterMeasurement(() => {
+          terminal.open(terminalRef.current!);
+        });
 
         // Clear watchdog — imports and open() succeeded within deadline
         if (watchdogTimer) {

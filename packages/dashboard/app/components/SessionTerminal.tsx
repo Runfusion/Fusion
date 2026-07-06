@@ -15,6 +15,7 @@ import {
   resolveTerminalFontFamily,
   resolveTerminalGlyphFontFamily,
   waitForTerminalFontMetrics,
+  withDomBasedTerminalCharacterMeasurement,
 } from "../utils/terminalPreferences";
 
 /**
@@ -459,7 +460,20 @@ export function SessionTerminal({
       term.loadAddon(unicode11);
       term.unicode.activeVersion = "11";
 
-      term.open(containerRef.current);
+      /*
+      FNXC:Terminal 2026-07-05-12:40:
+      FN-7603 recurrence #5: mirror TerminalModal's fix — force xterm's
+      CharSizeService to self-select its DOM-based measurement strategy for
+      the synchronous duration of open() so cell-width measurement (feeding
+      FitAddon.fit() and DomRenderer._setDefaultSpacing()'s baked
+      letter-spacing) uses the SAME pipeline as WidthCache's DOM-based
+      per-glyph measurement, instead of the default Canvas/OffscreenCanvas
+      strategy that measures through a different pipeline. See
+      docs/solutions/ui-bugs/xterm-options-noop-remeasure-after-font-settle.md.
+      */
+      withDomBasedTerminalCharacterMeasurement(() => {
+        term.open(containerRef.current!);
+      });
       xtermRef.current = term;
       fitAddonRef.current = fitAddon as unknown as ITerminalAddon;
 

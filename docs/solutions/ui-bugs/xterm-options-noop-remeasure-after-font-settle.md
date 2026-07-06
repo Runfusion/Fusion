@@ -207,3 +207,104 @@ jsdom cannot exercise real xterm.js internals, so the FN-7567 regression models 
   obtainable in this execution environment (headless coding agent, no physical device access) — this
   gap is recorded explicitly rather than treating jsdom/desktop WebKit as proof. See task document
   key="repro" on FN-7567 and `docs/ios-acceptance.md`.
+
+## Recurrence #5 (FN-7603): mock/real divergence — Canvas vs DOM character measurement
+
+FN-7561's `forceTerminalFontRemeasure()` and FN-7567's post-fit re-bake both ran correctly, and both
+were validated ONLY against jsdom test doubles that never exercise real `@xterm/xterm@5.5.0`. On the
+reported real mobile device, ordinary ASCII still rendered with visible gaps on the initial paint. This
+is the fifth recurrence of the same defect, so the FN-7603 executor was required to read the installed
+`@xterm/xterm@5.5.0`/`@xterm/addon-fit@0.10.0` source before touching production code (see task
+document key="xterm-source-audit" on FN-7603).
+
+### The actual mechanism
+
+xterm's `CharSizeService` selects ONE of two measurement strategies **the moment `terminal.open()`
+runs**:
+
+```js
+// @xterm/xterm/lib/xterm.js (installed 5.5.0), CharSizeService constructor
+try { this._measureStrategy = new OffscreenCanvasStrategy(optionsService) }      // canvas: ctx.measureText("W")
+catch { this._measureStrategy = new DomFallbackStrategy(document, container, optionsService) } // DOM: offsetWidth/32
+```
+
+The Canvas strategy is chosen whenever `OffscreenCanvas` + `CanvasRenderingContext2D.measureText()`
+reporting `fontBoundingBoxAscent`/`fontBoundingBoxDescent` are available — true on essentially every
+real modern mobile Safari/Chrome. `dimensions.css.cell.width` (which feeds both `FitAddon.fit()`'s
+column count, per the installed `addon-fit@0.10.0` `proposeDimensions()`, and
+`DomRenderer._setDefaultSpacing()`'s baked letter-spacing) derives from whichever strategy
+`CharSizeService` picked.
+
+Separately, `DomRenderer._setDefaultSpacing()` and `DomRendererRowFactory.createRow()`'s per-glyph
+override BOTH measure via `WidthCache`, which is **always** DOM-based (`offsetWidth` of a hidden
+32×-repeated-character span) — entirely independent of `CharSizeService`'s strategy choice. Real glyphs
+are painted 100% through the DOM (`DomRenderer` never draws through canvas). Canvas 2D text measurement
+and DOM/CSS text layout are two different browser rendering pipelines that can disagree — even by a
+fraction of a device pixel — for the same font on the same device; this is a documented,
+long-standing cross-API text-metrics inconsistency. `_setDefaultSpacing()`'s formula
+(`dimensions.css.cell.width - widthCache.get('W')`) only correctly converges to zero (tight, contiguous
+cells) when both operands are measured through the SAME pipeline. None of FN-7456/FN-7460/FN-7561/
+FN-7567 (or their test doubles) ever modeled this — all four assumed CharSizeService's measurement and
+WidthCache's measurement were the same value.
+
+### Why FN-7456/FN-7460/FN-7561/FN-7567 missed this
+
+Every prior fix's test double (`mockHandleCharSizeChanged`) treated the measured character width as a
+single shared value used for both "the cell width that drives fit" and "the width WidthCache subtracts
+in `_setDefaultSpacing()`" — a faithful-looking model of xterm's DOM-only fallback strategy, but NOT of
+the Canvas strategy that real xterm actually selects by default on real mobile browsers. Because jsdom
+cannot run real `@xterm/xterm`, and no fix before FN-7603 cross-checked the double against the installed
+source, the divergence between "what CharSizeService measures" (Canvas, in the real common case) and
+"what WidthCache measures" (always DOM) went completely uncovered for four recurrences.
+
+### Solution
+
+Force `CharSizeService` to construct with its own DOM fallback strategy — unifying the cell-width
+measurement with `WidthCache`'s measurement — by making `OffscreenCanvas` transiently unavailable for
+the synchronous duration of `terminal.open()` (where `CharSizeService` is constructed):
+
+```ts
+// packages/dashboard/app/utils/terminalPreferences.ts
+export function withDomBasedTerminalCharacterMeasurement<T>(fn: () => T): T {
+  const descriptor = Object.getOwnPropertyDescriptor(window, "OffscreenCanvas");
+  delete (window as any).OffscreenCanvas;
+  try {
+    return fn();
+  } finally {
+    if (descriptor) Object.defineProperty(window, "OffscreenCanvas", descriptor);
+  }
+}
+```
+
+Both `TerminalModal.tsx` and `SessionTerminal.tsx` now wrap their `terminal.open(container)` call in
+`withDomBasedTerminalCharacterMeasurement(() => terminal.open(container))`. `CharSizeService`'s
+constructor try-block throws (no `OffscreenCanvas` global), so it self-selects the SAME DOM-based
+strategy `WidthCache` already always uses — no hardcoded letter-spacing/cell-width compensation is
+added; the fix unifies the measurement pipeline instead.
+
+Do not:
+
+- Patch `window.OffscreenCanvas` outside the narrow synchronous `open()` window — other page code
+  (charts, canvas-based rendering elsewhere in the dashboard) may legitimately need it.
+- Assume this is scoped to mobile only — desktop with the DOM renderer (WebGL addon failed to load, or
+  `renderer: "canvas"` preference) has the identical divergence and benefits from the same fix.
+- Treat this as a replacement for FN-7561/FN-7567 — both remain necessary; this fix addresses a
+  different, independent measurement-pipeline mismatch.
+
+### Regression coverage (Canvas-vs-DOM divergence, not CSS/call-count)
+
+- Extended the FN-7567 double: `mockCanvasCharWidthPx` (drives `FitAddon.fit()`'s column count,
+  mirroring `dimensions.css.cell.width`) can diverge from `mockDomCharWidthPx` (mirrors
+  `WidthCache.get('W')`) by a fixed offset, gated on `window.OffscreenCanvas` being defined at the
+  moment the mock's `open()` runs — exactly mirroring the real `CharSizeService` constructor's
+  try/catch strategy selection.
+- The assertion is the same rendered-geometry invariant as FN-7567 (baked letter-spacing `== 0`), but
+  now fails on HEAD even with the full FN-7561/FN-7567 settle+pre/post-fit-remeasure sequence present,
+  because the divergence is NOT an ordering bug — it's a measurement-pipeline bug those fixes cannot
+  see or fix.
+- See `TerminalModal.test.tsx` describe block "FN-7603 mobile inter-character spacing (Canvas vs DOM
+  CharSizeService measurement divergence)".
+- Run: `pnpm --filter @fusion/dashboard exec vitest run app/components/__tests__/TerminalModal.test.tsx app/components/__tests__/SessionTerminal.test.tsx app/components/__tests__/SessionTerminal.mobile.test.tsx app/utils/__tests__/terminalPreferences.test.ts app/__tests__/terminal-input.test.ts --silent=passed-only --reporter=dot`.
+- Real mobile Safari/Chrome sanity check remains the strongest signal; a real-device screenshot was not
+  obtainable in this execution environment — this gap is recorded explicitly (task document
+  key="repro" on FN-7603) rather than treating jsdom/desktop WebKit as proof.
