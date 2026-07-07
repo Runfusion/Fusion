@@ -97,6 +97,14 @@ export type EnrichedChatSession = ChatSession & {
   lastMessageAt?: string;
   /** Whether a generation is currently in progress for this session */
   isGenerating?: boolean;
+  /**
+   * FNXC:ChatSearch 2026-07-07-00:00:
+   * When a session is included in `GET /chat/sessions` because its message content (not
+   * title) matched a server-side content search, this carries a truncated preview of the
+   * matching message so the UI can show "why did this match" without a second round trip.
+   * Absent when the session was not returned via content search.
+   */
+  matchedMessagePreview?: string;
 };
 
 /** A parsed @ mention of an agent in a chat message */

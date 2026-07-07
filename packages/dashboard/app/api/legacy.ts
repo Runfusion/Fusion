@@ -10019,11 +10019,30 @@ export interface ChatRoomMessageResponse {
   message: ChatRoomMessage;
 }
 
+/**
+ * FNXC:ChatSearch 2026-07-07-00:00:
+ * `q`/`titleOnly` mirror the server's GET /chat/sessions content-search params (see
+ * register-chat-routes.ts). `q` triggers server-side message-content search; `titleOnly=true`
+ * (or omitting `q`) preserves the pre-existing client-side title/agent-only filtering.
+ */
+export interface FetchChatSessionsOptions {
+  status?: string;
+  q?: string;
+  titleOnly?: boolean;
+}
+
 /** Fetch all chat sessions for a project */
-export function fetchChatSessions(projectId?: string, status?: string): Promise<ChatSessionListResponse> {
+export function fetchChatSessions(
+  projectId?: string,
+  status?: string,
+  options?: FetchChatSessionsOptions,
+): Promise<ChatSessionListResponse> {
   const search = new URLSearchParams();
   if (projectId) search.set("projectId", projectId);
-  if (status) search.set("status", status);
+  const resolvedStatus = options?.status ?? status;
+  if (resolvedStatus) search.set("status", resolvedStatus);
+  if (options?.q && options.q.trim()) search.set("q", options.q.trim());
+  if (options?.titleOnly) search.set("titleOnly", "true");
   const qs = search.toString();
   return api<ChatSessionListResponse>(`/chat/sessions${qs ? `?${qs}` : ""}`);
 }

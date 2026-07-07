@@ -91,6 +91,8 @@ const defaultChatState: UseChatReturn = {
   hasMoreMessages: false,
   searchQuery: "",
   setSearchQuery: vi.fn(),
+  searchInTitleOnly: false,
+  setSearchInTitleOnly: vi.fn(),
   filteredSessions: [sessionOne, sessionTwo],
   refreshSessions: vi.fn(),
   agentsMap: new Map(),

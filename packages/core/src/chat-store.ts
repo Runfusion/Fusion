@@ -743,6 +743,70 @@ export class ChatStore extends EventEmitter<ChatStoreEvents> {
   }
 
   /**
+   * Escape a raw search term for safe use inside a SQL `LIKE ... ESCAPE '\'` pattern.
+   * Escapes the LIKE wildcard characters (`%`, `_`) and the escape character itself (`\`)
+   * so a literal user-typed `%`/`_` is matched literally instead of acting as a wildcard.
+   */
+  private escapeLikePattern(raw: string): string {
+    return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+  }
+
+  /**
+   * Search sessions by message content (not just title/agentId).
+   *
+   * FNXC:ChatSearch 2026-07-07-00:00:
+   * Message content is not fully loaded client-side (only sessions + a last-message preview
+   * are), so "find a conversation by something that was said in it" requires a server round
+   * trip against chat_messages. There is no FTS table for chat_messages (see db.ts schema), so
+   * this uses a parameterized SQL `LIKE ... ESCAPE '\'` query — never string-concatenated —
+   * with `%`/`_`/`\` escaped in the search term so a literal `%` or `_` typed by the user is
+   * matched literally rather than acting as a wildcard (injection- and wildcard-safety).
+   *
+   * Scoped to the given session IDs (already filtered by projectId/status/agentId by the
+   * caller via listSessions) to keep the query bounded and avoid re-deriving scope filters
+   * against chat_sessions here. Deduplicates to one row per session using MAX(createdAt) so a
+   * session with multiple matching messages appears once, with a preview of its most recent
+   * matching message (truncated to ~100 chars, mirroring getLastMessageForSessions).
+   *
+   * @param query - Raw user search text (content match)
+   * @param sessionIds - Session IDs to search within (already scope-filtered by the caller)
+   * @returns Map of sessionId -> truncated preview of the most recent matching message
+   */
+  searchSessionsByMessageContent(query: string, sessionIds: string[]): Map<string, string> {
+    const trimmed = query.trim();
+    if (!trimmed || !sessionIds || sessionIds.length === 0) {
+      return new Map();
+    }
+
+    const escaped = this.escapeLikePattern(trimmed);
+    const pattern = `%${escaped}%`;
+    const placeholders = sessionIds.map(() => "?").join(", ");
+
+    // Single bounded query: find the most recent matching message per session via a
+    // GROUP BY + join-back, avoiding N+1 per-session queries. Ties on createdAt (common in
+    // fast test/bulk-insert scenarios where multiple messages share a millisecond timestamp)
+    // are broken by SQLite's implicit rowid, which tracks insertion order.
+    const rows = this.db.prepare(`
+      SELECT cm.* FROM chat_messages cm
+      INNER JOIN (
+        SELECT sessionId, MAX(rowid) as maxRowid
+        FROM chat_messages
+        WHERE sessionId IN (${placeholders}) AND content LIKE ? ESCAPE '\\'
+        GROUP BY sessionId
+      ) matched ON cm.sessionId = matched.sessionId AND cm.rowid = matched.maxRowid
+    `).all(...sessionIds, pattern);
+
+    const result = new Map<string, string>();
+    for (const row of rows as unknown as ChatMessageRow[]) {
+      const message = this.rowToMessage(row);
+      if (result.has(message.sessionId)) continue;
+      const content = message.content || "";
+      result.set(message.sessionId, content.length > 100 ? content.slice(0, 100) + "…" : content);
+    }
+    return result;
+  }
+
+  /**
    * Delete a message by ID.
    *
    * @param id - Message ID

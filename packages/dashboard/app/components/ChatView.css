@@ -267,6 +267,36 @@ When the movable chat popup is resized narrow, collapse Direct/Rooms labels to i
 
 .chat-sidebar-search-container {
   padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/*
+FNXC:ChatSearch 2026-07-07-00:00:
+Compact toggle button, reusing .btn/.btn-sm so it inherits the shared button visual language
+instead of one-off styling. aria-pressed drives the active/inactive look via existing token
+colors (no hardcoded hex).
+*/
+.chat-search-title-only-toggle {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.chat-search-title-only-toggle[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.chat-session-preview--matched {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-sidebar-search-wrapper {

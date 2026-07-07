@@ -202,21 +202,37 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   /**
    * GET /api/chat/sessions
    * List chat sessions with optional filtering.
-   * Query params: projectId?, status?, agentId?
+   * Query params: projectId?, status?, agentId?, q?, titleOnly?
+   *
+   * FNXC:ChatSearch 2026-07-07-00:00:
+   * `q` triggers a server-side message-content search (title/agentId filtering stays
+   * client-side, unchanged) because chat message bodies are not fully loaded client-side.
+   * `titleOnly=true` (or `q` absent) preserves the exact prior behavior: the normal enriched
+   * session list, with title/agent filtering left to the client. When `q` is present and
+   * titleOnly is not set, the result is narrowed to sessions whose content matches
+   * `q` (via ChatStore.searchSessionsByMessageContent), scoped by the same
+   * projectId/status/agentId filters and the task-planner common-feed guard used below, with
+   * `matchedMessagePreview` attached. The dashboard hook unions this with its local
+   * title/agent match so "content mode" covers both signals.
    *
    * Response is enriched with lastMessagePreview and lastMessageAt for each session.
    */
   router.get("/chat/sessions", rateLimit(RATE_LIMITS.api), async (req, res) => {
     try {
-      const { projectId, status, agentId, lookup, modelProvider, modelId } = req.query as {
+      const { projectId, status, agentId, lookup, modelProvider, modelId, q, titleOnly } = req.query as {
         projectId?: string;
         status?: string;
         agentId?: string;
         lookup?: string;
         modelProvider?: string;
         modelId?: string;
+        q?: string;
+        titleOnly?: string;
       };
       const { store: scopedStore, chatStore } = await resolveScopedChatStore(projectId);
+      const hasSearchQuery = typeof q === "string" && q.trim().length > 0;
+      const isTitleOnly = titleOnly === "true" || !hasSearchQuery;
+      const isContentSearch = hasSearchQuery && !isTitleOnly;
 
       const isResumeLookup = lookup === "resume";
       const hasModelProvider = typeof modelProvider === "string" && modelProvider.trim().length > 0;
@@ -272,6 +288,19 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
           });
         }
 
+        /*
+        FNXC:ChatSearch 2026-07-07-00:00:
+        Content search runs AFTER the task-planner common-feed filter above so a matching
+        message inside a hidden task-planner session can never bypass that guard. It also runs
+        after resume-lookup narrowing, so `lookup=resume` and task-detail routes are unaffected
+        (isContentSearch is only true for the plain listSessions path).
+        */
+        let contentMatches: Map<string, string> | undefined;
+        if (isContentSearch && !isResumeLookup) {
+          contentMatches = chatStore.searchSessionsByMessageContent(q!.trim(), sessions.map((s) => s.id));
+          sessions = sessions.filter((session) => contentMatches!.has(session.id));
+        }
+
         // Batch-gather generating session IDs to avoid N+1 calls
         const resolvedChatManager = projectId
           ? await resolveScopedChatManager(projectId).catch(() => options?.chatManager)
@@ -290,6 +319,12 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
             enriched.lastMessageAt = lastMessage.createdAt;
           }
           enriched.isGenerating = generatingSet.has(session.id);
+          if (contentMatches) {
+            const matchedPreview = contentMatches.get(session.id);
+            if (matchedPreview !== undefined) {
+              enriched.matchedMessagePreview = matchedPreview;
+            }
+          }
         }
       }
 

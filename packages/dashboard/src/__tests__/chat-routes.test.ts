@@ -145,6 +145,7 @@ const mockAddMessage = vi.fn();
 const mockGetMessages = vi.fn();
 const mockGetMessage = vi.fn();
 const mockGetLastMessageForSessions = vi.fn().mockReturnValue(new Map());
+const mockSearchSessionsByMessageContent = vi.fn().mockReturnValue(new Map());
 const mockFindLatestActiveSessionForTarget = vi.fn();
 const mockDeleteMessage = vi.fn();
 const mockDeleteSessionsForAgentId = vi.fn();
@@ -306,6 +307,7 @@ const mockChatStoreInstance = {
   getMessages: mockGetMessages,
   getMessage: mockGetMessage,
   getLastMessageForSessions: mockGetLastMessageForSessions,
+  searchSessionsByMessageContent: mockSearchSessionsByMessageContent,
   findLatestActiveSessionForTarget: mockFindLatestActiveSessionForTarget,
   deleteMessage: mockDeleteMessage,
   deleteSessionsForAgentId: mockDeleteSessionsForAgentId,
@@ -929,6 +931,82 @@ describe("Chat API Routes", () => {
 
       expect(response.status).toBe(200);
       expect(mockListSessions).toHaveBeenCalledWith({ projectId: "proj-001" });
+    });
+
+    describe("content search (q / titleOnly)", () => {
+      it("narrows results to content-matched sessions and attaches matchedMessagePreview", async () => {
+        const matchSession = { ...sampleSession, id: "chat-match" };
+        const noMatchSession = { ...sampleSession, id: "chat-no-match" };
+        mockListSessions.mockReturnValue([matchSession, noMatchSession]);
+        mockGetLastMessageForSessions.mockReturnValue(new Map());
+        mockSearchSessionsByMessageContent.mockReturnValue(new Map([["chat-match", "found the roadmap here"]]));
+
+        const response = await request(app, "GET", "/api/chat/sessions?q=roadmap");
+
+        expect(response.status).toBe(200);
+        expect(mockSearchSessionsByMessageContent).toHaveBeenCalledWith("roadmap", ["chat-match", "chat-no-match"]);
+        const body = (response.body as any).sessions;
+        expect(body.map((s: any) => s.id)).toEqual(["chat-match"]);
+        expect(body[0].matchedMessagePreview).toBe("found the roadmap here");
+      });
+
+      it("ignores content search and preserves current behavior when titleOnly=true", async () => {
+        mockListSessions.mockReturnValue([sampleSession]);
+        mockGetLastMessageForSessions.mockReturnValue(new Map());
+
+        const response = await request(app, "GET", "/api/chat/sessions?q=roadmap&titleOnly=true");
+
+        expect(response.status).toBe(200);
+        expect(mockSearchSessionsByMessageContent).not.toHaveBeenCalled();
+        expect((response.body as any).sessions).toHaveLength(1);
+      });
+
+      it("performs no content search when q is absent (unchanged default behavior)", async () => {
+        mockListSessions.mockReturnValue([sampleSession]);
+        mockGetLastMessageForSessions.mockReturnValue(new Map());
+
+        const response = await request(app, "GET", "/api/chat/sessions");
+
+        expect(response.status).toBe(200);
+        expect(mockSearchSessionsByMessageContent).not.toHaveBeenCalled();
+        expect((response.body as any).sessions).toHaveLength(1);
+      });
+
+      it("keeps task-planner sessions excluded from content matches when the setting is off", async () => {
+        const plannerMatch = { ...sampleSession, id: "chat-planner", agentId: "task-planner:FN-7337" };
+        mockListSessions.mockReturnValue([plannerMatch]);
+        mockGetLastMessageForSessions.mockReturnValue(new Map());
+        mockSearchSessionsByMessageContent.mockReturnValue(new Map([["chat-planner", "secret plan"]]));
+
+        const response = await request(app, "GET", "/api/chat/sessions?q=secret");
+
+        expect(response.status).toBe(200);
+        // Task-planner filter runs before content search narrowing, so the planner session
+        // never reaches searchSessionsByMessageContent and is excluded from the response.
+        expect((response.body as any).sessions).toHaveLength(0);
+      });
+
+      it("handles injection-style q values (%, ') safely and passes them through verbatim", async () => {
+        mockListSessions.mockReturnValue([sampleSession]);
+        mockGetLastMessageForSessions.mockReturnValue(new Map());
+        mockSearchSessionsByMessageContent.mockReturnValue(new Map());
+
+        const response = await request(app, "GET", `/api/chat/sessions?q=${encodeURIComponent("50%' OR 1=1--")}`);
+
+        expect(response.status).toBe(200);
+        expect(mockSearchSessionsByMessageContent).toHaveBeenCalledWith("50%' OR 1=1--", [sampleSession.id]);
+        expect((response.body as any).sessions).toHaveLength(0);
+      });
+
+      it("does not run content search for lookup=resume", async () => {
+        mockFindLatestActiveSessionForTarget.mockReturnValue(sampleSession);
+        mockGetLastMessageForSessions.mockReturnValue(new Map());
+
+        const response = await request(app, "GET", "/api/chat/sessions?lookup=resume&agentId=agent-001&q=roadmap");
+
+        expect(response.status).toBe(200);
+        expect(mockSearchSessionsByMessageContent).not.toHaveBeenCalled();
+      });
     });
   });
 
