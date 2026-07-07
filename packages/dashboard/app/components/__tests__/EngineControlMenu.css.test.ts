@@ -90,6 +90,28 @@ function extractMobileMediaBlocks(css: string): string {
   return blocks.join("\n");
 }
 
+function extractMediaBlocksForWidth(css: string, width: string): string {
+  const blocks: string[] = [];
+  const regex = new RegExp(`@media[^{}]*\\(max-width:\\s*${width}\\)[^{]*\\{`, "g");
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(css)) !== null) {
+    const startIdx = match.index + match[0].length;
+    let braceCount = 1;
+    let endIdx = startIdx;
+    while (braceCount > 0 && endIdx < css.length) {
+      if (css[endIdx] === "{") braceCount += 1;
+      if (css[endIdx] === "}") braceCount -= 1;
+      endIdx += 1;
+    }
+    if (braceCount === 0) {
+      blocks.push(css.slice(startIdx, endIdx - 1));
+    }
+  }
+
+  return blocks.join("\n");
+}
+
 function normalizeCss(css: string): string {
   return css.replace(/\s+/g, " ").trim();
 }
@@ -132,7 +154,11 @@ describe("EngineControlMenu CSS token validity (FN-6862)", () => {
 
   it("renders the mobile and narrow-tablet footer popover as a viewport-safe bottom panel", () => {
     expect(componentCss).toContain("@media (max-width: 1024px)");
-    expect(componentCss).not.toContain("@media (max-width: 768px)");
+    /*
+    FNXC:EngineControls 2026-07-07-08:20:
+    FN-7340 added a @media (max-width: 768px) block for range-slider thumb touch-target sizing — a separate concern from popover placement, which stays on the 1024px breakpoint (extractMobileMediaBlocks). The earlier whole-file ban on "@media (max-width: 768px)" was too broad; assert instead that the 768px block never repositions the popover.
+    */
+    expect(extractMediaBlocksForWidth(componentCss, "768px")).not.toContain(".engine-control-menu__popover");
 
     const desktopPopoverBlock = normalizeCss(extractRuleBlock(componentCss, ".engine-control-menu__popover"));
     const footerDesktopPopoverBlock = normalizeCss(

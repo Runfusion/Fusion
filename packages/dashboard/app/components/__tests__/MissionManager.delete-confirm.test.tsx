@@ -227,6 +227,12 @@ describe("MissionManager mission delete confirmation", () => {
     const addToast = vi.fn();
     renderMissionManager(addToast);
 
+    /*
+    FNXC:MissionManager 2026-07-07-08:25:
+    FN-7156 made inline Missions open on the overview (no first-mission auto-selection), so a selected-detail delete must first click the mission in the list to load its detail before the fetchMission/delete-modal flow runs.
+    */
+    fireEvent.click(await findMissionListItem("Build Auth System"));
+
     await waitFor(() => {
       expect(mockFetchMission).toHaveBeenCalledWith("M-001", projectId);
     });

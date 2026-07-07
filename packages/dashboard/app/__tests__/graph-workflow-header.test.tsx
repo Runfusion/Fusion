@@ -89,11 +89,15 @@ describe("Graph workflow header integration", () => {
     expect(headerSlot.contains(selector)).toBe(true);
 
     const contextTasks = screen.getByTestId("graph-plugin-context-tasks");
+      /*
+      FNXC:GraphWorkflowSelection 2026-07-07-08:15:
+      FN-7057 changed filterTasksByGraphWorkflowSelection to treat stale taskWorkflowIds entries that reference deleted/missing workflows as DEFAULT-workflow assignments (so tasks never vanish from every view). FN-unknown carries wf-missing, so under the default Coding selection it now resolves to the default workflow and is SHOWN, not filtered out.
+      */
     await waitFor(() => {
       expect(within(contextTasks).getByTestId("graph-context-task-FN-default")).toBeInTheDocument();
       expect(within(contextTasks).getByTestId("graph-context-task-FN-unassigned")).toBeInTheDocument();
       expect(within(contextTasks).queryByTestId("graph-context-task-FN-review")).toBeNull();
-      expect(within(contextTasks).queryByTestId("graph-context-task-FN-unknown")).toBeNull();
+      expect(within(contextTasks).getByTestId("graph-context-task-FN-unknown")).toBeInTheDocument();
     });
 
     fireEvent.click(selector);

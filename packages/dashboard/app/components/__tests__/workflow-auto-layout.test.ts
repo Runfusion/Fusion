@@ -236,11 +236,15 @@ describe("autoLayout — foreach / unreachable / cycles", () => {
       "code-review",
       "review",
     ]);
+    /*
+    FNXC:WorkflowAutoLayout 2026-07-07-08:10:
+    FN-7265 (align per-step review workflow) removed the standalone `review` prompt node from the stepwise IR — per-step review now happens inside the foreach (step-review), so the post-foreach success path is steps → browser-verification → code-review → completion-summary → merge-gate. The connected editor run for the stepwise built-in therefore ends at `completion-summary`, not `review`.
+    */
     assertAutoLayoutRunConnected("stepwise", workflowDef(BUILTIN_STEPWISE_CODING_WORKFLOW_IR), [
       "steps",
       "browser-verification",
       "code-review",
-      "review",
+      "completion-summary",
     ]);
   });
 

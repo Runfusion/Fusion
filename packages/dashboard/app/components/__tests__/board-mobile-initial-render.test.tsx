@@ -127,7 +127,7 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     vi.unstubAllGlobals();
   });
 
-  it("normalizes scrollLeft to 0 on initial mobile render and keeps snap style in CSS, not inline", () => {
+  it("preserves board column scroll during initial mobile stabilization while keeping snap style in CSS, not inline", () => {
     const viewportSpy = mockViewport(375);
     const raf = vi.fn<(cb: FrameRequestCallback) => number>((cb) => {
       setTimeout(() => cb(0), 0);
@@ -145,14 +145,18 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     act(() => {
       vi.runOnlyPendingTimers();
     });
-    expect(board.scrollLeft).toBe(0);
+    /*
+    FNXC:BoardMobile 2026-07-07-08:30:
+    FN-7342 (preserve board scroll during refresh stabilization) removed the `boardEl.scrollLeft = 0` reset from mobile stabilization — #board is the user's horizontal scroller, so stabilization now only normalizes document-level horizontal drift and must not force the board back to triage. The board's column scroll position is therefore preserved (500) instead of reset to 0; rAF scheduling and the CSS-not-inline snap invariant still hold.
+    */
+    expect(board.scrollLeft).toBe(500);
     expect(raf).toHaveBeenCalled();
     expect(board.style.scrollSnapType).toBe("");
 
     viewportSpy.mockRestore();
   });
 
-  it("re-anchors on pageshow persisted restore for mobile", () => {
+  it("preserves board column scroll on pageshow persisted restore for mobile", () => {
     const viewportSpy = mockViewport(375);
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
       setTimeout(() => cb(0), 0);
@@ -176,7 +180,11 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
     act(() => {
       vi.runOnlyPendingTimers();
     });
-    expect(board.scrollLeft).toBe(0);
+    /*
+    FNXC:BoardMobile 2026-07-07-08:32:
+    FN-7342 keeps pageshow/bfcache stabilization scoped to document-level drift, so the board column scroll set before the restore (500) is preserved rather than re-anchored to 0.
+    */
+    expect(board.scrollLeft).toBe(500);
 
     viewportSpy.mockRestore();
   });
@@ -468,7 +476,11 @@ describe("Board mobile initial render stabilization (FN-4574)", () => {
       expect(document.querySelector("main.board.board-workflow-columns")).not.toBeNull();
     });
 
-    expect(document.querySelector(".board-workflow-toolbar")).toBeNull();
+    /*
+    FNXC:BoardMobile 2026-07-07-08:35:
+    FN-6825 (combine workflow actions in switcher) moved edit/create into the WorkflowSwitcher, so shouldRenderWorkflowControls is now `workflowOptions.length > 0` rather than gated on onCreateWorkflow/onOpenWorkflowEditor. A Board rendered without those callbacks still shows the switcher toolbar whenever workflow options exist, so the no-callbacks toolbar shell no longer disappears.
+    */
+    expect(document.querySelector(".board-workflow-toolbar")).not.toBeNull();
     expect(document.querySelectorAll(".board-workflow-columns [data-testid^='column-']")).toHaveLength(6);
 
     viewportSpy.mockRestore();
