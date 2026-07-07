@@ -3476,7 +3476,17 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
    * Get a single plugin by ID.
    * Query: { projectId?: string }
    */
-  router.get("/plugins/:id", async (req: Request, res: Response) => {
+  router.get("/plugins/:id", async (req: Request, res: Response, next: NextFunction) => {
+    // "registry" is a static sub-route (GET /plugins/registry) owned by the
+    // plugin sub-router mounted further below. Because this generic ":id" route
+    // is registered first, Express would otherwise match it for the literal
+    // path "/plugins/registry" (id === "registry") and throw
+    // 'Plugin "registry" not found', shadowing the real registry handler.
+    // Fall through so the mounted sub-router can serve the registry listing.
+    if (req.params.id === "registry") {
+      next();
+      return;
+    }
     const { store: scopedStore } = await getProjectContext(req);
     const pluginStore = scopedStore.getPluginStore();
     const id = req.params.id as string;

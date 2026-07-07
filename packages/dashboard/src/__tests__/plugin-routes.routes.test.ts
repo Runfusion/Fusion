@@ -305,6 +305,42 @@ describe("GET /plugins/:id", () => {
   });
 });
 
+describe("GET /plugins/registry (route-shadowing regression)", () => {
+  let store: TaskStore;
+  let pluginStore: PluginStore;
+
+  beforeEach(() => {
+    pluginStore = createMockPluginStore();
+    store = createMockTaskStore({
+      getPluginStore: vi.fn().mockReturnValue(pluginStore),
+    });
+  });
+
+  function buildApp() {
+    const app = express();
+    app.use(express.json());
+    app.use("/api", createApiRoutes(store, {
+      pluginStore,
+      pluginLoader: createMockPluginLoader(),
+    }));
+    return app;
+  }
+
+  // Regression: the generic "GET /plugins/:id" route is registered before the
+  // plugin sub-router that owns "GET /plugins/registry". Without the pass-through
+  // guard, "/api/plugins/registry" matched ":id" (id === "registry"), called
+  // pluginStore.getPlugin("registry") and failed with 'Plugin "registry" not found'.
+  it("serves the registry listing instead of being shadowed by /plugins/:id", async () => {
+    const res = await GET(buildApp(), "/api/plugins/registry");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("plugins");
+    expect(Array.isArray(res.body.plugins)).toBe(true);
+    // The ":id" handler must NOT have been consulted for the literal "registry".
+    expect(pluginStore.getPlugin as ReturnType<typeof vi.fn>).not.toHaveBeenCalledWith("registry");
+  });
+});
+
 describe("GET /plugins/:id/settings", () => {
   let store: TaskStore;
   let pluginStore: PluginStore;
