@@ -471,6 +471,229 @@ describe("HeartbeatTriggerScheduler", () => {
       expect(store.endHeartbeatRun).not.toHaveBeenCalled();
       expect(scheduler.getRegisteredAgents()).not.toContain("executor-FN-999");
     });
+
+    describe("FN-7645: zombie long-interval timer re-arm", () => {
+      /**
+       * FNXC:AgentHeartbeat 2026-07-07-00:00:
+       * Regression coverage for FN-7645: a long-interval (~1h) agent whose
+       * live setInterval silently stops firing must self-heal within one 60s
+       * audit cycle once its lastHeartbeatAt goes stale beyond threshold, even
+       * though a timer map entry is still present (the audit previously
+       * short-circuited on `this.timers.has(agent.id)` and only repaired
+       * *missing* registrations). A parallel healthy short-interval agent must
+       * keep ticking on its own cadence, unaffected/undisturbed.
+       */
+      function buildAgent(overrides: Partial<Agent> & { id: string; heartbeatIntervalMs: number }): Agent {
+        const { heartbeatIntervalMs, ...rest } = overrides;
+        return {
+          name: rest.id,
+          role: "executor",
+          state: "active",
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+          runtimeConfig: { enabled: true, heartbeatIntervalMs },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+          ...rest,
+        } as Agent;
+      }
+
+      it("re-arms a present-but-non-advancing long-interval timer while leaving a healthy short-interval agent unaffected", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agents: Record<string, Agent> = {
+          "agent-long": buildAgent({ id: "agent-long", heartbeatIntervalMs: 3_600_000 }),
+          "agent-short": buildAgent({ id: "agent-short", heartbeatIntervalMs: 300_000 }),
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => Object.values(agents));
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        // Simulate production behavior: a dispatched timer tick advances the
+        // agent's lastHeartbeatAt (as a real heartbeat run completion would).
+        callback.mockImplementation(async (agentId: string) => {
+          agents[agentId] = { ...agents[agentId], lastHeartbeatAt: new Date().toISOString() };
+        });
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(scheduler.getRegisteredAgents()).toContain("agent-long");
+        expect(scheduler.getRegisteredAgents()).toContain("agent-short");
+
+        // Kill the long-interval agent's live interval handle out from under the
+        // scheduler, simulating a silently-dead setInterval while its map entry
+        // (and therefore the audit's "already registered" short-circuit) remains
+        // present — the exact "zombie timer" signature this task fixes.
+        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
+        const longTimerEntry = timers.get("agent-long");
+        expect(longTimerEntry?.kind).toBe("interval");
+        clearInterval(longTimerEntry!.handle as ReturnType<typeof setInterval>);
+
+        callback.mockClear();
+
+        // Advance across many 60s audit cycles spanning several hours — the
+        // ~18h staleness signature from the original report, scaled down for
+        // test speed but well past the default 2x-interval (7.2M ms) threshold.
+        await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000); // 4 hours
+
+        // Assertion it is gone: the long-interval agent must have been
+        // re-armed and dispatched within one audit cycle of going stale.
+        expect(callback).toHaveBeenCalledWith("agent-long", "timer", expect.anything());
+        expect(scheduler.getRegisteredAgents()).toContain("agent-long");
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+
+        // The healthy short-interval agent ticks on its own normal cadence
+        // (4h / 300_000ms = 48 ticks) and must not be force re-armed or thrashed.
+        const shortTicks = callback.mock.calls.filter((call) => call[0] === "agent-short").length;
+        expect(shortTicks).toBe(48);
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed agentId=agent-short"));
+      });
+
+      it("does not force re-arm a long-interval timer entry whose lastHeartbeatAt is fresh", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildAgent({ id: "agent-long", heartbeatIntervalMs: 3_600_000 });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Well within the 2x-interval stale threshold (7.2M ms) — several audit
+        // cycles must not force a re-arm or dispatch.
+        await vi.advanceTimersByTimeAsync(30 * 60_000); // 30 minutes
+
+        expect(callback).not.toHaveBeenCalled();
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+      });
+
+      it("does not force re-arm when lastHeartbeatAt is null/never-ticked even though a timer entry is present", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildAgent({ id: "agent-long", heartbeatIntervalMs: 3_600_000, lastHeartbeatAt: null as unknown as string });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // getHeartbeatAgeMs() returns NaN for a null lastHeartbeatAt, so the
+        // "stale beyond threshold" comparison must never be true — a never-ticked
+        // agent with a live timer entry must be left alone by the audit.
+        await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
+
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+      });
+
+      it("only force re-arms once stale beyond threshold, not at a small multiple within it", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        // Default repair-stale multiplier is 2x, so threshold = 7_200_000ms (2h).
+        const agent = buildAgent({ id: "agent-long", heartbeatIntervalMs: 3_600_000 });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
+        clearInterval(timers.get("agent-long")!.handle as ReturnType<typeof setInterval>);
+        callback.mockClear();
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Stale by a small multiple (1.1x interval = 3_960_000ms) — still under
+        // the 2x threshold, so the zombie repair must not fire yet.
+        await vi.advanceTimersByTimeAsync(3_960_000);
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(callback).not.toHaveBeenCalled();
+
+        // Cross the 2x threshold (total elapsed now > 7_200_000ms) — the next
+        // audit cycle must repair it. Repair re-registers via a jittered
+        // (<=5s) catch-up timeout, so advance a little further to let that
+        // dispatch actually fire.
+        await vi.advanceTimersByTimeAsync(3_300_000);
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+        expect(callback).toHaveBeenCalledWith("agent-long", "timer", expect.anything());
+      });
+
+      it("pause guards still suppress dispatch after a zombie re-arm (does not regress FN-2658)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildAgent({ id: "agent-long", heartbeatIntervalMs: 3_600_000 });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        const taskStore = {
+          getSettings: vi.fn().mockResolvedValue({ globalPause: true, enginePaused: false }),
+        } as unknown as TaskStore;
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
+        clearInterval(timers.get("agent-long")!.handle as ReturnType<typeof setInterval>);
+        callback.mockClear();
+
+        // The audit still re-registers the zombie timer (registration is not
+        // itself gated on pause), but the dispatched tick must be suppressed by
+        // onTimerTick's globalPause guard — the callback must never fire while
+        // globally paused, even for a freshly-repaired long-interval agent.
+        await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
+
+        expect(callback).not.toHaveBeenCalled();
+      });
+
+      it("does not disturb a healthy active heartbeat run even when lastHeartbeatAt looks stale", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T02:00:00.000Z"));
+
+        // Active-run staleness (FN-4119) is judged against `heartbeatTimeoutMs`,
+        // independently from the timer-registration repair threshold (which is
+        // based on `heartbeatIntervalMs`). Use a long heartbeatTimeoutMs so the
+        // active run reads as healthy throughout the audit window even though
+        // lastHeartbeatAt (2h old) has already crossed the interval-based
+        // zombie-repair threshold. An agent with a genuinely live active run
+        // never gets a bare timer entry armed in the first place (audit skips
+        // re-arm while the run is healthy), so this proves the new zombie-stale
+        // check does not override the FN-4119 active-run guard.
+        const agent = buildAgent({ id: "agent-long", heartbeatIntervalMs: 3_600_000 });
+        (agent.runtimeConfig as Record<string, unknown>).heartbeatTimeoutMs = 24 * 60 * 60 * 1000;
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue({ id: "run-healthy", status: "active" } as any);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-long");
+        callback.mockClear();
+        vi.mocked(store.endHeartbeatRun).mockClear();
+
+        await vi.advanceTimersByTimeAsync(60_000); // one audit cycle
+
+        expect(store.endHeartbeatRun).not.toHaveBeenCalled();
+        expect(callback).not.toHaveBeenCalled();
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-long");
+        expect(heartbeatLog.log).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-long (active run)");
+      });
+    });
   });
 
   describe("registerAgent", () => {

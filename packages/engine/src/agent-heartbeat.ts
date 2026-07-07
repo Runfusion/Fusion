@@ -4616,9 +4616,32 @@ export class HeartbeatTriggerScheduler {
       const staleMultiplier = this.resolveRepairStaleMultiplier(settings);
       const agents = await this.store.listAgents();
       let rearmedCount = 0;
+      let zombieRearmedCount = 0;
       for (const agent of agents) {
         if (!this.isTimerEligibleAgent(agent)) continue;
-        if (this.timers.has(agent.id)) continue;
+
+        const hasTimerEntry = this.timers.has(agent.id);
+        const staleThresholdMs = this.getRepairStaleThresholdMs(agent, staleMultiplier);
+        const elapsedMs = getHeartbeatAgeMs(agent);
+        const staleAtRepair = Number.isFinite(elapsedMs) && elapsedMs > staleThresholdMs;
+
+        /*
+         * FNXC:AgentHeartbeat 2026-07-07-00:00:
+         * FN-7645 — the audit previously short-circuited on `if (this.timers.has(agent.id)) continue;`,
+         * which only ever repaired MISSING registrations. A live setInterval can silently stop firing
+         * (dropped/garbage-collected interval, transient scheduling failure that doesn't throw) while its
+         * entry stays present in `this.timers` forever — a "zombie" registration. Long-interval (~1h)
+         * agents were the ones that actually suffered from this because their sparse cadence meant a
+         * single lost tick compounded into hours of silence before anyone noticed (short intervals
+         * self-heal within minutes just by virtue of ticking often). Fix: when a timer entry IS present
+         * but the agent's lastHeartbeatAt has gone stale beyond the same repair threshold used for
+         * missing-registration repair, treat it as non-advancing and force a clear+re-register — while a
+         * fresh (non-stale) present timer is left alone so healthy short-interval agents are never
+         * force-re-armed or double-ticked.
+         */
+        if (hasTimerEntry && !staleAtRepair) continue;
+
+        const isZombieRearm = hasTimerEntry && staleAtRepair;
 
         const activeRun = await this.store.getActiveHeartbeatRun(agent.id);
         const activeRunId = activeRun?.id ?? null;
@@ -4640,25 +4663,30 @@ export class HeartbeatTriggerScheduler {
           }
         }
 
+        // registerAgent() clears any existing (including zombie) timer entry via
+        // clearAgentTimer() before re-arming, so a present-but-dead interval handle
+        // never leaks and the new registration phase-aligns via computeInitialDelayMs.
         this.registerAgent(agent.id, this.getAgentTimerConfig(agent), {
           lastHeartbeatAt: agent.lastHeartbeatAt,
         });
 
-        const staleThresholdMs = this.getRepairStaleThresholdMs(agent, staleMultiplier);
-        const elapsedMs = getHeartbeatAgeMs(agent);
-        const staleAtRepair = Number.isFinite(elapsedMs) && elapsedMs > staleThresholdMs;
         const staleRepairReason = staleAtRepair
-          ? `No heartbeat for ${Math.round(elapsedMs / 1000)}s before timer audit repair (threshold ${Math.round(staleThresholdMs / 1000)}s)`
+          ? isZombieRearm
+            ? `zombie-timer-rearmed: no heartbeat for ${Math.round(elapsedMs / 1000)}s while a timer entry remained present (threshold ${Math.round(staleThresholdMs / 1000)}s)`
+            : `No heartbeat for ${Math.round(elapsedMs / 1000)}s before timer audit repair (threshold ${Math.round(staleThresholdMs / 1000)}s)`
           : undefined;
         await this.markRepairMetadata(agent, staleAtRepair, staleRepairReason);
 
         rearmedCount++;
+        if (isZombieRearm) zombieRearmedCount++;
         if (reapedActiveRun && activeRunId) {
           heartbeatLog.log(
             `Timer audit re-armed after stale-run reap reason=timer-audit-rearmed agentId=${agent.id} runId=${activeRunId} elapsedMs=${activeRunElapsedMs} thresholdMs=${activeRunThresholdMs}`,
           );
         }
-        if (staleAtRepair) {
+        if (isZombieRearm) {
+          heartbeatLog.warn(`Timer audit force re-armed non-advancing agent ${agent.id} reason=zombie-timer-rearmed (audit:${reason}): ${staleRepairReason}`);
+        } else if (staleAtRepair) {
           heartbeatLog.warn(`Timer re-armed stale agent ${agent.id} (audit:${reason}): ${staleRepairReason ?? "heartbeat exceeded stale threshold before repair"}`);
         } else {
           heartbeatLog.log(`Timer re-armed for ${agent.id} (audit:${reason})`);
@@ -4666,7 +4694,7 @@ export class HeartbeatTriggerScheduler {
       }
 
       if (rearmedCount > 0) {
-        heartbeatLog.log(`Timer audit repaired ${rearmedCount} missing registration(s) (${reason})`);
+        heartbeatLog.log(`Timer audit repaired ${rearmedCount} registration(s) (${zombieRearmedCount} zombie, ${rearmedCount - zombieRearmedCount} missing) (${reason})`);
       }
     } catch (error) {
       heartbeatLog.warn(`Timer audit failed (${reason}): ${error instanceof Error ? error.message : String(error)}`);
