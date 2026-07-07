@@ -1081,5 +1081,99 @@ describe("TaskStore", () => {
     });
 });
 
+  // FNXC:AutoMergeLifecycle 2026-07-07-12:00: Signature 1 (FN-7641 / NEXT-010) regression —
+  // a proven-merge recoveryRehome move from a legacy source column to `done` must succeed
+  // instead of throwing "Invalid transition: 'todo' -> 'done'". Covers every legacy source
+  // column the CAS/queue-retry paths can leave a landed task parked in (todo, in-progress,
+  // triage), while confirming normal (non-recovery) moves still reject illegal adjacency.
+  describe("moveTask — legacy proven-merge recoveryRehome to done (FN-7641)", () => {
+    it("RED-FIRST: reproduces the original 'todo -> done' invalid-transition symptom without recoveryRehome", async () => {
+      const task = await store.createTask({ description: "repro NEXT-010 without recovery flag" });
+      await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      await expect(store.moveTask(task.id, "done")).rejects.toThrow(
+        "Invalid transition: 'todo' → 'done'",
+      );
+    });
+
+    it("allows a legacy todo -> done recoveryRehome move for a proven-merge task (non-workflow)", async () => {
+      const task = await store.createTask({ description: "NEXT-010 workspace merge finalize repro" });
+      await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const moved = await store.moveTask(task.id, "done", {
+        recoveryRehome: true,
+        preserveProgress: true,
+      });
+
+      expect(moved.column).toBe("done");
+    });
+
+    it("allows a legacy in-progress -> done recoveryRehome move for a proven-merge task", async () => {
+      const task = await store.createTask({ description: "NEXT-010 in-progress recovery repro" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const moved = await store.moveTask(task.id, "done", {
+        recoveryRehome: true,
+        preserveProgress: true,
+      });
+
+      expect(moved.column).toBe("done");
+    });
+
+    it("allows a legacy triage -> done recoveryRehome move for a proven-merge task", async () => {
+      const task = await store.createTask({ description: "NEXT-010 triage recovery repro" });
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const moved = await store.moveTask(task.id, "done", {
+        recoveryRehome: true,
+        preserveProgress: true,
+      });
+
+      expect(moved.column).toBe("done");
+    });
+
+    it("still allows the normal in-review -> done recovery path unchanged", async () => {
+      const task = await store.createTask({ description: "normal in-review recovery unaffected" });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const moved = await store.moveTask(task.id, "done", {
+        recoveryRehome: true,
+        preserveProgress: true,
+      });
+
+      expect(moved.column).toBe("done");
+    });
+
+    it("does NOT relax adjacency for a normal (non-recovery) todo -> done move", async () => {
+      const task = await store.createTask({ description: "non-recovery move must still reject" });
+      await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      await expect(store.moveTask(task.id, "done")).rejects.toThrow("Invalid transition");
+    });
+
+    it("allows a legacy todo -> done recoveryRehome move for a custom-workflow task", async () => {
+      const task = await store.createTask({
+        description: "NEXT-010 custom workflow recovery repro",
+        workflowId: "builtin:coding",
+      });
+      await store.moveTask(task.id, "todo");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const moved = await store.moveTask(task.id, "done", {
+        recoveryRehome: true,
+        preserveProgress: true,
+      });
+
+      expect(moved.column).toBe("done");
+    });
+  });
 
 });

@@ -237,6 +237,64 @@ function createMockStore(taskOverrides: Partial<Task> = {}, allTasks: Task[] = [
 }
 
 describe("auto-merge proven finalization helper", () => {
+  /*
+   * FNXC:AutoMergeLifecycle 2026-07-07-12:00:
+   * Signature 1 (FN-7641 / NEXT-010) regression: a WORKSPACE merge ("AI merge (workspace): all
+   * N sub-repo(s) landed") reaches finalizeTask -> finalizeProvenAutoMergeTask the same as a
+   * direct merge, so the recovery-rehome move from a stranded `todo` row must succeed instead of
+   * throwing "Invalid transition: 'todo' -> 'done'". This exercises the workspace source label
+   * explicitly (the prior test below already covers the direct-ai-merge source label).
+   */
+  it("reconciles a workspace-merge-landed todo row without invalid todo-to-done transition (NEXT-010)", async () => {
+    const strandedTask = {
+      id: "FN-WS-010",
+      title: "Workspace merge stranded in todo",
+      description: "Test",
+      column: "todo",
+      status: "queued",
+      error: "Invalid transition: 'todo' → 'done'. Valid targets: in-progress, triage",
+      blockedBy: null,
+      overlapBlockedBy: null,
+      dependencies: [],
+      steps: [{ status: "done" }],
+      currentStep: 0,
+      log: [{ action: "AI merge (workspace): all 2 sub-repo(s) landed" }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      mergeDetails: {
+        mergeConfirmed: true,
+        commitSha: "workspace-landed-sha",
+        mergedAt: "2026-07-07T12:00:00.000Z",
+        landedFiles: ["packages/a/file.ts", "packages/b/file.ts"],
+      },
+    } as Task;
+    const doneTask = { ...strandedTask, column: "done", status: null, error: null } as Task;
+    const store = createMockStore(strandedTask) as unknown as TaskStore & {
+      getTask: ReturnType<typeof vi.fn>;
+      moveTask: ReturnType<typeof vi.fn>;
+      emit: ReturnType<typeof vi.fn>;
+    };
+    store.getTask.mockResolvedValue(strandedTask);
+    store.moveTask.mockResolvedValue(doneTask);
+
+    const result = await finalizeProvenAutoMergeTask({
+      store,
+      taskId: "FN-WS-010",
+      result: { task: strandedTask, ok: true, merged: true, commitSha: "workspace-landed-sha", mergeConfirmed: true } as MergeResult,
+      source: "workflow-graph-merge-finalize",
+      auditAgentId: "merger",
+      auditPhase: "workspace-merge-finalize",
+    });
+
+    expect(result.outcome).toBe("done");
+    expect(result.task?.column).toBe("done");
+    expect(store.moveTask).toHaveBeenCalledWith(
+      "FN-WS-010",
+      "done",
+      expect.objectContaining({ moveSource: "engine", recoveryRehome: true, preserveProgress: true }),
+    );
+  });
+
   it("reconciles a landed merge-confirmed todo row without invalid todo-to-done transition", async () => {
     const strandedTask = {
       id: "FN-6897",

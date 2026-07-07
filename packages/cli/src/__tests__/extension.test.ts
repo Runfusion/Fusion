@@ -3519,6 +3519,65 @@ describe("fn pi extension (runnable structured-output regression slice)", () => 
       );
       expect(show.details.task.nodeId).toBeUndefined();
     });
+
+    // FNXC:StateMachine 2026-07-07-12:00: FN-7641 Signature 2 CLI regression — nodeId='end'
+    // must finalize-on-proof or return an explicit isError, never a silent "Updated" no-op
+    // (NEXT-322 / NEXT-375 / NEXT-340).
+    it("finalizes an in-review task to done when setting nodeId='end' with merge proof", async () => {
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const task = await store.createTask({ description: "out-of-band merge repro" });
+      await store.updateTask(task.id, { steps: [{ name: "Only step", status: "done" }] });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      await store.updateTask(task.id, { mergeDetails: { mergeConfirmed: true } });
+      store.close();
+
+      const updateTool = api.tools.get("fn_task_update")!;
+      const result = await updateTool.execute(
+        "finalize-node-end",
+        { id: task.id, nodeId: "end" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).not.toBe(true);
+
+      const showTool = api.tools.get("fn_task_show")!;
+      const show = await showTool.execute("show-finalized", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+      expect(show.details.task.column).toBe("done");
+      expect(show.details.task.nodeId).toBe("end");
+    });
+
+    it("returns an explicit isError instead of a silent no-op when setting nodeId='end' without merge proof", async () => {
+      const store = new TaskStore(tmpDir);
+      await store.init();
+      const task = await store.createTask({ description: "no proof repro" });
+      await store.updateTask(task.id, { steps: [{ name: "Only step", status: "done" }] });
+      await store.moveTask(task.id, "todo");
+      await store.moveTask(task.id, "in-progress");
+      await store.moveTask(task.id, "in-review");
+      store.close();
+
+      const updateTool = api.tools.get("fn_task_update")!;
+      const result = await updateTool.execute(
+        "reject-node-end",
+        { id: task.id, nodeId: "end" },
+        undefined,
+        undefined,
+        makeCtx(tmpDir),
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text.toLowerCase()).toContain("merge");
+
+      const showTool = api.tools.get("fn_task_show")!;
+      const show = await showTool.execute("show-rejected", { id: task.id }, undefined, undefined, makeCtx(tmpDir));
+      expect(show.details.task.column).toBe("in-review");
+      expect(show.details.task.nodeId).toBeUndefined();
+    });
   });
 
   describe("fn_task_retry", () => {

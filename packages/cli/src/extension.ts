@@ -971,6 +971,16 @@ export default function kbExtension(pi: ExtensionAPI) {
         updatedFields.push("agentId");
       }
       if (params.nodeId !== undefined) {
+        /*
+        FNXC:StateMachine 2026-07-07-12:00:
+        Signature 2 (FN-7641 / NEXT-322 / NEXT-375 / NEXT-340): nodeId='end' after an
+        out-of-band merge must never silently no-op here either. Pre-validate exactly like
+        the dashboard route so the CLI tool returns an explicit isError instead of a "success"
+        response that changed nothing when there is no durable merge proof. When proof exists,
+        `store.updateTask` below performs the real finalize-to-done move (shared logic in
+        TaskStore.updateTask / node-override-guard.ts), so this tool, the dashboard route, and
+        store.updateTask all exhibit identical behavior.
+        */
         const normalizedNodeId = normalizeNullableStringInput(params.nodeId);
         const validation = validateNodeOverrideChange(task, normalizedNodeId ?? null);
         if (!validation.allowed) {

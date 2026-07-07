@@ -4306,6 +4306,16 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         updates.sourceMetadataPatch = { nearDuplicateDismissed: true };
       }
 
+      /*
+      FNXC:WorkflowRouting 2026-07-07-12:00:
+      Signature 2 (FN-7641 / NEXT-322 / NEXT-375 / NEXT-340): setting nodeId='end' after a
+      human/agent merges the branch tip directly into main (out-of-band, bypassing the merge
+      node) must never silently no-op. Pre-validate here so the caller gets an explicit 409
+      instead of a 200 that changed nothing when there is no durable merge proof. When proof
+      exists (`validation.allowed === true`), `scopedStore.updateTask` below performs the real
+      finalize-to-done move itself (shared logic in TaskStore.updateTask / node-override-guard.ts)
+      so this route, the CLI task-update tool, and store.updateTask all exhibit identical behavior.
+      */
       if (hasBodyField("nodeId") && validatedNodeId !== undefined) {
         const currentTask = await scopedStore.getTask(req.params.id);
         if (!currentTask) {

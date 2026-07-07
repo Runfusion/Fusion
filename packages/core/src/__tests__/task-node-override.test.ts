@@ -127,4 +127,77 @@ describe("task node override persistence", () => {
     expect((await store.getTask(second.id)).nodeId).toBe("node-beta");
     expect((await store.getTask(third.id)).nodeId).toBeUndefined();
   });
+
+  // FNXC:StateMachine 2026-07-07-12:00: Signature 2 (FN-7641) end-to-end regression through the
+  // real store.updateTask surface (not just the pure guard) — nodeId='end' must finalize-on-proof
+  // or error, never silently no-op, for both non-workflow and custom-workflow tasks.
+  describe("nodeId='end' finalize-on-proof-or-error (FN-7641 Signature 2)", () => {
+    it("REPRO: advances an in-review task with all steps done + merge proof to done instead of no-op", async () => {
+      const created = await store.createTask({ description: "NEXT-322 out-of-band merge repro" });
+      await store.updateTask(created.id, { steps: [{ name: "Only step", status: "done" }] });
+      await store.moveTask(created.id, "todo");
+      await store.moveTask(created.id, "in-progress");
+      await store.moveTask(created.id, "in-review");
+      await store.updateTask(created.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const updated = await store.updateTask(created.id, { nodeId: "end" });
+
+      expect(updated.column).toBe("done");
+      expect(updated.nodeId).toBe("end");
+    });
+
+    it("REPRO: rejects nodeId='end' with an explicit error when there is no merge proof (never a silent no-op)", async () => {
+      const created = await store.createTask({ description: "NEXT-340 no proof repro" });
+      await store.updateTask(created.id, { steps: [{ name: "Only step", status: "done" }] });
+      await store.moveTask(created.id, "todo");
+      await store.moveTask(created.id, "in-progress");
+      await store.moveTask(created.id, "in-review");
+
+      await expect(store.updateTask(created.id, { nodeId: "end" })).rejects.toThrow(
+        "does not finalize a card by itself",
+      );
+
+      const unchanged = await store.getTask(created.id);
+      expect(unchanged.column).toBe("in-review");
+      expect(unchanged.nodeId).toBeUndefined();
+    });
+
+    it("advances a custom-workflow task (builtin:coding) with merge proof identically", async () => {
+      const created = await store.createTask({
+        description: "custom workflow finalize repro",
+        workflowId: "builtin:coding",
+      });
+      await store.updateTask(created.id, { steps: [{ name: "Only step", status: "done" }] });
+      await store.moveTask(created.id, "todo");
+      await store.moveTask(created.id, "in-progress");
+      await store.moveTask(created.id, "in-review");
+      await store.updateTask(created.id, { mergeDetails: { mergeConfirmed: true } });
+
+      const updated = await store.updateTask(created.id, { nodeId: "end" });
+
+      expect(updated.column).toBe("done");
+    });
+
+    it("is a true no-op (no throw, stays done) when the task is already done", async () => {
+      const created = await store.createTask({ description: "already done repro" });
+      await store.moveTask(created.id, "todo");
+      await store.moveTask(created.id, "in-progress");
+      await store.moveTask(created.id, "in-review");
+      await store.moveTask(created.id, "done");
+
+      const updated = await store.updateTask(created.id, { nodeId: "end" });
+
+      expect(updated.column).toBe("done");
+      expect(updated.nodeId).toBe("end");
+    });
+
+    it("leaves the existing in-progress guard unchanged for a terminal nodeId with merge proof", async () => {
+      const created = await store.createTask({ description: "in-progress guard unaffected" });
+      await store.moveTask(created.id, "todo");
+      await store.moveTask(created.id, "in-progress");
+      await store.updateTask(created.id, { mergeDetails: { mergeConfirmed: true } });
+
+      await expect(store.updateTask(created.id, { nodeId: "end" })).rejects.toThrow("in progress");
+    });
+  });
 });
