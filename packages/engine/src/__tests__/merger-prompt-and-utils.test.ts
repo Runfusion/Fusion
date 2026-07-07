@@ -711,6 +711,87 @@ describe("push-after-merge", () => {
     expect(pushAttempts).toBe(2);
   });
 
+  it("retries push multiple times across repeated non-fast-forward rejections", async () => {
+    let pushAttempts = 0;
+    let pullAttempts = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) {
+        pullAttempts += 1;
+        return Buffer.from("");
+      }
+      if (cmdStr.startsWith('git push "origin" "main"')) {
+        pushAttempts += 1;
+        if (pushAttempts < 3) {
+          const err = new Error("non-fast-forward") as Error & { stderr?: string };
+          err.stderr = "[rejected] main -> main (non-fast-forward)";
+          throw err;
+        }
+        return Buffer.from("");
+      }
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    expect(result.pushed).toBe(true);
+    expect(pullAttempts).toBe(3);
+    expect(pushAttempts).toBe(3);
+  });
+
+  it("gives up after exhausting non-fast-forward retries", async () => {
+    let pushAttempts = 0;
+    let pullAttempts = 0;
+
+    mockedExecSync.mockImplementation((cmd: any) => {
+      const cmdStr = String(cmd);
+      if (cmdStr.startsWith('git pull --rebase "origin" "main"')) {
+        pullAttempts += 1;
+        return Buffer.from("");
+      }
+      if (cmdStr.startsWith('git push "origin" "main"')) {
+        pushAttempts += 1;
+        const err = new Error("non-fast-forward") as Error & { stderr?: string };
+        err.stderr = `[rejected] main -> main (non-fast-forward) attempt ${pushAttempts}`;
+        throw err;
+      }
+      if (cmdStr.includes("git symbolic-ref --short HEAD")) return "main" as any;
+      if (cmdStr.includes("git rev-parse --verify REBASE_HEAD")) {
+        const err = new Error("fatal: Needed a single revision") as Error & { status?: number };
+        err.status = 128;
+        throw err;
+      }
+      return Buffer.from("");
+    });
+
+    const store = createMockStore();
+    const result = await pushToRemoteAfterMerge(store, "/tmp/root", "FN-050", {
+      ...DEFAULT_SETTINGS,
+      mergeIntegrationWorktree: "cwd-main" as const,
+      pushAfterMerge: true,
+      pushRemote: "origin",
+    });
+
+    expect(result.pushed).toBe(false);
+    expect(result.error).toContain("non-fast-forward");
+    // 1 initial push attempt + PUSH_NON_FF_MAX_RETRIES (3) retries = 4 total
+    expect(pushAttempts).toBe(4);
+    expect(pullAttempts).toBe(4);
+  });
+
   it("aborts rebase when conflicts remain unresolved", async () => {
     let rebaseInProgress = false;
 

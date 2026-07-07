@@ -342,6 +342,12 @@ const DEPENDENCY_SYNC_TRIGGER_PATTERNS = [
 
 const PULL_REBASE_TIMEOUT_MS = 120_000;
 const PUSH_TIMEOUT_MS = 60_000;
+const PUSH_NON_FF_MAX_RETRIES = 3;
+const PUSH_NON_FF_RETRY_BACKOFF_MS = [2_000, 5_000, 10_000];
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function emitMergeAttemptAuditEvent(params: {
   audit: RunAuditor;
@@ -7336,33 +7342,47 @@ export async function pushToRemoteAfterMerge(
     mergerLog.log(`${taskId}: pushed merged result to ${remote}/${branch}`);
     return { pushed: true };
   } catch (firstPushError: unknown) {
-    const firstMessage = getCommandErrorMessage(firstPushError);
-    mergerLog.warn(`${taskId}: initial push failed: ${firstMessage}`);
+    let lastMessage = getCommandErrorMessage(firstPushError);
+    mergerLog.warn(`${taskId}: initial push failed: ${lastMessage}`);
 
-    if (!isNonFastForwardPushError(firstMessage)) {
-      return { pushed: false, error: firstMessage };
+    if (!isNonFastForwardPushError(lastMessage)) {
+      return { pushed: false, error: lastMessage };
     }
 
-    mergerLog.log(`${taskId}: push rejected as non-fast-forward; retrying pull --rebase and push once`);
-
-    try {
-      throwIfAborted(options?.signal, taskId);
-      await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
-      throwIfAborted(options?.signal, taskId);
-      await execAsync(pushCommand, {
-        cwd: rootDir,
-        timeout: PUSH_TIMEOUT_MS,
-        maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
-        encoding: "utf-8",
-      });
-      mergerLog.log(`${taskId}: push succeeded after non-fast-forward retry`);
-      return { pushed: true };
-    } catch (retryError: unknown) {
-      rethrowIfMergeAborted(retryError);
-      const retryMessage = getCommandErrorMessage(retryError);
-      mergerLog.error(`${taskId}: push retry failed: ${retryMessage}`);
-      return { pushed: false, error: retryMessage };
+    // Non-fast-forward push failures mean origin moved between our pre-push
+    // pull and the push itself. A single retry can still lose the race if
+    // origin moves again in that window (busy repos, concurrent mergers), so
+    // retry a bounded number of times with backoff, re-fetching+rebasing
+    // before each attempt.
+    const maxRetries = PUSH_NON_FF_MAX_RETRIES;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      mergerLog.log(
+        `${taskId}: push rejected as non-fast-forward; retrying pull --rebase and push (attempt ${attempt}/${maxRetries})`,
+      );
+      try {
+        throwIfAborted(options?.signal, taskId);
+        await pullWithRebaseAndResolveConflicts(store, rootDir, taskId, settings, remote, branch, options);
+        throwIfAborted(options?.signal, taskId);
+        await execAsync(pushCommand, {
+          cwd: rootDir,
+          timeout: PUSH_TIMEOUT_MS,
+          maxBuffer: VERIFICATION_COMMAND_MAX_BUFFER,
+          encoding: "utf-8",
+        });
+        mergerLog.log(`${taskId}: push succeeded after non-fast-forward retry (attempt ${attempt}/${maxRetries})`);
+        return { pushed: true };
+      } catch (retryError: unknown) {
+        rethrowIfMergeAborted(retryError);
+        lastMessage = getCommandErrorMessage(retryError);
+        mergerLog.error(`${taskId}: push retry ${attempt}/${maxRetries} failed: ${lastMessage}`);
+        if (attempt === maxRetries || !isNonFastForwardPushError(lastMessage)) {
+          break;
+        }
+        throwIfAborted(options?.signal, taskId);
+        await delay(PUSH_NON_FF_RETRY_BACKOFF_MS[attempt - 1] ?? PUSH_NON_FF_RETRY_BACKOFF_MS.at(-1)!);
+      }
     }
+    return { pushed: false, error: lastMessage };
   }
 }
 
