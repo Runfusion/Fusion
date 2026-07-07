@@ -261,6 +261,18 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       // have set up in Fusion. We restrict to providers with credentials
       // in Fusion's own auth stores (primary + legacy .pi + models.json),
       // plus any providers enabled via settings toggles (Claude CLI, etc.).
+      /*
+      FNXC:ModelCatalog 2026-07-07-08:00:
+      FN-7630 (GitHub #1931): the Hermes Runtime plugin must be strictly additive
+      — connecting/activating or disconnecting it must never narrow this
+      configuredProviders allow-set. This block only ever ADDS provider ids
+      (auth-storage-derived, CLI-toggle-derived, and customProviders-derived); it
+      never removes an entry based on any runtime-plugin connection state, and no
+      Hermes-specific branch exists here by design. customProviders' registry keys
+      are added unconditionally (regardless of whether Hermes is loaded/connected)
+      so a connected Hermes runtime can never deactivate independently-configured
+      custom Fusion providers/models. See register-model-routes-hermes-additive.test.ts.
+      */
       const configuredProviders = await getConfiguredProviderNames(options?.authStorage);
       if (useClaudeCli) configuredProviders.add("pi-claude-cli");
       if (useDroidCli) configuredProviders.add("droid-cli");

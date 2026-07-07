@@ -38,6 +38,18 @@ const hermesRuntimeFactory: PluginRuntimeFactory = async (ctx) => {
 
 // ── Plugin Definition ─────────────────────────────────────────────────────────
 
+/*
+FNXC:ModelCatalog 2026-07-07-08:00:
+FN-7630 (GitHub #1931): connecting/activating this plugin must be strictly
+additive to Fusion's global provider/model/auth catalogs — it must never
+suppress, deactivate, or hide independently-configured custom providers,
+models, or auth options. `onLoad`/`onUnload` below intentionally receive no
+reference to AuthStorage/ModelRegistry/global settings (see PluginContext in
+@fusion/plugin-sdk) so this plugin is structurally incapable of mutating
+those stores; it only resolves its own CLI settings, installs its own skill,
+and logs/emits its own lifecycle events. Do not widen PluginContext access
+from this plugin without re-auditing this invariant.
+*/
 const plugin: FusionPlugin = definePlugin({
   manifest: {
     id: "fusion-plugin-hermes-runtime",
