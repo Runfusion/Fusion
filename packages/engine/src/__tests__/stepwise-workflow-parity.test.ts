@@ -425,6 +425,8 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
         readArtifact: async () => "### Step 1: do it\n",
         writeSteps: async () => {},
       },
+      // FNXC:WorkflowGraphCutover 2026-07-07-09:05: stepwise-coding gained a default-on plan-review optional-group (and always-on completion-summary) before the foreach; wire the custom-node runner (success) so those auxiliary nodes pass through and the foreach/step invariant under test is actually reached (mirrors production executor.ts runCustomNode + runStepwiseGraph).
+      runCustomNode: async () => ({ outcome: "success" }),
     });
     const result = await executor.run(task, settingsOn(), BUILTIN_STEPWISE_CODING_WORKFLOW_IR);
 
@@ -464,6 +466,7 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
         readArtifact: async () => "### Step 1: a\n### Step 2: b\n### Step 3: c\n",
         writeSteps: async () => {},
       },
+      runCustomNode: async () => ({ outcome: "success" }),
     });
     const result = await executor.run(task, settingsOn(), BUILTIN_STEPWISE_CODING_WORKFLOW_IR);
 
@@ -501,6 +504,7 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
         readArtifact: async () => "### Step 1: a\n### Step 2: b\n",
         writeSteps: async () => {},
       },
+      runCustomNode: async () => ({ outcome: "success" }),
     });
     const result = await executor.run(task, settingsOn(), BUILTIN_STEPWISE_CODING_WORKFLOW_IR);
 
@@ -581,6 +585,7 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
         readArtifact: async () => "no steps here, just prose",
         writeSteps: async () => {},
       },
+      runCustomNode: async () => ({ outcome: "success" }),
     });
     const result = await executor.run(task, settingsOn(), BUILTIN_STEPWISE_CODING_WORKFLOW_IR);
 
@@ -620,19 +625,21 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
     expect(browserVerificationCalls).toBe(1);
     expect(result.visitedNodeIds).toContain("browser-verification");
     expect(result.visitedNodeIds).toContain(BROWSER_VERIFICATION_STEP_VISITED_ID);
-    // Ordering: all step instances complete before the group's inner step, which
-    // precedes review.
+    // FNXC:WorkflowGraphCutover 2026-07-07-09:10:
+    // FN-7265 removed the post-foreach `review` node; the pre-merge gate is now the default-on `code-review` optional-group (browser-verification → code-review → completion-summary → merge-gate). The R-3 run-once ordering invariant is therefore: all step instances finish before the browser-verification inner step, which precedes the code-review gate.
     const groupStepIdx = result.visitedNodeIds.indexOf(BROWSER_VERIFICATION_STEP_VISITED_ID);
-    const reviewIdx = result.visitedNodeIds.indexOf("review");
+    const codeReviewIdx = result.visitedNodeIds.indexOf("code-review");
     const lastStepIdx = result.visitedNodeIds.map((id) => id.startsWith("steps#")).lastIndexOf(true);
     expect(lastStepIdx).toBeLessThan(groupStepIdx);
-    expect(groupStepIdx).toBeLessThan(reviewIdx);
+    expect(groupStepIdx).toBeLessThan(codeReviewIdx);
   });
 
   it("bypasses the browser-verification optional-group (inert) when it is not enabled", async () => {
     // Disabled (no enabledWorkflowSteps): the group node is traversed but its
     // template body never runs — the inner prompt node is not visited and the
-    // custom-node runner is never invoked for it. Routes straight to review.
+    // custom-node runner is never invoked for it. Routes straight to the
+    // code-review gate.
+    // FNXC:WorkflowGraphCutover 2026-07-07-09:10: FN-7265 removed the `review` node; the post-foreach gate this inert path reaches is now `code-review`.
     let browserVerificationCalls = 0;
     const { outcome, result } = await runStepwiseGraph(2, [["APPROVE"], ["APPROVE"]], {
       runCustomNode: async (nodeId) => {
@@ -644,6 +651,6 @@ describe("stepwise workflow parity (U7 / KTD-9)", () => {
     expect(browserVerificationCalls).toBe(0);
     expect(result.visitedNodeIds).toContain("browser-verification");
     expect(result.visitedNodeIds).not.toContain(BROWSER_VERIFICATION_STEP_VISITED_ID);
-    expect(result.visitedNodeIds).toContain("review");
+    expect(result.visitedNodeIds).toContain("code-review");
   });
 });

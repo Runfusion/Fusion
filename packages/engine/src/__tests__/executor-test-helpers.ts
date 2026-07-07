@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { Mock } from "vitest";
 import { installTaskWorktreeIdentityGuard } from "../worktree-hooks.js";
+import type * as ReviewerModule from "../reviewer.js";
 
 // Mock external dependencies
 vi.mock("../pi.js", () => ({
@@ -24,9 +25,14 @@ vi.mock("../pi.js", () => ({
     }
   }),
 }));
-vi.mock("../reviewer.js", () => ({
-  reviewStep: vi.fn(),
-}));
+/*
+ * FNXC:WorkflowReviewers 2026-07-07-08:40:
+ * Commit 3167dbc83 wired `proseSignalsClearApproval` + `extractJsonObjectCandidates` from reviewer.js into the workflow-step verdict parser (parseWorkflowStepVerdict). A mock that returns only `reviewStep` makes every executeWorkflowStep verdict parse throw `[vitest] No "extractJsonObjectCandidates" export`. Surface the real exports via importOriginal and stub only `reviewStep` (the agent-invoking seam these tests avoid); the verdict-parsing helpers then run for real.
+ */
+vi.mock("../reviewer.js", async (importOriginal) => {
+  const actual = (await importOriginal()) as ReviewerModule;
+  return { ...actual, reviewStep: vi.fn() };
+});
 vi.mock("../logger.js", () => {
   const createMockLogger = () => ({
     log: vi.fn(),

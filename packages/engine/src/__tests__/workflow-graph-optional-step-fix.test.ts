@@ -313,7 +313,15 @@ describe("TaskExecutor pre-merge optional-step fix seam", () => {
     await (executor as any).clearStalePauseAbortBeforeDispatch(liveTask);
 
     expect((executor as any).pausedAborted.has("FN-7066")).toBe(false);
-    expect(store.logEntry).not.toHaveBeenCalled();
+    /*
+     * FNXC:WorkflowLifecycle 2026-07-07-08:35:
+     * FN-7335 wired a best-effort "Pause abort marked: provenance=… source=…" breadcrumb into markPausedAborted() itself (via safeLogEntry), so the setup markPausedAborted() call above now produces one store.logEntry. clearStalePauseAbortBeforeDispatch() must still clear SILENTLY: it logs via executorLog only and must NOT emit its own store.logEntry (the marker is volatile engine state, not a task event). Assert no "cleared stale pause-abort marker" log reached the store.
+     */
+    expect(
+      store.logEntry.mock.calls.some(([, message]: [string, string]) =>
+        /cleared stale pause-abort marker/i.test(message),
+      ),
+    ).toBe(false);
   });
 
   it("clears pause-abort provenance for manual retry", () => {
