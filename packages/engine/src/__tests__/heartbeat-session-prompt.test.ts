@@ -294,10 +294,10 @@ describe("createHeartbeatTools", () => {
 
     const result = await createTool.execute("call-1", { description: "Follow-up task" }, undefined as any, undefined as any, undefined as any);
 
+    // FN-7536+: createTask input no longer carries `column` (defaulted server-side to triage) and now forwards `githubTracking`; objectContaining tolerates the extra key.
     expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
       description: "Follow-up task",
       dependencies: undefined,
-      column: "triage",
       priority: undefined,
       summarize: true,
       source: expect.objectContaining({

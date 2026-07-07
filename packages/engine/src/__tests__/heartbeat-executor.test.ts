@@ -12,6 +12,7 @@ import {
   getAgentSoulWords,
 } from "../agent-heartbeat.js";
 import { AgentLogger } from "../agent-logger.js";
+import { expectAppendAgentLog } from "./agent-log-assertions.js";
 import type { AgentStore, AgentHeartbeatRun, TaskStore, TaskDetail, Agent, MessageStore, Message } from "@fusion/core";
 import { createMessage, createBudgetStatus } from "./heartbeat-test-helpers.js";
 vi.mock("../logger.js", async () => {
@@ -3551,9 +3552,10 @@ describe("executeHeartbeat", () => {
       const monitor = new HeartbeatMonitor({ store, taskStore: mockTaskStore, rootDir: "/tmp" });
       const result = await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
 
-      expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "Heartbeat produced visible output", "text", undefined, "executor");
-      expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "read", "tool", undefined, "executor");
-      expect(appendAgentLog).toHaveBeenCalledWith("FN-001", "read", "tool_result", undefined, "executor");
+      // FN-7503 added an optional 6th timing arg; pin the first five and tolerate timing.
+      expectAppendAgentLog(appendAgentLog, "FN-001", "Heartbeat produced visible output", "text", undefined, "executor");
+      expectAppendAgentLog(appendAgentLog, "FN-001", "read", "tool", undefined, "executor");
+      expectAppendAgentLog(appendAgentLog, "FN-001", "read", "tool_result", undefined, "executor");
       expect(result.contextSnapshot?.taskId).toBe("FN-001");
       expect(result.stdoutExcerpt).toContain("Heartbeat produced visible output");
     });
@@ -3626,10 +3628,10 @@ describe("executeHeartbeat", () => {
 
       await monitor.executeHeartbeat({ agentId: "agent-001", source: "on_demand" });
 
+      // FN-7536+: createTask input no longer carries `column` (defaulted server-side to triage) and now forwards `githubTracking`; objectContaining tolerates the extra key.
       expect(mockTaskStore.createTask).toHaveBeenCalledWith(expect.objectContaining({
         description: "Follow-up task",
         dependencies: undefined,
-        column: "triage",
         priority: undefined,
         summarize: true,
         source: expect.objectContaining({
