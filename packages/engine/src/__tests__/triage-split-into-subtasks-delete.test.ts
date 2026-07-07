@@ -8,11 +8,20 @@ import { TriageProcessor } from "../triage.js";
 
 const { mockCreateFnAgent } = vi.hoisted(() => ({ mockCreateFnAgent: vi.fn() }));
 
-vi.mock("../pi.js", () => ({
-  createFnAgent: mockCreateFnAgent,
-  describeModel: vi.fn().mockReturnValue("mock-model"),
-  promptWithFallback: vi.fn(),
-}));
+vi.mock("../pi.js", () => {
+  /*
+  FNXC:EngineTests 2026-07-07-08:05:
+  triage.ts specifyTask now (FN-7559) checks `err instanceof ModelFallbackExhaustedError` in its catch and (earlier, agentWork) calls `formatModelMarkerDetails`. The pi mock must expose both so the instanceof guard is callable and agentWork's model-marker formatting resolves, instead of crashing happy-path specifyTask runs.
+  */
+  class ModelFallbackExhaustedError extends Error {}
+  return {
+    ModelFallbackExhaustedError,
+    createFnAgent: mockCreateFnAgent,
+    describeModel: vi.fn().mockReturnValue("mock-model"),
+    formatModelMarkerDetails: vi.fn((model: string) => model),
+    promptWithFallback: vi.fn(),
+  };
+});
 
 vi.mock("@fusion/core", async (importOriginal) => {
   const { createEngineCoreMock } = await import("../test/mockCore.js");
@@ -118,13 +127,13 @@ describe("triage split/delete lineage forwarding", () => {
     const captured = { current: [] as any[] };
     mockSessionFactory(captured);
 
-    let promptCallCount = 0;
+    /*
+    FNXC:TriageSplitLineage 2026-07-07-09:05:
+    specifyTask now invokes promptWithFallback exactly once — the multi-call retry loop that this test simulated (creating children on the 4th call) no longer exists, so the fallback never fired and deleteTask(removeLineageReferences) was never reached. Simulate the split-close inside that single promptWithFallback call instead. The removeLineageReferences lineage-forwarding invariant (FN-5129/FN-5131) is what this test guards, regardless of how many prompt calls precede it.
+    */
     const { promptWithFallback } = await import("../pi.js");
     (promptWithFallback as ReturnType<typeof vi.fn>).mockImplementation(async () => {
-      promptCallCount += 1;
-      if (promptCallCount === 4) {
-        await createChildrenFromTool(captured.current);
-      }
+      await createChildrenFromTool(captured.current);
     });
 
     const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
