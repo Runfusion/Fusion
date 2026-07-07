@@ -668,6 +668,73 @@ describe("processPullRequestMergeTask", () => {
     expect(github.getPrMergeStatus).toHaveBeenCalledWith("owner", "repo", 7);
   });
 
+  it("counts a conflicting stale-base PR against mergeRetries so the stall escape fires", async () => {
+    const task: MockTask = {
+      id: "FN-9020",
+      title: "test",
+      description: "desc",
+      column: "in-review",
+      mergeRetries: 1,
+    };
+    const branch = getTaskBranchName(task.id);
+    const store = makeStore(task);
+    execMock.mockImplementation(() => "");
+
+    const existingPr = { number: 9, url: "https://github.com/x/y/pull/9", status: "open" as const, headBranch: branch, baseBranch: "main" };
+    const github = {
+      findPrForBranch: vi.fn(async () => existingPr),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({
+        prInfo: { ...existingPr, mergeable: "conflicting" as const },
+        reviewDecision: null,
+        checks: [],
+        mergeReady: false,
+        blockingReasons: [],
+      })),
+      mergePr: vi.fn(),
+    };
+
+    const result = await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined);
+
+    expect(result).toBe("waiting");
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, {
+      status: "awaiting-pr-checks",
+      mergeRetries: 2,
+    });
+  });
+
+  it("does not bump mergeRetries for a non-conflicting not-ready PR", async () => {
+    const task: MockTask = {
+      id: "FN-9021",
+      title: "test",
+      description: "desc",
+      column: "in-review",
+      mergeRetries: 1,
+    };
+    const branch = getTaskBranchName(task.id);
+    const store = makeStore(task);
+    execMock.mockImplementation(() => "");
+
+    const existingPr = { number: 10, url: "https://github.com/x/y/pull/10", status: "open" as const, headBranch: branch, baseBranch: "main" };
+    const github = {
+      findPrForBranch: vi.fn(async () => existingPr),
+      createPr: vi.fn(),
+      getPrMergeStatus: vi.fn(async () => ({
+        prInfo: { ...existingPr, mergeable: "unknown" as const },
+        reviewDecision: null,
+        checks: [],
+        mergeReady: false,
+        blockingReasons: [],
+      })),
+      mergePr: vi.fn(),
+    };
+
+    const result = await processPullRequestMergeTask(store as never, "/repo", task.id, github as never, () => undefined);
+
+    expect(result).toBe("waiting");
+    expect(store.updateTask).toHaveBeenCalledWith(task.id, { status: "awaiting-pr-checks" });
+  });
+
   it("skips the push when an existing PR already covers the branch", async () => {
     const task: MockTask = {
       id: "FN-9002",
@@ -883,7 +950,7 @@ describe("processPullRequestMergeTask", () => {
     expect(github.createPr).toHaveBeenCalledWith(expect.objectContaining({ head: branch }));
   });
 
-  it("parks no-delta branches instead of retrying into branch push failures", async () => {
+  it("finalizes no-delta branches as a no-op done instead of failing", async () => {
     const task: MockTask = {
       id: "FN-9012",
       title: "test",
@@ -913,13 +980,13 @@ describe("processPullRequestMergeTask", () => {
 
     expect(result).toBe("skipped");
     expect(store.updateTask).toHaveBeenCalledWith(task.id, {
-      status: "failed",
-      error: `No pull request created for ${branch}: the branch has no commits relative to the base branch.`,
+      status: null,
+      mergeRetries: 0,
     });
-    expect(store.logEntry).toHaveBeenCalledWith(
+    expect(store.moveTask).toHaveBeenCalledWith(task.id, "done");
+    expect(store.updateTask).not.toHaveBeenCalledWith(
       task.id,
-      `No pull request created for ${branch}: the branch has no commits relative to the base branch.`,
-      expect.stringContaining("No commits between"),
+      expect.objectContaining({ status: "failed" }),
     );
   });
 

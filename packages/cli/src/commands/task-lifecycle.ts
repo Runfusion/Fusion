@@ -641,6 +641,40 @@ async function finalizePullRequestMerge(
 }
 
 /**
+ * Finalize a task whose branch has no commits relative to the base branch
+ * ("No commits between ...") as a terminal no-op DONE, mirroring the engine's
+ * canonical zero-commits decision (merger-ai.ts `noOpResult` → done, PR #1920).
+ * Marking it `failed` here left an empty-diff follow-up task pinning the merge
+ * slot + file leases indefinitely; a no-op branch is not a failure — there was
+ * simply nothing to merge.
+ */
+async function finalizeNoOpMergeTask(
+  store: TaskStore,
+  cwd: string,
+  task: TaskDetail,
+  reason: string,
+  pool?: WorktreePool,
+): Promise<void> {
+  const branch = task.branch ?? getTaskBranchName(task.id);
+  await cleanupMergedTaskArtifacts(cwd, task, { pool });
+  await store.updateTask(task.id, { status: null, mergeRetries: 0 });
+  const movedTask = await store.moveTask(task.id, "done");
+  const mergedTask = movedTask ?? (await store.getTask(task.id));
+  await store.logEntry(task.id, reason, `Branch ${branch} has no commits relative to the base branch; nothing to merge.`);
+  store.emit("task:merged", {
+    task: mergedTask,
+    branch: mergedTask.branch ?? branch,
+    merged: false,
+    noOp: true,
+    ok: true,
+    reason,
+    mergeConfirmed: true,
+    worktreeRemoved: false,
+    branchDeleted: false,
+  } as MergeResult);
+}
+
+/**
  * Result of processing a PR merge task.
  * - "waiting": PR exists but not ready to merge (checks pending, reviews needed)
  * - "merged": Successfully merged and cleaned up
@@ -774,8 +808,7 @@ export async function processPullRequestMergeTask(
           const message = err instanceof Error ? err.message : String(err);
           if (message.includes("No commits between")) {
             await store.updateBranchGroup(branchGroup.id, { prState: "none", prNumber: null, prUrl: null });
-            await store.updateTask(task.id, { status: "failed", error: `No pull request created for ${branchGroup.branchName}: no commits relative to ${projectDefaultBranch}.` });
-            await store.logEntry(task.id, "No group pull request created", message);
+            await finalizeNoOpMergeTask(store, cwd, task, "No group pull request created (no commits vs base) — finalizing as no-op", pool);
             return "skipped";
           }
           throw err;
@@ -878,9 +911,7 @@ export async function processPullRequestMergeTask(
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (message.includes("No commits between")) {
-        const error = `No pull request created for ${branch}: the branch has no commits relative to the base branch.`;
-        await store.updateTask(task.id, { status: "failed", error });
-        await store.logEntry(task.id, error, message);
+        await finalizeNoOpMergeTask(store, cwd, task, "No pull request created (no commits vs base) — finalizing as no-op", pool);
         return "skipped";
       }
       throw err;
@@ -924,7 +955,23 @@ export async function processPullRequestMergeTask(
 
   if (!mergeStatus.mergeReady) {
     if (mergeStatus.prInfo.status === "open") {
-      await store.updateTask(task.id, { status: "awaiting-pr-checks" });
+      // A stale-base PR that GitHub reports as CONFLICTING never becomes
+      // mergeable on its own — nothing in the PR path rebases the head branch —
+      // so an unbounded `awaiting-pr-checks` wait pins the merge slot + file
+      // leases forever (FN-485). Count each conflicting poll against
+      // `mergeRetries` so the existing `getInReviewStallReason`
+      // "merge-retries-exhausted" escape disposes the task after
+      // `maxAutoMergeRetries` cycles. Pending/behind PRs still wait indefinitely
+      // (checks legitimately run; "behind" is resolved by the pre-merge rebase).
+      // ponytail: bounded escape via the existing stall counter, not an in-path
+      // rebase. Upgrade path: rebase the head branch onto base + force-push here
+      // before giving up, then reset mergeRetries.
+      await store.updateTask(task.id, {
+        status: "awaiting-pr-checks",
+        ...(mergeStatus.prInfo.mergeable === "conflicting"
+          ? { mergeRetries: (task.mergeRetries ?? 0) + 1 }
+          : {}),
+      });
     } else {
       await store.updateTask(task.id, { status: null });
     }
