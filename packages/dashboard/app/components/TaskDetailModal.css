@@ -393,6 +393,21 @@ The task-detail modal metadata must keep priority, execution mode, provenance, P
 
 .detail-priority-chip {
   gap: var(--space-xs);
+  /*
+  FNXC:TaskDetail 2026-07-07-15:40:
+  FN-7633 — Priority, Execution-mode, and the Oversight trigger must all
+  resolve the exact SAME box height, not merely the same floor. FN-7618 gave
+  the Oversight trigger `align-self: stretch` inside its own `inline-flex`
+  wrapper, so it fills the cluster row height, while this control (and
+  Execution-mode) were only floored via `min-height` and could resolve
+  shorter once their content/line-height differed from the trigger's. Pin an
+  explicit `height` (not just `min-height`) from the SAME
+  `--detail-priority-control-min-height` token used everywhere else in this
+  cluster so no control can outgrow or undershoot the others regardless of
+  flex stretch behavior. `min-height` stays as a floor for any context where
+  content needs more room (e.g. unexpected font scaling).
+  */
+  height: var(--detail-priority-control-min-height);
   min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
@@ -498,6 +513,15 @@ uppercases its content; this only removes a duplicated, drift-prone override.
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
+  /*
+  FNXC:TaskDetail 2026-07-07-15:40:
+  FN-7633 — same shared-height fix as `.detail-priority-chip` above: pin an
+  explicit `height` (not just `min-height`) from the shared
+  `--detail-priority-control-min-height` token so this control cannot resolve
+  shorter than the Oversight trigger, which FN-7618 made stretch to the
+  cluster row height via its wrapper's `align-self: stretch`.
+  */
+  height: var(--detail-priority-control-min-height);
   min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
@@ -711,7 +735,6 @@ affect its size or anchoring — only the trigger's box height changes.
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  min-height: var(--detail-priority-control-min-height);
   padding-block: var(--space-xs);
   box-sizing: border-box;
   /*
@@ -727,11 +750,22 @@ affect its size or anchoring — only the trigger's box height changes.
   FNXC:TaskDetail 2026-07-05-14:00:
   FN-7618 — `align-self: stretch` makes the trigger fill the height of its
   `.detail-oversight-menu-dropdown` wrapper (now `inline-flex`/`align-items:
-  stretch`), which itself stretches to the shared cluster row height. The
-  `min-height` token above remains as the floor for any context where the
-  wrapper isn't stretched (e.g. isolated rendering), so the trigger never
-  drops below Priority/Execution-mode's height either way.
+  stretch`), which itself stretches to the shared cluster row height. Kept
+  below as a harmless safety net (a no-op once `height` is explicit) for any
+  context where the wrapper isn't stretched.
+
+  FNXC:TaskDetail 2026-07-07-15:40:
+  FN-7633 — relying on `align-self: stretch` alone made this trigger resolve
+  a TALLER box than Priority/Execution-mode, which only had `min-height` as a
+  floor (not a fixed height), so the three controls no longer read as one
+  uniform row. Pin the SAME explicit `height` (not just `min-height`) from
+  the shared `--detail-priority-control-min-height` token used by
+  `.detail-priority-chip` and `.detail-execution-mode-toggle` above, so all
+  three controls resolve identical box heights regardless of flex
+  stretch/content differences. `min-height` stays as the floor.
   */
+  height: var(--detail-priority-control-min-height);
+  min-height: var(--detail-priority-control-min-height);
   align-self: stretch;
   border-width: var(--btn-border-width);
   border-color: var(--border);

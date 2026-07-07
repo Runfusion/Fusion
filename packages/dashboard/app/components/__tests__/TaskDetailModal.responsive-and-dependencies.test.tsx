@@ -304,6 +304,55 @@ describe("TaskDetailModal", () => {
       expect(mobileBlock).not.toMatch(/\.detail-oversight-menu-trigger\s*\{[^}]*align-self:\s*(?:auto|center|flex-start|flex-end);/);
     });
 
+    it("resolves the same fixed box height for Priority, Execution-mode, and the Oversight trigger, not just a shared floor (FN-7633)", () => {
+      const css = readDashboardStylesSource();
+      const mobileBlock = getCssAtRuleBlockContaining(css, "@media (max-width: 768px)", ".detail-meta-inline-controls");
+
+      const priorityChipBlock = getExactCssRuleBlock(css, ".detail-priority-chip");
+      const executionToggleBlock = getExactCssRuleBlock(css, ".detail-execution-mode-toggle");
+      const oversightTriggerBlock = getExactCssRuleBlock(css, ".detail-oversight-menu-trigger");
+      const oversightMenuBlock = getExactCssRuleBlock(css, ".detail-oversight-menu");
+
+      // FN-7618 gave the Oversight trigger `align-self: stretch` so it fills
+      // its wrapper's stretched row height, while Priority and Execution-mode
+      // were only floored via `min-height` — a floor is not a guarantee of
+      // equality, so on desktop the trigger could resolve taller than its
+      // siblings whenever their content/line-height differed. Assert all
+      // three now pin an explicit, EQUAL `height` (not merely `min-height`)
+      // from the SAME shared token, so none can outgrow or undershoot the
+      // others regardless of flex stretch/content differences.
+      for (const block of [priorityChipBlock, executionToggleBlock, oversightTriggerBlock]) {
+        expect(block).toContain("height: var(--detail-priority-control-min-height);");
+        expect(block).toContain("min-height: var(--detail-priority-control-min-height);");
+        expect(block).toContain("box-sizing: border-box;");
+      }
+
+      // Guard against a future regression reintroducing a second, independent
+      // literal height source (e.g. a hardcoded px height) instead of reusing
+      // the shared token.
+      expect(css).not.toMatch(/\.detail-priority-chip\s*\{[^}]*height:\s*\d+px/);
+      expect(css).not.toMatch(/\.detail-execution-mode-toggle\s*\{[^}]*height:\s*\d+px/);
+      expect(css).not.toMatch(/\.detail-oversight-menu-trigger\s*\{[^}]*height:\s*\d+px/);
+
+      // The fixed height must hold at non-mobile widths (the reported
+      // symptom) — the base (non-media-scoped) rules above already assert
+      // this since `getExactCssRuleBlock` matches the top-level selector, not
+      // one nested in a media query.
+
+      // No `@media (max-width: 768px)` override redefines any of the three
+      // selectors with a diverging `height`, so the mobile wrap fallback
+      // keeps all three controls the same height too.
+      for (const selector of [".detail-priority-chip", ".detail-execution-mode-toggle", ".detail-oversight-menu-trigger"]) {
+        const mobileSelectorBlock = getExactCssRuleBlock(mobileBlock, selector);
+        expect(mobileSelectorBlock).toBe("");
+      }
+
+      // The popover itself must remain untouched by the height fix — still
+      // absolutely positioned, no explicit height forcing it to stretch.
+      expect(oversightMenuBlock).toContain("position: absolute;");
+      expect(oversightMenuBlock).not.toMatch(/^\s*height:/m);
+    });
+
     it("renders the Priority dropdown chip like the Oversight dropdown chip, on every surface (FN-7597)", () => {
       const css = readDashboardStylesSource();
 
