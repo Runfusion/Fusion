@@ -192,8 +192,14 @@ Planner Chat must keep visual height parity with Activity chat: desktop textarea
 
 FNXC:TaskDetailPlannerChat 2026-07-01-23:54:
 Mobile Planner Chat should match regular task chat: keep the composer as a single input row with a one-line textarea and a square send affordance on the right instead of stacking the labeled button below the input.
+
+FNXC:TaskDetailPlannerChat 2026-07-07-00:00:
+The Planner Chat streaming Stop button must occupy the same width footprint as the Send button it replaces (no shift/shrink on swap) and mirror the regular Chat view's stop-button sizing (`.chat-input-row`'s `--chat-input-control-size` in ChatView.css). The shared `.chat-input-send` / `.chat-input-stop` classes read that custom property from `.chat-input-row`, which the Planner composer never renders inside of, so the property was undefined here and `width` fell back to `auto`, sizing each button from its own content only. Declare the same control-size formula scoped to `.task-planner-chat-composer` and give `.task-planner-chat-send` (present on both the send and stop button variants) a matching `min-inline-size` floor so neither button can render narrower than the other on desktop, without touching ChatView.css's own token.
 */
 .task-planner-chat-composer {
+  /* FN-7634: same formula as ChatView.css's `.chat-input-row { --chat-input-control-size: … }` so the Planner stop/send buttons share the regular Chat view's control-size floor. */
+  --chat-input-control-size: calc(var(--space-lg) * 2.5);
+
   display: flex;
   flex: 0 0 auto;
   flex-wrap: wrap;
@@ -215,6 +221,8 @@ Mobile Planner Chat should match regular task chat: keep the composer as a singl
 .task-planner-chat-send {
   flex: 0 0 auto;
   min-block-size: calc(var(--space-2xl) + var(--space-sm));
+  /* FN-7634: floor both the Send and Stop button variants (both carry this class) at the same width so the streaming swap never narrows or widens the control. */
+  min-inline-size: var(--chat-input-control-size);
 }
 
 @media (max-width: 768px) {

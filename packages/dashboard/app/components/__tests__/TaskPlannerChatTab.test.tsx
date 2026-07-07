@@ -714,6 +714,39 @@ describe("TaskPlannerChatTab", () => {
     expect(stopIcon).toHaveClass("chat-input-stop-icon");
   });
 
+  it("keeps the planner stop button width in parity with the send button on desktop and mobile (FN-7634)", () => {
+    // Desktop: both `.chat-input-send` and `.chat-input-stop` (from ChatView.css) read
+    // `width: var(--chat-input-control-size)`, which is only declared inside `.chat-input-row`.
+    // The Planner composer must declare that same custom property itself so the value never
+    // resolves to `auto`, and must give the shared `.task-planner-chat-send` class (present on
+    // both the send and stop button variants) a `min-inline-size` floor bound to it — otherwise
+    // the streaming Stop button can render narrower than the idle Send button.
+    expect(taskPlannerChatCss).toMatch(/\.task-planner-chat-composer\s*\{[\s\S]*?--chat-input-control-size:\s*calc\(var\(--space-lg\)\s*\*\s*2\.5\);/);
+
+    // The base (non-mobile) `.task-planner-chat-send` rule is the first one in source order,
+    // before the `@media (max-width: 768px)` block redeclares it for mobile.
+    const mediaQueryStart = taskPlannerChatCss.indexOf("@media (max-width: 768px)");
+    const desktopCss = mediaQueryStart >= 0 ? taskPlannerChatCss.slice(0, mediaQueryStart) : taskPlannerChatCss;
+    const desktopSendRule = desktopCss.match(/\.task-planner-chat-send\s*\{[^}]*\}/)?.[0] ?? "";
+    // The desktop rule must bind the same control-size custom property as its floor so the
+    // Send button (idle) and Stop button (streaming) — both of which carry this class — never
+    // differ in width footprint.
+    expect(desktopSendRule).toMatch(/min-inline-size:\s*var\(--chat-input-control-size\)/);
+
+    // Mobile keeps its pre-existing explicit square sizing, which already applies identically
+    // to both the send and stop variants via the shared `.task-planner-chat-send` class.
+    const mobileSendRule = taskPlannerChatCss
+      .slice(mediaQueryStart)
+      .match(/\.task-planner-chat-send\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(mobileSendRule).toMatch(/inline-size:\s*calc\(var\(--space-2xl\)\s*\+\s*var\(--space-lg\)\)/);
+    expect(mobileSendRule).toMatch(/min-inline-size:\s*calc\(var\(--space-2xl\)\s*\+\s*var\(--space-lg\)\)/);
+
+    // Guard the FN-7594-era contract that the stop icon span stays visible on mobile even
+    // though other text-label spans are visually hidden.
+    const mobileTextHideRule = taskPlannerChatCss.match(/@media \(max-width: 768px\)[\s\S]*?\.task-planner-chat-send[^{}]*\{[^}]*clip:[^}]*\}/)?.[0] ?? "";
+    expect(mobileTextHideRule).toMatch(/span:not\(\.chat-input-stop-icon\)/);
+  });
+
   it("renders live and stored thinking output through the standard chat surface", async () => {
     const user = userEvent.setup();
     mockFetchChatMessages.mockResolvedValueOnce({
