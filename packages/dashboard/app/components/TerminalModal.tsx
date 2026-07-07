@@ -1038,6 +1038,55 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     replaceActiveTabSession,
   } = useTerminalSessions(projectId);
 
+  /*
+  FNXC:Terminal 2026-07-06-09:15:
+  FN-7620 root cause: the mobile terminal could render BLANK (not merely
+  mis-spaced) because nothing ever watched the xterm CONTAINER's (`terminalRef`)
+  own box. Real `FitAddon.proposeDimensions()` (@xterm/addon-fit@0.10.0) reads
+  `getComputedStyle(terminal.element.parentElement)` height/width and, when that
+  resolves to 0 (e.g. the mobile fullscreen/keyboard-overlap height cascade,
+  dvh support, or web-font/layout settle has not finished by the time the first
+  `fitAddon.fit()` call in `initTerminal` runs), floors to a degenerate
+  `{cols: 2, rows: 1}` grid rather than bailing out — xterm silently resizes
+  into a near-invisible box. Only `modalRef` (the whole modal) had a
+  ResizeObserver; a modal that is already sized to 100dvh/the keyboard box does
+  not re-fire that observer when only INNER content (the terminal container)
+  later settles to its real size, so the degenerate grid could persist forever
+  with no reconnect/orientation/keyboard-toggle/manual-refit path able to catch
+  it. `SessionTerminal.tsx` already observes its own container this way (see
+  its `resizeObserver.observe(containerRef.current)`); TerminalModal did not.
+  Mirror that: observe the xterm container itself for the life of each xterm
+  instance so ANY change in its OWN box (not just the outer modal's box) —
+  including the very first zero-to-real transition — triggers a corrective
+  fit via the existing `fitAndResizeForSession`. Re-established whenever the
+  container remounts (tab switch uses `key={activeTab?.sessionId}` on the
+  container div). See docs/solutions/ui-bugs/mobile-terminal-blank-render-zero-geometry-container.md.
+  */
+  useEffect(() => {
+    if (!isOpen) return;
+    const node = terminalRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+
+    let pendingFrame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
+      pendingFrame = requestAnimationFrame(() => {
+        pendingFrame = null;
+        const sessionId =
+          typeof xtermInitializedRef.current === "string"
+            ? xtermInitializedRef.current
+            : undefined;
+        fitAndResizeForSession(sessionId);
+      });
+    });
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
+    };
+  }, [fitAndResizeForSession, isOpen, activeTab?.sessionId]);
+
   const {
     projectName: terminalWorkspaceProjectName,
     workspaces: terminalWorkspaces,

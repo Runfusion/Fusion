@@ -776,3 +776,69 @@ describe("SessionTerminal", () => {
     await waitFor(() => expect(screen.queryByText("Not yet")).toBeNull());
   });
 });
+
+/*
+FNXC:Terminal 2026-07-06-09:20:
+FN-7620 investigated whether `SessionTerminal` (the embedded CLI-agent
+terminal) shares `TerminalModal`'s mobile blank-render defect (a zero-geometry
+xterm container with no recovery path once collapsed to FitAddon's degenerate
+{cols:2, rows:1} floor). It does NOT: `SessionTerminal` already attaches
+`resizeObserver.observe(containerRef.current)` directly on its own xterm
+container (`cli-terminal-viewport`) right after init — the SAME container-level
+observer pattern `TerminalModal` was missing and this task added. This proves
+that invariant with the same "fire the exact ResizeObserver notification a real
+browser delivers, without any reconnect/keyboard-toggle/orientation trigger"
+model used in `TerminalModal.test.tsx`'s FN-7620 coverage.
+*/
+describe("SessionTerminal — FN-7620 mobile blank render (container geometry recovery, unaffected surface)", () => {
+  type CapturedEntry = { target: Element; callback: ResizeObserverCallback };
+  let captured: CapturedEntry[] = [];
+  let originalGlobalResizeObserver: unknown;
+
+  class CapturingResizeObserver {
+    private readonly callback: ResizeObserverCallback;
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+    }
+    observe(target: Element): void {
+      captured.push({ target, callback: this.callback });
+    }
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+
+  beforeEach(() => {
+    captured = [];
+    originalGlobalResizeObserver = (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = CapturingResizeObserver;
+  });
+
+  afterEach(() => {
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = originalGlobalResizeObserver;
+  });
+
+  it("observes its own xterm container (not just relying on an outer/ancestor observer) so a zero-then-real geometry transition recovers without any external trigger", async () => {
+    render(<SessionTerminal sessionId="s1" />);
+    await waitFor(() => expect(FakeWS.instances.length).toBe(1));
+    await waitFor(() => expect(mockTerm.open).toHaveBeenCalled());
+
+    const container = screen.getByTestId("cli-terminal-viewport");
+    const matches = captured.filter((entry) => entry.target === container);
+
+    // Decisive invariant: SessionTerminal already wires a ResizeObserver
+    // directly onto its own xterm container element (unlike pre-fix
+    // TerminalModal, which only observed the outer modal box).
+    expect(matches.length).toBeGreaterThan(0);
+
+    mockFitAddon.fit.mockClear();
+    // Fire the same notification a real browser delivers the instant the
+    // container's box changes — not a manual fit()/reconnect call.
+    act(() => {
+      for (const entry of matches) {
+        entry.callback([] as unknown as ResizeObserverEntry[], entry as unknown as ResizeObserver);
+      }
+    });
+
+    await waitFor(() => expect(mockFitAddon.fit).toHaveBeenCalled());
+  });
+});
