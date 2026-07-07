@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
+import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
 
 /*
  * FNXC:DesktopRuntime 2026-07-02-14:35:
@@ -100,7 +101,7 @@ async function createStoreDefault(rootDir: string): Promise<TaskStoreLike> {
 }
 
 async function createDashboardServerDefault(store: TaskStoreLike, rootDir: string): Promise<{ server: Server; cleanup: RuntimeCleanup }> {
-  const { CentralCore, PluginLoader } = await import("@fusion/core");
+  const { CentralCore, PluginLoader, ensureBundledPluginInstalled, isBundledPluginId } = await import("@fusion/core");
   const { createServer } = await import("@fusion/dashboard");
   const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry, seedDashboardProviders } = await import("@fusion/engine");
 
@@ -168,19 +169,49 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
      * FN-7623: mirror the CLI dashboard command's plugin wiring (packages/cli/src/commands/dashboard.ts)
      * — construct the store's PluginStore, build a PluginLoader, load enabled plugins, and run schema-init
      * hooks — so the desktop embedded server's registry sub-router mounts (GET /api/plugins/registry) and
-     * POST /api/plugins install mode works. Bundled-plugin auto-install (Hermes/OpenClaw/Paperclip/Dependency
-     * Graph) depends on packages/cli/src/plugins/bundled-plugin-install.ts, which is CLI-only and out of
-     * scope for desktop (desktop must not depend on the CLI package) — see FN-7623 scope note. Failures here
-     * must not crash embedded startup: the dashboard still needs to boot even if the plugin subsystem can't
-     * come up (e.g. a corrupt plugin manifest), so this is wrapped and traced rather than left to throw.
+     * POST /api/plugins install mode works. Failures here must not crash embedded startup: the dashboard
+     * still needs to boot even if the plugin subsystem can't come up (e.g. a corrupt plugin manifest), so
+     * this is wrapped and traced rather than left to throw.
+     *
+     * FNXC:DesktopRuntime 2026-07-07-12:30:
+     * FN-7637: bundled-plugin auto-install (Dependency Graph, Hermes, OpenClaw, Paperclip, …) is now
+     * host-agnostic in @fusion/core's ensureBundledPluginInstalled. The only host-specific input is
+     * bundle-directory resolution: resolveDesktopBundlePluginDirs (./bundled-plugin-dirs.js) resolves
+     * each manifest id to its staged `@fusion-plugin-examples/<short-name>` package directory via
+     * import.meta.resolve, mirroring the CLI's `<cli>/dist/plugins/<id>` resolver
+     * (packages/cli/src/plugins/bundled-plugin-install.ts). Mirrors the CLI dashboard command's startup
+     * auto-install pass: install the bundled Dependency Graph plugin before loadAllPlugins() so it is
+     * enabled/registered before the general load pass runs, and expose the same lazy-install callback the
+     * CLI wires so PUT /api/plugins/:id/settings can auto-install Hermes/OpenClaw/Paperclip/etc. on first
+     * save. Cross-reference: local-server.ts carries the matching wiring for the other desktop startup path.
      */
     let pluginStore: PluginStoreLike | undefined;
     let pluginLoader: InstanceType<typeof PluginLoader> | undefined;
+    let ensureBundledPluginInstalledCallback: ((pluginId: string) => Promise<boolean>) | undefined;
     try {
       strace("createDashboardServer: pluginStore.init");
       pluginStore = store.getPluginStore();
       await pluginStore.init();
       pluginLoader = new PluginLoader({ pluginStore: pluginStore as never, taskStore: store as never });
+
+      const boundPluginStore = pluginStore;
+      const boundPluginLoader = pluginLoader;
+
+      try {
+        strace("createDashboardServer: bundled dependency-graph auto-install");
+        const installStatus = await ensureBundledPluginInstalled(
+          boundPluginStore as never,
+          boundPluginLoader,
+          "fusion-plugin-dependency-graph",
+          resolveDesktopBundlePluginDirs,
+        );
+        strace(`createDashboardServer: bundled dependency-graph auto-install status=${installStatus}`);
+      } catch (error) {
+        strace(
+          `createDashboardServer: bundled dependency-graph auto-install FAILED (non-fatal) — ${error instanceof Error ? error.stack : String(error)}`,
+        );
+      }
+
       strace("createDashboardServer: pluginLoader.loadAllPlugins");
       const { loaded, errors } = await pluginLoader.loadAllPlugins();
       strace(`createDashboardServer: plugins loaded=${loaded} errors=${errors}`);
@@ -188,12 +219,34 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       if (schemaHooks.length > 0) {
         await store.getDatabase().runPluginSchemaInits(schemaHooks);
       }
+
+      ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
+        if (!isBundledPluginId(pluginId)) {
+          strace(`ensureBundledPluginInstalled: unknown bundled plugin id "${pluginId}"`);
+          return false;
+        }
+        try {
+          const status = await ensureBundledPluginInstalled(boundPluginStore as never, boundPluginLoader, pluginId, resolveDesktopBundlePluginDirs);
+          if (status === "missing-bundle") {
+            strace(`ensureBundledPluginInstalled: bundled plugin "${pluginId}" not found in this build`);
+            return false;
+          }
+          strace(`ensureBundledPluginInstalled: bundled plugin "${pluginId}" status=${status}`);
+          return true;
+        } catch (error) {
+          strace(
+            `ensureBundledPluginInstalled: failed to auto-install "${pluginId}" — ${error instanceof Error ? error.stack : String(error)}`,
+          );
+          throw error;
+        }
+      };
     } catch (error) {
       strace(
         `createDashboardServer: plugin subsystem init FAILED (non-fatal, dashboard still boots) — ${error instanceof Error ? error.stack : String(error)}`,
       );
       pluginStore = undefined;
       pluginLoader = undefined;
+      ensureBundledPluginInstalledCallback = undefined;
     }
 
     strace("createDashboardServer: createServer");
@@ -204,6 +257,7 @@ async function createDashboardServerDefault(store: TaskStoreLike, rootDir: strin
       authStorage: wrappedAuthStorage,
       modelRegistry,
       ...(pluginStore && pluginLoader ? { pluginStore: pluginStore as never, pluginLoader, pluginRunner: pluginLoader } : {}),
+      ...(ensureBundledPluginInstalledCallback ? { ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback } : {}),
       onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
     });
 

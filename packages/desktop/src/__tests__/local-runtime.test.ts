@@ -85,6 +85,14 @@ const engineMocks = vi.hoisted(() => {
   }));
   const createServer = vi.fn(() => ({ listen: vi.fn() }));
 
+  // FN-7637: bundled-plugin auto-install mocks proving createDashboardServerDefault wires
+  // ensureBundledPluginInstalled/isBundledPluginId from @fusion/core into both the startup
+  // auto-install pass (Dependency Graph before loadAllPlugins) and the createServer(...)
+  // callback option consumed by PUT /api/plugins/:id/settings.
+  const ensureBundledPluginInstalled = vi.fn(async () => "installed" as const);
+  const isBundledPluginId = vi.fn((id: string) => id.startsWith("fusion-plugin-"));
+  const resolveDesktopBundlePluginDirs = vi.fn((pluginId: string) => [`/desktop/node_modules/@fusion-plugin-examples/${pluginId.replace(/^fusion-plugin-/, "")}`]);
+
   return {
     centralCore,
     engineManager,
@@ -97,10 +105,19 @@ const engineMocks = vi.hoisted(() => {
     pluginStoreInstance,
     pluginLoaderInstance,
     runPluginSchemaInits,
+    ensureBundledPluginInstalled,
+    isBundledPluginId,
+    resolveDesktopBundlePluginDirs,
   };
 });
 
-vi.mock("@fusion/core", () => ({ CentralCore: engineMocks.CentralCore, PluginLoader: engineMocks.PluginLoader }));
+vi.mock("@fusion/core", () => ({
+  CentralCore: engineMocks.CentralCore,
+  PluginLoader: engineMocks.PluginLoader,
+  ensureBundledPluginInstalled: engineMocks.ensureBundledPluginInstalled,
+  isBundledPluginId: engineMocks.isBundledPluginId,
+}));
+vi.mock("../bundled-plugin-dirs.js", () => ({ resolveDesktopBundlePluginDirs: engineMocks.resolveDesktopBundlePluginDirs }));
 vi.mock("@fusion/dashboard", () => ({ createServer: engineMocks.createServer }));
 vi.mock("@fusion/engine", () => ({
   ProjectEngineManager: engineMocks.ProjectEngineManager,
@@ -559,6 +576,170 @@ describe("LocalRuntimeManager", () => {
     expect(engineMocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.not.objectContaining({ pluginStore: expect.anything() }),
+    );
+
+    await manager.stopLocal();
+  });
+
+  /*
+   * FN-7637 symptom verification: before this fix, createDashboardServerDefault never invoked
+   * ensureBundledPluginInstalled and never passed an ensureBundledPluginInstalled callback into
+   * createServer(...), so bundled runtime plugins (Dependency Graph, Hermes, OpenClaw, Paperclip, …)
+   * were never auto-installed on desktop the way the CLI dashboard command auto-installs them.
+   * Assert the fix holds in BOTH the engine-less (zero-projects) and projects-present startup
+   * states, since auto-install must run independent of whether a primary engine resolved.
+   */
+  it("auto-installs the bundled Dependency Graph plugin and wires ensureBundledPluginInstalled into createServer when engine-less (zero projects) (FN-7637)", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const server = new FakeServer(4545);
+    engineMocks.createServer.mockReturnValueOnce({
+      listen: vi.fn(() => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      }),
+    });
+
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => store,
+    });
+
+    await manager.startLocal();
+
+    expect(engineMocks.ensureBundledPluginInstalled).toHaveBeenCalledWith(
+      engineMocks.pluginStoreInstance,
+      engineMocks.pluginLoaderInstance,
+      "fusion-plugin-dependency-graph",
+      engineMocks.resolveDesktopBundlePluginDirs,
+    );
+    expect(engineMocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ensureBundledPluginInstalled: expect.any(Function) }),
+    );
+
+    await manager.stopLocal();
+  });
+
+  it("auto-installs the bundled Dependency Graph plugin and wires ensureBundledPluginInstalled into createServer when a project engine resolved (projects-present) (FN-7637)", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    engineMocks.centralCore.listProjects.mockResolvedValueOnce([
+      { id: "project-1", name: "Repo", path: "/repo", status: "active" },
+    ]);
+    const server = new FakeServer(4545);
+    engineMocks.createServer.mockReturnValueOnce({
+      listen: vi.fn(() => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      }),
+    });
+
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => store,
+    });
+
+    await manager.startLocal();
+
+    expect(engineMocks.ensureBundledPluginInstalled).toHaveBeenCalledWith(
+      engineMocks.pluginStoreInstance,
+      engineMocks.pluginLoaderInstance,
+      "fusion-plugin-dependency-graph",
+      engineMocks.resolveDesktopBundlePluginDirs,
+    );
+    expect(engineMocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        engine: expect.anything(),
+        ensureBundledPluginInstalled: expect.any(Function),
+      }),
+    );
+
+    await manager.stopLocal();
+  });
+
+  it("the wired ensureBundledPluginInstalled callback delegates to the shared helper for a lazy-install id (FN-7637)", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const server = new FakeServer(4545);
+    engineMocks.createServer.mockReturnValueOnce({
+      listen: vi.fn(() => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      }),
+    });
+
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => store,
+    });
+
+    await manager.startLocal();
+
+    const callOptions = engineMocks.createServer.mock.calls[0]?.[1] as { ensureBundledPluginInstalled: (id: string) => Promise<boolean> };
+    engineMocks.ensureBundledPluginInstalled.mockClear();
+    engineMocks.ensureBundledPluginInstalled.mockResolvedValueOnce("installed");
+
+    const result = await callOptions.ensureBundledPluginInstalled("fusion-plugin-hermes-runtime");
+
+    expect(result).toBe(true);
+    expect(engineMocks.ensureBundledPluginInstalled).toHaveBeenCalledWith(
+      engineMocks.pluginStoreInstance,
+      engineMocks.pluginLoaderInstance,
+      "fusion-plugin-hermes-runtime",
+      engineMocks.resolveDesktopBundlePluginDirs,
+    );
+
+    await manager.stopLocal();
+  });
+
+  it("the wired ensureBundledPluginInstalled callback returns false for a missing bundle (FN-7637)", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    const server = new FakeServer(4545);
+    engineMocks.createServer.mockReturnValueOnce({
+      listen: vi.fn(() => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      }),
+    });
+
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => store,
+    });
+
+    await manager.startLocal();
+
+    const callOptions = engineMocks.createServer.mock.calls[0]?.[1] as { ensureBundledPluginInstalled: (id: string) => Promise<boolean> };
+    engineMocks.ensureBundledPluginInstalled.mockResolvedValueOnce("missing-bundle");
+
+    const result = await callOptions.ensureBundledPluginInstalled("fusion-plugin-reports");
+
+    expect(result).toBe(false);
+
+    await manager.stopLocal();
+  });
+
+  it("does not wire ensureBundledPluginInstalled into createServer when the plugin subsystem fails to init (fail-soft) (FN-7637)", async () => {
+    const { LocalRuntimeManager } = await import("../local-runtime.ts");
+    engineMocks.pluginStoreInstance.init.mockRejectedValueOnce(new Error("plugin db locked"));
+    const server = new FakeServer(4545);
+    engineMocks.createServer.mockReturnValueOnce({
+      listen: vi.fn(() => {
+        setTimeout(() => server.emit("listening"), 0);
+        return server as unknown as Server;
+      }),
+    });
+
+    const manager = new LocalRuntimeManager({
+      rootDir: "/repo",
+      createStore: async () => store,
+    });
+
+    const status = await manager.startLocal();
+
+    expect(status).toMatchObject({ source: "embedded-local", state: "running", port: 4545 });
+    expect(engineMocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ ensureBundledPluginInstalled: expect.anything() }),
     );
 
     await manager.stopLocal();

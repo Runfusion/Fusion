@@ -46,6 +46,14 @@ const mocks = vi.hoisted(() => {
     return pluginLoaderInstance;
   });
 
+  // FN-7637: bundled-plugin auto-install mocks proving local-server.ts wires
+  // ensureBundledPluginInstalled/isBundledPluginId from @fusion/core into both the startup
+  // auto-install pass (Dependency Graph before loadAllPlugins) and the createServer(...)
+  // callback option consumed by PUT /api/plugins/:id/settings.
+  const ensureBundledPluginInstalled = vi.fn(async () => "installed" as const);
+  const isBundledPluginId = vi.fn((id: string) => id.startsWith("fusion-plugin-"));
+  const resolveDesktopBundlePluginDirs = vi.fn((pluginId: string) => [`/desktop/node_modules/@fusion-plugin-examples/${pluginId.replace(/^fusion-plugin-/, "")}`]);
+
   const store = {
     init: vi.fn(async () => undefined),
     watch: vi.fn(async () => undefined),
@@ -127,10 +135,20 @@ const mocks = vi.hoisted(() => {
     runPluginSchemaInits,
     seedDashboardProviders,
     seedDashboardProvidersDispose,
+    ensureBundledPluginInstalled,
+    isBundledPluginId,
+    resolveDesktopBundlePluginDirs,
   };
 });
 
-vi.mock("@fusion/core", () => ({ TaskStore: mocks.TaskStore, CentralCore: mocks.CentralCore, PluginLoader: mocks.PluginLoader }));
+vi.mock("@fusion/core", () => ({
+  TaskStore: mocks.TaskStore,
+  CentralCore: mocks.CentralCore,
+  PluginLoader: mocks.PluginLoader,
+  ensureBundledPluginInstalled: mocks.ensureBundledPluginInstalled,
+  isBundledPluginId: mocks.isBundledPluginId,
+}));
+vi.mock("../bundled-plugin-dirs.js", () => ({ resolveDesktopBundlePluginDirs: mocks.resolveDesktopBundlePluginDirs }));
 vi.mock("@fusion/dashboard", () => ({ createServer: mocks.createServer }));
 vi.mock("@fusion/engine", () => ({
   ProjectEngineManager: mocks.ProjectEngineManager,
@@ -310,6 +328,82 @@ describe("DesktopLocalServerManager", () => {
     expect(mocks.createServer).toHaveBeenCalledWith(
       expect.anything(),
       expect.not.objectContaining({ pluginStore: expect.anything() }),
+    );
+  });
+
+  /*
+   * FN-7637 symptom verification: before this fix, DesktopLocalServerManager.start() never invoked
+   * ensureBundledPluginInstalled and never passed an ensureBundledPluginInstalled callback into
+   * createServer(...), so bundled runtime plugins (Dependency Graph, Hermes, OpenClaw, Paperclip, …)
+   * were never auto-installed on desktop the way they are under the CLI dashboard command. Assert the
+   * fix: the startup pass calls the shared helper for the bundled Dependency Graph id using the
+   * desktop bundle-dir resolver, and createServer receives a callable ensureBundledPluginInstalled
+   * option.
+   */
+  it("auto-installs the bundled Dependency Graph plugin at startup and wires ensureBundledPluginInstalled into createServer (FN-7637)", async () => {
+    const { DesktopLocalServerManager } = await import("../local-server.ts");
+    const manager = new DesktopLocalServerManager("/repo");
+
+    await manager.start();
+
+    expect(mocks.ensureBundledPluginInstalled).toHaveBeenCalledWith(
+      mocks.pluginStoreInstance,
+      mocks.pluginLoaderInstance,
+      "fusion-plugin-dependency-graph",
+      mocks.resolveDesktopBundlePluginDirs,
+    );
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ ensureBundledPluginInstalled: expect.any(Function) }),
+    );
+  });
+
+  it("the wired ensureBundledPluginInstalled callback delegates to the shared helper for a lazy-install id", async () => {
+    const { DesktopLocalServerManager } = await import("../local-server.ts");
+    const manager = new DesktopLocalServerManager("/repo");
+
+    await manager.start();
+
+    const callOptions = mocks.createServer.mock.calls[0]?.[1] as { ensureBundledPluginInstalled: (id: string) => Promise<boolean> };
+    mocks.ensureBundledPluginInstalled.mockClear();
+    mocks.ensureBundledPluginInstalled.mockResolvedValueOnce("installed");
+
+    const result = await callOptions.ensureBundledPluginInstalled("fusion-plugin-hermes-runtime");
+
+    expect(result).toBe(true);
+    expect(mocks.ensureBundledPluginInstalled).toHaveBeenCalledWith(
+      mocks.pluginStoreInstance,
+      mocks.pluginLoaderInstance,
+      "fusion-plugin-hermes-runtime",
+      mocks.resolveDesktopBundlePluginDirs,
+    );
+  });
+
+  it("the wired ensureBundledPluginInstalled callback returns false for a missing bundle", async () => {
+    const { DesktopLocalServerManager } = await import("../local-server.ts");
+    const manager = new DesktopLocalServerManager("/repo");
+
+    await manager.start();
+
+    const callOptions = mocks.createServer.mock.calls[0]?.[1] as { ensureBundledPluginInstalled: (id: string) => Promise<boolean> };
+    mocks.ensureBundledPluginInstalled.mockResolvedValueOnce("missing-bundle");
+
+    const result = await callOptions.ensureBundledPluginInstalled("fusion-plugin-reports");
+
+    expect(result).toBe(false);
+  });
+
+  it("does not wire ensureBundledPluginInstalled into createServer when the plugin subsystem fails to init (fail-soft)", async () => {
+    mocks.pluginStoreInstance.init.mockRejectedValueOnce(new Error("plugin db locked"));
+    const { DesktopLocalServerManager } = await import("../local-server.ts");
+    const manager = new DesktopLocalServerManager("/repo");
+
+    const runtime = await manager.start();
+
+    expect(runtime.port).toBe(4545);
+    expect(mocks.createServer).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ ensureBundledPluginInstalled: expect.anything() }),
     );
   });
 });

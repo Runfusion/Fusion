@@ -3,6 +3,7 @@ import { once } from "node:events";
 import type { Server } from "node:http";
 
 import { resolveDesktopRuntimePrimaryProject } from "./engine-runtime.js";
+import { resolveDesktopBundlePluginDirs } from "./bundled-plugin-dirs.js";
 
 /*
  * FNXC:DesktopRuntime 2026-07-07-12:00:
@@ -66,7 +67,7 @@ export class DesktopLocalServerManager {
 
     try {
       const { TaskStore } = await import("@fusion/core");
-      const { CentralCore, PluginLoader } = await import("@fusion/core");
+      const { CentralCore, PluginLoader, ensureBundledPluginInstalled, isBundledPluginId } = await import("@fusion/core");
       const { createServer } = await import("@fusion/dashboard");
       const { ProjectEngineManager, createFusionAuthStorage, createFusionModelRegistry, seedDashboardProviders } = await import("@fusion/engine");
       store = new TaskStore(this.rootDir) as TaskStoreLike;
@@ -113,22 +114,54 @@ export class DesktopLocalServerManager {
        * build a PluginLoader, load enabled plugins, and run schema-init hooks — so this legacy path's
        * registry sub-router mounts and install works too. Fail soft: a broken plugin subsystem must not
        * prevent the embedded dashboard from booting.
+       *
+       * FNXC:DesktopRuntime 2026-07-07-12:30:
+       * FN-7637: mirror local-runtime.ts's bundled-plugin auto-install wiring so BOTH desktop startup
+       * paths auto-install bundled runtime plugins (Dependency Graph, Hermes, OpenClaw, Paperclip, …)
+       * identically — same shared @fusion/core helper, same resolveDesktopBundlePluginDirs resolver, same
+       * lazy-install callback exposed to PUT /api/plugins/:id/settings. See local-runtime.ts's matching
+       * comment for the full rationale.
        */
       let pluginStore: PluginStoreLike | undefined;
       let pluginLoader: InstanceType<typeof PluginLoader> | undefined;
+      let ensureBundledPluginInstalledCallback: ((pluginId: string) => Promise<boolean>) | undefined;
       try {
         pluginStore = store.getPluginStore();
         await pluginStore.init();
         pluginLoader = new PluginLoader({ pluginStore: pluginStore as never, taskStore: store as never });
+
+        const boundPluginStore = pluginStore;
+        const boundPluginLoader = pluginLoader;
+
+        try {
+          await ensureBundledPluginInstalled(
+            boundPluginStore as never,
+            boundPluginLoader,
+            "fusion-plugin-dependency-graph",
+            resolveDesktopBundlePluginDirs,
+          );
+        } catch {
+          // Bundled dependency-graph auto-install failure must not block startup (FN-7637, mirrors FN-7623 fail-soft).
+        }
+
         await pluginLoader.loadAllPlugins();
         const schemaHooks = pluginLoader.getPluginSchemaInitHooks();
         if (schemaHooks.length > 0) {
           await store.getDatabase().runPluginSchemaInits(schemaHooks);
         }
+
+        ensureBundledPluginInstalledCallback = async (pluginId: string): Promise<boolean> => {
+          if (!isBundledPluginId(pluginId)) {
+            return false;
+          }
+          const status = await ensureBundledPluginInstalled(boundPluginStore as never, boundPluginLoader, pluginId, resolveDesktopBundlePluginDirs);
+          return status !== "missing-bundle";
+        };
       } catch {
         // Plugin subsystem failures must not block embedded dashboard startup (FN-7623).
         pluginStore = undefined;
         pluginLoader = undefined;
+        ensureBundledPluginInstalledCallback = undefined;
       }
 
       const app = createServer(store as never, {
@@ -138,6 +171,7 @@ export class DesktopLocalServerManager {
         authStorage: wrappedAuthStorage,
         modelRegistry,
         ...(pluginStore && pluginLoader ? { pluginStore: pluginStore as never, pluginLoader, pluginRunner: pluginLoader } : {}),
+        ...(ensureBundledPluginInstalledCallback ? { ensureBundledPluginInstalled: ensureBundledPluginInstalledCallback } : {}),
         onProjectFirstAccessed: (projectId: string) => engineManager.onProjectAccessed(projectId),
       });
       server = app.listen(0);

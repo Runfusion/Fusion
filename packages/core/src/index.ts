@@ -1233,6 +1233,14 @@ export type {
 export { PluginStore } from "./plugin-store.js";
 export type { PluginStoreEvents, PluginRegistrationInput, PluginUpdateInput } from "./plugin-store.js";
 export { PluginLoader, resolvePluginEntryPath } from "./plugin-loader.js";
+export {
+  BUNDLED_PLUGIN_IDS,
+  isBundledPluginId,
+  ensureBundledPluginInstalled,
+  ensureBundledDependencyGraphPluginInstalled,
+  ensureBundledCursorRuntimePluginInstalled,
+} from "./plugins/bundled-plugin-install.js";
+export type { BundledPluginId, EnsureBundledResult, BundledPluginDirResolver } from "./plugins/bundled-plugin-install.js";
 export { scanPluginSecurity } from "./plugin-security-scan.js";
 export type { PluginSecurityScanResult, PluginSecurityFinding } from "./plugin-security-scan.js";
 export type {
