@@ -195,6 +195,11 @@ describe("reliability interactions: verification follow-up dedup", () => {
   it("remains additive with FN-4892 same-agent duplicate intake", async () => {
     const fx = await createStore();
     fixtures.push(fx);
+    /*
+    FNXC:ReliabilityTests 2026-07-08-12:30:
+    FN-7658 gated same-agent duplicate auto-archiving behind autoArchiveDuplicateTasksEnabled (default false → flag-in-place in triage). This test asserts the ARCHIVE path is additive with verification follow-up dedup, so opt into the legacy archive behavior explicitly rather than asserting the new flag-in-place default.
+    */
+    await fx.store.updateSettings({ autoArchiveDuplicateTasksEnabled: true });
     const source = {
       sourceType: "api" as const,
       sourceAgentId: "agent-1",
