@@ -11,13 +11,11 @@ import { isMobileViewport, MOBILE_MEDIA_QUERY } from "../hooks/useViewportMode";
 import {
   TERMINAL_PREFERENCES_KEY,
   forceTerminalFontRemeasure,
-  guardAgainstCollapsedTerminalScreen,
   readTerminalPreferences,
   resolveTerminalFontFamily,
   resolveTerminalGlyphFontFamily,
   waitForTerminalFontMetrics,
   withDomBasedTerminalCharacterMeasurement,
-  type TerminalScreenGuardHandle,
 } from "../utils/terminalPreferences";
 
 /**
@@ -194,8 +192,6 @@ export function SessionTerminal({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<ITerminalAddon | null>(null);
-  /** FN-7692: active collapsed-screen guard for the current xterm; disposed on teardown. */
-  const screenGuardRef = useRef<TerminalScreenGuardHandle | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const [postureTooltipOpen, setPostureTooltipOpen] = useState(false);
@@ -512,28 +508,6 @@ export function SessionTerminal({
         /* container not measurable yet */
       }
 
-      /*
-      FNXC:Terminal 2026-07-08-16:20:
-      FN-7692: arm the collapsed-screen guard on this attach surface too. The task-session terminal
-      opens inside the same mobile fullscreen layout, so its initial open()+fit() can likewise measure a
-      0-width cell and collapse .xterm-screen to 0x0 — prompt bytes stream in but paint into a zero-size
-      box (blank terminal). Force a genuine remeasure+fit (re-driven by a ResizeObserver as the layout
-      settles) until the screen has a real width. Tied to this xterm instance; disposed on teardown.
-      */
-      screenGuardRef.current?.dispose();
-      if (containerRef.current) {
-        screenGuardRef.current = guardAgainstCollapsedTerminalScreen(
-          containerRef.current,
-          term,
-          () => {
-            if (disposed || xtermRef.current !== term) return;
-            (fitAddon as unknown as { fit: () => void }).fit();
-            sendResize(term.cols, term.rows);
-          },
-          resolvedFontFamily,
-        );
-      }
-
       void (async () => {
         const fontMetricsSettled = await waitForTerminalFontMetrics(
           terminalPreferences.fontSize,
@@ -710,8 +684,6 @@ export function SessionTerminal({
         }
         wsRef.current = null;
       }
-      screenGuardRef.current?.dispose(); // FN-7692: stop the collapsed-screen watchdog on teardown
-      screenGuardRef.current = null;
       const term = xtermRef.current;
       if (term) {
         try {

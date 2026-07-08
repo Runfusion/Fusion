@@ -42,7 +42,6 @@ import {
   TERMINAL_FONT_FAMILY_PRESETS,
   clampTerminalFontSize,
   forceTerminalFontRemeasure,
-  guardAgainstCollapsedTerminalScreen,
   readTerminalPreferences,
   resolveTerminalFontFamily,
   resolveTerminalGlyphFontFamily,
@@ -51,7 +50,6 @@ import {
   writeTerminalPreferences,
   type TerminalPreferences,
   type TerminalRenderer,
-  type TerminalScreenGuardHandle,
 } from "../utils/terminalPreferences";
 import "@xterm/xterm/css/xterm.css";
 
@@ -608,12 +606,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const initializedRendererRef = useRef<TerminalRenderer>(terminalPreferences.renderer);
   /** Tracks a pending requestAnimationFrame for deferred xterm re-fit. */
   const pendingFitRef = useRef<number | null>(null);
-  /**
-   * FN-7692: active collapsed-screen guard for the current xterm instance. Disposed and re-armed on
-   * every (re)init so the mobile 0x0-screen watchdog never outlives its terminal. See
-   * `guardAgainstCollapsedTerminalScreen`.
-   */
-  const screenGuardRef = useRef<TerminalScreenGuardHandle | null>(null);
   /*
   FNXC:Terminal 2026-06-22-09:00:
   Docked-resize, floating-drag, and floating-resize each attach pointer listeners and schedule a rAF for the duration of a drag. If the modal closes or the component unmounts mid-drag, those listeners + the pending frame would leak. Track the active drag teardown here and run it from the close/unmount effect.
@@ -1396,8 +1388,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     if (xtermRef.current && (xtermInitializedRef.current !== currentSessionId || projectChanged)) {
       xtermRef.current.dispose();
       xtermRef.current = null;
-      screenGuardRef.current?.dispose(); // FN-7692: guard is tied to the disposed xterm instance
-      screenGuardRef.current = null;
       fitAddonRef.current = null;
       xtermInitializedRef.current = false;
       if (windowResizeListenerRef.current) {
@@ -1568,28 +1558,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         xtermInitializedRef.current = currentSessionId;
         void remeasureAfterTerminalFontLoad(currentSessionId, terminal, fitAddon);
 
-        /*
-        FNXC:Terminal 2026-07-08-16:20:
-        FN-7692: arm the collapsed-screen guard for this instance. On the mobile fullscreen layout the
-        initial open()+fit() above can measure a 0-width cell and collapse .xterm-screen to 0x0, leaving
-        the terminal blank even though the prompt already streamed in. The guard forces a genuine
-        remeasure+fit (re-driven by a ResizeObserver as the mobile modal/keyboard geometry settles) until
-        the screen has a real width. Dispose any prior guard first so it is tied to this xterm's lifetime.
-        */
-        screenGuardRef.current?.dispose();
-        if (terminalRef.current) {
-          screenGuardRef.current = guardAgainstCollapsedTerminalScreen(
-            terminalRef.current,
-            terminal,
-            () => {
-              if (xtermInitializedRef.current !== currentSessionId) return;
-              fitAddon.fit();
-              resizeRef.current?.(terminal.cols, terminal.rows);
-            },
-            fontFamilyAtInit,
-          );
-        }
-
         // If the virtual keyboard opened while xterm was still in async
         // initialization for this tab, force a post-init fit so this new
         // session uses the already-constrained mobile modal height.
@@ -1735,8 +1703,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       xtermRef.current.dispose();
       xtermRef.current = null;
     }
-    screenGuardRef.current?.dispose(); // FN-7692: stop the collapsed-screen watchdog on close
-    screenGuardRef.current = null;
     fitAddonRef.current = null;
     xtermInitializedRef.current = false;
     if (windowResizeListenerRef.current) {
@@ -2123,8 +2089,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         xtermRef.current.dispose();
         xtermRef.current = null;
       }
-      screenGuardRef.current?.dispose(); // FN-7692: re-armed by the re-running init effect
-      screenGuardRef.current = null;
       fitAddonRef.current = null;
       xtermInitializedRef.current = false;
       if (windowResizeListenerRef.current) {
@@ -2190,8 +2154,6 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
       xtermRef.current.dispose();
       xtermRef.current = null;
     }
-    screenGuardRef.current?.dispose(); // FN-7692: drop the watchdog before a manual re-init
-    screenGuardRef.current = null;
     fitAddonRef.current = null;
     xtermInitializedRef.current = false;
     if (windowResizeListenerRef.current) {
