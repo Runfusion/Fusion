@@ -308,3 +308,70 @@ describe("TaskStore.updateWorkflowSettingValues", () => {
     expect(effective.workflowStepTimeoutMs).toBe(900_000);
   });
 });
+
+describe("TaskStore.getModelLaneDrift", () => {
+  const harness = createSharedTaskStoreTestHarness();
+
+  beforeAll(harness.beforeAll);
+  afterAll(harness.afterAll);
+  beforeEach(harness.beforeEach);
+  afterEach(harness.afterEach);
+
+  it("flags non-terminal tasks still pinned to a lane's old value, and excludes done/unrelated tasks", async () => {
+    const store = harness.store();
+
+    await store.updateWorkflowSettingValues(BUILTIN_CODING, PROJECT, {
+      executionProvider: "anthropic",
+      executionModelId: "claude-sonnet-4-6",
+    });
+    const before = store.getWorkflowSettingValues(BUILTIN_CODING, PROJECT);
+
+    const pinned = await store.createTask({
+      description: "pinned to old model",
+      workflowId: BUILTIN_CODING,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+    });
+    const alreadyCurrent = await store.createTask({
+      description: "already on the new model",
+      workflowId: BUILTIN_CODING,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-5",
+    });
+    const doneTask = await store.createTask({
+      description: "terminal task, excluded even though pinned to the old model",
+      workflowId: BUILTIN_CODING,
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      column: "done",
+    });
+
+    await store.updateWorkflowSettingValues(BUILTIN_CODING, PROJECT, {
+      executionModelId: "claude-sonnet-5",
+    });
+    const after = store.getWorkflowSettingValues(BUILTIN_CODING, PROJECT);
+
+    const drift = store.getModelLaneDrift(BUILTIN_CODING, before, after);
+    expect(drift).toHaveLength(1);
+    const execution = drift[0];
+    expect(execution.lane).toBe("execution");
+    expect(execution.from).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-6" });
+    expect(execution.to).toEqual({ provider: "anthropic", modelId: "claude-sonnet-5" });
+    expect(execution.taskIds).toEqual([pinned.id]);
+    expect(execution.taskIds).not.toContain(alreadyCurrent.id);
+    expect(execution.taskIds).not.toContain(doneTask.id);
+  });
+
+  it("reports no drift when the lane value is unchanged", async () => {
+    const store = harness.store();
+    await store.updateWorkflowSettingValues(BUILTIN_CODING, PROJECT, {
+      executionProvider: "anthropic",
+      executionModelId: "claude-sonnet-5",
+    });
+    const before = store.getWorkflowSettingValues(BUILTIN_CODING, PROJECT);
+    await store.updateWorkflowSettingValues(BUILTIN_CODING, PROJECT, { requirePrApproval: true });
+    const after = store.getWorkflowSettingValues(BUILTIN_CODING, PROJECT);
+
+    expect(store.getModelLaneDrift(BUILTIN_CODING, before, after)).toEqual([]);
+  });
+});

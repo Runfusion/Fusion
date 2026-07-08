@@ -15806,6 +15806,78 @@ ${stepsSection}`;
     return ids;
   }
 
+  /** Model-lane setting keys (workflow_settings) paired with the task columns
+   *  they seed at task-creation time (a permanent point-in-time snapshot,
+   *  never re-synced when the workflow default later changes). */
+  private static readonly MODEL_LANES = [
+    { lane: "execution", providerKey: "executionProvider", modelIdKey: "executionModelId", providerCol: "modelProvider", modelIdCol: "modelId" },
+    { lane: "planning", providerKey: "planningProvider", modelIdKey: "planningModelId", providerCol: "planningModelProvider", modelIdCol: "planningModelId" },
+    { lane: "validator", providerKey: "validatorProvider", modelIdKey: "validatorModelId", providerCol: "validatorModelProvider", modelIdCol: "validatorModelId" },
+  ] as const;
+
+  /**
+   * Diff `before`/`after` workflow setting values for the three model lanes
+   * and, for each lane whose provider+modelId pair changed, list the
+   * non-terminal tasks on this workflow still pinned to the OLD pair. A
+   * task's model columns are captured once at creation and never re-synced,
+   * so changing a workflow's default silently orphans already-created tasks
+   * unless this drift is surfaced. Read-only — never mutates `tasks`; pair
+   * with `POST /tasks/batch-update-models` to actually re-pin flagged ids.
+   */
+  getModelLaneDrift(
+    workflowId: string,
+    before: Record<string, unknown>,
+    after: Record<string, unknown>,
+  ): Array<{
+    lane: string;
+    from: { provider: string | null; modelId: string | null };
+    to: { provider: string | null; modelId: string | null };
+    taskIds: string[];
+  }> {
+    const asStringOrNull = (v: unknown): string | null => (typeof v === "string" ? v : null);
+    const includeNullSelection = workflowId === TaskStore.DEFAULT_WORKFLOW_POOL_ID;
+    const drift: Array<{
+      lane: string;
+      from: { provider: string | null; modelId: string | null };
+      to: { provider: string | null; modelId: string | null };
+      taskIds: string[];
+    }> = [];
+
+    for (const l of TaskStore.MODEL_LANES) {
+      const fromProvider = asStringOrNull(before[l.providerKey]);
+      const fromModelId = asStringOrNull(before[l.modelIdKey]);
+      const toProvider = asStringOrNull(after[l.providerKey]);
+      const toModelId = asStringOrNull(after[l.modelIdKey]);
+      if (fromProvider === toProvider && fromModelId === toModelId) continue;
+      if (fromProvider === null && fromModelId === null) continue;
+
+      const occupants = this.listWorkflowOccupantTaskIds(workflowId, includeNullSelection);
+      let taskIds: string[] = [];
+      if (occupants.length > 0) {
+        const placeholders = occupants.map(() => "?").join(",");
+        const rows = this.db
+          .prepare(
+            `SELECT id FROM tasks
+              WHERE id IN (${placeholders})
+                AND "deletedAt" IS NULL
+                AND "column" != 'archived'
+                AND "column" != 'done'
+                AND "${l.providerCol}" IS ?
+                AND "${l.modelIdCol}" IS ?`,
+          )
+          .all(...occupants, fromProvider, fromModelId) as Array<{ id: string }>;
+        taskIds = rows.map((r) => r.id);
+      }
+      drift.push({
+        lane: l.lane,
+        from: { provider: fromProvider, modelId: fromModelId },
+        to: { provider: toProvider, modelId: toModelId },
+        taskIds,
+      });
+    }
+    return drift;
+  }
+
   /** Map column id → occupant count for the tasks selecting `workflowId`
    *  (plus null-selection tasks when `includeNullSelection`). */
   private occupantsByColumnForWorkflow(

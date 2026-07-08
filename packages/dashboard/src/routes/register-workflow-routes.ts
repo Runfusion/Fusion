@@ -481,16 +481,22 @@ export function registerWorkflowRoutes(ctx: ApiRoutesContext): void {
       await assertWorkflowExists(store, workflowId);
       const projectId = store.getWorkflowSettingsProjectId();
       try {
+        const before = store.getWorkflowSettingValues(workflowId, projectId);
         const stored = await store.updateWorkflowSettingValues(
           workflowId,
           projectId,
           values as Record<string, unknown>,
         );
         const declarations = await resolveSettingDeclarations(store, workflowId);
+        // Model-lane drift: tasks already pinned to the value being replaced
+        // are never auto-resynced (see getModelLaneDrift), so surface them
+        // here rather than let the change silently orphan those tasks.
+        const modelDrift = store.getModelLaneDrift(workflowId, before, stored).filter((d) => d.taskIds.length > 0);
         res.json({
           stored,
           effective: resolveEffectiveSettingValues(declarations, stored),
           orphaned: findOrphanedSettingValues(declarations, stored),
+          ...(modelDrift.length > 0 ? { modelDrift } : {}),
         });
       } catch (writeErr: unknown) {
         // Typed rejection → 400 with the structured rejections so the client can
