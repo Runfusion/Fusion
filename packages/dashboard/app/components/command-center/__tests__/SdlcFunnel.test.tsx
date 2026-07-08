@@ -61,7 +61,7 @@ describe("SdlcFunnel", () => {
     expect(apiMock).toHaveBeenCalledWith(expect.stringContaining("/command-center/activity"), undefined);
 
     // Funnel bars carry an accessible label per stage with its count.
-    expect(screen.getByLabelText("Triage: 4")).toBeTruthy();
+    expect(screen.getByLabelText("Planning: 4")).toBeTruthy();
     expect(screen.getByLabelText("In progress: 3")).toBeTruthy();
     expect(screen.getByLabelText("Done: 2")).toBeTruthy();
     // Unknown-trait columns surface under "Other".
@@ -73,7 +73,7 @@ describe("SdlcFunnel", () => {
     render(<SdlcFunnel range={range7d} />);
 
     await screen.findByTestId("cc-area-funnel");
-    expect(screen.getByRole("img", { name: "Completion rate for in-range triage entrants" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Completion rate for in-range planning entrants" })).toBeTruthy();
     expect(screen.getByTestId("cc-funnel-completion-rate").textContent).toContain("50%");
     expect(screen.getByTestId("cc-funnel-done").textContent).toContain("2");
     expect(screen.getByTestId("cc-funnel-entered").textContent).toContain("4");
@@ -102,7 +102,7 @@ describe("SdlcFunnel", () => {
     render(<SdlcFunnel range={range7d} />);
 
     await screen.findByTestId("cc-area-funnel");
-    expect(screen.getByRole("img", { name: "Completion rate for in-range triage entrants" })).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Completion rate for in-range planning entrants" })).toBeTruthy();
     expect(screen.getByTestId("cc-funnel-completion-rate").textContent).toContain("—");
   });
 

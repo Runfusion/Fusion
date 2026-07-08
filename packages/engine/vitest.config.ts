@@ -52,8 +52,110 @@ export default defineConfig({
     projects: [
       {
         extends: true,
+        resolve: {
+          /*
+          FNXC:EngineTests 2026-07-08-03:00:
+          FN-7667: scope the gate-safe @fusion/core barrel (packages/core/src/index.gate.ts)
+          to THIS project only. It must not leak to the root resolve.alias — that would
+          silently narrow the module graph for engine-default/engine-reliability/engine-slow
+          too. Project-level resolve.alias merges over (does not replace) the root map
+          inherited via extends:true, so @fusion/test-utils/@fusion/plugin-sdk/@fusion/dashboard
+          stay on their root aliases and only @fusion/core is overridden here.
+
+          FNXC:EngineTests 2026-07-08-04:50:
+          FN-7669: the @fusion/core alias now points at a PRE-BUNDLED single ESM
+          file (packages/core/.gate-bundle/core.mjs — a SIBLING of
+          packages/core/node_modules/, deliberately NOT nested inside it; nesting
+          inside node_modules triggers Vite's SSR external-dep heuristic and
+          silently defeats vi.mock interception for imports nested inside the
+          bundle, see scripts/build-engine-core-gate-bundle.mjs for the full repro)
+          instead of directly at index.gate.ts's source. FN-7668 profiled the
+          gate's dominant wall-time cost as vitest/Vite SSR's import-phase — each
+          of the 18 pool:"forks" processes independently re-resolving+evaluating
+          the ~430-file barrel closure with zero cross-fork sharing. esbuild-
+          bundling the index.gate.ts closure (220 first-party files, the
+          @fusion/core slice of that ~430) into one file
+          (scripts/build-engine-core-gate-bundle.mjs, wired below via globalSetup
+          so it is rebuilt fresh before every gate invocation — never a hand-
+          maintained/stale artifact) collapses that to a single file load per
+          fork. See the task's docs document for the full A/B measurement,
+          coverage-parity proof, and land/no-land rationale.
+          @fusion/engine is deliberately left on the full barrel, unbundled: none
+          of the 18 curated gate files import "@fusion/engine" at all (verified by
+          grep across all 18 files), so bundling it would be zero-benefit
+          churn/risk — and it would additionally risk double-registering or
+          dead-locking the core↔engine circular-import DI
+          (`void import("@fusion/core").then(setCreateFnAgent...)` in
+          packages/engine/src/index.ts) for no measured gain.
+
+          FNXC:EngineTests 2026-07-08-06:20:
+          FN-7670 prototyped extending this same lever to the @fusion/engine
+          RELATIVE-import production graph (`../merger.js`, `../hold-release.js`,
+          `../scheduler.js`, `../workflow-node-handlers.js`, ...) that the 18 gate
+          files reach directly — NOT the barrel above, which stays untouched per
+          the paragraph above regardless. It built a fully working, coverage-
+          parity-preserving, mock-safe bundle (171 first-party files → 35 output
+          files via esbuild multi-entry splitting) but an interleaved, host-load-
+          controlled A/B showed NO clear incremental wall-time win over this
+          @fusion/core-only bundle (delta within this host's own ~2.5x run-to-run
+          noise band) — the byte-size growth of 14 separate large root bundles
+          (e.g. one alone reached 1.3MB) offset the per-file-dispatch savings that
+          made the single-file @fusion/core bundle above pay off. NOT landed; the
+          wiring was reverted to this @fusion/core-only state. See FN-7670's task
+          docs document for the full closure/mock-boundary analysis, the A/B
+          methodology and data, and the negative-result rationale.
+
+          FNXC:EngineTests 2026-07-08-06:20:
+          FN-7673 re-attempted this lever with a SINGLE COMBINED-ENTRY design
+          (all 14 mock-safe roots redirected via a resolveId plugin to ONE
+          packages/engine/.gate-bundle/engine.mjs, no `splitting`, mirroring the
+          @fusion/core bundle's one-alias/one-output-file shape) rather than
+          FN-7670's 14-separate-root design. It achieved the design goal (149
+          first-party inputs -> 1 output file) and full coverage parity (335/335)
+          but a TRUE interleaved A/B (5 warm pairs + 1 cold pair) showed the
+          combined-entry bundle is CONSISTENTLY SLOWER than this @fusion/core-only
+          baseline — warm median real +29.1% slower, import-phase aggregate
+          +74.0% slower, holding across every pair (not within this host's noise
+          band, unlike FN-7670's inconclusive result). Working theory: funnelling
+          all 14 original relative-import sites through a `resolveId`-plugin
+          redirect to one large (2.3MB) synthetic `export *` file adds more
+          transform/resolution overhead than it saves, unlike the @fusion/core
+          bundle's plain `resolve.alias` (a single fixed target, no per-specifier
+          plugin hook). NOT landed; wiring fully reverted to this @fusion/core-
+          only state (both the engine-graph scans and the combined-entry builder
+          were removed from scripts/build-engine-core-gate-bundle.mjs, and the
+          resolveId plugin was removed from this file — full diff in FN-7673's
+          git history). This lever (bundling the @fusion/engine relative-import
+          graph for the engine-core gate, in either a 14-file or single-combined-
+          entry shape) is now considered CLOSED — do not re-attempt without new
+          evidence changing the underlying cost model. See FN-7673's task docs
+          document for the full A/B data, the mock-boundary risk finding (a
+          combined-entry design broke a shared-test-helper vi.mock in a way
+          FN-7670's per-root design never could), and the closure rationale.
+          */
+          alias: {
+            "@fusion/core": resolve(__dirname, "../core/.gate-bundle/core.mjs"),
+          },
+        },
         test: {
           name: "engine-core",
+          /*
+          FNXC:EngineTests 2026-07-08-04:50:
+          FN-7669: prepend the gate-bundle builder to this project's globalSetup so
+          the @fusion/core bundle above is rebuilt before any of the 18 forks spawn
+          and resolve the alias. REBUILD-EVERY-RUN is the invalidation model — the
+          builder's own esbuild dependency graph (not a hand list) determines what
+          gets bundled, and because it reruns on every gate invocation there is no
+          drift surface. The original root-level vitest-teardown.ts worker-root
+          cleanup hook is preserved (both entries run; order does not matter, they
+          are independent) rather than replaced, since `extends:true` does not
+          array-merge test.globalSetup across project/root the way resolve.alias
+          object-merges.
+          */
+          globalSetup: [
+            resolve(__dirname, "../core/src/__test-utils__/vitest-teardown.ts"),
+            resolve(__dirname, "../../scripts/build-engine-core-gate-bundle.mjs"),
+          ],
           /*
           FNXC:EngineTests 2026-06-25-11:11:
           The curated engine-core merge gate hits a Node 24.15.0/macOS libuv kqueue SIGABRT when Vitest thread workers close unmanaged file descriptors. Scope fork workers to this gate so the broad default engine suite keeps its explicit worker-thread behavior.
@@ -70,9 +172,12 @@ export default defineConfig({
           // triage, scheduling, self-healing.
           // Budget: the whole project must stay under ~60s wall-clock so the
           // CI gate job's test run lands under ~1 minute.
+          /*
+          FNXC:EngineTests 2026-07-08-00:00:
+          Removed merger-post-merge.test.ts — retired by FN-7039 (graph is sole post-merge owner); it matched zero files. Graph post-merge is covered by workflow-graph-post-merge.test.ts in engine-default; no gate replacement needed.
+          */
           include: [
             "src/__tests__/merger-merge-lifecycle.test.ts",
-            "src/__tests__/merger-post-merge.test.ts",
             "src/__tests__/merger-conflict-resolution.test.ts",
             "src/__tests__/merger-diff-scope.test.ts",
             "src/__tests__/merger-landed-files-capture.test.ts",

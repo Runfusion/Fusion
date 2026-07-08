@@ -68,6 +68,13 @@ export interface ResolvedRuntime {
   wasConfigured: boolean;
   /** The runtime ID that was resolved */
   runtimeId: string;
+  /**
+   * When wasConfigured is false because a configured hint could not be
+   * resolved, the reason for that fallback ("not_found" vs "factory_error").
+   * Absent when there was no configured hint at all, or when hint was
+   * "pi"/"default" (no fallback occurred).
+   */
+  fallbackReason?: FallbackReason;
 }
 
 /**
@@ -128,20 +135,30 @@ export function getDefaultPiRuntime(): AgentRuntime {
 }
 
 /**
+ * Result of a plugin runtime lookup attempt: either a successfully resolved
+ * runtime, or a miss carrying the distinguishing FallbackReason so callers
+ * can tell "never registered" apart from "factory threw".
+ */
+type ResolvePluginRuntimeResult =
+  | { ok: true; runtime: AgentRuntime; pluginId: string }
+  | { ok: false; reason: FallbackReason };
+
+/**
  * Resolve a plugin runtime by its runtimeId.
  *
  * @param pluginRunner - PluginRunner for looking up runtimes
  * @param runtimeId - The runtime ID to find
- * @returns The resolved runtime wrapper, or null if not found
+ * @returns The resolved runtime wrapper, or a miss tagged with the
+ *          FallbackReason distinguishing "not_found" from "factory_error"
  */
 async function resolvePluginRuntime(
   pluginRunner: PluginRunner,
   runtimeId: string,
-): Promise<{ runtime: AgentRuntime; pluginId: string } | null> {
+): Promise<ResolvePluginRuntimeResult> {
   // Use the convenience method for single runtime lookup
   const registration = pluginRunner.getRuntimeById(runtimeId);
   if (!registration) {
-    return null;
+    return { ok: false, reason: "not_found" };
   }
 
   const { pluginId, runtime } = registration;
@@ -152,7 +169,7 @@ async function resolvePluginRuntime(
     const pluginContext = await pluginRunner.createRuntimeContext(pluginId);
     if (!pluginContext) {
       runtimeLog.warn(`Plugin "${pluginId}" runtime factory context unavailable`);
-      return null;
+      return { ok: false, reason: "not_found" };
     }
 
     // Instantiate the runtime via factory
@@ -161,18 +178,18 @@ async function resolvePluginRuntime(
 
     if (!instance) {
       runtimeLog.warn(`Plugin "${pluginId}" runtime factory returned null`);
-      return null;
+      return { ok: false, reason: "factory_error" };
     }
 
     // Wrap the plugin runtime to conform to AgentRuntime interface
     // The plugin may return its own interface, so we adapt if needed
     const wrappedRuntime = wrapPluginRuntime(instance, runtime.metadata.runtimeId, runtime.metadata.name);
 
-    return { runtime: wrappedRuntime, pluginId };
+    return { ok: true, runtime: wrappedRuntime, pluginId };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     runtimeLog.error(`Plugin "${pluginId}" runtime factory error: ${message}`);
-    return null;
+    return { ok: false, reason: "factory_error" };
   }
 }
 
@@ -286,10 +303,11 @@ export async function resolveRuntime(context: RuntimeResolutionContext): Promise
   }
 
   // Look up the plugin runtime
+  let fallbackReason: FallbackReason = "not_found";
   try {
     const resolved = await resolvePluginRuntime(pluginRunner, runtimeId);
 
-    if (resolved) {
+    if (resolved.ok) {
       runtimeLog.log(`[${sessionPurpose}] Using configured plugin runtime "${runtimeId}" from "${resolved.pluginId}"`);
       return {
         runtime: resolved.runtime,
@@ -297,17 +315,21 @@ export async function resolveRuntime(context: RuntimeResolutionContext): Promise
         runtimeId,
       };
     }
+
+    fallbackReason = resolved.reason;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     runtimeLog.error(`[${sessionPurpose}] Error resolving plugin runtime "${runtimeId}": ${message}`);
+    fallbackReason = "factory_error";
   }
 
   // Case 3: Runtime not found or error — fall back to pi with warning
-  logRuntimeFallback(sessionPurpose, runtimeId, "not_found");
+  logRuntimeFallback(sessionPurpose, runtimeId, fallbackReason);
   return {
     runtime: getDefaultPiRuntime(),
     wasConfigured: false,
     runtimeId: "pi",
+    fallbackReason,
   };
 }
 

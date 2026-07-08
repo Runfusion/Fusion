@@ -108,3 +108,52 @@ export async function archiveAsSameAgentDuplicate(
   });
   await store.moveTask(taskId, "archived");
 }
+
+/**
+ * FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
+ * This is the DEFAULT same-agent duplicate intake outcome (the setting
+ * `autoArchiveDuplicateTasksEnabled` defaults to `false`). Operators do not
+ * want duplicates silently disappearing into `archived` on creation — they
+ * want visibility and a chance to decide. Instead of moving the task, this
+ * records the same near-duplicate marker (`nearDuplicateOf`/`nearDuplicateScore`)
+ * used elsewhere (see FN-6439 `clearNearDuplicateReferencesTo`) so the dashboard's
+ * existing yellow "Duplicate" chip with Keep/Archive actions to surface it
+ * for a human decision. The task is left in whatever column it was created
+ * in — this function does NOT call `moveTask`.
+ *
+ * `siblingIds` should be ordered with the canonical/earliest sibling first;
+ * that first id becomes `nearDuplicateOf` and its score becomes
+ * `nearDuplicateScore`.
+ */
+export async function flagSameAgentDuplicate(
+  store: TaskStore,
+  taskId: string,
+  siblingIds: string[],
+  scores: Record<string, number>,
+): Promise<Record<string, unknown> | undefined> {
+  const canonicalId = siblingIds[0];
+  await store.logEntry(
+    taskId,
+    "Flagged as same-agent duplicate",
+    `Near-duplicate of recently-filed sibling task(s): ${siblingIds.join(", ")} (not archived — autoArchiveDuplicateTasksEnabled is off)`,
+  );
+  // FN-7658: reuse the existing duplicate activity type with a `source` disambiguator
+  // rather than inventing a schema-unknown activity type; run-audit consumers already
+  // understand `task:auto-archived-duplicate` and can key off `metadata.source`.
+  await store.recordActivity({
+    type: "task:auto-archived-duplicate",
+    taskId,
+    details: "Flagged (not archived) as same-agent duplicate during intake",
+    metadata: { siblingTaskIds: siblingIds, scores, source: "same-agent-flagged" },
+  });
+  if (!canonicalId) return undefined;
+  const sourceMetadataPatch = {
+    nearDuplicateOf: canonicalId,
+    nearDuplicateScore: scores[canonicalId] ?? null,
+  };
+  await store.updateTask(taskId, { sourceMetadataPatch });
+  // Return the applied patch so the in-memory task object held by the createTask
+  // caller (which was written to disk BEFORE this flag runs) can be kept in sync
+  // without a redundant re-fetch.
+  return sourceMetadataPatch;
+}

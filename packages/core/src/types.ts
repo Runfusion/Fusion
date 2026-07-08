@@ -4423,6 +4423,17 @@ export interface ProjectSettings {
   /** Retention in integer days before done tasks are auto-archived.
    *  0 disables this days-based override. When > 0, takes precedence over autoArchiveDoneAfterMs. */
   doneAutoArchiveDays?: number;
+  /**
+   * FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
+   * Operators do not want same-agent duplicate tasks silently archived on
+   * creation (FN-4892 intake heuristic) — they want visibility and a chance
+   * to decide. When `true`, `_maybeAutoArchiveSameAgentDuplicate` archives the
+   * later task as before. When `false` (the default), the heuristic still
+   * detects the duplicate but flags it in place via the existing near-duplicate
+   * marker (`nearDuplicateOf`/`nearDuplicateScore`) instead of moving it to
+   * `archived`, so the dashboard's yellow "Duplicate" chip with Keep/Archive
+   * actions surfaces it for a human decision. Default: false. */
+  autoArchiveDuplicateTasksEnabled?: boolean;
   /** How much agent log content to preserve when a task is moved to cold archive storage.
    *  - "compact": deterministic summary plus a small recent-entry snapshot (default)
    *  - "full": copy the full agent.log into archive.db

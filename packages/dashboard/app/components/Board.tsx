@@ -65,6 +65,12 @@ interface BoardProps {
   onArchiveAllDone?: () => Promise<Task[]>;
   /** Lazy-load archived tasks. Called the first time the user expands the archived column. */
   onLoadArchivedTasks?: () => Promise<void>;
+  /** FNXC:ArchivePagination 2026-07-08-00:00: FN-7659 — fetch the next 100-item page of archived tasks (newest-first). Threaded to the Archived column's server-backed "Show more" button. */
+  onLoadMoreArchivedTasks?: () => Promise<void>;
+  /** Whether another archived page is available beyond what is currently loaded. */
+  archivedHasMore?: boolean;
+  /** True while a "Show more" archived page fetch is in flight. */
+  archivedLoadingMore?: boolean;
   searchQuery?: string;
   availableModels?: ModelInfo[];
   /**
@@ -160,7 +166,7 @@ function BoardWorkflowSkeleton({ empty = false }: { empty?: boolean }) {
   );
 }
 
-export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
+export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, onMoveTask, onPauseTask, onUnpauseTask, onResetTask, onDuplicateTask, onMergeTask, onOpenDetail, onOpenRefine, onOpenGroupModal, addToast, onQuickCreate, onNewTask, autoMerge, mergeStrategy = "direct", onToggleAutoMerge, planAutoApproveEnabled, onTogglePlanAutoApprove, globalPaused, onUpdateTask, onRetryTask, onArchiveTask, onUnarchiveTask, onRevertTask, onDeleteTask, onArchiveAllDone, onLoadArchivedTasks, onLoadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, searchQuery = "", availableModels, onPlanningMode, onSubtaskBreakdown, onOpenDetailWithTab, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, taskStuckTimeoutMs, onOpenMission, staleHighFanoutBlockerAgeThresholdMs, lastFetchTimeMs, prAuthAvailable, onOpenWorkflowEditor, onCreateWorkflow, workflowColumnsEnabled, settingsLoaded, workflowControlsInHeader = false }: BoardProps) {
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   /*
   FNXC:DoneColumnSorting 2026-06-29-16:57:
@@ -636,7 +642,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       const isWorkflowDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
       grouped[column.id] = isWorkflowDoneLikeColumn
         ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
-        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType);
+        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true);
     }
     return grouped;
   }, [doneSortMode, selectedWorkflow, selectedWorkflowCreateColumnId, selectedWorkflowTasks]);
@@ -790,7 +796,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
       const isDoneLikeColumn = column.flags.complete === true && column.flags.archived !== true;
       grouped[column.id] = isDoneLikeColumn
         ? sortTasksForDisplayColumn(grouped[column.id] ?? [], "done", doneSortMode)
-        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType);
+        : sortTasksForDisplayColumn(grouped[column.id] ?? [], column.id as ColumnType, doneSortMode, column.flags.archived === true);
     }
     return grouped;
   }, [aggregateBoardColumns, doneSortMode, getEffectiveTaskWorkflowId, tasks, workflowColumnsByWorkflowId]);
@@ -906,12 +912,13 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                   prAuthAvailable={prAuthAvailable}
                   autoMerge={autoMerge}
                   mergeStrategy={mergeStrategy}
-                  {...(((columnDef.flags.intake || columnDef.flags.hold) && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
+                  // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
+                  {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
                   {...(isCreateColumn && aggregateQuickCreateTarget ? { workflowId: aggregateQuickCreateTarget.workflowId, workflowOptions, defaultWorkflowId: boardWorkflows?.defaultWorkflowId ?? null, onQuickCreate: handleAggregateWorkflowQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
                   {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                   {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
                   {...(isDoneLikeColumn ? { doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
-                  {...(columnDef.flags.archived ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
+                  {...(columnDef.flags.archived ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived: onLoadMoreArchivedTasks } : {})}
                 />
               );
             })}
@@ -987,7 +994,8 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
                 prAuthAvailable={prAuthAvailable}
                 autoMerge={autoMerge}
                 mergeStrategy={mergeStrategy}
-                {...(((columnDef.flags.intake || columnDef.flags.hold) && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
+                // FNXC:PlanApproval 2026-07-07-00:00: FN-7653 — the plan auto-approve shortcut belongs only to the intake/planning column, never to hold (Todo-like) columns; the built-in Coding workflow's Todo column carries the hold trait and was wrongly receiving this prop pair.
+                {...((columnDef.flags.intake && !columnDef.flags.archived && !columnDef.flags.complete && !columnDef.flags.countsTowardWip && !columnDef.flags.mergeBlocker && !columnDef.flags.humanReview) ? { planAutoApproveEnabled, onTogglePlanAutoApprove } : {})}
                 {...(isCreateColumn ? { workflowOptions, defaultWorkflowId: selectedWorkflow.id, onQuickCreate: handleWorkflowQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
                 {...(columnDef.flags.mergeBlocker || columnDef.flags.humanReview ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
                 {...(columnDef.id === "done" ? { onArchiveAllDone } : {})}
@@ -1046,6 +1054,9 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
               mergeStrategy={mergeStrategy}
               collapsed={archivedCollapsed}
               onToggleCollapse={handleToggleArchivedCollapse}
+              archivedHasMore={archivedHasMore}
+              archivedLoadingMore={archivedLoadingMore}
+              onLoadMoreArchived={onLoadMoreArchivedTasks}
             />
           )}
         </main>
@@ -1101,7 +1112,7 @@ export function Board({ tasks, projectId, maxConcurrent, showWorktreeGrouping, o
             {...(col === "triage" ? { onQuickCreate, onNewTask, onPlanningMode, onSubtaskBreakdown } : {})}
             {...(col === "in-review" ? { onToggleAutoMerge: handleToggleAutoMerge } : {})}
             {...(col === "done" ? { onArchiveAllDone, doneSortMode, onDoneSortModeChange: setDoneSortMode } : {})}
-            {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse } : {})}
+            {...(col === "archived" ? { collapsed: archivedCollapsed, onToggleCollapse: handleToggleArchivedCollapse, archivedHasMore, archivedLoadingMore, onLoadMoreArchived: onLoadMoreArchivedTasks } : {})}
           />
         ))}
       </main>

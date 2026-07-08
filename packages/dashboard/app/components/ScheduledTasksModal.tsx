@@ -144,6 +144,49 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
   }, []);
 
   /*
+  FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652):
+  The live-output panel's terminal status must be a function of the AUTHORITATIVE run result (the POST
+  trigger's `result.success`, mirrored server-side by `AutomationLiveRunRegistry.complete()`), never of
+  transient SSE stream mechanics. Two benign-teardown paths used to get misread as "the run failed":
+  (a) `streamRoutineRun` is opened WITHOUT a runId (it races the POST so a slow run still streams live),
+      so its resilient EventSource can exhaust reconnect attempts and fire `onFatalError("Connection
+      lost")` for reasons that have nothing to do with the run's outcome (dev-server hiccup, a normal
+      post-terminal `res.end()` racing the client, etc.) — this must never itself paint "Run failed".
+  (b) a runId-less stream can (server-permitting) attach to a stale prior run and replay ITS terminal
+      event; `routes.ts`'s `getForAutoAttach` bounds that window, but the client still treats the
+      awaited POST result as the single source of truth rather than trusting whichever event happened
+      to arrive on the SSE channel.
+  `reconcileLiveRunResult` is the one place that commits a terminal status/line; it is idempotent (a
+  no-op when the panel already reflects the same terminal status) and drops any output the panel
+  accumulated after a wrongly-terminal state so no false "Run failed" line can linger once the true
+  outcome is known.
+  */
+  const reconcileLiveRunResult = useCallback((routineId: string, success: boolean, errorMessage?: string) => {
+    setLiveRunOutput((previous) => {
+      const current = previous[routineId];
+      const targetStatus: "complete" | "error" = success ? "complete" : "error";
+      if (current?.status === targetStatus) {
+        // Already reflects the authoritative outcome (a genuine SSE terminal event already matched it).
+        return previous;
+      }
+      const line = success
+        ? t("schedule.liveRunComplete", "Run complete")
+        : (errorMessage || t("schedule.liveRunError", "Run failed"));
+      // Only carry forward the transcript if the panel is still mid-run; a mismatched prior terminal
+      // status (stale-attach or benign-teardown artifact) must not leave its line behind once the real
+      // outcome supersedes it.
+      const base = current && current.status === "running" ? current.output : "";
+      return {
+        ...previous,
+        [routineId]: {
+          output: base ? `${base}\n${line}` : line,
+          status: targetStatus,
+        },
+      };
+    });
+  }, [t]);
+
+  /*
   FNXC:AutomationLiveOutput 2026-06-26-00:00:
   The modal and embedded Automations view both render RoutineCard, so the run handler owns one SSE stream per routine and passes the accumulated live transcript down instead of duplicating stream logic per presentation.
   */
@@ -161,17 +204,17 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
       return;
     }
     if (event.type === "complete") {
-      appendLiveRunLine(routineId, t("schedule.liveRunComplete", "Run complete"), "complete");
+      reconcileLiveRunResult(routineId, true);
       liveRunStreamsRef.current[routineId]?.close();
       delete liveRunStreamsRef.current[routineId];
       return;
     }
     if (event.type === "error") {
-      appendLiveRunLine(routineId, event.message ?? t("schedule.liveRunError", "Run failed"), "error");
+      reconcileLiveRunResult(routineId, false, event.message);
       liveRunStreamsRef.current[routineId]?.close();
       delete liveRunStreamsRef.current[routineId];
     }
-  }, [appendLiveRunLine, t]);
+  }, [appendLiveRunLine, reconcileLiveRunResult]);
 
   // ── Routine CRUD handlers ───────────────────────────────────────────────
 
@@ -233,7 +276,12 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
       liveRunStreamsRef.current[routine.id]?.close();
       liveRunStreamsRef.current[routine.id] = streamRoutineRun(routine.id, {
         onEvent: (event) => handleLiveRunEvent(routine.id, event),
-        onFatalError: (message) => appendLiveRunLine(routine.id, message, "error"),
+        // FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652): benign SSE teardown (reconnect
+        // exhaustion, a normal post-terminal close racing the client) is NOT a run-failure signal —
+        // intentionally a no-op here. The awaited `runRoutine` result below is the sole authority that
+        // reconciles `liveRunOutput` to the real terminal state; letting this callback paint
+        // "Run failed" is exactly the FN-7652 bug (a successful run ending in an error-styled panel).
+        onFatalError: () => {},
       }, scopeOptions);
       try {
         const { result } = await runRoutine(routine.id, scopeOptions);
@@ -245,6 +293,7 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
             success: result.success,
           },
         }));
+        reconcileLiveRunResult(routine.id, result.success, result.error);
         if (result.success) {
           addToast(t("schedule.routineSuccess", "\"{{name}}\" completed successfully", { name: routine.name }), "success");
         } else {
@@ -252,14 +301,19 @@ export function ScheduledTasksModal({ onClose, addToast, projectId, presentation
         }
         await loadRoutines();
       } catch (err) {
-        addToast(getErrorMessage(err) || t("schedule.runError", "Failed to run routine"), "error");
+        const message = getErrorMessage(err) || t("schedule.runError", "Failed to run routine");
+        // FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652): the POST itself never resolved with a
+        // result, so this IS a genuine failure — reconcile the live panel to the real error too, not
+        // just the toast, so it doesn't linger stuck on "running".
+        reconcileLiveRunResult(routine.id, false, message);
+        addToast(message, "error");
       } finally {
         liveRunStreamsRef.current[routine.id]?.close();
         delete liveRunStreamsRef.current[routine.id];
         setRunningRoutineId(null);
       }
     },
-    [addToast, appendLiveRunLine, handleLiveRunEvent, loadRoutines, scopeOptions, t],
+    [addToast, handleLiveRunEvent, loadRoutines, reconcileLiveRunResult, scopeOptions, t],
   );
 
   const handleToggleRoutine = useCallback(

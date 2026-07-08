@@ -23,6 +23,7 @@ import { resolveEffectivePlannerOversightLevel } from "../../../core/src/workflo
 import { addressPrFeedback, fetchTaskDetail, uploadAttachment, fetchMission, fetchAgent, rebuildTaskSpec, refreshPrStatus, fetchWorkflowSettingValues, type WorkflowFieldDefinition, type RevertTaskOptions, type RevertTaskResult } from "../api";
 import { GitHubBadge } from "./GitHubBadge";
 import { GitLabBadge } from "./GitLabBadge";
+import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 import { PrCreateModal } from "./PrCreateModal";
 import { ProviderIcon } from "./ProviderIcon";
 import { PluginSlot } from "./PluginSlot";
@@ -2937,6 +2938,7 @@ function TaskCardComponent({
         {task.gitlabTracking?.item && (
           <GitLabBadge item={task.gitlabTracking.item} />
         )}
+        <RuntimeFallbackBadge taskId={task.id} isInViewport={isInViewport} projectId={projectId} />
         {prNode && (
           prNode.state === "failed" ? (
             <button

@@ -196,6 +196,12 @@ export interface MainContentProps {
   ) => Promise<Task>;
   archiveAllDone: () => Promise<Task[]>;
   loadArchivedTasks: () => Promise<void>;
+  /** FNXC:ArchivePagination 2026-07-08-00:00: FN-7659 — fetch the next 100-item page of archived tasks (newest-first). */
+  loadMoreArchivedTasks: () => Promise<void>;
+  /** Whether another page of archived tasks is available beyond what is currently loaded. */
+  archivedHasMore: boolean;
+  /** True while a "Show more" archived page fetch is in flight. */
+  archivedLoadingMore: boolean;
   searchQuery: string;
   availableModels: ModelInfo[];
   favoriteProviders: string[];

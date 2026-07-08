@@ -75,6 +75,15 @@ export interface StandardChatActionButtonProps {
   classNameSend?: string;
   classNameStop?: string;
   showSendText?: boolean;
+  /**
+   * FNXC:StandardChatSurface 2026-07-07-00:00:
+   * Send and Stop visible-text are independently controllable so callers like
+   * the planner (FN-7655) can render the Stop button icon-only while keeping
+   * the Send button's text label. Defaults to `showSendText` when unset so
+   * existing callers keep prior combined behavior (accessible name via
+   * aria-label is always preserved regardless of this flag).
+   */
+  showStopText?: boolean;
   sendTestId?: string;
   stopTestId?: string;
 }
@@ -515,11 +524,14 @@ export function useStandardChatActionGesture() {
   return { beginTouchActionGesture, markHandledSendTouch, consumeHandledSendTouch };
 }
 
-export function StandardChatActionButton({ isStreaming, canSend, onSend, onStop, sendLabel, stopLabel, classNameSend = "chat-input-send", classNameStop = "chat-input-stop", showSendText = false, sendTestId = "chat-send-btn", stopTestId = "chat-stop-btn" }: StandardChatActionButtonProps) {
+export function StandardChatActionButton({ isStreaming, canSend, onSend, onStop, sendLabel, stopLabel, classNameSend = "chat-input-send", classNameStop = "chat-input-stop", showSendText = false, showStopText, sendTestId = "chat-send-btn", stopTestId = "chat-stop-btn" }: StandardChatActionButtonProps) {
   const { t } = useTranslation("app");
   const { beginTouchActionGesture, markHandledSendTouch, consumeHandledSendTouch } = useStandardChatActionGesture();
+  // FNXC:StandardChatSurface 2026-07-07-00:00: resolve the Stop button's visible-text flag
+  // independently of Send's, defaulting to showSendText when the caller doesn't opt in (FN-7655).
+  const showStop = showStopText ?? showSendText;
   if (isStreaming) {
-    return <button type="button" className={classNameStop} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; onStop?.(); }} aria-label={stopLabel ?? t("chat.stopGeneration", "Stop generation")} data-testid={stopTestId} style={{ touchAction: "manipulation" }}><span className="chat-input-stop-icon" aria-hidden="true" />{showSendText && <span>{stopLabel ?? t("chat.stopGeneration", "Stop generation")}</span>}</button>;
+    return <button type="button" className={classNameStop} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); onStop?.(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; onStop?.(); }} aria-label={stopLabel ?? t("chat.stopGeneration", "Stop generation")} data-testid={stopTestId} style={{ touchAction: "manipulation" }}><span className="chat-input-stop-icon" aria-hidden="true" />{showStop && <span>{stopLabel ?? t("chat.stopGeneration", "Stop generation")}</span>}</button>;
   }
   return <button type="button" className={classNameSend} onPointerDown={(event) => { if (event.pointerType && event.pointerType !== "mouse") { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); void onSend(); } }} onTouchStart={(event) => { event.preventDefault(); if (!beginTouchActionGesture()) return; markHandledSendTouch(); void onSend(); }} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (consumeHandledSendTouch()) return; void onSend(); }} disabled={!canSend} data-testid={sendTestId} aria-label={sendLabel ?? t("chat.send", "Send")} style={{ touchAction: "manipulation" }}><Send size={16} />{showSendText && <span>{sendLabel ?? t("chat.send", "Send")}</span>}</button>;
 }

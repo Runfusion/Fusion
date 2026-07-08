@@ -518,6 +518,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   autoArchiveDoneTasksEnabled: true,
   autoArchiveDoneAfterMs: 48 * 60 * 60 * 1000,
   doneAutoArchiveDays: 0,
+  // FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658): default OFF — operators
+  // decide via the near-duplicate flag/UI instead of tasks silently vanishing
+  // into `archived` during intake. Set true to restore the pre-FN-7658 behavior.
+  autoArchiveDuplicateTasksEnabled: false,
   archiveAgentLogMode: "compact",
   autoUpdatePrStatus: false,
   githubCommentOnDone: false,

@@ -1213,7 +1213,7 @@
       "workflowMismatch": "Drag can't move a card between workflows. Use the workflow switcher instead."
     },
     "todo": "To Do",
-    "triage": "Triage",
+    "triage": "Planning",
     "workflow": {
       "edit": "Edit workflows",
       "new": "New workflow"
@@ -1363,7 +1363,6 @@
     "scopeRooms": "Rooms",
     "scrollMessageToTop": "Scroll message to top",
     "searchConversations": "Search conversations...",
-    "searchInTitleOnly": "Search in title only",
     "selectAgentForNewChat": "Select agent for new chat",
     "selectAgentPlaceholder": "Select an agent to start chatting",
     "selectModel": "Select a model",
@@ -1621,11 +1620,11 @@
     "funnel": {
       "ariaLabel": "Tasks per workflow stage",
       "completionRate": "Completion rate",
-      "completionRateAria": "Completion rate for in-range triage entrants",
+      "completionRateAria": "Completion rate for in-range planning entrants",
       "completionRateHint": "Done ÷ entered (in range)",
       "doneInRange": "Reached done",
       "empty": "No task transitions in the selected range.",
-      "enteredInRange": "Entered triage",
+      "enteredInRange": "Entered planning",
       "rangeDays_one": "{{count}} day range",
       "rangeDays_other": "{{count}} day range",
       "stage": {
@@ -1634,7 +1633,7 @@
         "inReview": "In review",
         "other": "Other",
         "todo": "Todo",
-        "triage": "Triage"
+        "triage": "Planning"
       },
       "throughputPerDay": "Tasks done / day",
       "throughputTitle": "Throughput",
@@ -5296,7 +5295,7 @@
     "catchUpPolicyRunOne": "Run the most recent missed run",
     "catchUpPolicySkip": "Skip missed runs",
     "columnTodo": "To Do",
-    "columnTriage": "Triage",
+    "columnTriage": "Planning",
     "command": "Command",
     "commandHelp": "Shell command to execute. Runs with your user permissions.",
     "commandHint": "Shell command to execute.",
@@ -5474,7 +5473,7 @@
     "targetColumnLabel": "Target Column",
     "taskColumnLabel": "Target Column",
     "taskColumnTodo": "To Do",
-    "taskColumnTriage": "Triage",
+    "taskColumnTriage": "Planning",
     "taskDescription": "Task Description *",
     "taskDescriptionHelp": "Describes the task that will be created.",
     "taskDescriptionHint": "Describes the task that will be created.",
@@ -5494,7 +5493,7 @@
     "title": "Automations",
     "todoColumn": "To Do",
     "toggleError": "Failed to toggle routine",
-    "triageColumn": "Triage",
+    "triageColumn": "Planning",
     "triggerApi": "API",
     "triggerCron": "Cron",
     "triggerManual": "Manual",
@@ -6547,6 +6546,8 @@
       "addIgnoredPath": " Add ignored path ",
       "archiveAgentLog": "Archive Agent Log",
       "archiveCompletedTasksAfterDays": "Archive Completed Tasks After (days)",
+      "autoArchiveDuplicateTasks": " Automatically archive duplicate tasks ",
+      "autoArchiveDuplicateTasksHelp": "Automatically archive tasks detected as same-agent duplicates on creation (off by default). When disabled, duplicates are flagged in place with the yellow Duplicate chip and Keep/Archive actions instead of being archived automatically.",
       "backlogNoTaskAutoClaimIsExecutorOnly": "Backlog/no-task auto-claim is executor-only by default. Enable to let engineer-role agents auto-claim unowned backlog tasks; explicit routing and delegation are unchanged. Default: off.",
       "browse": " Browse ",
       "closeParenPeriod": ").",

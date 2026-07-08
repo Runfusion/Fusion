@@ -180,6 +180,21 @@ export function SchedulingSection({ scopeBanner, form, setForm, globalMaxConcurr
         </select>
         <small>{t("settings.scheduling.compactModeKeepsArchiveSizeLowWhilePreserving", "Compact mode keeps archive size low while preserving recent agent activity for context. Default: compact.")}</small>
       </div>
+      {/**
+       * FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
+       * Operators do not want same-agent duplicate tasks (FN-4892 intake heuristic)
+       * silently archived on creation — they want visibility and a chance to decide
+       * via the near-duplicate flag/UI. Default off; this toggle restores the old
+       * aggressive auto-archive behavior when enabled.
+       */}
+      <div className="form-group">
+        <label htmlFor="autoArchiveDuplicateTasksEnabled" className="checkbox-label">
+          <input id="autoArchiveDuplicateTasksEnabled" type="checkbox" checked={form.autoArchiveDuplicateTasksEnabled ?? false} onChange={(e) => setForm((f) => ({
+            ...f,
+            autoArchiveDuplicateTasksEnabled: e.target.checked,
+        }))}/>{t("settings.scheduling.autoArchiveDuplicateTasks", " Automatically archive duplicate tasks ")}</label>
+        <small>{t("settings.scheduling.autoArchiveDuplicateTasksHelp", "Automatically archive tasks detected as same-agent duplicates on creation (off by default). When disabled, duplicates are flagged in place with the yellow Duplicate chip and Keep/Archive actions instead of being archived automatically.")}</small>
+      </div>
       <div className="form-group">
         <label htmlFor="maxStuckKills">{t("settings.scheduling.maxStuckRetries", "Max Stuck Retries")}</label>
         <input id="maxStuckKills" type="number" min={1} step={1} value={form.maxStuckKills ?? ""} onChange={(e) => {

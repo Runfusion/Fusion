@@ -299,6 +299,25 @@ export function fetchTasks(
   return api<Task[]>(`/tasks${suffix}`);
 }
 
+/**
+ * FNXC:ArchivePagination 2026-07-08-00:00:
+ * Dedicated paged read for the Archived board column (FN-7659). Returns
+ * one bounded page (default 100) ordered `archivedAt DESC` plus `total`/
+ * `hasMore` so the caller can drive a "Show more" affordance without ever
+ * fetching the whole archive in one request.
+ */
+export function fetchArchivedTasks(
+  projectId?: string,
+  limit?: number,
+  offset?: number,
+): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
+  const search = new URLSearchParams();
+  if (limit !== undefined) search.set("limit", String(limit));
+  if (offset !== undefined) search.set("offset", String(offset));
+  const suffix = search.size > 0 ? `?${search.toString()}` : "";
+  return api<{ tasks: Task[]; total: number; hasMore: boolean }>(withProjectId(`/tasks/archived${suffix}`, projectId));
+}
+
 export async function fetchTaskDetail(id: string, projectId?: string): Promise<TaskDetail> {
   const maxAttempts = 2; // 1 initial + 1 retry
   const url = buildApiUrl(withProjectId(`/tasks/${id}`, projectId));
@@ -314,6 +333,29 @@ export async function fetchTaskDetail(id: string, projectId?: string): Promise<T
   }
   // unreachable
   throw new Error("Request failed");
+}
+
+export interface TaskRuntimeFallbackResponse {
+  taskId: string;
+  hasEvent: boolean;
+  wasConfigured: boolean | null;
+  runtimeHint: string | null;
+  reason: string | null;
+  eventId: string | null;
+  timestamp: string | null;
+  showFallbackBadge: boolean;
+}
+
+/**
+ * Fetch the most recent session:runtime-resolved audit event for a task,
+ * normalized for the runtime-fallback badge/toast affordance. Used by
+ * useRuntimeFallbackStatus.
+ */
+export async function fetchTaskRuntimeFallback(
+  taskId: string,
+  projectId?: string,
+): Promise<TaskRuntimeFallbackResponse> {
+  return api<TaskRuntimeFallbackResponse>(withProjectId(`/tasks/${taskId}/runtime-fallback`, projectId));
 }
 
 export interface UpdateTaskReviewRequest {

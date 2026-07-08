@@ -1259,7 +1259,9 @@ describe("Board", () => {
       }
     });
 
-    it("passes plan auto-approval toggle to selected workflow intake and hold columns only", async () => {
+    it("passes plan auto-approval toggle to the selected workflow intake column only, not hold", async () => {
+      // FNXC:PlanApproval 2026-07-07-00:00 (FN-7653): the hold column must NOT receive the toggle;
+      // only the intake/planning column does. Regression coverage for the Todo-shows-toggle bug.
       const workflow = {
         id: "wf-plan-columns",
         name: "Plan columns",
@@ -1276,13 +1278,24 @@ describe("Board", () => {
 
       await waitFor(() => expect(screen.getByTestId("column-idea")).toBeDefined());
       expect(screen.getByTestId("column-idea").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
-      expect(screen.getByTestId("column-hold").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-hold").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-work").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-review").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-done").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
     });
 
-    it("passes plan auto-approval toggle to all-workflows aggregate intake columns", async () => {
+    it("reproduces then disproves the Todo/hold column plan-toggle symptom on the built-in Coding workflow", async () => {
+      // FNXC:PlanApproval 2026-07-07-00:00 (FN-7653): exact reported symptom — built-in Coding workflow's
+      // `todo` column carries the hold trait and used to wrongly render the Auto-approve plan toggle.
+      enableFlag({ "FN-1": "builtin:coding" }, [DEFAULT_WORKFLOW]);
+      renderBoard({ tasks: [mkTask({ id: "FN-1", column: "triage" })], planAutoApproveEnabled: true });
+
+      await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
+      expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-todo").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
+    });
+
+    it("passes plan auto-approval toggle to all-workflows aggregate intake columns only, not hold", async () => {
       const projectId = "project-all-plan-columns";
       enableFlag({ "FN-1": "builtin:coding" }, [DEFAULT_WORKFLOW]);
       window.localStorage.setItem(scopedKey(BOARD_WORKFLOW_SELECTION_STORAGE_KEY, projectId), ALL_WORKFLOWS_BOARD_VIEW_ID);
@@ -1293,6 +1306,7 @@ describe("Board", () => {
 
       await waitFor(() => expect(screen.getByTestId("column-triage")).toBeDefined());
       expect(screen.getByTestId("column-triage").getAttribute("data-has-plan-auto-approve-toggle")).toBe("yes");
+      expect(screen.getByTestId("column-todo").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
       expect(screen.getByTestId("column-in-progress").getAttribute("data-has-plan-auto-approve-toggle")).toBe("no");
     });
 

@@ -2298,7 +2298,7 @@ function TasksTab({
             <span className="agent-task-id">{task.id}</span>
             <span className={`agent-task-column column-${task.column}`}>{
               ({
-                triage: t("board.triage", "Triage"),
+                triage: t("board.triage", "Planning"),
                 todo: t("board.todo", "Todo"),
                 "in-progress": t("board.inProgress", "In Progress"),
                 "in-review": t("board.inReview", "In Review"),

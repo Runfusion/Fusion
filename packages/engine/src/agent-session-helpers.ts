@@ -347,6 +347,7 @@ export async function createResolvedAgentSession(
         mockProviderActive: isMockProviderId(runtimeOptions.defaultProvider),
         testModeActive: settings ? isTestModeActive(settings) : false,
         ...(runtimeHint ? { runtimeHint } : {}),
+        ...("fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
       },
     });
   } catch (err) {

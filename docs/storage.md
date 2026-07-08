@@ -33,6 +33,13 @@
 - SQLite operational-log pruning is controlled separately by `settings.operationalLogRetentionDays`. It now prunes `activityLog`, `runAuditEvents`, `agentHeartbeats`, terminal `agentRuns` rows by `endedAt`, and `agentConfigRevisions` by `createdAt`.
 - Safety invariants for operational pruning: in-flight `agentRuns` (`endedAt IS NULL`) are never deleted, and the most-recent `agentConfigRevisions` row per agent is always preserved even when older than the retention window.
 
+### Archived-column pagination (FN-7659)
+
+- The Archived board column no longer loads the full archive into memory. `ArchiveDatabase.listPage(limit, offset)` reads a bounded page ordered `archivedAt DESC, rowid DESC` via SQL `LIMIT/OFFSET`, backed by the existing `idxArchivedTasksArchivedAt` index.
+- `TaskStore.listArchivedTasks({ limit, offset, slim })` is a dedicated, archive-only read path (default page size 100) that maps paged entries through `archiveEntryToTask` and returns `{ tasks, total, hasMore }` in `archivedAt DESC` order. It intentionally does **not** run the `createdAt ASC` sort used by the merged `listTasks({ includeArchived: true })` path — that merged path (and its non-board consumers: github-tracking reconciler, signal routes, agent-token-usage, self-healing) is unchanged.
+- `GET /tasks/archived?limit=&offset=` exposes the paged read with `projectId` scoping and `limit`/`offset` validation, returning the same `{ tasks, total, hasMore }` shape.
+- The dashboard's `useTasks` hook loads page 1 on first Archived-column expand and fetches subsequent pages only via an explicit "Show more" click (`loadMoreArchivedTasks`); it never re-fetches the whole archive on SSE reconnect, tab-visibility recovery, or repeated expand calls. Fetched pages merge into the board `tasks` array de-duplicated by id, with active SQLite rows authoritative over archive snapshots.
+
 ### Activity-log no-op `task:moved` cleanup (FN-5940)
 
 - `TaskStore` now defends the invariant that `activityLog` never records a `task:moved` row when `metadata.from === metadata.to`.
@@ -55,6 +62,7 @@
 - Gate boundary: soft-deleted children and archived-column children do **not** block parent removal; only live non-archived children block.
 - `cleanupArchivedTasks` intentionally tolerates dangling lineage pointers in historical/archive cleanup flows; it does not run lineage rewrites.
 - For forensic reads, soft-deleted parents remain accessible through `readTaskFromDb(id, { includeDeleted: true })`.
+- Agent-facing tool layer (FN-7661): the `fn_task_archive` and `fn_task_delete` pi/CLI tools (`packages/cli/src/extension.ts`) both accept an optional `removeLineageReferences` boolean and forward it to `store.archiveTask` / `store.deleteTask`, so an agent that hits `TaskHasLineageChildrenError` can retry with `{ removeLineageReferences: true }` to clear the block — matching the recovery path the error message already advertises.
 
 ### Documents under soft-deleted tasks (FN-5140)
 

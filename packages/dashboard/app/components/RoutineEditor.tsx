@@ -703,7 +703,7 @@ export function RoutineEditor({ routine, onSubmit, onCancel, scope: formScope, p
               <div className="form-group">
                 <label htmlFor="routine-task-column">{t("schedule.taskColumnLabel", "Target Column")}</label>
                 <select id="routine-task-column" value={taskColumn} onChange={(e) => setTaskColumn(e.target.value)}>
-                  <option value="triage">{t("schedule.taskColumnTriage", "Triage")}</option>
+                  <option value="triage">{t("schedule.taskColumnTriage", "Planning")}</option>
                   <option value="todo">{t("schedule.taskColumnTodo", "To Do")}</option>
                 </select>
               </div>

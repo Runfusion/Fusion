@@ -33,7 +33,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliBin = path.join(repoRoot, "packages/cli/bin.mjs");
@@ -66,6 +66,33 @@ function parsePortList(raw) {
 }
 
 const RESERVED_PORTS = new Set([4040, ...parsePortList(process.env.FUSION_RESERVED_PORTS)]);
+
+/*
+ * FNXC:BootSmoke 2026-07-07-00:00:
+ * On macOS the just-terminated `fn serve` child (plus OS-level fsevents/Spotlight
+ * indexing) can still be writing into the throwaway `$HOME`/project dirs
+ * (`/var/folders/.../fusion-boot-smoke-*`) when cleanup runs, so a synchronous
+ * `rmSync(..., { recursive: true, force: true })` intermittently throws ENOTEMPTY.
+ * Cleanup runs from the `process.on("exit")` handler and the retry-port branch —
+ * both AFTER `boot-smoke: PASS` has already been decided/printed — so an uncaught
+ * throw there turned a genuine pass into a `pnpm verify:fast` failure. `rmSync`'s
+ * own `maxRetries`/`retryDelay` already retries transient ENOTEMPTY/EBUSY/EPERM
+ * synchronously (exit handlers cannot await, so async `fs.rm` is not an option
+ * here); the outer try/catch is the final safety net that swallows the error if
+ * removal never succeeds, so a post-PASS cleanup failure can never fail the gate.
+ */
+/**
+ * Remove a throwaway boot-smoke temp dir, tolerating the macOS ENOTEMPTY
+ * async-writer race. Never throws — a cleanup failure after the smoke
+ * verdict is already decided must not change the exit code.
+ */
+export function removeTempDir(dir, { rm = rmSync, maxRetries = 5, retryDelayMs = 100 } = {}) {
+  try {
+    rm(dir, { recursive: true, force: true, maxRetries, retryDelay: retryDelayMs });
+  } catch (err) {
+    console.warn(`boot-smoke: cleanup of ${dir} failed after retries (ignored): ${err?.message ?? err}`);
+  }
+}
 
 /** Ask the OS for a free ephemeral port, retrying if it lands on a reserved one. */
 async function getEphemeralPort() {
@@ -206,8 +233,8 @@ async function bootAndVerify(attempt, registerCleanup) {
     } catch {
       // ESRCH: child already reaped between the check and the kill — fine.
     }
-    rmSync(isolatedHome, { recursive: true, force: true });
-    rmSync(isolatedProject, { recursive: true, force: true });
+    removeTempDir(isolatedHome);
+    removeTempDir(isolatedProject);
   });
 
   const exitedEarly = new Promise((resolve) => {
@@ -225,8 +252,8 @@ async function bootAndVerify(attempt, registerCleanup) {
     if (/EADDRINUSE/.test(stderrBuf) && attempt < BOOT_ATTEMPTS) {
       console.log(`boot-smoke: port :${port} lost to another process (EADDRINUSE), retrying with a fresh port (attempt ${attempt}/${BOOT_ATTEMPTS})`);
       await exitedEarly; // child is already dead or dying; wait so cleanup is race-free
-      rmSync(isolatedHome, { recursive: true, force: true });
-      rmSync(isolatedProject, { recursive: true, force: true });
+      removeTempDir(isolatedHome);
+      removeTempDir(isolatedProject);
       return "retry-port";
     }
     fail(err.message, stderrBuf);
@@ -263,4 +290,9 @@ async function bootAndVerify(attempt, registerCleanup) {
   return "ok";
 }
 
-main().catch((err) => fail(err.message ?? String(err)));
+// FNXC:BootSmoke 2026-07-07-00:00: Guard the top-level boot so importing this
+// module (e.g. from the regression test to reach `removeTempDir`) never spawns
+// a real server; only a direct `node scripts/boot-smoke.mjs` invocation runs it.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main().catch((err) => fail(err.message ?? String(err)));
+}

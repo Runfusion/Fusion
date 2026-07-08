@@ -148,9 +148,15 @@ export function useTasks(options?: UseTasksOptions) {
   const [lastRefreshErrorAt, setLastRefreshErrorAt] = useState<number | null>(null);
   // Once the user expands the archived column, we keep including archived tasks
   // in subsequent refreshes for the lifetime of this hook instance.
-  const [includeArchived, setIncludeArchived] = useState(false);
+  /*
+  FNXC:ArchivePagination 2026-07-08-00:00:
+  FN-7659 retired the merged-refresh path this flag used to drive (see the
+  loadArchivedTasks note below): nothing sets it true anymore, so it is kept
+  as a stable `false` constant purely for return-type/back-compat rather
+  than reactive state.
+  */
+  const includeArchived = false;
   const includeArchivedRef = useRef(includeArchived);
-  includeArchivedRef.current = includeArchived;
   const tasksRef = useRef(tasks);
   const fetchVersionRef = useRef(0);
   // Tracks the project context version to detect stale SSE events after project switches.
@@ -170,6 +176,20 @@ export function useTasks(options?: UseTasksOptions) {
   const lastConfirmedIncludeArchivedRef = useRef(false);
   // Track previous projectId to detect changes
   const previousProjectIdRef = useRef<string | undefined>(projectId);
+  /*
+  FNXC:ArchivePagination 2026-07-08-01:30:
+  Declared ahead of `refreshTasks` (rather than alongside the rest of the
+  archived-pagination state below) because `refreshTasks` reads it on every
+  generic refresh to decide whether to carry merged archived rows forward.
+  Code review (FN-7659) found `refreshTasks`'s unconditional
+  `setTasks(normalizedFetchedTasks)` silently discarded the archived page(s)
+  merged in by `loadArchivedTasks`/`loadMoreArchivedTasks` on the very next
+  SSE reconnect, tab-visibility regain, delete-invalidation refresh, or
+  search-then-clear — making `loadArchivedTasks` a permanent no-op
+  (`archivedLoadedRef.current` stays true) and silently emptying the
+  Archived column for the rest of the session.
+  */
+  const archivedLoadedRef = useRef(false);
   tasksRef.current = tasks;
   searchQueryRef.current = searchQuery;
 
@@ -190,7 +210,20 @@ export function useTasks(options?: UseTasksOptions) {
     const requestVersion = ++fetchVersionRef.current;
     const requestProjectId = projectId; // Capture the projectId for this request
     const query = options?.searchQueryOverride ?? searchQueryRef.current;
-    const wantArchived = options?.includeArchivedOverride ?? includeArchivedRef.current;
+    /*
+    FNXC:ArchivePagination 2026-07-08-01:30:
+    When a search query is active and the user has expanded the Archived
+    column at least once this session, include archived rows in the
+    search-scoped fetch by default (unless the caller explicitly overrides).
+    This is bounded — the merged `listTasks`/`searchTasks` archived branch
+    already runs through `archiveDb.search()`'s own limit, not a full-table
+    load — and restores the pre-FN-7659 behavior where, once expanded,
+    search results included archived matches. A cleared/empty query falls
+    back to the narrow legacy `includeArchivedRef` (always false) so an
+    ordinary refresh never re-triggers a merged archived fetch; the Archived
+    column's own rows are instead carried forward below.
+    */
+    const wantArchived = options?.includeArchivedOverride ?? (query ? archivedLoadedRef.current : includeArchivedRef.current);
 
     try {
       const fetchedTasks = await api.fetchTasks(undefined, undefined, requestProjectId, query, wantArchived);
@@ -199,7 +232,38 @@ export function useTasks(options?: UseTasksOptions) {
         return;
       }
       const normalizedFetchedTasks = filterActiveTasks(fetchedTasks.map(normalizeTask));
-      setTasks(normalizedFetchedTasks);
+      /*
+      FNXC:ArchivePagination 2026-07-08-01:30:
+      A generic refresh (SSE reconnect resync, tab-visibility regain, delete-
+      fetch invalidation, project switch, or a search that has been cleared
+      back to "") always fetches with `includeArchived=false` and would
+      otherwise blow away any archived page(s) already merged in by
+      `loadArchivedTasks`/`loadMoreArchivedTasks`, making the Archived column
+      go silently empty and `loadArchivedTasks` a permanent no-op for the
+      rest of the session (code review finding, FN-7659). When this fetch
+      did not itself request archived rows and there is no active search
+      filter, carry the previously merged archived rows (`column ===
+      "archived"`) forward from the latest task state instead of discarding
+      them; active/non-archived rows from the fresh fetch stay authoritative
+      by id. A non-empty search query intentionally skips carry-over: `wantArchived`
+      is already derived above from `archivedLoadedRef` for query-bearing
+      fetches, so search results include fresh, query-matched archived rows
+      directly and boundedly (via `archiveDb.search()`'s own limit) rather
+      than re-showing stale, query-unfiltered archived cards from this branch.
+      Carry-over reads from `archivedTasksRef` (the canonical accumulator
+      maintained by `mergeArchivedPage`), not from the previous `tasks`
+      state, so a search that temporarily narrowed `tasks` to only its
+      matches cannot cause previously loaded archived rows to be lost once
+      the query is cleared.
+      */
+      const shouldCarryOverArchived = !wantArchived && !query && archivedLoadedRef.current;
+      if (shouldCarryOverArchived) {
+        const freshIds = new Set(normalizedFetchedTasks.map((task) => task.id));
+        const archivedCarryOver = archivedTasksRef.current.filter((task) => !freshIds.has(task.id));
+        setTasks(archivedCarryOver.length > 0 ? [...normalizedFetchedTasks, ...archivedCarryOver] : normalizedFetchedTasks);
+      } else {
+        setTasks(normalizedFetchedTasks);
+      }
       if (requestProjectId) {
         const cachedPayload = fetchedTasks.length > 500 ? fetchedTasks.slice(0, 500) : fetchedTasks;
         writeCache(`${SWR_CACHE_KEYS.TASKS_PREFIX}${requestProjectId}`, cachedPayload, { maxBytes: 500_000 });
@@ -258,13 +322,90 @@ export function useTasks(options?: UseTasksOptions) {
     }
   }, [shouldRefreshOnTaskViewReentry, sseEnabled]);
 
-  /** Lazy-load archived tasks. Called by the Board when the archived column is first expanded. */
-  const loadArchivedTasks = useCallback(async () => {
-    if (includeArchivedRef.current) return;
-    setIncludeArchived(true);
-    includeArchivedRef.current = true;
-    await refreshTasksRef.current({ includeArchivedOverride: true });
+  /*
+  FNXC:ArchivePagination 2026-07-08-00:00:
+  FN-7659 — the Archived column must load newest-first (`archivedAt DESC`) in
+  server-backed pages of 100 with an explicit "Show more" affordance, and the
+  full archive must never load into memory in one pass. The prior
+  implementation flipped `includeArchived` and re-ran the merged `refreshTasks`
+  (backed by `listTasks({includeArchived:true})`), which (a) sorted archived
+  rows oldest-first alongside active rows and (b) fetched the ENTIRE archive
+  on every subsequent refresh (SSE reconnect, tab-visibility recovery,
+  search) once the column had ever been expanded. `loadArchivedTasks`/
+  `loadMoreArchivedTasks` now call the dedicated `GET /tasks/archived` page
+  read and merge only the fetched page into `tasks` (de-duplicated by id,
+  active SQLite rows authoritative — mirrors the existing collapse-by-id
+  invariant). `includeArchived` is intentionally left untouched here so it
+  keeps its narrow legacy meaning (an explicit search override) instead of
+  being repurposed to gate a full-archive refetch.
+  */
+  const [archivedHasMore, setArchivedHasMore] = useState(false);
+  const [archivedLoadingMore, setArchivedLoadingMore] = useState(false);
+  const archivedOffsetRef = useRef(0);
+  // Note: archivedLoadedRef is declared earlier (near tasksRef) so refreshTasks can read it.
+  const archivedLoadingMoreRef = useRef(false);
+  /*
+  FNXC:ArchivePagination 2026-07-08-01:30:
+  Canonical store of every archived row merged in so far via
+  `loadArchivedTasks`/`loadMoreArchivedTasks`, independent of the transient
+  `tasks` state. A search-scoped `refreshTasks` fetch can temporarily
+  replace `tasks` with only the query-matched rows (active + matching
+  archived); if the generic-refresh carry-over in `refreshTasks` read
+  archived rows back out of `tasks` at that point, clearing the query would
+  "carry over" only the narrower search-result set and permanently lose any
+  previously loaded archived rows that did not match the last query. Keeping
+  a dedicated accumulator means carry-over always restores the full set of
+  archived rows loaded so far, regardless of what the last fetch's result
+  shape happened to be.
+  */
+  const archivedTasksRef = useRef<Task[]>([]);
+
+  const mergeArchivedPage = useCallback((page: Task[]) => {
+    const normalizedPage = page.map(normalizeTask);
+    const knownArchivedIds = new Set(archivedTasksRef.current.map((task) => task.id));
+    const newArchived = normalizedPage.filter((task) => !knownArchivedIds.has(task.id));
+    if (newArchived.length > 0) {
+      archivedTasksRef.current = [...archivedTasksRef.current, ...newArchived];
+    }
+    setTasks((prev) => {
+      const existingIds = new Set(prev.map((task) => task.id));
+      const additions = normalizedPage.filter((task) => !existingIds.has(task.id));
+      if (additions.length === 0) return prev;
+      return [...prev, ...additions];
+    });
   }, []);
+
+  /** Lazy-load archived tasks, page 1 (100, newest-first). Called by the Board when the archived column is first expanded. */
+  const loadArchivedTasks = useCallback(async () => {
+    if (archivedLoadedRef.current) return;
+    archivedLoadedRef.current = true;
+    try {
+      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, 0);
+      mergeArchivedPage(page);
+      archivedOffsetRef.current = page.length;
+      setArchivedHasMore(hasMore);
+    } catch {
+      // Allow a future expand attempt to retry the first page.
+      archivedLoadedRef.current = false;
+    }
+  }, [projectId, mergeArchivedPage]);
+
+  /** Fetch the next 100-item page of archived tasks. No-op when there is no further page or a fetch is already in flight. */
+  const loadMoreArchivedTasks = useCallback(async () => {
+    if (!archivedLoadedRef.current || archivedLoadingMoreRef.current) return;
+    if (!archivedHasMore) return;
+    archivedLoadingMoreRef.current = true;
+    setArchivedLoadingMore(true);
+    try {
+      const { tasks: page, hasMore } = await api.fetchArchivedTasks(projectId, 100, archivedOffsetRef.current);
+      mergeArchivedPage(page);
+      archivedOffsetRef.current += page.length;
+      setArchivedHasMore(hasMore);
+    } finally {
+      archivedLoadingMoreRef.current = false;
+      setArchivedLoadingMore(false);
+    }
+  }, [projectId, archivedHasMore, mergeArchivedPage]);
 
   // Debounced search effect - separate from refreshTasks to avoid dependency cycle
   const prevSearchQueryRef = useRef<string | undefined>(searchQuery);
@@ -300,6 +441,16 @@ export function useTasks(options?: UseTasksOptions) {
   useEffect(() => {
     setIsStale(true);
     void refreshTasks({ clearOnError: true });
+    // FNXC:ArchivePagination 2026-07-08-00:00: reset archived-page state on
+    // project switch so a new project's Archived column starts collapsed
+    // and re-fetches its own page 1 rather than reusing the previous
+    // project's offset/hasMore.
+    archivedLoadedRef.current = false;
+    archivedOffsetRef.current = 0;
+    archivedLoadingMoreRef.current = false;
+    archivedTasksRef.current = [];
+    setArchivedHasMore(false);
+    setArchivedLoadingMore(false);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") {
@@ -823,5 +974,5 @@ export function useTasks(options?: UseTasksOptions) {
     lastFetchTimeMs.current = Date.now();
   }, []);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

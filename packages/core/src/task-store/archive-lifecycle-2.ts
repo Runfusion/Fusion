@@ -21,6 +21,7 @@ import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {softDeleteTaskRow as softDeleteTaskRowAsync, readTaskRow as readTaskRowAsync} from "../task-store/async-persistence.js";
 import {findLiveLineageChildren as findLiveLineageChildrenAsync, removeLineageReferences} from "../task-store/async-lifecycle.js";
 import {archiveParentTaskWithLineageGate, findArchivedTaskEntry, deleteArchivedTaskEntry, restoreTaskFromArchive} from "../task-store/async-archive-lineage.js";
+import {getArchivedRowCount, listArchivedTaskEntriesPage} from "../async-archive-db.js";
 
 export async function taskToArchiveEntryImpl(store: TaskStore, task: Task, archivedAt: string): Promise<ArchivedTaskEntry> {
     const settings = await store.getSettingsFast();
@@ -207,6 +208,42 @@ export async function archiveTaskBackendImpl(store: TaskStore, id: string, optio
 
     return store.archiveEntryToTask(entry, false);
   }
+
+/**
+ * FNXC:ArchivePagination 2026-07-08-00:00:
+ * Dedicated archived-only read path for the Archived board column (FN-7659).
+ * The merged `listTasks({includeArchived:true})` path re-sorts everything
+ * (active + archived) by `createdAt ASC`, which is correct for the merged
+ * consumers but wrong for the Archived column (must be newest-first) and
+ * unbounded. This reads ONLY archive cold storage via a bounded LIMIT/OFFSET
+ * page ordered `archivedAt DESC` — do not re-sort by createdAt and do not use
+ * as a substitute for the merged path. Backend mode reads `archive.archived_tasks`
+ * via async Drizzle; the sqlite path mirrors upstream's `archiveDb.listPage()`.
+ */
+export async function listArchivedTasksImpl(store: TaskStore, options?: {
+  limit?: number;
+  offset?: number;
+  slim?: boolean;
+}): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
+    const rawLimit = options?.limit ?? 100;
+    const limit = Math.min(500, Math.max(1, Math.trunc(rawLimit) || 100));
+    const rawOffset = options?.offset ?? 0;
+    const offset = Math.max(0, Math.trunc(rawOffset) || 0);
+    const slim = options?.slim ?? true;
+
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const total = await getArchivedRowCount(layer.db);
+      const entries = await listArchivedTaskEntriesPage(layer.db, limit, offset);
+      const tasks = entries.map((entry) => store.archiveEntryToTask(entry, slim));
+      return { tasks, total, hasMore: offset + tasks.length < total };
+    }
+
+    const total = store.archiveDb.getArchivedRowCount();
+    const entries = store.archiveDb.listPage(limit, offset);
+    const tasks = entries.map((entry) => store.archiveEntryToTask(entry, slim));
+    return { tasks, total, hasMore: offset + tasks.length < total };
+}
 
 export async function unarchiveTaskImpl(store: TaskStore, id: string): Promise<Task> {
     /*

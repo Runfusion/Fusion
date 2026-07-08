@@ -601,6 +601,7 @@ Default notes:
 | `autoArchiveDoneTasksEnabled` | `boolean` | `true` | Enable periodic auto-archiving of done tasks. |
 | `autoArchiveDoneAfterMs` | `number` | `172800000` | Age in ms after entering done before auto-archive (48h). |
 | `doneAutoArchiveDays` | `number` | `0` | Integer day-based done-task retention. `0` disables day override; values `> 0` take precedence over `autoArchiveDoneAfterMs`. |
+| `autoArchiveDuplicateTasksEnabled` | `boolean` | `false` | FN-7658: gates whether same-agent duplicate intake (FN-4892) auto-archives the later task. Default `false` — the duplicate is flagged in place (`nearDuplicateOf`/`nearDuplicateScore` marker, yellow "Duplicate" chip with Keep/Archive actions) instead of being archived automatically. Set `true` to restore the pre-FN-7658 auto-archive behavior. Does not affect ghost-bug preflight or tombstone-resurrection blocking. |
 | `archiveAgentLogMode` | `"none" \| "compact" \| "full"` | `"compact"` | Agent log retention strategy for cold archive snapshots. |
 | `autoUpdatePrStatus` | `boolean` | `false` | Auto-refresh PR status badges. |
 | `githubCommentOnDone` | `boolean` | `false` | When enabled, tasks imported from GitHub issues post a completion comment to the source issue when the task moves to `done`. |

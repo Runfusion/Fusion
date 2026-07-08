@@ -202,6 +202,7 @@ const SETTING_DESCRIPTION_KEYS: Record<string, string> = {
   autoArchiveDoneTasksEnabled: "scheduling.completedTasksOlderThanTheThresholdAreMoved",
   autoArchiveDoneAfterMs: "scheduling.numberOfDaysATaskCanStayIn",
   archiveAgentLogMode: "scheduling.compactModeKeepsArchiveSizeLowWhilePreserving",
+  autoArchiveDuplicateTasksEnabled: "scheduling.autoArchiveDuplicateTasksHelp",
   maxStuckKills: "scheduling.maximumStuckDetectorRetriesBeforeATaskIs",
   groupOverlappingFiles: "scheduling.whenEnabledTasksThatModifyTheSameFiles",
   ignoreHiddenOverlapPaths: "scheduling.ignoreHiddenDotPathsHelp",

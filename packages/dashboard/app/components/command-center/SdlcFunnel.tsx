@@ -12,13 +12,21 @@ import "./SdlcFunnel.css";
 /** The funnel sub-shape carried on the activity analytics payload (U7). */
 type SdlcFunnelData = ActivityAnalytics["funnel"];
 
-/** Human-readable label per stage key, falling back to the raw key. */
+/**
+ * FNXC:CommandCenter 2026-07-08-00:00:
+ * The SDLC funnel's intake stage displays as "Planning" (not "Triage") for
+ * consistency with the renamed board column (FN-7660/FN-7665). The aggregator
+ * stage KEY produced by aggregateSdlcFunnel and matched below stays "triage" —
+ * only the English display text changes.
+ *
+ * Human-readable label per stage key, falling back to the raw key.
+ */
 function useStageLabels(): (stage: string) => string {
   const { t } = useTranslation("app");
   return (stage: string) => {
     switch (stage) {
       case "triage":
-        return t("commandCenter.funnel.stage.triage", "Triage");
+        return t("commandCenter.funnel.stage.triage", "Planning");
       case "todo":
         return t("commandCenter.funnel.stage.todo", "Todo");
       case "in-progress":
@@ -99,7 +107,7 @@ export function SdlcFunnel({ range }: { range: DateRange }) {
             <RadialGauge
               value={funnel?.completionRate ?? null}
               label={t("commandCenter.funnel.completionRate", "Completion rate")}
-              ariaLabel={t("commandCenter.funnel.completionRateAria", "Completion rate for in-range triage entrants")}
+              ariaLabel={t("commandCenter.funnel.completionRateAria", "Completion rate for in-range planning entrants")}
             />
             <span className="cc-stat-sub">
               {t("commandCenter.funnel.completionRateHint", "Done ÷ entered (in range)")}
@@ -124,7 +132,7 @@ export function SdlcFunnel({ range }: { range: DateRange }) {
           </div>
           <div className="card cc-stat-card" data-testid="cc-funnel-entered">
             <div className="cc-stat-label">
-              {t("commandCenter.funnel.enteredInRange", "Entered triage")}
+              {t("commandCenter.funnel.enteredInRange", "Entered planning")}
             </div>
             <div className="cc-stat-value">{formatCount(funnel?.enteredInRange ?? 0)}</div>
           </div>

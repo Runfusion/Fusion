@@ -106,7 +106,7 @@ import { getTaskSelectClauseWithActivityLogLimitImpl, getChangedTaskColumnsImpl,
 import { getOrCreateForProjectImpl, listGoalCitationsImpl, atomicWriteTaskJsonWithAuditImpl, duplicateTaskImpl, listStrandedRefinementsImpl, tryClaimCheckoutImpl, evaluateWorkflowMovePoliciesImpl, recordRunAuditEventImpl, getRunAuditEventsImpl, getWorkflowParitySummaryImpl, dequeueMergeQueueOnColumnExitImpl, updateIssueInfoImpl, listWorkflowStepsImpl, getWorkflowStepImpl, createWorkflowDefinitionImpl, countActiveInCapacitySlotSyncImpl, countActiveInCapacitySlotAsyncImpl, generateSpecifiedPromptImpl, recordActivityImpl, getEvalStoreImpl } from "./task-store/remaining-ops-1.js";
 import { markLegacyAutoMergeStampsOnceImpl, appendAgentLogImpl, importLegacyAgentLogsImpl, cleanupNoOpTaskMovedActivityRowsOnceImpl, runWorkflowColumnsIntegrityPassImpl, backfillCommitAssociationDiffStatsImpl } from "./task-store/workflow-integrity.js";
 import { saveWorkflowRunBranchImpl, clearNearDuplicateReferencesToImpl, selectNextTaskForAgentImpl, pauseTaskImpl, clearLinkedAgentTaskIdsImpl, listArtifactsImpl, rehomeOccupantImpl } from "./task-store/branch-group-ops.js";
-import { taskToArchiveEntryImpl, deleteTaskBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl } from "./task-store/archive-lifecycle-2.js";
+import { taskToArchiveEntryImpl, deleteTaskBackendImpl, archiveTaskBackendImpl, unarchiveTaskImpl, restoreFromArchiveImpl, listArchivedTasksImpl } from "./task-store/archive-lifecycle-2.js";
 import { isValidMergeRequestTransitionImpl, enqueueMergeQueueSyncInternalImpl, releaseMergeQueueLeaseImpl, collectMergeDetailsImpl, applyPrMergedTransitionImpl } from "./task-store/merge-queue-ops-2.js";
 import { upsertWorkflowWorkItemImpl, transitionWorkflowWorkItemImpl, acquireWorkflowWorkItemLeaseImpl } from "./task-store/workflow-workitems-ops-2.js";
 import { getSettingsImpl, getSettingsFastImpl, getSettingsByScopeImpl, getSettingsByScopeFastImpl } from "./task-store/settings-ops-2.js";
@@ -1951,6 +1951,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 /** Read all archived task entries from SQLite. */
   async readArchiveLog(): Promise<import("./types.js").ArchivedTaskEntry[]> {
     return this.archiveDb.list();
+  }
+
+  /**
+   * FNXC:ArchivePagination 2026-07-08-00:00:
+   * Paged newest-first read for the Archived board column (FN-7659). See
+   * listArchivedTasksImpl for the ordering/bounding contract.
+   */
+  async listArchivedTasks(options?: { limit?: number; offset?: number; slim?: boolean }): Promise<{ tasks: Task[]; total: number; hasMore: boolean }> {
+    return listArchivedTasksImpl(this, options);
   }
 
 /** Find a specific task in the archive by ID. */

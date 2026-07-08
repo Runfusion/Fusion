@@ -18,6 +18,9 @@ importers:
       '@eslint/js':
         specifier: ^9.0.0
         version: 9.39.4
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
       eslint:
         specifier: ^9.0.0
         version: 9.39.4(jiti@2.7.0)

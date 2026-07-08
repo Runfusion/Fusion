@@ -710,7 +710,9 @@ describe("TaskPlannerChatTab", () => {
     const stopIcon = stopButton.querySelector(".chat-input-stop-icon");
     expect(stopIcon).toBeTruthy();
     expect(stopIcon).toHaveAttribute("aria-hidden", "true");
-    expect(stopButton).toHaveTextContent("Stop generation");
+    // FN-7655: the streaming stop button is icon-only — no visible "Stop generation" text span,
+    // even though the accessible name (aria-label) above still resolves to "Stop generation".
+    expect(stopButton.querySelector("span:not(.chat-input-stop-icon)")).toBeNull();
     expect(screen.getByText("Thinking…")).toBeInTheDocument();
     expect(screen.getByText("checking the plan")).toBeInTheDocument();
 

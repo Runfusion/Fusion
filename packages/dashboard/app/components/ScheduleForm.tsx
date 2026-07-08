@@ -739,7 +739,7 @@ export function ScheduleForm({ schedule, onSubmit, onCancel, scope: formScope, p
                   value={taskColumn}
                   onChange={(e) => setTaskColumn(e.target.value)}
                 >
-                  <option value="triage">{t("schedule.columnTriage", "Triage")}</option>
+                  <option value="triage">{t("schedule.columnTriage", "Planning")}</option>
                   <option value="todo">{t("schedule.columnTodo", "To Do")}</option>
                 </select>
               </div>

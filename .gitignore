@@ -104,3 +104,14 @@ packages/mobile/android/
 
 # Desktop packaging: staged flat prod closure produced by `@fusion/desktop build` (pnpm deploy)
 packages/desktop/deploy/
+
+# FNXC:EngineTests 2026-07-08-04:10:
+# FN-7669 prototype: rebuilt-every-run esbuild bundle of the @fusion/core
+# gate-safe barrel closure, emitted by scripts/build-engine-core-gate-bundle.mjs
+# from the engine-core vitest project's globalSetup. Never committed — it is
+# regenerated fresh before every gate run (no drift surface). Lives as a
+# SIBLING of packages/core/node_modules/ (not nested inside it) — nesting
+# inside node_modules triggers Vite's SSR external-dep heuristic and defeats
+# vi.mock interception for imports nested inside the bundle; see the script
+# comment (scripts/build-engine-core-gate-bundle.mjs) for the full repro.
+packages/core/.gate-bundle/

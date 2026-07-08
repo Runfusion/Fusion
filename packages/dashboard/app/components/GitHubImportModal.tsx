@@ -36,6 +36,7 @@ import { useMobileScrollLock } from "../hooks/useMobileScrollLock";
 import { useOverlayDismiss } from "../hooks/useOverlayDismiss";
 import { useEmbeddedPresentation, type ModalPresentation } from "../hooks/useEmbeddedPresentation";
 import { getScopedItem, setScopedItem } from "../utils/projectStorage";
+import { getGitHubImportState, saveGitHubImportState } from "../hooks/modalPersistence";
 
 interface GitHubImportModalProps {
   isOpen: boolean;
@@ -421,6 +422,26 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
   // Track which owner/repo we've already auto-loaded to prevent duplicate loads
   const autoLoadedRef = useRef<{ owner: string; repo: string; labels: string; tab: TabType } | null>(null);
 
+  /*
+  FNXC:GitHubImport 2026-07-07-00:00:
+  Restored selections (issue/pull/GitLab) must not be applied until the reloaded list actually contains them, otherwise a
+  stale selection would either render a dead preview or (worse) silently point at the wrong item. `handleLoad`/
+  `handleLoadPulls`/`handleLoadGitLab` all clear the selection at the START of a fetch (existing behavior for user-triggered
+  reloads), so the hydrated-on-mount selection is parked here and only re-applied once the corresponding fetch resolves AND
+  the item is still present in the reloaded list; otherwise it is silently dropped (graceful degrade, no stuck/empty preview).
+  */
+  const pendingRestoreSelectionRef = useRef<{ issueNumber: number | null; pullNumber: number | null; gitlabKey: string | null }>({
+    issueNumber: null,
+    pullNumber: null,
+    gitlabKey: null,
+  });
+  // Set true during mount hydration when the persisted provider is GitLab with enough input to load; consumed by a
+  // one-shot effect below once gitlabProject/gitlabGroup state actually reflects the hydrated values.
+  const needsGitlabAutoLoadRef = useRef(false);
+  // Gates the persist-on-change effect until the mount hydration effect has applied its (possibly restored) values to
+  // state, so the FIRST commit's still-default state is never written over a real persisted value.
+  const [readyToPersistImportState, setReadyToPersistImportState] = useState(false);
+
   // Build set of already imported URLs from existing tasks
   const importedUrls = new Set<string>();
   for (const task of tasks) {
@@ -440,23 +461,48 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
     }
   }
 
-  // Reset state when modal opens and fetch remotes
+  /*
+  FNXC:GitHubImport 2026-07-07-00:00:
+  Retain-state-on-exit-and-return (FN-7657): the embedded Import Tasks view fully unmounts on navigation away and remounts
+  fresh on return, so this "reset on open" effect must HYDRATE persisted per-project state instead of hard-resetting it when
+  a prior value exists, and fall back to the exact previous reset/default-remote-auto-detect behavior when nothing is
+  persisted (first-time opens keep their existing UX unchanged). Only the cheap, restorable fields are hydrated here
+  (provider/tab/labels/remote/owner/repo/GitLab inputs/selection) — fetched issue/pull/GitLab lists, loading flags, and
+  detail caches are ALWAYS reset and re-derived via the existing auto-load, never persisted.
+
+  Decision: the modal presentation (`AppModals.tsx`, mobile overflow path) shares this same effect/state and therefore
+  ALSO restores persisted state on open rather than starting fresh — keeping the two presentations coherent, since both
+  read/write the same per-project storage key and a user may open either one first. Modal open/close otherwise behaves
+  exactly as before (Cancel/close still unmount-discards in-memory-only state such as the fetched lists/loading flags).
+  */
   useEffect(() => {
     if (isOpen) {
+      setReadyToPersistImportState(false);
+      const persisted = getGitHubImportState(projectId);
+
+      /*
+      FNXC:GitHubImport 2026-07-07-00:00:
+      owner/repo/selectedRemoteName are intentionally NOT hydrated synchronously here (unlike the other fields) — doing so
+      would populate them before the remote-detection fetch below resolves, which flips the auto-load effect on
+      immediately (synchronously, within the same mount commit) instead of after the async remote fetch as before. That
+      earlier timing can disable the tab buttons (loading=true) before a user's next interaction lands. They are applied
+      instead inside the fetchGitRemotes().then() below, preserving the original async timing while still taking
+      precedence over the default-remote auto-detect once remotes are known.
+      */
       setOwner("");
       setRepo("");
-      setLabels("");
-      setProvider("github");
-      setGitlabResource("project_issue");
-      setGitlabProject("");
-      setGitlabGroup("");
+      setLabels(persisted?.labels ?? "");
+      setProvider(persisted?.provider ?? "github");
+      setGitlabResource(persisted?.gitlabResource ?? "project_issue");
+      setGitlabProject(persisted?.gitlabProject ?? "");
+      setGitlabGroup(persisted?.gitlabGroup ?? "");
       setGitlabItems([]);
       setSelectedGitlabKey(null);
       setIssues([]);
       setSelectedIssueNumber(null);
       setPulls([]);
       setSelectedPullNumber(null);
-      setActiveTab("issues");
+      setActiveTab(persisted?.activeTab ?? "issues");
       setError(null);
       setIsIssuesEmptyState(false);
       setIsPullsEmptyState(false);
@@ -465,6 +511,22 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       setLoadingRemotes(true);
       setSelectedRemoteName("");
       autoLoadedRef.current = null;
+
+      // Stash the restored selections; they are re-applied once the corresponding reload resolves and confirms the item
+      // is still present (see handleLoad/handleLoadPulls/handleLoadGitLab), never applied blindly.
+      pendingRestoreSelectionRef.current = {
+        issueNumber: persisted?.selectedIssueNumber ?? null,
+        pullNumber: persisted?.selectedPullNumber ?? null,
+        gitlabKey: persisted?.selectedGitlabKey ?? null,
+      };
+      needsGitlabAutoLoadRef.current =
+        persisted?.provider === "gitlab" &&
+        (persisted.gitlabResource === "group_issue" ? Boolean(persisted.gitlabGroup) : Boolean(persisted.gitlabProject));
+
+      // Applying the hydrated (possibly-empty) values above completes the synchronous portion of hydration; flipping this
+      // now lets the persist-on-change effect start writing from the NEXT render, which already reflects these values —
+      // never the pre-hydration defaults from this render's initial mount.
+      setReadyToPersistImportState(true);
 
       mountedRef.current = true;
       const remoteLoadRequestId = remoteLoadRequestIdRef.current + 1;
@@ -487,21 +549,38 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
           setRemotes(fetchedRemotes);
           setLoadingRemotes(false);
 
-          const defaultRemote = fetchedRemotes.length === 1
-            ? fetchedRemotes[0]
-            : fetchedRemotes.find((remote) => remote.name === "origin");
+          // Hydrated remote/owner/repo take precedence when the named remote still exists in the freshly detected list.
+          const hydratedRemoteName = persisted?.selectedRemoteName;
+          const hydratedRemote = hydratedRemoteName
+            ? fetchedRemotes.find((remote) => remote.name === hydratedRemoteName)
+            : undefined;
 
-          if (defaultRemote) {
-            setOwner(defaultRemote.owner);
-            setRepo(defaultRemote.repo);
-            setSelectedRemoteName(defaultRemote.name);
-          } else if (fetchedRemotes.length > 1) {
-            // Multiple remotes without origin: don't auto-select, user must choose.
-            setOwner("");
-            setRepo("");
-            setSelectedRemoteName("");
+          if (hydratedRemote) {
+            setOwner(hydratedRemote.owner);
+            setRepo(hydratedRemote.repo);
+            setSelectedRemoteName(hydratedRemote.name);
+          } else if (persisted?.owner && persisted?.repo) {
+            // Persisted owner/repo survive even without a matching named remote (e.g. remote renamed/removed).
+            setOwner(persisted.owner);
+            setRepo(persisted.repo);
+            setSelectedRemoteName(persisted.selectedRemoteName ?? "");
+          } else {
+            const defaultRemote = fetchedRemotes.length === 1
+              ? fetchedRemotes[0]
+              : fetchedRemotes.find((remote) => remote.name === "origin");
+
+            if (defaultRemote) {
+              setOwner(defaultRemote.owner);
+              setRepo(defaultRemote.repo);
+              setSelectedRemoteName(defaultRemote.name);
+            } else if (fetchedRemotes.length > 1) {
+              // Multiple remotes without origin: don't auto-select, user must choose.
+              setOwner("");
+              setRepo("");
+              setSelectedRemoteName("");
+            }
+            // If no remotes, owner/repo remain empty
           }
-          // If no remotes, owner/repo remain empty
         })
         .catch(() => {
           if (!cancelled && mountedRef.current && remoteLoadRequestId === remoteLoadRequestIdRef.current) {
@@ -554,6 +633,14 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       if (fetchedIssues.length === 0) {
         setIsIssuesEmptyState(true);
       }
+      // FNXC:GitHubImport 2026-07-07-00:00: Re-apply a hydrated-on-mount selection only if it survived the reload; otherwise drop it silently (already null from the reset above).
+      const restoreIssueNumber = pendingRestoreSelectionRef.current.issueNumber;
+      if (restoreIssueNumber !== null) {
+        pendingRestoreSelectionRef.current.issueNumber = null;
+        if (fetchedIssues.some((issue) => issue.number === restoreIssueNumber)) {
+          setSelectedIssueNumber(restoreIssueNumber);
+        }
+      }
     } catch (err) {
       setError(getErrorMessage(err) || t("git.failedToFetchIssues", "Failed to fetch issues"));
     } finally {
@@ -579,6 +666,14 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       setPulls(fetchedPulls);
       if (fetchedPulls.length === 0) {
         setIsPullsEmptyState(true);
+      }
+      // FNXC:GitHubImport 2026-07-07-00:00: Re-apply a hydrated-on-mount selection only if it survived the reload; otherwise drop it silently (already null from the reset above).
+      const restorePullNumber = pendingRestoreSelectionRef.current.pullNumber;
+      if (restorePullNumber !== null) {
+        pendingRestoreSelectionRef.current.pullNumber = null;
+        if (fetchedPulls.some((pull) => pull.number === restorePullNumber)) {
+          setSelectedPullNumber(restorePullNumber);
+        }
       }
     } catch (err) {
       setError(getErrorMessage(err) || t("git.failedToFetchPulls", "Failed to fetch pull requests"));
@@ -631,6 +726,14 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
           : await apiFetchGitLabMergeRequests(project, 30, labelArray.length > 0 ? labelArray : undefined);
       setGitlabItems(fetched);
       if (fetched.length === 0) setIsIssuesEmptyState(true);
+      // FNXC:GitHubImport 2026-07-07-00:00: Re-apply a hydrated-on-mount GitLab selection only if it survived the reload; otherwise drop it silently (already null from the reset above).
+      const restoreGitlabKey = pendingRestoreSelectionRef.current.gitlabKey;
+      if (restoreGitlabKey !== null) {
+        pendingRestoreSelectionRef.current.gitlabKey = null;
+        if (fetched.some((item) => `${item.resourceKind}:${item.projectId ?? item.projectPath ?? ""}:${item.iid}` === restoreGitlabKey)) {
+          setSelectedGitlabKey(restoreGitlabKey);
+        }
+      }
     } catch (err) {
       setError(getErrorMessage(err) || t("git.failedToFetchGitlab", "Failed to fetch GitLab resources"));
     } finally {
@@ -657,6 +760,65 @@ export function GitHubImportModal({ isOpen, onClose, onImport, tasks, projectId,
       setImporting(false);
     }
   }, [selectedGitlabItem, gitlabEnabled, gitlabResource, gitlabProject, gitlabGroup, projectId, onImport, isMobile, mobileView, t]);
+
+  /*
+  FNXC:GitHubImport 2026-07-07-00:00:
+  Mirrors the GitHub auto-load effect below for GitLab: on mount hydration with a persisted GitLab provider + enough input
+  (project for project_issue/merge_request, group for group_issue), trigger exactly one auto-load so the restored
+  selection has a list to be validated/re-applied against (see handleLoadGitLab). One-shot via the ref flag so manual
+  reloads/tab switches never re-trigger this.
+  */
+  useEffect(() => {
+    if (!needsGitlabAutoLoadRef.current) return;
+    if (provider !== "gitlab") return;
+    const ready = gitlabResource === "group_issue" ? Boolean(gitlabGroup.trim()) : Boolean(gitlabProject.trim());
+    if (!ready) return;
+    needsGitlabAutoLoadRef.current = false;
+    handleLoadGitLab();
+  }, [provider, gitlabResource, gitlabProject, gitlabGroup, handleLoadGitLab]);
+
+  /*
+  FNXC:GitHubImport 2026-07-07-00:00:
+  Persist the cheap/restorable import-state fields per-project whenever any of them change, so leaving and returning to
+  the embedded view resumes the user's prior context. Gated on readyToPersistImportState so the FIRST commit after mount
+  (still holding pre-hydration defaults) never overwrites a real persisted value; the mount-hydration effect above flips
+  this flag only after applying the (possibly restored) values to state.
+  */
+  useEffect(() => {
+    if (!readyToPersistImportState) return;
+    saveGitHubImportState(
+      {
+        provider,
+        activeTab,
+        labels,
+        selectedRemoteName,
+        owner,
+        repo,
+        gitlabResource,
+        gitlabProject,
+        gitlabGroup,
+        selectedIssueNumber,
+        selectedPullNumber,
+        selectedGitlabKey,
+      },
+      projectId,
+    );
+  }, [
+    readyToPersistImportState,
+    provider,
+    activeTab,
+    labels,
+    selectedRemoteName,
+    owner,
+    repo,
+    gitlabResource,
+    gitlabProject,
+    gitlabGroup,
+    selectedIssueNumber,
+    selectedPullNumber,
+    selectedGitlabKey,
+    projectId,
+  ]);
 
   // Auto-load data when owner and repo are set and valid
   useEffect(() => {

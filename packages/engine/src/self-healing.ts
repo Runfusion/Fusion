@@ -10154,8 +10154,30 @@ export class SelfHealingManager {
         if (agent.state !== "running" && agent.state !== "error") {
           return false;
         }
+        /*
+         * FNXC:AgentHeartbeat 2026-07-08-12:20:
+         * FN-7672: 4 of the CTO's 6 durable direct reports went simultaneously
+         * `error` (correlated auth/session blip) and stayed stuck for hours —
+         * HeartbeatTriggerScheduler clears timers entirely on `state === "error"`
+         * (isTickableState excludes it), so a durable error-state agent can ONLY
+         * come back via this recovery sweep; there is no natural self-heal via
+         * the normal tick loop. The `managerMissing` gate below previously
+         * applied uniformly to BOTH orphaned "running" agents (a genuinely
+         * different failure mode — a live process whose manager row vanished)
+         * AND "error" agents, which meant a durable agent in `error` with a
+         * present/active manager was structurally never even considered for
+         * recovery, regardless of how transient its `lastError` was. That is
+         * the systemic gap: manager presence has no bearing on whether a
+         * durable agent's own error is transient and safe to retry. Restrict
+         * `managerMissing` to the "running" orphan-detection path (unchanged
+         * behavior) and let "error" state proceed to the existing transient /
+         * operator-actionable / active-execution / cooldown / retry-budget
+         * guards below, which already exist specifically to prevent restart
+         * loops on genuinely broken (non-transient/operator-actionable)
+         * credentials — those guards are NOT weakened here.
+         */
         const managerMissing = !agent.reportsTo || !allAgentIds.has(agent.reportsTo);
-        if (!managerMissing) {
+        if (agent.state === "running" && !managerMissing) {
           return false;
         }
         const updatedAt = Date.parse(agent.updatedAt ?? "");

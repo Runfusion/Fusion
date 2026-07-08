@@ -494,8 +494,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
     hasMoreMessages,
     searchQuery,
     setSearchQuery,
-    searchInTitleOnly,
-    setSearchInTitleOnly,
     filteredSessions,
     agentsMap: chatAgentsMap,
   } = useChat(projectId, addToast);
@@ -2788,12 +2786,13 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           <>
             {/* Search section */}
             {/*
-            FNXC:ChatSearch 2026-07-07-00:00:
-            Search now matches message content by default (server round trip), not just
-            title/agentId. The "Search in title only" toggle restores the prior client-only
-            title/agentId behavior on demand. Rendered on both desktop and mobile since this
-            sidebar markup is shared (mobile layout is a CSS breakpoint of the same DOM), and
-            only within the Direct scope — Rooms already hides search/list entirely.
+            FNXC:ChatSearch 2026-07-07-12:00:
+            Search always matches message content (server round trip) in addition to
+            title/agentId; there is no client toggle to restrict it back to title-only (FN-7651
+            removed the "Search in title only" button per user request). Rendered on both desktop
+            and mobile since this sidebar markup is shared (mobile layout is a CSS breakpoint of
+            the same DOM), and only within the Direct scope — Rooms already hides search/list
+            entirely.
             */}
             <div className="chat-sidebar-search-container">
               <div className="chat-sidebar-search-wrapper">
@@ -2807,17 +2806,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
                   data-testid="chat-search-input"
                 />
               </div>
-              <button
-                type="button"
-                className="btn btn-sm chat-search-title-only-toggle"
-                onClick={() => setSearchInTitleOnly(!searchInTitleOnly)}
-                aria-pressed={searchInTitleOnly}
-                aria-label={t("chat.searchInTitleOnly", "Search in title only")}
-                title={t("chat.searchInTitleOnly", "Search in title only")}
-                data-testid="chat-search-title-only-toggle"
-              >
-                {t("chat.searchInTitleOnly", "Search in title only")}
-              </button>
             </div>
             {/* Session list section */}
             <div className="chat-session-list chat-sidebar-list">

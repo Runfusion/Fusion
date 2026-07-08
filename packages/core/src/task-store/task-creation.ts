@@ -20,7 +20,7 @@ import {resolveTitleSummarizerSettingsModel} from "../model-resolution.js";
 import {resolveEffectiveSettingsById} from "../workflow-settings-resolver.js";
 import {getErrorMessage} from "../error-message.js";
 import {generateTaskLineageId} from "../task-lineage.js";
-import {archiveAsSameAgentDuplicate, findSameAgentDuplicates} from "../duplicate-intake.js";
+import {archiveAsSameAgentDuplicate, findSameAgentDuplicates, flagSameAgentDuplicate} from "../duplicate-intake.js";
 import {buildBootstrapPrompt} from "../mesh-task-replication.js";
 import {validateFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
@@ -1026,8 +1026,25 @@ export async function _maybeAutoArchiveSameAgentDuplicateImpl(store: TaskStore, 
       const siblingTaskIds = matches.filter((match) => !match.tombstoned).map((match) => match.id);
       if (siblingTaskIds.length === 0) return;
       const scores = Object.fromEntries(matches.filter((match) => !match.tombstoned).map((match) => [match.id, match.score]));
-      await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
-      task.column = "archived";
+      /*
+      FNXC:DuplicateIntake 2026-07-07-00:00 (FN-7658):
+      Operators do not want same-agent duplicates silently vanishing into `archived`
+      during intake. Default (`autoArchiveDuplicateTasksEnabled` falsey) flags the
+      duplicate in place via the near-duplicate marker so a human decides (Keep/Archive
+      chip). Only an explicit `true` restores the pre-FN-7658 auto-archive behavior.
+      NOTE: the tombstone-resurrection block above (`TombstonedTaskResurrectionError`)
+      is a distinct safety mechanism and is intentionally NOT gated by this setting —
+      it always fires regardless of `autoArchiveDuplicateTasksEnabled`.
+      */
+      if (settings.autoArchiveDuplicateTasksEnabled === true) {
+        await archiveAsSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
+        task.column = "archived";
+      } else {
+        const appliedPatch = await flagSameAgentDuplicate(store, task.id, siblingTaskIds, scores);
+        if (appliedPatch) {
+          task.sourceMetadata = { ...(task.sourceMetadata ?? {}), ...appliedPatch };
+        }
+      }
     } catch (error) {
       if (error instanceof TombstonedTaskResurrectionError) {
         throw error;

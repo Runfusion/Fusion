@@ -957,6 +957,43 @@ describe("Automation routes", () => {
       expect(String(streamRes.body)).toContain("Live run not found or expired");
     });
 
+    // FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652): the dashboard's manual "Run" trigger opens
+    // this stream WITHOUT a runId (it races the POST). A runId-less stream that attaches after the run
+    // already succeeded must deliver `complete`, never a terminal `error` — this is the server-side half
+    // of the false "Run failed"-for-a-success-run regression.
+    it("delivers complete, never a terminal error, for a runId-less stream attached after a successful run", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({ ...FAKE_SCHEDULE, command: "echo manual-run-ok" });
+      const { app } = buildApp(mockStore);
+
+      const runRes = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+      expect(runRes.status).toBe(200);
+      expect(runRes.body.result.success).toBe(true);
+
+      const streamRes = await performRequest(app, "GET", "/api/automations/sched-001/run/stream");
+      expect(streamRes.status).toBe(200);
+      const body = String(streamRes.body);
+      expect(body).toContain("event: complete");
+      expect(body).not.toContain("event: error");
+    });
+
+    it("still delivers a real terminal error event for a runId-less stream after a genuinely failed run", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({ ...FAKE_SCHEDULE, command: "exit 1" });
+      const { app } = buildApp(mockStore);
+
+      const runRes = await REQUEST(app, "POST", "/api/automations/sched-001/run");
+      expect(runRes.status).toBe(200);
+      expect(runRes.body.result.success).toBe(false);
+      expect(runRes.body.result.error).toBeTruthy();
+
+      const streamRes = await performRequest(app, "GET", "/api/automations/sched-001/run/stream");
+      expect(streamRes.status).toBe(200);
+      const body = String(streamRes.body);
+      expect(body).toContain("event: error");
+      expect(body).not.toContain("event: complete");
+    });
+
     it("defaults manual ai-prompt runs to all tools when allowedTools is omitted", async () => {
       vi.mocked(createFnAgent).mockClear();
       const mockStore = createMockAutomationStore();
@@ -1553,6 +1590,17 @@ describe("Automation routes", () => {
       expect(res.body.error).toContain("Schedule not found");
     });
 
+    // FNXC:AutomationLiveOutput 2026-07-07-08:30 (FN-7663): proves the shared run-stream handler
+    // preserves scope isolation identically to every other /automations/:id/* route.
+    it("GET /automations/:id/run/stream returns 404 for schedule with wrong scope", async () => {
+      const mockStore = createMockAutomationStore();
+      mockStore.getSchedule.mockResolvedValue({ ...FAKE_SCHEDULE, scope: "global" as const });
+      const { app } = buildApp(mockStore);
+      const res = await REQUEST(app, "GET", "/api/automations/sched-001/run/stream?scope=project");
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Schedule not found");
+    });
+
     it("POST /automations/:id/toggle with matching scope returns 200", async () => {
       const mockStore = createMockAutomationStore();
       mockStore.getSchedule.mockResolvedValue({ ...FAKE_SCHEDULE, scope: "project" as const });
@@ -2059,6 +2107,68 @@ describe("Routine routes", () => {
       expect(runRes.body.result.output).toBe("routine-live-output");
     });
 
+    // FNXC:AutomationLiveOutput 2026-07-07-08:30 (FN-7663): mirrors the automations "unknown manual
+    // run id" coverage — both routes now share one handler for the requested-runId-not-found branch.
+    it("returns a terminal SSE error for an unknown manual run id", async () => {
+      const mockStore = createMockRoutineStore();
+      const { app } = buildRoutineApp(mockStore);
+
+      const streamRes = await performRequest(app, "GET", "/api/routines/routine-001/run/stream?runId=missing-run");
+      expect(streamRes.status).toBe(200);
+      expect(String(streamRes.body)).toContain("event: error");
+      expect(String(streamRes.body)).toContain("Live run not found or expired");
+    });
+
+    // FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652): mirrors the /automations/:id/run/stream
+    // coverage above — both stream endpoints share AutomationLiveRunRegistry/attachRun, so the
+    // runId-less-stream invariant (success run never delivers a terminal error) must hold for /routines too.
+    it("delivers complete, never a terminal error, for a runId-less stream attached after a successful run", async () => {
+      const mockStore = createMockRoutineStore();
+      const { app } = buildRoutineApp(mockStore);
+
+      const runRes = await REQUEST(app, "POST", "/api/routines/routine-001/run");
+      expect(runRes.status).toBe(200);
+      expect(runRes.body.result.success).toBe(true);
+
+      const streamRes = await performRequest(app, "GET", "/api/routines/routine-001/run/stream");
+      expect(streamRes.status).toBe(200);
+      const body = String(streamRes.body);
+      expect(body).toContain("event: complete");
+      expect(body).not.toContain("event: error");
+    });
+
+    it("still delivers a real terminal error event for a runId-less stream after a genuinely failed run", async () => {
+      const mockStore = createMockRoutineStore();
+      const routineRunner = createMockRoutineRunner();
+      routineRunner.triggerManual.mockImplementation(async (_id: string, liveCallbacks?: { onStep?: (data: Record<string, unknown>) => void }) => {
+        liveCallbacks?.onStep?.({ stepIndex: 0, stepId: "step-1", stepName: "Mock step", status: "started" });
+        return {
+          routineId: "routine-001",
+          success: false,
+          output: "",
+          error: "synthetic routine failure",
+          triggerType: "cron" as const,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+        } satisfies RoutineExecutionResult;
+      });
+      const store = createMockStore();
+      const app = express();
+      app.use(express.json());
+      app.use("/api", createApiRoutes(store, { routineStore: mockStore as any, routineRunner }));
+
+      const runRes = await REQUEST(app, "POST", "/api/routines/routine-001/run");
+      expect(runRes.status).toBe(200);
+      expect(runRes.body.result.success).toBe(false);
+
+      const streamRes = await performRequest(app, "GET", "/api/routines/routine-001/run/stream");
+      expect(streamRes.status).toBe(200);
+      const body = String(streamRes.body);
+      expect(body).toContain("event: error");
+      expect(body).toContain("synthetic routine failure");
+      expect(body).not.toContain("event: complete");
+    });
+
     it("returns 404 for missing routine", async () => {
       const mockStore = createMockRoutineStore();
       mockStore.getRoutine.mockRejectedValue(Object.assign(new Error("not found"), { code: "ENOENT" }));
@@ -2445,6 +2555,18 @@ describe("Routine routes", () => {
       mockStore.getRoutine.mockResolvedValue({ ...FAKE_ROUTINE, scope: "project" as const });
       const { app } = buildRoutineApp(mockStore);
       const res = await REQUEST(app, "POST", "/api/routines/routine-001/run?scope=global");
+      expect(res.status).toBe(404);
+      expect(res.body.error).toContain("Routine not found");
+    });
+
+    // FNXC:AutomationLiveOutput 2026-07-07-08:30 (FN-7663): mirrors the automations run-stream
+    // scope test above — both routes now delegate to the same shared handler, so scope isolation
+    // must hold identically for /routines/:id/run/stream.
+    it("GET /routines/:id/run/stream returns 404 for routine with wrong scope", async () => {
+      const mockStore = createMockRoutineStore();
+      mockStore.getRoutine.mockResolvedValue({ ...FAKE_ROUTINE, scope: "project" as const });
+      const { app } = buildRoutineApp(mockStore);
+      const res = await REQUEST(app, "GET", "/api/routines/routine-001/run/stream?scope=global");
       expect(res.status).toBe(404);
       expect(res.body.error).toContain("Routine not found");
     });

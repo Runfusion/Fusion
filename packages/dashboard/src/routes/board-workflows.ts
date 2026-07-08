@@ -70,9 +70,17 @@ export interface BoardWorkflowsPayload {
   taskWorkflowIds: Record<string, string>;
 }
 
+/*
+ * FNXC:Workflows 2026-07-07-00:00:
+ * The canonical built-in lifecycle label for the intake column (id: "triage")
+ * is "Planning" — FN-7599 renamed the IR column name, but this override map
+ * was still clobbering it back to "Triage" for built-in workflows via
+ * describeColumns(ir, true). Do not re-clobber the IR rename (FN-7660); the
+ * column id itself remains "triage" everywhere (types, DB, transitions).
+ */
 const BUILTIN_WORKFLOW_COLUMN_LABELS: Record<string, string> = {
   ideas: "Ideas",
-  triage: "Triage",
+  triage: "Planning",
   todo: "Todo",
   "in-progress": "In Progress",
   "in-review": "In Review",

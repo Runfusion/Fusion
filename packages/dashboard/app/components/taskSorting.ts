@@ -56,7 +56,23 @@ export function sortTasksForDisplayColumn(
   tasks: readonly Task[],
   column: Column,
   doneSortMode: DoneColumnSortMode = "completion-date-desc",
+  isArchivedColumn: boolean = column === "archived",
 ): Task[] {
+  /*
+  FNXC:ArchivePagination 2026-07-08-00:00:
+  FN-7659 — the Archived column must render newest-first (`archivedAt DESC`),
+  the exact order the paginated `GET /tasks/archived` read and useTasks'
+  page-merge already produce. The generic priority+task-id sort below would
+  silently undo that ordering (it ran for every non-todo/non-done column,
+  including archived, before this fix), so archived columns pass through
+  unsorted — both the legacy literal `"archived"` column id and, for
+  workflow-mode custom archived columns, the caller-supplied
+  `isArchivedColumn` flag (derived from the column's `archived` trait flag).
+  */
+  if (isArchivedColumn) {
+    return [...tasks];
+  }
+
   if (column === "todo") {
     return [...tasks].sort((a, b) => {
       const priorityCmp = compareTaskPriority(a.priority, b.priority);

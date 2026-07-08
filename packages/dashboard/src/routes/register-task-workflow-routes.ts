@@ -989,6 +989,38 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /**
+   * FNXC:ArchivePagination 2026-07-08-00:00:
+   * Dedicated paged read for the Archived board column: newest-first
+   * (`archivedAt DESC`) in chunks of 100 by default via SQL LIMIT/OFFSET,
+   * so a large archive is never loaded into memory in one pass. This is a
+   * sibling to GET /tasks (which stays byte-identical for its existing
+   * merged-listing consumers) rather than a replacement for it.
+   */
+  router.get("/tasks/archived", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const limit = typeof req.query.limit === "string" ? Number.parseInt(req.query.limit, 10) : undefined;
+      const offset = typeof req.query.offset === "string" ? Number.parseInt(req.query.offset, 10) : undefined;
+
+      if (limit !== undefined && (!Number.isFinite(limit) || limit <= 0)) {
+        throw badRequest("limit must be a positive integer");
+      }
+      if (offset !== undefined && (!Number.isFinite(offset) || offset < 0)) {
+        throw badRequest("offset must be a non-negative integer");
+      }
+
+      const { tasks, total, hasMore } = await scopedStore.listArchivedTasks({ limit, offset, slim: true });
+
+      res.json({ tasks, total, hasMore });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   router.post("/tasks/duplicate-check", async (req, res) => {
     try {
       const { store: scopedStore } = await getProjectContext(req);
@@ -2887,6 +2919,77 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw notFound(`Task ${req.params.id} not found`);
       } else {
         rethrowAsApiError(err, "Internal server error");
+      }
+    }
+  });
+
+  /**
+   * GET /api/tasks/:id/runtime-fallback
+   * Return the most recent "session:runtime-resolved" run-audit event for
+   * this task, normalized for the runtime-fallback badge/toast affordance.
+   *
+   * `showFallbackBadge` is true only when the most recent event has
+   * `wasConfigured === false` AND a non-empty configured `runtimeHint` — a
+   * missing hint (no runtime was ever configured) is not a misconfiguration
+   * and must not surface a badge. Older fallback events are superseded by
+   * any later successful resolution because only the single most recent
+   * event (limit: 1, store-ordered most-recent-first) is considered.
+   *
+   * Response: TaskRuntimeFallbackResponse (see routes.ts)
+   */
+  router.get("/tasks/:id/runtime-fallback", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const taskId = req.params.id;
+
+      // Verify task exists so callers get a clean 404 instead of an empty
+      // "no event yet" response for a nonexistent task ID.
+      await scopedStore.getTask(taskId);
+
+      const [latest] = scopedStore.getRunAuditEvents({
+        taskId,
+        mutationType: "session:runtime-resolved",
+        limit: 1,
+      });
+
+      if (!latest) {
+        res.json({
+          taskId,
+          hasEvent: false,
+          wasConfigured: null,
+          runtimeHint: null,
+          reason: null,
+          eventId: null,
+          timestamp: null,
+          showFallbackBadge: false,
+        });
+        return;
+      }
+
+      const metadata = latest.metadata ?? {};
+      const wasConfigured = metadata.wasConfigured === true;
+      const runtimeHintRaw = typeof metadata.runtimeHint === "string" ? metadata.runtimeHint.trim() : "";
+      const runtimeHint = runtimeHintRaw.length > 0 ? runtimeHintRaw : null;
+      const reason = typeof metadata.reason === "string" ? metadata.reason : null;
+
+      res.json({
+        taskId,
+        hasEvent: true,
+        wasConfigured,
+        runtimeHint,
+        reason,
+        eventId: latest.id,
+        timestamp: latest.timestamp,
+        showFallbackBadge: wasConfigured === false && runtimeHint !== null,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        throw notFound(`Task ${req.params.id} not found`);
+      } else {
+        rethrowAsApiError(err);
       }
     }
   });

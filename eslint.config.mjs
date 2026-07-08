@@ -132,6 +132,16 @@ export default tseslint.config(
       // so these artifacts must be explicitly ignored or they flood lint with
       // no-unused-expressions / no-undef errors (FN-6775).
       "packages/mobile/android/app/src/main/assets/public/**",
+      // FNXC:LintConfig 2026-07-08-04:55:
+      // FN-7669: rebuilt-every-run esbuild bundle of the @fusion/core gate-safe
+      // barrel closure (scripts/build-engine-core-gate-bundle.mjs, consumed via
+      // engine-core's vitest resolve.alias). Gitignored, non-committed, and
+      // deliberately placed OUTSIDE node_modules/ (see script comment) so Vite's
+      // SSR loader does not externalize it — but that same placement means
+      // ESLint's flat config (which does not read .gitignore) would otherwise
+      // flood lint with no-undef/no-unused-vars errors against the minified,
+      // generated bundle text. Ignore it explicitly.
+      "packages/core/.gate-bundle/**",
       "coverage/**",
       // Project metadata (fn data, worktrees, etc.)
       ".fusion/**",

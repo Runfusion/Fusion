@@ -1583,20 +1583,33 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Archive Task",
     description:
       "Archive a task from any live column (move to archived). " +
-      "Archived tasks are preserved for historical reference but moved out of the main board view.",
+      "Archived tasks are preserved for historical reference but moved out of the main board view. " +
+      "If the task is still referenced as a lineage parent by another task, archiving is rejected unless removeLineageReferences:true is passed.",
     promptSnippet: "Archive a Fusion task from any live column (moves to archived column)",
     promptGuidelines: [
       "Use to clean up tasks from any live board column when you want them hidden from active views",
       "Already archived tasks cannot be archived again",
       "Archived tasks can be unarchived later if needed",
+      "If archiving fails because the task is still referenced as a lineage parent by another task, retry with removeLineageReferences:true to clear that reference and unblock the archive",
     ],
+    /*
+    FNXC:TaskLifecycleTools 2026-07-07-00:00:
+    fn_task_archive and fn_task_delete both gate on store.TaskHasLineageChildrenError, whose message tells the
+    caller to pass { removeLineageReferences: true } — but neither tool schema exposed that parameter, leaving
+    lineage-parent tasks permanently stuck (FN-7661). Expose it on both tools' Type.Object schema and forward it
+    to the store call so the recovery path the error message advertises is actually reachable by agents. Keep
+    this in sync with store.archiveTask / store.deleteTask option shapes if they change.
+    */
     parameters: Type.Object({
       id: Type.String({ description: "Task ID to archive from any live column (e.g. FN-001)." }),
+      removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references (child sourceParentTaskId) before archiving, so a task still referenced as a lineage parent can be archived." })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const store = await getStore(ctx.cwd);
-      const task = await store.archiveTask(params.id);
+      const task = await store.archiveTask(params.id, {
+        removeLineageReferences: params.removeLineageReferences === true,
+      });
 
       return {
         content: [{ type: "text", text: `Archived ${task.id} → ${columnLabel(task.column)}` }],
@@ -1640,7 +1653,8 @@ export default function kbExtension(pi: ExtensionAPI) {
     label: "fn: Delete Task",
     description:
       "Soft-delete a task from active Fusion board views. " +
-      "The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation.",
+      "The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. " +
+      "If the task is still referenced as a lineage parent by another task, deletion is rejected unless removeLineageReferences:true is passed.",
     promptSnippet: "Soft-delete a Fusion task",
     promptGuidelines: [
       "Use for cleaning up test tasks or tasks created in error when you want the task hidden from active board views",
@@ -1648,10 +1662,17 @@ export default function kbExtension(pi: ExtensionAPI) {
       "Use allowResurrection:true when operators want the deleted task ID to be intentionally reusable on future createTask calls",
       "Use fn_task_archive for completed work you want to keep referenceable in the board",
       "True hard removal is handled by archive cleanup paths (archiveTaskAndCleanup / cleanupArchivedTasks), not fn_task_delete",
+      "If deletion fails because the task is still referenced as a lineage parent by another task, retry with removeLineageReferences:true to clear that reference and unblock the delete",
     ],
+    /*
+    FNXC:TaskLifecycleTools 2026-07-07-00:00:
+    See matching comment on fn_task_archive above (FN-7661): the store's TaskHasLineageChildrenError message
+    advertises { removeLineageReferences: true } as the recovery path, so this tool must expose and forward it too.
+    */
     parameters: Type.Object({
       id: Type.String({ description: "Task ID to delete (e.g. FN-001)" }),
       allowResurrection: Type.Optional(Type.Boolean({ description: "When true, mark this tombstone as explicitly reusable for future recreation." })),
+      removeLineageReferences: Type.Optional(Type.Boolean({ description: "When true, clear incoming lineage-parent references (child sourceParentTaskId) before deleting, so a task still referenced as a lineage parent can be removed." })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1659,6 +1680,7 @@ export default function kbExtension(pi: ExtensionAPI) {
       const callerTaskId = (ctx as { taskId?: string }).taskId;
       const task = await store.deleteTask(params.id, {
         allowResurrection: params.allowResurrection === true,
+        removeLineageReferences: params.removeLineageReferences === true,
         auditContext: {
           agentId: "pi-extension",
           runId: `synthetic-pi-delete-${params.id}-${Date.now()}`,

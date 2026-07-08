@@ -1642,6 +1642,119 @@ describe("useChat", () => {
     });
   });
 
+  it("FN-7656 reattaches and shows working state on refresh reporting isGenerating with no inFlightGeneration snapshot yet (pre-first-delta)", async () => {
+    // Regression: early in a generation the server reports isGenerating:true
+    // with inFlightGeneration still null (no delta emitted yet). The stale
+    // local `sessions` cache also reports isGenerating:false. selectSession's
+    // authoritative fetchChatSession refresh must reattach on isGenerating
+    // alone, without waiting for an inFlightGeneration snapshot.
+    const staleSession = {
+      ...makeSession({ id: "session-001", agentId: "agent-001" }),
+      isGenerating: false,
+      inFlightGeneration: null,
+    };
+    const generatingSessionNoSnapshot = {
+      ...staleSession,
+      isGenerating: true,
+      inFlightGeneration: null,
+    };
+
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [staleSession] });
+    mockFetchChatSession.mockResolvedValueOnce({ session: generatingSessionNoSnapshot });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(mockAttachChatStream).toHaveBeenCalledTimes(1);
+      expect(mockAttachChatStream).toHaveBeenCalledWith("session-001", expect.any(Object), undefined, {});
+      expect(result.current.isStreaming).toBe(true);
+    });
+  });
+
+  it("FN-7656 does not reattach when the authoritative refresh reports isGenerating:false", async () => {
+    const session = {
+      ...makeSession({ id: "session-001", agentId: "agent-001" }),
+      isGenerating: false,
+      inFlightGeneration: null,
+    };
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [session] });
+    mockFetchChatSession.mockResolvedValueOnce({ session: { ...session, isGenerating: false, inFlightGeneration: null } });
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(mockFetchChatSession).toHaveBeenCalledWith("session-001", undefined);
+    });
+
+    expect(mockAttachChatStream).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(false);
+  });
+
+  it("FN-7656 does not reattach to a session the user has already navigated away from before the refresh resolves", async () => {
+    const sessionA = {
+      ...makeSession({ id: "session-001", agentId: "agent-001" }),
+      isGenerating: false,
+      inFlightGeneration: null,
+    };
+    const sessionB = {
+      ...makeSession({ id: "session-002", agentId: "agent-001" }),
+      isGenerating: false,
+      inFlightGeneration: null,
+    };
+    mockFetchChatSessions.mockResolvedValueOnce({ sessions: [sessionA, sessionB] });
+    const deferredRefresh = createDeferredPromise<{ session: ChatSession }>();
+    mockFetchChatSession.mockReturnValueOnce(deferredRefresh.promise);
+    mockFetchChatMessages.mockResolvedValue({ messages: [] });
+
+    const { result } = renderHook(() => useChat());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(2);
+    });
+
+    act(() => {
+      result.current.selectSession("session-001");
+    });
+
+    await waitFor(() => {
+      expect(mockFetchChatSession).toHaveBeenCalledWith("session-001", undefined);
+    });
+
+    // User navigates away to session-002 before the session-001 refresh resolves.
+    act(() => {
+      result.current.selectSession("session-002");
+    });
+
+    await act(async () => {
+      deferredRefresh.resolve({
+        session: { ...sessionA, isGenerating: true, inFlightGeneration: null },
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockAttachChatStream).not.toHaveBeenCalled();
+    expect(result.current.isStreaming).toBe(false);
+    expect(result.current.activeSession?.id).toBe("session-002");
+  });
+
   it("fetches session on visible return only when no live stream and swallows reconnect failures", async () => {
     const session = {
       ...makeSession({ id: "session-001", agentId: "agent-001" }),

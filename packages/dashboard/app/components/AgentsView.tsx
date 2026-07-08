@@ -38,6 +38,7 @@ import {
 import { AgentAvatar } from "./AgentAvatar";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 import { AgentTaskBadge } from "./AgentTaskBadge";
+import { RuntimeFallbackBadge } from "./RuntimeFallbackBadge";
 
 export interface AgentsViewProps {
   addToast: (message: string, type?: "success" | "error") => void;
@@ -1718,6 +1719,9 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       </div>
                       <div className="agent-board-name">{agent.name}</div>
                       <div className="agent-board-id">{agent.id}</div>
+                      {agent.taskId && (
+                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
+                      )}
                       <div className="agent-board-health" style={{ color: health.color }} title={healthSummary.title}>
                         {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
                       </div>
@@ -1888,6 +1892,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       <div className="agent-task">
                         <span className="text-secondary">{t("agents.workingOn", "Working on:")}</span>
                         <span className="badge"><AgentTaskBadge taskId={agent.taskId} taskColumn={agent.taskColumn} /></span>
+                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
                       </div>
                     )}
                     <div className="agent-heartbeat-control">

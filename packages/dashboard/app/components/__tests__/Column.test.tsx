@@ -440,6 +440,47 @@ describe("Column pagination", () => {
     expect(screen.queryByRole("button", { name: /Load 25 more/i })).toBeNull();
   });
 
+  /*
+  FNXC:ArchivePagination 2026-07-08-00:00:
+  FN-7659 — the Archived column's server-backed "Show more" is a distinct
+  affordance from the client-side Load-more button covered above: it renders
+  only when `archivedHasMore` is true, is absent for an empty/under-one-page
+  archive, and invokes `onLoadMoreArchived` (not the client-side visible-count
+  bump) when clicked.
+  */
+  describe("archived pagination (FN-7659)", () => {
+    const archivedTasks = Array.from({ length: 3 }, (_, index) => ({
+      ...makeTask(`KB-ARCH-${index + 1}`),
+      column: "archived" as ColumnType,
+    }));
+
+    it("shows the server-backed Show more button only when archivedHasMore is true", () => {
+      render(<Column {...defaultProps} column="archived" tasks={archivedTasks} collapsed={false} archivedHasMore={false} />);
+      expect(screen.queryByRole("button", { name: /Show more/i })).toBeNull();
+    });
+
+    it("renders no Show more button for an empty archive", () => {
+      render(<Column {...defaultProps} column="archived" tasks={[]} collapsed={false} archivedHasMore={false} />);
+      expect(screen.queryByRole("button", { name: /Show more/i })).toBeNull();
+    });
+
+    it("renders the Show more button when archivedHasMore is true and invokes onLoadMoreArchived on click", async () => {
+      const onLoadMoreArchived = vi.fn().mockResolvedValue(undefined);
+      const user = userEvent.setup();
+      render(<Column {...defaultProps} column="archived" tasks={archivedTasks} collapsed={false} archivedHasMore onLoadMoreArchived={onLoadMoreArchived} />);
+
+      const button = screen.getByRole("button", { name: /Show more/i });
+      await user.click(button);
+
+      expect(onLoadMoreArchived).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not render the Show more button when the archived column is collapsed", () => {
+      render(<Column {...defaultProps} column="archived" tasks={archivedTasks} collapsed archivedHasMore onLoadMoreArchived={vi.fn()} />);
+      expect(screen.queryByRole("button", { name: /Show more/i })).toBeNull();
+    });
+  });
+
   it("disables pagination when isSearchActive is true, showing all tasks", () => {
     const tasks = Array.from({ length: 110 }, (_, index) => makeTask(`KB-${String(index + 1).padStart(3, "0")}`));
     render(<Column {...defaultProps} column="todo" tasks={tasks} isSearchActive={true} />);

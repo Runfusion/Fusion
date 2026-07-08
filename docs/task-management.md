@@ -149,14 +149,20 @@ The duplicate-close task log line remains `Duplicate of <canonicalTaskId> — cl
 Fusion applies two conservative intake heuristics that may auto-archive newly filed tasks before execution starts:
 
 - **Ghost-bug preflight** (triage finalize path): for bug-fix-shaped specs that cite concrete constructs/commands, Fusion probes current `main`. If all definitive probes show the cited bug does not reproduce, the task is archived as `auto-resolved-ghost-bug`.
-- **Same-agent duplicate intake** (create path): if the same `source.sourceAgentId` filed a highly similar task within 24h (threshold `0.75`), the later task is archived as `auto-resolved-duplicate` and the earliest sibling is kept.
+- **Same-agent duplicate intake** (create path): if the same `source.sourceAgentId` (or `source.sourceParentTaskId`) filed a highly similar task within 24h (threshold `0.75`), Fusion still detects the near-duplicate — but what happens next depends on the `autoArchiveDuplicateTasksEnabled` project/global setting (default **`false`**, FN-7658):
+  - **Default (`false`)**: the later task is left in place and flagged via the same near-duplicate marker used elsewhere (`sourceMetadata.nearDuplicateOf` / `nearDuplicateScore`), so the dashboard's yellow "Duplicate" chip with Keep/Archive actions surfaces it for a human decision. The task is never moved to `archived` automatically.
+  - **`true`** (legacy behavior, opt-in): the later task is archived as `auto-resolved-duplicate` and the earliest sibling is kept, exactly as before FN-7658.
+
+Ghost-bug preflight is unaffected by `autoArchiveDuplicateTasksEnabled` — it is a distinct heuristic and always auto-archives on a definitive non-repro.
 
 Both heuristics are **fail-open**: probe/detection errors, timeouts, or inconclusive signals do not block normal intake — the task continues in the regular flow.
+
+Tombstone-resurrection blocking (recreating a soft-deleted task within the sticky window) is a separate safety mechanism from same-agent duplicate intake and is **not** gated by `autoArchiveDuplicateTasksEnabled` — it always throws `TombstonedTaskResurrectionError` regardless of the setting.
 
 Activity + run-audit event types:
 
 - `task:auto-archived-ghost-bug`
-- `task:auto-archived-duplicate`
+- `task:auto-archived-duplicate` — emitted for both outcomes of the same-agent duplicate heuristic; the flag-only (default) path sets `metadata.source: "same-agent-flagged"` to distinguish it from the legacy auto-archive outcome.
 
 These appear in task activity history; run-audit entries are emitted where run context exists (triage/engine paths). Store-only intake paths record activity without synthetic run context.
 

@@ -134,6 +134,9 @@ export function MainContent({
   deleteTask,
   archiveAllDone,
   loadArchivedTasks,
+  loadMoreArchivedTasks,
+  archivedHasMore,
+  archivedLoadingMore,
   searchQuery,
   availableModels,
   favoriteProviders,
@@ -728,6 +731,9 @@ export function MainContent({
             onDeleteTask={deleteTask}
             onArchiveAllDone={archiveAllDone}
             onLoadArchivedTasks={loadArchivedTasks}
+            onLoadMoreArchivedTasks={loadMoreArchivedTasks}
+            archivedHasMore={archivedHasMore}
+            archivedLoadingMore={archivedLoadingMore}
             searchQuery={searchQuery}
             availableModels={availableModels}
             onOpenDetailWithTab={handleOpenDetailWithTab}
@@ -842,6 +848,9 @@ export function MainContent({
           onDeleteTask={deleteTask}
           onArchiveAllDone={archiveAllDone}
           onLoadArchivedTasks={loadArchivedTasks}
+          onLoadMoreArchivedTasks={loadMoreArchivedTasks}
+          archivedHasMore={archivedHasMore}
+          archivedLoadingMore={archivedLoadingMore}
           searchQuery={searchQuery}
           availableModels={availableModels}
           onOpenDetailWithTab={handleOpenDetailWithTab}

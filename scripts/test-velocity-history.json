@@ -1361,6 +1361,118 @@
       "measurementFailures": [],
       "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
       "timingNotes": []
+    },
+    {
+      "capturedAt": "2026-07-08T09:30:50.606Z",
+      "gateMs": 36301,
+      "bootSmokeMs": 25333,
+      "testMs": 43360,
+      "quarantineCount": 1,
+      "slowestTop20": [
+        {
+          "file": "packages/dashboard/src/__tests__/insights-routes.test.ts",
+          "ms": 26500,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/engine/src/runtimes/__tests__/in-process-runtime.test.ts",
+          "ms": 24700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/workflow-routes.test.ts",
+          "ms": 22000,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/db.test.ts",
+          "ms": 21200,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/GitManagerModal.test.tsx",
+          "ms": 16900,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/mission-store.test.ts",
+          "ms": 16000,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/cli/src/__tests__/extension.test.ts",
+          "ms": 15700,
+          "package": "@runfusion/fusion"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentPromptsManager.test.tsx",
+          "ms": 14800,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/App.test.tsx",
+          "ms": 14600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.inline-editing-and-integrations.test.tsx",
+          "ms": 14100,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/TaskDetailModal.rendering.test.tsx",
+          "ms": 13700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/src/__tests__/routes-auth.test.ts",
+          "ms": 13600,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/core/src/__tests__/agent-store.test.ts",
+          "ms": 13400,
+          "package": "@fusion/core"
+        },
+        {
+          "file": "packages/engine/src/__tests__/workspace-merger-idempotency.test.ts",
+          "ms": 12700,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/self-healing-workspace.test.ts",
+          "ms": 11800,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/engine/src/__tests__/pr-response-run.test.ts",
+          "ms": 11600,
+          "package": "@fusion/engine"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/ListView.test.tsx",
+          "ms": 11300,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "plugins/fusion-plugin-compound-engineering/src/__tests__/sync.test.ts",
+          "ms": 11000,
+          "package": "@fusion-plugin-examples/compound-engineering"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/AgentDetailView.settings.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        },
+        {
+          "file": "packages/dashboard/app/components/__tests__/SecretsView.test.tsx",
+          "ms": 10700,
+          "package": "@fusion/dashboard"
+        }
+      ],
+      "measurementFailures": [],
+      "timingSnapshotCapturedAt": "2026-06-27T05:41:42.568Z",
+      "timingNotes": []
     }
   ]
 }

@@ -134,6 +134,27 @@ export async function listArchivedTasks(
 }
 
 /**
+ * FNXC:ArchivePagination 2026-07-08-00:00:
+ * Bounded page of archived task snapshots for the Archived board column
+ * (FN-7659), ordered `archivedAt DESC` with an `id DESC` tie-break (Postgres
+ * has no rowid; id is the deterministic stand-in for same-timestamp rows).
+ * Mirrors sync `ArchiveDatabase.listPage()`.
+ */
+export async function listArchivedTaskEntriesPage(
+  handle: QueryHandle,
+  limit: number,
+  offset: number,
+): Promise<ArchivedTaskEntry[]> {
+  const rows = await handle
+    .select({ taskJson: archivedTaskColumns.taskJson })
+    .from(schema.archive.archivedTasks)
+    .orderBy(desc(archivedTaskColumns.archivedAt), desc(archivedTaskColumns.id))
+    .limit(limit)
+    .offset(offset);
+  return rows.map((row) => JSON.parse((row as { taskJson: string }).taskJson) as ArchivedTaskEntry);
+}
+
+/**
  * FNXC:ArchiveDatabase 2026-06-24-19:20:
  * Read a single archived task by id. Returns undefined when absent. Mirrors
  * sync `ArchiveDatabase.get()`.

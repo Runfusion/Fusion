@@ -52,6 +52,16 @@ export class ArchiveDatabase {
     throwSqliteRemoved();
   }
 
+  /**
+   * FNXC:ArchivePagination 2026-07-08-00:00:
+   * Sqlite stub for FN-7659's paginated archive read; the live implementation
+   * is the async Drizzle path (listArchivedTaskEntriesPage in async-archive
+   * helpers) ordered archivedAt DESC with an id DESC tie-break.
+   */
+  listPage(_limit: number, _offset: number): ArchivedTaskEntry[] {
+    throwSqliteRemoved();
+  }
+
   get(_id: string): ArchivedTaskEntry | undefined {
     throwSqliteRemoved();
   }

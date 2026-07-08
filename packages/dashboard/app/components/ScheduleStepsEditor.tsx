@@ -331,7 +331,7 @@ function StepEditor({ step, onSave, onCancel }: StepEditorProps) {
               value={taskColumn}
               onChange={(e) => setTaskColumn(e.target.value)}
             >
-              <option value="triage">{t("schedule.triageColumn", "Triage")}</option>
+              <option value="triage">{t("schedule.triageColumn", "Planning")}</option>
               <option value="todo">{t("schedule.todoColumn", "To Do")}</option>
             </select>
             <small>{t("schedule.targetColumnHelp", "Column where the new task will be created")}</small>

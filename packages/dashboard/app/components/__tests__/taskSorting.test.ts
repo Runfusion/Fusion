@@ -27,6 +27,33 @@ describe("sortTasksForDisplayColumn", () => {
     expect(sortTasksForDisplayColumn([], "done")).toEqual([]);
   });
 
+  /*
+  FNXC:ArchivePagination 2026-07-08-00:00:
+  FN-7659 — the Archived column's server-fetched order (`archivedAt DESC`,
+  newest-first) must not be re-sorted by priority/task-id like every other
+  non-todo/non-done column. Both the legacy literal "archived" column id and
+  the explicit isArchivedColumn flag (for workflow-mode custom archived
+  columns) must pass the incoming order through unchanged.
+  */
+  it("passes through the incoming order unchanged for the legacy 'archived' column id", () => {
+    const tasks = [
+      task({ id: "FN-3", priority: "low" }),
+      task({ id: "FN-1", priority: "urgent" }),
+      task({ id: "FN-2", priority: "normal" }),
+    ];
+
+    expect(ids(sortTasksForDisplayColumn(tasks, "archived"))).toEqual(["FN-3", "FN-1", "FN-2"]);
+  });
+
+  it("passes through the incoming order unchanged when isArchivedColumn is explicitly true", () => {
+    const tasks = [
+      task({ id: "FN-9", priority: "low" }),
+      task({ id: "FN-5", priority: "urgent" }),
+    ];
+
+    expect(ids(sortTasksForDisplayColumn(tasks, "todo", "completion-date-desc", true))).toEqual(["FN-9", "FN-5"]);
+  });
+
   it("defaults Done to completion-date descending with numeric task-id ascending ties", () => {
     const tasks = [
       task({ id: "FN-7240", columnMovedAt: "2026-06-01T00:00:00.000Z" }),

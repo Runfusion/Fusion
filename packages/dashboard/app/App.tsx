@@ -441,7 +441,7 @@ function AppInner() {
   // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
   // SSE remains enabled only for board/list views to free connection slots for mission detail fetches. The false→true missed-event catch-up lives inside useTasks so App keeps the routing gate only and cannot double-fetch on task-view re-entry.
   const taskSseEnabled = taskView === "board" || taskView === "list";
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -1398,6 +1398,9 @@ function AppInner() {
     deleteTask,
     archiveAllDone,
     loadArchivedTasks,
+    loadMoreArchivedTasks,
+    archivedHasMore,
+    archivedLoadingMore,
     searchQuery,
     availableModels,
     favoriteProviders,
