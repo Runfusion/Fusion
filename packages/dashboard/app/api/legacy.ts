@@ -335,6 +335,29 @@ export async function fetchTaskDetail(id: string, projectId?: string): Promise<T
   throw new Error("Request failed");
 }
 
+export interface TaskRuntimeFallbackResponse {
+  taskId: string;
+  hasEvent: boolean;
+  wasConfigured: boolean | null;
+  runtimeHint: string | null;
+  reason: string | null;
+  eventId: string | null;
+  timestamp: string | null;
+  showFallbackBadge: boolean;
+}
+
+/**
+ * Fetch the most recent session:runtime-resolved audit event for a task,
+ * normalized for the runtime-fallback badge/toast affordance. Used by
+ * useRuntimeFallbackStatus.
+ */
+export async function fetchTaskRuntimeFallback(
+  taskId: string,
+  projectId?: string,
+): Promise<TaskRuntimeFallbackResponse> {
+  return api<TaskRuntimeFallbackResponse>(withProjectId(`/tasks/${taskId}/runtime-fallback`, projectId));
+}
+
 export interface UpdateTaskReviewRequest {
   reviewState: TaskDetail["reviewState"] | null;
 }

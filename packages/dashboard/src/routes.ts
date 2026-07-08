@@ -701,6 +701,33 @@ export interface RunAuditResponse {
 }
 
 /**
+ * Response shape for GET /api/tasks/:id/runtime-fallback
+ *
+ * Normalized view of the most recent "session:runtime-resolved" run-audit
+ * event for a task, used to drive the dashboard's runtime-fallback
+ * badge/toast affordance. `showFallbackBadge` is the single field UI
+ * consumers should branch on: true only when the latest resolution had
+ * `wasConfigured: false` for a non-empty configured `runtimeHint`.
+ */
+export interface TaskRuntimeFallbackResponse {
+  taskId: string;
+  /** Whether any session:runtime-resolved audit event exists for this task yet. */
+  hasEvent: boolean;
+  /** Whether the resolved runtime matched an explicitly configured hint. Null when hasEvent is false. */
+  wasConfigured: boolean | null;
+  /** The configured runtime hint from the most recent event, or null when absent/blank. */
+  runtimeHint: string | null;
+  /** FallbackReason ("not_found" | "factory_error" | "init_error") when wasConfigured is false, else null. */
+  reason: string | null;
+  /** Audit event ID, usable as a stable dedupe key for one-shot toasts. */
+  eventId: string | null;
+  /** ISO-8601 timestamp of the most recent event. */
+  timestamp: string | null;
+  /** True only when wasConfigured === false AND runtimeHint is non-empty. */
+  showFallbackBadge: boolean;
+}
+
+/**
  * Response shape for GET /api/agents/:id/runs/:runId/cited-goals
  */
 export interface RunCitedGoalsResponse {

@@ -269,6 +269,7 @@ describe("runtime-resolution", () => {
 
         expect(result.runtimeId).toBe("pi");
         expect(result.wasConfigured).toBe(false);
+        expect(result.fallbackReason).toBe("not_found");
       });
 
       it("should fall back to pi when openclaw runtime is not registered", async () => {
@@ -278,6 +279,7 @@ describe("runtime-resolution", () => {
 
         expect(result.runtimeId).toBe("pi");
         expect(result.wasConfigured).toBe(false);
+        expect(result.fallbackReason).toBe("not_found");
       });
 
       it("should fall back to pi when runtime factory throws", async () => {
@@ -298,6 +300,7 @@ describe("runtime-resolution", () => {
 
         expect(result.runtimeId).toBe("pi");
         expect(result.wasConfigured).toBe(false);
+        expect(result.fallbackReason).toBe("factory_error");
       });
 
       it("should fall back to pi when runtime factory returns null", async () => {
@@ -318,6 +321,7 @@ describe("runtime-resolution", () => {
 
         expect(result.runtimeId).toBe("pi");
         expect(result.wasConfigured).toBe(false);
+        expect(result.fallbackReason).toBe("factory_error");
       });
 
       it("should fall back to pi when createRuntimeContext returns null", async () => {
@@ -333,6 +337,28 @@ describe("runtime-resolution", () => {
 
         expect(result.runtimeId).toBe("pi");
         expect(result.wasConfigured).toBe(false);
+        expect(result.fallbackReason).toBe("not_found");
+      });
+
+      it("should report reason 'not_found' distinct from 'factory_error' across the two hint failure modes", async () => {
+        // not_found: no registration at all
+        mockPluginRunner.getRuntimeById.mockReturnValueOnce(undefined);
+        const notFoundResult = await resolveRuntime(createContext("executor", "missing-plugin"));
+        expect(notFoundResult.fallbackReason).toBe("not_found");
+
+        // factory_error: registration exists but factory throws during instantiation
+        const throwingRuntime: PluginRuntimeRegistration = {
+          metadata: { runtimeId: "throws", name: "Throwing Runtime" },
+          factory: vi.fn().mockRejectedValue(new Error("boom")),
+        };
+        mockPluginRunner.getRuntimeById.mockReturnValueOnce({
+          pluginId: "throwing-plugin",
+          runtime: throwingRuntime,
+        });
+        const factoryErrorResult = await resolveRuntime(createContext("executor", "throws"));
+        expect(factoryErrorResult.fallbackReason).toBe("factory_error");
+
+        expect(notFoundResult.fallbackReason).not.toBe(factoryErrorResult.fallbackReason);
       });
     });
   });
