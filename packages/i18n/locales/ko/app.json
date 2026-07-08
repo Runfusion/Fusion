@@ -6526,6 +6526,8 @@
       "addIgnoredPath": "",
       "archiveAgentLog": "",
       "archiveCompletedTasksAfterDays": "",
+      "autoArchiveDuplicateTasks": "",
+      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",

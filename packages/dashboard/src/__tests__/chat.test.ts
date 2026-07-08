@@ -26,6 +26,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 // Mock @fusion/core to prevent cascade loading of real fs modules
 vi.mock("@fusion/core", () => ({
   summarizeTitle: vi.fn(),
+  // FNXC:DashboardChatTests 2026-07-08-12:00: FN-7675 added FUSION_RUNTIME_SELF_AWARENESS to chat.ts's @fusion/core imports (CHAT_SYSTEM_PROMPT embeds it). The hand-written core mock must stub it so chat.js loads; importOriginal is intentionally avoided to prevent the real fs cascade this mock exists to block.
+  FUSION_RUNTIME_SELF_AWARENESS: "",
   AgentStore: vi.fn(),
   ChatStore: vi.fn(),
   registerTraitHookImpl: vi.fn(),
