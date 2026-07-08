@@ -146,9 +146,12 @@ export default defineConfig({
           // triage, scheduling, self-healing.
           // Budget: the whole project must stay under ~60s wall-clock so the
           // CI gate job's test run lands under ~1 minute.
+          /*
+          FNXC:EngineTests 2026-07-08-00:00:
+          Removed merger-post-merge.test.ts — retired by FN-7039 (graph is sole post-merge owner); it matched zero files. Graph post-merge is covered by workflow-graph-post-merge.test.ts in engine-default; no gate replacement needed.
+          */
           include: [
             "src/__tests__/merger-merge-lifecycle.test.ts",
-            "src/__tests__/merger-post-merge.test.ts",
             "src/__tests__/merger-conflict-resolution.test.ts",
             "src/__tests__/merger-diff-scope.test.ts",
             "src/__tests__/merger-landed-files-capture.test.ts",
