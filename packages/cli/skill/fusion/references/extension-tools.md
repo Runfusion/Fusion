@@ -104,11 +104,12 @@ Request a refinement of a completed or in-review task. Creates a new follow-up t
 
 ### fn_task_archive
 
-Archive a task from any live column (move to archived). Archived tasks are preserved for historical reference but moved out of the main board view.
+Archive a task from any live column (move to archived). Archived tasks are preserved for historical reference but moved out of the main board view. If the task is still referenced as a lineage parent by another task, archiving is rejected unless removeLineageReferences:true is passed.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID to archive from any live column (e.g. FN-001). |
+| `removeLineageReferences` | boolean | — | When true, clear incoming lineage-parent references (child sourceParentTaskId) before archiving, so a task still referenced as a lineage parent can be archived. |
 
 ### fn_task_unarchive
 
@@ -120,12 +121,13 @@ Unarchive an archived task (move from archived → its restore column). Restores
 
 ### fn_task_delete
 
-Soft-delete a task from active Fusion board views. The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation.
+Soft-delete a task from active Fusion board views. The task row and artifacts are preserved; optional allowResurrection marks the ID for intentional recreation. If the task is still referenced as a lineage parent by another task, deletion is rejected unless removeLineageReferences:true is passed.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID to delete (e.g. FN-001) |
 | `allowResurrection` | boolean | — | When true, mark this tombstone as explicitly reusable for future recreation. |
+| `removeLineageReferences` | boolean | — | When true, clear incoming lineage-parent references (child sourceParentTaskId) before deleting, so a task still referenced as a lineage parent can be removed. |
 
 ### fn_task_browse_gitlab_project_issues
 
