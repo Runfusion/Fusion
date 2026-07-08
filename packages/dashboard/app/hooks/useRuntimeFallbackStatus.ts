@@ -13,11 +13,69 @@
  * would add cross-cutting server/socket surface for no material latency win.
  * This hook only polls while `enabled` is true (callers should pass
  * `isInViewport` so off-screen cards do not generate background traffic).
+ *
+ * ## Cross-instance toast dedupe (FUX-039)
+ * The same task can be rendered by multiple simultaneously-mounted card
+ * surfaces (e.g. the board card AND the list card both poll the same taskId
+ * when a caller toggles view modes, or a task appears in both
+ * ActiveAgentsPanel and AgentsView at once). Each surface owns its own
+ * `useRuntimeFallbackStatus` hook instance, so a dedupe key stored only in a
+ * per-instance `useRef` cannot see what a sibling instance has already
+ * toasted — every newly-mounted instance would fire its own toast for the
+ * same underlying fallback session, spamming the user. `claimToastOnce`
+ * below is a module-level (i.e. shared across every hook instance in the
+ * process) claim store: only the first instance to observe a given eventId
+ * gets `shouldToastNow: true`.
  */
 import { useEffect, useRef, useState } from "react";
 import { fetchTaskRuntimeFallback, type TaskRuntimeFallbackResponse } from "../api/legacy";
 
 const POLL_INTERVAL_MS = 30_000;
+
+/**
+ * Upper bound on how many distinct fallback-session eventIds we remember
+ * having toasted. Without a cap, a long-lived dashboard session polling many
+ * tasks over hours/days would grow this set unboundedly. Eviction is
+ * insertion-order (oldest-claimed-first), which is sufficient here: once an
+ * eventId has been evicted it is exceedingly unlikely to be re-observed
+ * (each event corresponds to a single agent session's one-time
+ * `session:runtime-resolved` audit write), so an accidental duplicate toast
+ * after eviction is a harmless, extremely rare edge case rather than a
+ * regression risk.
+ */
+const MAX_CLAIMED_EVENT_IDS = 500;
+
+/** Module-level (process-wide) set of fallback-session eventIds already claimed for a toast. */
+let claimedEventIds = new Set<string>();
+
+/**
+ * Atomically claim `eventId` for a toast. Returns true the first time a given
+ * eventId is claimed (the caller should fire the toast); returns false on
+ * every subsequent claim attempt for the same eventId, including from other
+ * hook instances mounted elsewhere in the tree. Safe to call from multiple
+ * components polling the same task concurrently.
+ */
+function claimToastOnce(eventId: string): boolean {
+  if (claimedEventIds.has(eventId)) {
+    return false;
+  }
+  claimedEventIds.add(eventId);
+  if (claimedEventIds.size > MAX_CLAIMED_EVENT_IDS) {
+    const oldest = claimedEventIds.values().next().value;
+    if (oldest !== undefined) {
+      claimedEventIds.delete(oldest);
+    }
+  }
+  return true;
+}
+
+/**
+ * Test-only: reset the shared claim store between test cases so assertions in
+ * one test don't leak dedupe state into the next. Not used by production code.
+ */
+export function __resetRuntimeFallbackToastClaimsForTests(): void {
+  claimedEventIds = new Set<string>();
+}
 
 export interface RuntimeFallbackStatus {
   /** True only when the latest resolution has wasConfigured=false and a non-empty runtimeHint. */
@@ -28,7 +86,7 @@ export interface RuntimeFallbackStatus {
   reason: string | null;
   /** Human-readable badge/toast message, or null when there is nothing to show. */
   message: string | null;
-  /** True exactly once, on the render where a newly-observed fallback session should fire a toast. */
+  /** True exactly once (process-wide, across every hook instance) for a newly-observed fallback session. */
   shouldToastNow: boolean;
 }
 
@@ -55,10 +113,14 @@ export function useRuntimeFallbackStatus(
   projectId?: string,
 ): RuntimeFallbackStatus {
   const [status, setStatus] = useState<RuntimeFallbackStatus>(IDLE_STATUS);
-  // Dedupe key for toasts: last audit event ID we already toasted for. Persists across
-  // polls/re-renders for the lifetime of the component so the toast fires exactly once
-  // per newly-observed fallback session, not on every poll.
-  const lastToastedEventIdRef = useRef<string | null>(null);
+  // Per-instance de-flicker guard only: once THIS hook instance has already
+  // rendered the badge for a given eventId, subsequent polls for the same
+  // eventId should not re-flip shouldToastNow even if the shared claim was
+  // won by this instance on an earlier poll cycle (claimToastOnce is
+  // one-shot per eventId process-wide, so this ref is redundant for
+  // correctness but documents the intent locally and avoids re-touching the
+  // shared store on every poll for an already-seen eventId).
+  const lastSeenEventIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled || !taskId) {
@@ -83,9 +145,14 @@ export function useRuntimeFallbackStatus(
         return;
       }
 
-      const isNewlyObserved = data.eventId !== null && data.eventId !== lastToastedEventIdRef.current;
-      if (isNewlyObserved && data.eventId) {
-        lastToastedEventIdRef.current = data.eventId;
+      const isNewEventForThisInstance = data.eventId !== null && data.eventId !== lastSeenEventIdRef.current;
+      let shouldToastNow = false;
+      if (isNewEventForThisInstance && data.eventId) {
+        lastSeenEventIdRef.current = data.eventId;
+        // Cross-instance dedupe: only the first instance (across the whole
+        // process — any mounted card/panel polling this or any other task)
+        // to observe this eventId wins the toast.
+        shouldToastNow = claimToastOnce(data.eventId);
       }
 
       setStatus({
@@ -93,7 +160,7 @@ export function useRuntimeFallbackStatus(
         runtimeHint: data.runtimeHint,
         reason: data.reason,
         message: formatRuntimeFallbackMessage(data.runtimeHint),
-        shouldToastNow: isNewlyObserved,
+        shouldToastNow,
       });
     };
 

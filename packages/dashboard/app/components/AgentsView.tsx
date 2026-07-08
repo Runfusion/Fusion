@@ -343,6 +343,95 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const [selectedAgentInitialTab, setSelectedAgentInitialTab] = useState<"dashboard" | "runs">("dashboard");
   const [selectedAgentInitialRunId, setSelectedAgentInitialRunId] = useState<string | null>(null);
   const [selectedAgentPreferActiveRun, setSelectedAgentPreferActiveRun] = useState(false);
+
+  // FUX-039: real viewport gating for RuntimeFallbackBadge on the board and
+  // list card surfaces. Both surfaces render inline inside .map() calls, so
+  // a naive per-item useState/useEffect would violate the rules of hooks.
+  // Instead, a single shared IntersectionObserver instance observes every
+  // registered card element, keyed distinctly per surface ("board:{id}" vs
+  // "list:{id}") so the two surfaces never share visibility state. The
+  // registration function below MUST return a cached, stable callback per
+  // key (never a fresh closure per render) — a fresh closure would look like
+  // an unmount+remount to React on every render, and in environments without
+  // IntersectionObserver support that reproduces a real infinite re-render
+  // loop (including jsdom test environments).
+  const intersectionObserverSupported = typeof IntersectionObserver !== "undefined";
+  const agentCardObserverRef = useRef<IntersectionObserver | null>(null);
+  const agentCardElementsRef = useRef<Map<string, Element>>(new Map());
+  const agentCardRefCallbacksRef = useRef<Map<string, (el: HTMLDivElement | null) => void>>(new Map());
+  const [visibleAgentCardKeys, setVisibleAgentCardKeys] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!intersectionObserverSupported) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisibleAgentCardKeys((prev) => {
+          let changed = false;
+          const next = new Set(prev);
+          for (const entry of entries) {
+            const key = (entry.target as HTMLElement).dataset.viewportKey;
+            if (!key) continue;
+            if (entry.isIntersecting) {
+              if (!next.has(key)) {
+                next.add(key);
+                changed = true;
+              }
+            } else if (next.has(key)) {
+              next.delete(key);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      },
+      { rootMargin: "200px" },
+    );
+    agentCardObserverRef.current = observer;
+    // Ref callbacks run during the commit phase, BEFORE this effect. Any card
+    // element registered on the initial mount (or during a render that
+    // happened before this observer existed) is already recorded in
+    // agentCardElementsRef but was never actually passed to .observe(), since
+    // the observer didn't exist yet at ref-callback time. Catch those up here.
+    for (const el of agentCardElementsRef.current.values()) {
+      observer.observe(el);
+    }
+    return () => {
+      observer.disconnect();
+      agentCardObserverRef.current = null;
+    };
+  }, [intersectionObserverSupported]);
+
+  const registerAgentCardRef = useCallback((key: string) => {
+    const cached = agentCardRefCallbacksRef.current.get(key);
+    if (cached) return cached;
+    const callback = (el: HTMLDivElement | null) => {
+      const prevElement = agentCardElementsRef.current.get(key);
+      const observer = agentCardObserverRef.current;
+      if (prevElement && observer) {
+        observer.unobserve(prevElement);
+      }
+      if (el) {
+        el.dataset.viewportKey = key;
+        agentCardElementsRef.current.set(key, el);
+        observer?.observe(el);
+      } else {
+        agentCardElementsRef.current.delete(key);
+        setVisibleAgentCardKeys((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+    };
+    agentCardRefCallbacksRef.current.set(key, callback);
+    return callback;
+  }, []);
+
+  const isAgentCardKeyInViewport = useCallback(
+    (key: string) => (intersectionObserverSupported ? visibleAgentCardKeys.has(key) : true),
+    [intersectionObserverSupported, visibleAgentCardKeys],
+  );
   const [agentView, setAgentView] = useState<"list" | "board" | "org">(() => {
     if (typeof window === "undefined") return "list";
     const saved = getScopedItem("fn-agent-view", projectId);
@@ -1690,8 +1779,13 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                 const healthSummary = getHealthSummary(agent, health, t);
                 const stateBadgeClass = getStateBadgeClass(agent.state);
                 const stateCardClass = getStateCardClass("agent-board-card", agent.state);
+                const viewportKey = `board:${agent.id}`;
                 return (
-                  <div key={agent.id} className={`agent-board-card ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}>
+                  <div
+                    key={agent.id}
+                    ref={registerAgentCardRef(viewportKey)}
+                    className={`agent-board-card ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}
+                  >
                     <div
                       className="agent-board-clickable"
                       onClick={() => openAgentDetail(agent.id)}
@@ -1720,7 +1814,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       <div className="agent-board-name">{agent.name}</div>
                       <div className="agent-board-id">{agent.id}</div>
                       {agent.taskId && (
-                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
+                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isAgentCardKeyInViewport(viewportKey)} projectId={projectId} />
                       )}
                       <div className="agent-board-health" style={{ color: health.color }} title={healthSummary.title}>
                         {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
@@ -1757,9 +1851,11 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               const heartbeatOptions = getHeartbeatIntervalOptions(configuredIntervalMs);
               const isUpdatingHeartbeat = updatingHeartbeatAgentId === agent.id;
               const modelLabel = getAgentModelLabel(agent);
+              const viewportKey = `list:${agent.id}`;
               return (
                 <div
                   key={agent.id}
+                  ref={registerAgentCardRef(viewportKey)}
                   className={`agent-card agent-card--clickable ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}
                   onClick={(e) => {
                     // Open detail when the user clicks the card body, but
@@ -1892,7 +1988,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       <div className="agent-task">
                         <span className="text-secondary">{t("agents.workingOn", "Working on:")}</span>
                         <span className="badge"><AgentTaskBadge taskId={agent.taskId} taskColumn={agent.taskColumn} /></span>
-                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
+                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isAgentCardKeyInViewport(viewportKey)} projectId={projectId} />
                       </div>
                     )}
                     <div className="agent-heartbeat-control">

@@ -169,7 +169,7 @@ async function resolvePluginRuntime(
     const pluginContext = await pluginRunner.createRuntimeContext(pluginId);
     if (!pluginContext) {
       runtimeLog.warn(`Plugin "${pluginId}" runtime factory context unavailable`);
-      return { ok: false, reason: "not_found" };
+      return { ok: false, reason: "init_error" };
     }
 
     // Instantiate the runtime via factory

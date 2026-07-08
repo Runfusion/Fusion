@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, FileText } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Agent } from "../api";
@@ -24,6 +24,32 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
   const { t } = useTranslation("app");
   const { entries, isConnected } = useLiveTranscript(agent.taskId, projectId);
   const [task, setTask] = useState<TaskDetail | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // FUX-039: real viewport gating (matching TaskCard.tsx's pattern) so
+  // RuntimeFallbackBadge's 30s poll only runs while this card is actually
+  // visible, rather than hardcoding isInViewport={true} for every mounted
+  // card regardless of scroll position.
+  const [isInViewport, setIsInViewport] = useState(false);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setIsInViewport(true);
+      return;
+    }
+
+    const element = cardRef.current;
+    if (!element) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsInViewport(entry?.isIntersecting ?? true);
+      },
+      { rootMargin: "200px" },
+    );
+
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   // Poll the agent's task so the empty state can show real run progress
   // (current step, executor model) instead of just "Connecting..." while the
@@ -101,6 +127,7 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
 
   return (
     <div
+      ref={cardRef}
       className="live-agent-card"
       onClick={handleSelect}
       onKeyDown={handleKeyDown}
@@ -120,7 +147,7 @@ function LiveAgentCard({ agent, projectId, onSelect, onOpenTaskLogs }: LiveAgent
           <span className="live-agent-task badge"><AgentTaskBadge taskId={agent.taskId} taskColumn={agent.taskColumn} /></span>
         )}
         {agent.taskId && (
-          <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
+          <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isInViewport} projectId={projectId} />
         )}
       </div>
       <div className="live-agent-card-transcript">

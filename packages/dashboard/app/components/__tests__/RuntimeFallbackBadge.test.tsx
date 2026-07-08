@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act } from "@testing-library/react";
 import { RuntimeFallbackBadge } from "../RuntimeFallbackBadge";
 import { ToastProvider, useToast } from "../../hooks/useToast";
+import { __resetRuntimeFallbackToastClaimsForTests } from "../../hooks/useRuntimeFallbackStatus";
 import type { TaskRuntimeFallbackResponse } from "../../api/legacy";
 
 const legacyMocks = vi.hoisted(() => ({
@@ -37,6 +38,22 @@ function renderBadge(taskId = "FN-100", isInViewport = true) {
   return render(
     <ToastProvider>
       <RuntimeFallbackBadge taskId={taskId} isInViewport={isInViewport} projectId="proj-1" />
+      <ToastPeek />
+    </ToastProvider>,
+  );
+}
+
+/**
+ * Renders TWO independently-mounted RuntimeFallbackBadge instances (as if the
+ * same task appeared on both a board card and a list card simultaneously),
+ * sharing a single ToastProvider/ToastPeek so cross-instance toast dedupe
+ * (FUX-039 finding 3) can be observed on one toast history.
+ */
+function renderTwoBadgeInstances(taskId = "FN-100") {
+  return render(
+    <ToastProvider>
+      <RuntimeFallbackBadge taskId={taskId} isInViewport={true} projectId="proj-1" />
+      <RuntimeFallbackBadge taskId={taskId} isInViewport={true} projectId="proj-1" />
       <ToastPeek />
     </ToastProvider>,
   );
@@ -88,6 +105,10 @@ describe("RuntimeFallbackBadge", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     legacyMocks.fetchTaskRuntimeFallback.mockReset();
+    // The FUX-039 toast-claim store is module-level (shared across every hook
+    // instance in the process) so multiple tests reusing the same eventId
+    // (e.g. "audit-fallback-1") don't leak dedupe state between test cases.
+    __resetRuntimeFallbackToastClaimsForTests();
   });
 
   afterEach(() => {
@@ -189,12 +210,42 @@ describe("RuntimeFallbackBadge", () => {
     expect(legacyMocks.fetchTaskRuntimeFallback).not.toHaveBeenCalled();
     expect(screen.queryByTestId("runtime-fallback-badge")).toBeNull();
   });
+
+  it("fires the toast exactly once across two simultaneously-mounted badge instances for the same task (FUX-039 cross-instance dedupe)", async () => {
+    // Regression test for finding 3: previously the toast-dedupe key
+    // (lastToastedEventIdRef) lived in a per-hook-instance useRef, so two
+    // badge instances polling the SAME task (e.g. the task's board card and
+    // list card both mounted at once) would each independently observe the
+    // fallback event as "new" and each fire their own toast — the user would
+    // see the same warning toasted twice. The dedupe must be shared across
+    // instances so only one toast ever fires per fallback session, no matter
+    // how many card surfaces are rendering it concurrently.
+    legacyMocks.fetchTaskRuntimeFallback.mockResolvedValue(fallbackWithHint);
+    renderTwoBadgeInstances();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Both instances should render their own badge (badge visibility is not deduped, only toasts).
+    expect(screen.getAllByTestId("runtime-fallback-badge")).toHaveLength(2);
+    // But only ONE toast should have fired, even though two hook instances
+    // independently polled and observed the same eventId.
+    expect(screen.getAllByTestId("toast-entry")).toHaveLength(1);
+
+    // Further polls (by either instance) for the same still-latest event must not add more toasts.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(screen.getAllByTestId("toast-entry")).toHaveLength(1);
+  });
 });
 
 describe("RuntimeFallbackBadge — mobile breakpoint", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     legacyMocks.fetchTaskRuntimeFallback.mockReset();
+    __resetRuntimeFallbackToastClaimsForTests();
   });
 
   afterEach(() => {
