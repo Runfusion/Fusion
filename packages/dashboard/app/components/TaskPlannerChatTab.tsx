@@ -964,6 +964,9 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
           sendLabel={t("taskDetail.plannerChat.send", "Send")}
           stopLabel={t("chat.stopGeneration", "Stop generation")}
           showSendText
+          // FNXC:TaskPlannerChat 2026-07-07-00:00: planner stop button is icon-only
+          // per FN-7655 — aria-label above keeps the accessible name "Stop generation".
+          showStopText={false}
         />
       </div>
     </section>
