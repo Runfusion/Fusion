@@ -2489,7 +2489,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         });
       };
 
-      const existingRun = automationLiveRuns.get(requestedRunId, schedule.id);
+      // FNXC:AutomationLiveOutput 2026-07-07-00:00 (FN-7652): no explicit runId means "attach me to
+      // this request's own run" — use getForAutoAttach so a stale finished run from before this
+      // trigger isn't mistaken for it (see AutomationLiveRunRegistry.getForAutoAttach).
+      const existingRun = requestedRunId
+        ? automationLiveRuns.get(requestedRunId, schedule.id)
+        : automationLiveRuns.getForAutoAttach(schedule.id);
       if (existingRun) {
         attachRun(existingRun);
       } else if (requestedRunId) {
@@ -2977,7 +2982,12 @@ export function createApiRoutes(store: TaskStore, options?: ServerOptions): Rout
         });
       };
 
-      const existingRun = automationLiveRuns.get(requestedRunId, routine.id);
+      // FNXC:AutomationLiveOutput 2026-07-07-00:00 (FN-7652): no explicit runId means "attach me to
+      // this request's own run" — use getForAutoAttach so a stale finished run from before this
+      // trigger isn't mistaken for it (see AutomationLiveRunRegistry.getForAutoAttach).
+      const existingRun = requestedRunId
+        ? automationLiveRuns.get(requestedRunId, routine.id)
+        : automationLiveRuns.getForAutoAttach(routine.id);
       if (existingRun) {
         attachRun(existingRun);
       } else if (requestedRunId) {
@@ -4994,6 +5004,14 @@ type AutomationLiveRunRecord = {
   listeners: Set<(event: AutomationLiveEvent, eventId: number) => void>;
   output: string;
   cleanupTimer?: NodeJS.Timeout;
+  /*
+   * FNXC:AutomationLiveOutput 2026-07-07-00:00 (FN-7652):
+   * Wall-clock start time (ms since epoch) used solely to decide whether a runId-less GET
+   * .../run/stream request should auto-attach to this run (see getForAutoAttach). Distinct from the
+   * result's own ISO `startedAt`/`completedAt` timestamps, which describe the automation's execution
+   * window, not stream-attach freshness.
+   */
+  startedAt: number;
 };
 
 function createAutomationRunId(): string {
@@ -5036,6 +5054,17 @@ class AutomationLiveRunRegistry {
   private readonly latestRunBySchedule = new Map<string, string>();
   private readonly scheduleStartListeners = new Map<string, Set<(run: AutomationLiveRunRecord) => void>>();
 
+  /*
+   * FNXC:AutomationLiveOutput 2026-07-07-00:00 (FN-7652):
+   * A runId-less GET .../run/stream auto-attach must not pick up a run that finished well before this
+   * specific trigger (e.g. the previous manual run for the same schedule/routine, still within the
+   * AUTOMATION_LIVE_RUN_TTL_MS replay window). Auto-attaching to that stale run replays its own
+   * (unrelated) terminal `complete`/`error` event onto a brand-new trigger's stream, which is exactly
+   * the false "Run failed"-for-a-success-run bug (FN-7652). Bound how old a *finished* run may be and
+   * still be auto-attached; a still-`running` run has no age limit since it IS the in-flight trigger.
+   */
+  private static readonly AUTO_ATTACH_STALE_WINDOW_MS = 10_000;
+
   start(scheduleId: string, runId = createAutomationRunId()): AutomationLiveRunRecord {
     const run: AutomationLiveRunRecord = {
       runId,
@@ -5044,6 +5073,7 @@ class AutomationLiveRunRegistry {
       buffer: new SessionEventBuffer(AUTOMATION_LIVE_EVENT_CAPACITY),
       listeners: new Set(),
       output: "",
+      startedAt: Date.now(),
     };
     this.runs.set(runId, run);
     this.latestRunBySchedule.set(scheduleId, runId);
@@ -5062,6 +5092,24 @@ class AutomationLiveRunRegistry {
     }
     const latestRunId = this.latestRunBySchedule.get(scheduleId);
     return latestRunId ? this.runs.get(latestRunId) : undefined;
+  }
+
+  /*
+   * FNXC:AutomationLiveOutput 2026-07-07-00:00 (FN-7652):
+   * Used by GET .../run/stream instead of `get()` when the caller supplied no explicit runId. Returns
+   * the latest run for the schedule/routine only when it is still live, or finished recently enough
+   * (AUTO_ATTACH_STALE_WINDOW_MS) to plausibly be the run this very request is racing against.
+   * Otherwise returns undefined so the caller falls back to `subscribeToScheduleStart` and waits for
+   * its own fresh `run` event, instead of replaying an unrelated older run's terminal outcome.
+   */
+  getForAutoAttach(scheduleId: string): AutomationLiveRunRecord | undefined {
+    const latestRunId = this.latestRunBySchedule.get(scheduleId);
+    if (!latestRunId) return undefined;
+    const run = this.runs.get(latestRunId);
+    if (!run) return undefined;
+    if (run.status === "running") return run;
+    if (Date.now() - run.startedAt < AutomationLiveRunRegistry.AUTO_ATTACH_STALE_WINDOW_MS) return run;
+    return undefined;
   }
 
   getBufferedEvents(runId: string, lastEventId = 0) {

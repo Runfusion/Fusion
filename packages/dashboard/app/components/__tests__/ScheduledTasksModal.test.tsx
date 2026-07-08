@@ -415,6 +415,84 @@ describe("ScheduledTasksModal", () => {
     });
   });
 
+  // FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652): regression coverage for the false
+  // "Run failed" bug — the live-output terminal status must be driven by the authoritative POST
+  // result, and benign SSE teardown (reconnect exhaustion → onFatalError) must never itself render an
+  // error state for a run whose real result is success.
+  it("reconciles live output to complete (never Run failed) when a success run's stream benignly errors out", async () => {
+    const routine = makeRoutine({ name: "My Routine" });
+    mockFetchRoutines.mockResolvedValue([routine]);
+    let streamHandlers: { onEvent: (event: any) => void; onFatalError?: (message: string) => void } | undefined;
+    mockStreamRoutineRun.mockImplementation((_id, handlers) => {
+      streamHandlers = handlers;
+      return { close: vi.fn() };
+    });
+    mockRunRoutine.mockImplementation(async () => {
+      // Simulate the resilient EventSource exhausting reconnect attempts (a normal post-terminal
+      // teardown / transient connection blip) firing BEFORE the POST result resolves.
+      streamHandlers?.onFatalError?.("Connection lost");
+      return {
+        result: {
+          routineId: routine.id,
+          success: true,
+          output: "Done",
+          startedAt: "2026-04-08T00:00:00.000Z",
+          completedAt: "2026-04-08T00:01:00.000Z",
+        },
+      };
+    });
+
+    render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("My Routine")).toBeDefined();
+    });
+    fireEvent.click(screen.getByLabelText("Run My Routine now"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith('"My Routine" completed successfully', "success");
+    });
+
+    const panel = document.querySelector(".routine-live-output");
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("complete");
+    expect(panel?.className).not.toContain("error");
+    expect(panel?.textContent ?? "").not.toMatch(/Run failed/);
+    expect(screen.getByText(/Run complete/)).toBeDefined();
+  });
+
+  it("still renders Run failed with the real error message for a genuinely failed run", async () => {
+    const routine = makeRoutine({ name: "My Routine" });
+    mockFetchRoutines.mockResolvedValue([routine]);
+    mockStreamRoutineRun.mockReturnValue({ close: vi.fn() });
+    mockRunRoutine.mockResolvedValue({
+      result: {
+        routineId: routine.id,
+        success: false,
+        output: "",
+        error: "backup command exited 1",
+        startedAt: "2026-04-08T00:00:00.000Z",
+        completedAt: "2026-04-08T00:01:00.000Z",
+      },
+    });
+
+    render(<ScheduledTasksModal onClose={onClose} addToast={addToast} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("My Routine")).toBeDefined();
+    });
+    fireEvent.click(screen.getByLabelText("Run My Routine now"));
+
+    await waitFor(() => {
+      expect(addToast).toHaveBeenCalledWith('"My Routine" failed: backup command exited 1', "error");
+    });
+
+    const panel = document.querySelector(".routine-live-output");
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("error");
+    expect(screen.getAllByText(/backup command exited 1/).length).toBeGreaterThan(0);
+  });
+
   it("deletes routines after confirmation", async () => {
     const routine = makeRoutine({ name: "My Routine" });
     mockFetchRoutines.mockResolvedValue([routine]);

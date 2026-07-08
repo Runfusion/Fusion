@@ -209,6 +209,43 @@ describe("RoutineCard", () => {
       expect(screen.getByText("done line")).toBeDefined();
     });
 
+    // FNXC:AutomationLiveOutput 2026-07-07-01:00 (FN-7652): the live-output panel's status class is
+    // the visible contract for the terminal state ScheduledTasksModal reconciles from the authoritative
+    // run result — assert `complete` never carries the `error` class (and vice versa) so a successful
+    // run can never render with error-styled chrome.
+    it("renders the complete status class (never error) for a reconciled successful run", () => {
+      const { container } = render(
+        <RoutineCard
+          routine={makeRoutine()}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onRun={onRun}
+          onToggle={onToggle}
+          liveRunOutput={{ output: "Run complete", status: "complete" }}
+        />,
+      );
+      const panel = container.querySelector(".routine-live-output");
+      expect(panel?.className).toContain("complete");
+      expect(panel?.className).not.toContain("error");
+      expect(screen.queryByText(/Run failed/)).toBeNull();
+    });
+
+    it("renders the error status class for a genuinely failed run", () => {
+      const { container } = render(
+        <RoutineCard
+          routine={makeRoutine()}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onRun={onRun}
+          onToggle={onToggle}
+          liveRunOutput={{ output: "Run failed", status: "error" }}
+        />,
+      );
+      const panel = container.querySelector(".routine-live-output");
+      expect(panel?.className).toContain("error");
+      expect(screen.getByText("Run failed")).toBeDefined();
+    });
+
     it("does not render a live-output panel when liveRunOutput is null", () => {
       render(
         <RoutineCard
