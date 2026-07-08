@@ -920,7 +920,7 @@ describe("SelfHealingManager", () => {
       expect(result).toBe(0);
     });
 
-    it("skips agents with valid manager", async () => {
+    it("skips a manager-present error-state agent whose lastError is not transient (default permanent classification)", async () => {
       vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
       const now = Date.now();
       const agentStore = createMockAgentStore([
@@ -931,8 +931,135 @@ describe("SelfHealingManager", () => {
 
       const result = await managerWithAgents.recoverOrphanedAgents();
 
+      // No lastError at all classifies as "permanent" (default), so this agent
+      // is correctly skipped — but via the transient-classification guard, not
+      // because its manager is present. See the "manager-present" tests below
+      // for FN-7672's actual invariant: manager presence alone must no longer
+      // exclude a durable error-state agent from the recovery sweep.
       expect(result).toBe(0);
       expect(agentStore.updateAgent).not.toHaveBeenCalled();
+      managerWithAgents.stop();
+    });
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-08-12:20:
+     * FN-7672 regression: 4 of the CTO's 6 durable direct reports went
+     * simultaneously `error` (shared upstream auth/session blip) while
+     * reporting to an ACTIVE/PRESENT CTO. Because HeartbeatTriggerScheduler
+     * clears timers on `state === "error"`, the only way back to a healthy
+     * heartbeat is this recovery sweep — and it previously required
+     * `managerMissing`, so a manager-present durable agent could never
+     * self-heal even with a genuinely transient cause. These tests assert
+     * the manager-present path is now considered (subject to all existing
+     * guards, unweakened).
+     */
+    it("recovers a transient error-state agent even when its manager is present and active", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const agentStore = createMockAgentStore([
+        { id: "manager-1", state: "active", updatedAt: new Date(now).toISOString() } as Agent,
+        {
+          id: "report-1",
+          state: "error",
+          reportsTo: "manager-1",
+          lastError: "socket hang up",
+          metadata: {},
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+      ]);
+      const restartDurableAgentHeartbeat = vi.fn().mockResolvedValue(true);
+      const managerWithAgents = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        agentStore,
+        restartDurableAgentHeartbeat,
+      });
+
+      const result = await managerWithAgents.recoverOrphanedAgents();
+
+      expect(result).toBe(1);
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-1", "active");
+      expect(agentStore.updateAgent).toHaveBeenLastCalledWith("report-1", { lastError: undefined });
+      expect(restartDurableAgentHeartbeat).toHaveBeenCalledWith("report-1", { reason: "transient-error", attempt: 1 });
+      managerWithAgents.stop();
+    });
+
+    it("does NOT auto-recover a manager-present agent whose error is operator-actionable (FN-7672 auth-credential cluster shape)", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const agentStore = createMockAgentStore([
+        { id: "manager-1", state: "active", updatedAt: new Date(now).toISOString() } as Agent,
+        {
+          id: "report-auth",
+          state: "error",
+          reportsTo: "manager-1",
+          lastError:
+            'Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"},"request_id":"req_011CcpL6f3iXHxeHfMUjg9o8"}',
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+      ]);
+      const managerWithAgents = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+
+      const result = await managerWithAgents.recoverOrphanedAgents();
+
+      expect(result).toBe(0);
+      expect(agentStore.updateAgentState).not.toHaveBeenCalled();
+      managerWithAgents.stop();
+    });
+
+    it("recovers only the eligible manager-present agent among a mixed cluster without touching healthy siblings", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const agentStore = createMockAgentStore([
+        { id: "cto", state: "active", updatedAt: new Date(now).toISOString() } as Agent,
+        { id: "sibling-healthy-1", state: "active", reportsTo: "cto", updatedAt: new Date(now).toISOString() } as Agent,
+        { id: "sibling-healthy-2", state: "active", reportsTo: "cto", updatedAt: new Date(now).toISOString() } as Agent,
+        {
+          id: "report-transient",
+          state: "error",
+          reportsTo: "cto",
+          lastError: "socket hang up",
+          metadata: {},
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+        {
+          id: "report-auth-1",
+          state: "error",
+          reportsTo: "cto",
+          lastError: "Invalid authentication credentials",
+          updatedAt: new Date(now - 120_000).toISOString(),
+        } as Agent,
+      ]);
+      const restartDurableAgentHeartbeat = vi.fn().mockResolvedValue(true);
+      const managerWithAgents = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        agentStore,
+        restartDurableAgentHeartbeat,
+      });
+
+      const result = await managerWithAgents.recoverOrphanedAgents();
+
+      expect(result).toBe(1);
+      expect(agentStore.updateAgentState).toHaveBeenCalledTimes(1);
+      expect(agentStore.updateAgentState).toHaveBeenCalledWith("report-transient", "active");
+      expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("sibling-healthy-1", expect.anything());
+      expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("sibling-healthy-2", expect.anything());
+      expect(agentStore.updateAgentState).not.toHaveBeenCalledWith("report-auth-1", expect.anything());
+      managerWithAgents.stop();
+    });
+
+    it("still gates a manager-missing RUNNING orphan on managerMissing (unchanged behavior)", async () => {
+      vi.mocked(store.getSettings).mockResolvedValue({ taskStuckTimeoutMs: 60_000 } as unknown as Settings);
+      const now = Date.now();
+      const agentStore = createMockAgentStore([
+        { id: "manager-1", state: "active", updatedAt: new Date(now).toISOString() } as Agent,
+        { id: "running-1", state: "running", reportsTo: "manager-1", updatedAt: new Date(now - 120_000).toISOString() } as Agent,
+      ]);
+      const managerWithAgents = new SelfHealingManager(store, { rootDir: "/tmp/test-project", agentStore });
+
+      const result = await managerWithAgents.recoverOrphanedAgents();
+
+      expect(result).toBe(0);
+      expect(agentStore.updateAgentState).not.toHaveBeenCalled();
       managerWithAgents.stop();
     });
 
