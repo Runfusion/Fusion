@@ -1,10 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_TERMINAL_PREFERENCES,
   LEGACY_TERMINAL_FONT_SIZE_KEY,
   TERMINAL_PREFERENCES_KEY,
   XTERM_FONT_FAMILY,
   forceTerminalFontRemeasure,
+  guardAgainstCollapsedTerminalScreen,
+  isTerminalScreenCollapsed,
   readTerminalPreferences,
   waitForTerminalFontMetrics,
   writeTerminalPreferences,
@@ -167,6 +169,140 @@ describe("terminalPreferences", () => {
 
       expect(getChangeCount()).toBeGreaterThan(0);
       expect(terminal.options.fontFamily).toBe("system-mono, monospace");
+    });
+  });
+
+  /*
+  FN-7692 regression: the mobile terminal rendered blank because xterm's `.xterm-screen` collapsed to
+  0x0 (character cell measured 0) even though the prompt data had already arrived. These tests pin the
+  guard that detects the collapsed state (container has width, screen does not), forces a genuine
+  remeasure + fit until the screen has a real width, waits (does not give up) while the container is not
+  yet measurable, and stays bounded when the screen never recovers. Symptom under test = a screen stuck
+  at width 0; assertion it is gone = a forced remeasure+fit runs until the screen reports a width.
+  */
+  describe("guardAgainstCollapsedTerminalScreen", () => {
+    let rafQueue: Array<() => void>;
+    let resizeObservers: Array<{ cb: () => void; disconnected: boolean }>;
+
+    beforeEach(() => {
+      rafQueue = [];
+      resizeObservers = [];
+      vi.stubGlobal("requestAnimationFrame", (cb: () => void) => {
+        rafQueue.push(cb);
+        return rafQueue.length;
+      });
+      vi.stubGlobal("cancelAnimationFrame", () => {});
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(cb: () => void) {
+            resizeObservers.push({ cb, disconnected: false });
+          }
+          observe(): void {}
+          disconnect(): void {
+            const entry = resizeObservers[resizeObservers.length - 1];
+            if (entry) entry.disconnected = true;
+          }
+        },
+      );
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function flushRaf(max = 200): void {
+      let n = 0;
+      while (rafQueue.length && n++ < max) {
+        const cb = rafQueue.shift();
+        cb?.();
+      }
+    }
+
+    function makeContainer(init: { containerWidth: number; screenWidth: number }) {
+      const state = { ...init };
+      const screen = {
+        getBoundingClientRect: () => ({ width: state.screenWidth }) as DOMRect,
+      };
+      const container = {
+        getBoundingClientRect: () => ({ width: state.containerWidth }) as DOMRect,
+        querySelector: (sel: string) => (sel === ".xterm-screen" ? screen : null),
+      } as unknown as HTMLElement;
+      return { container, state };
+    }
+
+    it("classifies collapse only when the container is measurable but the screen is not", () => {
+      expect(isTerminalScreenCollapsed(385, 0)).toBe(true);
+      expect(isTerminalScreenCollapsed(385, 300)).toBe(false);
+      expect(isTerminalScreenCollapsed(0, 0)).toBe(false);
+    });
+
+    it("forces a remeasure + fit and stops once the screen reports a width", () => {
+      const { container, state } = makeContainer({ containerWidth: 385, screenWidth: 0 });
+      const terminal = { options: { fontFamily: XTERM_FONT_FAMILY } };
+      let fitCalls = 0;
+      // A genuine remeasure+fit recovers the collapsed screen on the first attempt.
+      const fit = () => {
+        fitCalls += 1;
+        state.screenWidth = 300;
+      };
+
+      guardAgainstCollapsedTerminalScreen(container, terminal, fit, XTERM_FONT_FAMILY);
+
+      expect(fitCalls).toBe(1);
+      expect(state.screenWidth).toBe(300);
+      // Recovered synchronously on the initial kick — nothing left scheduled.
+      expect(rafQueue.length).toBe(0);
+    });
+
+    it("does not act while the container itself is not yet measurable, then recovers on relayout", () => {
+      const { container, state } = makeContainer({ containerWidth: 0, screenWidth: 0 });
+      const terminal = { options: { fontFamily: XTERM_FONT_FAMILY } };
+      let fitCalls = 0;
+      const fit = () => {
+        fitCalls += 1;
+        state.screenWidth = 300;
+      };
+
+      guardAgainstCollapsedTerminalScreen(container, terminal, fit, XTERM_FONT_FAMILY);
+      // Container has no width yet (mobile modal not settled): must wait, not give up.
+      expect(fitCalls).toBe(0);
+      expect(resizeObservers[0]?.disconnected).toBe(false);
+
+      // Container becomes measurable; the ResizeObserver re-drives the guard.
+      state.containerWidth = 385;
+      resizeObservers[0].cb();
+
+      expect(fitCalls).toBe(1);
+      expect(state.screenWidth).toBe(300);
+    });
+
+    it("stays bounded (never spins) when the screen never recovers", () => {
+      const { container } = makeContainer({ containerWidth: 385, screenWidth: 0 });
+      const terminal = { options: { fontFamily: XTERM_FONT_FAMILY } };
+      let fitCalls = 0;
+      const fit = () => {
+        fitCalls += 1; // never sets a width — the collapse persists
+      };
+
+      guardAgainstCollapsedTerminalScreen(container, terminal, fit, XTERM_FONT_FAMILY, {
+        maxAttempts: 3,
+      });
+      flushRaf();
+
+      expect(fitCalls).toBe(3);
+      expect(rafQueue.length).toBe(0);
+    });
+
+    it("is a no-op when the screen already has a width at mount", () => {
+      const { container } = makeContainer({ containerWidth: 385, screenWidth: 300 });
+      const terminal = { options: { fontFamily: XTERM_FONT_FAMILY } };
+      let fitCalls = 0;
+
+      guardAgainstCollapsedTerminalScreen(container, terminal, () => (fitCalls += 1), XTERM_FONT_FAMILY);
+
+      expect(fitCalls).toBe(0);
+      expect(rafQueue.length).toBe(0);
     });
   });
 });

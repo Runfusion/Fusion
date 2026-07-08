@@ -294,6 +294,127 @@ export function withDomBasedTerminalCharacterMeasurement<T>(fn: () => T): T {
   }
 }
 
+/*
+FNXC:Terminal 2026-07-08-16:20:
+FN-7692 (mobile blank-terminal, recurrence of FN-7620/FN-7686): Both terminal surfaces (standalone
+TerminalModal and task-session SessionTerminal) can run `terminal.open()` + `FitAddon.fit()` on the
+mobile fullscreen layout while xterm's `CharSizeService` resolves the character cell to 0 width. When
+the cell width is 0, `FitAddon.proposeDimensions()` yields 0 columns/rows and `.xterm-screen` (plus the
+WebGL renderer canvas) collapses to 0x0 — the shell prompt DOES arrive over the WebSocket and IS written
+into xterm's row DOM, but it is painted into a zero-size box, so the terminal looks permanently blank
+("view renders but no output for many seconds" on mobile). Reproduced live: `.xterm` container measured
+385x758 while `.xterm-screen` stayed `width:0px;height:0px` and xterm's own `.xterm-char-measure-element`
+read 0 even though an identical monospace span in the same container measured ~295px — i.e. the correct
+measurement is achievable and xterm is holding a stale 0. The bug is renderer-independent (repro'd on both
+DOM and WebGL renderers) and mobile-layout-specific (desktop widths render immediately).
+
+Every prior guard validates the CONTAINER width (`clientWidth > 0`) and font load
+(`waitForTerminalFontMetrics`), but none validate that the RESULTING measured screen/cell width is
+non-zero, and a single 0 measurement is cached and never re-validated. `guardAgainstCollapsedTerminalScreen`
+closes that gap: while the container has a width but `.xterm-screen` does not, it forces a genuine
+CharSizeService remeasure (DOM-strategy `forceTerminalFontRemeasure`) followed by a `fit()`, re-driven by a
+`ResizeObserver` so it re-attempts exactly when the mobile modal/keyboard geometry finally settles. It is
+bounded (`maxAttempts`) so it never spins, and a no-op once the screen has a non-zero width.
+*/
+
+/** True when the terminal has a laid-out container but its rendered screen collapsed to zero width. */
+export function isTerminalScreenCollapsed(containerWidth: number, screenWidth: number): boolean {
+  return containerWidth > 0 && screenWidth <= 0;
+}
+
+/** Handle returned by {@link guardAgainstCollapsedTerminalScreen}; call `dispose()` on teardown. */
+export interface TerminalScreenGuardHandle {
+  dispose: () => void;
+}
+
+/**
+ * Watch a mounted xterm terminal for the collapsed-screen state (container has width, `.xterm-screen`
+ * does not) and force a genuine remeasure + fit until the screen is no longer collapsed or `maxAttempts`
+ * is exhausted. See the FN-7692 note above for the root cause. Renderer-agnostic and bounded.
+ *
+ * @param container The `.xterm` host element (or its wrapper) that also contains `.xterm-screen`.
+ * @param terminal  The xterm Terminal (only its mutable `options.fontFamily` is used, to force remeasure).
+ * @param fit       Runs `FitAddon.fit()` (callers also notify the server of the new cols/rows here).
+ * @param fontFamily The already-resolved xterm font family to land back on after the remeasure sentinel.
+ */
+export function guardAgainstCollapsedTerminalScreen(
+  container: HTMLElement,
+  terminal: { options: { fontFamily?: string } },
+  fit: () => void,
+  fontFamily: string,
+  options?: { maxAttempts?: number },
+): TerminalScreenGuardHandle {
+  const maxAttempts = options?.maxAttempts ?? 40;
+  let attempts = 0;
+  let disposed = false;
+  let rafId: number | null = null;
+  let observer: ResizeObserver | null = null;
+
+  const containerWidth = (): number => container.getBoundingClientRect().width;
+  const screenWidth = (): number => {
+    const screen = container.querySelector<HTMLElement>(".xterm-screen");
+    return screen ? screen.getBoundingClientRect().width : 0;
+  };
+
+  const dispose = (): void => {
+    disposed = true;
+    if (rafId !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(rafId);
+    }
+    rafId = null;
+    observer?.disconnect();
+    observer = null;
+  };
+
+  const attemptRecovery = (): void => {
+    if (disposed) return;
+    // Healthy — the screen has a real width; stop watching.
+    if (screenWidth() > 0) {
+      dispose();
+      return;
+    }
+    // Not yet measurable — the container itself has no width (mobile modal/keyboard geometry has
+    // not settled). Do NOT give up: wait for the ResizeObserver to re-drive when it becomes
+    // measurable. Only a screen that stays collapsed WITH a measurable container is the bug.
+    if (!isTerminalScreenCollapsed(containerWidth(), screenWidth())) {
+      return;
+    }
+    if (attempts >= maxAttempts) {
+      dispose();
+      return;
+    }
+    attempts += 1;
+    try {
+      // Force xterm's DOM-based CharSizeService strategy for the remeasure so the cell width is
+      // measured through the same pipeline the DomRenderer paints through (see FN-7603 note above).
+      withDomBasedTerminalCharacterMeasurement(() =>
+        forceTerminalFontRemeasure(terminal, fontFamily),
+      );
+      fit();
+    } catch {
+      // Ignore transient fit/measure errors during mobile viewport/keyboard transitions.
+    }
+    if (!isTerminalScreenCollapsed(containerWidth(), screenWidth())) {
+      dispose();
+      return;
+    }
+    if (typeof requestAnimationFrame === "function") {
+      rafId = requestAnimationFrame(attemptRecovery);
+    }
+  };
+
+  // Re-drive on container relayout: on mobile the width only becomes measurable after the fullscreen
+  // modal and keyboard CSS vars settle, which is exactly when a fresh remeasure finally succeeds.
+  if (typeof ResizeObserver !== "undefined") {
+    observer = new ResizeObserver(() => attemptRecovery());
+    observer.observe(container);
+  }
+  // Kick once immediately in case the container is already measurable at mount.
+  attemptRecovery();
+
+  return { dispose };
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
