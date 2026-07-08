@@ -1790,3 +1790,37 @@ The Android keyboard-open recurrence can start with a touch-primary visualViewpo
     display: none;
   }
 }
+
+/*
+FNXC:TerminalFooter 2026-07-08-15:00:
+FN-7684: extend the FN-7560 mobile footer relocation to the project's canonical
+tablet tier (769-1024px, `--tablet-breakpoint: 1024px`, matching the JS
+`isTabletTerminal` flag). A tablet keeps the desktop display modes (docked/
+floating/pinned-below, unlike mobile's fullscreen shell) but its header still
+overflows if it renders the full `.terminal-actions` cluster — the help text
+and zoom controls collide with the pin/pop-out/close icons. TerminalModal.tsx
+stops rendering `.terminal-actions` in the header at <=1024px and instead
+renders the SAME shared `terminalActionControls` fragment here, mirroring every
+mobile footer declaration (not just a display:flex override) so the tablet
+footer keeps the same min-width: 0 + overflow-x: auto horizontal-scroll safety
+net as mobile (FN-7550/FN-7560) plus the FN-7621 touch-action carve-out.
+Unlike mobile, the tablet footer has more room, so it intentionally does NOT
+reapply the mobile-only `.terminal-shortcuts--header, .terminal-connection-status
+{ display: none }` hide above — both stay visible on tablet.
+*/
+@media (min-width: 769px) and (max-width: 1024px) {
+  .terminal-status-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: var(--space-xs);
+    border-top: 1px solid var(--border);
+    padding: var(--space-xs);
+    padding-bottom: max(var(--space-xs), env(safe-area-inset-bottom, 0));
+    min-height: 36px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y;
+  }
+}
