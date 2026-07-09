@@ -894,6 +894,7 @@ export {
   getTaskMergeBlocker,
   getTaskHardMergeBlocker,
   getTaskCompletionBlocker,
+  getLatestFailedPreMergeReviewStep,
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,

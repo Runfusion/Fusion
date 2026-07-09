@@ -7386,6 +7386,11 @@
       "skipped": "{{id}}의 브랜치 재연결을 건너뜀: {{reason}}",
       "skippedResult": "재연결 건너뜀: {{reason}}"
     },
+    "bypassReview": {
+      "btn": "실패한 리뷰 건너뛰기",
+      "promptMessage": "실패한 병합 전 리뷰 단계를 건너뛰는 이유(필수, 감사 로그에 기록됨):",
+      "success": "{{id}}의 실패한 리뷰 단계를 건너뛰었습니다"
+    },
     "cacheBreakdown": "(읽기 {{read}} / 쓰기 {{write}} / 입력 {{input}})",
     "cacheHitRatio": "캐시 적중률:",
     "cacheRead": "캐시 읽기",

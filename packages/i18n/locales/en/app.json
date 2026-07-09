@@ -7396,6 +7396,11 @@
       "skipped": "Branch reattachment skipped for {{id}}: {{reason}}",
       "skippedResult": "Reattachment skipped: {{reason}}"
     },
+    "bypassReview": {
+      "btn": "Bypass failed review",
+      "promptMessage": "Reason for bypassing the failed pre-merge review step (required, audit-logged):",
+      "success": "Bypassed failed review lane for {{id}}"
+    },
     "cacheBreakdown": "(read {{read}} / write {{write}} / input {{input}})",
     "cacheHitRatio": "Cache hit ratio:",
     "cacheRead": "Cache read",

@@ -353,6 +353,13 @@ export interface TaskDetailModalProps {
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Operator-only review-lane bypass (FN-7720). Only wired here (Task Detail) so
+  it never appears in the Board/List card context menus — single canonical
+  affordance surface for this policy-gated escape hatch.
+  */
+  onBypassReview?: (id: string, reason: string) => Promise<Task>;
   onResetTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
@@ -622,6 +629,7 @@ export function TaskDetailContent({
   onRevertTask,
   onMergeTask,
   onRetryTask,
+  onBypassReview,
   onResetTask,
   onDuplicateTask,
   onTaskUpdated,
@@ -2513,6 +2521,31 @@ export function TaskDetailContent({
       });
   }, [task.id, onRetryTask, requestClose, addToast]);
 
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Operator-only review-lane bypass (FN-7720). Requires a non-empty reason
+  before firing — mirrors handleReset's window.confirm gate but needs free
+  text, so it uses window.prompt rather than the checkbox-only confirm
+  dialog. Does NOT close the modal (unlike handleRetry): the operator should
+  see the bypassed step's state update in place via onTaskUpdated instead of
+  losing detail context.
+  */
+  const handleBypassReview = useCallback(() => {
+    if (!onBypassReview) return;
+    const reason = window.prompt(
+      t("taskDetail.bypassReview.promptMessage", "Reason for bypassing the failed pre-merge review step (required, audit-logged):"),
+    );
+    if (!reason || !reason.trim()) return;
+    onBypassReview(task.id, reason.trim())
+      .then((updated) => {
+        onTaskUpdated?.(updated);
+        addToast(t("taskDetail.bypassReview.success", "Bypassed failed review lane for {{id}}", { id: task.id }), "success");
+      })
+      .catch((err) => {
+        addToast(getErrorMessage(err), "error");
+      });
+  }, [task.id, onBypassReview, onTaskUpdated, addToast, t]);
+
   const handleReset = useCallback(() => {
     if (!onResetTask) return;
     if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
@@ -3229,6 +3262,7 @@ export function TaskDetailContent({
     hasDuplicateHandler: Boolean(onDuplicateTask),
     hasRetryHandler: Boolean(onRetryTask),
     hasResetHandler: Boolean(onResetTask),
+    hasBypassReviewHandler: Boolean(onBypassReview),
     mergeStrategy,
     autoMergeEnabled: effectiveAutoMerge,
     prAutomationLabel,
@@ -3243,6 +3277,7 @@ export function TaskDetailContent({
     onMerge: handleMergeMenuItemClick,
     onStartPrReview: handleStartPrReviewMenuItemClick,
     onCheckPrStatus: handleCheckPrStatus,
+    onBypassReview: handleBypassReview,
   }), [
     task,
     t,
@@ -3251,6 +3286,7 @@ export function TaskDetailContent({
     onDuplicateTask,
     onRetryTask,
     onResetTask,
+    onBypassReview,
     mergeStrategy,
     effectiveAutoMerge,
     prAutomationLabel,
@@ -3265,6 +3301,7 @@ export function TaskDetailContent({
     handleMergeMenuItemClick,
     handleStartPrReviewMenuItemClick,
     handleCheckPrStatus,
+    handleBypassReview,
   ]);
   const primaryMoveTransition = taskActionMenuModel.moveTransitions[0]?.column;
   const secondaryMoveTransitions = taskActionMenuModel.moveTransitions.slice(1);

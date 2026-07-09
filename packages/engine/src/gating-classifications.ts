@@ -61,6 +61,8 @@ const PERMANENT_TASK_AGENT_ONLY_TOOLS = [
   "fn_task_pause",
   "fn_task_unpause",
   "fn_task_retry",
+  // FNXC:ReviewLaneBypass 2026-07-09-00:00: fn_task_bypass_review (FN-7720) is registered only on the CLI/pi-extension operator tool surface (packages/cli/src/extension.ts), the same registration path as fn_task_retry/fn_task_pause above — classify it here so the action gate never falls through to the unrecognized-tool exemption for this mutating, policy-gated escape hatch.
+  "fn_task_bypass_review",
   "fn_task_duplicate",
   "fn_task_archive",
   "fn_task_unarchive",

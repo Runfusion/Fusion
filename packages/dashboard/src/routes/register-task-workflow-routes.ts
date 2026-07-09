@@ -2421,6 +2421,43 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * Operator/privileged escape hatch for a card stranded in `in-review` solely
+   * by a failed pre-merge review lane (Runfusion/Fusion#1946 no-verdict
+   * dispatch defect). Mirrors the `/tasks/:id/retry` route shape but delegates
+   * all eligibility/mutation logic to `store.bypassFailedPreMergeReviewStep`
+   * (FN-7720). This route is intentionally NOT part of the executor/reviewer
+   * agent tool surface — dashboard/operator only.
+   */
+  router.post("/tasks/:id/bypass-review", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { reason, actor } = (req.body ?? {}) as { reason?: unknown; actor?: unknown };
+      if (typeof reason !== "string" || reason.trim().length === 0) {
+        throw badRequest("reason is required to bypass a failed pre-merge review step");
+      }
+      const resolvedActor = typeof actor === "string" && actor.trim().length > 0 ? actor.trim() : "dashboard-operator";
+      const updated = await scopedStore.bypassFailedPreMergeReviewStep(req.params.id, {
+        reason: reason.trim(),
+        actor: resolvedActor,
+      });
+      res.json(updated);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("not found")) {
+        throw notFound(message);
+      }
+      if (message.includes("Cannot bypass review lane") || message.includes("requires a non-empty reason")) {
+        throw conflict(message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   // Nuclear reset — erase all progress and allocate a fresh worktree+branch on next run
   router.post("/tasks/:id/reset", async (req, res) => {
     try {

@@ -746,6 +746,20 @@ Post-merge optional groups never trigger this send-back path because merge has a
 
 Advisory failures are intentionally excluded from merge blocking and self-healing auto-revive after a task is already in review; their live-run fix pass is only the bounded pre-review remediation described above.
 
+#### Review-lane bypass (operator escape hatch, FN-7720)
+
+Self-healing recovery re-runs the *same* dispatch that produced a failed pre-merge review step. When that step failed for infrastructure reasons rather than a genuine `REVISE` verdict — the leading real-world cause being the `(no feedback captured)` no-verdict dispatch defect (Runfusion/Fusion#1946) — recovery keeps re-running the defective dispatch instead of unblocking the card. For that situation, Fusion exposes a supported, audit-logged **review-lane bypass** primitive so a privileged operator can advance the card without waiting on the underlying engine fix:
+
+- **Store primitive:** `TaskStore.bypassFailedPreMergeReviewStep(id, { reason, actor })` in `@fusion/core`.
+- **Dashboard:** `POST /tasks/:id/bypass-review` (requires a body `{ reason }`), and a **Bypass failed review** action in the Task Detail actions menu — shown only when the task is `in-review` and carries a failed pre-merge review step. The operator must type a reason before it fires.
+- **CLI / pi extension:** `fn_task_bypass_review` (params: `id`, required `reason`). This tool is registered **only** on the CLI/pi-extension operator surface — it is never exposed to executor, reviewer, or triage agent tool lists, so autonomous task execution cannot self-bypass a review it failed.
+
+**A reason is always mandatory** and every bypass is audit-logged (actor, timestamp, reason, and the prior step status it superseded) via a `task:bypass-review` run-audit event plus a task log entry.
+
+The bypass targets the **most-recently-completed failed pre-merge** `WorkflowStepResult` (any lane — Code Review, Code Review Remediation, Plan Review, Browser Verification) and rewrites it in place: `status` becomes `"skipped"` (a terminal, non-blocking value `getTaskMergeBlocker` does not match), and the result is stamped with `bypassedBy`, `bypassedAt`, `bypassReason`, and `bypassedFromStatus` (the prior `"failed"` status) plus `bypassedFromVerdict` when one was present. **The bypass never fabricates a reviewer `verdict`** (no synthetic `APPROVE`) — it is an honest record that the gate was overridden, not that the change was reviewed and approved.
+
+The bypass clears **only** the `"task has failed pre-merge workflow steps"` merge-blocker reason. It does **not** touch any other `getTaskMergeBlocker` condition: a paused task, incomplete steps, a blocking task status, or a still-`pending` pre-merge step all continue to block exactly as before. It also does not itself move the task to `done` or force a merge — an `autoMerge:false` task remains terminal-until-human-merge after the bypass, same as before (FN-5147). Because the bypassed step's `status` is no longer `"failed"`, self-healing's recovery sweep (`recoverReviewTasksWithFailedPreMergeSteps`) no longer selects it for re-dispatch.
+
 ## Viewing Results
 
 <!--

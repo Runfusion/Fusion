@@ -441,7 +441,7 @@ function AppInner() {
   // FNXC:DashboardLiveUpdates 2026-06-26-01:08:
   // SSE remains enabled only for board/list views to free connection slots for mission detail fetches. The false→true missed-event catch-up lives inside useTasks so App keeps the routing gate only and cannot double-fetch on task-view re-entry.
   const taskSseEnabled = taskView === "board" || taskView === "list";
-  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
+  const { tasks, isStale, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, updateTask, duplicateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, ingestCreatedTasks, lastFetchTimeMs } = useTasks(
     {
       ...(currentProject ? { projectId: currentProject.id } : {}),
       searchQuery: searchQuery || undefined,
@@ -1253,7 +1253,7 @@ function AppInner() {
 
   // Props for the extracted <MainContent> switch (see components/dashboard/MainContent.tsx).
   // Every value is passed by its App name; the switch renders the same subtrees as before.
-  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetail, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
+  const rightDock = useRightDockController({ active: rightDockActive, projectId: currentProject?.id, addToast, settingsLoaded, researchReadinessVersion, goalAnchorId, tasks: isRemote && remoteData.tasks.length > 0 ? remoteData.tasks : tasks, workflowSteps, subscribePluginEvents, openDetailTask, openTaskPopup: popOutTaskDetail, openMobileTasksInPopup, openFileInBrowser, onMoveTask: moveTask, onDeleteTask: deleteTask, onArchiveTask: archiveTask, onRevertTask: revertTask, onMergeTask: mergeTask, onRetryTask: retryTask, onBypassReview: bypassReview, onResetTask: resetTask, onDuplicateTask: duplicateTask, onTaskUpdated: (task: Task) => ingestCreatedTasks([task]), openSettings: (section?: string) => openSettingsWithNav(section as SectionId), onOpenUsage: openUsageWithNav, onOpenActivityLog: openActivityLogWithNav, onOpenGitHubImport: openGitHubImportWithNav, onOpenGitManager: openGitManagerWithNav, onOpenSchedules: openSchedulesWithNav, onSendSelectionToTask: modalManager.openNewTaskWithDescription, onCreateTaskFromInsight: handleInsightTaskCreate, onNavigateToMission: handleOpenMission, onTaskCreated: (task: Task) => ingestCreatedTasks([task]), prAuthAvailable, autoMerge, taskDetailChatFirst, visibilityOptions: { experimentalFeatures: { insights: insightsEnabled, memoryView: memoryEnabled, devServerView: devServerEnabled, researchView: researchEnabled, evalsView: evalsEnabled, goalsView: goalsEnabled }, showSkillsTab: skillsEnabled, todosEnabled, pluginDashboardViews }, footerVisible: executorFooterVisible });
 
   /*
   FNXC:OpenTasksInRightSidebar 2026-06-28-00:00:
@@ -1798,6 +1798,7 @@ function AppInner() {
               onDeleteTask={deleteTask}
               onMergeTask={mergeTask}
               onRetryTask={retryTask}
+              onBypassReview={bypassReview}
               onResetTask={resetTask}
               onDuplicateTask={duplicateTask}
               onRequestClose={close}
@@ -1828,7 +1829,7 @@ function AppInner() {
         }}
         onPlanningMode={openPlanningWithInitialPlanWithNav}
         onSubtaskBreakdown={subtaskBreakdownEnabled ? openSubtaskBreakdownWithNav : undefined}
-        taskOperations={{ moveTask, deleteTask, mergeTask, archiveTask, revertTask, retryTask, resetTask, duplicateTask }}
+        taskOperations={{ moveTask, deleteTask, mergeTask, archiveTask, revertTask, retryTask, bypassReview, resetTask, duplicateTask }}
         deepLink={{ handleDetailClose }}
         settings={{ prAuthAvailable, autoMerge, taskDetailChatFirst, themeMode, colorTheme, dashboardFontScalePct, shadcnCustomColors, resolvedThemeMode, setThemeMode, setColorTheme, setDashboardFontScalePct, setShadcnCustomColors, setQuickChatButtonModeImmediate }}
         onSettingsClose={handleSettingsCloseWithNav}

@@ -85,6 +85,15 @@ Retry a failed task — clears the error state. Non-review failures move to todo
 |-----------|------|----------|-------------|
 | `id` | string | ✓ | Task ID to retry (e.g. FN-001). Must be in 'failed' state. |
 
+### fn_task_bypass_review
+
+Policy-gated escape hatch for an in-review task stranded solely by a failed pre-merge review lane (leading real-world cause: the Runfusion/Fusion#1946 '(no feedback captured)' no-verdict dispatch defect), not a real REVISE. Rewrites the latest failed pre-merge WorkflowStepResult to a terminal non-blocking status with explicit bypass audit metadata (who/when/why/prior status) — it never fabricates a reviewer verdict. Requires a mandatory reason and is audit-logged. Clears ONLY the failed-pre-merge-step merge blocker; paused, incomplete-step, blocking-status, and still-pending conditions still block, and an autoMerge:false task is not force-merged.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `id` | string | ✓ | Task ID (e.g. FN-001) |
+| `reason` | string | ✓ | Mandatory justification for the bypass (audit-logged) |
+
 ### fn_task_duplicate
 
 Duplicate an existing task, creating a fresh copy in planning. Copies the title and description but resets all execution state. The AI planning agent will replan the new task.

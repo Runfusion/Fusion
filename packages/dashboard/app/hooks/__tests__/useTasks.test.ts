@@ -33,6 +33,7 @@ vi.mock("../../api", async (importOriginal) => {
     deleteTask: vi.fn(),
     mergeTask: vi.fn(),
     retryTask: vi.fn(),
+    bypassReview: vi.fn(),
     duplicateTask: vi.fn(),
     updateTask: vi.fn(),
     archiveTask: vi.fn(),
@@ -51,6 +52,7 @@ const mockFetchArchivedTasks = vi.mocked(api.fetchArchivedTasks);
 const mockCreateTask = vi.mocked(api.createTask);
 const mockDeleteTask = vi.mocked(api.deleteTask);
 const mockRetryTask = vi.mocked(api.retryTask);
+const mockBypassReview = vi.mocked(api.bypassReview);
 const mockDuplicateTask = vi.mocked(api.duplicateTask);
 const mockUpdateTask = vi.mocked(api.updateTask);
 const mockArchiveAllDone = vi.mocked(api.archiveAllDone);
@@ -2039,6 +2041,62 @@ describe("useTasks", () => {
       expect(mockReadCache).not.toHaveBeenCalled();
       expect(mockWriteCache).not.toHaveBeenCalled();
       expect(mockClearCache).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Mirrors the retryTask describe block above (FN-7720): success replaces the
+  matching local task row immediately (no SSE/refresh dependency), and a
+  rejected bypass leaves local state and cache untouched.
+  */
+  describe("bypassReview", () => {
+    it("calls the bypass-review API and normalizes the returned task into local state", async () => {
+      const failing = createMockTask({
+        id: "FN-BYP",
+        column: "in-review" as Column,
+        status: null,
+      });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      const bypassed = createMockTask({
+        id: "FN-BYP",
+        column: "in-review" as Column,
+        status: null,
+      });
+      mockFetchTasks.mockResolvedValueOnce([failing, keep]);
+      mockBypassReview.mockResolvedValueOnce(bypassed);
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+
+      let returned: Task | undefined;
+      await act(async () => {
+        returned = await result.current.bypassReview("FN-BYP", "infra failure");
+      });
+
+      expect(mockBypassReview).toHaveBeenCalledWith("FN-BYP", "infra failure", "proj-1");
+      expect(returned).toEqual(expect.objectContaining({ id: "FN-BYP" }));
+      expect(result.current.tasks).toEqual([bypassed, keep]);
+    });
+
+    it("keeps local state untouched when the bypass API call rejects", async () => {
+      const failing = createMockTask({ id: "FN-BYP", column: "in-review" as Column, status: null });
+      const keep = createMockTask({ id: "FN-KEEP", column: "todo" as Column });
+      mockFetchTasks.mockResolvedValueOnce([failing, keep]);
+      mockBypassReview.mockRejectedValueOnce(new Error("reason is required"));
+
+      const { result } = renderHook(() => useTasks({ projectId: "proj-1" }));
+
+      await waitFor(() => expect(result.current.tasks).toHaveLength(2));
+
+      await expect(
+        act(async () => {
+          await result.current.bypassReview("FN-BYP", "");
+        }),
+      ).rejects.toThrow("reason is required");
+
+      expect(result.current.tasks).toEqual([failing, keep]);
     });
   });
 

@@ -65,6 +65,8 @@ interface AppModalsProps {
     /* FNXC:TaskRevert 2026-07-05-00:00 (FN-7525): threaded alongside archiveTask; never mutates the source task's column. */
     revertTask?: (taskId: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
     retryTask: (taskId: string) => Promise<Task>;
+    /* FNXC:ReviewLaneBypass 2026-07-09-00:00 (FN-7720): operator-only review-lane bypass, threaded to TaskDetailModal only. */
+    bypassReview?: (taskId: string, reason: string) => Promise<Task>;
     resetTask: (taskId: string) => Promise<Task>;
     duplicateTask: (taskId: string) => Promise<Task>;
   };
@@ -324,6 +326,7 @@ export function AppModals({
             onArchiveTask={taskOperations.archiveTask}
             onRevertTask={taskOperations.revertTask}
             onRetryTask={taskOperations.retryTask}
+            onBypassReview={taskOperations.bypassReview}
             onResetTask={taskOperations.resetTask}
             onDuplicateTask={taskOperations.duplicateTask}
             onTaskUpdated={modalManager.updateDetailTask}

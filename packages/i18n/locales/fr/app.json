@@ -7386,6 +7386,11 @@
       "skipped": "Rattachement de branche ignoré pour {{id}} : {{reason}}",
       "skippedResult": "Rattachement ignoré : {{reason}}"
     },
+    "bypassReview": {
+      "btn": "Contourner la revue échouée",
+      "promptMessage": "Motif du contournement de l'étape de revue pré-fusion échouée (obligatoire, journalisé) :",
+      "success": "Revue échouée contournée pour {{id}}"
+    },
     "cacheBreakdown": "(lus {{read}} / écrits {{write}} / entrée {{input}})",
     "cacheHitRatio": "Taux de hits du cache :",
     "cacheRead": "Lecture du cache",

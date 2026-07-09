@@ -7386,6 +7386,11 @@
       "skipped": "Reconexión de rama omitida para {{id}}: {{reason}}",
       "skippedResult": "Reconexión omitida: {{reason}}"
     },
+    "bypassReview": {
+      "btn": "Omitir revisión fallida",
+      "promptMessage": "Motivo para omitir el paso de revisión previo a la fusión fallido (obligatorio, se registra en auditoría):",
+      "success": "Revisión fallida omitida para {{id}}"
+    },
     "cacheBreakdown": "(lectura {{read}} / escritura {{write}} / entrada {{input}})",
     "cacheHitRatio": "Tasa de aciertos de caché:",
     "cacheRead": "Lectura de caché",

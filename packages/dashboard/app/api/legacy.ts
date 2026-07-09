@@ -831,6 +831,21 @@ export function retryTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
 }
 
+/*
+FNXC:ReviewLaneBypass 2026-07-09-00:00:
+Operator/privileged review-lane bypass primitive (FN-7720). Bypasses the latest
+failed pre-merge review step of an in-review task so it can advance past the
+gate; a non-empty `reason` is mandatory and audited server-side. Mirrors
+`retryTask`'s client shape.
+*/
+export function bypassReview(id: string, reason: string, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/bypass-review`, projectId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function relaunchCliSession(sessionId: string, projectId?: string): Promise<{ ok: boolean; taskId?: string }> {
   return api<{ ok: boolean; taskId?: string }>(
     withProjectId(`/cli-sessions/${encodeURIComponent(sessionId)}/relaunch`, projectId),

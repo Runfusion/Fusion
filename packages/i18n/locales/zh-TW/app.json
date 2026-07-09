@@ -7386,6 +7386,11 @@
       "skipped": "{{id}} 的分支重新綁定已跳過：{{reason}}",
       "skippedResult": "重新綁定已跳過：{{reason}}"
     },
+    "bypassReview": {
+      "btn": "跳過失敗的審查",
+      "promptMessage": "跳過失敗的合併前審查步驟的原因（必填，將被審計記錄）：",
+      "success": "已為 {{id}} 跳過失敗的審查通道"
+    },
     "cacheBreakdown": "（讀取 {{read}} / 寫入 {{write}} / 輸入 {{input}}）",
     "cacheHitRatio": "快取命中率：",
     "cacheRead": "快取讀取",

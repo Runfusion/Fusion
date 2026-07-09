@@ -225,6 +225,15 @@ export function getTaskMergeBlocker(
     return "task has incomplete or failed pre-merge workflow steps";
   }
 
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * `bypassFailedPreMergeReviewStep` (store.ts) recovers a card stranded here by
+   * rewriting the selected step's `status` from `"failed"` to `"skipped"` (see
+   * `getLatestFailedPreMergeReviewStep` below) plus bypass audit metadata. A
+   * bypassed step therefore no longer matches this branch, so this function
+   * stays byte-identical in logic — the bypass works upstream of the blocker,
+   * not by special-casing it here (FN-7720).
+   */
   if (
     task.workflowStepResults?.some((result) => {
       const phase = result.phase || "pre-merge";
@@ -235,6 +244,27 @@ export function getTaskMergeBlocker(
   }
 
   return undefined;
+}
+
+/**
+ * Returns the most-recently-completed `status:"failed"` pre-merge workflow
+ * step result on a task, or `undefined` when none exists. Mirrors the sort
+ * (most-recent `completedAt`/`startedAt` first) used by self-healing's
+ * `latestFailedPreMergeStep` (packages/engine/src/self-healing.ts) so the
+ * bypass primitive and the recovery sweep select the identical step
+ * (FN-7720). Post-merge failed steps are excluded — they do not block merge
+ * and are out of scope for the bypass.
+ */
+export function getLatestFailedPreMergeReviewStep(
+  task: Pick<Task, "workflowStepResults">,
+): WorkflowStepResult | undefined {
+  return (task.workflowStepResults ?? [])
+    .filter((result) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed")
+    .sort((a, b) => {
+      const aTs = Date.parse(a.completedAt || a.startedAt || "");
+      const bTs = Date.parse(b.completedAt || b.startedAt || "");
+      return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
+    })[0];
 }
 
 export function getTaskHardMergeBlocker(

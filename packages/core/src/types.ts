@@ -885,6 +885,28 @@ export interface WorkflowStepResult {
   startedAt?: string;
   /** ISO-8601 timestamp when the step completed */
   completedAt?: string;
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * A privileged operator can bypass a `status:"failed"` pre-merge review step
+   * (leading real-world cause: the Runfusion/Fusion#1946 `(no feedback captured)`
+   * no-verdict dispatch defect) so a card stranded solely by that failure can
+   * advance to merge (FN-7720). The bypass REWRITES this result's `status` to a
+   * terminal, non-blocking value (`"skipped"`) and stamps the fields below as an
+   * explicit audit trail — it never fabricates a reviewer `verdict`. Only the
+   * `getTaskMergeBlocker` "task has failed pre-merge workflow steps" reason is
+   * cleared; every other merge-blocker condition (paused, incomplete steps,
+   * blocking task status, still-`pending` pre-merge steps) is untouched.
+   */
+  /** Operator identity that performed the bypass, if this result was bypassed. */
+  bypassedBy?: string;
+  /** ISO-8601 timestamp when the bypass was applied. */
+  bypassedAt?: string;
+  /** Mandatory operator-supplied justification for the bypass. */
+  bypassReason?: string;
+  /** The `status` this result carried immediately before the bypass rewrote it (always `"failed"` for the supported bypass path). */
+  bypassedFromStatus?: WorkflowStepResult["status"];
+  /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
+  bypassedFromVerdict?: WorkflowStepResult["verdict"];
 }
 
 /**

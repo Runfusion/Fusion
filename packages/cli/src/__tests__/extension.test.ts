@@ -287,6 +287,7 @@ describe.skipIf(!SHOULD_RUN_LEGACY_EXTENSION_INTEGRATION)("fn pi extension (lega
         "fn_task_pause",
         "fn_task_unpause",
         "fn_task_retry",
+        "fn_task_bypass_review",
         "fn_task_duplicate",
         "fn_task_refine",
         "fn_task_import_github",

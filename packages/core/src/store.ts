@@ -161,7 +161,7 @@ import { CentralCore } from "./central-core.js";
 import { SecretsStore } from "./secrets-store.js";
 import { MasterKeyManager } from "./master-key.js";
 import { hasSyncPassphraseConfigured } from "./secrets-sync-passphrase.js";
-import { getTaskDoneBypassBlocker, getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
+import { getLatestFailedPreMergeReviewStep, getTaskDoneBypassBlocker, getTaskMergeBlocker, resolveTaskMergeTarget } from "./task-merge.js";
 import { DEFAULT_STALE_MERGING_MIN_AGE_MS, getInReviewStallReason } from "./in-review-stall.js";
 import { getInReviewStalledSignal } from "./in-review-stalled.js";
 import { getStalePausedReviewSignal } from "./stale-paused-review.js";
@@ -9741,6 +9741,104 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       } else {
         await this.atomicWriteTaskJson(dir, task);
       }
+      if (this.isWatching) this.taskCache.set(id, { ...task });
+
+      this.emit("task:updated", task);
+      return task;
+    });
+  }
+
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * Operator/privileged-only escape hatch for a card stranded in `in-review`
+   * solely by a failed pre-merge review lane (leading real-world cause: the
+   * Runfusion/Fusion#1946 `(no feedback captured)` no-verdict dispatch
+   * defect). Requires a mandatory `reason` and rewrites the latest failed
+   * pre-merge `WorkflowStepResult` to a terminal `"skipped"` status with
+   * explicit bypass audit metadata (who/when/why/prior status) — it never
+   * synthesizes a reviewer `verdict`. This clears ONLY the
+   * "task has failed pre-merge workflow steps" `getTaskMergeBlocker` reason;
+   * paused/incomplete-step/blocking-status/still-pending conditions still
+   * block, and an `autoMerge:false` task is not force-merged — it only
+   * becomes eligible for the normal human-review merge path (FN-7720). NOT
+   * exposed to executor/reviewer/triage agent tool surfaces — see
+   * `fn_task_bypass_review` registration comments for the same rule.
+   */
+  async bypassFailedPreMergeReviewStep(
+    id: string,
+    options: { reason: string; actor: string },
+  ): Promise<Task> {
+    const reason = options.reason?.trim();
+    if (!reason) {
+      throw new Error("bypassFailedPreMergeReviewStep requires a non-empty reason");
+    }
+    const actor = options.actor?.trim() || "operator";
+
+    return this.withTaskLock(id, async () => {
+      const dir = this.taskDir(id);
+      const task = await this.readTaskJson(dir);
+
+      if (task.column !== "in-review") {
+        throw new Error(`Cannot bypass review lane for ${id}: task is in '${task.column}', must be in 'in-review'`);
+      }
+      if (task.paused) {
+        throw new Error(`Cannot bypass review lane for ${id}: task is paused`);
+      }
+
+      const target = getLatestFailedPreMergeReviewStep(task);
+      if (!target) {
+        throw new Error(`Cannot bypass review lane for ${id}: no failed pre-merge review step found`);
+      }
+
+      const results = task.workflowStepResults ?? [];
+      const targetIndex = results.indexOf(target);
+      if (targetIndex === -1) {
+        throw new Error(`Cannot bypass review lane for ${id}: failed step result not found`);
+      }
+
+      const now = new Date().toISOString();
+      const bypassed: import("./types.js").WorkflowStepResult = {
+        ...target,
+        status: "skipped",
+        bypassedBy: actor,
+        bypassedAt: now,
+        bypassReason: reason,
+        bypassedFromStatus: target.status,
+        bypassedFromVerdict: target.verdict,
+      };
+      // A bypass never fabricates a reviewer verdict.
+      delete bypassed.verdict;
+
+      const nextResults = [...results];
+      nextResults[targetIndex] = bypassed;
+      task.workflowStepResults = nextResults;
+
+      if (!task.log) {
+        task.log = [];
+      }
+      task.updatedAt = now;
+      task.log.push({
+        timestamp: now,
+        action: `Review lane bypassed: ${target.workflowStepName} (${target.workflowStepId}) by ${actor} — ${reason}`,
+      });
+
+      this.recordRunAuditEvent({
+        taskId: task.id,
+        agentId: actor,
+        runId: this.makeSyntheticDeleteRunId(task.id),
+        domain: "database",
+        mutationType: "task:bypass-review",
+        target: task.id,
+        metadata: {
+          workflowStepId: target.workflowStepId,
+          workflowStepName: target.workflowStepName,
+          bypassedFromStatus: target.status,
+          bypassedFromVerdict: target.verdict ?? null,
+          reason,
+        },
+      });
+
+      await this.atomicWriteTaskJson(dir, task);
       if (this.isWatching) this.taskCache.set(id, { ...task });
 
       this.emit("task:updated", task);
