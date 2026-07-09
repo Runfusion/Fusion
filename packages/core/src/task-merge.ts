@@ -63,7 +63,7 @@ export function resolveEffectiveAutoMerge(
  * FNXC:PrAutoMergeGate 2026-06-28-00:33:
  * FN-7182: a dashboard-created open PR is a human handoff, so exclude it from all automatic merge processing and self-healing recovery until the human merges or closes the PR.
  * This mirrors the `autoMerge:false` in-review gate while preserving manual Merge PR/manual done paths and pipeline PRs without `manual: true`.
- * Shared-branch member integration still bypasses this function via `allowInReviewMergeProcessing(... ) || isSharedBranchGroupMemberIntegration(task)`, so a manual PR on a shared member can still be integrated to its group branch; group-to-default promotion remains gated separately.
+ * Shared-branch member integration still bypasses this function via `allowInReviewMergeProcessing(... ) || isLiveSharedBranchGroupMemberIntegration(task, group)`, so a manual PR on a live shared member can still be integrated to its group branch; group-to-default promotion remains gated separately.
  */
 export function allowsAutoMergeProcessing(
   task: Pick<Task, "autoMerge" | "prInfo" | "prInfos">,
@@ -91,6 +91,17 @@ export function isSharedBranchGroupMemberIntegration(
 ): boolean {
   return task.branchContext?.assignmentMode === "shared"
     && Boolean(task.branchContext.groupId?.trim());
+}
+
+/**
+ * FNXC:AutoMergeHold 2026-07-09-16:42:
+ * FN-7750 / Runfusion#1980: the `autoMerge:false` exemption for shared-branch members is valid only while the branch group is live. Missing, finalized, abandoned, or dissolved groups must degrade to the standalone manual-hold path so operator Merge & Close control is honored regardless of whether the task was API-, user-, or engine-created.
+ */
+export function isLiveSharedBranchGroupMemberIntegration(
+  task: Pick<Task, "branchContext">,
+  group: Pick<BranchGroup, "status"> | null | undefined,
+): boolean {
+  return isSharedBranchGroupMemberIntegration(task) && group != null && group.status === "open";
 }
 
 export function resolveTaskMergeTarget(

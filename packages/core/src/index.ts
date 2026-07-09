@@ -913,6 +913,7 @@ export {
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,
+  isLiveSharedBranchGroupMemberIntegration,
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
   resolveTaskMergeTarget,

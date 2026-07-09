@@ -26,6 +26,7 @@ import {
   emitOverseerRetry,
   emitOverseerSteering,
   getTaskHardMergeBlocker,
+  isLiveSharedBranchGroupMemberIntegration,
   isSharedBranchGroupMemberIntegration,
   isWorkspaceTask,
   normalizeMergerMode,
@@ -1817,8 +1818,8 @@ export class ProjectEngine {
   async requestInterpreterMerge(taskId: string, options: { signal?: AbortSignal } = {}): Promise<MergeResult> {
     let task: Task | null = null;
     let settings: Settings | undefined;
+    const store = this.runtime.getTaskStore();
     try {
-      const store = this.runtime.getTaskStore();
       settings = await store.getSettings();
       task = await store.getTask(taskId);
     } catch {
@@ -1827,7 +1828,7 @@ export class ProjectEngine {
     const eligible = !!task && !!settings
       && task.column === "in-review"
       && !settings.globalPause && !settings.enginePaused
-      && this.allowInReviewMergeProcessing(task, settings)
+      && this.allowInReviewMergeProcessing(task, settings, store)
       && !(task.paused && !task.mergeDetails?.mergeConfirmed);
     if (!eligible) {
       // A null task means the lookup failed or the task was deleted; never hand
@@ -2286,8 +2287,14 @@ export class ProjectEngine {
    * pushed wins. listTasks returns createdAt ASC — without this sort an
    * older low-priority task would start before a later urgent one.
    */
-  private allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge">, settings: Pick<Settings, "autoMerge">): boolean {
-    return allowsAutoMergeProcessing(task, settings) || isSharedBranchGroupMemberIntegration(task);
+  private allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge">, settings: Pick<Settings, "autoMerge">, store: Partial<Pick<TaskStore, "getBranchGroup">> = this.runtime.getTaskStore()): boolean {
+    const groupId = task.branchContext?.groupId?.trim();
+    const branchGroup = groupId ? store.getBranchGroup?.(groupId) : null;
+    /*
+    FNXC:AutoMergeHold 2026-07-09-16:53:
+    FN-7750 / Runfusion#1980: shared-branch member integration may bypass the global `autoMerge:false` hold only while its group row is still open. Stale, finalized, abandoned, or missing groups must flow through the standalone manual-hold gate so no task provenance can solo auto-merge to main.
+    */
+    return allowsAutoMergeProcessing(task, settings) || isLiveSharedBranchGroupMemberIntegration(task, branchGroup);
   }
 
   private async emitLegacyAutoMergeStampAdvisory(store: TaskStore): Promise<void> {
@@ -2330,7 +2337,7 @@ export class ProjectEngine {
   private enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge" | "maxAutoMergeRetries">): number {
     const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
     const eligible = sortTasksByPriorityThenAgeAndId(
-      tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries) && this.allowInReviewMergeProcessing(t, settings)) as Task[],
+      tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries) && this.allowInReviewMergeProcessing(t, settings, this.runtime.getTaskStore())) as Task[],
     );
     for (const t of eligible) {
       this.internalEnqueueMerge(t.id);
@@ -2544,7 +2551,7 @@ export class ProjectEngine {
             if (!task || task.column !== "in-review") {
               continue;
             }
-            if (!this.allowInReviewMergeProcessing(task, settings)) {
+            if (!this.allowInReviewMergeProcessing(task, settings, store)) {
               runtimeLog.log(`Auto-merge skipping ${taskId} — autoMerge disabled`);
               continue;
             }
@@ -2586,8 +2593,15 @@ export class ProjectEngine {
               // silently promote the poisoned row to `done` — exactly the
               // false-positive completion class that lost FN-5612/5613/5614/5616/
               // 5623/5625 work on 2026-05-27/28.
-              const branchGroupForFastPath = isSharedBranchGroupMemberIntegration(task)
+              const branchGroupForFastPathCandidate = isSharedBranchGroupMemberIntegration(task)
                 ? (store as any).getBranchGroup?.(task.branchContext?.groupId)
+                : null;
+              /*
+              FNXC:AutoMergeHold 2026-07-09-16:58:
+              FN-7750: merge-confirmed fast-path rerouting to a branch-group integration branch is safe only for a live/open group. A missing or terminal group must leave the row on its stored standalone target instead of reviving a stale group route that could bypass the manual merge hold.
+              */
+              const branchGroupForFastPath = isLiveSharedBranchGroupMemberIntegration(task, branchGroupForFastPathCandidate)
+                ? branchGroupForFastPathCandidate
                 : null;
               const routedFastPathTarget = branchGroupForFastPath?.branchName?.trim();
               const integrationBranchForGate =
@@ -4049,7 +4063,7 @@ export class ProjectEngine {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: ${settings.globalPause ? "globalPause" : "enginePaused"} active`);
             return;
           }
-          if (!this.allowInReviewMergeProcessing(latestTask, settings)) {
+          if (!this.allowInReviewMergeProcessing(latestTask, settings, store)) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: autoMerge disabled`);
             return;
           }
@@ -4166,7 +4180,7 @@ export class ProjectEngine {
 
       try {
         const settings = await store.getSettings();
-        if (settings.globalPause || settings.enginePaused || !this.allowInReviewMergeProcessing(task, settings)) {
+        if (settings.globalPause || settings.enginePaused || !this.allowInReviewMergeProcessing(task, settings, store)) {
           return;
         }
         if (this.options.getTaskMergeBlocker?.(task)) {

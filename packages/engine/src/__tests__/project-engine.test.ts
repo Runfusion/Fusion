@@ -244,6 +244,7 @@ function createMockStore(initialSettings: Record<string, unknown>) {
     emit: vi.fn(),
     addTaskComment: vi.fn(async () => undefined),
     getActiveMergingTask: vi.fn(() => null),
+    getBranchGroup: vi.fn(() => null),
     on: vi.fn((event: string, handler: (...args: unknown[]) => void | Promise<void>) => {
       if (event === "settings:updated") {
         settingsHandlers.add(handler as (payload: SettingsHandlerPayload) => void | Promise<void>);
@@ -2546,6 +2547,7 @@ describe("ProjectEngine paused in-review auto-merge behavior", () => {
 
   it("startup merge sweep enqueues shared-group members when autoMerge is false", async () => {
     const mockStore = createMockStore({ ...baseSettings, autoMerge: false });
+    mockStore.store.getBranchGroup.mockReturnValue({ id: "BG-5819", status: "open", branchName: "fusion/groups/bg-5819" });
     mockStore.store.listTasks.mockResolvedValueOnce([
       {
         id: "FN-shared",
@@ -3321,8 +3323,8 @@ describe("ProjectEngine stale mergeActive rescue (FN-3900)", () => {
 });
 
 describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
-  const gate = (task: Partial<Task>, settings: { autoMerge: boolean }) =>
-    (createEngine() as any).allowInReviewMergeProcessing(task, settings) as boolean;
+  const gate = (task: Partial<Task>, settings: { autoMerge: boolean }, branchGroup: { status: "open" | "finalized" | "abandoned" } | null = null) =>
+    (createEngine() as any).allowInReviewMergeProcessing(task, settings, { getBranchGroup: vi.fn(() => branchGroup) }) as boolean;
 
   it("lets an explicit per-task autoMerge:true through when the global setting is off", () => {
     expect(gate({ autoMerge: true }, { autoMerge: false })).toBe(true);
@@ -3338,11 +3340,40 @@ describe("allowInReviewMergeProcessing per-task autoMerge override", () => {
     expect(gate({ autoMerge: false }, { autoMerge: true })).toBe(true);
   });
 
-  it("still exempts shared-branch-group member integration when the global setting is off", () => {
+  it("still exempts live shared-branch-group member integration when the global setting is off", () => {
     expect(gate(
       { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
       { autoMerge: false },
+      { status: "open" },
     )).toBe(true);
+  });
+
+  it.each([
+    ["missing", null],
+    ["finalized", { status: "finalized" as const }],
+    ["abandoned", { status: "abandoned" as const }],
+  ])("blocks shared-branch-group member integration for %s groups when global autoMerge is off", (_label, branchGroup) => {
+    expect(gate(
+      { branchContext: { assignmentMode: "shared", groupId: "grp-1" } as Task["branchContext"] },
+      { autoMerge: false },
+      branchGroup,
+    )).toBe(false);
+  });
+
+  it.each([
+    ["api", { sourceType: "api" }],
+    ["user-created", { sourceType: undefined }],
+    ["engine-created", { sourceType: "unknown", sourceMetadata: { fusionBranchContext: { assignmentMode: "shared", groupId: "grp-1", source: "mission" } } }],
+  ])("applies the dissolved-group manual hold regardless of %s provenance", (_label, provenance) => {
+    expect(gate(
+      {
+        ...provenance,
+        autoMerge: undefined,
+        branchContext: { assignmentMode: "shared", groupId: "grp-1", source: "mission" } as Task["branchContext"],
+      },
+      { autoMerge: false },
+      null,
+    )).toBe(false);
   });
 });
 

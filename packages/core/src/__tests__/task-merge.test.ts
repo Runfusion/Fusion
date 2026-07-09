@@ -14,6 +14,7 @@ import {
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,
+  isLiveSharedBranchGroupMemberIntegration,
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
   resolveTaskMergeTarget,
@@ -164,14 +165,16 @@ describe("resolveEffectiveGroupAutoMerge", () => {
 });
 
 describe("isSharedBranchGroupMemberIntegration", () => {
+  const sharedTask = {
+    branchContext: {
+      assignmentMode: "shared" as const,
+      groupId: "BG-1",
+      source: "planning" as const,
+    },
+  };
+
   it("returns true for shared members with a resolvable group id", () => {
-    expect(isSharedBranchGroupMemberIntegration({
-      branchContext: {
-        assignmentMode: "shared",
-        groupId: "BG-1",
-        source: "planning",
-      },
-    })).toBe(true);
+    expect(isSharedBranchGroupMemberIntegration(sharedTask)).toBe(true);
   });
 
   it("returns false for per-task-derived grouped members", () => {
@@ -196,6 +199,31 @@ describe("isSharedBranchGroupMemberIntegration", () => {
 
   it("returns false when branch context is absent", () => {
     expect(isSharedBranchGroupMemberIntegration({ branchContext: undefined })).toBe(false);
+  });
+
+  it("requires a live open group for auto-merge-off shared-member integration", () => {
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "open" })).toBe(true);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "finalized" })).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, { status: "abandoned" })).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, null)).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration(sharedTask, undefined)).toBe(false);
+  });
+
+  it("does not grant the live-group exemption to non-shared or blank-group contexts", () => {
+    expect(isLiveSharedBranchGroupMemberIntegration({
+      branchContext: {
+        assignmentMode: "per-task-derived",
+        groupId: "BG-1",
+        source: "planning",
+      },
+    }, { status: "open" })).toBe(false);
+    expect(isLiveSharedBranchGroupMemberIntegration({
+      branchContext: {
+        assignmentMode: "shared",
+        groupId: "   ",
+        source: "planning",
+      },
+    }, { status: "open" })).toBe(false);
   });
 });
 

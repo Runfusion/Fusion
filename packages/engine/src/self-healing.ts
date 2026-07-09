@@ -5935,6 +5935,7 @@ export class SelfHealingManager {
         t.column === "in-review" &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
+        // FNXC:AutoMergeHold 2026-07-09-17:10: FN-7750 intentionally keeps the pure branchContext-shape predicate here. Stale shared-group members must stay OUT of solo no-op finalize even when their group is not live; only the positive auto-merge-off exemption gates use the live-group predicate.
         !isSharedBranchGroupMemberIntegration(t) &&
         // FNXC:Workspace 2026-06-22-14:10 (Phase D review A — workspace single-commit-finalize gate):
         // This no-op finalize classifies one branch against one base over `this.options.rootDir`

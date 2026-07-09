@@ -11,7 +11,7 @@ import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON } from "@fusion/core";
+import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
@@ -8015,6 +8015,12 @@ export class TaskExecutor {
     };
   }
 
+  private isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): boolean {
+    const groupId = live.branchContext?.groupId?.trim();
+    const branchGroup = groupId ? this.store.getBranchGroup(groupId) : null;
+    return isLiveSharedBranchGroupMemberIntegration(live, branchGroup);
+  }
+
   private async routeRetryableRemediationGraphFailureToPreMergeFix(
     live: TaskDetail,
     failedNode: string | undefined,
@@ -8030,7 +8036,8 @@ export class TaskExecutor {
     if (!live.worktree) return false;
     const settings = await this.store.getSettings().catch(() => undefined);
     if (!settings || settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !isSharedBranchGroupMemberIntegration(live)) return false;
+    /* FNXC:AutoMergeHold 2026-07-09-17:04: FN-7750 requires retryable pre-merge remediation to treat stale shared-group members as standalone manual-hold rows when global auto-merge is off; only live/open groups retain the shared-member exemption. */
+    if (!allowsAutoMergeProcessing(live, settings) && !this.isLiveSharedBranchGroupMember(live)) return false;
     const target = this.latestFailedPreMergeWorkflowStep(live);
     if (!target) return false;
     const budget = await this.resolveFailedPreMergeWorkflowStepBudget(live, target);
@@ -8084,7 +8091,7 @@ export class TaskExecutor {
     } catch {
       return false;
     }
-    const sharedBranchMember = isSharedBranchGroupMemberIntegration(live);
+    const sharedBranchMember = this.isLiveSharedBranchGroupMember(live);
     if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
     if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;
     if ((live.mergeRetries ?? 0) >= resolveMaxAutoMergeRetries(settings)) return false;
@@ -8152,7 +8159,8 @@ export class TaskExecutor {
     } catch {
       return false;
     }
-    if (isSharedBranchGroupMemberIntegration(live)) return false;
+    /* FNXC:AutoMergeHold 2026-07-09-17:07: FN-7749's benign manual-hold classifier must exclude only live shared-group integrations. FN-7750 stale shared-group members are standalone manual-hold rows and should not be stranded as pause-abort failures. */
+    if (this.isLiveSharedBranchGroupMember(live)) return false;
     return !allowsAutoMergeProcessing(live, settings) || resolveEffectiveAutoMerge(live, settings) === false;
   }
 
@@ -8193,7 +8201,7 @@ export class TaskExecutor {
       return false;
     }
     if (settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !isSharedBranchGroupMemberIntegration(live)) return false;
+    if (!allowsAutoMergeProcessing(live, settings) && !this.isLiveSharedBranchGroupMember(live)) return false;
 
     this.clearPausedAborted(live.id);
     this.activeWorktrees.delete(live.id);
@@ -8266,7 +8274,7 @@ export class TaskExecutor {
       return false;
     }
     if (settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !isSharedBranchGroupMemberIntegration(live)) return false;
+    if (!allowsAutoMergeProcessing(live, settings) && !this.isLiveSharedBranchGroupMember(live)) return false;
 
     const nextRetries = priorRetries + 1;
     this.clearPausedAborted(live.id);
@@ -8372,7 +8380,7 @@ export class TaskExecutor {
     if (live.column === "in-review") {
       if (live.autoMerge === false) return false;
       if (!settings) return false;
-      const sharedBranchMember = isSharedBranchGroupMemberIntegration(live);
+      const sharedBranchMember = this.isLiveSharedBranchGroupMember(live);
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }
