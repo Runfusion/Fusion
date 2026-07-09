@@ -66,10 +66,42 @@ grok --prompt "<text>" --format json
   OpenAI-compatible streaming path (`https://api.x.ai/v1`), which still
   requires one.
 - This adapter is only reached when an agent's
-  `runtimeConfig.runtimeHint === "grok"`. Nothing in the product sets that
-  today — routing Grok execution through the CLI end-to-end (vs. the direct
-  xAI endpoint, which remains the default) is tracked as a follow-up. See
+  `runtimeConfig.runtimeHint === "grok"`. See "Routing Grok through the CLI
+  runtime (FN-7725)" below for how to set that, and
   `docs/grok-cli-contract.md` for the full contract and decision record.
+
+## Routing Grok through the CLI runtime (FN-7725)
+
+By default, selecting a `grok-cli/*` **model** for an agent/task still routes
+execution through the **direct xAI OpenAI-compatible endpoint**
+(`https://api.x.ai/v1`, FN-7711/FN-7714) — this default is unchanged by this
+plugin.
+
+To route a specific agent's execution through the `grok` CLI's own
+non-interactive streaming mode (`grok --prompt --format json`) instead:
+
+1. Open the agent in the dashboard (**New Agent** or an existing agent's
+   detail view).
+2. Under **Runtime Source**, choose **Runtime** instead of **Built-in
+   Model**.
+3. Select **Grok Runtime** from the runtime dropdown (sourced from
+   `GET /api/plugins/runtimes`, which lists every installed plugin runtime
+   including this one).
+4. Save. The agent's `runtimeConfig.runtimeHint` is now `"grok"`; every
+   session that agent drives (as an assigned executor, column agent, or
+   child agent) resolves through `packages/engine/src/runtime-resolution.ts`
+   to this plugin's `GrokRuntimeAdapter` instead of the default pi runtime.
+
+**Known limitation:** Runtime-mode is model-agnostic — it does not carry a
+specific `grok-cli/*` model id through to the adapter, so
+`GrokRuntimeAdapter.createSession()` always falls back to `"grok/default"`.
+If you need a specific Grok model honored end-to-end, use the direct xAI
+endpoint path (**Built-in Model** → a `grok-cli/*` model) instead — that
+path does preserve model selection, just not via the CLI binary.
+
+This routing is opt-in and per-agent; it does not change any other agent's
+or task's execution path, and it does not change what a `grok-cli/*` model
+selection does under **Built-in Model** mode.
 
 ## Enable via Settings → Authentication
 

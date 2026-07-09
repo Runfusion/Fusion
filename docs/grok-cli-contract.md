@@ -134,19 +134,78 @@ Notes:
   `GrokCliProviderCard.tsx`) is out of scope for this task and is not
   modified here.
 
-## Wiring gap (recorded, not closed by this task)
+## Wiring (resolved — FN-7725)
 
-`packages/engine/src/runtime-resolution.ts`'s `resolveRuntime()` only reaches
-a plugin runtime adapter (like `GrokRuntimeAdapter`) when
-`runtimeConfig.runtimeHint === "grok"`. A repo-wide grep at Step 0 of this
-task confirmed **nothing in the product sets `runtimeHint` to `"grok"`
-today** (task/agent config, settings, or otherwise) — the same wiring gap
-FN-7715's stale comment already noted. This task lands the adapter
-implementation and its tests, but does **not** wire an end-to-end path that
-exercises it (no product code sets `runtimeHint: "grok"`, and no settings
-toggle exists to prefer CLI execution over the direct endpoint). That wiring
-is filed as a follow-up task (see `fn_task_create` entries linked from this
-task).
+<!--
+FNXC:GrokCli 2026-07-09-00:00:
+FN-7725 requirement: close the wiring gap below by making GrokRuntimeAdapter
+reachable through a real, exercised, additive/opt-in path, decision-first
+between option (a) formalizing the agent Runtime-mode hint path vs option (b)
+a new "prefer CLI runtime" settings toggle deriving the hint from a
+grok-cli/* model selection. Decision: option (a). Direct xAI endpoint stays
+default and unchanged.
+-->
+
+**Decision: option (a) — formalize, document, and test the existing agent
+Runtime-mode picker path. Do NOT add a new settings toggle (option (b)).**
+
+**Trigger:** an agent's `runtimeConfig.runtimeHint === "grok"`, set today via
+the dashboard's agent **Runtime Source → Runtime** picker
+(`NewAgentDialog.tsx` / `AgentDetailView.tsx`), which is populated from
+`GET /api/plugins/runtimes` (already generic — surfaces every registered
+plugin runtime, including the bundled Grok Runtime plugin's `runtimeId:
+"grok"`, with no Grok-specific code required).
+
+**Exact seam:** `packages/engine/src/agent-session-helpers.ts`'s
+`extractRuntimeHint(runtimeConfig)` reads that hint from the assigned agent's
+`runtimeConfig` and threads it, as `runtimeHint`, into
+`packages/engine/src/runtime-resolution.ts`'s `resolveRuntime()` — which is
+totally runtime-agnostic: when the hint matches a registered plugin
+`runtimeId`, `resolvePluginRuntime()` calls that plugin's `runtime.factory`
+(the Grok plugin's factory returns `new GrokRuntimeAdapter()`,
+`plugins/fusion-plugin-grok-runtime/src/index.ts`) and the resolved adapter
+becomes the session's runtime. This same generic chain already carries
+`"hermes"` and `"droid"` runtime hints end-to-end (see
+`hermes-runtime-integration.test.ts`, `droid-runtime-e2e.test.ts`) — Grok's
+plugin registration alone was sufficient for the chain to reach it; **no
+engine or dashboard code changed for this task**, because the generic
+Runtime-mode picker → `extractRuntimeHint` → `resolveRuntime` →
+`resolvePluginRuntime` → plugin `factory` chain was already correct and
+exercised for other plugin runtimes. FN-7725 formalizes this as the *decided*
+Grok wiring, adds `packages/engine/src/__tests__/grok-runtime-routing.test.ts`
+proving the chain specifically resolves `GrokRuntimeAdapter` (id `"grok"`)
+and drives its `onText` streaming seam via a faked spawn (see
+`runtime-adapter.ts`'s injectable `spawn` option; no live `grok` binary), and
+records the decision here plus in `plugins/fusion-plugin-grok-runtime/README.md`.
+
+**Why option (a), not (b):** option (b) (an opt-in "prefer CLI runtime"
+setting deriving `runtimeHint: "grok"` from a `grok-cli/*` model selection)
+would add a new `Settings` field, defaulting/resolution logic, and a
+SettingsModal UI toggle (desktop + mobile) — net-new surface area for a path
+that, on inspection, was **already fully wired generically** by the existing
+Runtime-mode picker. Per the Decision guidance's preference for "the smaller,
+additive change," formalizing + testing + documenting the already-working
+path is lower risk and closes the actual gap (an *exercised* path, not just
+an implemented adapter) without adding new user-facing config surface.
+
+**Known limitation (by design, unchanged by this task):** Runtime-mode is
+model-agnostic — `NewAgentDialog.tsx`/`AgentDetailView.tsx` clear the `model`
+field when Runtime mode is selected (`model: runtimeMode === "runtime" ? ""
+: ...`), so `GrokRuntimeAdapter.createSession()` never receives a
+`defaultModelId` from this path and always falls back to `"grok/default"`. A
+specific `grok-cli/*` model choice is therefore not preserved when routing
+via Runtime-mode. Preserving model selection through the CLI runtime would
+require option (b) (or an equivalent); it is filed as a follow-up task only
+if genuinely warranted (see Follow-ups below), not implemented here.
+
+**Why the direct xAI endpoint stays default:** nothing in this task changes
+what a `grok-cli/*` **model** selection does — it continues to route through
+the direct xAI OpenAI-compatible endpoint (FN-7711/FN-7714,
+`packages/core/src/grok-provider.ts`, `packages/engine/src/pi.ts`), which
+this task does not touch. The CLI-routed path is reached *only* by the
+separate, explicit agent Runtime-mode choice — an opt-in, additive,
+fully-reversible path (nothing sets the hint unless an operator explicitly
+picks Runtime mode for that agent).
 
 ## Decision
 
@@ -183,18 +242,23 @@ Rationale:
 - FN-7716's probe/auth-readiness surface (`probe.ts`,
   `register-auth-routes.ts`, `GrokCliProviderCard.tsx`) is untouched by this
   task.
-- End-to-end routing (making the product actually set
-  `runtimeHint === "grok"`, or adding a settings toggle to prefer the CLI
-  over the direct endpoint) is explicitly out of scope here and is filed as
-  a follow-up task.
+- End-to-end routing was out of scope for FN-7722 and is resolved by
+  FN-7725 (see "Wiring" above): decision option (a), formalizing the
+  existing agent Runtime-mode picker path. No settings toggle was added.
 
 ## Follow-ups filed from this task
 
 See the task's `fn_task_create` calls (linked from FN-7722) for:
 
-1. End-to-end routing wiring — actually setting `runtimeHint === "grok"` (or
-   a settings toggle preferring the CLI) so `GrokRuntimeAdapter` is
-   exercised in a real execution path.
+1. ~~End-to-end routing wiring~~ — **closed by FN-7725** (see "Wiring"
+   above): the agent Runtime-mode picker path was formalized, documented,
+   and covered by `packages/engine/src/__tests__/grok-runtime-routing.test.ts`.
 2. Full tool-call/break-early bridging for `tool_use` NDJSON events, if a
    future need for Grok-CLI-driven tool execution arises (out of scope for
-   the scoped text/no-thinking adapter landed here).
+   the scoped text/no-thinking adapter landed here; tracked separately as
+   FN-7724).
+3. (Filed by FN-7725, if warranted) Preserving a specific `grok-cli/*` model
+   selection when routing through the CLI runtime (Runtime-mode is currently
+   model-agnostic — see "Known limitation" in "Wiring" above). This is the
+   deferred option (b) shape; only file it if a genuine operator need
+   surfaces, per the task's Decision guidance.

@@ -88,6 +88,18 @@ export interface ResolvedSessionResult {
 /**
  * Extract runtime hint from untyped runtimeConfig payload.
  *
+ * FNXC:GrokCli 2026-07-09-00:00:
+ * FN-7725: this is the exact seam the decided Grok CLI routing wiring (option
+ * (a) in docs/grok-cli-contract.md "Wiring") depends on. When an agent's
+ * Runtime Source is set to "Runtime" (NewAgentDialog.tsx/AgentDetailView.tsx)
+ * with the bundled Grok Runtime plugin selected, `runtimeConfig.runtimeHint`
+ * is `"grok"`, and this value flows unchanged into `resolveRuntime()`
+ * (runtime-resolution.ts), which resolves the Grok plugin's `GrokRuntimeAdapter`
+ * generically — the same chain already used by the hermes/droid plugin
+ * runtimes, so no Grok-specific logic lives here. The direct xAI
+ * OpenAI-compatible model path (grok-provider.ts) is untouched and remains
+ * the default; this hint-based path is opt-in and additive.
+ *
  * @param runtimeConfig - Agent/task runtime configuration
  * @returns normalized runtime hint or undefined when missing/invalid
  */
