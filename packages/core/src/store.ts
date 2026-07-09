@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile, rename, unlink, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { existsSync, statSync, watch, type Dirent, type FSWatcher } from "node:fs";
+import { existsSync, statSync, type Dirent, type FSWatcher } from "node:fs";
 import { detectWorkspaceRepos, saveWorkspaceConfig, loadWorkspaceConfig } from "./git-repository.js";
 import type { Task, TaskDetail, TaskCreateInput, TaskAttachment, AgentLogEntry, BoardConfig, Column, ColumnId, CheckoutClaimPrecondition, MergeResult, Settings, GlobalSettings, ProjectSettings, ActivityLogEntry, ActivityEventType, TaskDocument, TaskDocumentRevision, TaskDocumentCreateInput, TaskDocumentWithTask, Artifact, ArtifactCreateInput, ArtifactType, ArtifactWithTask, InboxTask, TaskLogEntry, RunMutationContext, RunAuditEvent, RunAuditEventInput, RunAuditEventFilter, ArchivedTaskEntry, ArchiveAgentLogMode, TaskPriority, SourceType, WorkflowStepTemplate, Agent, AutostashOrphanRecord, TaskCommitAssociation, TaskCommitAssociationMatchSource, TaskCommitAssociationConfidence, CommitAssociationDiffBackfillReport, GithubIssueAction, MergeQueueEntry, MergeQueueEnqueueOptions, MergeQueueAcquireOptions, MergeQueueReleaseOutcome, HandoffToReviewOptions, GoalCitation, GoalCitationFilter, GoalCitationInput, GoalCitationSurface, BranchGroup, BranchGroupCreateInput, BranchGroupUpdate, TaskBranchAssignmentMode, MergeRequestRecord, MergeRequestState, MergeRequestWorkflowProjectionOptions, CompletionHandoffMarker, WorkflowWorkItem, WorkflowWorkItemDueFilter, WorkflowWorkItemKind, WorkflowWorkItemState, WorkflowWorkItemTransitionPatch, WorkflowWorkItemUpsertInput, PrEntity, PrEntityCreateInput, PrEntityUpdate, PrEntityState, PrThreadState, PrThreadOutcome, PrConflictState, PrChecksRollup, PrReviewDecision, PluginActivation, PluginActivationInput } from "./types.js";
 import { createActivityLogSnapshot, createRunAuditSnapshot, createTaskMetadataSnapshot, toTaskMetadataRecord, validateSnapshotEnvelope, type ActivityLogSnapshot, type RunAuditSnapshot, type TaskMetadataSnapshot } from "./shared-mesh-state.js";
@@ -18,6 +18,7 @@ import {
 import { parseWorkflowIr, serializeWorkflowIr, downgradeIrToV1IfPure } from "./workflow-ir.js";
 import { resolveAllowedColumns, workflowHasColumn } from "./workflow-transitions.js";
 import { extractEffectiveWriteScopeFromPrompt, extractFileScopeTokens, isValidFileScopeEntry } from "./file-scope-classification.js";
+import { FsWatchPollController } from "./fs-watch-poll-controller.js";
 
 export type OverlapBlockerRepairReason =
   | "task-not-found"
@@ -1607,8 +1608,20 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   /** Separate SQLite database for compact archived task snapshots. */
   private _archiveDb: ArchiveDatabase | null = null;
 
-  /** File-system watcher instance */
-  private watcher: FSWatcher | null = null;
+  /**
+   * FNXC:CoreStores 2026-07-09-14:20:
+   * FN-7726 — the mechanical fs.watch+poll lifecycle (fail-soft watch setup,
+   * setInterval, teardown) is now owned by the shared `FsWatchPollController`
+   * (see fs-watch-poll-controller.ts) instead of being duplicated inline;
+   * TaskStore still owns `taskCache`/`lastKnownModified`/`pollingInProgress`
+   * and the actual diff body in checkForChanges(), passed to the controller
+   * as `onPoll`.
+   */
+  private readonly watchPoll = new FsWatchPollController();
+  /** Back-compat accessor so existing tests can reach the live FSWatcher via `storeAny.watcher`. */
+  private get watcher(): FSWatcher | null {
+    return this.watchPoll.watcher;
+  }
   /** In-memory cache of tasks for diffing watcher events */
   private taskCache: Map<string, Task> = new Map();
   /**
@@ -1673,8 +1686,6 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
   private _pluginWorkflowStepTemplates: Array<{ pluginId: string; template: WorkflowStepTemplate }> = [];
   /** Global settings store (`~/.fusion/settings.json`) */
   private globalSettingsStore: GlobalSettingsStore;
-  /** Polling interval for change detection */
-  private pollInterval: ReturnType<typeof setInterval> | null = null;
   /** Guard flag to prevent overlapping poll cycles */
   private pollingInProgress = false;
   /** Last known modification timestamp for change detection */
@@ -1702,7 +1713,7 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
 
   /** Whether the store is actively watching for changes (watcher or polling). */
   private get isWatching(): boolean {
-    return this.watcher !== null || this.pollInterval !== null;
+    return this.watchPoll.isWatching();
   }
   /** Cached MissionStore instance */
   private missionStore: MissionStore | null = null;
@@ -12770,7 +12781,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
    * any task mutations.
    */
   async watch(): Promise<void> {
-    if (this.watcher || this.pollInterval) return; // already watching
+    if (this.watchPoll.isWatching()) return; // already watching
     this.clearStartupSlimListMemo();
 
     // Populate cache with current state. The watcher only needs metadata to
@@ -12848,30 +12859,14 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     this.lastPollTime = new Date().toISOString();
 
     // Use a sentinel watcher object so existing code that checks `this.watcher` still works
-    try {
-      this.watcher = watch(this.tasksDir, { recursive: true }, (_event, _filename) => {
-        // No-op - we use polling now, but keep watcher for API compat
-      });
-      this.watcher.on("error", (err) => {
-        storeLog.warn("fs.watch emitted an error; polling will continue", {
-          phase: "watch:fs-watch-error",
-          error: err instanceof Error ? err.message : String(err),
-          tasksDir: this.tasksDir,
-        });
-      });
-    } catch (err) {
-      // fs.watch may not be available - that's fine
-      storeLog.warn("fs.watch unavailable; falling back to polling-only updates", {
-        phase: "watch:fs-watch-setup",
-        error: err instanceof Error ? err.message : String(err),
-        tasksDir: this.tasksDir,
-      });
-    }
-
-    // Poll for changes every second
-    this.pollInterval = setInterval(() => {
-      void this.checkForChanges();
-    }, 1000);
+    this.watchPoll.start({
+      dir: this.tasksDir,
+      recursive: true,
+      pollIntervalMs: 1000,
+      onPoll: () => this.checkForChanges(),
+      log: storeLog,
+      errorContext: { tasksDir: this.tasksDir },
+    });
     this.clearStartupSlimListMemo();
   }
 
@@ -13029,14 +13024,7 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
    * Stop watching and clean up.
    */
   stopWatching(): void {
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
-    }
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
-    }
+    this.watchPoll.stop();
     for (const timer of this.debounceTimers.values()) {
       clearTimeout(timer);
     }

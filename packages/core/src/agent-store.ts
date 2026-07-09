@@ -8,7 +8,7 @@
  */
 
 import { mkdir, readFile, writeFile, readdir, unlink, rename, access, appendFile } from "node:fs/promises";
-import { constants as fsConstants, watch, type FSWatcher } from "node:fs";
+import { constants as fsConstants, type FSWatcher } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -60,6 +60,7 @@ import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { Database } from "./db.js";
 import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
 import { createLogger } from "./logger.js";
+import { FsWatchPollController } from "./fs-watch-poll-controller.js";
 
 const agentStoreLog = createLogger("agent-store");
 
@@ -271,9 +272,20 @@ export class AgentStore extends EventEmitter {
    * `agent:stateChanged` events (no new event names) so the engine's current
    * listeners react within a bounded latency instead of waiting up to 60s.
    * The audit sweep is retained unmodified as the durable backstop.
+   *
+   * FNXC:AgentStore 2026-07-09-14:20:
+   * FN-7726 — the mechanical fs.watch+poll lifecycle (fail-soft watch setup,
+   * setInterval, teardown) is now owned by the shared `FsWatchPollController`
+   * (see fs-watch-poll-controller.ts) instead of being duplicated inline;
+   * this store still owns the `agentSnapshotCache`/`lastKnownModified`/
+   * `pollingInProgress` diff/gating state and the actual diff body in
+   * checkForChanges(), passed to the controller as `onPoll`.
    */
-  private watcher: FSWatcher | null = null;
-  private pollInterval: ReturnType<typeof setInterval> | null = null;
+  private readonly watchPoll = new FsWatchPollController();
+  /** Back-compat accessor so existing tests can reach the live FSWatcher via `storeAny.watcher`. */
+  private get watcher(): FSWatcher | null {
+    return this.watchPoll.watcher;
+  }
   /** Last-seen (state, updatedAt) per agent id, used to diff external changes. Populated on startWatching() and kept current by every in-process write via touchWatchSnapshot(). */
   private agentSnapshotCache: Map<string, { state: AgentState; updatedAt: string }> = new Map();
   private lastKnownModified = 0;
@@ -3012,7 +3024,7 @@ export class AgentStore extends EventEmitter {
    * (fs.watch and/or poll fallback registered).
    */
   isWatching(): boolean {
-    return this.watcher !== null || this.pollInterval !== null;
+    return this.watchPoll.isWatching();
   }
 
   /**
@@ -3030,7 +3042,7 @@ export class AgentStore extends EventEmitter {
    * `__meta` read.
    */
   async startWatching(pollIntervalMs = 2000): Promise<void> {
-    if (this.watcher || this.pollInterval) return; // already watching
+    if (this.watchPoll.isWatching()) return; // already watching
 
     const agents = await this.listAgents({ includeEphemeral: true });
     this.agentSnapshotCache.clear();
@@ -3039,32 +3051,13 @@ export class AgentStore extends EventEmitter {
     }
     this.lastKnownModified = this.db.getLastModified();
 
-    try {
-      this.watcher = watch(this.rootDir, (_event, _filename) => {
-        // No-op — the poll fallback below does the actual diffing; fs.watch
-        // here only exists as a fast-path nudge candidate and for API/close
-        // symmetry, matching TaskStore's own watch() implementation.
-      });
-      this.watcher.on("error", (err) => {
-        agentStoreLog.warn("fs.watch emitted an error; polling will continue", {
-          phase: "watch:fs-watch-error",
-          error: err instanceof Error ? err.message : String(err),
-          rootDir: this.rootDir,
-        });
-      });
-    } catch (err) {
-      // fs.watch may not be available on this platform/filesystem — that's
-      // fine, the poll fallback below is the reliable path.
-      agentStoreLog.warn("fs.watch unavailable; falling back to polling-only updates", {
-        phase: "watch:fs-watch-setup",
-        error: err instanceof Error ? err.message : String(err),
-        rootDir: this.rootDir,
-      });
-    }
-
-    this.pollInterval = setInterval(() => {
-      void this.checkForChanges();
-    }, pollIntervalMs);
+    this.watchPoll.start({
+      dir: this.rootDir,
+      pollIntervalMs,
+      onPoll: () => this.checkForChanges(),
+      log: agentStoreLog,
+      errorContext: { rootDir: this.rootDir },
+    });
   }
 
   /**
@@ -3139,14 +3132,7 @@ export class AgentStore extends EventEmitter {
    * Stop cross-process change detection and clear all handles.
    */
   stopWatching(): void {
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
-    }
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval);
-      this.pollInterval = null;
-    }
+    this.watchPoll.stop();
     this.agentSnapshotCache.clear();
   }
 
