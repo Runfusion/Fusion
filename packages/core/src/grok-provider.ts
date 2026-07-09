@@ -20,6 +20,10 @@
  * provider's model list wholesale rather than merging).
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export const GROK_CLI_PROVIDER_ID = "grok-cli";
 
 type GrokModelInput = "text" | "image";
@@ -173,10 +177,53 @@ function cloneGrokProviderRegistration(config: GrokProviderRegistration): GrokPr
  * registry" hard-fail this task fixes. Always pass a cloned config because pi's
  * registerProvider() stores and mutates the config object during later upserts.
  */
+/**
+ * FNXC:ProviderAuth 2026-07-09-00:00:
+ * FN-7714 honors a Grok API key stored in `~/.grok/user-settings.json` (`{ "apiKey": ... }`)
+ * when `GROK_API_KEY` is not set in the environment. `GROK_PROVIDER_REGISTRATION.apiKey` is
+ * the static env reference `"$GROK_API_KEY"`, which pi resolves from `process.env.GROK_API_KEY`
+ * at request time — so the fix hydrates that env var (never the provider config, which would
+ * leak the raw key via `/api/models`-style reads and logs) from the settings file, only when
+ * the env var is currently unset/empty. An already-set `GROK_API_KEY` always wins and the file
+ * is never read in that case. A missing (ENOENT), malformed, or empty/absent-`apiKey` settings
+ * file is fail-soft: never throw, never mutate env. This exactly mirrors the precedence and
+ * fail-soft behavior of `probeGrokApiKeyPresence` in
+ * `plugins/fusion-plugin-grok-runtime/src/probe.ts` (env-first, `.trim().length > 0`, same
+ * `~/.grok/user-settings.json` path), kept synchronous here because
+ * `registerBuiltInGrokProvider` itself is synchronous.
+ */
+export function hydrateGrokApiKeyFromUserSettings(
+  logWarning: (message: string) => void = () => {},
+): void {
+  const envKey = process.env.GROK_API_KEY;
+  if (typeof envKey === "string" && envKey.trim().length > 0) {
+    // Env var always wins; never read or overwrite from the settings file.
+    return;
+  }
+
+  try {
+    const settingsPath = join(homedir(), ".grok", "user-settings.json");
+    const raw = readFileSync(settingsPath, "utf-8");
+    const parsed = JSON.parse(raw) as { apiKey?: unknown };
+    if (typeof parsed?.apiKey === "string" && parsed.apiKey.trim().length > 0) {
+      process.env.GROK_API_KEY = parsed.apiKey.trim();
+    }
+  } catch (error) {
+    // Fail-soft: a missing (ENOENT), malformed, or unreadable settings file must never throw
+    // or mutate process.env — only unexpected errors are worth a warning; ENOENT is routine.
+    const isEnoent = (error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
+    if (!isEnoent) {
+      const message = error instanceof Error ? error.message : String(error);
+      logWarning(`Failed to read ~/.grok/user-settings.json for GROK_API_KEY fallback: ${message}`);
+    }
+  }
+}
+
 export function registerBuiltInGrokProvider(
   modelRegistry: GrokModelRegistryLike,
   logWarning: (message: string) => void = () => {},
 ): void {
+  hydrateGrokApiKeyFromUserSettings(logWarning);
   try {
     modelRegistry.registerProvider(GROK_CLI_PROVIDER_ID, cloneGrokProviderRegistration(GROK_PROVIDER_REGISTRATION));
   } catch (error) {
