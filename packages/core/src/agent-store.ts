@@ -8,7 +8,7 @@
  */
 
 import { mkdir, readFile, writeFile, readdir, unlink, rename, access, appendFile } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { randomUUID, randomBytes, createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -59,6 +59,9 @@ import { canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplic
 import { normalizeAgentPermissionPolicy } from "./agent-permission-policy.js";
 import { Database } from "./db.js";
 import { createAgentRunSnapshot, createAgentSnapshot, validateSnapshotEnvelope, type AgentRunSnapshot, type AgentSnapshot } from "./shared-mesh-state.js";
+import { createLogger } from "./logger.js";
+
+const agentStoreLog = createLogger("agent-store");
 
 /** Database row shape returned by SELECT on agentRatings. */
 interface AgentRatingRow {
@@ -251,6 +254,30 @@ export class AgentStore extends EventEmitter {
   private readonly claimProjectId?: string;
   private readonly defaultNodeId?: string;
   private readonly inMemoryDb: boolean;
+
+  /*
+   * FNXC:AgentStore 2026-07-09-08:15:
+   * FN-7723 — `fn agent stop`/`start` mutate the agent row from a SEPARATE
+   * process (the CLI opens its own AgentStore, writes, and exits), so the
+   * engine's long-lived in-process `agent:updated`/`agent:stateChanged`
+   * listeners (HeartbeatTriggerScheduler.watchAgentLifecycle) never fire for
+   * those transitions — the only prior reconciliation was the 60s
+   * `auditTimerRegistrations` sweep. This opt-in fs.watch+poll lifecycle
+   * (started ONLY by the long-lived engine store, never the CLI/dashboard
+   * short-lived stores) mirrors TaskStore's proven watch()/checkForChanges()
+   * pattern: watch the `.fusion` dir for a fast-path nudge, always run a
+   * poll fallback gated by db.getLastModified(), diff agent rows against a
+   * last-seen snapshot, and re-emit the EXISTING `agent:updated`/
+   * `agent:stateChanged` events (no new event names) so the engine's current
+   * listeners react within a bounded latency instead of waiting up to 60s.
+   * The audit sweep is retained unmodified as the durable backstop.
+   */
+  private watcher: FSWatcher | null = null;
+  private pollInterval: ReturnType<typeof setInterval> | null = null;
+  /** Last-seen (state, updatedAt) per agent id, used to diff external changes. Populated on startWatching() and kept current by every in-process write via touchWatchSnapshot(). */
+  private agentSnapshotCache: Map<string, { state: AgentState; updatedAt: string }> = new Map();
+  private lastKnownModified = 0;
+  private pollingInProgress = false;
 
   constructor(options: AgentStoreOptions = {}) {
     super();
@@ -1870,6 +1897,11 @@ export class AgentStore extends EventEmitter {
 
       this.db.prepare("DELETE FROM agents WHERE id = ?").run(agentId);
       this.db.bumpLastModified();
+      // FN-7723: keep this instance's own change-detection snapshot in sync
+      // with its own delete so a later poll never mistakes the row's absence
+      // for an external delete (deletes are pruned from the cache, not
+      // re-emitted, since agent:deleted already fires below).
+      this.agentSnapshotCache.delete(agentId);
 
       this.emit("agent:deleted", agentId);
     });
@@ -2942,12 +2974,188 @@ export class AgentStore extends EventEmitter {
       JSON.stringify(data),
     );
     this.db.bumpLastModified();
+
+    /*
+     * FNXC:AgentStore 2026-07-09-08:15:
+     * FN-7723 — update this instance's own change-detection snapshot cache
+     * synchronously with every in-process write (createAgent/updateAgent/
+     * updateAgentState/etc. all funnel through writeAgent()). This is the
+     * self-write suppression mechanism: when this instance's own poll tick
+     * later diffs against the cache, its own write is already reflected, so
+     * it is never mistaken for an external change and never double-emitted.
+     * Only meaningful once startWatching() has populated the cache; a no-op
+     * write to a Map before watching starts is negligible cost.
+     */
+    this.agentSnapshotCache.set(agent.id, this.watchSnapshotOf(agent));
+  }
+
+  /**
+   * FN-7723: build the change-detection snapshot for an agent.
+   *
+   * Deliberately does NOT key equality on `updatedAt` alone: `updatedAt` is a
+   * millisecond-resolution ISO string, and two writes issued in quick
+   * succession (e.g. `createAgent()` immediately followed by
+   * `updateAgentState()` in a test, or two rapid CLI mutations) can land in
+   * the SAME millisecond, producing an identical `updatedAt` even though
+   * `state` genuinely changed. Comparing `state` explicitly (in addition to
+   * `updatedAt`, which still catches non-state metadata churn) closes that
+   * race so a stop/start transition is never silently missed.
+   */
+  private watchSnapshotOf(agent: Agent): { state: AgentState; updatedAt: string } {
+    return { state: agent.state, updatedAt: agent.updatedAt };
+  }
+
+  // ── Cross-process change detection (FN-7723) ────────────────────────────────────
+
+  /**
+   * Whether this store is actively watching for cross-process changes
+   * (fs.watch and/or poll fallback registered).
+   */
+  isWatching(): boolean {
+    return this.watcher !== null || this.pollInterval !== null;
+  }
+
+  /**
+   * Start opt-in cross-process change detection.
+   *
+   * Only the long-lived engine `AgentStore` instance should call this (see
+   * packages/engine/src/runtimes/in-process-runtime.ts). The CLI's
+   * short-lived `AgentStore` (packages/cli/src/commands/agent.ts) and
+   * per-request dashboard stores must NOT call this — they mutate and exit
+   * (or are ephemeral) so there is nothing for them to watch.
+   *
+   * Mirrors TaskStore.watch(): a sentinel `fs.watch` on the rootDir for a
+   * fast-path nudge (fail-soft if unavailable), plus an always-on poll
+   * fallback gated by `db.getLastModified()` so a no-op tick is one cheap
+   * `__meta` read.
+   */
+  async startWatching(pollIntervalMs = 2000): Promise<void> {
+    if (this.watcher || this.pollInterval) return; // already watching
+
+    const agents = await this.listAgents({ includeEphemeral: true });
+    this.agentSnapshotCache.clear();
+    for (const agent of agents) {
+      this.agentSnapshotCache.set(agent.id, this.watchSnapshotOf(agent));
+    }
+    this.lastKnownModified = this.db.getLastModified();
+
+    try {
+      this.watcher = watch(this.rootDir, (_event, _filename) => {
+        // No-op — the poll fallback below does the actual diffing; fs.watch
+        // here only exists as a fast-path nudge candidate and for API/close
+        // symmetry, matching TaskStore's own watch() implementation.
+      });
+      this.watcher.on("error", (err) => {
+        agentStoreLog.warn("fs.watch emitted an error; polling will continue", {
+          phase: "watch:fs-watch-error",
+          error: err instanceof Error ? err.message : String(err),
+          rootDir: this.rootDir,
+        });
+      });
+    } catch (err) {
+      // fs.watch may not be available on this platform/filesystem — that's
+      // fine, the poll fallback below is the reliable path.
+      agentStoreLog.warn("fs.watch unavailable; falling back to polling-only updates", {
+        phase: "watch:fs-watch-setup",
+        error: err instanceof Error ? err.message : String(err),
+        rootDir: this.rootDir,
+      });
+    }
+
+    this.pollInterval = setInterval(() => {
+      void this.checkForChanges();
+    }, pollIntervalMs);
+  }
+
+  /**
+   * Diff current agent rows against the last-seen snapshot and re-emit the
+   * EXISTING `agent:updated`/`agent:stateChanged` events for any agent whose
+   * `state` or `updatedAt` advanced since this instance last observed it.
+   * Gated by `db.getLastModified()` so an unchanged DB costs one `__meta`
+   * SELECT. Compares `state` explicitly (not just `updatedAt`) so a genuine
+   * transition is never masked by an `updatedAt` millisecond collision
+   * between two rapid writes (see `watchSnapshotOf()`).
+   *
+   * Exposed (not private) so tests can drive a poll cycle directly instead
+   * of waiting on the real setInterval, per docs/testing.md's "no real
+   * polling waits" rule — mirrors TaskStore's own testable checkForChanges().
+   */
+  async checkForChanges(): Promise<void> {
+    if (this.pollingInProgress) return;
+    this.pollingInProgress = true;
+    try {
+      const currentModified = this.db.getLastModified();
+      if (currentModified <= this.lastKnownModified) return;
+      this.lastKnownModified = currentModified;
+
+      const agents = await this.listAgents({ includeEphemeral: true });
+      const seenIds = new Set<string>();
+      for (const agent of agents) {
+        seenIds.add(agent.id);
+        const cached = this.agentSnapshotCache.get(agent.id);
+        if (!cached) {
+          // A brand-new agent row this instance has never seen. createAgent()
+          // already emits agent:created in-process; a cross-process create is
+          // out of scope for this task (agents are created via the dashboard/
+          // CLI in the same flow that would also emit agent:created there).
+          // Just seed the cache so future updates to it diff correctly.
+          this.agentSnapshotCache.set(agent.id, this.watchSnapshotOf(agent));
+          continue;
+        }
+        const stateChanged = cached.state !== agent.state;
+        const updatedAtChanged = cached.updatedAt !== agent.updatedAt;
+        if (!stateChanged && !updatedAtChanged) continue;
+
+        const previousState = cached.state;
+        this.agentSnapshotCache.set(agent.id, this.watchSnapshotOf(agent));
+
+        if (stateChanged) {
+          this.emit("agent:stateChanged", agent.id, previousState, agent.state);
+          this.emit("agent:updated", agent, previousState);
+        } else {
+          this.emit("agent:updated", agent);
+        }
+      }
+
+      // Prune cache entries for agents deleted by another process. deleteAgent()
+      // already emits agent:deleted in-process for the originating instance;
+      // cross-process delete detection is not required by this task's scope
+      // (delete is a rare, operator-driven action, unlike stop/start), so we
+      // just keep the cache from growing unbounded.
+      for (const id of this.agentSnapshotCache.keys()) {
+        if (!seenIds.has(id)) this.agentSnapshotCache.delete(id);
+      }
+    } catch (err) {
+      agentStoreLog.warn("checkForChanges poll cycle failed", {
+        lastKnownModified: this.lastKnownModified,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      this.pollingInProgress = false;
+    }
+  }
+
+  /**
+   * Stop cross-process change detection and clear all handles.
+   */
+  stopWatching(): void {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+    this.agentSnapshotCache.clear();
   }
 
   /**
    * Close the underlying SQLite connection and release resources.
    */
   close(): void {
+    this.stopWatching();
+
     if (!this._db) {
       return;
     }

@@ -3056,4 +3056,181 @@ describe("AgentStore", () => {
     expect([run1.id, run2.id]).toContain(limitedRunId);
     expect(applyRun.applied + applyRun.skipped).toBeGreaterThanOrEqual(0);
   });
+
+  /*
+   * FN-7723: cross-process change detection. `fn agent stop`/`start` mutate
+   * agent rows from a SEPARATE process (a separate short-lived AgentStore),
+   * so a long-lived engine AgentStore's in-process `agent:updated` listener
+   * never fires for them without this watch/poll re-emit path. These tests
+   * drive `checkForChanges()` directly (per docs/testing.md's "no real
+   * polling waits" rule) rather than waiting on the real setInterval.
+   */
+  describe("cross-process change detection (FN-7723)", () => {
+    it("a second AgentStore watching the same DB re-emits agent:updated and agent:stateChanged for a state change it did not write", async () => {
+      // Cross-instance persistence requires disk-backed stores (see the
+      // "SQLite persistence" describe block above for the same swap).
+      store.close();
+      store = new AgentStore({ rootDir });
+      await store.init();
+
+      const agent = await store.createAgent({ name: "WatchedAgent", role: "executor" });
+      expect(agent.state).toBe("active");
+
+      const reader = new AgentStore({ rootDir });
+      await reader.init();
+      const readerUpdated = vi.fn();
+      const readerStateChanged = vi.fn();
+      reader.on("agent:updated", readerUpdated);
+      reader.on("agent:stateChanged", readerStateChanged);
+
+      try {
+        await reader.startWatching();
+        expect(reader.isWatching()).toBe(true);
+
+        // Writer (a different AgentStore instance) mutates the agent state —
+        // this is the exact cross-process shape of `fn agent stop`.
+        const updated = await store.updateAgentState(agent.id, "paused");
+
+        // Drive the reader's poll cycle directly instead of waiting 2s.
+        await reader.checkForChanges();
+
+        expect(readerStateChanged).toHaveBeenCalledTimes(1);
+        expect(readerStateChanged).toHaveBeenCalledWith(agent.id, "active", "paused");
+        expect(readerUpdated).toHaveBeenCalledTimes(1);
+        expect(readerUpdated).toHaveBeenCalledWith(
+          expect.objectContaining({ id: agent.id, state: "paused", updatedAt: updated.updatedAt }),
+          "active",
+        );
+
+        // A second poll cycle with no further writes must not re-emit.
+        readerUpdated.mockClear();
+        readerStateChanged.mockClear();
+        await reader.checkForChanges();
+        expect(readerUpdated).not.toHaveBeenCalled();
+        expect(readerStateChanged).not.toHaveBeenCalled();
+      } finally {
+        reader.close();
+      }
+    });
+
+    it("does not double-emit for a write this same watching instance originated", async () => {
+      store.close();
+      store = new AgentStore({ rootDir });
+      await store.init();
+
+      const agent = await store.createAgent({ name: "SelfWriteAgent", role: "executor" });
+
+      const updated = vi.fn();
+      store.on("agent:updated", updated);
+
+      await store.startWatching();
+      updated.mockClear(); // startWatching() itself does not emit
+
+      await store.updateAgentState(agent.id, "paused");
+      // In-process write already emitted synchronously inside updateAgentState.
+      expect(updated).toHaveBeenCalledTimes(1);
+
+      // The next poll cycle must not find a "new" change — the write already
+      // updated this instance's own snapshot cache via writeAgent().
+      updated.mockClear();
+      await store.checkForChanges();
+      expect(updated).not.toHaveBeenCalled();
+    });
+
+    it("stopWatching() and close() clear the watcher and poll interval handles", async () => {
+      store.close();
+      store = new AgentStore({ rootDir });
+      await store.init();
+
+      await store.startWatching();
+      expect(store.isWatching()).toBe(true);
+
+      store.stopWatching();
+      expect(store.isWatching()).toBe(false);
+
+      // stopWatching() is idempotent.
+      expect(() => store.stopWatching()).not.toThrow();
+
+      // close() also stops watching for callers that skip the explicit call.
+      await store.startWatching();
+      expect(store.isWatching()).toBe(true);
+      store.close();
+      // Re-open to assert cleanly without leaking a handle across tests; the
+      // outer afterEach() will close() this fresh instance.
+      store = new AgentStore({ rootDir });
+      await store.init();
+      expect(store.isWatching()).toBe(false);
+    });
+
+    it("logs a watcher error and keeps the poll fallback operational", async () => {
+      store.close();
+      store = new AgentStore({ rootDir });
+      await store.init();
+
+      const agent = await store.createAgent({ name: "PollFallbackAgent", role: "executor" });
+
+      const reader = new AgentStore({ rootDir });
+      await reader.init();
+      const readerUpdated = vi.fn();
+      reader.on("agent:updated", readerUpdated);
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      try {
+        await reader.startWatching();
+        const readerAny = reader as unknown as { watcher: { emit: (event: string, err: Error) => void } | null };
+
+        // Simulate a degraded fs.watch (or its unavailability, matching
+        // TaskStore's own fail-soft test shape) — the poll fallback must
+        // still detect the change regardless of the watcher's health.
+        if (readerAny.watcher) {
+          readerAny.watcher.emit("error", new Error("watcher degraded (simulated)"));
+          const watcherErrorCall = warnSpy.mock.calls.find(
+            (call) => typeof call[0] === "string" && call[0].includes("fs.watch emitted an error; polling will continue"),
+          );
+          expect(watcherErrorCall).toBeDefined();
+        } else {
+          const fallbackCall = warnSpy.mock.calls.find(
+            (call) => typeof call[0] === "string" && call[0].includes("fs.watch unavailable; falling back to polling-only updates"),
+          );
+          expect(fallbackCall).toBeDefined();
+        }
+
+        expect(reader.isWatching()).toBe(true);
+
+        await store.updateAgentState(agent.id, "paused");
+        await reader.checkForChanges();
+
+        expect(readerUpdated).toHaveBeenCalledTimes(1);
+        expect(readerUpdated).toHaveBeenCalledWith(
+          expect.objectContaining({ id: agent.id, state: "paused" }),
+          "active",
+        );
+      } finally {
+        reader.close();
+        warnSpy.mockRestore();
+      }
+    });
+
+    it("checkForChanges() failures are logged and non-fatal", async () => {
+      store.close();
+      store = new AgentStore({ rootDir });
+      await store.init();
+      await store.startWatching();
+
+      const listAgentsSpy = vi.spyOn(store, "listAgents").mockImplementationOnce(() => {
+        throw new Error("simulated listAgents failure");
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      // Force a change to be detected so checkForChanges() attempts the
+      // (failing) listAgents() call rather than short-circuiting on an
+      // unchanged lastModified.
+      await store.createAgent({ name: "TriggerChange", role: "executor" });
+
+      await expect(store.checkForChanges()).resolves.toBeUndefined();
+
+      listAgentsSpy.mockRestore();
+      warnSpy.mockRestore();
+    });
+  });
 });

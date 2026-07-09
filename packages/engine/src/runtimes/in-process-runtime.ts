@@ -391,6 +391,23 @@ export class InProcessRuntime
         agentStoreForReflection = new AgentStoreClass({ rootDir: this.taskStore.getFusionDir(), taskStore: this.taskStore });
         await agentStoreForReflection.init();
         runtimeLog.log("AgentStore initialized for reflection service");
+
+        /*
+         * FNXC:AgentStore 2026-07-09-08:15:
+         * FN-7723 — this is the ONE long-lived engine AgentStore instance for
+         * this project/runtime, so it is the only one that should opt into
+         * cross-process change detection (fs.watch + poll re-emitting
+         * agent:updated/agent:stateChanged). The CLI's short-lived AgentStore
+         * (packages/cli/src/commands/agent.ts) and dashboard per-request
+         * stores never call startWatching(). Failure here is non-fatal — the
+         * 60s auditTimerRegistrations sweep remains the durable backstop.
+         */
+        try {
+          await agentStoreForReflection.startWatching();
+          runtimeLog.log("AgentStore cross-process change detection started");
+        } catch (watchErr) {
+          runtimeLog.warn(`AgentStore.startWatching() failed (falling back to the 60s audit sweep only):`, watchErr instanceof Error ? watchErr.message : watchErr);
+        }
       } catch (agentErr) {
         runtimeLog.warn(`AgentStore initialization failed (reflection service will be unavailable):`, agentErr instanceof Error ? agentErr.message : agentErr);
       }
@@ -1119,6 +1136,19 @@ export class InProcessRuntime
       if (this.triggerScheduler) {
         this.triggerScheduler.stop();
         runtimeLog.log("TriggerScheduler stopped");
+      }
+
+      // 4a. Stop AgentStore cross-process change detection (FN-7723). This
+      // engine store is the only AgentStore instance in this process that
+      // ever called startWatching(); stopping it here clears the fs.watch
+      // handle and poll interval so shutdown does not leak them.
+      if (this.agentStore) {
+        try {
+          this.agentStore.stopWatching();
+          runtimeLog.log("AgentStore cross-process change detection stopped");
+        } catch (watchStopErr) {
+          runtimeLog.warn(`AgentStore.stopWatching() failed:`, watchStopErr instanceof Error ? watchStopErr.message : watchStopErr);
+        }
       }
 
       // 4. Stop stuck task detector

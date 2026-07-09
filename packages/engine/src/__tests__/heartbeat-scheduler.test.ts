@@ -1002,6 +1002,168 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(scheduler.getRegisteredAgents()).not.toContain("agent-repeat-stop");
       });
     });
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-09-08:15:
+     * FN-7723 — the cross-process notification fast-path over the FN-7718/
+     * FN-7645 audit backstop. `AgentStore.checkForChanges()` re-emits the
+     * SAME `agent:updated`/`agent:stateChanged` events exercised by the
+     * "agent lifecycle seam registration" tests above; this describe proves
+     * `watchAgentLifecycle`'s existing listener reacts to a re-emitted
+     * EXTERNAL event (simulated here by emitting directly on the
+     * EventEmitter-backed store, exactly as AgentStore.checkForChanges()
+     * would after diffing a cross-process write) WITHOUT the 60s audit ever
+     * running, and that the audit still works as the backstop when no event
+     * arrives at all. No new engine-side listener/seam was added for this
+     * task — syncTimerForAgent handles the re-emitted event identically to
+     * an in-process one, so this is a pure regression/characterization
+     * suite over the existing wiring plus FN-7718's stale-repair guard.
+     */
+    describe("FN-7723: re-emitted external agent:updated drives the timer without the audit", () => {
+      // Self-contained EventEmitter-backed store mirroring `createLifecycleStore`
+      // from the "agent lifecycle seam registration" describe above (out of
+      // scope here since this sits inside "scheduler timer audit"). Emitting
+      // directly on this store simulates AgentStore.checkForChanges()'s
+      // re-emit of the EXISTING `agent:updated` event after diffing a
+      // cross-process write — no new event names, no engine-side seam.
+      type CrossProcessStore = EventEmitter & Pick<AgentStore, "getAgent" | "getActiveHeartbeatRun" | "getBudgetStatus" | "listAgents" | "getRecentRuns" | "updateAgent"> & {
+        agents: Map<string, Agent>;
+      };
+
+      function buildCrossProcessAgent(overrides: Partial<Agent> & { id: string; heartbeatIntervalMs: number }): Agent {
+        const { heartbeatIntervalMs, ...rest } = overrides;
+        return {
+          name: rest.id,
+          role: "executor",
+          state: "active",
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+          runtimeConfig: { enabled: true, heartbeatIntervalMs },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+          ...rest,
+        } as Agent;
+      }
+
+      function createCrossProcessStore(initialAgents: Agent[] = []): CrossProcessStore {
+        return Object.assign(new EventEmitter(), {
+          agents: new Map(initialAgents.map((agent) => [agent.id, agent])),
+          getAgent: vi.fn(async function(this: CrossProcessStore, agentId: string) {
+            return this.agents.get(agentId) ?? null;
+          }),
+          getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+          getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+          listAgents: vi.fn(async function(this: CrossProcessStore) {
+            return Array.from(this.agents.values());
+          }),
+          getRecentRuns: vi.fn().mockResolvedValue([]),
+          updateAgent: vi.fn(),
+        }) as CrossProcessStore;
+      }
+
+      it("a re-emitted external stop clears the timer and a re-emitted external start re-arms it, with zero audit cycles elapsed", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildCrossProcessAgent({ id: "agent-cross-process", heartbeatIntervalMs: 300_000 });
+        const eventStore = createCrossProcessStore([agent]);
+        scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+        scheduler.start();
+        eventStore.emit("agent:created", agent);
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+        // Simulate AgentStore.checkForChanges() re-emitting agent:updated for a
+        // CLI `fn agent stop` it detected on its next poll tick — well before
+        // the 60s audit interval elapses.
+        const stopped = { ...eventStore.agents.get(agent.id)!, state: "paused" as const };
+        eventStore.agents.set(agent.id, stopped);
+        await vi.advanceTimersByTimeAsync(2_000); // one AgentStore poll tick (2s default), zero audit cycles (60s)
+        eventStore.emit("agent:updated", stopped, "active");
+
+        expect(scheduler.getRegisteredAgents()).not.toContain(agent.id);
+
+        // Simulate the re-emitted external `fn agent start`, still with no
+        // audit cycle having elapsed.
+        const started = { ...eventStore.agents.get(agent.id)!, state: "active" as const };
+        eventStore.agents.set(agent.id, started);
+        await vi.advanceTimersByTimeAsync(2_000);
+        eventStore.emit("agent:updated", started, "paused");
+
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+        const timers = (scheduler as unknown as { timers: Map<string, unknown> }).timers;
+        expect(timers.has(agent.id)).toBe(true);
+
+        // Total elapsed time (4s) never reached a single 60s audit cycle.
+        expect(callback).not.toHaveBeenCalled();
+      });
+
+      it("honors FN-7718's stale-present-entry force-re-arm when the re-emitted event arrives after the timer entry went stale", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildCrossProcessAgent({ id: "agent-cross-process-stale", heartbeatIntervalMs: 3_600_000 });
+        const eventStore = createCrossProcessStore([agent]);
+        scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+        scheduler.start();
+        eventStore.emit("agent:created", agent);
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+        // Advance well past the 2x stale threshold (7.2M ms) with the entry
+        // still present — the audit is never driven here, only the poll-detected
+        // re-emit path.
+        await vi.advanceTimersByTimeAsync(8 * 60 * 60 * 1000);
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // A re-emitted external start (CLI `fn agent start`, surfaced by
+        // AgentStore.checkForChanges()) while the stale entry is still present
+        // must force re-arm exactly like an in-process start would (FN-7718).
+        const started = { ...eventStore.agents.get(agent.id)!, state: "active" as const };
+        eventStore.agents.set(agent.id, started);
+        eventStore.emit("agent:updated", started, "paused");
+
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("Timer sync force re-armed stale present entry"));
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+      });
+
+      it("the 60s audit still reconciles a stop/start when NO re-emitted event ever arrives (backstop retained)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        // Use the plain (non-EventEmitter) mocked store so no agent:updated
+        // event can ever fire — the ONLY path that can reconcile this stop is
+        // the audit's listAgents() sweep, proving the backstop is untouched by
+        // this task's additive fast-path.
+        let agent: Agent = {
+          id: "agent-audit-backstop",
+          name: "agent-audit-backstop",
+          role: "executor",
+          state: "active",
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+          runtimeConfig: { enabled: true, heartbeatIntervalMs: 300_000 },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => [agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(scheduler.getRegisteredAgents()).toContain("agent-audit-backstop");
+
+        // Mutate the DB row out-of-process (no event, ever) — same shape as the
+        // FN-7718 "clears an orphaned timer entry" test, kept here to assert the
+        // audit backstop is unchanged by FN-7723's additive fast-path.
+        agent = { ...agent, state: "paused" };
+        await vi.advanceTimersByTimeAsync(3 * 60_000); // several audit cycles
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-audit-backstop");
+
+        agent = { ...agent, state: "active", lastHeartbeatAt: "2026-01-01T00:00:00.000Z" };
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(scheduler.getRegisteredAgents()).toContain("agent-audit-backstop");
+      });
+    });
   });
 
   describe("registerAgent", () => {
