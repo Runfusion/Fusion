@@ -577,14 +577,26 @@ fn task logs FN-001 --follow --limit 50 --type tool
 - unavailable-node policy value
 - source provenance line (`Source: <origin>`), including parent task / GitHub issue URL context when present
 
-`fn task show`/`fn task move` retry-on-lock (FN-7731): if the board database
+Every `fn task` subcommand that touches the board retries on lock (FN-7731,
+generalized to all subcommands in FN-7734): if the board database
 (`.fusion/fusion.db`) is momentarily locked by the engine or another agent,
-both commands retry with bounded exponential backoff instead of failing
+the command retries with bounded exponential backoff instead of failing
 outright. If the lock hasn't cleared once the retry deadline (default 15s)
 is reached, the command fails fast with a clear, actionable, non-zero-exit
 error naming the task and operation rather than hanging. Override the
 deadline with `FUSION_CLI_LOCK_RETRY_MS` (milliseconds). The resolved
-`TaskStore` is always closed on exit so the CLI process exits promptly.
+`TaskStore` is always closed on exit (success, not-found, or lock-exhaustion)
+so the CLI process exits promptly, for both a registered/cached project
+store and the uncached CWD-fallback resolution branch.
+
+Multi-step commands (`fn task create`, `fn task retry`, `fn task delete`,
+`fn task merge`, the GitHub/GitLab bulk-import commands) retry each discrete
+board write independently rather than retrying the whole flow, so a lock
+error on a later step never redoes an already-committed earlier write (e.g.
+double-creating a task). Long-lived/interactive commands (`fn task plan`,
+interactive GitHub import, `fn task logs --follow`) keep their interactive
+prompt loop or tail session un-retried by design but still close the
+resolved store on every exit path, including on `Ctrl+C`.
 
 ### Execution and status
 

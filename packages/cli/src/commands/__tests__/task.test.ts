@@ -980,7 +980,14 @@ describe("project-aware task command behavior", () => {
       expect.any(Function),
     );
     expect(sigintHandlers).toHaveLength(1);
-    expect(() => sigintHandlers[0]()).toThrow("process.exit");
+    // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): the SIGINT handler
+    // now closes the resolved board store BEFORE exiting (previously it
+    // called `process.exit(0)` synchronously with no teardown), so invoking
+    // it no longer throws synchronously — it fires the close and exits once
+    // that settles. Await a tick and assert `process.exit(0)` was reached.
+    sigintHandlers[0]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(exitSpy).toHaveBeenCalledWith(0);
     promise.catch(() => {});
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");
