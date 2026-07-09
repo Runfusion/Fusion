@@ -23,6 +23,17 @@ describe("InProcessRuntime onStart duplicate guard", () => {
     expect(source).toContain("return this.chatStore;");
   });
 
+  it("wires heartbeat worktree-acquisition retry-cap exhaustion into CentralCore failure stats (FN-7721)", () => {
+    // FN-7721: a heartbeat-driven task worktree acquisition that exhausts its
+    // bounded cross-heartbeat retry cap must be counted the same way
+    // `Executor`'s `onError` counts a failure, so
+    // `performanceSummary.totalTasksFailed` / project health stats are not
+    // silently starved of a real failure.
+    const source = readFileSync(join(process.cwd(), "src/runtimes/in-process-runtime.ts"), "utf-8");
+    expect(source).toContain("onTaskAcquisitionExhausted: (taskId, detail) => {");
+    expect(source).toContain("this.recordTaskCompletion(taskId, false);");
+  });
+
   it("rehydrates autopilot mission watches during startup recovery", () => {
     const source = readFileSync(join(process.cwd(), "src/runtimes/in-process-runtime.ts"), "utf-8");
     expect(source).toContain("activeMissionAutopilot.recoverMissions(activeMissionStore)");

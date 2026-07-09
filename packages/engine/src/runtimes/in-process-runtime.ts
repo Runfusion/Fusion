@@ -710,6 +710,18 @@ export class InProcessRuntime
               runtimeLog.warn(`drainPendingAssignment failed for ${agentId}: ${err instanceof Error ? err.message : String(err)}`);
             });
           },
+          /*
+           * FNXC:WorktreeAcquisition 2026-07-09-00:00:
+           * A heartbeat-driven task worktree acquisition that exhausts its bounded
+           * retry cap (agent-heartbeat.ts MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES)
+           * is a real task failure that must be counted the same way `Executor`'s
+           * `onError` counts a failure, so `performanceSummary.totalTasksFailed` /
+           * project health stats are not silently starved (FN-7721).
+           */
+          onTaskAcquisitionExhausted: (taskId, detail) => {
+            runtimeLog.error(`Heartbeat worktree acquisition exhausted retry cap for ${taskId}:`, detail);
+            this.recordTaskCompletion(taskId, false);
+          },
         });
         this.heartbeatMonitor.start();
       }
