@@ -59,7 +59,6 @@ export default interface Resources {
         "mergeWorktreeReacquired": "Merge Worktree Reacquired",
         "nearDuplicateFlagged": "Near-Duplicate Flagged",
         "projectIsolationTransition": "Project Isolation Transition",
-        "releaseAuthorizationRequired": "Release Authorization Required",
         "settingsUpdated": "Settings Updated",
         "taskCreated": "Task Created",
         "taskDeleted": "Task Deleted",
@@ -7694,7 +7693,6 @@ export default interface Resources {
         "rejectMessage": "Reject this plan? The specification will be discarded and regenerated.",
         "rejectTitle": "Reject Plan",
         "rejected": "Plan rejected — {{id}} returned to Planning for replanning",
-        "releaseAuthorizationHold": "Awaiting release authorization — add the explicit authorization marker to the spec and resubmit.",
         "replanning": "Replanning {{id}}…"
       },
       "pr": {
@@ -8127,7 +8125,6 @@ export default interface Resources {
       "attachFileFailed": "Failed to attach {{fileName}}: {{error}}",
       "attachedFile": "Attached {{fileName}} to {{taskId}}",
       "awaitingApproval": "Awaiting Approval",
-      "awaitingReleaseAuthorization": "Awaiting Release Authorization",
       "baseBranch": "Base",
       "blockedByTooltip": "Blocked by {{taskId}} (file overlap)",
       "branch": "Branch",

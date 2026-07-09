@@ -42,7 +42,6 @@ function getEventTypeLabels(t: TFunction<"app">): Record<ActivityEventType, stri
     "task:deleted": t("activityLog.eventType.taskDeleted", "Task Deleted"),
     "task:merged": t("activityLog.eventType.taskMerged", "Task Merged"),
     "task:failed": t("activityLog.eventType.taskFailed", "Task Failed"),
-    "task:release-authorization-required": t("activityLog.eventType.releaseAuthorizationRequired", "Release Authorization Required"),
     "task:duplicate-warning-overridden": t("activityLog.eventType.duplicateWarningOverridden", "Duplicate Warning Overridden"),
     "task:auto-archived-ghost-bug": t("activityLog.eventType.autoArchivedGhostBug", "Task Auto-Archived (Ghost Bug)"),
     "task:auto-archived-duplicate": t("activityLog.eventType.autoArchivedDuplicate", "Task Auto-Archived (Duplicate)"),
@@ -62,11 +61,6 @@ const EVENT_TYPE_ICONS: Record<ActivityEventType, React.ReactNode> = {
   "task:deleted": <X size={14} className="activity-icon deleted" />,
   "task:merged": <CheckCircle size={14} className="activity-icon merged" />,
   "task:failed": <XCircle size={14} className="activity-icon failed" />,
-  /*
-  FNXC:ReleaseAuthorizationGate 2026-06-15-04:00:
-  The release gate parks unauthorized publish-class tasks; activity logs must expose that blocked state with warning styling so a human can authorize or revise the task.
-  */
-  "task:release-authorization-required": <AlertCircle size={14} className="activity-icon updated" />,
   "task:duplicate-warning-overridden": <AlertCircle size={14} className="activity-icon updated" />,
   "task:auto-archived-ghost-bug": <AlertCircle size={14} className="activity-icon failed" />,
   "task:auto-archived-duplicate": <Trash2 size={14} className="activity-icon deleted" />,

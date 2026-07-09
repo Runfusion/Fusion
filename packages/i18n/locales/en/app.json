@@ -67,7 +67,6 @@
       "mergeWorktreeReacquired": "Merge Worktree Reacquired",
       "nearDuplicateFlagged": "Near-Duplicate Flagged",
       "projectIsolationTransition": "Project Isolation Transition",
-      "releaseAuthorizationRequired": "Release Authorization Required",
       "settingsUpdated": "Settings Updated",
       "taskCreated": "Task Created",
       "taskDeleted": "Task Deleted",
@@ -7651,7 +7650,6 @@
       "rejected": "Plan rejected — {{id}} returned to Planning for replanning",
       "rejectMessage": "Reject this plan? The specification will be discarded and regenerated.",
       "rejectTitle": "Reject Plan",
-      "releaseAuthorizationHold": "Awaiting release authorization — add the explicit authorization marker to the spec and resubmit.",
       "replanning": "Replanning {{id}}…"
     },
     "pr": {
@@ -8084,7 +8082,6 @@
     "attachedFile": "Attached {{fileName}} to {{taskId}}",
     "attachFileFailed": "Failed to attach {{fileName}}: {{error}}",
     "awaitingApproval": "Awaiting Approval",
-    "awaitingReleaseAuthorization": "Awaiting Release Authorization",
     "baseBranch": "Base",
     "blockedByTooltip": "Blocked by {{taskId}} (file overlap)",
     "branch": "Branch",

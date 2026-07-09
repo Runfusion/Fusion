@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "合併工作樹已重新取得",
       "nearDuplicateFlagged": "近似重複已標記",
       "projectIsolationTransition": "專案隔離轉換",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "設定已更新",
       "taskCreated": "任務已建立",
       "taskDeleted": "任務已刪除",
@@ -7612,8 +7611,7 @@
       "rejected": "計劃已拒絕 — {{id}} 已返回規劃階段重新規劃",
       "rejectMessage": "拒絕此計劃？規範將被丟棄並重新生成。",
       "rejectTitle": "拒絕計劃",
-      "replanning": "正在為 {{id}} 重新規劃…",
-      "releaseAuthorizationHold": ""
+      "replanning": "正在為 {{id}} 重新規劃…"
     },
     "pr": {
       "awaitingChecks": "等待 PR 檢查",
@@ -8253,7 +8251,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

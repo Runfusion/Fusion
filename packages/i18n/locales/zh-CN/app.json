@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "合并工作树已重新获取",
       "nearDuplicateFlagged": "近似重复已标记",
       "projectIsolationTransition": "项目隔离转换",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "设置已更新",
       "taskCreated": "任务已创建",
       "taskDeleted": "任务已删除",
@@ -7612,8 +7611,7 @@
       "rejected": "计划已拒绝 — {{id}} 已返回规划阶段重新规划",
       "rejectMessage": "拒绝此计划？规范将被丢弃并重新生成。",
       "rejectTitle": "拒绝计划",
-      "replanning": "正在为 {{id}} 重新规划…",
-      "releaseAuthorizationHold": ""
+      "replanning": "正在为 {{id}} 重新规划…"
     },
     "pr": {
       "awaitingChecks": "等待 PR 检查",
@@ -8253,7 +8251,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

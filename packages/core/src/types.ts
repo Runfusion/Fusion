@@ -1241,8 +1241,12 @@ export type ActivityEventType =
   | "task:auto-archived-deterministic-duplicate"
   | "task:auto-archived-near-duplicate"
   | "task:near-duplicate-flagged"
-  /** FNXC:ReleaseAuthorizationGate 2026-06-15-02:44: Release-class tasks parked by triage need a distinct activity so operators can see that explicit user approval is required before dispatch. */
-  | "task:release-authorization-required"
+  /*
+   * FNXC:ReleaseAuthorizationGate 2026-07-09-01:00:
+   * The triage release-authorization planning gate and its `task:release-authorization-required`
+   * activity type were removed (FN-7732, following the engine gate removal in b5b0458). Releases
+   * are kept out of Fusion by agent instruction (AGENTS.md -> "Releasing"), not by an activity/gate.
+   */
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   | "task:merge-worktree-reacquired"

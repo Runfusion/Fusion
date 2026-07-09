@@ -380,17 +380,6 @@ Workflow badges need a slight token-based gap between icon and label so compact 
   color: var(--triage);
 }
 
-/*
-FNXC:PlanApproval 2026-07-04-21:35:
-FN-7559: release-authorization holds share the awaiting-approval status/badge
-base styling with the manual gate but get a subtle border so the distinct
-"Awaiting Release Authorization" label reads as a genuinely different hold,
-not a restyle of the ordinary manual-approval badge.
-*/
-.card-status-badge.awaiting-release-authorization {
-  border: 1px solid color-mix(in srgb, var(--triage) 55%, transparent);
-}
-
 .card-status-badge.awaiting-input {
   background: color-mix(in srgb, var(--color-warning) 14%, transparent);
   color: var(--color-warning);

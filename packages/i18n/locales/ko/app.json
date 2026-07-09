@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "병합 작업트리 재확보됨",
       "nearDuplicateFlagged": "유사 중복 표시됨",
       "projectIsolationTransition": "프로젝트 격리 전환",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "설정 업데이트됨",
       "taskCreated": "작업 생성됨",
       "taskDeleted": "작업 삭제됨",
@@ -7612,8 +7611,7 @@
       "rejected": "계획 거부됨 — {{id}}이(가) 재계획을 위해 Planning으로 반환됨",
       "rejectMessage": "이 계획을 거부하시겠습니까? 명세가 삭제되고 재생성됩니다.",
       "rejectTitle": "계획 거부",
-      "replanning": "{{id}} 재계획 중…",
-      "releaseAuthorizationHold": ""
+      "replanning": "{{id}} 재계획 중…"
     },
     "pr": {
       "awaitingChecks": "PR 검사 대기 중",
@@ -8253,7 +8251,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "Arbre de travail de fusion réacquis",
       "nearDuplicateFlagged": "Quasi-doublon signalé",
       "projectIsolationTransition": "Transition d'isolation de projet",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "Paramètres mis à jour",
       "taskCreated": "Tâche créée",
       "taskDeleted": "Tâche supprimée",
@@ -7612,8 +7611,7 @@
       "rejected": "Plan rejeté — {{id}} renvoyé en planification pour replanning",
       "rejectMessage": "Rejeter ce plan ? La spécification sera supprimée et régénérée.",
       "rejectTitle": "Rejeter le plan",
-      "replanning": "Replanning de {{id}}…",
-      "releaseAuthorizationHold": ""
+      "replanning": "Replanning de {{id}}…"
     },
     "pr": {
       "awaitingChecks": "En attente des vérifications du PR",
@@ -8253,7 +8251,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

@@ -2667,13 +2667,8 @@ export function TaskDetailContent({
   }, [onRevertTask, confirm, task.id, addToast, t]);
 
   const isTaskPaused = task.paused || task.userPaused;
-  /*
-   * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
-   * The triage release-authorization gate was removed. Any task still carrying the
-   * legacy awaitingApprovalReason === "release-authorization" is now treated as an
-   * ordinary manual plan-approval hold so it shows Approve/Reject Plan and is not
-   * stranded with no resolvable affordance.
-   */
+  // A legacy row carrying awaitingApprovalReason === "release-authorization" is an
+  // ordinary manual plan-approval hold (FN-7732) — no distinct treatment needed.
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
 
   const handleTogglePause = useCallback(async () => {
@@ -5664,9 +5659,8 @@ export function TaskDetailContent({
             </>
           ) : (
             <>
-              {/* Approve/Reject Plan buttons for manual plan-approval holds.
-                  FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the release-authorization
-                  gate was removed, so legacy release-authorization holds render these too. */}
+              {/* Approve/Reject Plan buttons for manual plan-approval holds (also covers
+                  legacy rows with awaitingApprovalReason === "release-authorization"). */}
               {isAwaitingApproval && workingTask.prompt && (
                 <>
                   <button className="btn btn-primary btn-sm" onClick={handleApprovePlan}>
