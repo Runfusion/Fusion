@@ -10,6 +10,7 @@ import { parseQuestionToolCall, type ParsedQuestionToolCall } from "../utils/par
 import { ChatQuestionResponse } from "./ChatQuestionResponse";
 import { ProviderIcon } from "./ProviderIcon";
 import { StandardChatActionButton, StandardChatMessageItem, StandardStreamingMessage, formatModelTag } from "./StandardChatSurface";
+import { CHAT_COMMANDS, filterChatCommands, getSlashTriggerMatch, matchChatCommand, type ChatCommand } from "./chat-commands";
 import "./TaskPlannerChatTab.css";
 
 interface TaskPlannerChatTabProps {
@@ -302,6 +303,9 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [showCommandMenu, setShowCommandMenu] = useState(false);
+  const [commandFilter, setCommandFilter] = useState("");
+  const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
   const [streamingThinking, setStreamingThinking] = useState("");
   const [composerState, setComposerState] = useState<ComposerState>("idle");
   const composerStateRef = useRef<ComposerState>("idle");
@@ -330,6 +334,22 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
       : {};
   }, [planningModelId, planningModelProvider]);
   const plannerChatScopeKey = `${task.id}\u0000${projectId ?? ""}\u0000${planningModelProvider ?? ""}\u0000${planningModelId ?? ""}`;
+
+  /*
+   * FNXC:TaskPlannerChatSlashCommands 2026-07-08-00:00:
+   * /steer is only dispatchable when this task's bound agent is actively
+   * running (task.column === "in-progress"), mirroring how TaskChatTab gates
+   * its own done-task affordance on task.column. Any other state (todo,
+   * in-review, done, archived, triage) shows the command in the menu but
+   * disabled with a hint instead of hiding it outright, and dispatch itself
+   * is refused with the same hint rather than silently sending plain chat.
+   */
+  const agentRunning = task.column === "in-progress";
+  const filteredCommands = useMemo(() => filterChatCommands(commandFilter, CHAT_COMMANDS), [commandFilter]);
+
+  useEffect(() => {
+    setHighlightedCommandIndex(0);
+  }, [commandFilter]);
 
   const applyStreamingSnapshot = useCallback((resolvedSessionId: string, text: string, thinking: string, toolCalls: ToolCallInfo[]) => {
     setStreamingThinking(thinking);
@@ -673,7 +693,68 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
     await refreshTaskAfterEdit(hadDiscardedSideEffect);
   }, [messages, projectId, refreshMessagesForSession, refreshTaskAfterEdit, sendMessageContent, sessionId, t]);
 
-  const sendMessage = useCallback(() => sendMessageContent(draft), [draft, sendMessageContent]);
+  const dispatchSlashCommand = useCallback(async (command: ChatCommand, remainder: string) => {
+    if (!agentRunning) {
+      // Do not silently fall back to a normal chat message: /steer with no
+      // running agent is a no-op with feedback, not a plain send.
+      addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
+      return;
+    }
+
+    try {
+      await command.run({ taskId: task.id, projectId, remainder });
+      setDraft("");
+      // Reuse the existing steering-refresh path (same toast + task refresh already
+      // used by the tool-call-driven steering flow above) instead of a second,
+      // divergent success toast for the same underlying action.
+      await refreshTaskAfterSteering();
+    } catch (err) {
+      const message = getErrorMessage(err) || t("taskDetail.plannerChat.commandSteerFailed", "Failed to send to the running agent");
+      addToastRef.current(message, "error");
+    }
+  }, [agentRunning, projectId, refreshTaskAfterSteering, t, task.id]);
+
+  const handleCommandMenuSelect = useCallback((command: ChatCommand) => {
+    if (!agentRunning) {
+      addToastRef.current(t("taskDetail.plannerChat.commandNoRunningAgent", "No running agent to steer"), "warning");
+      return;
+    }
+
+    setDraft((current) => {
+      const triggerMatch = getSlashTriggerMatch(current);
+      if (!triggerMatch) return current;
+      const replacement = `${command.trigger} `;
+      return current.slice(0, triggerMatch.start) + replacement + current.slice(triggerMatch.end);
+    });
+
+    setShowCommandMenu(false);
+    setCommandFilter("");
+    setHighlightedCommandIndex(0);
+  }, [agentRunning, t]);
+
+  const sendMessage = useCallback(() => {
+    const trimmed = draft.trim();
+    const commandMatch = matchChatCommand(trimmed, CHAT_COMMANDS);
+    if (commandMatch) {
+      setShowCommandMenu(false);
+      return dispatchSlashCommand(commandMatch.command, commandMatch.remainder);
+    }
+    return sendMessageContent(draft);
+  }, [draft, dispatchSlashCommand, sendMessageContent]);
+
+  const handleDraftChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = event.target.value;
+    setDraft(nextValue);
+
+    const triggerMatch = getSlashTriggerMatch(nextValue);
+    if (triggerMatch) {
+      setShowCommandMenu(true);
+      setCommandFilter(triggerMatch.filter);
+    } else {
+      setShowCommandMenu(false);
+      setCommandFilter("");
+    }
+  }, []);
 
   const stopPlannerStreaming = useCallback(() => {
     streamRequestRef.current += 1;
@@ -686,10 +767,41 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
   }, []);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showCommandMenu && event.key === "ArrowDown") {
+      event.preventDefault();
+      if (filteredCommands.length > 0) {
+        setHighlightedCommandIndex((prev) => (prev + 1) % filteredCommands.length);
+      }
+      return;
+    }
+
+    if (showCommandMenu && event.key === "ArrowUp") {
+      event.preventDefault();
+      if (filteredCommands.length > 0) {
+        setHighlightedCommandIndex((prev) => (prev === 0 ? filteredCommands.length - 1 : prev - 1));
+      }
+      return;
+    }
+
+    if (showCommandMenu && (event.key === "Enter" || event.key === "Tab") && !event.shiftKey && filteredCommands.length > 0) {
+      event.preventDefault();
+      const commandToSelect = filteredCommands[highlightedCommandIndex] ?? filteredCommands[0];
+      if (commandToSelect) {
+        handleCommandMenuSelect(commandToSelect);
+      }
+      return;
+    }
+
+    if (showCommandMenu && event.key === "Escape") {
+      event.preventDefault();
+      setShowCommandMenu(false);
+      return;
+    }
+
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     void sendMessage();
-  }, [sendMessage]);
+  }, [showCommandMenu, filteredCommands, highlightedCommandIndex, handleCommandMenuSelect, sendMessage]);
 
   const canSend = draft.trim().length > 0 && composerState !== "sending";
   const showEmptyState = historyLoaded && !loading && !error && messages.length === 0;
@@ -943,13 +1055,46 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
         )}
       </div>
 
+      {showCommandMenu && (
+        <div
+          className="chat-skill-menu task-planner-chat-command-menu"
+          data-testid="task-planner-chat-command-menu"
+          role="listbox"
+          aria-label={t("chat.skillSuggestions", "Skill suggestions")}
+        >
+          {filteredCommands.length === 0 ? (
+            <div className="chat-skill-menu-empty">{t("chat.noSkillsFound", "No skills found")}</div>
+          ) : (
+            filteredCommands.map((command, index) => (
+              <button
+                key={command.trigger}
+                type="button"
+                role="option"
+                aria-selected={index === highlightedCommandIndex}
+                aria-disabled={!agentRunning}
+                className={`chat-skill-menu-item chat-command-menu-item${index === highlightedCommandIndex ? " chat-skill-menu-item--highlighted" : ""}${!agentRunning ? " chat-command-menu-item--disabled" : ""}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setHighlightedCommandIndex(index)}
+                onClick={() => handleCommandMenuSelect(command)}
+              >
+                <span className="chat-skill-menu-item-name">{command.trigger}</span>
+                <span className="chat-skill-menu-item-description">
+                  {agentRunning
+                    ? command.description
+                    : t("chat.commandNoRunningAgentHint", "No running agent to steer")}
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
       <div className="task-planner-chat-composer">
         <textarea
           className="input task-planner-chat-input"
           aria-label={t("taskDetail.plannerChat.inputLabel", "Message planner chat")}
-          placeholder={t("taskDetail.plannerChat.placeholder", "Ask the planner about this task…")}
+          placeholder={t("taskDetail.plannerChat.placeholder", "Ask the planner about this task… Type / for commands")}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={handleDraftChange}
           onKeyDown={handleKeyDown}
           disabled={composerState === "sending"}
           rows={1}

@@ -8,7 +8,7 @@ import { TaskPlannerChatTab } from "../TaskPlannerChatTab";
 
 const taskPlannerChatCss = readFileSync(resolve(__dirname, "../TaskPlannerChatTab.css"), "utf8");
 
-const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockStreamChatResponse, mockAttachChatStream, mockEditChatMessage, mockTranslations, mockT } = vi.hoisted(() => {
+const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockFetchChatSession, mockFetchChatMessages, mockFetchTaskDetail, mockStreamChatResponse, mockAttachChatStream, mockEditChatMessage, mockAddSteeringComment, mockTranslations, mockT } = vi.hoisted(() => {
   const translations = new Map<string, string>();
   return {
     mockEnsureTaskPlannerChatSession: vi.fn(),
@@ -19,6 +19,7 @@ const { mockEnsureTaskPlannerChatSession, mockFetchTaskPlannerChatSession, mockF
     mockStreamChatResponse: vi.fn(),
     mockAttachChatStream: vi.fn(),
     mockEditChatMessage: vi.fn(),
+    mockAddSteeringComment: vi.fn(),
     mockTranslations: translations,
     mockT: (key: string, fallback: string) => translations.get(key) ?? fallback,
   };
@@ -42,6 +43,7 @@ vi.mock("../../api", async (importOriginal) => {
     streamChatResponse: mockStreamChatResponse,
     attachChatStream: mockAttachChatStream,
     editChatMessage: mockEditChatMessage,
+    addSteeringComment: mockAddSteeringComment,
   };
 });
 
@@ -133,6 +135,7 @@ describe("TaskPlannerChatTab", () => {
     mockStreamChatResponse.mockReturnValue({ close: vi.fn(), isConnected: () => true });
     mockAttachChatStream.mockReturnValue({ close: vi.fn(), isConnected: () => true });
     mockEditChatMessage.mockResolvedValue({ retained: [] });
+    mockAddSteeringComment.mockResolvedValue(makeTask("FN-7310"));
   });
 
   it("looks up an existing task-scoped planner session and renders the starter-prompt empty state", async () => {
@@ -1612,6 +1615,77 @@ describe("TaskPlannerChatTab", () => {
       ));
       // No reversal call is made for the already-applied steering comment.
       expect(mockFetchTaskDetail).not.toHaveBeenCalledWith("FN-7310", expect.anything(), expect.anything());
+    });
+  });
+
+  describe("slash-command /steer", () => {
+    it("shows /steer in the '/' menu, disabled with a hint, when the task's agent is not running", async () => {
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "todo" }) });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "/" } });
+
+      const option = await screen.findByRole("option", { name: /steer/i });
+      expect(option).toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByText(/no running agent/i)).toBeInTheDocument();
+    });
+
+    it("enables /steer in the menu when the task's agent is running (column === in-progress)", async () => {
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "/" } });
+
+      const option = await screen.findByRole("option", { name: /steer/i });
+      expect(option).toHaveAttribute("aria-disabled", "false");
+    });
+
+    it("submitting '/steer do X' on a running task calls addSteeringComment and does not start a planner-chat send", async () => {
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }), projectId: "proj-1" });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "/steer do X" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-7310", "do X", "proj-1"));
+      expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
+      await waitFor(() => expect(textarea).toHaveValue(""));
+    });
+
+    it("submitting a normal message still starts a planner-chat send when the task's agent is running", async () => {
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "What is the status?" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await screen.findByText("What is the status?");
+      expect(mockAddSteeringComment).not.toHaveBeenCalled();
+    });
+
+    it("submitting '/steer ...' with no running agent shows a hint and does not dispatch or send a message", async () => {
+      const addToast = vi.fn();
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "todo" }), addToast });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "/steer do X" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => expect(addToast).toHaveBeenCalledWith(expect.stringContaining("No running agent"), "warning"));
+      expect(mockAddSteeringComment).not.toHaveBeenCalled();
+      expect(mockEnsureTaskPlannerChatSession).not.toHaveBeenCalled();
+      expect(textarea).toHaveValue("/steer do X");
+    });
+
+    it("does not dispatch when the trigger appears mid-message", async () => {
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "please /steer this" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await screen.findByText("please /steer this");
+      expect(mockAddSteeringComment).not.toHaveBeenCalled();
     });
   });
 });
