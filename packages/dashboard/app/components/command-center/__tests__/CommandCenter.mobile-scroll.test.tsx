@@ -9,6 +9,8 @@ import { CommandCenter } from "../CommandCenter";
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   fetchOrgTree: vi.fn().mockResolvedValue([]),
   fetchExecutorStats: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, maxConcurrent: 2 }),
   fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxTriageConcurrent: 1, maxWorktrees: 5 }),

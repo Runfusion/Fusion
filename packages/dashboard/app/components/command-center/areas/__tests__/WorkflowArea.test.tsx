@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => mocks.api(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
 }));
 
 import { WorkflowArea } from "../WorkflowArea";
@@ -73,6 +75,20 @@ beforeEach(() => {
 });
 
 describe("WorkflowArea", () => {
+  it("appends projectId to its workflows request when supplied, and omits it when not", async () => {
+    mocks.api.mockResolvedValue(emptyWorkflowFixture());
+    const { unmount } = render(<WorkflowArea range={range7d} projectId="proj-wf" />);
+    await screen.findByTestId("cc-area-workflows-empty");
+    expect(mocks.api.mock.calls.at(-1)?.[0]).toBe("/command-center/workflows?from=2026-06-08&projectId=proj-wf");
+    unmount();
+
+    mocks.api.mockClear();
+    mocks.api.mockResolvedValue(emptyWorkflowFixture());
+    render(<WorkflowArea range={range7d} />);
+    await screen.findByTestId("cc-area-workflows-empty");
+    expect(mocks.api.mock.calls.at(-1)?.[0]).toBe("/command-center/workflows?from=2026-06-08");
+  });
+
   it("renders loading, empty, and error states through AreaShell", async () => {
     let resolveWorkflows: (value: unknown) => void = () => undefined;
     mocks.api.mockReturnValueOnce(new Promise((resolve) => { resolveWorkflows = resolve; }));

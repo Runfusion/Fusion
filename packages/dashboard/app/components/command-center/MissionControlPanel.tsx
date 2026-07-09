@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Loader2, Radio } from "lucide-react";
 import type { LiveSnapshot, LiveSession, ColumnCount } from "@fusion/core";
-import { api } from "../../api/legacy";
+import { api, withProjectId } from "../../api/legacy";
 import { subscribeSse } from "../../sse-bus";
 import { Funnel, type FunnelStage } from "./charts/Funnel";
 import "./MissionControlPanel.css";
@@ -79,7 +79,7 @@ export interface LiveSnapshotState {
  * The decision to poll is derived from the freshest snapshot (kept in a ref so the
  * interval callback always sees current state), re-evaluated after every fetch.
  */
-export function useLiveSnapshot(): LiveSnapshotState {
+export function useLiveSnapshot(projectId?: string): LiveSnapshotState {
   const [snapshot, setSnapshot] = useState<LiveSnapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +106,7 @@ export function useLiveSnapshot(): LiveSnapshotState {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     try {
-      const result = await api<LiveSnapshot>("/command-center/live");
+      const result = await api<LiveSnapshot>(withProjectId("/command-center/live", projectId));
       if (!mountedRef.current) return;
       snapshotRef.current = result;
       setSnapshot(result);
@@ -135,7 +135,7 @@ export function useLiveSnapshot(): LiveSnapshotState {
         }
       }
     }
-  }, [stopPolling]);
+  }, [stopPolling, projectId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -230,9 +230,9 @@ function deriveFunnelStages(columns: ColumnCount[], label: (id: string, fallback
  * `GET /api/command-center/live` with push + poll convergence (KTD5): SSE events
  * trigger an immediate refetch, and a 5s poll runs only while work is in-flight.
  */
-export function MissionControlPanel() {
+export function MissionControlPanel({ projectId }: { projectId?: string } = {}) {
   const { t } = useTranslation("app");
-  const { snapshot, isLoading, error } = useLiveSnapshot();
+  const { snapshot, isLoading, error } = useLiveSnapshot(projectId);
 
   const sessions = useMemo(() => snapshot?.sessions ?? [], [snapshot?.sessions]);
   const nodes = useMemo(

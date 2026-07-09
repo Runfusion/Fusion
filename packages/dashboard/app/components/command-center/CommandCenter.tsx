@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Gauge } from "lucide-react";
 import type { ActivityAnalytics, ColorTheme, LiveSnapshot, SignalsAnalytics, ThemeMode, TokenAnalytics, ToolAnalytics } from "@fusion/core";
-import { api } from "../../api/legacy";
+import { api, withProjectId } from "../../api/legacy";
 import { DateRangePicker, defaultPresets, rangeFromPreset, type DateRange } from "./DateRangePicker";
 import { LoadingSpinner } from "../LoadingSpinner";
 import { TokensArea } from "./areas/TokensArea";
@@ -149,10 +149,11 @@ function OverviewTab({
   const { t } = useTranslation("app");
   const tokens = useAnalyticsArea<TokenAnalytics>("/command-center/tokens?groupBy=model", range, {
     pollMs: OVERVIEW_TOKEN_REFRESH_MS,
+    projectId,
   });
-  const tools = useAnalyticsArea<ToolAnalytics>("/command-center/tools", range);
-  const activity = useAnalyticsArea<ActivityAnalytics>("/command-center/activity", range);
-  const signals = useAnalyticsArea<SignalsAnalytics>("/command-center/signals", range);
+  const tools = useAnalyticsArea<ToolAnalytics>("/command-center/tools", range, { projectId });
+  const activity = useAnalyticsArea<ActivityAnalytics>("/command-center/activity", range, { projectId });
+  const signals = useAnalyticsArea<SignalsAnalytics>("/command-center/signals", range, { projectId });
   const [liveSnapshot, setLiveSnapshot] = useState<LiveSnapshot | null>(null);
   const [liveSnapshotLoading, setLiveSnapshotLoading] = useState(true);
 
@@ -161,7 +162,7 @@ function OverviewTab({
     setLiveSnapshotLoading(true);
     void (async () => {
       try {
-        const result = await api<LiveSnapshot>("/command-center/live");
+        const result = await api<LiveSnapshot>(withProjectId("/command-center/live", projectId));
         if (!cancelled) {
           setLiveSnapshot(result);
         }
@@ -178,7 +179,7 @@ function OverviewTab({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [projectId]);
 
   const tokenTotal = tokens.data?.totals?.totalTokens ?? 0;
   const toolCalls = tools.data?.toolCalls ?? 0;
@@ -310,7 +311,7 @@ function OverviewTab({
   );
   const throughputSection = (
     <div className="cc-overview-throughput" data-testid="command-center-throughput">
-      <SdlcFunnel range={range} />
+      <SdlcFunnel range={range} projectId={projectId} />
     </div>
   );
 
@@ -562,33 +563,33 @@ export function CommandCenter({
           />
         );
       case "tokens":
-        return <TokensArea range={range} />;
+        return <TokensArea range={range} projectId={projectId} />;
       case "tools":
-        return <ToolsArea range={range} />;
+        return <ToolsArea range={range} projectId={projectId} />;
       case "activity":
-        return <ActivityArea range={range} />;
+        return <ActivityArea range={range} projectId={projectId} />;
       case "productivity":
-        return <ProductivityArea range={range} />;
+        return <ProductivityArea range={range} projectId={projectId} />;
       case "team":
         return <TeamArea range={range} projectId={projectId} addToast={addToast} />;
       case "workflows":
-        return <WorkflowArea range={range} />;
+        return <WorkflowArea range={range} projectId={projectId} />;
       case "ecosystem":
-        return <EcosystemArea range={range} />;
+        return <EcosystemArea range={range} projectId={projectId} />;
       case "github":
-        return <GithubArea range={range} />;
+        return <GithubArea range={range} projectId={projectId} />;
       case "gitlab":
-        return <GitlabArea range={range} />;
+        return <GitlabArea range={range} projectId={projectId} />;
       case "signals":
-        return <SignalsArea range={range} />;
+        return <SignalsArea range={range} projectId={projectId} />;
       case "system":
         return <SystemStatsArea />;
       case "nodes":
         return <NodesView addToast={addToast} />;
       case "reliability":
-        return <ReliabilityView />;
+        return <ReliabilityView projectId={projectId} />;
       case "mission-control":
-        return <MissionControlPanel />;
+        return <MissionControlPanel projectId={projectId} />;
       default:
         return <PlaceholderTab tabId={activeTab} />;
     }

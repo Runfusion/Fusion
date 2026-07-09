@@ -1,6 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const apiMock = vi.fn();
+vi.mock("../../api/legacy", () => ({
+  api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
+}));
+
 import { ReliabilityView } from "../ReliabilityView";
 
 const baseResponse = {
@@ -32,13 +39,13 @@ const baseResponse = {
   mergeAttempts: { mean: 1.2, max: 2, histogram: { "1": 1 } },
 };
 
-function renderInProjectContent() {
+function renderInProjectContent(projectId?: string) {
   return render(
     <div
       data-testid="project-content"
       style={{ display: "flex", flex: "1 1 auto", height: "100%", minHeight: 0, minWidth: 0, width: "100%", overflow: "hidden" }}
     >
-      <ReliabilityView />
+      <ReliabilityView projectId={projectId} />
     </div>,
   );
 }
@@ -63,10 +70,11 @@ describe("ReliabilityView", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    apiMock.mockReset();
   });
 
   it("shows loading spinner while data is loading", () => {
-    vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise<Response>(() => {}));
+    apiMock.mockReturnValue(new Promise(() => {}));
 
     render(<ReliabilityView />);
 
@@ -75,8 +83,8 @@ describe("ReliabilityView", () => {
     expect(screen.queryByRole("heading", { name: "Reliability" })).not.toBeInTheDocument();
   });
 
-  it("shows error message when fetch fails", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network unavailable"));
+  it("shows error message when the api client rejects", async () => {
+    apiMock.mockRejectedValue(new Error("Network unavailable"));
 
     render(<ReliabilityView />);
 
@@ -85,12 +93,27 @@ describe("ReliabilityView", () => {
     expect(screen.queryByRole("heading", { name: "Reliability" })).not.toBeInTheDocument();
   });
 
+  it("uses the shared api() client (carrying auth) instead of raw fetch, and appends projectId when supplied", async () => {
+    apiMock.mockResolvedValue(baseResponse);
+
+    const { unmount } = render(<ReliabilityView />);
+    await waitFor(() => expect(apiMock).toHaveBeenCalled());
+    expect(apiMock.mock.calls[0]?.[0]).toBe("/health/reliability");
+    unmount();
+
+    apiMock.mockClear();
+    apiMock.mockResolvedValue(baseResponse);
+    render(<ReliabilityView projectId="proj-xyz" />);
+    await waitFor(() => expect(apiMock).toHaveBeenCalled());
+    expect(apiMock.mock.calls[0]?.[0]).toBe("/health/reliability?projectId=proj-xyz");
+  });
+
   it.each([
     ["desktop", 1024],
     ["mobile", 375],
   ])("fills flex parent width and height in %s loading state", (_label, width) => {
     setViewportWidth(width);
-    vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise<Response>(() => {}));
+    apiMock.mockReturnValue(new Promise(() => {}));
 
     renderInProjectContent();
 
@@ -102,7 +125,7 @@ describe("ReliabilityView", () => {
     ["mobile", 375],
   ])("fills flex parent width and height in %s populated state", async (_label, width) => {
     setViewportWidth(width);
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    apiMock.mockResolvedValue(baseResponse);
 
     const { container } = renderInProjectContent();
 
@@ -115,7 +138,7 @@ describe("ReliabilityView", () => {
     ["mobile", 375],
   ])("fills flex parent width and height in %s error state", async (_label, width) => {
     setViewportWidth(width);
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network unavailable"));
+    apiMock.mockRejectedValue(new Error("Network unavailable"));
 
     renderInProjectContent();
 
@@ -125,9 +148,9 @@ describe("ReliabilityView", () => {
 
   it("shows data after successful load even if loading refresh is pending", async () => {
     vi.useFakeTimers();
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce({ ok: true, json: async () => baseResponse } as Response)
-      .mockReturnValueOnce(new Promise<Response>(() => {}));
+    apiMock
+      .mockResolvedValueOnce(baseResponse)
+      .mockReturnValueOnce(new Promise(() => {}));
 
     render(<ReliabilityView />);
     await act(async () => {
@@ -140,7 +163,7 @@ describe("ReliabilityView", () => {
       vi.advanceTimersByTime(60_000);
     });
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(apiMock).toHaveBeenCalledTimes(2);
     expect(screen.getByText("80.0%")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Reliability" })).toBeInTheDocument();
     expect(screen.queryByTestId("reliability-loading")).not.toBeInTheDocument();
@@ -148,7 +171,7 @@ describe("ReliabilityView", () => {
   });
 
   it("renders headline percent and details disclosure", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    apiMock.mockResolvedValue(baseResponse);
     render(<ReliabilityView />);
 
     await waitFor(() => expect(screen.getByText("80.0%")).toBeInTheDocument());
@@ -157,7 +180,7 @@ describe("ReliabilityView", () => {
   });
 
   it("hides zero-sample days by default and reveals with toggle", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    apiMock.mockResolvedValue(baseResponse);
     render(<ReliabilityView />);
 
     await waitFor(() => expect(screen.getByText("2026-05-13")).toBeInTheDocument());
@@ -168,7 +191,7 @@ describe("ReliabilityView", () => {
   });
 
   it("renders the in-review flow chart for populated reliability data", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    apiMock.mockResolvedValue(baseResponse);
     render(<ReliabilityView />);
 
     await waitFor(() => expect(screen.getByRole("img", { name: "In-review entered vs bounced per day" })).toBeInTheDocument());
@@ -176,7 +199,7 @@ describe("ReliabilityView", () => {
   });
 
   it("renders the merge-attempts chart for populated reliability data", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    apiMock.mockResolvedValue(baseResponse);
     render(<ReliabilityView />);
 
     await waitFor(() => expect(screen.getByRole("img", { name: "Merge attempts histogram" })).toBeInTheDocument());
@@ -184,15 +207,12 @@ describe("ReliabilityView", () => {
   });
 
   it("renders chart empty states without throwing when reliability series are empty", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...baseResponse,
-        headline: { inReviewFailureRate7d: null, reason: "no-in-review-entries" },
-        perDay: [],
-        mergeAttempts: { mean: null, max: null, histogram: {}, reason: "no-audit-coverage" },
-      }),
-    } as Response);
+    apiMock.mockResolvedValue({
+      ...baseResponse,
+      headline: { inReviewFailureRate7d: null, reason: "no-in-review-entries" },
+      perDay: [],
+      mergeAttempts: { mean: null, max: null, histogram: {}, reason: "no-audit-coverage" },
+    });
 
     render(<ReliabilityView />);
 
@@ -203,32 +223,29 @@ describe("ReliabilityView", () => {
   });
 
   it("keeps the flow chart source consistent with the Show empty days table toggle", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...baseResponse,
-        perDay: [
-          {
-            date: "2026-05-12",
-            tasksEnteredInReview: 4,
-            tasksBouncedToInProgress: 1,
-            postMergeAuditFailures: null,
-            fileScopeInvariantFailures: null,
-            recoverAlreadyMergedReviewTasksRecoveries: null,
-            hasSamples: false,
-          },
-          {
-            date: "2026-05-13",
-            tasksEnteredInReview: 0,
-            tasksBouncedToInProgress: 0,
-            postMergeAuditFailures: null,
-            fileScopeInvariantFailures: null,
-            recoverAlreadyMergedReviewTasksRecoveries: null,
-            hasSamples: true,
-          },
-        ],
-      }),
-    } as Response);
+    apiMock.mockResolvedValue({
+      ...baseResponse,
+      perDay: [
+        {
+          date: "2026-05-12",
+          tasksEnteredInReview: 4,
+          tasksBouncedToInProgress: 1,
+          postMergeAuditFailures: null,
+          fileScopeInvariantFailures: null,
+          recoverAlreadyMergedReviewTasksRecoveries: null,
+          hasSamples: false,
+        },
+        {
+          date: "2026-05-13",
+          tasksEnteredInReview: 0,
+          tasksBouncedToInProgress: 0,
+          postMergeAuditFailures: null,
+          fileScopeInvariantFailures: null,
+          recoverAlreadyMergedReviewTasksRecoveries: null,
+          hasSamples: true,
+        },
+      ],
+    });
 
     render(<ReliabilityView />);
 
@@ -241,13 +258,13 @@ describe("ReliabilityView", () => {
     expect(within(screen.getByTestId("reliability-flow-chart")).queryByText("No in-review flow data")).not.toBeInTheDocument();
   });
 
-  it("opens reset modal and confirms reset with refetch", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce({ ok: true, json: async () => baseResponse } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ resetAt: "2026-05-13T01:00:00.000Z" }) } as Response)
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...baseResponse, resetAt: "2026-05-13T01:00:00.000Z" }) } as Response);
+  it("opens reset modal and confirms reset with refetch, both carrying projectId", async () => {
+    apiMock
+      .mockResolvedValueOnce(baseResponse)
+      .mockResolvedValueOnce({ resetAt: "2026-05-13T01:00:00.000Z" })
+      .mockResolvedValueOnce({ ...baseResponse, resetAt: "2026-05-13T01:00:00.000Z" });
 
-    render(<ReliabilityView />);
+    render(<ReliabilityView projectId="proj-reset" />);
     await waitFor(() => expect(screen.getByText("80.0%")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Reset stats" }));
@@ -255,13 +272,13 @@ describe("ReliabilityView", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm reset" }));
     await waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalledWith("/api/health/reliability/reset", { method: "POST" });
+      expect(apiMock).toHaveBeenCalledWith("/health/reliability/reset?projectId=proj-reset", { method: "POST" });
     });
     await waitFor(() => expect(screen.getByText(/Counting since/)).toBeInTheDocument());
   });
 
   it("renders duration more-stats raw metrics", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => baseResponse } as Response);
+    apiMock.mockResolvedValue(baseResponse);
     render(<ReliabilityView />);
 
     await waitFor(() => expect(screen.getByText("80.0%")).toBeInTheDocument());
@@ -271,7 +288,7 @@ describe("ReliabilityView", () => {
   });
 
   it("FN-4594: root container provides vertical scroll contract", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...baseResponse, perDay: [] }) } as Response);
+    apiMock.mockResolvedValue({ ...baseResponse, perDay: [] });
 
     const { container } = render(<ReliabilityView />);
     await waitFor(() => expect(container.querySelector(".reliability-view")).not.toBeNull());
@@ -283,39 +300,33 @@ describe("ReliabilityView", () => {
   });
 
   it("FN-4716: renders 100.0% when zero bounces", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...baseResponse,
-        headline: { inReviewFailureRate7d: 0 },
-        perDay: [
-          {
-            date: "2026-05-13",
-            tasksEnteredInReview: 5,
-            tasksBouncedToInProgress: 0,
-            postMergeAuditFailures: null,
-            fileScopeInvariantFailures: null,
-            recoverAlreadyMergedReviewTasksRecoveries: null,
-            hasSamples: true,
-          },
-        ],
-      }),
-    } as Response);
+    apiMock.mockResolvedValue({
+      ...baseResponse,
+      headline: { inReviewFailureRate7d: 0 },
+      perDay: [
+        {
+          date: "2026-05-13",
+          tasksEnteredInReview: 5,
+          tasksBouncedToInProgress: 0,
+          postMergeAuditFailures: null,
+          fileScopeInvariantFailures: null,
+          recoverAlreadyMergedReviewTasksRecoveries: null,
+          hasSamples: true,
+        },
+      ],
+    });
 
     render(<ReliabilityView />);
     await waitFor(() => expect(screen.getByText("100.0%")).toBeInTheDocument());
   });
 
   it("renders null headline reason gracefully", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        ...baseResponse,
-        headline: { inReviewFailureRate7d: null, reason: "no-in-review-entries" },
-        duration: { p50Ms: null, p95Ms: null, sampleCount: 0, reason: "insufficient-samples" },
-        mergeAttempts: { mean: null, max: null, histogram: {}, reason: "no-audit-coverage" },
-      }),
-    } as Response);
+    apiMock.mockResolvedValue({
+      ...baseResponse,
+      headline: { inReviewFailureRate7d: null, reason: "no-in-review-entries" },
+      duration: { p50Ms: null, p95Ms: null, sampleCount: 0, reason: "insufficient-samples" },
+      mergeAttempts: { mean: null, max: null, histogram: {}, reason: "no-audit-coverage" },
+    });
 
     render(<ReliabilityView />);
     await waitFor(() => expect(screen.getByText("Insufficient data — no-in-review-entries")).toBeInTheDocument());

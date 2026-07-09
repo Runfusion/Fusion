@@ -207,6 +207,7 @@ export function TeamArea({
   const [orgChartViewportWidth, setOrgChartViewportWidth] = useState(0);
   const { data, isLoading, error } = useAnalyticsArea<TeamAnalytics>("/command-center/team", range, {
     pollMs: TEAM_LIVE_REFRESH_MS,
+    projectId,
   });
 
   useEffect(() => {

@@ -64,9 +64,11 @@ function buildBarData(
     });
 }
 
-export function WorkflowArea({ range }: { range: DateRange }) {
+export function WorkflowArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
-  const { data, isLoading, error } = useAnalyticsArea<WorkflowAnalytics>("/command-center/workflows", range);
+  const { data, isLoading, error } = useAnalyticsArea<WorkflowAnalytics>("/command-center/workflows", range, {
+    projectId,
+  });
   const unknownWorkflow = t("commandCenter.workflows.unknownWorkflow", "(unknown workflow)");
   const noChartData = t("commandCenter.workflows.noChartData", "No non-zero values for this chart yet.");
 

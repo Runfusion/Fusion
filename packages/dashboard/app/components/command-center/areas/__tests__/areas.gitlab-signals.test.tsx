@@ -4,6 +4,8 @@ import { render, screen, within } from "@testing-library/react";
 const mocks = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("../../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => mocks.api(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
 }));
 
 import { GitlabArea } from "../GitlabArea";
@@ -52,6 +54,20 @@ beforeEach(() => {
 });
 
 describe("GitlabArea", () => {
+  it("appends projectId to its gitlab request when supplied, and omits it when not", async () => {
+    mocks.api.mockResolvedValue(gitlabFixture());
+    const { unmount } = render(<GitlabArea range={range7d} projectId="proj-gl" />);
+    await screen.findByTestId("cc-area-gitlab");
+    expect(mocks.api.mock.calls.at(-1)?.[0]).toBe("/command-center/gitlab?from=2026-06-08&projectId=proj-gl");
+    unmount();
+
+    mocks.api.mockClear();
+    mocks.api.mockResolvedValue(gitlabFixture());
+    render(<GitlabArea range={range7d} />);
+    await screen.findByTestId("cc-area-gitlab");
+    expect(mocks.api.mock.calls.at(-1)?.[0]).toBe("/command-center/gitlab?from=2026-06-08");
+  });
+
   it("renders GitLab analytics from local dashboard API data only", async () => {
     mocks.api.mockResolvedValue(gitlabFixture());
 

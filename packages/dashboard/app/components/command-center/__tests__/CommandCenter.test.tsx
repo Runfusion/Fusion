@@ -9,6 +9,8 @@ import { CommandCenter } from "../CommandCenter";
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   fetchOrgTree: vi.fn().mockResolvedValue([]),
   fetchExecutorStats: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false, maxConcurrent: 2 }),
   fetchSettings: vi.fn().mockResolvedValue({ maxConcurrent: 2, maxTriageConcurrent: 1, maxWorktrees: 5 }),
@@ -1099,24 +1101,23 @@ describe("CommandCenter shell", () => {
     expect(screen.getByTestId("cc-github-fixed").textContent).toContain("2");
   });
 
-  it("renders and routes the Reliability tab exactly once", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => reliabilityFixture(),
-    } as Response);
+  it("renders and routes the Reliability tab exactly once, threading projectId to the shared api() client", async () => {
+    apiMock.mockImplementation((path: string) => {
+      if (path.startsWith("/health/reliability")) return Promise.resolve(reliabilityFixture());
+      if (path === "/command-center/live" || path.startsWith("/command-center/live?")) return Promise.resolve(liveFixture());
+      if (path === "/system-stats") return Promise.resolve(systemStatsFixture());
+      if (path === "/settings/global") return Promise.resolve({ vitestAutoKillEnabled: true, vitestKillThresholdPct: 90 });
+      return Promise.reject(new Error(`Unhandled api path: ${path}`));
+    });
 
-    try {
-      render(<CommandCenter />);
-      expect(screen.getAllByTestId("command-center-tab-reliability")).toHaveLength(1);
+    render(<CommandCenter projectId="project-a" />);
+    expect(screen.getAllByTestId("command-center-tab-reliability")).toHaveLength(1);
 
-      fireEvent.click(screen.getByTestId("command-center-tab-reliability"));
-      expect(screen.getByTestId("command-center-tab-reliability").getAttribute("aria-selected")).toBe("true");
-      expect(screen.getByTestId("command-center-panel-reliability")).toBeTruthy();
-      expect(await screen.findByRole("heading", { name: "Reliability" })).toBeTruthy();
-      expect(fetchSpy).toHaveBeenCalledWith("/api/health/reliability");
-    } finally {
-      fetchSpy.mockRestore();
-    }
+    fireEvent.click(screen.getByTestId("command-center-tab-reliability"));
+    expect(screen.getByTestId("command-center-tab-reliability").getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByTestId("command-center-panel-reliability")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "Reliability" })).toBeTruthy();
+    expect(apiMock).toHaveBeenCalledWith("/health/reliability?projectId=project-a", undefined);
   });
 
   it("renders the Team tab with sortable per-agent stats and charts", async () => {

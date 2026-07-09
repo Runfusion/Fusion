@@ -18,11 +18,12 @@ function formatResolvedAt(value: string, fallback: string): string {
   return date.toLocaleString();
 }
 
-export function GitlabArea({ range }: { range: DateRange }) {
+export function GitlabArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const { data, isLoading, error } = useAnalyticsArea<GitlabIssueAnalytics>(
     "/command-center/gitlab",
     range,
+    { projectId },
   );
 
   const daily = useMemo(() => data?.daily ?? [], [data?.daily]);

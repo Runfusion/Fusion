@@ -7,6 +7,8 @@ const apiMock = vi.fn();
 
 vi.mock("../../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
 }));
 
 vi.mock("../../../ProviderIcon", () => ({
@@ -277,5 +279,15 @@ describe("TokensArea provider model icons", () => {
     }
     expect(screen.getByTestId("cc-tokens-row-unknown")).toHaveTextContent("(unknown)");
     expect(screen.getByTestId("cc-tokens-row-(unknown)")).toHaveTextContent("(unknown)");
+  });
+});
+
+describe("FUX-037: TokensArea projectId scoping", () => {
+  it("appends projectId to the tokens request when supplied, and omits it when not", async () => {
+    render(<TokensArea range={range7d} projectId="proj-tokens" />);
+    await screen.findByTestId("cc-tokens-table");
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe(
+      "/command-center/tokens?groupBy=model&granularity=day&from=2026-06-08&projectId=proj-tokens",
+    );
   });
 });
