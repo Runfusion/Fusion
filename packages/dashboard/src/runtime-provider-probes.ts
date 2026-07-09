@@ -31,6 +31,12 @@ import {
 } from "@fusion-plugin-examples/cursor-runtime";
 
 import {
+  discoverGrokProviderModels,
+  probeGrokBinary,
+  type GrokBinaryStatus,
+} from "@fusion-plugin-examples/grok-runtime";
+
+import {
   agentsMe,
   discoverPaperclipCliConfig,
   listCompanies,
@@ -55,6 +61,7 @@ export type {
   MintedApiKey,
   OpenClawBinaryStatus,
   CursorBinaryStatus,
+  GrokBinaryStatus,
   PaperclipAgentSummary,
   PaperclipCliDiscoveryResult,
   PaperclipCompanySummary,
@@ -64,6 +71,10 @@ export { mintAgentApiKeyViaCli };
 
 export async function probeCursorCliProvider(opts?: { binaryPath?: string }): Promise<CursorBinaryStatus> {
   return probeCursorBinary(opts);
+}
+
+export async function probeGrokCliProvider(opts?: { binaryPath?: string }): Promise<GrokBinaryStatus> {
+  return probeGrokBinary(opts);
 }
 
 /**
@@ -96,6 +107,38 @@ export async function discoverCursorCliModels(opts?: {
   timeoutMs?: number;
 }): Promise<CursorModelDiscoveryResult> {
   return discoverCursorProviderModels(opts) as Promise<CursorModelDiscoveryResult>;
+}
+
+/**
+ * Result shape returned by the Grok plugin's model-discovery contribution.
+ *
+ * FNXC:GrokCli 2026-07-08-00:00:
+ * FN-7705: mirrors CursorModelDiscoveryResult above; the Grok plugin's
+ * discovery never populates reasoning/contextWindow today (the real
+ * `grok models` output has no such fields), but the shape is kept
+ * consistent with the other CLI providers for a future enrichment pass.
+ */
+export interface GrokModelDiscoveryResult {
+  models: Array<{ id: string; label?: string; reasoning?: boolean; contextWindow?: number }>;
+  source: string;
+  fallbackUsed: boolean;
+  reason?: string;
+}
+
+/**
+ * Discover Grok CLI models via `grok models`, delegating to the Grok Runtime
+ * plugin's `discoverGrokProviderModels` cliProviders contribution.
+ *
+ * This is the stable mock/spy boundary for `grok-model-cache.ts` and its
+ * tests — never called directly per-request; see `getGrokPickerModels`.
+ * Never throws by contract of the underlying plugin function (a missing/
+ * unavailable binary resolves to `{ models: [], fallbackUsed: true, ... }`).
+ */
+export async function discoverGrokCliModels(opts?: {
+  binaryPath?: string;
+  timeoutMs?: number;
+}): Promise<GrokModelDiscoveryResult> {
+  return discoverGrokProviderModels(opts) as Promise<GrokModelDiscoveryResult>;
 }
 
 /**

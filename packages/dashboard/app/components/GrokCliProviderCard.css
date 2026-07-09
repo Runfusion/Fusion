@@ -1,0 +1,65 @@
+.grok-cli-provider-card .auth-provider-cli-actions,
+.grok-cli-provider-card .onboarding-provider-card__actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+/*
+FNXC:GrokCli 2026-07-08-00:00:
+Mirrors .cursor-cli-provider-card__body (FN-7695) — compact card body must be inset to match
+`.auth-provider-header`'s horizontal padding (`var(--space-sm) var(--space-md)`), otherwise the
+status line and binary-path control render flush against the card's left/right/bottom edges.
+*/
+.grok-cli-provider-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md) var(--space-sm);
+}
+
+.grok-cli-binary-path-control {
+  display: grid;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.grok-cli-binary-path-label {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.grok-cli-binary-path-row {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.grok-cli-binary-path-input {
+  min-width: 0;
+  flex: 1 1 18rem;
+  height: 2rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  padding: 0 var(--space-sm);
+}
+
+@media (max-width: 768px) {
+  .grok-cli-provider-card .auth-provider-cli-actions,
+  .grok-cli-provider-card .onboarding-provider-card__actions,
+  .grok-cli-binary-path-row {
+    flex-wrap: wrap;
+  }
+
+  .grok-cli-binary-path-row .btn,
+  .grok-cli-binary-path-input {
+    width: 100%;
+  }
+
+  .grok-cli-provider-card__body {
+    padding: 0 var(--space-sm) var(--space-sm);
+  }
+}

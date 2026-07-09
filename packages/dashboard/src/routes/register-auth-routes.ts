@@ -5,7 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { GIT_INSTALL_URL, isGhAvailable, isGhAuthenticated, probeGitCliStatus } from "@fusion/core";
 import { probeClaudeCli } from "../claude-cli-probe.js";
 import { probeDroidCli } from "../droid-cli-probe.js";
-import { probeCursorCliProvider } from "../runtime-provider-probes.js";
+import { probeCursorCliProvider, probeGrokCliProvider } from "../runtime-provider-probes.js";
 import { probeLlamaCpp } from "../llama-cpp-probe.js";
 import { ApiError, badRequest, conflict } from "../api-error.js";
 import { clearUsageCache } from "../usage.js";
@@ -57,6 +57,24 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
 
   async function probeCursorCliWithStoredBinary() {
     return probeCursorCliProvider({ binaryPath: await readCursorCliBinaryPath() });
+  }
+
+  /*
+  FNXC:GrokCli 2026-07-08-00:00:
+  Mirrors normalizeCursorCliBinaryPath/readCursorCliBinaryPath/probeCursorCliWithStoredBinary above (FN-7705). Auth provider list, status, enable, and path-save validation must all probe the same trimmed global Grok CLI binary override before falling back to PATH candidates.
+  */
+  function normalizeGrokCliBinaryPath(value: unknown): string | undefined {
+    return typeof value === "string" ? value.trim() || undefined : undefined;
+  }
+
+  async function readGrokCliBinaryPath(): Promise<string | undefined> {
+    if (!store) return undefined;
+    const globalSettings = await store.getGlobalSettingsStore().getSettings();
+    return normalizeGrokCliBinaryPath((globalSettings as Record<string, unknown>).grokCliBinaryPath);
+  }
+
+  async function probeGrokCliWithStoredBinary() {
+    return probeGrokCliProvider({ binaryPath: await readGrokCliBinaryPath() });
   }
 
   /**
@@ -665,6 +683,32 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         });
       }
 
+      /*
+      FNXC:GrokCli 2026-07-08-00:00:
+      FN-7705: inject the synthetic "Grok — via Grok CLI" provider, mirroring
+      the cursor-cli injection above. Unlike Cursor (OAuth/session auth,
+      `authenticated` derived from toggle+binary availability only), Grok is
+      API-key auth — `authenticated` also requires the probe's own
+      `authenticated` flag (GROK_API_KEY / ~/.grok/user-settings.json apiKey
+      presence), per the PROMPT.md contract.
+      */
+      if (store) {
+        let grokEnabled = false;
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          grokEnabled = (globalSettings as Record<string, unknown>).useGrokCli === true;
+        } catch {
+          // best effort
+        }
+        const grokBinary = await probeGrokCliWithStoredBinary();
+        providers.push({
+          id: "grok-cli",
+          name: "Grok — via Grok CLI",
+          authenticated: grokEnabled && grokBinary.available && grokBinary.authenticated === true,
+          type: "cli" as const,
+        });
+      }
+
       // Inject synthetic llama.cpp provider.
       if (store) {
         let llamaEnabled = false;
@@ -1034,6 +1078,94 @@ export const registerAuthRoutes: ApiRouteRegistrar = (ctx) => {
         try {
           const globalSettings = await store.getGlobalSettingsStore().getSettings();
           enabled = (globalSettings as Record<string, unknown>).useCursorCli === true;
+        } catch {
+          // best effort
+        }
+      }
+      res.json({ binary, enabled, binaryPath, extension: null, ready: enabled && binary.available });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  /*
+  FNXC:GrokCli 2026-07-08-00:00:
+  FN-7705: POST /auth/grok-cli mirrors POST /auth/cursor-cli's enable/disable +
+  binaryPath contract exactly. "Cannot enable" only requires the binary to be
+  available (mirroring Cursor) — API-key presence is surfaced via the probe's
+  `authenticated`/`reason` fields on the status route rather than blocking
+  enable, since an operator may enable routing before setting GROK_API_KEY.
+  */
+  router.post("/auth/grok-cli", async (req, res) => {
+    try {
+      if (!store) {
+        throw new ApiError(500, "Settings store unavailable");
+      }
+      const requestedEnabled = req.body?.enabled;
+      const hasEnabledPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "enabled");
+      const requestedBinaryPath = req.body?.binaryPath;
+      const hasBinaryPathPatch = Object.prototype.hasOwnProperty.call(req.body ?? {}, "binaryPath");
+      if (!hasEnabledPatch && !hasBinaryPathPatch) {
+        throw badRequest("enabled or binaryPath is required");
+      }
+      if (hasEnabledPatch && typeof requestedEnabled !== "boolean") {
+        throw badRequest("enabled must be a boolean");
+      }
+      if (hasBinaryPathPatch && requestedBinaryPath !== null && typeof requestedBinaryPath !== "string") {
+        throw badRequest("binaryPath must be a string or null");
+      }
+
+      const currentSettings = await store.getGlobalSettingsStore().getSettings();
+      const enabled = hasEnabledPatch ? requestedEnabled : (currentSettings as Record<string, unknown>).useGrokCli === true;
+      const currentBinaryPath = normalizeGrokCliBinaryPath((currentSettings as Record<string, unknown>).grokCliBinaryPath);
+      const nextBinaryPath = hasBinaryPathPatch
+        ? normalizeGrokCliBinaryPath(requestedBinaryPath)
+        : currentBinaryPath;
+
+      if (hasBinaryPathPatch && nextBinaryPath) {
+        const binary = await probeGrokCliProvider({ binaryPath: nextBinaryPath });
+        if (!binary.available || !binary.usingConfiguredBinaryPath) {
+          throw new ApiError(400, `Cannot save Grok CLI binary path: ${binary.reason ?? "configured binary not available"}`);
+        }
+      }
+
+      if (enabled) {
+        const binary = await probeGrokCliProvider({ binaryPath: nextBinaryPath });
+        if (!binary.available) {
+          throw new ApiError(400, `Cannot enable Grok CLI routing: ${binary.reason ?? "grok binary not available"}`);
+        }
+      }
+
+      const patch: Record<string, unknown> = {};
+      if (hasEnabledPatch) {
+        patch.useGrokCli = enabled;
+      }
+      if (hasBinaryPathPatch) {
+        patch.grokCliBinaryPath = nextBinaryPath ?? null;
+      }
+      const settings = await store.updateGlobalSettings(patch);
+      invalidateAllGlobalSettingsCaches();
+      res.json({
+        enabled: (settings as Record<string, unknown>).useGrokCli === true,
+        binaryPath: normalizeGrokCliBinaryPath((settings as Record<string, unknown>).grokCliBinaryPath),
+        restartRequired: false,
+      });
+    } catch (err: unknown) {
+      if (err instanceof ApiError) throw err;
+      rethrowAsApiError(err);
+    }
+  });
+
+  router.get("/providers/grok-cli/status", async (_req, res) => {
+    try {
+      const binaryPath = await readGrokCliBinaryPath();
+      const binary = await probeGrokCliProvider({ binaryPath });
+      let enabled = false;
+      if (store) {
+        try {
+          const globalSettings = await store.getGlobalSettingsStore().getSettings();
+          enabled = (globalSettings as Record<string, unknown>).useGrokCli === true;
         } catch {
           // best effort
         }

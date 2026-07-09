@@ -106,6 +106,7 @@
     "@fusion-plugin-examples/cli-printing-press": "workspace:*",
     "@fusion-plugin-examples/compound-engineering": "workspace:*",
     "@fusion-plugin-examples/cursor-runtime": "workspace:*",
+    "@fusion-plugin-examples/grok-runtime": "workspace:*",
     "@fusion-plugin-examples/dependency-graph": "workspace:*",
     "@fusion-plugin-examples/droid-runtime": "workspace:*",
     "@fusion-plugin-examples/hermes-runtime": "workspace:*",

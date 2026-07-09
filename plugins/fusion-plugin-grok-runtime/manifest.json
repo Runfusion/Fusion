@@ -1,0 +1,6 @@
+{
+  "id": "fusion-plugin-grok-runtime",
+  "name": "Grok Runtime Plugin",
+  "version": "0.1.0",
+  "description": "Provides Grok CLI-backed model provider and runtime integration"
+}

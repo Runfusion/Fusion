@@ -70,7 +70,7 @@ async function buildPackage(relativePath: string): Promise<void> {
 // condition kept for the bun-compiled CLI), so a missing dist => the packaged
 // app crashes on Local mode when @fusion/dashboard imports the plugin.
 // routes.ts / runtime-provider-probes.ts / droid-cli-probe.ts / roadmap-routes.ts
-// pull hermes, openclaw, paperclip, cursor, droid and roadmap; dependency-graph
+// pull hermes, openclaw, paperclip, cursor, grok, droid and roadmap; dependency-graph
 // backs a dashboard view. Keep this list in sync with dashboard's static plugin imports.
 export async function buildDashboardRuntimePlugins(): Promise<void> {
   await buildPackage("packages/plugin-sdk");
@@ -80,6 +80,7 @@ export async function buildDashboardRuntimePlugins(): Promise<void> {
     buildPackage("plugins/fusion-plugin-openclaw-runtime"),
     buildPackage("plugins/fusion-plugin-paperclip-runtime"),
     buildPackage("plugins/fusion-plugin-cursor-runtime"),
+    buildPackage("plugins/fusion-plugin-grok-runtime"),
     buildPackage("plugins/fusion-plugin-droid-runtime"),
     buildPackage("plugins/fusion-plugin-roadmap"),
   ]);

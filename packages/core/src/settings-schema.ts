@@ -167,6 +167,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Cursor CLI binary overrides are global operator settings because executable locations are machine-local. Blank/undefined preserves PATH auto-detection through cursor-agent and cursor.
   */
   cursorCliBinaryPath: undefined,
+  useGrokCli: undefined,
+  /*
+  FNXC:GrokCli 2026-07-08-00:00:
+  Grok CLI binary overrides are global operator settings because executable locations are machine-local. Blank/undefined preserves PATH auto-detection through grok.
+  */
+  grokCliBinaryPath: undefined,
   // Global baseline lanes for per-role model selection
   executionGlobalProvider: undefined,
   executionGlobalModelId: undefined,

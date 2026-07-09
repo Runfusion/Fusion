@@ -1241,6 +1241,7 @@ export {
   ensureBundledPluginInstalled,
   ensureBundledDependencyGraphPluginInstalled,
   ensureBundledCursorRuntimePluginInstalled,
+  ensureBundledGrokRuntimePluginInstalled,
 } from "./plugins/bundled-plugin-install.js";
 export type { BundledPluginId, EnsureBundledResult, BundledPluginDirResolver } from "./plugins/bundled-plugin-install.js";
 export { scanPluginSecurity } from "./plugin-security-scan.js";

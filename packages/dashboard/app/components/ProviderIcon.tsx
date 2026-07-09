@@ -729,6 +729,11 @@ const providerConfig: Record<
   "pi-claude-cli": { component: ClaudeCliIcon, color: "var(--provider-anthropic)", label: "Anthropic — via Claude CLI" },
   "droid-cli": { component: DroidCliIcon, color: "var(--provider-openai)", label: "Factory AI — via Droid CLI" },
   "cursor-cli": { component: CursorCliIcon, color: "var(--provider-cursor-cli)", label: "Cursor — via Cursor CLI" },
+  /*
+  FNXC:GrokCli 2026-07-08-00:00:
+  FN-7705: reuse the existing XaiIcon/brand color for the grok-cli synthetic auth provider — Grok is an xAI product, and no dedicated CLI-badge asset exists yet. Do not fabricate a new icon asset per AGENTS.md/PROMPT.md guidance.
+  */
+  "grok-cli": { component: XaiIcon, color: "var(--text)", label: "Grok — via Grok CLI" },
   "llama-cpp": { component: LlamaCppIcon, color: "var(--provider-ollama)", label: "llama.cpp" },
   "llama-server": { component: LlamaCppIcon, color: "var(--provider-ollama)", label: "llama.cpp" },
 

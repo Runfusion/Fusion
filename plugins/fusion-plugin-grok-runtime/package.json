@@ -1,0 +1,40 @@
+{
+  "name": "@fusion-plugin-examples/grok-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Grok CLI runtime plugin for Fusion",
+  "keywords": [
+    "fusion-plugin",
+    "grok",
+    "runtime"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "source": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./probe": {
+      "types": "./src/probe.ts",
+      "source": "./src/probe.ts",
+      "import": "./dist/probe.js"
+    }
+  },
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run --silent=passed-only --reporter=dot"
+  },
+  "dependencies": {
+    "@fusion/plugin-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  }
+}

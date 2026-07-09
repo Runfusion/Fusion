@@ -3388,6 +3388,15 @@ export interface GlobalSettings {
    * Operators need a global machine-local Cursor CLI executable override when PATH discovery resolves the wrong `cursor-agent`, `cursor`, `.cmd`, or `.bat` shim. Blank/undefined means Fusion must keep auto-detecting through PATH candidates.
    */
   cursorCliBinaryPath?: string;
+  /** When true, enable Grok CLI model-provider support (provider ID: `grok-cli`)
+   *  through an operator-local Grok CLI installation. Grok is API-key auth (not
+   *  OAuth/session) — see `grokCliBinaryPath` below and the plugin's probe. */
+  useGrokCli?: boolean;
+  /**
+   * FNXC:GrokCli 2026-07-08-00:00:
+   * Operators need a global machine-local Grok CLI executable override when PATH discovery resolves the wrong `grok`/`.cmd`/`.bat` shim. Blank/undefined means Fusion must keep auto-detecting through PATH candidates.
+   */
+  grokCliBinaryPath?: string;
   /** Global baseline AI model provider for task execution (executor agent).
    *  This is the global lane that project-level `executionProvider` can override.
    *  Must be set together with `executionGlobalModelId`. Falls back to

@@ -5,6 +5,7 @@ import { customProviderRegistryKey, mergeSupplementalAnthropicModels, resolvePla
 import type { CustomProvider } from "@fusion/core";
 import { ApiError } from "../api-error.js";
 import { getCursorPickerModels, CURSOR_PICKER_PROVIDER_ID } from "../cursor-model-cache.js";
+import { getGrokPickerModels, GROK_PICKER_PROVIDER_ID } from "../grok-model-cache.js";
 import { getHermesPickerModels, HERMES_PICKER_PROVIDER_ID } from "../hermes-model-cache.js";
 import type { AuthStorageLike } from "../routes.js";
 import type { ApiRouteRegistrar } from "./types.js";
@@ -163,6 +164,8 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
     let useLlamaCpp = false;
     let useCursorCli = false;
     let cursorCliBinaryPath: string | undefined;
+    let useGrokCli = false;
+    let grokCliBinaryPath: string | undefined;
     let resolvedPlanningProvider: string | undefined;
     let resolvedPlanningModelId: string | undefined;
     let customProviders: CustomProvider[] = [];
@@ -192,6 +195,16 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         const rawCursorCliBinaryPath = (globalSettings as Record<string, unknown>).cursorCliBinaryPath;
         cursorCliBinaryPath =
           typeof rawCursorCliBinaryPath === "string" ? rawCursorCliBinaryPath.trim() || undefined : undefined;
+        useGrokCli = (globalSettings as Record<string, unknown>).useGrokCli === true;
+        /*
+        FNXC:GrokCli 2026-07-08-00:20:
+        FN-7705: mirror the cursorCliBinaryPath override handling above so a
+        machine-local grokCliBinaryPath override applies to model-picker
+        discovery, not just the auth/probe/status paths.
+        */
+        const rawGrokCliBinaryPath = (globalSettings as Record<string, unknown>).grokCliBinaryPath;
+        grokCliBinaryPath =
+          typeof rawGrokCliBinaryPath === "string" ? rawGrokCliBinaryPath.trim() || undefined : undefined;
         customProviders = globalSettings.customProviders ?? [];
 
         const mergedSettings = await store.getSettingsFast();
@@ -271,6 +284,9 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       if (!useCursorCli) {
         models = models.filter((m) => m.provider !== "cursor-cli");
       }
+      if (!useGrokCli) {
+        models = models.filter((m) => m.provider !== "grok-cli");
+      }
 
       /*
       FNXC:ModelCatalog 2026-07-07-09:05:
@@ -343,6 +359,38 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
         }
       }
 
+      /*
+      FNXC:GrokCli 2026-07-08-00:05:
+      FN-7705: additively surface Grok CLI-discovered models (`grok models`)
+      under the stable "grok-cli" provider id, mirroring the cursor-cli merge
+      above. Grok has its own settings toggle (useGrokCli) — the toggle IS the
+      signal here, so discovery is only attempted when useGrokCli is true.
+      Fetched through getGrokPickerModels, backed by a short-TTL, single-flight
+      cache keyed by binary path — this call NEVER spawns grok per request, and
+      NEVER throws (a missing/failed/unavailable binary degrades to []). Grok
+      rows are merged respecting the existing seenModelKeys provider/id dedup
+      so an existing row always wins over a colliding Grok row — purely
+      additive, must never displace, overwrite, or filter out an existing row.
+      */
+      if (useGrokCli) {
+        // getGrokPickerModels never throws by contract (see
+        // grok-model-cache.ts), but this try/catch is a defensive belt so a
+        // Grok discovery failure can never reject the /models handler or drop
+        // existing rows — degrade to zero Grok rows instead.
+        try {
+          const grokModels = await getGrokPickerModels({ binaryPath: grokCliBinaryPath });
+          for (const grokModel of grokModels) {
+            const key = `${grokModel.provider}/${grokModel.id}`;
+            if (seenModelKeys.has(key)) continue;
+            seenModelKeys.add(key);
+            models.push(grokModel);
+          }
+        } catch (grokErr: unknown) {
+          const message = grokErr instanceof Error ? grokErr.message : String(grokErr);
+          runtimeLogger.child("models").warn(`Failed to load grok-cli models: ${message}`);
+        }
+      }
+
       // Filter to only providers the user has explicitly configured in Fusion.
       // getAvailable() checks supplemental credential stores (Codex CLI,
       // Claude Code, env vars) which surface providers the user may not
@@ -374,6 +422,9 @@ export const registerModelRoutes: ApiRouteRegistrar = (ctx) => {
       // previously-missing configuredProviders.add("cursor-cli") gap that
       // silently dropped Cursor rows even when the plugin surfaced them.
       if (useCursorCli) configuredProviders.add(CURSOR_PICKER_PROVIDER_ID);
+      // FNXC:GrokCli 2026-07-08-00:05 (FN-7705): allow-list "grok-cli" through
+      // the final filter whenever the toggle is on, mirroring cursor-cli above.
+      if (useGrokCli) configuredProviders.add(GROK_PICKER_PROVIDER_ID);
       // FNXC:ModelCatalog 2026-07-07-09:05 (FN-7636): only allow-list "hermes"
       // through the final filter when Hermes rows were actually contributed
       // above, mirroring the useClaudeCli/useDroidCli toggle pattern (Hermes

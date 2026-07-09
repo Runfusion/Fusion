@@ -530,6 +530,18 @@ export default defineConfig({
         __dirname,
         "../../plugins/fusion-plugin-cursor-runtime/src/index.ts",
       ),
+      /*
+      FNXC:GrokCli 2026-07-08-00:00:
+      runtime-provider-probes.ts imports probeGrokBinary from @fusion-plugin-examples/grok-runtime (FN-7705, mirroring the Cursor alias above). Without these source aliases, Vite tries to resolve the package's dist/ exports which don't exist in a source checkout.
+      */
+      "@fusion-plugin-examples/grok-runtime/probe": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-grok-runtime/src/probe.ts",
+      ),
+      "@fusion-plugin-examples/grok-runtime": resolve(
+        __dirname,
+        "../../plugins/fusion-plugin-grok-runtime/src/index.ts",
+      ),
       "@fusion-plugin-examples/roadmap/roadmap-suggestions": resolve(
         __dirname,
         "../../plugins/fusion-plugin-roadmap/src/roadmap-suggestions.ts",

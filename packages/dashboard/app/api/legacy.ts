@@ -1968,6 +1968,24 @@ export interface CursorCliStatus {
   ready: boolean;
 }
 
+export interface GrokCliStatus {
+  binary: {
+    available: boolean;
+    authenticated?: boolean;
+    version?: string;
+    binaryPath?: string;
+    configuredBinaryPath?: string;
+    usingConfiguredBinaryPath?: boolean;
+    diagnostics?: string[];
+    reason?: string;
+    probeDurationMs: number;
+  };
+  enabled: boolean;
+  binaryPath?: string;
+  extension: null;
+  ready: boolean;
+}
+
 export interface LlamaCppStatus {
   enabled: boolean;
   extension: {
@@ -2038,6 +2056,10 @@ export function fetchDroidCliStatus(): Promise<DroidCliStatus> {
 
 export function fetchCursorCliStatus(): Promise<CursorCliStatus> {
   return api<CursorCliStatus>("/providers/cursor-cli/status");
+}
+
+export function fetchGrokCliStatus(): Promise<GrokCliStatus> {
+  return api<GrokCliStatus>("/providers/grok-cli/status");
 }
 
 /** Probe llama.cpp server + setting + extension state. */
@@ -2317,6 +2339,24 @@ export function setCursorCliBinaryPath(
   binaryPath: string | null,
 ): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
   return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/cursor-cli", {
+    method: "POST",
+    body: JSON.stringify({ binaryPath }),
+  });
+}
+
+export function setGrokCliEnabled(
+  enabled: boolean,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function setGrokCliBinaryPath(
+  binaryPath: string | null,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
     method: "POST",
     body: JSON.stringify({ binaryPath }),
   });
