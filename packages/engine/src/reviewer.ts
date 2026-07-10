@@ -78,6 +78,11 @@ export interface ReviewOptions {
   projectValidatorFallbackModelId?: string;
   /** Default thinking effort level for the reviewer agent session. */
   defaultThinkingLevel?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Validator/reviewer sessions accept a fallback-specific thinking level so retryable fallback swaps preserve the selected fallback model's reasoning effort.
+   */
+  fallbackThinkingLevel?: string;
   /** Task store for persisting agent log entries. When provided with `taskId`, enables full conversation logging. */
   store?: TaskStore;
   /** Task ID for agent log persistence. Required alongside `store`. */
@@ -415,6 +420,7 @@ export async function reviewStep(
       defaultModelId: overrides?.forceModelId ?? validatorModelId,
       fallbackProvider: validatorFallbackProvider,
       fallbackModelId: validatorFallbackModelId,
+      fallbackThinkingLevel: options.fallbackThinkingLevel,
       defaultThinkingLevel: options.defaultThinkingLevel,
       runAuditor,
       settings: effectiveSettings,

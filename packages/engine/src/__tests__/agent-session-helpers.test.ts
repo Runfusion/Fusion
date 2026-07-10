@@ -4,14 +4,19 @@ import {
   extractRuntimeModel,
   resolveExecutorSessionModel,
   resolveExecutorThinkingLevel,
+  resolveExecutorFallbackThinkingLevel,
   resolveHeartbeatSessionModels,
   resolveImplicitPlanningFallbackModel,
   resolveMergerSessionModel,
+  resolveMergerFallbackThinkingLevel,
   resolvePlanningSessionModel,
   resolvePlanningThinkingLevel,
+  resolvePlanningFallbackThinkingLevel,
   resolveTitleSummarizerThinkingLevel,
+  resolveTitleSummarizerFallbackThinkingLevel,
   resolveValidatorSessionModel,
   resolveValidatorThinkingLevel,
+  resolveValidatorFallbackThinkingLevel,
 } from "../agent-session-helpers.js";
 
 const { resolveRuntimeMock } = vi.hoisted(() => ({
@@ -58,6 +63,39 @@ describe("resolve model-lane thinking levels", () => {
       defaultThinkingLevelOverride: "minimal",
       defaultThinkingLevel: "low",
     })).toBe("medium");
+  });
+
+  it("resolves fallback thinking through fallback key then executor lane then defaults", () => {
+    expect(resolveExecutorFallbackThinkingLevel("task", { fallbackThinkingLevel: "high", executionThinkingLevel: "low" })).toBe("high");
+    expect(resolveExecutorFallbackThinkingLevel(undefined, { executionThinkingLevel: "minimal", defaultThinkingLevel: "low" })).toBe("minimal");
+    expect(resolveExecutorFallbackThinkingLevel(undefined, { defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
+    expect(resolveExecutorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "low" })).toBe("low");
+  });
+
+  it("resolves workflow fallback thinking before global fallback then lane defaults", () => {
+    expect(resolvePlanningFallbackThinkingLevel({ planningFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolvePlanningFallbackThinkingLevel({ fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("high");
+    expect(resolvePlanningFallbackThinkingLevel({ planningThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
+    expect(resolvePlanningFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolvePlanningFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
+
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { validatorFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", validatorThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { fallbackThinkingLevel: "high", validatorThinkingLevel: "low" })).toBe("high");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { validatorThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "minimal" })).toBe("minimal");
+  });
+
+  it("resolves title summarizer and merger fallback thinking through fallback and default chains", () => {
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ titleSummarizerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", titleSummarizerThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ fallbackThinkingLevel: "high", titleSummarizerThinkingLevel: "low" })).toBe("high");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ titleSummarizerThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
+
+    expect(resolveMergerFallbackThinkingLevel({ fallbackThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
+    expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
+    expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");
   });
 });
 

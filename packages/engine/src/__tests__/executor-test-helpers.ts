@@ -89,6 +89,29 @@ vi.mock("../agent-session-helpers.js", async () => {
       ?? (typeof settings?.executionGlobalThinkingLevel === "string" ? settings.executionGlobalThinkingLevel : undefined)
       ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
       ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
+    /*
+     * FNXC:Settings-ThinkingLevel 2026-07-10-14:20:
+     * FN-7794 added fallback-swap thinking resolvers (resolveExecutorFallbackThinkingLevel / resolveValidatorFallbackThinkingLevel) that executor.ts now calls unconditionally on the main session-creation and workflow-step-review hot paths. This shared harness mocks the whole `agent-session-helpers.js` module, so leaving these unmocked throws "No export is defined on the mock" for every test that reaches those paths (51 files depend on this harness). Mirror production's fallback-key -> lane-key -> default-override -> default precedence.
+     */
+    resolveExecutorFallbackThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
+      (typeof settings?.fallbackThinkingLevel === "string" ? settings.fallbackThinkingLevel : undefined)
+      ?? taskThinkingLevel
+      ?? (typeof settings?.executionThinkingLevel === "string" ? settings.executionThinkingLevel : undefined)
+      ?? (typeof settings?.executionGlobalThinkingLevel === "string" ? settings.executionGlobalThinkingLevel : undefined)
+      ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
+      ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
+    resolveValidatorThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
+      (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? taskThinkingLevel
+      ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
+      ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
+    resolveValidatorFallbackThinkingLevel: (taskThinkingLevel: string | undefined, settings: Record<string, unknown> | undefined) =>
+      (typeof settings?.validatorFallbackThinkingLevel === "string" ? settings.validatorFallbackThinkingLevel : undefined)
+      ?? (typeof settings?.fallbackThinkingLevel === "string" ? settings.fallbackThinkingLevel : undefined)
+      ?? (typeof settings?.validatorThinkingLevel === "string" ? settings.validatorThinkingLevel : undefined)
+      ?? taskThinkingLevel
+      ?? (typeof settings?.defaultThinkingLevelOverride === "string" ? settings.defaultThinkingLevelOverride : undefined)
+      ?? (typeof settings?.defaultThinkingLevel === "string" ? settings.defaultThinkingLevel : undefined),
     resolveExecutorSessionModel: (
       taskModelProvider: string | undefined,
       taskModelId: string | undefined,

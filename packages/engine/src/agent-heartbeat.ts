@@ -55,7 +55,7 @@ import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./run-audit.js";
 import { promptWithFallback } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels } from "./agent-session-helpers.js";
+import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./session-skill-context.js";
@@ -2814,6 +2814,7 @@ export class HeartbeatMonitor {
           defaultModelId: heartbeatSessionModels.defaultModelId,
           fallbackProvider: heartbeatSessionModels.fallbackProvider,
           fallbackModelId: heartbeatSessionModels.fallbackModelId,
+          fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, heartbeatModelSettings),
           runAuditor: audit,
           settings: heartbeatModelSettings,
           mcpServers: heartbeatMcp.servers,

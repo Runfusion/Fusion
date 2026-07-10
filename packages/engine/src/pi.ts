@@ -1033,6 +1033,11 @@ export interface AgentOptions {
   fallbackProvider?: string;
   /** Optional fallback model ID used with `fallbackProvider`. */
   fallbackModelId?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Fallback model swaps must honor the fallback model's configured thinking level while preserving the lane/default thinking level when no fallback-specific value is set.
+   */
+  fallbackThinkingLevel?: string;
   /** Default thinking effort level (e.g. "medium", "high"). When provided, sets the session's thinking level after creation. */
   defaultThinkingLevel?: string;
   /** Optional pre-configured SessionManager. When provided, the agent session
@@ -2525,11 +2530,18 @@ export async function createFnAgent(options: AgentOptions): Promise<AgentResult>
 
   let thinkingCompatibilityDisabled = false;
   const applyThinkingLevelIfSupported = (targetSession: AgentSession, sourceModel: string): void => {
-    if (!options.defaultThinkingLevel || thinkingCompatibilityDisabled) {
+    /*
+     * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+     * Fallback-swap sessions apply the fallback model's configured thinking level, or transparently keep the lane/default level when no fallback-specific value exists. The compatibility-disable guard remains shared so thinking/reasoning conflicts disable explicit thinking for both primary and fallback paths.
+     */
+    const effectiveThinkingLevel = usingFallback
+      ? options.fallbackThinkingLevel ?? options.defaultThinkingLevel
+      : options.defaultThinkingLevel;
+    if (!effectiveThinkingLevel || thinkingCompatibilityDisabled) {
       return;
     }
     try {
-      (targetSession as PromptableSession).setThinkingLevel(options.defaultThinkingLevel as any);
+      (targetSession as PromptableSession).setThinkingLevel(effectiveThinkingLevel as any);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (!isThinkingReasoningConflictError(message)) {

@@ -109,7 +109,7 @@ import { evaluateAutoMergeFactProviders } from "./auto-merge-fact-providers.js";
 import { resolveMergePolicy, type MergeFileScopeMode } from "./merge-trait.js";
 import { describeModel, promptWithFallback } from "./pi.js";
 import { accumulateSessionTokenUsage } from "./session-token-usage.js";
-import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel } from "./agent-session-helpers.js";
+import { createResolvedAgentSession, extractRuntimeHint, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveMergerFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { createFallbackModelObserver } from "./fallback-model-observer.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
@@ -1969,6 +1969,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
       defaultModelId: mergerSessionModel.modelId,
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
+      fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
       defaultThinkingLevel: resolveMergerThinkingLevel(settings),
       runAuditor: createRunAuditor(store, {
         runId: mergeRunContext?.runId ?? generateSyntheticRunId("merge", taskId),
@@ -3163,6 +3164,7 @@ ${fileList}
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
@@ -3580,6 +3582,7 @@ ${fileList}
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
@@ -7084,6 +7087,7 @@ You are assisting with a paused \`git pull --rebase\`.
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),
@@ -12039,6 +12043,7 @@ async function runAiAgentForCommit(params: AiAgentParams): Promise<{ success: bo
     defaultModelId: mergerSessionModel.modelId,
     fallbackProvider: settings.fallbackProvider,
     fallbackModelId: settings.fallbackModelId,
+    fallbackThinkingLevel: resolveMergerFallbackThinkingLevel(settings),
     defaultThinkingLevel: resolveMergerThinkingLevel(settings),
     runAuditor: createRunAuditor(store, {
       runId: generateSyntheticRunId("merge", taskId),

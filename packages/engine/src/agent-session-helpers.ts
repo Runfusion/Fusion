@@ -207,6 +207,54 @@ export function resolveMergerThinkingLevel(settings: Partial<Settings> | undefin
   return firstThinkingLevel(settings?.defaultThinkingLevelOverride, settings?.defaultThinkingLevel);
 }
 
+/**
+ * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+ * Fallback thinking resolvers mirror fallback provider/model precedence: lane-specific fallback thinking wins where a lane can select a lane fallback model, then global fallback thinking, then the primary lane/default thinking chain for compatibility when no fallback-specific value is configured.
+ */
+export function resolveExecutorFallbackThinkingLevel(
+  taskThinkingLevel: ThinkingLevel | string | undefined,
+  settings: Partial<Settings> | undefined,
+): string | undefined {
+  return firstThinkingLevel(
+    settings?.fallbackThinkingLevel,
+    resolveExecutorThinkingLevel(taskThinkingLevel, settings),
+  );
+}
+
+export function resolvePlanningFallbackThinkingLevel(
+  settings: Partial<Settings> | undefined,
+  taskThinkingLevel?: ThinkingLevel | string,
+): string | undefined {
+  return firstThinkingLevel(
+    settings?.planningFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
+    resolvePlanningThinkingLevel(settings, taskThinkingLevel),
+  );
+}
+
+export function resolveValidatorFallbackThinkingLevel(
+  taskThinkingLevel: ThinkingLevel | string | undefined,
+  settings: Partial<Settings> | undefined,
+): string | undefined {
+  return firstThinkingLevel(
+    settings?.validatorFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
+    resolveValidatorThinkingLevel(taskThinkingLevel, settings),
+  );
+}
+
+export function resolveTitleSummarizerFallbackThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+  return firstThinkingLevel(
+    settings?.titleSummarizerFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
+    resolveTitleSummarizerThinkingLevel(settings),
+  );
+}
+
+export function resolveMergerFallbackThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+  return firstThinkingLevel(settings?.fallbackThinkingLevel, resolveMergerThinkingLevel(settings));
+}
+
 function hasCompleteRuntimeModel(
   model: ResolvedModelSelection,
 ): model is { provider: string; modelId: string } {
@@ -259,8 +307,14 @@ function applyGrokCliNoKeyRuntimeOptions(
       ...runtimeOptions,
       defaultProvider: runtimeOptions.fallbackProvider,
       defaultModelId: stripGrokCliModelProviderPrefix(runtimeOptions.fallbackModelId),
+      /*
+       * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+       * When the no-visible-key Grok CLI fallback is promoted to the primary runtime, promote its fallback thinking level too; the cleared fallback pair must not leave the Grok CLI session using the superseded primary model's thinking level.
+       */
+      defaultThinkingLevel: runtimeOptions.fallbackThinkingLevel ?? runtimeOptions.defaultThinkingLevel,
       fallbackProvider: undefined,
       fallbackModelId: undefined,
+      fallbackThinkingLevel: undefined,
     };
   }
 

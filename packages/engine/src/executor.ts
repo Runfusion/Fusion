@@ -88,7 +88,9 @@ import {
   extractRuntimeHint,
   resolveExecutorSessionModel,
   resolveExecutorThinkingLevel,
+  resolveExecutorFallbackThinkingLevel,
   resolveValidatorThinkingLevel,
+  resolveValidatorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
@@ -6719,6 +6721,12 @@ export class TaskExecutor {
                   : detail.thinkingLevel,
                 settings,
               ),
+              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(
+                typeof config.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(config.thinkingLevel)
+                  ? (config.thinkingLevel as ThinkingLevel)
+                  : detail.thinkingLevel,
+                settings,
+              ),
               taskValidatorProvider: detail.validatorModelProvider,
               taskValidatorModelId: detail.validatorModelId,
               projectValidatorProvider: settings.validatorProvider,
@@ -10606,7 +10614,9 @@ export class TaskExecutor {
         );
         const executorFallbackProvider = settings.fallbackProvider;
         const executorFallbackModelId = settings.fallbackModelId;
-        const executorThinkingLevel = resolveExecutorThinkingLevel(this.graphSeamThinkingLevel.get(task.id) ?? detail.thinkingLevel, settings);
+        const executorSessionThinkingSource = this.graphSeamThinkingLevel.get(task.id) ?? detail.thinkingLevel;
+        const executorThinkingLevel = resolveExecutorThinkingLevel(executorSessionThinkingSource, settings);
+        const executorFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(executorSessionThinkingSource, settings);
 
         // U1 telemetry: now that the session model/provider/node are resolved,
         // give the agent logger the context it needs to emit usage_events tool
@@ -10705,6 +10715,7 @@ export class TaskExecutor {
             defaultModelId: executorModelId,
             fallbackProvider: executorFallbackProvider,
             fallbackModelId: executorFallbackModelId,
+            fallbackThinkingLevel: executorFallbackThinkingLevel,
             defaultThinkingLevel: executorThinkingLevel,
             runAuditor: audit,
             settings,
@@ -11132,6 +11143,7 @@ export class TaskExecutor {
                   defaultModelId: executorModelId,
                   fallbackProvider: executorFallbackProvider,
                   fallbackModelId: executorFallbackModelId,
+                  fallbackThinkingLevel: executorFallbackThinkingLevel,
                   defaultThinkingLevel: executorThinkingLevel,
                   runAuditor: audit,
                   settings,
@@ -13636,6 +13648,7 @@ export class TaskExecutor {
               defaultModelId: settings.defaultModelId,
               fallbackProvider: settings.fallbackProvider,
               fallbackModelId: settings.fallbackModelId,
+              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(latestDetailForReview.thinkingLevel, settings),
               defaultThinkingLevel: resolveValidatorThinkingLevel(latestDetailForReview.thinkingLevel, settings),
               // Task-level validator override (from task)
               taskValidatorProvider: latestDetailForReview.validatorModelProvider,
@@ -14997,7 +15010,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
 
     type ModelTuple = { provider?: string; modelId?: string };
-    const fallbackCandidates: Array<ModelTuple & { label: string }> = [
+    type WorkflowStepFallbackLabel = "validatorFallback" | "globalFallback";
+    const fallbackCandidates: Array<ModelTuple & { label: WorkflowStepFallbackLabel }> = [
       { provider: settings.validatorFallbackProvider, modelId: settings.validatorFallbackModelId, label: "validatorFallback" },
       { provider: settings.fallbackProvider, modelId: settings.fallbackModelId, label: "globalFallback" },
     ];
@@ -15144,8 +15158,17 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
       /*
        * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
        * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then task override, then settings defaults/lane fallbacks.
+       *
+       * FNXC:Settings-ThinkingLevel 2026-07-10-14:20:
+       * The step's own `fallback` attempt already swaps to a distinct model (validator fallback OR global fallback pair) — it must honor THAT model's fallback thinking level, not silently reuse the primary lane's thinking level. Route by which candidate `fallback.label` actually matched instead of only special-casing `validatorFallback`.
        */
-      const workflowStepThinkingLevel = resolveExecutorThinkingLevel(workflowStep.thinkingLevel ?? task.thinkingLevel, settings);
+      const workflowStepThinkingSource = workflowStep.thinkingLevel ?? task.thinkingLevel;
+      const workflowStepThinkingLevel = attemptLabel === "fallback"
+        ? (fallback?.label === "validatorFallback"
+          ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
+          : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings))
+        : resolveExecutorThinkingLevel(workflowStepThinkingSource, settings);
+      const workflowStepFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
         runtimeHint: workflowRuntimeHint,
@@ -15157,6 +15180,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         defaultModelId: modelId,
         fallbackProvider: settings.fallbackProvider,
         fallbackModelId: settings.fallbackModelId,
+        fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
         defaultThinkingLevel: workflowStepThinkingLevel,
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
         settings,
@@ -18033,6 +18057,7 @@ Child agent: ${agent.id} (${name})`;
             defaultModelId: childExecutorModelId,
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
+            fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, settings),
             runAuditor: createRunAuditor(this.store, this.getRunContextFor(taskId)),
             settings,
             taskEnv,

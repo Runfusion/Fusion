@@ -65,6 +65,9 @@ Defaults from `DEFAULT_GLOBAL_SETTINGS`; key scope from `GLOBAL_SETTINGS_KEYS`.
 | `fallbackProvider` | `string` | `undefined` | Fallback provider when the selected/default model hits transient provider failures or model-compatibility/auth-tier rejections. Dashboard chat also offers this fallback for explicit user-selected models, but the engine only swaps for retryable provider/model-selection failures. |
 | `fallbackModelId` | `string` | `undefined` | Fallback model ID (must pair with `fallbackProvider`). |
 | `fallbackThinkingLevel` | `ThinkingLevel` | `undefined` | Optional global fallback-lane thinking override for the `fallbackProvider`/`fallbackModelId` pair. Inherits `defaultThinkingLevel` when unset. |
+
+Fallback thinking-level values are applied at runtime when Fusion swaps from the primary model to the configured fallback model; if unset, the active lane/default thinking level continues to apply.
+
 | `defaultThinkingLevel` | `"off" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh"` | `undefined` | Default reasoning effort for AI sessions. `xhigh` requests maximum reasoning effort; Claude CLI adapters map it to `high` for non-Opus models and `max` for Opus models. If a provider/runtime rejects simultaneous `thinking` and `reasoning_effort` parameters, Fusion retries without the explicit thinking override instead of failing the run. |
 | `ntfyEnabled` | `boolean` | `false` | Enable ntfy push notifications. |
 | `failureNotificationMode` | `"sticky-only" \| "terminal-only" \| "all"` | `"sticky-only"` | Failure notification behavior. `sticky-only` defers failed-task notifications by `failureNotificationDelayMs` and suppresses transient self-recoveries. `terminal-only` suppresses while auto-retry is still active and only dispatches when `paused === true` or `column === "in-review"` with `status === "failed"`. `all` restores legacy immediate failure notifications. |
