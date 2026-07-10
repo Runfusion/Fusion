@@ -1,6 +1,6 @@
 import "./ModelOnboardingModal.css";
 import "./SetupWizardModal.css";
-import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent } from "react";
+import { lazy, Suspense, useState, useEffect, useCallback, useRef, useMemo, type KeyboardEvent, type ReactNode } from "react";
 import { X, Loader2, CheckCircle, Key, Zap, GitPullRequest, Rocket, Plus, Sparkles, UserRound } from "lucide-react";
 import { getErrorMessage, type Task } from "@fusion/core";
 import type { AuthProvider, ManualOAuthCodeInfo, ModelInfo, CustomProvider, CustomProviderConfig, OAuthDeviceCodeInfo } from "../api";
@@ -227,6 +227,23 @@ const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 
 const getManualCodeLoginWarningMessage = (providerName: string) =>
   `After you sign in with ${providerName}, the browser will try to redirect to a localhost address that this dashboard can't reach. The redirect tab will look like it failed. Before that happens, copy the full URL from the browser address bar — you'll paste it back here to finish login. Continue?`;
+
+/*
+FNXC:Onboarding 2026-07-10-10:05:
+Install-guidance i18n strings (git/gh CLI) contain backtick-quoted commands like `gh` and `brew install gh`.
+Previously those backticks rendered as literal characters in plain text (first-run review called this out as slop).
+Render backtick spans as real <code> elements so commands are visually distinct, without splitting every
+translated string into prefix/suffix keys (all existing locale catalogs keep working unchanged).
+*/
+function renderWithInlineCode(text: string): ReactNode {
+  const parts = text.split("`");
+  if (parts.length < 3) {
+    return text;
+  }
+  return parts.map((part, index) =>
+    index % 2 === 1 ? <code key={index}>{part}</code> : <span key={index}>{part}</span>,
+  );
+}
 
 function getProviderDisplayName(providerId: string): string {
   if (PROVIDER_DISPLAY_NAMES[providerId]) {
@@ -1006,7 +1023,6 @@ export function ModelOnboardingModal({
   const hasGithubProvider = githubActionState.oauth.providerAvailable;
   const isGithubAuthenticated = githubActionState.oauth.authenticated;
   const isGithubLoginInProgress = githubActionState.oauth.loginInProgress;
-  const isGithubCliAuthenticated = githubActionState.ghCli.authenticated;
   const gitInstallUrl = gitCliStatus?.installUrl ?? GIT_INSTALL_URL;
   const gitVersionLabel = gitCliStatus?.version
     ? t("setup.gitPrerequisiteInstalledVersion", "Git is installed on the Fusion host ({{version}}).", { version: gitCliStatus.version })
@@ -1120,6 +1136,27 @@ export function ModelOnboardingModal({
       setAuthLoading(false),
     );
   }, [loadAuthStatus, loadModels, loadGlobalSettings]);
+
+  /*
+  FNXC:Onboarding 2026-07-10-10:10:
+  Bug from first-run review: connecting GitHub mid-session (e.g. running `gh auth login` in a terminal,
+  or completing an OAuth login from another surface) left later wizard steps (Agent / First Task readiness
+  summary) showing GitHub as "not connected" because provider/gh-CLI status was only fetched once and only
+  re-fetched when returning to the AI Setup step. Revalidate the cached auth/gh/git status whenever the
+  window regains focus (the user just came back from a terminal or an OAuth tab) and whenever any surface
+  broadcasts a successful OAuth re-login, so every step reflects the current connection state.
+  */
+  useEffect(() => {
+    const refreshAuthStatus = () => {
+      void loadAuthStatus();
+    };
+    window.addEventListener("focus", refreshAuthStatus);
+    window.addEventListener(OAUTH_RELOGIN_SUCCESS_EVENT, refreshAuthStatus);
+    return () => {
+      window.removeEventListener("focus", refreshAuthStatus);
+      window.removeEventListener(OAUTH_RELOGIN_SUCCESS_EVENT, refreshAuthStatus);
+    };
+  }, [loadAuthStatus]);
 
   // Restore login outcomes from persisted state on mount
   useEffect(() => {
@@ -2147,8 +2184,19 @@ export function ModelOnboardingModal({
   const visibleOrderedAiProviders = orderedAiProviders.filter(
     (provider) => !(provider.id === "anthropic" && hasSeparatedAnthropicProvider),
   );
+  /*
+  FNXC:Onboarding 2026-07-10-10:15:
+  First-run review: after connecting a provider the "Connected providers" section rendered BELOW the
+  quick-start cards and the long provider list, so users could not see what was already connected without
+  scrolling. ALL connected providers (quick-start and advanced alike) now render in a single "Connected
+  providers" section at the TOP of the AI Setup step, and the quick-start list only offers providers that
+  still need connecting. The "N of M providers connected" summary above is unchanged.
+  */
+  const connectedVisibleProviders = visibleOrderedAiProviders.filter(
+    (provider) => provider.authenticated,
+  );
   const quickStartProviders = visibleOrderedAiProviders
-    .filter((provider) => quickStartSet.has(provider.id))
+    .filter((provider) => quickStartSet.has(provider.id) && !provider.authenticated)
     .sort((a, b) => {
       const rankA = QUICK_START_PROVIDER_IDS.indexOf(a.id as (typeof QUICK_START_PROVIDER_IDS)[number]);
       const rankB = QUICK_START_PROVIDER_IDS.indexOf(b.id as (typeof QUICK_START_PROVIDER_IDS)[number]);
@@ -2157,9 +2205,6 @@ export function ModelOnboardingModal({
       }
       return compareOnboardingProviders(a, b);
     });
-  const connectedNonQuickStartProviders = visibleOrderedAiProviders.filter(
-    (provider) => provider.authenticated && !quickStartSet.has(provider.id),
-  );
   const advancedProviders = visibleOrderedAiProviders.filter(
     (provider) => !provider.authenticated && !quickStartSet.has(provider.id),
   );
@@ -2625,12 +2670,30 @@ export function ModelOnboardingModal({
                     actions={{ refreshAuthProviders: () => { void loadAuthStatus(); } }}
                   />
 
+                  {/*
+                  FNXC:Onboarding 2026-07-10-10:15:
+                  Connected providers render FIRST so that reopening the step (or returning after an
+                  OAuth login) immediately shows what is already connected without scrolling.
+                  */}
+                  {connectedVisibleProviders.length > 0 && (
+                    <section className="onboarding-provider-section" data-testid="onboarding-connected-providers">
+                      <h3 className="onboarding-section-title">{t("setup.connectedProviders", "Connected providers")}</h3>
+                      <div className="model-onboarding-providers">
+                        {connectedVisibleProviders.map((provider) => renderAiProviderCard(provider))}
+                      </div>
+                    </section>
+                  )}
+
                   <section className="onboarding-provider-section" data-testid="onboarding-quick-start-providers">
                     <h3 className="onboarding-section-title">{t("setup.quickStartProviders", "Quick start providers")}</h3>
                     {quickStartProviders.length > 0 ? (
                       <div className="model-onboarding-providers">
                         {quickStartProviders.map((provider) => renderAiProviderCard(provider))}
                       </div>
+                    ) : connectedVisibleProviders.length > 0 ? (
+                      <p className="onboarding-helper-text">
+                        {t("setup.quickStartAllConnected", "All quick-start providers are already connected.")}
+                      </p>
                     ) : (
                       <p className="onboarding-helper-text">
                         {t("setup.noQuickStartProviders", "No quick-start providers are available in this environment.")}
@@ -2680,16 +2743,7 @@ export function ModelOnboardingModal({
                     </OnboardingDisclosure>
                   </section>
 
-                  {connectedNonQuickStartProviders.length > 0 && (
-                    <section className="onboarding-provider-section" data-testid="onboarding-connected-providers">
-                      <h3 className="onboarding-section-title">{t("setup.connectedProviders", "Connected providers")}</h3>
-                      <div className="model-onboarding-providers">
-                        {connectedNonQuickStartProviders.map((provider) => renderAiProviderCard(provider))}
-                      </div>
-                    </section>
-                  )}
-
-                  {/* Model Selection — placed directly after the authenticated provider list */}
+                  {/* Model Selection — placed directly after the provider sections */}
                   <div className="onboarding-model-section">
                     <h3 className="onboarding-section-title">
                       {t("setup.defaultModelOptional", "Default Model (Optional)")}
@@ -2793,13 +2847,20 @@ export function ModelOnboardingModal({
                     <p>{gitVersionLabel}</p>
                   ) : (
                     <>
+                      {/*
+                        FNXC:Onboarding 2026-07-10-10:20:
+                        First-run review flagged raw backtick literals rendering as plain text.
+                        Commands in these strings now render as real <code> elements via renderWithInlineCode.
+                        Missing git is a hard blocker for project setup, so its per-OS instructions stay
+                        expanded (unlike the optional gh CLI guidance which is collapsed behind a disclosure).
+                      */}
                       <p>
-                        {t("setup.gitPrerequisiteMissingBody", "Fusion could not find `git` on the server host running Fusion. Install Git there before cloning repositories, initializing projects, or registering Git-backed workspaces.")}
+                        {renderWithInlineCode(t("setup.gitPrerequisiteMissingBody", "Fusion could not find `git` on the server host running Fusion. Install Git there before cloning repositories, initializing projects, or registering Git-backed workspaces."))}
                       </p>
                       <ul className="onboarding-github-git-install-list">
-                        <li>{t("setup.gitPrerequisiteMac", "macOS: install Xcode Command Line Tools with `xcode-select --install`, Homebrew with `brew install git`, or the Git installer.")}</li>
-                        <li>{t("setup.gitPrerequisiteWindows", "Windows: install Git for Windows and restart the Fusion host shell or service.")}</li>
-                        <li>{t("setup.gitPrerequisiteLinux", "Linux: install with your package manager, for example `sudo apt install git`, `sudo dnf install git`, or `sudo pacman -S git`.")}</li>
+                        <li>{renderWithInlineCode(t("setup.gitPrerequisiteMac", "macOS: install Xcode Command Line Tools with `xcode-select --install`, Homebrew with `brew install git`, or the Git installer."))}</li>
+                        <li>{renderWithInlineCode(t("setup.gitPrerequisiteWindows", "Windows: install Git for Windows and restart the Fusion host shell or service."))}</li>
+                        <li>{renderWithInlineCode(t("setup.gitPrerequisiteLinux", "Linux: install with your package manager, for example `sudo apt install git`, `sudo dnf install git`, or `sudo pacman -S git`."))}</li>
                       </ul>
                       <a href={gitInstallUrl} target="_blank" rel="noreferrer">
                         {t("setup.gitPrerequisiteInstallLink", "Open Git install downloads")}
@@ -2809,22 +2870,31 @@ export function ModelOnboardingModal({
                 </div>
               )}
 
+              {/*
+                FNXC:Onboarding 2026-07-10-10:25:
+                First-run review called the GitHub step "slop-coded": it mixed tiny bold micro-headers,
+                bullet items, and helper-text sizes inside one flat list. The with/without comparison is
+                now two labeled groups on one consistent type scale (heading + plain list items), rendered
+                only while GitHub is NOT connected — a connected user does not need the sales pitch.
+              */}
               {!isGitHubReady && (
                 <div className="onboarding-feature-list">
-                  <ul>
-                    <li className="onboarding-feature-list-heading">
-                      <strong>{t("setup.withoutGitHubHeading", "Without GitHub (available now):")}</strong>
-                    </li>
-                    <li className="onboarding-helper-text">{t("setup.withoutGitHub1", "Create tasks manually")}</li>
-                    <li className="onboarding-helper-text">{t("setup.withoutGitHub2", "Describe work for AI agents")}</li>
-                    <li className="onboarding-helper-text">{t("setup.withoutGitHub3", "Track progress on the board")}</li>
-                    <li className="onboarding-feature-list-heading">
-                      <strong>{t("setup.withGitHubHeading", "With GitHub (after connecting):")}</strong>
-                    </li>
-                    <li className="onboarding-helper-text onboarding-feature-list-item--with-github">{t("setup.withGitHub1", "Import issues as tasks")}</li>
-                    <li className="onboarding-helper-text onboarding-feature-list-item--with-github">{t("setup.withGitHub2", "Sync pull request status")}</li>
-                    <li className="onboarding-helper-text onboarding-feature-list-item--with-github">{t("setup.withGitHub3", "Link code changes to tasks")}</li>
-                  </ul>
+                  <div className="onboarding-feature-list__group">
+                    <h4>{t("setup.withoutGitHubHeading", "Without GitHub (available now)")}</h4>
+                    <ul>
+                      <li>{t("setup.withoutGitHub1", "Create tasks manually")}</li>
+                      <li>{t("setup.withoutGitHub2", "Describe work for AI agents")}</li>
+                      <li>{t("setup.withoutGitHub3", "Track progress on the board")}</li>
+                    </ul>
+                  </div>
+                  <div className="onboarding-feature-list__group">
+                    <h4>{t("setup.withGitHubHeading", "With GitHub (after connecting)")}</h4>
+                    <ul>
+                      <li>{t("setup.withGitHub1", "Import issues as tasks")}</li>
+                      <li>{t("setup.withGitHub2", "Sync pull request status")}</li>
+                      <li>{t("setup.withGitHub3", "Link code changes to tasks")}</li>
+                    </ul>
+                  </div>
                 </div>
               )}
 
@@ -2849,27 +2919,36 @@ export function ModelOnboardingModal({
                 GitHub onboarding must give users in-flow paths for both supported auth modes instead of Settings-only explanatory copy.
                 The dashboard can start OAuth when the GitHub provider exists; `gh` CLI setup remains explicit host-side guidance because Fusion does not install third-party binaries automatically.
               */}
-              {!isGithubCliAuthenticated && githubActionState.ghCli.state === "missing" && (
+              {/*
+                FNXC:Onboarding 2026-07-10-10:30:
+                State-driven GitHub step (first-run review): the gh CLI cards only render while GitHub is
+                NOT ready overall — an OAuth-connected user must never be told to install the GitHub CLI.
+                The per-OS install wall of text is collapsed behind a single disclosure; the card leads
+                with one sentence and commands render as <code> instead of raw backtick literals.
+              */}
+              {!isGitHubReady && githubActionState.ghCli.state === "missing" && (
                 <div className="onboarding-github-setup-card onboarding-github-setup-card--warning" data-testid="onboarding-gh-cli-install-card" role="status">
                   <div className="onboarding-github-setup-card__heading">
                     <ProviderIcon provider="github" size="sm" />
                     <strong>{t("setup.githubCliInstallTitle", "Install GitHub CLI")}</strong>
                   </div>
                   <p>
-                    {t("setup.githubCliInstallBody", "Fusion could not find `gh` on the host running Fusion. Install GitHub CLI there to import issues and track pull requests with CLI authentication.")}
+                    {renderWithInlineCode(t("setup.githubCliInstallBody", "Fusion could not find `gh` on the host running Fusion. Install GitHub CLI there to import issues and track pull requests with CLI authentication."))}
                   </p>
-                  <ul className="onboarding-github-setup-list">
-                    <li>{t("setup.githubCliInstallMac", "macOS: `brew install gh` or download the installer from GitHub CLI releases.")}</li>
-                    <li>{t("setup.githubCliInstallWindows", "Windows: install GitHub CLI with WinGet, Chocolatey, or the GitHub CLI installer, then restart the Fusion host shell or service.")}</li>
-                    <li>{t("setup.githubCliInstallLinux", "Linux: install `gh` with your distribution package manager or the packages from cli.github.com.")}</li>
-                  </ul>
-                  <a className="btn btn-sm" href={GH_CLI_INSTALL_URL} target="_blank" rel="noreferrer">
-                    {t("setup.githubCliInstallLink", "Open GitHub CLI releases")}
-                  </a>
+                  <OnboardingDisclosure summary={t("setup.githubCliInstallShowInstructions", "Show install instructions")}>
+                    <ul className="onboarding-github-setup-list">
+                      <li>{renderWithInlineCode(t("setup.githubCliInstallMac", "macOS: `brew install gh` or download the installer from GitHub CLI releases."))}</li>
+                      <li>{renderWithInlineCode(t("setup.githubCliInstallWindows", "Windows: install GitHub CLI with WinGet, Chocolatey, or the GitHub CLI installer, then restart the Fusion host shell or service."))}</li>
+                      <li>{renderWithInlineCode(t("setup.githubCliInstallLinux", "Linux: install `gh` with your distribution package manager or the packages from cli.github.com."))}</li>
+                    </ul>
+                    <a className="btn btn-sm" href={GH_CLI_INSTALL_URL} target="_blank" rel="noreferrer">
+                      {t("setup.githubCliInstallLink", "Open GitHub CLI releases")}
+                    </a>
+                  </OnboardingDisclosure>
                 </div>
               )}
 
-              {!isGithubCliAuthenticated && githubActionState.ghCli.state === "unauthenticated" && (
+              {!isGitHubReady && githubActionState.ghCli.state === "unauthenticated" && (
                 <div className="onboarding-github-setup-card onboarding-github-setup-card--info" data-testid="onboarding-gh-cli-auth-card" role="status">
                   <div className="onboarding-github-setup-card__heading">
                     <ProviderIcon provider="github" size="sm" />
@@ -2898,32 +2977,40 @@ export function ModelOnboardingModal({
                     <ProviderIcon provider="github" size="lg" />
                   </div>
                   {isGitHubReadyViaCli ? (
-                    <p>
-                      {t("setup.githubCliAuthNote", "GitHub CLI is already authenticated, so imports and PR tracking work now. OAuth from the dashboard is optional and only controls dashboard-managed connect/disconnect.")}
-                    </p>
+                    <>
+                      <p>
+                        {t("setup.githubCliAuthNote", "GitHub CLI is already authenticated, so imports and PR tracking work now. OAuth from the dashboard is optional and only controls dashboard-managed connect/disconnect.")}
+                      </p>
+                      <div className="model-onboarding-github-optional__actions">
+                        <button
+                          className="btn btn-primary btn-sm"
+                          /*
+                           * FNXC:Onboarding 2026-07-03-08:00:
+                           * Advance via handleNext (not a raw setStep) so the GitHub step's status is
+                           * recorded. When GitHub is ready via the gh CLI, "Continue with gh CLI auth"
+                           * must COMPLETE the step (handleNext) — previously it jumped to project-setup
+                           * without adding "github" to completedSteps, so step 2 never checked off.
+                           */
+                          onClick={handleNext}
+                        >
+                          {t("setup.continueWithGhCli", "Continue with gh CLI auth →")}
+                        </button>
+                      </div>
+                    </>
                   ) : (
+                    /*
+                     * FNXC:Onboarding 2026-07-10-10:35:
+                     * First-run review: the step offered THREE overlapping escape hatches at once —
+                     * an in-body "Continue without GitHub →" CTA plus footer "Skip GitHub →" plus
+                     * "Next →". The in-body button is removed entirely; the footer "Skip GitHub →"
+                     * is the single skip affordance. The explanatory sentence (and its wrapper) stays,
+                     * and its former actions <div> is dropped with it so no empty button shell remains
+                     * on desktop or mobile.
+                     */
                     <p>
-                      {t("setup.githubOauthUnavailable", "Dashboard GitHub OAuth is not configured on this Fusion host. You can still continue without GitHub, or use the GitHub CLI setup guidance above when available.")}
+                      {t("setup.githubOauthUnavailable", "Dashboard GitHub OAuth is not configured on this Fusion host. You can still skip GitHub below, or use the GitHub CLI setup guidance above when available.")}
                     </p>
                   )}
-                  <div className="model-onboarding-github-optional__actions">
-                    <button
-                      className="btn btn-primary btn-sm"
-                      /*
-                       * FNXC:Onboarding 2026-07-03-08:00:
-                       * Advance via handleNext/handleSkip (not a raw setStep) so the GitHub step's
-                       * status is recorded. When GitHub is ready via the gh CLI, "Continue with gh CLI
-                       * auth" must COMPLETE the step (handleNext) — previously it jumped to project-setup
-                       * without adding "github" to completedSteps, so step 2 never checked off. When
-                       * GitHub isn't connected, "Continue without GitHub" is a SKIP (handleSkip).
-                       */
-                      onClick={isGitHubReadyViaCli ? handleNext : handleSkip}
-                    >
-                      {isGitHubReadyViaCli
-                        ? t("setup.continueWithGhCli", "Continue with gh CLI auth →")
-                        : t("setup.continueWithoutGitHub", "Continue without GitHub →")}
-                    </button>
-                  </div>
                 </div>
               ) : (
                 <>
@@ -3358,13 +3445,23 @@ export function ModelOnboardingModal({
           </a>
           {step === "ai-setup" && (
             <>
-              <button
-                className="btn btn-sm"
-                onClick={handleDismiss}
-                disabled={saving}
-              >
-                {t("setup.skipForNow", "Skip for now")}
-              </button>
+              {/*
+                FNXC:Onboarding 2026-07-10-10:40:
+                First-run review: the AI Setup footer showed BOTH "Skip for now" (dismiss onboarding) and
+                "Skip setup →" (skip this step) next to "Next →". Once at least one AI provider is
+                connected the user has effectively completed this step, so "Skip for now" is redundant
+                noise and is hidden; "Skip setup →" and "Next →" remain. No wrapper/aria-label is left
+                behind — the button subtree is omitted entirely (desktop and mobile share this markup).
+              */}
+              {!hasAiProvider && (
+                <button
+                  className="btn btn-sm"
+                  onClick={handleDismiss}
+                  disabled={saving}
+                >
+                  {t("setup.skipForNow", "Skip for now")}
+                </button>
+              )}
               <button className="onboarding-skip-step-link" onClick={handleSkip}>
                 {t("setup.skipSetup", "Skip setup →")}
               </button>

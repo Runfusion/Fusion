@@ -4,6 +4,7 @@ import { Check, Loader2 } from "lucide-react";
 import { validateProjectPath, validateProjectName, suggestProjectName } from "../utils/projectDetection";
 import type { ProjectCreateInput, NodeInfo } from "../api";
 import { DirectoryPicker } from "./DirectoryPicker";
+import { getSelectableRuntimeNodes, shouldShowRuntimeNodeSelector } from "./setupWizardNodes";
 
 export interface SetupProjectFormProps {
   /** Called when the form is submitted with valid data */
@@ -119,24 +120,34 @@ export function SetupProjectForm({
 
   return (
     <form onSubmit={handleSubmit} className="setup-project-form">
-      {/* Node selector */}
-      <div className="form-group">
-        <div className="project-node-selector">
-          <span className="project-node-selector__label">{t("setup.runtimeNode", "Runtime Node")}</span>
-          <select
-            value={nodeId}
-            onChange={(e) => setNodeId(e.target.value)}
-            disabled={isSubmitting}
-          >
-            <option value="">{t("setup.localNode", "Local node")}</option>
-            {nodes.map((node) => (
-              <option key={node.id} value={node.id}>
-                {node.name} ({node.type})
-              </option>
-            ))}
-          </select>
+      {/*
+        FNXC:SetupWizard 2026-07-10-11:00:
+        Same Runtime Node dedupe as SetupWizardModal (Surface Enumeration for the duplicate
+        "Local node" / "local (local)" option bug): local-type node records never render as
+        options and the selector is hidden when only the local machine exists.
+      */}
+      {shouldShowRuntimeNodeSelector(nodes) && (
+        <div className="form-group">
+          <div className="project-node-selector">
+            <span className="project-node-selector__label">{t("setup.runtimeNode", "Runtime Node")}</span>
+            <select
+              value={nodeId}
+              onChange={(e) => setNodeId(e.target.value)}
+              disabled={isSubmitting}
+            >
+              <option value="">{t("setup.localNode", "Local node")}</option>
+              {getSelectableRuntimeNodes(nodes).map((node) => (
+                <option key={node.id} value={node.id}>
+                  {node.name} ({node.type})
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="form-hint">
+            {t("setup.runtimeNodeHint", "A runtime node is the machine where this project's tasks run. \"Local node\" is this computer; pick a remote node to run tasks elsewhere.")}
+          </p>
         </div>
-      </div>
+      )}
 
       {/* Path input */}
       <div className="form-group">

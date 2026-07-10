@@ -448,11 +448,19 @@ describe("onboarding flow integration", () => {
       expect(screen.getByText("You only need one provider to get started.")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Advanced provider settings/ })).toHaveAttribute("aria-expanded", "false");
 
+      /*
+      FNXC:Onboarding 2026-07-10-10:15:
+      ALL connected providers (quick-start and advanced alike) render in the "Connected providers"
+      section at the TOP of the step, above quick start; quick start only offers unconnected providers.
+      */
       const quickStartSection = screen.getByTestId("onboarding-quick-start-providers");
-      expect(getProviderOrderInSection(quickStartSection)).toEqual(["anthropic", "openai", "google", "openrouter"]);
+      expect(getProviderOrderInSection(quickStartSection)).toEqual(["openai", "google", "openrouter"]);
 
       const connectedSection = screen.getByTestId("onboarding-connected-providers");
-      expect(getProviderOrderInSection(connectedSection)).toEqual(["zai"]);
+      expect(getProviderOrderInSection(connectedSection)).toEqual(["anthropic", "zai"]);
+      expect(
+        connectedSection.compareDocumentPosition(quickStartSection) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
 
       expect(screen.queryByTestId("onboarding-provider-card-minimax")).not.toBeInTheDocument();
       expect(screen.queryByTestId("onboarding-provider-card-moonshot")).not.toBeInTheDocument();
