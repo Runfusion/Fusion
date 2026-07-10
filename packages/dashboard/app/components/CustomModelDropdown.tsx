@@ -1,5 +1,6 @@
 import "./CustomModelDropdown.css";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, useId } from "react";
+import { THINKING_LEVELS } from "@fusion/core";
 import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { ModelInfo } from "../api";
@@ -30,6 +31,14 @@ export interface CustomModelDropdownProps {
   onToggleModelFavorite?: (modelId: string) => void;
   /** Request a wider menu for dense settings surfaces while default callers keep trigger-width sizing. */
   menuWidth?: "trigger" | "readable";
+  /** Optional thinking/reasoning effort value; empty string means inherit/default when defaultThinkingLevel is provided. */
+  thinkingLevel?: string;
+  /** Called when the optional inline thinking-level selector changes. */
+  onThinkingLevelChange?: (level: string) => void;
+  /** Effective default thinking level; when supplied, the selector includes an empty "Default (level)" option. */
+  defaultThinkingLevel?: string;
+  /** Explicitly render the optional inline thinking-level selector even without a change callback. */
+  showThinkingLevel?: boolean;
 }
 
 interface DropdownPosition {
@@ -68,6 +77,10 @@ export function CustomModelDropdown({
   noChangeLabel: noChangeLabelProp,
   defaultOptionLabel: defaultOptionLabelProp,
   menuWidth = "trigger",
+  thinkingLevel,
+  onThinkingLevelChange,
+  defaultThinkingLevel,
+  showThinkingLevel,
 }: CustomModelDropdownProps) {
   const { t } = useTranslation("app");
   const placeholder = placeholderProp ?? t("model.selectPlaceholder", "Select a model…");
@@ -78,6 +91,7 @@ export function CustomModelDropdown({
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const [dropdownPosition, setDropdownPosition] = useState<DropdownPosition | null>(null);
   const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  const generatedThinkingId = useId();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -137,6 +151,30 @@ export function CustomModelDropdown({
   }, [modelsByProvider, favoriteProviders]);
 
   const hasNoChangeOption = typeof noChangeValue === "string" && noChangeValue.length > 0;
+  const shouldShowThinking = showThinkingLevel ?? Boolean(onThinkingLevelChange);
+  const normalizedThinkingLevel = thinkingLevel ?? "";
+  const hasDefaultThinkingOption = typeof defaultThinkingLevel === "string";
+  const thinkingSelectId = id ? `${id}-thinking-level` : `${generatedThinkingId}-thinking-level`;
+
+  /*
+  FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+  The shared model dropdown can optionally embed a thinking-level selector so task and agent model pickers expose one consistent reasoning-effort affordance, including `xhigh`. The selector stays inert unless a caller opts in with `showThinkingLevel` or `onThinkingLevelChange`, preserving every settings, insights, schedule, workflow, planning, onboarding, and bulk-edit surface that only needs model selection.
+  */
+  const thinkingOptions = useMemo(() => THINKING_LEVELS.map((level) => ({
+    value: level,
+    label: t(`models.options.${level}`, level === "xhigh" ? "Very High" : level.charAt(0).toUpperCase() + level.slice(1)),
+  })), [t]);
+
+  const thinkingBadgeLabel = useMemo(() => {
+    if (!shouldShowThinking) return "";
+    if (normalizedThinkingLevel) {
+      return thinkingOptions.find((option) => option.value === normalizedThinkingLevel)?.label ?? normalizedThinkingLevel;
+    }
+    if (hasDefaultThinkingOption) {
+      return t("modelSelection.thinkingDefault", "Default ({{level}})", { level: defaultThinkingLevel });
+    }
+    return thinkingOptions.find((option) => option.value === "off")?.label ?? "Off";
+  }, [defaultThinkingLevel, hasDefaultThinkingOption, normalizedThinkingLevel, shouldShowThinking, t, thinkingOptions]);
 
   // Get current provider from value
   const currentProvider = useMemo(() => {
@@ -530,6 +568,30 @@ export function CustomModelDropdown({
         {t("models.count", { count: filteredModels.length, defaultValue_one: "{{count}} model", defaultValue_other: "{{count}} models" })}
       </div>
 
+      {shouldShowThinking && (
+        <div className="model-combobox-thinking" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+          <label className="model-combobox-thinking-label" htmlFor={thinkingSelectId}>
+            {t("models.labels.thinkingLevel", "Thinking Level")}
+          </label>
+          <select
+            id={thinkingSelectId}
+            className="thinking-level-select model-combobox-thinking-select"
+            data-testid="custom-model-dropdown-thinking"
+            value={normalizedThinkingLevel}
+            onChange={(e) => onThinkingLevelChange?.(e.target.value)}
+            disabled={disabled || !onThinkingLevelChange}
+            aria-label={t("models.labels.thinkingLevel", "Thinking Level")}
+          >
+            {hasDefaultThinkingOption && (
+              <option value="">{t("modelSelection.thinkingDefault", "Default ({{level}})", { level: defaultThinkingLevel })}</option>
+            )}
+            {thinkingOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div ref={listRef} className="model-combobox-list">
         {specialOptions.map((option, index) => (
           <div
@@ -691,6 +753,11 @@ export function CustomModelDropdown({
             </span>
           )}
           <span className="model-combobox-trigger-text">{selectedDisplayText || placeholder}</span>
+          {shouldShowThinking && (
+            <span className={`model-badge ${normalizedThinkingLevel ? "model-badge-custom" : "model-badge-default"} model-combobox-thinking-badge`} data-testid="custom-model-dropdown-thinking-badge">
+              {thinkingBadgeLabel}
+            </span>
+          )}
           <span className="model-combobox-trigger-arrow">▼</span>
         </button>
       </div>

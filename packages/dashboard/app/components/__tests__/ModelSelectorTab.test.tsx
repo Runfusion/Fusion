@@ -168,7 +168,8 @@ describe("ModelSelectorTab", () => {
       }, "project-alpha");
     });
 
-    await user.selectOptions(screen.getByLabelText("Thinking Level"), "high");
+    await user.click(screen.getByRole("button", { name: "Executor Model" }));
+    await user.selectOptions(await screen.findByTestId("custom-model-dropdown-thinking"), "high");
     await waitFor(() => {
       expect(mockUpdateTask).toHaveBeenNthCalledWith(4, "FN-7398", {
         thinkingLevel: "high",

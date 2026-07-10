@@ -50,6 +50,78 @@ describe("CustomModelDropdown", () => {
     expect(css).not.toMatch(/(^|\n)\s*html\s*\*/);
   });
 
+  it("renders opt-in thinking control with default option and calls back for concrete and inherited values", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onThinkingLevelChange = vi.fn();
+
+    render(
+      <CustomModelDropdown
+        label="Executor Model"
+        value="openai/gpt-4o"
+        onChange={onChange}
+        models={MOCK_MODELS}
+        thinkingLevel="high"
+        onThinkingLevelChange={onThinkingLevelChange}
+        defaultThinkingLevel="off"
+      />,
+    );
+
+    expect(screen.getByTestId("custom-model-dropdown-thinking-badge")).toHaveTextContent("High");
+    await user.click(screen.getByRole("button", { name: "Executor Model" }));
+
+    const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
+    expect(thinkingSelect).toHaveAccessibleName("Thinking Level");
+    expect(within(thinkingSelect).getByRole("option", { name: "Default (off)" })).toBeTruthy();
+    for (const optionName of ["Off", "Minimal", "Low", "Medium", "High", "Very High"]) {
+      expect(within(thinkingSelect).getByRole("option", { name: optionName })).toBeTruthy();
+    }
+
+    await user.selectOptions(thinkingSelect, "xhigh");
+    expect(onThinkingLevelChange).toHaveBeenLastCalledWith("xhigh");
+    await user.selectOptions(thinkingSelect, "");
+    expect(onThinkingLevelChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("renders concrete-only thinking control without Default when no defaultThinkingLevel is supplied", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CustomModelDropdown
+        label="Agent Model"
+        value=""
+        onChange={vi.fn()}
+        models={MOCK_MODELS}
+        thinkingLevel="off"
+        onThinkingLevelChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Agent Model" }));
+    const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
+
+    expect(within(thinkingSelect).queryByRole("option", { name: /Default/ })).toBeNull();
+    expect(within(thinkingSelect).getAllByRole("option")).toHaveLength(6);
+  });
+
+  it("keeps thinking control inert when callers do not opt in", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CustomModelDropdown
+        label="Settings Model"
+        value=""
+        onChange={vi.fn()}
+        models={MOCK_MODELS}
+      />,
+    );
+
+    expect(screen.queryByTestId("custom-model-dropdown-thinking-badge")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Settings Model" }));
+
+    expect(screen.queryByTestId("custom-model-dropdown-thinking")).toBeNull();
+  });
+
   it("renders the open dropdown in a portal attached to document.body", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

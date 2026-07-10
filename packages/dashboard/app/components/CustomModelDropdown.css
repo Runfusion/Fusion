@@ -38,6 +38,7 @@
 
 .model-combobox-trigger-text {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -128,6 +129,38 @@
   color: var(--text-muted);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-thinking-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.model-combobox-thinking-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-combobox-thinking-badge {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*

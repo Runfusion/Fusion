@@ -415,6 +415,9 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
               onToggleFavorite={handleToggleFavorite}
               favoriteModels={favoriteModels}
               onToggleModelFavorite={handleToggleModelFavorite}
+              thinkingLevel={selectedThinking ?? ""}
+              onThinkingLevelChange={handleThinkingChange}
+              defaultThinkingLevel={settings?.defaultThinkingLevel ?? "off"}
             />
             <small>{t("models.descriptions.executor", "The AI model used to implement this task.")}</small>
           </div>
@@ -479,36 +482,6 @@ export function ModelSelectorTab({ task, addToast, onTaskUpdated, settings, proj
             <small>{t("models.descriptions.planning", "The AI model used for task specification (triage phase).")}</small>
           </div>
 
-          <div className="form-group">
-            <label htmlFor="thinkingLevel">{t("models.labels.thinkingLevel", "Thinking Level")}</label>
-            <div className="model-selector-current">
-              {savedThinking === null ? (
-                <span className="model-badge model-badge-default">
-                  {t("models.states.usingDefault", "Using default")} ({settings?.defaultThinkingLevel ?? "off"})
-                </span>
-              ) : (
-                <span className="model-badge model-badge-custom">
-                  {savedThinking}
-                </span>
-              )}
-            </div>
-            <select
-              id="thinkingLevel"
-              value={selectedThinking ?? ""}
-              onChange={(e) => handleThinkingChange(e.target.value)}
-              disabled={isSaving}
-              className="thinking-level-select"
-            >
-              <option value="">{t("models.options.default", "Default")} ({settings?.defaultThinkingLevel ?? "off"})</option>
-              <option value="off">{t("models.options.off", "Off")}</option>
-              <option value="minimal">{t("models.options.minimal", "Minimal")}</option>
-              <option value="low">{t("models.options.low", "Low")}</option>
-              <option value="medium">{t("models.options.medium", "Medium")}</option>
-              <option value="high">{t("models.options.high", "High")}</option>
-              <option value="xhigh">{t("models.options.xhigh", "Very High")}</option>
-            </select>
-            <small>{t("models.descriptions.thinkingLevel", "Controls the reasoning effort for the AI agent. Higher levels use more tokens.")}</small>
-          </div>
 
           <div className="model-selector-status">
             {executorUsingDefault && validatorUsingDefault && planningUsingDefault && savedThinking === null

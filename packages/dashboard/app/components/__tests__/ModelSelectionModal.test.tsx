@@ -68,6 +68,9 @@ vi.mock("../CustomModelDropdown", () => ({
     onChange,
     models,
     placeholder,
+    thinkingLevel,
+    onThinkingLevelChange,
+    defaultThinkingLevel,
   }: {
     id: string;
     label: string;
@@ -75,10 +78,33 @@ vi.mock("../CustomModelDropdown", () => ({
     onChange: (value: string) => void;
     models: ModelInfo[];
     placeholder: string;
+    thinkingLevel?: string;
+    onThinkingLevelChange?: (value: string) => void;
+    defaultThinkingLevel?: string;
   }) => (
     <div data-testid={`mock-dropdown-${id}`}>
       <span data-testid={`dropdown-label-${id}`}>{label}</span>
       <span data-testid={`dropdown-value-${id}`}>{value || "empty"}</span>
+      {onThinkingLevelChange ? (
+        <>
+          <span data-testid="custom-model-dropdown-thinking-badge" className={`model-badge ${thinkingLevel ? "model-badge-custom" : "model-badge-default"}`}>
+            {thinkingLevel || "Default"}
+          </span>
+          <select
+            data-testid="custom-model-dropdown-thinking"
+            value={thinkingLevel || ""}
+            onChange={(e) => onThinkingLevelChange(e.target.value)}
+          >
+            <option value="">Default ({defaultThinkingLevel ?? "off"})</option>
+            <option value="off">Off</option>
+            <option value="minimal">Minimal</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="xhigh">Very High</option>
+          </select>
+        </>
+      ) : null}
       <select
         data-testid={`dropdown-select-${id}`}
         value={value}
@@ -280,14 +306,14 @@ describe("ModelSelectionModal", () => {
   describe("Thinking level selection", () => {
     it("does not render the thinking-level selector when onThinkingLevelChange is omitted", () => {
       renderModelSelectionModal();
-      expect(screen.queryByTestId("model-selection-thinking")).toBeNull();
-      expect(screen.queryByTestId("thinking-badge")).toBeNull();
+      expect(screen.queryByTestId("custom-model-dropdown-thinking")).toBeNull();
+      expect(screen.queryByTestId("custom-model-dropdown-thinking-badge")).toBeNull();
     });
 
     it("renders the thinking-level selector with all six levels plus Default when onThinkingLevelChange is provided", () => {
       renderModelSelectionModal({ onThinkingLevelChange: vi.fn() });
 
-      const select = screen.getByTestId("model-selection-thinking") as HTMLSelectElement;
+      const select = screen.getByTestId("custom-model-dropdown-thinking") as HTMLSelectElement;
       expect(select).toBeTruthy();
 
       const options = Array.from(select.options).map((o) => o.value);
@@ -296,24 +322,24 @@ describe("ModelSelectionModal", () => {
 
     it("still omits the thinking-level selector while models are empty, even when onThinkingLevelChange is provided", () => {
       renderModelSelectionModal({ models: [], onThinkingLevelChange: vi.fn() });
-      expect(screen.queryByTestId("model-selection-thinking")).toBeNull();
+      expect(screen.queryByTestId("custom-model-dropdown-thinking")).toBeNull();
     });
 
     it("still omits the thinking-level selector while models are loading", () => {
       renderModelSelectionModal({ modelsLoading: true, onThinkingLevelChange: vi.fn() });
-      expect(screen.queryByTestId("model-selection-thinking")).toBeNull();
+      expect(screen.queryByTestId("custom-model-dropdown-thinking")).toBeNull();
     });
 
     it("still omits the thinking-level selector when models fail to load", () => {
       renderModelSelectionModal({ modelsError: "Failed to fetch", onThinkingLevelChange: vi.fn() });
-      expect(screen.queryByTestId("model-selection-thinking")).toBeNull();
+      expect(screen.queryByTestId("custom-model-dropdown-thinking")).toBeNull();
     });
 
     it("calls onThinkingLevelChange with the selected level", () => {
       const onThinkingLevelChange = vi.fn();
       renderModelSelectionModal({ onThinkingLevelChange });
 
-      const select = screen.getByTestId("model-selection-thinking");
+      const select = screen.getByTestId("custom-model-dropdown-thinking");
       fireEvent.change(select, { target: { value: "high" } });
 
       expect(onThinkingLevelChange).toHaveBeenCalledWith("high");
@@ -323,7 +349,7 @@ describe("ModelSelectionModal", () => {
       const onThinkingLevelChange = vi.fn();
       renderModelSelectionModal({ onThinkingLevelChange, thinkingLevel: "high" });
 
-      const select = screen.getByTestId("model-selection-thinking");
+      const select = screen.getByTestId("custom-model-dropdown-thinking");
       fireEvent.change(select, { target: { value: "" } });
 
       expect(onThinkingLevelChange).toHaveBeenCalledWith("");
@@ -332,15 +358,15 @@ describe("ModelSelectionModal", () => {
     it("displays the thinking badge as 'Using default' when thinkingLevel is empty", () => {
       renderModelSelectionModal({ onThinkingLevelChange: vi.fn(), thinkingLevel: "" });
 
-      const badge = screen.getByTestId("thinking-badge");
-      expect(badge.textContent).toBe("Using default");
+      const badge = screen.getByTestId("custom-model-dropdown-thinking-badge");
+      expect(badge.textContent).toBe("Default");
       expect(badge.classList.contains("model-badge-default")).toBe(true);
     });
 
     it("displays the thinking badge with the selected level when overridden", () => {
       renderModelSelectionModal({ onThinkingLevelChange: vi.fn(), thinkingLevel: "xhigh" });
 
-      const badge = screen.getByTestId("thinking-badge");
+      const badge = screen.getByTestId("custom-model-dropdown-thinking-badge");
       expect(badge.textContent).toBe("xhigh");
       expect(badge.classList.contains("model-badge-custom")).toBe(true);
     });

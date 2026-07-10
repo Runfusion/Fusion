@@ -296,6 +296,9 @@ export function ModelSelectionModal({
                         onToggleFavorite={onToggleFavorite}
                         favoriteModels={favoriteModels}
                         onToggleModelFavorite={onToggleModelFavorite}
+                        thinkingLevel={thinkingLevel}
+                        onThinkingLevelChange={onThinkingLevelChange}
+                        defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                       />
                     </div>
                   </div>
@@ -326,35 +329,6 @@ export function ModelSelectionModal({
                     </div>
                   </div>
 
-                  {onThinkingLevelChange && (
-                    <div className="task-detail-section">
-                      <div className="inline-create-model-row">
-                        <label htmlFor="model-selection-thinking" className="inline-create-model-label">
-                          {t("modelSelection.thinkingModel", "Thinking")}
-                        </label>
-                        <span
-                          className={`model-badge ${thinkingLevel ? "model-badge-custom" : "model-badge-default"}`}
-                          data-testid="thinking-badge"
-                        >
-                          {thinkingLevel || t("modelSelection.usingDefault", "Using default")}
-                        </span>
-                        <select
-                          id="model-selection-thinking"
-                          data-testid="model-selection-thinking"
-                          value={thinkingLevel}
-                          onChange={(e) => onThinkingLevelChange(e.target.value)}
-                        >
-                          <option value="">{t("modelSelection.thinkingDefault", "Default ({{level}})", { level: defaultThinkingLevel ?? "off" })}</option>
-                          <option value="off">{t("models.options.off", "Off")}</option>
-                          <option value="minimal">{t("models.options.minimal", "Minimal")}</option>
-                          <option value="low">{t("models.options.low", "Low")}</option>
-                          <option value="medium">{t("models.options.medium", "Medium")}</option>
-                          <option value="high">{t("models.options.high", "High")}</option>
-                          <option value="xhigh">{t("models.options.xhigh", "Very High")}</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
 

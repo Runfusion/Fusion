@@ -154,9 +154,10 @@ describe("TaskForm", () => {
 
     fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
-    await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: /Thinking/i })).toBeTruthy();
-    });
+    fireEvent.click(await screen.findByRole("button", { name: "Executor Model" }));
+
+    const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
+    expect(thinkingSelect).toBeTruthy();
     expect(screen.getByRole("option", { name: /Very High/i })).toHaveAttribute("value", "xhigh");
   });
 

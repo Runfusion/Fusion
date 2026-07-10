@@ -369,6 +369,8 @@ export function NewAgentDialog({
               onToggleFavorite={toggleFavoriteProvider}
               favoriteModels={favoriteModels}
               onToggleModelFavorite={toggleFavoriteModel}
+              thinkingLevel={runtimeConfig.thinkingLevel}
+              onThinkingLevelChange={(level) => setRuntimeConfig(c => ({ ...c, thinkingLevel: level as ThinkingLevel }))}
             />
           )}
         </div>
@@ -674,22 +676,6 @@ export function NewAgentDialog({
           {step === 1 && (
             <div>
               {renderRuntimeSourceSection("agent-runtime-source-step-1")}
-              <div className="agent-dialog-field">
-                <label htmlFor="agent-thinking">{t("agents.fieldThinkingLevel", "Thinking Level")}</label>
-                <select
-                  id="agent-thinking"
-                  className="select"
-                  value={runtimeConfig.thinkingLevel}
-                  onChange={e => setRuntimeConfig(c => ({ ...c, thinkingLevel: e.target.value as ThinkingLevel }))}
-                >
-                  <option value="off">{t("agents.thinkingOff", "Off")}</option>
-                  <option value="minimal">{t("agents.thinkingMinimal", "Minimal")}</option>
-                  <option value="low">{t("agents.thinkingLow", "Low")}</option>
-                  <option value="medium">{t("agents.thinkingMedium", "Medium")}</option>
-                  <option value="high">{t("agents.thinkingHigh", "High")}</option>
-                  <option value="xhigh">{t("agents.thinkingXhigh", "Very High")}</option>
-                </select>
-              </div>
               <div className="agent-dialog-field">
                 <label htmlFor="agent-max-turns">{t("agents.fieldMaxTurns", "Max Turns")}</label>
                 <input

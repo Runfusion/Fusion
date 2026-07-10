@@ -245,6 +245,9 @@ vi.mock("../CustomModelDropdown", () => ({
     onChange,
     label,
     disabled,
+    thinkingLevel,
+    onThinkingLevelChange,
+    defaultThinkingLevel,
   }: {
     value: string;
     onChange: (value: string) => void;
@@ -257,9 +260,28 @@ vi.mock("../CustomModelDropdown", () => ({
     onToggleFavorite?: (provider: string) => void;
     favoriteModels?: string[];
     onToggleModelFavorite?: (modelId: string) => void;
+    thinkingLevel?: string;
+    onThinkingLevelChange?: (value: string) => void;
+    defaultThinkingLevel?: string;
   }) => (
     <div data-testid={`custom-model-dropdown-${label}`}>
       <span data-testid={`dropdown-value-${label}`}>{value || "none"}</span>
+      {onThinkingLevelChange ? (
+        <select
+          data-testid="custom-model-dropdown-thinking"
+          value={thinkingLevel || ""}
+          onChange={(e) => onThinkingLevelChange(e.target.value)}
+          disabled={disabled}
+        >
+          <option value="">Default ({defaultThinkingLevel ?? "off"})</option>
+          <option value="off">Off</option>
+          <option value="minimal">Minimal</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">Very High</option>
+        </select>
+      ) : null}
       <button
         data-testid={`dropdown-select-${label}`}
         onClick={() => onChange("anthropic/claude-sonnet-4-5")}
@@ -2587,13 +2609,7 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("model-menu-validator")).toBeTruthy();
     });
 
-    /*
-    FNXC:Settings-ThinkingLevel 2026-07-09-00:00:
-    The inline quick-entry model menu must expose a Thinking entry with parity to the full task pickers
-    (TaskForm, ModelSelectorTab, ModelSelectionModal), including a plain <select> submenu with all six
-    levels plus a named Default option.
-    */
-    it("shows a Thinking option in the model menu", () => {
+    it("does not render a separate Thinking option in the model menu", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
@@ -2601,19 +2617,19 @@ describe("QuickEntryBox", () => {
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       openModelMenu();
 
-      expect(screen.getByTestId("model-menu-thinking")).toBeTruthy();
+      expect(screen.queryByTestId("model-menu-thinking")).toBeNull();
     });
 
-    it("clicking Thinking opens a submenu with a level <select>", () => {
+    it("clicking Executor opens a submenu with the inline thinking-level selector", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
       const textarea = screen.getByTestId("quick-entry-input");
 
       fireEvent.change(textarea, { target: { value: "Task with models" } });
       openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-thinking"));
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
 
-      const select = screen.getByTestId("model-thinking-select") as HTMLSelectElement;
+      const select = screen.getByTestId("custom-model-dropdown-thinking") as HTMLSelectElement;
       expect(select).toBeTruthy();
       const options = Array.from(select.options).map((o) => o.value);
       expect(options).toEqual(["", "off", "minimal", "low", "medium", "high", "xhigh"]);
@@ -3009,8 +3025,8 @@ describe("QuickEntryBox", () => {
 
       fireEvent.change(textarea, { target: { value: "Task with thinking level override" } });
       openModelMenu();
-      fireEvent.click(screen.getByTestId("model-menu-thinking"));
-      fireEvent.change(screen.getByTestId("model-thinking-select"), { target: { value: "xhigh" } });
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
+      fireEvent.change(screen.getByTestId("custom-model-dropdown-thinking"), { target: { value: "xhigh" } });
       fireEvent.click(screen.getByTestId("model-submenu-back"));
 
       fireEvent.keyDown(textarea, { key: "Escape" });

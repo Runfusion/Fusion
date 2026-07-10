@@ -170,7 +170,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [showPriorityPicker, setShowPriorityPicker] = useState(false);
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
-  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | "thinking" | null>(null);
+  const [activeModelSubmenu, setActiveModelSubmenu] = useState<"plan" | "executor" | "validator" | null>(null);
   const [executorProvider, setExecutorProvider] = useState<string | undefined>(undefined);
   const [executorModelId, setExecutorModelId] = useState<string | undefined>(undefined);
   const [validatorProvider, setValidatorProvider] = useState<string | undefined>(undefined);
@@ -415,7 +415,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const hasExecutorOverride = Boolean(executorProvider && executorModelId);
   const hasValidatorOverride = Boolean(validatorProvider && validatorModelId);
   const hasPlanningOverride = Boolean(planningProvider && planningModelId);
-  const hasThinkingOverride = Boolean(thinkingLevel);
   const selectedModelCount = Number(hasExecutorOverride) + Number(hasValidatorOverride) + Number(hasPlanningOverride);
   const modelMenuLabel = selectedPresetId
     ? settings?.modelPresets?.find((p) => p.id === selectedPresetId)?.name ?? t("tasks.models", "Models")
@@ -2351,59 +2350,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     </span>
                     <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
                   </button>
-                  {/*
-                  FNXC:Settings-ThinkingLevel 2026-07-09-00:00:
-                  Quick-entry inline model menu must expose the same thinking (reasoning-effort) levels as the full task
-                  pickers (TaskForm, ModelSelectorTab, ModelSelectionModal) so a task created from this bar can carry a
-                  per-task thinking-level override just like one created from the New Task modal.
-                  */}
-                  <button
-                    type="button"
-                    className={`model-menu-item ${hasThinkingOverride ? "model-menu-item--active" : ""}`}
-                    onClick={() => setActiveModelSubmenu("thinking")}
-                    data-testid="model-menu-thinking"
-                  >
-                    <span className="model-menu-item-label">
-                      <Brain size={12} style={{ verticalAlign: "middle", marginRight: 6 }} />
-                      {t("tasks.modelThinking", "Thinking")}
-                    </span>
-                    <span className="model-menu-item-value">
-                      {hasThinkingOverride
-                        ? thinkingLevel
-                        : t("tasks.usingDefault", "Using default")}
-                    </span>
-                    <ChevronRight size={12} style={{ marginLeft: "auto", color: "var(--text-dim)" }} />
-                  </button>
-                </div>
-              ) : activeModelSubmenu === "thinking" ? (
-                // Submenu with a plain <select> for the thinking-level override (not a model list)
-                <div className="model-submenu">
-                  <button
-                    type="button"
-                    className="model-submenu-back"
-                    onClick={() => setActiveModelSubmenu(null)}
-                    data-testid="model-submenu-back"
-                  >
-                    <ChevronDown size={12} style={{ transform: "rotate(90deg)", marginRight: 4 }} />
-                    {t("common.back", "Back")}
-                  </button>
-                  <div className="model-submenu-header">
-                    {t("tasks.thinkingModel", "Thinking Level")}
-                  </div>
-                  <select
-                    id="model-thinking-select"
-                    data-testid="model-thinking-select"
-                    value={thinkingLevel}
-                    onChange={(e) => handleThinkingLevelChange(e.target.value)}
-                  >
-                    <option value="">{t("modelSelection.thinkingDefault", "Default ({{level}})", { level: settings?.defaultThinkingLevel ?? "off" })}</option>
-                    <option value="off">{t("models.options.off", "Off")}</option>
-                    <option value="minimal">{t("models.options.minimal", "Minimal")}</option>
-                    <option value="low">{t("models.options.low", "Low")}</option>
-                    <option value="medium">{t("models.options.medium", "Medium")}</option>
-                    <option value="high">{t("models.options.high", "High")}</option>
-                    <option value="xhigh">{t("models.options.xhigh", "Very High")}</option>
-                  </select>
                 </div>
               ) : (
                 // Submenu with CustomModelDropdown for the selected target
@@ -2446,6 +2392,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     onToggleFavorite={handleToggleFavorite}
                     favoriteModels={effectiveFavoriteModels}
                     onToggleModelFavorite={handleToggleModelFavorite}
+                    thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : undefined}
+                    onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : undefined}
+                    defaultThinkingLevel={activeModelSubmenu === "executor" ? settings?.defaultThinkingLevel ?? "off" : undefined}
                   />
                   {modelsError && (
                     <div className="model-submenu-error">
