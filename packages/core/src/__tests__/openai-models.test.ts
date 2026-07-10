@@ -1,3 +1,4 @@
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
   GPT_5_6_LUNA_MODEL_ID,
@@ -9,6 +10,42 @@ import {
 } from "../openai-models.js";
 
 const EXPECTED_IDS = [GPT_5_6_LUNA_MODEL_ID, GPT_5_6_SOL_MODEL_ID, GPT_5_6_TERRA_MODEL_ID];
+const BUILT_IN_CODEX_IDS = ["gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"];
+const OPENAI_CODEX_OAUTH_CREDENTIAL = {
+  refresh: "test-refresh-token",
+  access: "test-access-token",
+  expires: Date.now() + 60_000,
+};
+const OPENAI_CODEX_OAUTH_PROVIDER = {
+  id: OPENAI_CODEX_PROVIDER_ID,
+  name: "ChatGPT Plus/Pro (Codex Subscription)",
+  login: async () => OPENAI_CODEX_OAUTH_CREDENTIAL,
+  refreshToken: async () => OPENAI_CODEX_OAUTH_CREDENTIAL,
+  getApiKey: () => OPENAI_CODEX_OAUTH_CREDENTIAL.access,
+};
+
+function createOpenAiCodexAuthStorage() {
+  const credential = {
+    type: "oauth",
+    access: "test-access-token",
+    refresh: "test-refresh-token",
+    expires: Date.now() + 60_000,
+  };
+
+  return {
+    getOAuthProviders: () => [OPENAI_CODEX_OAUTH_PROVIDER],
+    get: (providerId: string) => providerId === OPENAI_CODEX_PROVIDER_ID ? credential : undefined,
+    hasAuth: (providerId: string) => providerId === OPENAI_CODEX_PROVIDER_ID,
+    getProviderEnv: () => ({}),
+    getApiKey: async (providerId: string) => providerId === OPENAI_CODEX_PROVIDER_ID ? credential.access : undefined,
+  };
+}
+
+function createRealRegistryWithLegacyCodexCatalog() {
+  const registry = ModelRegistry.inMemory(createOpenAiCodexAuthStorage() as never) as unknown as ModelRegistry & { models: Array<Record<string, unknown>> };
+  registry.models = registry.models.filter((model) => model.provider !== OPENAI_CODEX_PROVIDER_ID || !EXPECTED_IDS.includes(String(model.id)));
+  return registry;
+}
 
 describe("SUPPLEMENTAL_OPENAI_CODEX_PROVIDER_REGISTRATION", () => {
   it("targets the openai-codex-responses API and ChatGPT backend baseUrl", () => {
@@ -130,5 +167,36 @@ describe("mergeSupplementalOpenAiCodexModels", () => {
 
     expect(() => mergeSupplementalOpenAiCodexModels(registry)).not.toThrow();
     expect(registeredProviders.has(OPENAI_CODEX_PROVIDER_ID)).toBe(true);
+  });
+
+  it("surfaces GPT-5.6 rows through the real ModelRegistry auth and full-replacement path", () => {
+    const registry = createRealRegistryWithLegacyCodexCatalog();
+    const beforeIds = registry.getAvailable()
+      .filter((model) => model.provider === OPENAI_CODEX_PROVIDER_ID)
+      .map((model) => model.id);
+    expect(beforeIds).not.toEqual(expect.arrayContaining(EXPECTED_IDS));
+    expect(beforeIds).toEqual(expect.arrayContaining(BUILT_IN_CODEX_IDS));
+
+    const warnings: string[] = [];
+    mergeSupplementalOpenAiCodexModels(registry, (message) => warnings.push(message));
+
+    expect(warnings).toEqual([]);
+    const codexRows = registry.getAvailable().filter((model) => model.provider === OPENAI_CODEX_PROVIDER_ID);
+    const codexIds = codexRows.map((model) => model.id);
+    expect(codexIds).toEqual(expect.arrayContaining([...BUILT_IN_CODEX_IDS, ...EXPECTED_IDS]));
+    expect(new Set(codexIds).size).toBe(codexIds.length);
+
+    for (const id of EXPECTED_IDS) {
+      const row = codexRows.find((model) => model.id === id);
+      expect(row).toMatchObject({
+        provider: OPENAI_CODEX_PROVIDER_ID,
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+        reasoning: true,
+        contextWindow: 372_000,
+        maxTokens: 128_000,
+      });
+      expect(row?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max", minimal: "low" });
+    }
   });
 });

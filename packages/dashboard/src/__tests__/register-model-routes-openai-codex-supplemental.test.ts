@@ -9,11 +9,51 @@ registry lacking these ids would never surface them even with openai-codex confi
 this suite encodes that failing-before/passing-after contract plus dedupe and the
 configuredProviders allow-list gate.
 */
+import { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Router } from "express";
 import { describe, expect, it, vi } from "vitest";
 import { registerModelRoutes } from "../routes/register-model-routes.js";
 
 const GPT_5_6_IDS = ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"];
+const BUILT_IN_CODEX_IDS = ["gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"];
+const OPENAI_CODEX_OAUTH_CREDENTIAL = {
+  refresh: "test-refresh-token",
+  access: "test-access-token",
+  expires: Date.now() + 60_000,
+};
+const OPENAI_CODEX_OAUTH_PROVIDER = {
+  id: "openai-codex",
+  name: "ChatGPT Plus/Pro (Codex Subscription)",
+  login: async () => OPENAI_CODEX_OAUTH_CREDENTIAL,
+  refreshToken: async () => OPENAI_CODEX_OAUTH_CREDENTIAL,
+  getApiKey: () => OPENAI_CODEX_OAUTH_CREDENTIAL.access,
+};
+
+function createOpenAiCodexAuthStorage(openAiCodexConfigured: boolean) {
+  const credential = {
+    type: "oauth",
+    access: "test-access-token",
+    refresh: "test-refresh-token",
+    expires: Date.now() + 60_000,
+  };
+
+  return {
+    reload: vi.fn(),
+    getOAuthProviders: vi.fn(() => [OPENAI_CODEX_OAUTH_PROVIDER]),
+    getApiKeyProviders: vi.fn(() => []),
+    get: vi.fn((providerId: string) => openAiCodexConfigured && providerId === "openai-codex" ? credential : undefined),
+    hasAuth: vi.fn((providerId: string) => openAiCodexConfigured && providerId === "openai-codex"),
+    hasApiKey: vi.fn(() => false),
+    getProviderEnv: vi.fn(() => ({})),
+    getApiKey: vi.fn(async (providerId: string) => openAiCodexConfigured && providerId === "openai-codex" ? credential.access : undefined),
+  };
+}
+
+function createRealModelRegistryWithLegacyCodexCatalog(authStorage: ReturnType<typeof createOpenAiCodexAuthStorage>) {
+  const registry = ModelRegistry.inMemory(authStorage as never) as unknown as ModelRegistry & { models: Array<Record<string, unknown>> };
+  registry.models = registry.models.filter((model) => model.provider !== "openai-codex" || !GPT_5_6_IDS.includes(String(model.id)));
+  return registry;
+}
 
 interface FakeOpenAiCodexModel {
   id: string;
@@ -61,7 +101,7 @@ function createFakeModelRegistry(initialOpenAiCodexModels: FakeOpenAiCodexModel[
   };
 }
 
-function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelRegistry>, options: { openAiCodexConfigured: boolean }) {
+function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelRegistry> | ModelRegistry, options: { openAiCodexConfigured: boolean }, authStorage = createOpenAiCodexAuthStorage(options.openAiCodexConfigured)) {
   const getHandlers = new Map<string, (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>>();
   const router = {
     get: vi.fn((path: string, handler: (req: unknown, res: { json: (body: unknown) => void }) => Promise<void>) => {
@@ -75,12 +115,6 @@ function createRouterHarness(modelRegistry: ReturnType<typeof createFakeModelReg
   };
 
   const runtimeLogger = { child: vi.fn(() => ({ warn: vi.fn() })) };
-
-  const authStorage = {
-    reload: vi.fn(),
-    getOAuthProviders: vi.fn(() => (options.openAiCodexConfigured ? [{ id: "openai-codex", name: "OpenAI Codex" }] : [])),
-    hasAuth: vi.fn((providerId: string) => options.openAiCodexConfigured && providerId === "openai-codex"),
-  };
 
   registerModelRoutes({
     router,
@@ -136,6 +170,35 @@ describe("FN-7745: GPT-5.6 codenamed OpenAI Codex variants — /api/models", () 
   it("does not surface the rows when openai-codex is not among the configured providers", async () => {
     const modelRegistry = createFakeModelRegistry([]);
     const handler = createRouterHarness(modelRegistry, { openAiCodexConfigured: false });
+
+    const response = await callModels(handler);
+    expect(response.models.some((m) => m.provider === "openai-codex")).toBe(false);
+  });
+
+  it("drives the real ModelRegistry path from supplemental merge through /api/models filtering", async () => {
+    const authStorage = createOpenAiCodexAuthStorage(true);
+    const modelRegistry = createRealModelRegistryWithLegacyCodexCatalog(authStorage);
+    const beforeIds = modelRegistry.getAvailable()
+      .filter((model) => model.provider === "openai-codex")
+      .map((model) => model.id);
+    expect(beforeIds).not.toEqual(expect.arrayContaining(GPT_5_6_IDS));
+    expect(beforeIds).toEqual(expect.arrayContaining(BUILT_IN_CODEX_IDS));
+
+    const handler = createRouterHarness(modelRegistry, { openAiCodexConfigured: true }, authStorage);
+
+    const response = await callModels(handler);
+    const codexRows = response.models.filter((m) => m.provider === "openai-codex");
+    const codexIds = codexRows.map((m) => m.id);
+    expect(codexIds).toEqual(expect.arrayContaining([...BUILT_IN_CODEX_IDS, ...GPT_5_6_IDS]));
+
+    const keys = response.models.map((m) => `${m.provider}/${m.id}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("keeps real-registry GPT-5.6 rows gated when openai-codex auth is absent", async () => {
+    const authStorage = createOpenAiCodexAuthStorage(false);
+    const modelRegistry = createRealModelRegistryWithLegacyCodexCatalog(authStorage);
+    const handler = createRouterHarness(modelRegistry, { openAiCodexConfigured: false }, authStorage);
 
     const response = await callModels(handler);
     expect(response.models.some((m) => m.provider === "openai-codex")).toBe(false);
