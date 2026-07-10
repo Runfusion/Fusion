@@ -1517,6 +1517,23 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
           return;
         }
 
+        /*
+        FNXC:ChatSlashCommands 2026-07-10-11:40:
+        Slash commands carry no attachments. Block dispatch (rather than silently dropping) when files are staged, since clearing the composer below revokes their object URLs before they could ever be sent.
+        */
+        if (files.length > 0) {
+          addToast(
+            t("chat.commandNoAttachments", "Attachments aren't supported with commands — remove them before sending"),
+            "warning",
+          );
+          return;
+        }
+
+        /*
+        FNXC:ChatSlashCommands 2026-07-10-11:40:
+        Clear the composer immediately on submit — BEFORE the network round-trip — not inside the success callback. Clearing late wipes any text the user typed while the command was in flight (composer-wipe race, FUX-015).
+        */
+        clearComposerState();
         void commandMatch.command
           .run({
             taskId: chatCommandContext.taskId,
@@ -1524,7 +1541,6 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
             remainder: commandMatch.remainder,
           })
           .then(() => {
-            clearComposerState();
             addToast(t("chat.commandSteerSuccess", "Sent to the running agent"), "success");
           })
           .catch((error: unknown) => {
@@ -2516,6 +2532,7 @@ export function ChatView({ projectId, addToast, floating = false, compactLayout 
       <input
         ref={fileInputRef}
         type="file"
+        data-testid="chat-file-input"
         accept="image/*,.txt,.json,.yaml,.yml,.log,.csv,.xml,.md"
         multiple
         style={{ display: "none" }}

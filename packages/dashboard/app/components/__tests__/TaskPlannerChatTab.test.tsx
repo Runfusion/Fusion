@@ -1687,5 +1687,43 @@ describe("TaskPlannerChatTab", () => {
       await screen.findByText("please /steer this");
       expect(mockAddSteeringComment).not.toHaveBeenCalled();
     });
+
+    // FUX-015 composer-wipe race: the draft is cleared on submit (before awaiting
+    // command.run), not in the success path, so text typed while the command is
+    // in flight is not wiped when run() resolves.
+    it("preserves text typed while the command is in flight (no late wipe on success)", async () => {
+      let resolveRun: () => void = () => {};
+      const runPromise = new Promise<void>((resolve) => { resolveRun = resolve; });
+      mockAddSteeringComment.mockReturnValueOnce(runPromise as unknown as ReturnType<typeof mockAddSteeringComment>);
+
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }), projectId: "proj-1" });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "/steer do X" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      // Draft cleared immediately on submit, before the command resolves.
+      await waitFor(() => expect(textarea).toHaveValue(""));
+      // User begins a new message while the command is still in flight.
+      fireEvent.change(textarea, { target: { value: "next message" } });
+
+      resolveRun();
+      await waitFor(() => expect(mockAddSteeringComment).toHaveBeenCalledWith("FN-7310", "do X", "proj-1"));
+      // The in-flight text must not be wiped by the success path.
+      expect(textarea).toHaveValue("next message");
+    });
+
+    // The planner command menu renders only commands (not skills), so its
+    // accessible copy must say "command", not the reused skill-menu copy.
+    it("labels the command menu with command-specific copy, not skill copy", async () => {
+      renderPlannerChat({ task: makeTask("FN-7310", { column: "in-progress" }) });
+      const textarea = await screen.findByLabelText("Message planner chat");
+
+      fireEvent.change(textarea, { target: { value: "/" } });
+
+      const menu = await screen.findByRole("listbox", { name: /command suggestions/i });
+      expect(menu).toBeInTheDocument();
+      expect(screen.queryByRole("listbox", { name: /skill suggestions/i })).not.toBeInTheDocument();
+    });
   });
 });

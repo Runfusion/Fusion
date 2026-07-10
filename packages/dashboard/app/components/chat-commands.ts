@@ -49,7 +49,7 @@ export interface ChatCommand {
  * entry point into that same, already-shipped mechanism, not a new backend
  * behavior.
  */
-export const CHAT_COMMANDS: ChatCommand[] = [
+export const CHAT_COMMANDS: readonly ChatCommand[] = [
   {
     trigger: "/steer",
     name: "steer",
@@ -76,7 +76,7 @@ export interface ChatCommandMatch {
  *     remainder character (e.g. "/steer" alone with nothing after it is not
  *     a dispatchable match and falls through to normal send behavior).
  */
-export function matchChatCommand(text: string, commands: ChatCommand[] = CHAT_COMMANDS): ChatCommandMatch | null {
+export function matchChatCommand(text: string, commands: readonly ChatCommand[] = CHAT_COMMANDS): ChatCommandMatch | null {
   for (const command of commands) {
     const prefix = `${command.trigger} `;
     if (!text.startsWith(prefix)) {
@@ -97,10 +97,10 @@ export function matchChatCommand(text: string, commands: ChatCommand[] = CHAT_CO
  * slash), so the menu can show commands and skills side by side using one
  * shared filter value.
  */
-export function filterChatCommands(filter: string, commands: ChatCommand[] = CHAT_COMMANDS): ChatCommand[] {
+export function filterChatCommands(filter: string, commands: readonly ChatCommand[] = CHAT_COMMANDS): ChatCommand[] {
   const normalized = filter.trim().toLowerCase();
   if (!normalized) {
-    return commands;
+    return [...commands];
   }
   return commands.filter((command) =>
     command.name.toLowerCase().includes(normalized)

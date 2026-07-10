@@ -701,9 +701,13 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
       return;
     }
 
+    /*
+    FNXC:ChatSlashCommands 2026-07-10-11:40:
+    Clear the draft immediately on submit — BEFORE awaiting command.run — not after it resolves. Clearing in the success path wipes any text the user typed while the command was in flight (composer-wipe race, FUX-015).
+    */
+    setDraft("");
     try {
       await command.run({ taskId: task.id, projectId, remainder });
-      setDraft("");
       // Reuse the existing steering-refresh path (same toast + task refresh already
       // used by the tool-call-driven steering flow above) instead of a second,
       // divergent success toast for the same underlying action.
@@ -1060,10 +1064,10 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
           className="chat-skill-menu task-planner-chat-command-menu"
           data-testid="task-planner-chat-command-menu"
           role="listbox"
-          aria-label={t("chat.skillSuggestions", "Skill suggestions")}
+          aria-label={t("chat.commandSuggestions", "Command suggestions")}
         >
           {filteredCommands.length === 0 ? (
-            <div className="chat-skill-menu-empty">{t("chat.noSkillsFound", "No skills found")}</div>
+            <div className="chat-skill-menu-empty">{t("chat.noCommandsFound", "No commands found")}</div>
           ) : (
             filteredCommands.map((command, index) => (
               <button

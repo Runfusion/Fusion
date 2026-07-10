@@ -225,7 +225,12 @@ describe("ChatView slash-command dispatch (/steer)", () => {
     expect(screen.getByText(/no running agent/i)).toBeInTheDocument();
   });
 
-  it("leaves the composer text intact and shows an error toast when run() fails", async () => {
+  // FUX-015 composer-wipe race: the composer is cleared on submit — BEFORE the
+  // network round-trip — so text the user types while the command is in flight
+  // is never wiped by a late callback. This matches normal chat send (which also
+  // clears immediately and does not restore on failure), so the composer stays
+  // empty after run() rejects; the error is surfaced via a toast.
+  it("clears the composer on submit and shows an error toast when run() fails", async () => {
     const sendMessage = vi.fn();
     setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
     mockAddSteeringComment.mockRejectedValueOnce(new Error("network down"));
@@ -240,6 +245,60 @@ describe("ChatView slash-command dispatch (/steer)", () => {
     fireEvent.keyDown(textarea, { key: "Enter" });
 
     await waitFor(() => expect(addToast).toHaveBeenCalledWith("network down", "error"));
+    expect(textarea).toHaveValue("");
+  });
+
+  // FUX-015 composer-wipe race: text typed AFTER submit (while the command is
+  // in flight) must survive the success callback — success no longer clears.
+  it("preserves text typed while the command is in flight (no late wipe on success)", async () => {
+    const sendMessage = vi.fn();
+    setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
+    let resolveRun: () => void = () => {};
+    const runPromise = new Promise<void>((resolve) => { resolveRun = resolve; });
+    mockAddSteeringComment.mockReturnValueOnce(runPromise as unknown as ReturnType<typeof addSteeringComment>);
+    const addToast = vi.fn();
+
+    await renderWithAct(
+      <ChatView projectId="proj-123" addToast={addToast} chatCommandContext={commandContext} />,
+    );
+
+    const textarea = screen.getByTestId("chat-input");
+    fireEvent.change(textarea, { target: { value: "/steer do X" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    // Composer cleared immediately on submit, before the command resolves.
+    await waitFor(() => expect(textarea).toHaveValue(""));
+    // User starts typing a new message while the command is still in flight.
+    fireEvent.change(textarea, { target: { value: "next message" } });
+
+    resolveRun();
+    await waitFor(() => expect(addToast).toHaveBeenCalledWith(expect.any(String), "success"));
+    // The in-flight text must not be wiped by the success callback.
+    expect(textarea).toHaveValue("next message");
+  });
+
+  it("blocks command dispatch and warns when attachments are staged", async () => {
+    const sendMessage = vi.fn();
+    setupMockChat({ activeSession: activeSessionFixture, messages: [], sendMessage });
+    const addToast = vi.fn();
+
+    await renderWithAct(
+      <ChatView projectId="proj-123" addToast={addToast} chatCommandContext={commandContext} />,
+    );
+
+    const textarea = screen.getByTestId("chat-input");
+    const file = new File(["hi"], "note.txt", { type: "text/plain" });
+    const fileInput = screen.getByTestId("chat-file-input");
+    await userEvent.upload(fileInput, file);
+
+    fireEvent.change(textarea, { target: { value: "/steer do X" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith(expect.stringMatching(/attachment/i), "warning"),
+    );
+    expect(mockAddSteeringComment).not.toHaveBeenCalled();
+    // Command was blocked, not sent — the composed text is preserved for the user to fix.
     expect(textarea).toHaveValue("/steer do X");
   });
 });
