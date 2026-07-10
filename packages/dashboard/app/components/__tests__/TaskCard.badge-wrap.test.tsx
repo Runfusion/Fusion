@@ -123,15 +123,81 @@ describe("TaskCard badge wrapping (FN-5162)", () => {
     expect(styles.whiteSpace).toBe("nowrap");
   });
 
+  it("places the agent badge in a left-aligned bottom row outside the header badge cluster", () => {
+    const agentRow = container.querySelector(".card-agent-badge-row") as HTMLElement;
+    const agentBadge = container.querySelector(".card-agent-created-badge") as HTMLElement;
+    const header = container.querySelector(".card-header") as HTMLElement;
+    const metaBadges = container.querySelector(".card-meta-badges") as HTMLElement;
+
+    expect(agentRow).toBeTruthy();
+    expect(agentBadge).toBeTruthy();
+    expect(agentRow.contains(agentBadge)).toBe(true);
+    expect(header.contains(agentBadge)).toBe(false);
+    expect(metaBadges.contains(agentBadge)).toBe(false);
+    expect(agentBadge.getAttribute("title")).toBe("Created by agent: agent-badge-wrap");
+    expect(agentBadge.getAttribute("aria-label")).toBe("Created by agent: agent-badge-wrap");
+    expect(agentBadge.querySelector(".visually-hidden")?.textContent).toBe("Created by agent: agent-badge-wrap");
+    expect(agentBadge.querySelector("span[aria-hidden='true']")?.textContent).toBe("agent-badge-...");
+
+    const styles = getComputedStyle(agentRow);
+    expect(styles.display).toBe("flex");
+    expect(styles.justifyContent).toBe("flex-start");
+    expect(styles.minWidth).toBe("0px");
+  });
+
+  it("does not render an empty header badge shell when the agent badge is the only grouped affordance", () => {
+    const { container: agentOnlyContainer } = render(
+      <TaskCard
+        task={makeTask({
+          priority: "normal" as Task["priority"],
+          executionMode: "standard",
+          sourceType: "agent_heartbeat",
+          sourceAgentId: "agent-only",
+          plannerOversightLevel: "off",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    const agentBadge = agentOnlyContainer.querySelector(".card-agent-created-badge");
+    expect(agentBadge).not.toBeNull();
+    expect(agentBadge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(agentBadge?.closest(".card-header")).toBeNull();
+    expect(agentOnlyContainer.querySelector(".card-meta-badges")).toBeNull();
+  });
+
+  it("omits the agent bottom row for non-agent-created tasks", () => {
+    const { container: nonAgentContainer } = render(
+      <TaskCard
+        task={makeTask({
+          priority: "normal" as Task["priority"],
+          executionMode: "standard",
+          sourceType: "dashboard_ui",
+          sourceAgentId: undefined,
+          plannerOversightLevel: "off",
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
+
+    expect(nonAgentContainer.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(nonAgentContainer.querySelector(".card-agent-badge-row")).toBeNull();
+    expect(nonAgentContainer.querySelector(".card-meta-badges")).toBeNull();
+  });
+
   it("places the workflow badge in a left-aligned bottom row outside the header badge cluster", () => {
     const workflowRow = container.querySelector(".card-workflow-badge-row") as HTMLElement;
     const workflowBadge = container.querySelector(".card-workflow-badge") as HTMLElement;
     const metaBadges = container.querySelector(".card-meta-badges") as HTMLElement;
+    const agentRow = container.querySelector(".card-agent-badge-row") as HTMLElement;
 
     expect(workflowRow).toBeTruthy();
     expect(workflowBadge).toBeTruthy();
     expect(workflowRow.contains(workflowBadge)).toBe(true);
     expect(metaBadges.contains(workflowBadge)).toBe(false);
+    expect(agentRow.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     const styles = getComputedStyle(workflowRow);
     expect(styles.display).toBe("flex");

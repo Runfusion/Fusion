@@ -2704,7 +2704,6 @@ function TaskCardComponent({
    */
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
-    || isAgentCreated
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
     // metadata (absent for the common "off" default) — include it in the wrapper
     // guard so `.card-meta-badges` only renders when it has a real child.
@@ -2981,17 +2980,6 @@ function TaskCardComponent({
               >
                 <Zap aria-hidden="true" />
                 <span className="visually-hidden">{t("tasks.fastMode", "Fast mode")}</span>
-              </span>
-            )}
-            {isAgentCreated && (
-              <span
-                className="card-agent-created-badge"
-                title={agentCreatedTitle}
-                aria-label={agentCreatedTitle}
-              >
-                <Bot size={11} aria-hidden="true" />
-                <span className="visually-hidden">{agentCreatedTitle}</span>
-                <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
               </span>
             )}
             {showOversightBadge && (
@@ -3542,6 +3530,23 @@ function TaskCardComponent({
             </button>
           )}
           {showInReviewMoveControl && !metaRowVisible && renderInReviewMoveControl()}
+        </div>
+      )}
+      {isAgentCreated && (
+        <div className="card-agent-badge-row" data-testid="card-agent-badge-row">
+          {/**
+           * FNXC:TaskCardLayout 2026-07-10-00:00:
+           * FN-7780 moves the created-by-agent chip below the task content and before the workflow identity row so the header keeps only ID/status/actions metadata and no longer wraps on narrow/mobile cards. The badge content, tooltip, and accessible name remain unchanged.
+           */}
+          <span
+            className="card-agent-created-badge"
+            title={agentCreatedTitle}
+            aria-label={agentCreatedTitle}
+          >
+            <Bot size={11} aria-hidden="true" />
+            <span className="visually-hidden">{agentCreatedTitle}</span>
+            <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
+          </span>
         </div>
       )}
       {hasWorkflowBadge && (

@@ -2594,7 +2594,7 @@ describe("TaskCard", () => {
   });
 
 
-  it("keeps priority, fast mode, and agent-created in meta while time moves to footer", () => {
+  it("keeps priority and fast mode in meta while agent-created and time move to bottom rows", () => {
 
     const { container } = render(
       <TaskCard
@@ -2618,7 +2618,6 @@ describe("TaskCard", () => {
     const expectedMetaSelectors = [
       ".card-priority-badge",
       ".card-execution-mode-badge",
-      ".card-agent-created-badge",
     ];
     expectedMetaSelectors.forEach((selector) => {
 
@@ -2637,10 +2636,15 @@ describe("TaskCard", () => {
     // longer renders a per-card badge (FN-7539) — an inherited default is not
     // meaningfully-configured oversight, so it does not appear among the
     // opt-in meta badges here.
+    const agentBadge = container.querySelector(".card-agent-created-badge");
+    expect(agentBadge).not.toBeNull();
+    expect(agentBadge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(agentBadge?.closest(".card-meta-badges")).toBeNull();
+    expect(agentBadge?.closest(".card-header")).toBeNull();
+
     expect(Array.from(group?.children ?? []).map((child) => child.className)).toEqual([
       "card-priority-badge card-priority-badge--high",
       "card-execution-mode-badge card-execution-mode-badge--fast",
-      "card-agent-created-badge",
     ]);
   });
 
@@ -2663,7 +2667,8 @@ describe("TaskCard", () => {
     expect(group).not.toBeNull();
     expect(group?.querySelector(".card-priority-badge")).not.toBeNull();
     expect(group?.querySelector(".card-execution-mode-badge")).not.toBeNull();
-    expect(group?.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(group?.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-created-badge")?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(group?.querySelector(".card-time-indicator")).toBeNull();
     expect(container.querySelector(".card-footer-row")).toBeNull();
     expect(container.querySelector(".card-footer-row-right")).toBeNull();
@@ -2706,6 +2711,7 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-priority-badge")).toBeNull();
     expect(container.querySelector(".card-execution-mode-badge")).toBeNull();
     expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-badge-row")).toBeNull();
 
   });
 
@@ -4497,7 +4503,10 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(badge?.closest(".card-header")).toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Task Robot");
+    expect(badge?.getAttribute("aria-label")).toBe("Created by agent: Task Robot");
     expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Task Robot");
     expect(badge?.querySelector(".visually-hidden")?.textContent).toBe("Created by agent: Task Robot");
   });
@@ -4518,6 +4527,8 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(badge?.closest(".card-meta-badges")).toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Scheduler Bot");
     expect(badge?.getAttribute("aria-label")).toBe("Created by agent: Scheduler Bot");
   });
@@ -4539,6 +4550,7 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Legacy Robot");
     expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Legacy Robot");
   });
@@ -4559,7 +4571,9 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent");
+    expect(badge?.getAttribute("aria-label")).toBe("Created by agent");
     expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Agent");
     expect(badge?.querySelector(".visually-hidden")?.textContent).toBe("Created by agent");
   });
@@ -4579,6 +4593,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-badge-row")).toBeNull();
   });
 
   it("coexists with GitHub badge and timer metadata", () => {
@@ -4606,7 +4621,7 @@ describe("TaskCard", () => {
 
     expect(container.querySelector(".card-github-badge")).not.toBeNull();
     expect(container.querySelector(".card-source-provenance")).not.toBeNull();
-    expect(container.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(container.querySelector(".card-agent-created-badge")?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(container.querySelector(".card-time-indicator")).not.toBeNull();
   });
 
@@ -5813,7 +5828,7 @@ describe("TaskCard workflow badges", () => {
     expect(screen.queryByTestId("card-workflow-badge-row")).toBeNull();
   });
 
-  it("keeps top badges in the meta cluster while rendering workflow identity below card rows", () => {
+  it("keeps top badges in the meta cluster while rendering agent and workflow identity below card rows", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T12:10:00.000Z"));
 
@@ -5839,11 +5854,16 @@ describe("TaskCard workflow badges", () => {
     const metaBadges = screen.getByTestId("card-meta-badges");
     const badge = screen.getByTestId("card-workflow-badge");
     const workflowRow = screen.getByTestId("card-workflow-badge-row");
+    const agentRow = screen.getByTestId("card-agent-badge-row");
+    const agentBadge = container.querySelector(".card-agent-created-badge");
     expect(metaBadges.querySelector(".card-priority-badge")).not.toBeNull();
     expect(metaBadges.querySelector(".card-execution-mode-badge")).not.toBeNull();
-    expect(metaBadges.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-agent-created-badge")).toBeNull();
     expect(metaBadges.querySelector(".card-workflow-badge")).toBeNull();
+    expect(agentRow).toContainElement(agentBadge as HTMLElement);
+    expect(agentBadge?.closest(".card-header")).toBeNull();
     expect(workflowRow).toContainElement(badge);
+    expect(agentRow.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     [".card-footer-row", ".card-meta", ".card-agent-row"].forEach((selector) => {
       const row = container.querySelector(selector);
