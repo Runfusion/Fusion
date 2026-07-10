@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SettingsModal } from "../SettingsModal";
+import { SettingsModal, SettingsView } from "../SettingsModal";
 import type { Settings } from "@fusion/core";
 
 
@@ -150,7 +150,7 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   })),
 }));
 
-import { fetchSettings, updateSettings } from "../../api";
+import { fetchDashboardHealth, fetchSettings, updateSettings } from "../../api";
 
 function mockSettingsViewport(matches: boolean): void {
   Object.defineProperty(window, "matchMedia", {
@@ -240,19 +240,45 @@ describe("SettingsModal mobile adaptations", () => {
     expect(modalHeader?.contains(version)).toBe(false);
   });
 
-  it("keeps update-check button clickable from the footer", async () => {
+  it("keeps update-check button clickable from the standalone and embedded mobile footers", async () => {
     mockSettingsViewport(true);
     const user = userEvent.setup();
-    const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    const standalone = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const modalActions = container.querySelector(".modal-actions");
+    const standaloneActions = standalone.container.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
+    expect(standaloneActions).toBeTruthy();
+
+    const standaloneUpdateButton = within(standaloneActions as HTMLElement).getByRole("button", { name: "Check for updates" });
+    await user.click(standaloneUpdateButton);
+    expect(standaloneUpdateButton.closest(".settings-modal-footer-version")).toBeTruthy();
+
+    standalone.unmount();
+    vi.clearAllMocks();
+
+    const embedded = render(<SettingsView onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const embeddedActions = embedded.container.querySelector(".settings-modal--embedded .modal-actions");
+    expect(embeddedActions).toBeTruthy();
+    const embeddedUpdateButton = within(embeddedActions as HTMLElement).getByRole("button", { name: "Check for updates" });
+    await user.click(embeddedUpdateButton);
+    expect(embeddedUpdateButton.closest(".settings-modal-footer-version")).toBeTruthy();
+  });
+
+  it("omits the version button when appVersion is unavailable without removing the footer rail", async () => {
+    vi.mocked(fetchDashboardHealth).mockResolvedValueOnce({ status: "ok", version: "", uptime: 120 });
+    mockSettingsViewport(true);
+    const { container, queryByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(fetchDashboardHealth).toHaveBeenCalled());
+
+    const modalActions = container.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
     expect(modalActions).toBeTruthy();
-
-    const updateButton = within(modalActions as HTMLElement).getByRole("button", { name: "Check for updates" });
-    await user.click(updateButton);
-
-    expect(updateButton).toBeTruthy();
+    expect(within(modalActions as HTMLElement).getByRole("link", { name: "Help and discussions" })).toBeTruthy();
+    expect(queryByRole("button", { name: "Check for updates" })).toBeNull();
+    expect(container.querySelector(".settings-modal-footer-version")).toBeTruthy();
+    expect(container.querySelector(".settings-update-check")).toBeTruthy();
   });
 
   it("keeps update-now button reachable from the mobile footer", async () => {
@@ -540,11 +566,23 @@ describe("SettingsModal mobile adaptations", () => {
     expectMobileRule(css, ".settings-preset-item", "flex-direction: column;");
     expectMobileRule(css, ".settings-preset-item-actions", "justify-content: flex-start;");
     expectMobileRule(css, ".settings-preset-size-grid", "grid-template-columns: 1fr;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "padding-block: var(--space-xs);");
     expectMobileRule(css, ".settings-modal .modal-actions", "flex-wrap: nowrap;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "align-items: center;");
     expectMobileRule(css, ".settings-modal .modal-actions", "overflow-x: auto;");
-    expectMobileRule(css, ".settings-update-check", "flex-wrap: nowrap;");
-    expect(css).toContain(".settings-modal .modal-header,\n  .settings-modal .modal-actions");
-    expect(css).toContain("padding-block: var(--space-sm);");
+    expectMobileRule(css, ".settings-modal .modal-actions-left", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .modal-actions-right", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "align-self: center;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "flex: 0 0 auto;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "min-width: max-content;");
+    expectMobileRule(css, ".settings-modal .settings-update-check", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .settings-update-check", "flex-wrap: nowrap;");
+    expectMobileRule(css, ".settings-modal .settings-version-check-btn", "line-height: 1;");
+    expectMobileRule(css, ".settings-modal .settings-version-check-btn", "white-space: nowrap;");
+    expectMobileRule(css, ".settings-modal .settings-modal-version", "display: inline-flex;");
+    expectMobileRule(css, ".settings-modal .settings-modal-version", "line-height: 1;");
+    expectMobileRule(css, ".settings-modal .settings-modal-version", "white-space: nowrap;");
+    expect(css).toContain(".settings-modal .modal-header {\n    padding-block: var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section)", "margin-left: auto;");
     expectMobileRule(css, ".auth-apikey-section", "align-items: flex-end;");
     expectMobileRule(css, ".auth-apikey-input-row", "justify-content: flex-end;");

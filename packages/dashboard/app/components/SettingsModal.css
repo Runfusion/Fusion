@@ -246,10 +246,17 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
   /*
   FNXC:Settings 2026-07-09-00:00:
   FN-7752 makes the mobile Settings header and footer shorter at ≤768px only. Keep the FN-4375 one-line header invariant while trimming vertical padding in both standalone modal and embedded SettingsView presentations.
+
+  FNXC:Settings 2026-07-10-00:00:
+  FN-7773 further tightens only the mobile footer rail so Version, Help, Import/Export, Reset, and Save read as one contained row without affecting desktop/tablet sizing.
   */
-  .settings-modal .modal-header,
-  .settings-modal .modal-actions {
+  .settings-modal .modal-header {
     padding-block: var(--space-sm);
+    padding-inline: var(--space-md);
+  }
+
+  .settings-modal .modal-actions {
+    padding-block: var(--space-xs);
     padding-inline: var(--space-md);
   }
 
@@ -304,6 +311,9 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
   /*
   FNXC:Settings 2026-07-09-00:00:
   FN-7752 requires the mobile Settings footer to remain a single horizontal row in both standalone and embedded presentations. Keep Version/Help, Export/Import/Reset, and Cancel/Save on one nowrap rail that can scroll horizontally instead of stacking into multiple rows.
+
+  FNXC:Settings 2026-07-10-00:00:
+  FN-7773 fixes the observed mobile overlap by centering every footer sub-region on the rail and making the Version text a non-wrapping inline box. Keep these selectors under the mobile media query so desktop/tablet footer flow remains unchanged.
   */
   .settings-modal .modal-actions {
     flex-wrap: nowrap;
@@ -313,30 +323,57 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
     overflow-y: hidden;
   }
 
-  .settings-modal .modal-actions-left,
-  .settings-modal .modal-actions-right {
+  .settings-modal .modal-actions-left {
+    align-items: center;
     flex-shrink: 0;
     gap: var(--space-xs);
   }
 
-  .settings-modal-footer-version {
-    flex: 0 1 auto;
-    margin-right: 0;
+  .settings-modal .modal-actions-right {
+    align-items: center;
+    flex-shrink: 0;
+    gap: var(--space-xs);
   }
 
-  .settings-update-check {
+  .settings-modal .settings-modal-footer-version {
+    align-items: center;
+    align-self: center;
+    flex: 0 0 auto;
+    margin-right: 0;
+    min-width: max-content;
+  }
+
+  .settings-modal .settings-update-check {
+    align-items: center;
     flex-wrap: nowrap;
     row-gap: 0;
   }
 
-  .settings-update-result {
+  .settings-modal .settings-update-result {
+    align-self: center;
     flex: 0 1 auto;
+    line-height: 1;
     white-space: nowrap;
   }
 
-  .settings-footer-help-btn,
-  .settings-version-check-btn {
+  .settings-modal .settings-footer-help-btn {
+    align-items: center;
     flex-shrink: 0;
+  }
+
+  .settings-modal .settings-version-check-btn {
+    align-items: center;
+    flex-shrink: 0;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .settings-modal .settings-modal-version {
+    align-items: center;
+    display: inline-flex;
+    flex-shrink: 0;
+    line-height: 1;
+    white-space: nowrap;
   }
 }
 
