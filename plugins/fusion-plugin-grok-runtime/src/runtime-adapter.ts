@@ -32,6 +32,9 @@ does, same `streamEnded`-guarded (via the existing `settled` flag)
 resolve-never-reject lifecycle as before. This adapter is only reached when
 an agent's `runtimeConfig.runtimeHint === "grok"` (wired end-to-end by
 FN-7725).
+
+FNXC:GrokCliRouting 2026-07-09-00:00:
+FN-7753: auto-derived `grok` runtime routing from a `grok-cli/*` model selection must preserve the concrete model. Normalize provider-qualified ids (`grok-cli/<id>` or `grok/<id>`) at session creation/prompt time and pass only the concrete id to `grok --model`; the no-model Runtime-mode path keeps the historical `grok/default` session fallback and omits `--model`.
 */
 
 /**
@@ -71,6 +74,23 @@ function parseToolArguments(raw: string | undefined): unknown {
   }
 }
 
+function normalizeGrokCliModel(model: string | undefined): string | undefined {
+  const normalized = model?.trim();
+  if (!normalized) return undefined;
+  for (const prefix of ["grok-cli/", "grok/"]) {
+    if (normalized.startsWith(prefix)) {
+      const stripped = normalized.slice(prefix.length).trim();
+      return stripped.length > 0 ? stripped : undefined;
+    }
+  }
+  return normalized;
+}
+
+function modelForCli(model: string | undefined): string | undefined {
+  const normalized = normalizeGrokCliModel(model);
+  return normalized && normalized !== "default" ? normalized : undefined;
+}
+
 export interface GrokRuntimeAdapterOptions {
   /** Binary name/path to invoke. Defaults to "grok" (PATH resolution). */
   binary?: string;
@@ -99,7 +119,7 @@ export class GrokRuntimeAdapter implements AgentRuntime {
       onToolEnd?: (toolName: string, isError: boolean, result?: unknown) => void;
     } = {},
   ): Promise<AgentSessionResult> {
-    const model = options.defaultModelId ?? "grok/default";
+    const model = normalizeGrokCliModel(options.defaultModelId) ?? "grok/default";
     const session: GrokSession = {
       model,
       systemPrompt: options.systemPrompt,
@@ -124,7 +144,7 @@ export class GrokRuntimeAdapter implements AgentRuntime {
     return new Promise<void>((resolve) => {
       let proc: GrokStreamProcess;
       try {
-        proc = this.spawnFn(this.binary, prompt, { cwd, signal });
+        proc = this.spawnFn(this.binary, prompt, { cwd, model: modelForCli(grokSession.model), signal });
       } catch {
         // Spawn threw synchronously (e.g. binary not found without shell
         // resolution) — resolve, never reject, matching the CLI-adapter

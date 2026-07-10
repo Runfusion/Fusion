@@ -192,6 +192,37 @@ function cloneGrokProviderRegistration(config: GrokProviderRegistration): GrokPr
  * `~/.grok/user-settings.json` path), kept synchronous here because
  * `registerBuiltInGrokProvider` itself is synchronous.
  */
+function readGrokUserSettingsApiKey(): string | undefined {
+  const settingsPath = join(homedir(), ".grok", "user-settings.json");
+  const raw = readFileSync(settingsPath, "utf-8");
+  const parsed = JSON.parse(raw) as { apiKey?: unknown };
+  return typeof parsed?.apiKey === "string" && parsed.apiKey.trim().length > 0
+    ? parsed.apiKey.trim()
+    : undefined;
+}
+
+/**
+ * FNXC:ProviderAuth 2026-07-09-00:00:
+ * FN-7753 needs a read-only, synchronous key-visibility predicate before runtime
+ * resolution chooses between the direct xAI endpoint and the `grok` CLI runtime.
+ * Mirror hydrateGrokApiKeyFromUserSettings/probeGrokApiKeyPresence exactly:
+ * non-empty `GROK_API_KEY` env wins; otherwise inspect `~/.grok/user-settings.json`
+ * for a non-empty `apiKey`; missing, unreadable, malformed, or keyless files are
+ * ordinary false results. Never mutate process.env and never log key material.
+ */
+export function isGrokApiKeyFusionVisible(): boolean {
+  const envKey = process.env.GROK_API_KEY;
+  if (typeof envKey === "string" && envKey.trim().length > 0) {
+    return true;
+  }
+
+  try {
+    return readGrokUserSettingsApiKey() !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export function hydrateGrokApiKeyFromUserSettings(
   logWarning: (message: string) => void = () => {},
 ): void {
@@ -202,11 +233,9 @@ export function hydrateGrokApiKeyFromUserSettings(
   }
 
   try {
-    const settingsPath = join(homedir(), ".grok", "user-settings.json");
-    const raw = readFileSync(settingsPath, "utf-8");
-    const parsed = JSON.parse(raw) as { apiKey?: unknown };
-    if (typeof parsed?.apiKey === "string" && parsed.apiKey.trim().length > 0) {
-      process.env.GROK_API_KEY = parsed.apiKey.trim();
+    const apiKey = readGrokUserSettingsApiKey();
+    if (apiKey) {
+      process.env.GROK_API_KEY = apiKey;
     }
   } catch (error) {
     // Fail-soft: a missing (ENOENT), malformed, or unreadable settings file must never throw

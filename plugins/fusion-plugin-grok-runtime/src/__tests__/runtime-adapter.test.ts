@@ -31,6 +31,34 @@ describe("GrokRuntimeAdapter", () => {
     expect(result.session.systemPrompt).toBe("sys");
   });
 
+  it("passes the normalized selected model to the CLI spawn seam", async () => {
+    const { proc } = makeFakeProc();
+    const spawn = vi.fn().mockReturnValue(proc);
+    const adapter = new GrokRuntimeAdapter({ spawn });
+    const { session } = await adapter.createSession({ defaultModelId: "grok-cli/grok-4.5" });
+
+    const promise = adapter.promptWithFallback(session, "hello grok");
+    proc.emit("close", 0, null);
+    await promise;
+
+    expect(session.model).toBe("grok-4.5");
+    expect(spawn).toHaveBeenCalledWith("grok", "hello grok", expect.objectContaining({ model: "grok-4.5" }));
+  });
+
+  it("omits --model for the no-model grok/default fallback", async () => {
+    const { proc } = makeFakeProc();
+    const spawn = vi.fn().mockReturnValue(proc);
+    const adapter = new GrokRuntimeAdapter({ spawn });
+    const { session } = await adapter.createSession({});
+
+    const promise = adapter.promptWithFallback(session, "hello grok");
+    proc.emit("close", 0, null);
+    await promise;
+
+    expect(session.model).toBe("grok/default");
+    expect(spawn).toHaveBeenCalledWith("grok", "hello grok", expect.objectContaining({ model: undefined }));
+  });
+
   it("streams onText for each text NDJSON event in order and resolves on close", async () => {
     const { proc, stdout } = makeFakeProc();
     const spawn = vi.fn().mockReturnValue(proc);

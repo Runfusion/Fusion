@@ -7,6 +7,7 @@ import {
   GROK_CLI_PROVIDER_ID,
   GROK_PROVIDER_REGISTRATION,
   hydrateGrokApiKeyFromUserSettings,
+  isGrokApiKeyFusionVisible,
   registerBuiltInGrokProvider,
 } from "../grok-provider.js";
 
@@ -29,6 +30,51 @@ mirrors probe.test.ts's fallback/precedence/fail-soft matrix so the $GROK_API_KE
 reference resolves from ~/.grok/user-settings.json when the env var is unset, without ever
 overwriting an operator-provided env value or throwing on a missing/malformed file.
 */
+describe("isGrokApiKeyFusionVisible", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.GROK_API_KEY;
+  });
+
+  it("returns true when env is set and does not read the settings file", () => {
+    process.env.GROK_API_KEY = " xai-from-env ";
+
+    expect(isGrokApiKeyFusionVisible()).toBe(true);
+    expect(readFileSync).not.toHaveBeenCalled();
+  });
+
+  it("returns true when env is unset and user settings has a non-empty apiKey without mutating env", () => {
+    vi.mocked(readFileSync).mockReturnValueOnce(JSON.stringify({ apiKey: " xai-from-file " }));
+
+    expect(isGrokApiKeyFusionVisible()).toBe(true);
+    expect(process.env.GROK_API_KEY).toBeUndefined();
+  });
+
+  it("returns false for a missing settings file without throwing or mutating env", () => {
+    const enoent = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    vi.mocked(readFileSync).mockImplementationOnce(() => {
+      throw enoent;
+    });
+
+    expect(() => isGrokApiKeyFusionVisible()).not.toThrow();
+    expect(isGrokApiKeyFusionVisible()).toBe(false);
+    expect(process.env.GROK_API_KEY).toBeUndefined();
+  });
+
+  it("returns false for empty, malformed, or keyless settings without throwing or mutating env", () => {
+    vi.mocked(readFileSync)
+      .mockReturnValueOnce(JSON.stringify({ apiKey: "   " }))
+      .mockReturnValueOnce("not json")
+      .mockReturnValueOnce(JSON.stringify({}));
+
+    expect(isGrokApiKeyFusionVisible()).toBe(false);
+    expect(() => isGrokApiKeyFusionVisible()).not.toThrow();
+    expect(isGrokApiKeyFusionVisible()).toBe(false);
+    expect(process.env.GROK_API_KEY).toBeUndefined();
+  });
+});
+
 describe("hydrateGrokApiKeyFromUserSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();

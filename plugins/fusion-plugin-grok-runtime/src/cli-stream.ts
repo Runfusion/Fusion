@@ -18,6 +18,7 @@ export type GrokStreamProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 export interface SpawnGrokStreamOptions {
   cwd?: string;
+  model?: string;
   signal?: AbortSignal;
 }
 
@@ -30,6 +31,11 @@ export interface SpawnGrokStreamOptions {
  */
 export function spawnGrokStream(binary: string, prompt: string, options?: SpawnGrokStreamOptions): GrokStreamProcess {
   const args: string[] = ["--prompt", prompt, "--format", "json"];
+  const model = options?.model?.trim();
+  if (model) {
+    // FNXC:GrokCliRouting 2026-07-09-00:00: FN-7753 preserves a selected `grok-cli/*` model when auto-routing through the CLI; upstream verifies `--model <model>` alongside `--prompt`/`--format json`.
+    args.push("--model", model);
+  }
   if (options?.cwd) {
     args.push("--directory", options.cwd);
   }

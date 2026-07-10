@@ -76,18 +76,23 @@ grok --prompt "<text>" --format json
   `~/.grok/user-settings.json`), a CLI-routed selection needs **no
   Fusion-visible `GROK_API_KEY`** — unlike the direct xAI
   OpenAI-compatible streaming path (`https://api.x.ai/v1`), which still
-  requires one.
-- This adapter is only reached when an agent's
-  `runtimeConfig.runtimeHint === "grok"`. See "Routing Grok through the CLI
-  runtime (FN-7725)" below for how to set that, and
+  requires one. When Fusion auto-routes a no-key `grok-cli/*` model selection
+  through this adapter (FN-7753), the selected model id is passed to the CLI
+  with `--model <id>`.
+- This adapter is reached either when an agent explicitly sets
+  `runtimeConfig.runtimeHint === "grok"` or when FN-7753's no-visible-key
+  `grok-cli/*` fallback derives that hint automatically. See "Routing Grok
+  through the CLI runtime (FN-7725 / FN-7753)" below and
   `docs/grok-cli-contract.md` for the full contract and decision record.
 
-## Routing Grok through the CLI runtime (FN-7725)
+## Routing Grok through the CLI runtime (FN-7725 / FN-7753)
 
-By default, selecting a `grok-cli/*` **model** for an agent/task still routes
-execution through the **direct xAI OpenAI-compatible endpoint**
-(`https://api.x.ai/v1`, FN-7711/FN-7714) — this default is unchanged by this
-plugin.
+By default, selecting a `grok-cli/*` **model** for an agent/task routes through
+the **direct xAI OpenAI-compatible endpoint** (`https://api.x.ai/v1`,
+FN-7711/FN-7714) whenever Fusion can see a `GROK_API_KEY` (environment or
+`~/.grok/user-settings.json` `apiKey`). If no Fusion-visible key resolves and
+the Grok Runtime plugin is registered, Fusion automatically routes that session
+through the `grok` CLI runtime instead, letting the CLI own auth end-to-end.
 
 To route a specific agent's execution through the `grok` CLI's own
 non-interactive streaming mode (`grok --prompt --format json`) instead:
@@ -104,16 +109,19 @@ non-interactive streaming mode (`grok --prompt --format json`) instead:
    child agent) resolves through `packages/engine/src/runtime-resolution.ts`
    to this plugin's `GrokRuntimeAdapter` instead of the default pi runtime.
 
-**Known limitation:** Runtime-mode is model-agnostic — it does not carry a
-specific `grok-cli/*` model id through to the adapter, so
-`GrokRuntimeAdapter.createSession()` always falls back to `"grok/default"`.
-If you need a specific Grok model honored end-to-end, use the direct xAI
-endpoint path (**Built-in Model** → a `grok-cli/*` model) instead — that
-path does preserve model selection, just not via the CLI binary.
+**Automatic fallback precedence (FN-7753):** explicit runtime hint >
+Fusion-visible key/direct endpoint > automatic CLI fallback. The fallback is
+only derived when no explicit runtime hint is set, the provider is `grok-cli`,
+no Fusion-visible key resolves, and runtime id `"grok"` is registered. The
+selected model is normalized from `grok-cli/<id>` (or `grok/<id>`) to `<id>`
+and sent as `--model <id>`.
 
-This routing is opt-in and per-agent; it does not change any other agent's
-or task's execution path, and it does not change what a `grok-cli/*` model
-selection does under **Built-in Model** mode.
+**Known limitation:** explicit Runtime-mode is still model-agnostic — it does
+not carry a specific `grok-cli/*` model id through to the adapter, so
+`GrokRuntimeAdapter.createSession()` falls back to `"grok/default"` and omits
+`--model`. Built-in Model selections preserve the model either through the
+direct endpoint (when a key is visible) or through the FN-7753 automatic CLI
+fallback (when no key is visible).
 
 ## Enable via Settings → Authentication
 

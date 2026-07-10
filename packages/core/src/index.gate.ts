@@ -98,6 +98,7 @@ export type { ZaiProviderRegistration } from "./zai-provider.js";
 export {
   GROK_CLI_PROVIDER_ID,
   GROK_PROVIDER_REGISTRATION,
+  isGrokApiKeyFusionVisible,
   mergeBuiltInGrokProviderModels,
   registerBuiltInGrokProvider,
 } from "./grok-provider.js";

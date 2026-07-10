@@ -12,6 +12,8 @@ import type { SkillSelectionContext } from "./skill-resolver.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
+  GROK_CLI_PROVIDER_ID,
+  isGrokApiKeyFusionVisible,
   isTestModeActive,
   resolveExecutionSettingsModel,
   resolveProjectDefaultModel,
@@ -150,6 +152,28 @@ function hasCompleteRuntimeModel(
   model: ResolvedModelSelection,
 ): model is { provider: string; modelId: string } {
   return Boolean(model.provider && model.modelId);
+}
+
+function stripGrokCliModelProviderPrefix(modelId: string | undefined): string | undefined {
+  const normalized = modelId?.trim();
+  if (!normalized) return normalized;
+  const grokCliPrefix = `${GROK_CLI_PROVIDER_ID}/`;
+  return normalized.startsWith(grokCliPrefix)
+    ? normalized.slice(grokCliPrefix.length)
+    : normalized;
+}
+
+function deriveGrokRuntimeHintForNoVisibleKey(
+  runtimeOptions: AgentRuntimeOptions,
+  pluginRunner: PluginRunner | undefined,
+): string | undefined {
+  if (runtimeOptions.defaultProvider !== GROK_CLI_PROVIDER_ID) return undefined;
+  if (isGrokApiKeyFusionVisible()) return undefined;
+  try {
+    return pluginRunner?.getRuntimeById("grok") ? "grok" : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function pickSettingsThenRuntimeModel(
@@ -375,13 +399,32 @@ export async function createResolvedAgentSession(
     }
     : runtimeOptions;
 
+  /*
+  FNXC:GrokCliRouting 2026-07-09-00:00:
+  FN-7753: when Built-in Model mode selects `grok-cli/*` but Fusion cannot see a GROK_API_KEY,
+  derive the existing Grok plugin runtime hint automatically so the `grok` binary owns auth end-to-end.
+  Explicit runtime hints always win, visible keys keep the direct xAI endpoint default, and mock/test-mode
+  provider routing stays on the mock runtime. Strip only the provider-qualified model prefix so the CLI
+  receives the concrete selected model via GrokRuntimeAdapter without changing non-grok sessions.
+  */
+  const autoGrokRuntimeHint = !useMockRuntime && !runtimeHint
+    ? deriveGrokRuntimeHintForNoVisibleKey(runtimeOptions, pluginRunner)
+    : undefined;
+  const effectiveRuntimeHint = autoGrokRuntimeHint ?? runtimeHint;
+  const effectiveRuntimeOptionsWithModel: AgentRuntimeOptions = autoGrokRuntimeHint
+    ? {
+      ...effectiveRuntimeOptions,
+      defaultModelId: stripGrokCliModelProviderPrefix(effectiveRuntimeOptions.defaultModelId),
+    }
+    : effectiveRuntimeOptions;
+
   const resolved = useMockRuntime
     ? {
       runtime: mockRuntimeSingleton,
       runtimeId: mockRuntimeSingleton.id,
       wasConfigured: true,
     }
-    : await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, runtimeHint));
+    : await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, effectiveRuntimeHint));
 
   sessionLog.log(
     `[${sessionPurpose}] Using runtime "${resolved.runtimeId}" (configured=${resolved.wasConfigured})`,
@@ -399,8 +442,9 @@ export async function createResolvedAgentSession(
         modelId: runtimeOptions.defaultModelId ?? null,
         mockProviderActive: isMockProviderId(runtimeOptions.defaultProvider),
         testModeActive: settings ? isTestModeActive(settings) : false,
-        ...(runtimeHint ? { runtimeHint } : {}),
-        ...("fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
+        ...(effectiveRuntimeHint ? { runtimeHint: effectiveRuntimeHint } : {}),
+        ...(autoGrokRuntimeHint ? { reason: "grok-cli-no-visible-key" } : {}),
+        ...(!autoGrokRuntimeHint && "fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
       },
     });
   } catch (err) {
@@ -411,7 +455,7 @@ export async function createResolvedAgentSession(
   // latest sync point (just before LLM session instantiation) rather than
   // here, before the runtime's own awaited setup work runs. See
   // AgentRuntimeOptions.beforeSpawnSession for the contract.
-  const result = await resolved.runtime.createSession(effectiveRuntimeOptions);
+  const result = await resolved.runtime.createSession(effectiveRuntimeOptionsWithModel);
 
   // Attach the resolved runtime's promptWithFallback as a bound method on the
   // session object when it is not already present. This is the dispatch hook

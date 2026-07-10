@@ -134,7 +134,7 @@ Notes:
   `GrokCliProviderCard.tsx`) is out of scope for this task and is not
   modified here.
 
-## Wiring (resolved — FN-7725)
+## Wiring (resolved — FN-7725, extended by FN-7753)
 
 <!--
 FNXC:GrokCli 2026-07-09-00:00:
@@ -148,13 +148,32 @@ default and unchanged.
 
 **Decision: option (a) — formalize, document, and test the existing agent
 Runtime-mode picker path. Do NOT add a new settings toggle (option (b)).**
+FN-7753 later closed the deferred no-key model-selection fallback without adding
+that rejected UI toggle: the session seam derives the same runtime hint
+automatically only when the direct endpoint cannot work because no Fusion-visible
+GROK_API_KEY resolves.
 
-**Trigger:** an agent's `runtimeConfig.runtimeHint === "grok"`, set today via
-the dashboard's agent **Runtime Source → Runtime** picker
+**Explicit trigger:** an agent's `runtimeConfig.runtimeHint === "grok"`, set today
+via the dashboard's agent **Runtime Source → Runtime** picker
 (`NewAgentDialog.tsx` / `AgentDetailView.tsx`), which is populated from
 `GET /api/plugins/runtimes` (already generic — surfaces every registered
 plugin runtime, including the bundled Grok Runtime plugin's `runtimeId:
 "grok"`, with no Grok-specific code required).
+
+**Automatic no-key fallback (FN-7753):** when `createResolvedAgentSession()` sees
+all of the following, it derives the same effective `runtimeHint: "grok"` before
+calling `resolveRuntime()`:
+
+1. no explicit runtime hint was supplied (explicit hints, including `"pi"`,
+   always win);
+2. the resolved execution provider is `grok-cli`;
+3. Fusion cannot see a non-empty `GROK_API_KEY` either in the environment or in
+   `~/.grok/user-settings.json`'s `apiKey` field; and
+4. the bundled Grok Runtime plugin has registered runtime id `"grok"`.
+
+If a Fusion-visible key exists, the direct xAI OpenAI-compatible endpoint remains
+the default. If the Grok runtime is not registered, Fusion leaves the session on
+the existing PI/direct path rather than inventing a separate routing mode.
 
 **Exact seam:** `packages/engine/src/agent-session-helpers.ts`'s
 `extractRuntimeHint(runtimeConfig)` reads that hint from the assigned agent's
@@ -188,24 +207,21 @@ additive change," formalizing + testing + documenting the already-working
 path is lower risk and closes the actual gap (an *exercised* path, not just
 an implemented adapter) without adding new user-facing config surface.
 
-**Known limitation (by design, unchanged by this task):** Runtime-mode is
-model-agnostic — `NewAgentDialog.tsx`/`AgentDetailView.tsx` clear the `model`
-field when Runtime mode is selected (`model: runtimeMode === "runtime" ? ""
-: ...`), so `GrokRuntimeAdapter.createSession()` never receives a
-`defaultModelId` from this path and always falls back to `"grok/default"`. A
-specific `grok-cli/*` model choice is therefore not preserved when routing
-via Runtime-mode. Preserving model selection through the CLI runtime would
-require option (b) (or an equivalent); it is filed as a follow-up task only
-if genuinely warranted (see Follow-ups below), not implemented here.
+**Model plumbing (FN-7753):** for the automatic no-key fallback, the selected
+`grok-cli/*` model id is preserved through `AgentRuntimeOptions.defaultModelId`,
+normalized by stripping a leading `grok-cli/` (or `grok/`) prefix, and passed to
+the CLI as `grok --model <id>` alongside `--prompt` and `--format json`.
+Runtime-mode remains model-agnostic when chosen explicitly from the dashboard;
+that no-model path still uses the adapter's historical `"grok/default"` session
+fallback and omits `--model`.
 
-**Why the direct xAI endpoint stays default:** nothing in this task changes
-what a `grok-cli/*` **model** selection does — it continues to route through
-the direct xAI OpenAI-compatible endpoint (FN-7711/FN-7714,
-`packages/core/src/grok-provider.ts`, `packages/engine/src/pi.ts`), which
-this task does not touch. The CLI-routed path is reached *only* by the
-separate, explicit agent Runtime-mode choice — an opt-in, additive,
-fully-reversible path (nothing sets the hint unless an operator explicitly
-picks Runtime mode for that agent).
+**Why the direct xAI endpoint stays default:** a `grok-cli/*` **model** selection
+continues to route through the direct xAI OpenAI-compatible endpoint
+(FN-7711/FN-7714, `packages/core/src/grok-provider.ts`, `packages/engine/src/pi.ts`)
+whenever Fusion can see a key. FN-7753 changes only the failing no-visible-key
+case, where the direct path would otherwise hard-fail even though the installed
+CLI may be authenticated by a source Fusion cannot inspect (project `.env`,
+`grok -k`, OAuth/login token store, sandbox secrets, etc.).
 
 ## Decision
 
@@ -228,17 +244,18 @@ Rationale:
   tool-call/break-early bridging as a documented follow-up (the Droid
   adapter's much larger `provider.ts` is the effort ceiling, not the target
   shape).
-- It is fully reversible: the adapter is only reachable via
-  `runtimeHint === "grok"`, which nothing sets today, so landing it carries
-  no behavioral change to any exercised path.
+- It is fully reversible: the adapter is reachable via either an explicit
+  `runtimeHint === "grok"` or FN-7753's narrow no-visible-key `grok-cli`
+  fallback. The direct endpoint remains the key-visible default.
 
 ## What stays unchanged
 
 - The **direct xAI OpenAI-compatible streaming path** (base URL
   `https://api.x.ai/v1`, api type `openai-completions`, `GROK_API_KEY`
-  sourced per FN-7711/FN-7714) remains the default, exercised Grok execution
-  path. This task does not touch `packages/core/src/grok-provider.ts` or
-  `packages/engine/src/pi.ts`.
+  sourced per FN-7711/FN-7714) remains the default when a Fusion-visible key
+  exists. FN-7753 adds a read-only key-visibility check in
+  `packages/core/src/grok-provider.ts` and derives CLI routing only when no
+  such key is visible and the Grok runtime is registered.
 - FN-7716's probe/auth-readiness surface (`probe.ts`,
   `register-auth-routes.ts`, `GrokCliProviderCard.tsx`) is untouched by this
   task.
@@ -265,8 +282,10 @@ See the task's `fn_task_create` calls (linked from FN-7722) for:
    `close`/`error`, unchanged from FN-7722. See
    `plugins/fusion-plugin-grok-runtime/README.md`'s "Tool execution
    bridging (FN-7724)" section.
-3. (Filed by FN-7725, if warranted) Preserving a specific `grok-cli/*` model
-   selection when routing through the CLI runtime (Runtime-mode is currently
-   model-agnostic — see "Known limitation" in "Wiring" above). This is the
-   deferred option (b) shape; only file it if a genuine operator need
-   surfaces, per the task's Decision guidance.
+3. ~~Preserving a specific `grok-cli/*` model selection when routing through
+   the CLI runtime~~ — **closed by FN-7753** for the automatic no-visible-key
+   fallback: `createResolvedAgentSession()` derives runtime hint `"grok"` only
+   when no explicit hint is set, provider is `grok-cli`, no Fusion-visible
+   `GROK_API_KEY`/user-settings `apiKey` resolves, and runtime id `"grok"` is
+   registered; the selected model is passed to the CLI via `--model <id>`.
+   Explicit Runtime-mode remains model-agnostic by design.
