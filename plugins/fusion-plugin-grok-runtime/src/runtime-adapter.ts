@@ -27,6 +27,45 @@ const FIRST_OUTPUT_TIMEOUT_MS = 60_000;
  */
 const INACTIVITY_TIMEOUT_MS = 30 * 60_000;
 
+/**
+ * FNXC:GrokCli 2026-07-10-15:10:
+ * FN-7779 root-cause helpers. The reported "No message" empty Grok bubble was
+ * not a legitimate content-empty response — it was every silent grok failure
+ * (missing/invalid GROK_API_KEY, bad flag, non-zero exit, missing binary)
+ * collapsing into a resolve-with-no-output. The frontend placeholder (FN-7779
+ * UI step) hid the symptom; these helpers cure the cause by turning each
+ * silent failure into visible, diagnosable text so the operator sees WHY grok
+ * returned nothing. Retargeted for FN-7796's single-JSON-object contract —
+ * the schema no longer carries a `tool_use`/`error` NDJSON event, so only the
+ * spawn/process/exit-code failure surfaces below apply.
+ */
+function emitFailureText(session: GrokSession, text: string): void {
+  session.callbacks.onText?.(text);
+}
+
+function describeSpawnFailure(error: unknown): string {
+  const reason = error instanceof Error ? error.message : String(error ?? "unknown error");
+  return `Grok CLI failed to start: ${reason}. Ensure the \`grok\` binary is installed and on PATH, or set GROK_API_KEY to use the direct xAI endpoint.`;
+}
+
+/**
+ * Build the operator-facing message for a run that finished with NO renderable
+ * content. Prefer the captured stderr (the channel for fatal, pre-JSON
+ * failures); otherwise fall back to a non-zero-exit diagnostic. Returns
+ * undefined for a genuinely clean, content-less exit (code 0, no stderr) so a
+ * legitimately empty response is not decorated with a false error.
+ */
+function describeSilentFailure(stderr: string, exitCode: number | null | undefined): string | undefined {
+  const trimmed = stderr.trim();
+  if (trimmed) {
+    return `Grok CLI returned no content. ${trimmed}`;
+  }
+  if (typeof exitCode === "number" && exitCode !== 0) {
+    return `Grok CLI exited with code ${exitCode} and produced no output. Check that GROK_API_KEY (or the \`grok\` login) is configured and the selected model is valid.`;
+  }
+  return undefined;
+}
+
 function normalizeGrokCliModel(model: string | undefined): string | undefined {
   const normalized = model?.trim();
   if (!normalized) return undefined;
@@ -169,12 +208,19 @@ export class GrokRuntimeAdapter implements AgentRuntime {
       let proc: GrokStreamProcess;
       try {
         proc = this.spawnFn(this.binary, prompt, { cwd, model: modelForCli(grokSession.model), signal });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+      } catch (spawnError) {
+        // Spawn threw synchronously (e.g. binary not found without shell
+        // resolution) — resolve, never reject, matching the CLI-adapter
+        // contract of always producing a well-formed result while retaining
+        // the concrete diagnostic for callers that surface session.state, AND
+        // (FN-7779 root-cause) surfacing the reason as visible text so the
+        // user sees a diagnosable failure instead of an empty bubble.
+        const message = spawnError instanceof Error ? spawnError.message : String(spawnError);
         const diagnostic = compactDiagnostic(`Grok CLI spawn failed: ${message}`);
         grokSession.state.errorMessage = diagnostic;
-        grokSession.callbacks.onText?.(diagnostic);
-        appendMessage(grokSession, "assistant", diagnostic);
+        const failureMessage = describeSpawnFailure(spawnError);
+        emitFailureText(grokSession, failureMessage);
+        appendMessage(grokSession, "assistant", failureMessage);
         resolve();
         return;
       }
@@ -188,6 +234,13 @@ export class GrokRuntimeAdapter implements AgentRuntime {
       let stdout = "";
       let firstOutputTimer: NodeJS.Timeout | undefined;
       let inactivityTimer: NodeJS.Timeout | undefined;
+      // FNXC:GrokCli 2026-07-10-15:10: FN-7779 root-cause — track whether any
+      // renderable content (real assistant text) or a fallback diagnostic has
+      // already been surfaced via onText, so a run that finished with NO
+      // renderable content gets exactly one visible reason instead of an
+      // empty "No message" assistant bubble (and never a duplicate
+      // diagnostic on top of real content).
+      let contentEmitted = false;
 
       const setErrorMessage = (message: string) => {
         if (message.trim().length === 0) return;
@@ -196,8 +249,9 @@ export class GrokRuntimeAdapter implements AgentRuntime {
 
       const emitDiagnosticText = (message: string | undefined) => {
         const diagnostic = message?.trim();
-        if (!diagnostic || assistantText || diagnosticEmitted) return;
+        if (!diagnostic || assistantText || diagnosticEmitted || contentEmitted) return;
         diagnosticEmitted = true;
+        contentEmitted = true;
         grokSession.callbacks.onText?.(diagnostic);
         appendMessage(grokSession, "assistant", diagnostic);
       };
@@ -211,6 +265,7 @@ export class GrokRuntimeAdapter implements AgentRuntime {
         }
         if (parsed.text.length > 0) {
           assistantText += parsed.text;
+          contentEmitted = true;
           grokSession.callbacks.onText?.(parsed.text);
           return;
         }
@@ -219,7 +274,24 @@ export class GrokRuntimeAdapter implements AgentRuntime {
         }
       };
 
-      const finish = () => {
+      /*
+      FNXC:GrokCli 2026-07-10-00:00:
+      A failing headless `grok` run can close stdout before the child `close` event reports its non-zero exit and stderr. Resolving too early made dashboard Chat persist an empty assistant message before the diagnostic existed. Finalize only from subprocess close/error or lifecycle timeouts, and store concrete stderr/parse error details on session.state.errorMessage so shared chat/executor seams can surface the reason without breaking the resolve-never-reject runtime contract.
+
+      FNXC:GrokCli 2026-07-10-12:52:
+      FN-7796 replaces the streaming-json/NDJSON contract with a single JSON object parsed once on subprocess close (`parsePromptOutput`/`emitParsedOutput`), because streaming-json intermittently emitted only `thought` + `stopReason:"Cancelled"` with no `text`. `stdout` is accumulated in full across `data` chunks rather than parsed line-by-line as it arrives.
+
+      FNXC:GrokCli 2026-07-10-15:10:
+      FN-7779 root-cause — the above only covered the zero-output shape. A run
+      that DID exit non-zero (or produced fatal stderr) with no renderable
+      content still resolved silently once `session.state.errorMessage` had
+      already been consumed by `emitDiagnosticText` for a different reason (or
+      not set at all). If nothing was rendered AND no diagnostic has been
+      emitted yet, fall back to `describeSilentFailure` (stderr-first, then a
+      non-zero-exit reason) so every silent failure surface gets a visible,
+      diagnosable `onText` — never a bare empty resolve.
+      */
+      const finish = (exitCode?: number | null) => {
         if (settled) return;
         settled = true;
         if (firstOutputTimer) clearTimeout(firstOutputTimer);
@@ -227,7 +299,21 @@ export class GrokRuntimeAdapter implements AgentRuntime {
         if (assistantText) {
           appendMessage(grokSession, "assistant", assistantText);
         } else {
-          emitDiagnosticText(grokSession.state.errorMessage);
+          // FN-7779's stderr/exit-code diagnostic takes priority when the run
+          // actually failed (non-empty stderr or non-zero exit): it names the
+          // concrete cause. Only fall back to the FN-7796 parse-shape
+          // diagnostic (session.state.errorMessage, e.g. "produced no JSON
+          // output") for the remaining case that describeSilentFailure can't
+          // describe — a code-0 exit with no stderr that still produced no
+          // parseable output.
+          const failure = describeSilentFailure(stderr, exitCode);
+          if (failure && !contentEmitted) {
+            contentEmitted = true;
+            emitFailureText(grokSession, failure);
+            appendMessage(grokSession, "assistant", failure);
+          } else {
+            emitDiagnosticText(grokSession.state.errorMessage);
+          }
         }
         resolve();
       };
@@ -264,13 +350,28 @@ export class GrokRuntimeAdapter implements AgentRuntime {
       });
 
       proc.stderr?.on("data", (chunk: Buffer | string) => {
-        stderr += chunk.toString();
+        // FNXC:GrokCli 2026-07-10-15:10: FN-7779 root-cause — xAI's Grok
+        // Build TUI writes fatal, pre-JSON failures (missing API key,
+        // invalid flag, auth error) to stderr with no JSON on stdout.
+        // Reading stdout alone would lose the entire failure reason, so
+        // stderr is captured for both the FN-7796 close diagnostic and the
+        // FN-7779 silent-failure fallback below. Capped to avoid unbounded
+        // growth on a pathologically chatty process.
+        if (stderr.length < 8192) stderr += chunk.toString();
       });
 
-      proc.on("error", (err) => {
-        const message = err instanceof Error ? err.message : String(err);
+      proc.on("error", (procError) => {
+        // FNXC:GrokCli 2026-07-10-15:10: FN-7779 root-cause — spawn/runtime
+        // process error (e.g. ENOENT for a missing `grok` binary) previously
+        // resolved into an empty bubble; surface the reason both on
+        // session.state (unchanged historical format) and as visible text
+        // via finish()'s silent-failure fallback.
+        const message = procError instanceof Error ? procError.message : String(procError);
         if (!assistantText) {
           setErrorMessage(compactDiagnostic(`Grok CLI process error: ${message}`));
+        }
+        if (!contentEmitted && !stderr) {
+          stderr = describeSpawnFailure(procError);
         }
         finish();
       });
@@ -287,7 +388,7 @@ export class GrokRuntimeAdapter implements AgentRuntime {
         } else if (!assistantText && !parsed.parsed && typeof code === "number" && code === 0) {
           setErrorMessage(formatNoJsonDiagnostic(firstStdoutChunk));
         }
-        finish();
+        finish(code);
       });
     });
   }

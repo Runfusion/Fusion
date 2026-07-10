@@ -9,7 +9,12 @@ FNXC:GrokCli 2026-07-10-12:54:
 FN-7796: adapter tests are pinned to the reliable xAI Grok Build TUI headless contract (`--output-format json` single object) and the live-captured flaky `streaming-json` cancellation shape. They intentionally avoid a live binary in CI but exercise the same spawn seam and lifecycle diagnostics that previously hid wrong-contract and cancelled-no-text failures behind fake fixtures.
 */
 
-function makeFakeProc(): { proc: GrokStreamProcess; stdout: PassThrough; stderr: PassThrough; kill: ReturnType<typeof vi.fn> } {
+function makeFakeProc(): {
+  proc: GrokStreamProcess;
+  stdout: PassThrough;
+  stderr: PassThrough;
+  kill: ReturnType<typeof vi.fn>;
+} {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const emitter = new EventEmitter();
@@ -357,6 +362,129 @@ describe("GrokRuntimeAdapter", () => {
 
     await expect(adapter.promptWithFallback(session, "hi")).resolves.toBeUndefined();
     expect(session.state.errorMessage).toBe("Grok CLI spawn failed: spawn ENOENT");
+  });
+
+  /*
+  FNXC:GrokCli 2026-07-10-15:10:
+  FN-7779 root-cause surface enumeration. The reported empty "No message" Grok
+  bubble was every SILENT failure collapsing into resolve-with-no-output. These
+  assert the invariant — a run with no renderable content surfaces a visible,
+  diagnosable reason via onText — across all known silent-failure surfaces:
+  stderr-only fatal exit, non-zero exit with no stderr, dropped NDJSON `error`
+  event, and process `error`. The clean content-less exit stays silent so a
+  legitimately empty response is not decorated with a false error.
+  */
+  describe("FN-7779 silent-failure surfacing", () => {
+    it("surfaces stderr text when grok exits with no NDJSON (missing key / fatal, pre-JSON failure)", async () => {
+      const { proc, stderr } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      stderr.write("Error: GROK_API_KEY is not set\n");
+      proc.emit("close", 1, null);
+      await promise;
+
+      expect(onText).toHaveBeenCalledTimes(1);
+      expect(onText.mock.calls[0][0]).toContain("GROK_API_KEY is not set");
+    });
+
+    it("surfaces a non-zero-exit diagnostic when there is no stdout and no stderr", async () => {
+      const { proc } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      proc.emit("close", 3, null);
+      await promise;
+
+      expect(onText).toHaveBeenCalledTimes(1);
+      expect(onText.mock.calls[0][0]).toContain("exited with code 3");
+    });
+
+    it("bridges a well-formed NDJSON `error` event into visible onText", async () => {
+      const { proc, stdout } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      stdout.write(`${JSON.stringify({ type: "error", message: "rate limited", timestamp: 1 })}\n`);
+      proc.emit("close", 0, null);
+      await promise;
+
+      expect(onText).toHaveBeenCalledTimes(1);
+      expect(onText.mock.calls[0][0]).toContain("rate limited");
+    });
+
+    it("surfaces the process error reason instead of an empty result", async () => {
+      const { proc } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      proc.emit("error", new Error("spawn grok ENOENT"));
+      await promise;
+
+      expect(onText).toHaveBeenCalledTimes(1);
+      expect(onText.mock.calls[0][0]).toContain("ENOENT");
+    });
+
+    it("surfaces a reason when the injected spawn throws synchronously", async () => {
+      const spawn = vi.fn().mockImplementation(() => {
+        throw new Error("spawn ENOENT");
+      });
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      await adapter.promptWithFallback(session, "hi");
+      expect(onText).toHaveBeenCalledTimes(1);
+      expect(onText.mock.calls[0][0]).toContain("ENOENT");
+    });
+
+    it("stays silent on a clean, content-less response (parsed EndTurn, empty text) — no false error text", async () => {
+      const { proc, stdout } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      // A genuinely empty grok response is a parsed JSON object with empty
+      // text and stopReason EndTurn — not zero stdout bytes. It must not be
+      // decorated with a false error bubble.
+      stdout.write(JSON.stringify({ text: "", stopReason: "EndTurn", sessionId: "abc" }));
+      stdout.end();
+      proc.emit("close", 0, null);
+      await promise;
+
+      expect(onText).not.toHaveBeenCalled();
+      expect(session.state.errorMessage).toBeUndefined();
+    });
+
+    it("does not append a stderr diagnostic when real text content was streamed", async () => {
+      const { proc, stdout, stderr } = makeFakeProc();
+      const spawn = vi.fn().mockReturnValue(proc);
+      const adapter = new GrokRuntimeAdapter({ spawn });
+      const onText = vi.fn();
+      const { session } = await adapter.createSession({ onText });
+
+      const promise = adapter.promptWithFallback(session, "hi");
+      stdout.write(`${JSON.stringify({ type: "text", stepNumber: 1, text: "answer", timestamp: 1 })}\n`);
+      stderr.write("warning: deprecated flag\n");
+      proc.emit("close", 0, null);
+      await promise;
+
+      expect(onText.mock.calls.map((c) => c[0])).toEqual(["answer"]);
+    });
   });
 
   it("describeModel formats grok prefix", () => {
