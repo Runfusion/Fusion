@@ -1495,6 +1495,8 @@ const skills: PluginSkillContribution[] = [
 
 `skillFiles` are relative to the plugin root. `skillId` must be kebab-case.
 
+Plugin skills are discovered per requesting project: the Skills view and workflow editor surface `plugin:<id>` skills only when that plugin is enabled for that project's plugin state, even if the daemon was started from a different directory.
+
 ## 16. Registering Workflow Steps
 
 Plugins can ship workflow step templates that users can enable like built-in quality gates.

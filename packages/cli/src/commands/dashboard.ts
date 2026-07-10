@@ -9,6 +9,7 @@ import {
   CentralCore,
   AgentStore,
   PluginLoader,
+  PluginStore,
   getTaskMergeBlocker,
   getEnabledPiExtensionPaths,
   isEphemeralAgent,
@@ -1679,15 +1680,77 @@ export async function runDashboard(port: number, opts: { paused?: boolean; dev?:
   //
   // Create the skills adapter using the same DefaultPackageManager instance
   // that was set up earlier for extension resolution.
+  const pluginSkillCache = new Map<
+    string,
+    { enabledKey: string; skills: ReturnType<PluginLoader["getPluginSkills"]> }
+  >();
+  const getProjectScopedPluginSkills = async (rootDir: string): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
+    const normalizedRootDir = pathResolve(rootDir);
+    const stateStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+    await stateStore.init();
+    try {
+      const enabledPlugins = await stateStore.listPlugins({ enabled: true });
+      const enabledKey = enabledPlugins
+        .map((plugin) => `${plugin.id}:${plugin.updatedAt}`)
+        .sort()
+        .join("\0");
+      const cached = pluginSkillCache.get(normalizedRootDir);
+      if (cached?.enabledKey === enabledKey) {
+        return cached.skills;
+      }
+      if (enabledPlugins.length === 0) {
+        const skills: ReturnType<PluginLoader["getPluginSkills"]> = [];
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      }
+
+      if (!store) {
+        return [];
+      }
+      /*
+       * FNXC:PluginSkills 2026-07-10-00:00:
+       * Same-root skill discovery must reuse the dashboard daemon's active PluginLoader; request-scoped loaders are only for other project roots and are stopped after metadata collection to avoid leaking plugin side effects or SQLite handles.
+       */
+      if (normalizedRootDir === pathResolve(store.getRootDir())) {
+        const enabledIds = new Set(enabledPlugins.map((plugin) => plugin.id));
+        const skills = pluginLoader.getPluginSkills().filter((entry) => enabledIds.has(entry.pluginId));
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      }
+
+      const scopedPluginStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+      const scopedTaskStore = new TaskStore(normalizedRootDir);
+      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: scopedTaskStore });
+      try {
+        await scopedPluginStore.init();
+        await scopedTaskStore.init();
+        const { errors } = await scopedPluginLoader.loadAllPlugins();
+        if (errors > 0) {
+          logSink.warn(`Project-scoped plugin skill loading for ${normalizedRootDir} had ${errors} error(s)`, "plugins");
+        }
+        const skills = scopedPluginLoader.getPluginSkills();
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      } finally {
+        await scopedPluginLoader.stopAllPlugins();
+        scopedPluginStore.close();
+        scopedTaskStore.close();
+      }
+    } finally {
+      stateStore.close();
+    }
+  };
+
   const skillsAdapter = packageManager
     ? createSkillsAdapter({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
-        // Surface plugin-contributed skills (e.g. compound-engineering ce-*) in
-        // the discovered-skills catalog so the workflow editor can resolve and
-        // display them. Lazy thunk: plugins finish loading before discovery runs.
-        getPluginSkills: () => pluginLoader.getPluginSkills(),
+        /*
+         * FNXC:PluginSkills 2026-07-10-00:00:
+         * `fn dashboard` can start outside the managed project whose Skills view is being served. Resolve plugin skill contributions with a PluginStore scoped to the requesting rootDir so project_plugin_states, not the daemon root, decides which plugin:<id> skills appear.
+         */
+        getPluginSkills: getProjectScopedPluginSkills,
       })
     : undefined;
 

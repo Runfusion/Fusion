@@ -9,10 +9,12 @@
  */
 
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import {
   CentralCore,
+  TaskStore,
   PluginLoader,
+  PluginStore,
   getTaskMergeBlocker,
   INSIGHT_EXTRACTION_SCHEDULE_NAME,
   processAndAuditInsightExtraction,
@@ -727,14 +729,72 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────
+  const pluginSkillCache = new Map<
+    string,
+    { enabledKey: string; skills: ReturnType<PluginLoader["getPluginSkills"]> }
+  >();
+  const getProjectScopedPluginSkills = async (rootDir: string): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
+    const normalizedRootDir = pathResolve(rootDir);
+    const stateStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+    await stateStore.init();
+    try {
+      const enabledPlugins = await stateStore.listPlugins({ enabled: true });
+      const enabledKey = enabledPlugins
+        .map((plugin) => `${plugin.id}:${plugin.updatedAt}`)
+        .sort()
+        .join("\0");
+      const cached = pluginSkillCache.get(normalizedRootDir);
+      if (cached?.enabledKey === enabledKey) return cached.skills;
+      if (enabledPlugins.length === 0) {
+        const skills: ReturnType<PluginLoader["getPluginSkills"]> = [];
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      }
+
+      /*
+       * FNXC:PluginSkills 2026-07-10-00:00:
+       * Same-root skill discovery must reuse the daemon's active PluginLoader; request-scoped loaders are only for other project roots and are stopped after metadata collection to avoid leaking plugin side effects or SQLite handles.
+       */
+      if (normalizedRootDir === pathResolve(store.getRootDir())) {
+        const enabledIds = new Set(enabledPlugins.map((plugin) => plugin.id));
+        const skills = pluginLoader.getPluginSkills().filter((entry) => enabledIds.has(entry.pluginId));
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      }
+
+      const scopedPluginStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+      const scopedTaskStore = new TaskStore(normalizedRootDir);
+      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: scopedTaskStore });
+      try {
+        await scopedPluginStore.init();
+        await scopedTaskStore.init();
+        const { errors } = await scopedPluginLoader.loadAllPlugins();
+        if (errors > 0) {
+          console.warn(`[plugins] Project-scoped plugin skill loading for ${normalizedRootDir} had ${errors} error(s)`);
+        }
+        const skills = scopedPluginLoader.getPluginSkills();
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      } finally {
+        await scopedPluginLoader.stopAllPlugins();
+        scopedPluginStore.close();
+        scopedTaskStore.close();
+      }
+    } finally {
+      stateStore.close();
+    }
+  };
+
   const skillsAdapter = packageManager
     ? createSkillsAdapter({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
-        // Surface plugin-contributed skills (e.g. compound-engineering ce-*) in
-        // the editor catalog; the package manager only scans disk.
-        getPluginSkills: () => pluginLoader.getPluginSkills(),
+        /*
+         * FNXC:PluginSkills 2026-07-10-00:00:
+         * `fn daemon` serves managed projects independently from its startup root. Resolve plugin skills with a PluginStore scoped to the requesting rootDir so disabled daemon-root plugins do not suppress project-enabled plugin:<id> skills.
+         */
+        getPluginSkills: getProjectScopedPluginSkills,
       })
     : undefined;
 

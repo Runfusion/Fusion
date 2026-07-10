@@ -64,6 +64,7 @@ const plugin = {
   hooks: {},
   tools: ${JSON.stringify(plugin.tools || [])},
   routes: ${JSON.stringify(plugin.routes || [])},
+  skills: ${JSON.stringify(plugin.skills || [])},
 };
 
 export default plugin;
@@ -915,12 +916,16 @@ export default plugin;
       await pluginStore.registerPlugin({ manifest: disabledPlugin.manifest, path: disabledPath });
       await pluginStore.disablePlugin("disabled-plugin");
 
+      const { loggerMap } = mockStructuredLoggerFactory();
       const loader = new PluginLoader({ pluginStore, taskStore: mockTaskStore });
       const result = await loader.loadAllPlugins();
 
       expect(result).toEqual({ loaded: 1, errors: 0 });
       expect(loader.isPluginLoaded("enabled-plugin")).toBe(true);
       expect(loader.isPluginLoaded("disabled-plugin")).toBe(false);
+      expect(loggerMap.get("plugin-loader")?.warn).toHaveBeenCalledWith(
+        "Skipped disabled plugin during loadAllPlugins: disabled-plugin",
+      );
     });
 
     /*
@@ -2586,6 +2591,70 @@ export default plugin;
           skill: { skillId: "browser", name: "Browser", description: "Web", skillFiles: ["./SKILL.md"] },
         },
       ]);
+    });
+
+    it("loads plugin skills according to each project's enablement scope", async () => {
+      await pluginStore.init();
+      const projectDir = join(rootDir, "managed-project");
+      await mkdir(projectDir, { recursive: true });
+      const projectPluginStore = new PluginStore(projectDir, { centralGlobalDir: rootDir });
+      await projectPluginStore.init();
+
+      const pluginDir = join(rootDir, "plugins");
+      const daemonPlugin = makePlugin(makeManifest({ id: "daemon-skill-plugin" }));
+      daemonPlugin.skills = [{ skillId: "daemon", name: "daemon-only", skillFiles: ["./SKILL.md"] }];
+      const projectPlugin = makePlugin(makeManifest({ id: "project-skill-plugin" }));
+      projectPlugin.skills = [{ skillId: "project", name: "project-only", skillFiles: ["./SKILL.md"] }];
+      const sharedPlugin = makePlugin(makeManifest({ id: "shared-skill-plugin" }));
+      sharedPlugin.skills = [{ skillId: "shared", name: "shared-skill", skillFiles: ["./SKILL.md"] }];
+      const disabledPlugin = makePlugin(makeManifest({ id: "disabled-everywhere-skill-plugin" }));
+      disabledPlugin.skills = [{ skillId: "disabled", name: "disabled-skill", skillFiles: ["./SKILL.md"] }];
+
+      await pluginStore.registerPlugin({
+        manifest: daemonPlugin.manifest,
+        path: await writePluginModule(pluginDir, "daemon-skill.js", daemonPlugin),
+      });
+      const projectRelativePluginDir = join(projectDir, "plugins");
+      await pluginStore.registerPlugin({
+        manifest: projectPlugin.manifest,
+        path: "plugins/project-skill.js",
+      });
+      await writePluginModule(projectRelativePluginDir, "project-skill.js", projectPlugin);
+      await pluginStore.registerPlugin({
+        manifest: sharedPlugin.manifest,
+        path: await writePluginModule(pluginDir, "shared-skill.js", sharedPlugin),
+      });
+      await pluginStore.registerPlugin({
+        manifest: disabledPlugin.manifest,
+        path: await writePluginModule(pluginDir, "disabled-skill.js", disabledPlugin),
+      });
+
+      await pluginStore.disablePlugin("project-skill-plugin");
+      await pluginStore.disablePlugin("disabled-everywhere-skill-plugin");
+      await projectPluginStore.enablePlugin("project-skill-plugin");
+      await projectPluginStore.enablePlugin("shared-skill-plugin");
+
+      const daemonTaskStore = { ...mockTaskStore, getRootDir: () => rootDir };
+      const projectTaskStore = { ...mockTaskStore, getRootDir: () => projectDir };
+      const daemonLoader = new PluginLoader({ pluginStore, taskStore: daemonTaskStore });
+      const projectLoader = new PluginLoader({ pluginStore: projectPluginStore, taskStore: projectTaskStore });
+
+      await daemonLoader.loadAllPlugins();
+      await projectLoader.loadAllPlugins();
+
+      expect(daemonLoader.getPluginSkills().map((entry) => `${entry.pluginId}:${entry.skill.name}`).sort()).toEqual([
+        "daemon-skill-plugin:daemon-only",
+        "shared-skill-plugin:shared-skill",
+      ]);
+      expect(projectLoader.getPluginSkills().map((entry) => `${entry.pluginId}:${entry.skill.name}`).sort()).toEqual([
+        "project-skill-plugin:project-only",
+        "shared-skill-plugin:shared-skill",
+      ]);
+      expect(projectLoader.getPluginSkills().some((entry) => entry.pluginId === "daemon-skill-plugin")).toBe(false);
+      expect(daemonLoader.getPluginSkills().some((entry) => entry.pluginId === "project-skill-plugin")).toBe(false);
+      expect(projectLoader.getPluginSkills().some((entry) => entry.pluginId === "disabled-everywhere-skill-plugin")).toBe(false);
+
+      projectPluginStore.close();
     });
 
     it("returns workflow steps, prompt contributions, and setup info", async () => {

@@ -355,10 +355,15 @@ export function createSkillsAdapter(options: {
    * skill catalog omits them. Lazy thunk: plugins may load after the adapter is
    * created, so it is invoked per discovery rather than captured eagerly.
    */
-  getPluginSkills?: () => Array<{
-    pluginId: string;
-    skill: { name: string; description?: string; enabled?: boolean };
-  }>;
+  getPluginSkills?: (rootDir: string) =>
+    | Array<{
+      pluginId: string;
+      skill: { name: string; description?: string; enabled?: boolean };
+    }>
+    | Promise<Array<{
+      pluginId: string;
+      skill: { name: string; description?: string; enabled?: boolean };
+    }>>;
   /** Optional superviseSpawn seam for tests */
   superviseSpawn?: typeof superviseSpawn;
 }): SkillsAdapter {
@@ -413,7 +418,11 @@ export function createSkillsAdapter(options: {
       // would otherwise never appear in the editor catalog. Dedup against disk
       // skills by bare name so a plugin skill that is also installed on disk is
       // not listed twice.
-      const pluginSkills = options.getPluginSkills?.() ?? [];
+      /*
+       * FNXC:PluginSkills 2026-07-10-00:00:
+       * Skill discovery is project-scoped: plugin contributions must be resolved for the requesting rootDir's project_plugin_states, not the daemon startup directory. This keeps /api/skills/discovered from leaking daemon-root plugin skills into unrelated projects while still surfacing skills enabled only for the requested managed project.
+       */
+      const pluginSkills = await (options.getPluginSkills?.(rootDir) ?? []);
       if (pluginSkills.length > 0) {
         const seenBareNames = new Set(discoveredSkills.map((s) => bareSkillName(s.name)));
         for (const { pluginId, skill } of pluginSkills) {
