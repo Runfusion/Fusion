@@ -1103,6 +1103,82 @@ describe("createServer health and headless mode", () => {
     vi.useRealTimers();
   });
 
+  // FNXC:ReliabilityHealth 2026-07-10-11:15:
+  // FUX-042 regression: reliability GET/reset must read/write the per-project store, not the shared root store.
+  // Enumerated surfaces: (1) GET with projectId reads project store, (2) GET without projectId falls back to root, (3) POST reset with projectId writes project store.
+  it("FUX-042: GET /api/health/reliability reads the project-scoped store, not the root store", async () => {
+    const rootStore = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ reliabilityStatsResetAt: "2026-01-01T00:00:00.000Z" }),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+    const projectStore = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ reliabilityStatsResetAt: "2026-05-10T00:00:00.000Z" }),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+    const getEngine = vi.fn((projectId: string) =>
+      projectId === "proj_a" ? { getTaskStore: vi.fn(() => projectStore) } : undefined,
+    );
+    const app = createServer(rootStore, {
+      engineManager: { getEngine } as unknown as import("@fusion/engine").ProjectEngineManager,
+    });
+
+    const res = await GET(app, "/api/health/reliability?projectId=proj_a");
+
+    expect(res.status).toBe(200);
+    expect((res.body as { resetAt: string }).resetAt).toBe("2026-05-10T00:00:00.000Z");
+    expect(projectStore.getSettings).toHaveBeenCalled();
+    expect(projectStore.getRunAuditEvents).toHaveBeenCalled();
+    expect(rootStore.getSettings).not.toHaveBeenCalled();
+    expect(rootStore.getRunAuditEvents).not.toHaveBeenCalled();
+  });
+
+  it("FUX-042: GET /api/health/reliability without projectId falls back to the root store", async () => {
+    const rootStore = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ reliabilityStatsResetAt: "2026-01-01T00:00:00.000Z" }),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+    const projectStore = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ reliabilityStatsResetAt: "2026-05-10T00:00:00.000Z" }),
+      getRunAuditEvents: vi.fn().mockReturnValue([]),
+    });
+    const getEngine = vi.fn((projectId: string) =>
+      projectId === "proj_a" ? { getTaskStore: vi.fn(() => projectStore) } : undefined,
+    );
+    const app = createServer(rootStore, {
+      engineManager: { getEngine } as unknown as import("@fusion/engine").ProjectEngineManager,
+    });
+
+    const res = await GET(app, "/api/health/reliability");
+
+    expect(res.status).toBe(200);
+    expect((res.body as { resetAt: string }).resetAt).toBe("2026-01-01T00:00:00.000Z");
+    expect(rootStore.getSettings).toHaveBeenCalled();
+    expect(projectStore.getSettings).not.toHaveBeenCalled();
+  });
+
+  it("FUX-042: POST /api/health/reliability/reset writes the project-scoped store, not the root store", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-13T12:00:00.000Z"));
+
+    const rootStore = createMockStore({ updateSettings: vi.fn().mockResolvedValue({}) });
+    const projectStore = createMockStore({ updateSettings: vi.fn().mockResolvedValue({}) });
+    const getEngine = vi.fn((projectId: string) =>
+      projectId === "proj_a" ? { getTaskStore: vi.fn(() => projectStore) } : undefined,
+    );
+    const app = createServer(rootStore, {
+      engineManager: { getEngine } as unknown as import("@fusion/engine").ProjectEngineManager,
+    });
+
+    const res = await REQUEST(app, "POST", "/api/health/reliability/reset?projectId=proj_a");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ resetAt: "2026-05-13T12:00:00.000Z" });
+    expect(projectStore.updateSettings).toHaveBeenCalledWith({ reliabilityStatsResetAt: "2026-05-13T12:00:00.000Z" });
+    expect(rootStore.updateSettings).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
   it("rejects invalid windowDays values", async () => {
     const app = createServer(createMockStore({
       getActivityLog: vi.fn().mockResolvedValue([]),

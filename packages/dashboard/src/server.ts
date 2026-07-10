@@ -1596,7 +1596,19 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   app.get("/api/health/reliability", async (req, res) => {
     const projectId = getProjectIdFromRequest(req);
-    const scopedStore = projectId ? await getScopedStore(projectId) : store;
+    /*
+    FNXC:ReliabilityHealth 2026-07-10-11:15:
+    Reliability GET/reset must read/write the per-project store so multi-project servers report per-project stats.
+    Use the in-scope resolveProjectScopedStore helper (createServer scope) — NOT the badge-websocket getScopedStore, which lives in a different function and is not visible here.
+    Store creation can fail (getOrCreateProjectStore throwing on a DB error); mirror the project SSE handler and return a targeted 500 instead of letting the failure fall through to the generic Express error handler with a vague message.
+    */
+    let scopedStore: TaskStore;
+    try {
+      scopedStore = await resolveProjectScopedStore(projectId);
+    } catch (err: unknown) {
+      sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to resolve project store");
+      return;
+    }
     const rawWindowDays = req.query.windowDays;
     const parsedWindowDays = rawWindowDays === undefined ? 7 : Number.parseInt(String(rawWindowDays), 10);
 
@@ -1702,7 +1714,17 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
 
   app.post("/api/health/reliability/reset", async (req, res) => {
     const projectId = getProjectIdFromRequest(req);
-    const scopedStore = projectId ? await getScopedStore(projectId) : store;
+    /*
+    FNXC:ReliabilityHealth 2026-07-10-11:15:
+    Same in-scope resolveProjectScopedStore + guard as the GET handler so the reset writes reliabilityStatsResetAt to the per-project store and a store-creation failure returns a targeted 500 rather than a vague generic error.
+    */
+    let scopedStore: TaskStore;
+    try {
+      scopedStore = await resolveProjectScopedStore(projectId);
+    } catch (err: unknown) {
+      sendErrorResponse(res, 500, err instanceof Error ? err.message : "Failed to resolve project store");
+      return;
+    }
     const resetAt = new Date().toISOString();
     await scopedStore.updateSettings({ reliabilityStatsResetAt: resetAt });
     res.json({ resetAt });
