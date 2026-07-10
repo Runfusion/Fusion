@@ -64,6 +64,13 @@ function mockFetch(statusByName: Record<string, { status: "valid" | "unreachable
   return fetchMock;
 }
 
+function expectButtonIconSize(button: HTMLElement, size: "14" | "16") {
+  const icon = button.querySelector("svg");
+  expect(icon).toBeInTheDocument();
+  expect(icon).toHaveAttribute("width", size);
+  expect(icon).toHaveAttribute("height", size);
+}
+
 function renderCard(options: { scope: McpSettingsScope; form?: Settings; globalSettings?: Pick<GlobalSettings, "mcpServers"> | null }) {
   let currentForm: Settings = options.form ?? ({} as Settings);
   const addToast = vi.fn();
@@ -142,6 +149,33 @@ describe("MCP Settings UI", () => {
     render(<ProjectMcpSection scopeBanner={<div>Project scope</div>} form={{} as Settings} setForm={vi.fn()} globalSettings={{ mcpServers: { enabled: true, servers: [] } }} addToast={vi.fn()} />);
     expect(await screen.findByTestId("mcp-servers-card-project")).toBeInTheDocument();
     expect(screen.getByText("No MCP servers configured.")).toBeInTheDocument();
+  });
+
+  it.each(["global", "project"] as const)("sizes MCP card inline button icons in %s scope", async (scope) => {
+    mockFetch({}, { [scope]: discoveredResponse(scope) });
+    renderCard({
+      scope,
+      form: { mcpServers: { enabled: true, servers: [{ name: `${scope}-local`, transport: "stdio", command: "node" }] } } as Settings,
+      globalSettings: scope === "project" ? { mcpServers: { enabled: true, servers: [{ name: "shared", transport: "stdio", command: "node" }] } } : undefined,
+    });
+
+    expectButtonIconSize(screen.getByRole("button", { name: /Add server/i }), "16");
+    const discovery = await screen.findByTestId(`mcp-discovery-${scope}`);
+    expectButtonIconSize(within(discovery).getByRole("button", { name: /Scan again/i }), "14");
+    expectButtonIconSize(screen.getByRole("button", { name: /Upload JSON/i }), "14");
+    expectButtonIconSize(screen.getByRole("button", { name: /Copy Fusion MCP JSON/i }), "14");
+
+    const localRow = await screen.findByTestId(`mcp-server-row-${scope}-local`);
+    expectButtonIconSize(within(localRow).getByRole("button", { name: /Test/i }), "14");
+    expectButtonIconSize(within(localRow).getByRole("button", { name: /^Edit$/i }), "14");
+    if (scope === "project") {
+      const inheritedRow = await screen.findByTestId("mcp-server-row-shared");
+      expectButtonIconSize(within(inheritedRow).getByRole("button", { name: /Override/i }), "14");
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: /Add server/i }));
+    const editor = await screen.findByTestId("mcp-server-editor");
+    expectButtonIconSize(within(editor).getByRole("button", { name: /Add secret reference/i }), "14");
   });
 
   it.each(["stdio", "sse", "streamable-http"] as const)("adds, edits, and removes a %s server without plaintext secrets", async (transport) => {

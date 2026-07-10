@@ -31,6 +31,8 @@ const PARK_ERROR =
   "Workflow graph failure surfaced after paused engine abort during pause/resume in 'todo' at node 'execute' — operator action required; retry or explicitly unpause/resume after inspecting the task";
 const IN_REVIEW_PARK_ERROR =
   "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'execute' — operator action required; retry or explicitly unpause/resume after inspecting the task";
+const MANUAL_HOLD_PARK_ERROR =
+  "Workflow graph failure surfaced after paused engine abort during pause/resume in 'in-review' at node 'merge-manual-hold' — operator action required; retry or explicitly unpause/resume after inspecting the task";
 const DONE_STEPS = [{ status: "done" }, { status: "done" }];
 
 function createMockStore(tasks: Task[]): TaskStore & EventEmitter {
@@ -193,6 +195,51 @@ describe("recoverPausedAbortFailures", () => {
     );
   });
 
+  it("clears an autoMerge:false manual-hold pause-abort park in place without moving backward", async () => {
+    const store = createMockStore([parkTask({
+      id: "FN-7749",
+      column: "in-review",
+      error: MANUAL_HOLD_PARK_ERROR,
+      steps: DONE_STEPS,
+      autoMerge: undefined,
+    })]);
+    (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+      autoMerge: false,
+      globalPause: false,
+      enginePaused: false,
+      maintenanceIntervalMs: 0,
+    } as unknown as Settings);
+    const clearBinding = vi.fn().mockReturnValue(true);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getExecutingTaskIds: () => new Set<string>(),
+      clearPhantomExecutorBinding: clearBinding as (taskId: string) => boolean | void,
+    });
+
+    const recovered = await manager.recoverPausedAbortFailures();
+
+    expect(recovered).toBe(1);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-7749", { status: null, error: null });
+    expect(store.moveTask).not.toHaveBeenCalled();
+    expect(clearBinding).toHaveBeenCalledWith("FN-7749");
+    expect(store.logEntry).toHaveBeenCalledWith(
+      "FN-7749",
+      "Auto-recovered: in-review pause-abort park cleared — preserved for normal review progression",
+    );
+    expect(store.recordRunAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutationType: "task:auto-recover-paused-abort-park",
+        target: "FN-7749",
+        metadata: expect.objectContaining({
+          fromColumn: "in-review",
+          preservedInReview: true,
+          recoveryRoute: "work-item-resume",
+          recoveryReason: "pause-abort-manual-merge-hold",
+        }),
+      }),
+    );
+  });
+
   it("skips paused, executing, incomplete in-review, and non-pause-abort failures", async () => {
     const store = createMockStore([
       parkTask({ id: "FN-A", paused: true }),
@@ -211,13 +258,34 @@ describe("recoverPausedAbortFailures", () => {
     expect(store.updateTask).not.toHaveBeenCalled();
   });
 
+  // FN-7736: explicit regression for the approval-hold shape (paused, canonical
+  // awaiting-approval reason) -- classifyPausedAbortWorkflowRecovery's existing
+  // generic `task.paused` skip already covers this, but the invariant
+  // ("approval-blocked tasks are never advanced") must be asserted directly
+  // rather than relying on incidental generic-pause coverage.
+  it("skips an approval-held pause-abort park (canonical awaiting-approval reason)", async () => {
+    const store = createMockStore([
+      parkTask({ id: "FN-APPROVAL", paused: true, pausedReason: "awaiting-approval" }),
+    ]);
+    const manager = new SelfHealingManager(store, {
+      rootDir: "/tmp/test-project",
+      getExecutingTaskIds: () => new Set<string>(),
+    });
+
+    const recovered = await manager.recoverPausedAbortFailures();
+
+    expect(recovered).toBe(0);
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(store.moveTask).not.toHaveBeenCalled();
+  });
+
   it("leaves guarded in-review pause-abort parks untouched", async () => {
     const candidates = [
       parkTask({ id: "FN-U", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, userPaused: true, autoMerge: true }),
       parkTask({ id: "FN-X", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, autoMerge: true }),
       parkTask({ id: "FN-M", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, autoMerge: true, mergeDetails: { mergeConfirmed: true } as any }),
       parkTask({ id: "FN-T", column: "in-review", error: `${IN_REVIEW_PARK_ERROR} merge-conflict`, steps: DONE_STEPS, autoMerge: true }),
-      parkTask({ id: "FN-A", column: "in-review", error: IN_REVIEW_PARK_ERROR, steps: DONE_STEPS, autoMerge: undefined }),
+      parkTask({ id: "FN-A", column: "in-review", error: MANUAL_HOLD_PARK_ERROR, steps: DONE_STEPS, autoMerge: undefined, branchContext: { groupId: "BG-1", source: "mission", assignmentMode: "shared" } as any }),
     ];
     const store = createMockStore(candidates);
     (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({

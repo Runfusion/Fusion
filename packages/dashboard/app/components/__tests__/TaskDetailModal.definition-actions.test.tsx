@@ -454,14 +454,12 @@ describe("TaskDetailModal", () => {
     });
 
     /*
-     * FN-7559: release-authorization holds share status "awaiting-approval" with
-     * the manual gate (auto-approve-all intentionally does not bypass release
-     * authorization), so the plain Approve/Reject affordance must never render
-     * for them — clicking Approve would let a release-class spec bypass the
-     * FN-6481 explicit-marker requirement via a button click. Instead a distinct,
-     * truthful reason is shown and no leftover empty button shell remains.
+     * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the triage release-authorization
+     * gate was removed. A task still carrying the legacy release-authorization hold is
+     * now treated as an ordinary manual plan-approval hold and renders Approve/Reject
+     * Plan normally instead of a distinct, unresolvable reason string.
      */
-    it("shows a distinct release-authorization reason instead of Approve/Reject Plan buttons", () => {
+    it("shows Approve/Reject Plan for a legacy release-authorization hold", () => {
       render(
         <TaskDetailModal
           task={makeTask({
@@ -480,9 +478,9 @@ describe("TaskDetailModal", () => {
         />,
       );
 
-      expect(screen.queryByText("Approve Plan")).toBeNull();
-      expect(screen.queryByText("Reject Plan")).toBeNull();
-      expect(screen.getByText(/Awaiting release authorization/i)).toBeTruthy();
+      expect(screen.getByText("Approve Plan")).toBeTruthy();
+      expect(screen.getByText("Reject Plan")).toBeTruthy();
+      expect(screen.queryByText(/Awaiting release authorization/i)).toBeNull();
     });
 
     it("does not show approval buttons when task is not in triage", () => {

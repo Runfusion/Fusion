@@ -70,6 +70,7 @@ function makeSession(overrides: Partial<ChatSession> & Pick<ChatSession, "id" | 
     projectId: overrides.projectId ?? null,
     modelProvider: overrides.modelProvider ?? null,
     modelId: overrides.modelId ?? null,
+    thinkingLevel: overrides.thinkingLevel ?? null,
     createdAt: overrides.createdAt ?? "2026-04-08T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-04-08T00:00:00.000Z",
   };
@@ -849,8 +850,8 @@ describe("useChat", () => {
     }));
   });
 
-  it("creates a new session and selects it", async () => {
-    const newSession = makeSession({ id: "session-new", agentId: "agent-001", title: "Test Chat" });
+  it("creates a new session with thinking level and selects it", async () => {
+    const newSession = makeSession({ id: "session-new", agentId: "agent-001", title: "Test Chat", thinkingLevel: "medium" });
     mockCreateChatSession.mockResolvedValueOnce({ session: newSession });
     mockFetchChatSessions.mockResolvedValueOnce({ sessions: [] });
 
@@ -865,18 +866,28 @@ describe("useChat", () => {
       createdSession = await result.current.createSession({
         agentId: "agent-001",
         title: "Test Chat",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        thinkingLevel: "medium",
       });
     });
 
     await waitFor(() => {
       expect(mockCreateChatSession).toHaveBeenCalledWith(
-        { agentId: "agent-001", title: "Test Chat" },
+        {
+          agentId: "agent-001",
+          title: "Test Chat",
+          modelProvider: "anthropic",
+          modelId: "claude-sonnet-4-5",
+          thinkingLevel: "medium",
+        },
         undefined,
       );
     });
 
     await waitFor(() => {
       expect(result.current.activeSession?.id).toBe("session-new");
+      expect(result.current.activeSession?.thinkingLevel).toBe("medium");
       expect(result.current.sessions).toHaveLength(1);
     });
   });

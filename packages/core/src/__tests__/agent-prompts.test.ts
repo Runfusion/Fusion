@@ -7,6 +7,7 @@ import {
   resolveAgentPrompt,
   getAvailableTemplates,
   getTemplatesForRole,
+  FUSION_RUNTIME_SELF_AWARENESS,
 } from "../agent-prompts.js";
 import { BUILTIN_CODING_WORKFLOW_IR } from "../builtin-coding-workflow-ir.js";
 import { BUILTIN_SEAM_PROMPTS, builtinSeamPrompt } from "../builtin-workflow-prompts.js";
@@ -618,5 +619,45 @@ describe("BUILTIN_AGENT_PROMPTS", () => {
     const ids = BUILTIN_AGENT_PROMPTS.map((t) => t.id);
     const uniqueIds = new Set(ids);
     expect(uniqueIds.size).toBe(ids.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FUSION_RUNTIME_SELF_AWARENESS (FN-7675)
+// ---------------------------------------------------------------------------
+
+describe("FUSION_RUNTIME_SELF_AWARENESS", () => {
+  it("declares the hosted-process contingency", () => {
+    expect(FUSION_RUNTIME_SELF_AWARENESS).toContain("hosted process");
+    expect(FUSION_RUNTIME_SELF_AWARENESS.toLowerCase()).toContain("inside");
+  });
+
+  it("declares agents cannot act after Fusion shuts down", () => {
+    expect(FUSION_RUNTIME_SELF_AWARENESS.toLowerCase()).toContain("cannot** perform any action after fusion is shut down".toLowerCase());
+  });
+
+  it("requires shutdown-crossing workflows to be handed off as a standalone user-run artifact", () => {
+    const lower = FUSION_RUNTIME_SELF_AWARENESS.toLowerCase();
+    expect(lower).toContain("standalone artifact the user runs themselves");
+    expect(lower).toContain("updates, installs, patches, migrations");
+  });
+
+  it("describes the platform (task board + engine + surfaces)", () => {
+    const lower = FUSION_RUNTIME_SELF_AWARENESS.toLowerCase();
+    expect(lower).toContain("ai-orchestrated task board");
+    expect(lower).toContain("desktop app");
+    expect(lower).toContain("cli");
+    expect(lower).toContain("web dashboard");
+  });
+
+  it("points agents at the maintained docs for capability grounding", () => {
+    const lower = FUSION_RUNTIME_SELF_AWARENESS.toLowerCase();
+    expect(lower).toContain("docs/");
+    expect(lower).toContain("concepts.md");
+  });
+
+  it("is prepended (byte-for-byte) to the executor base prompt mirror", () => {
+    const executorPrompt = resolveAgentPrompt("executor");
+    expect(executorPrompt.startsWith(FUSION_RUNTIME_SELF_AWARENESS)).toBe(true);
   });
 });

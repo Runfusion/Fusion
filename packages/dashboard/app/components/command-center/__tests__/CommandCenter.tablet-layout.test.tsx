@@ -9,6 +9,8 @@ import { CommandCenter } from "../CommandCenter";
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   // TeamArea (rendered on the team tab) imports these directly; provide resolving
   // mocks so its mount effects (heartbeat-multiplier load/save, org tree, executor
   // stats) don't call undefined and throw synchronously.

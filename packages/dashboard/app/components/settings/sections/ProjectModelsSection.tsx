@@ -10,22 +10,27 @@ import type { ModelLane, SectionBaseProps, SectionSaveHandler, SettingsFormState
 import { LoadingSpinner } from "../../LoadingSpinner";
 type LaneStatus = "inherited" | "overridden";
 type WorkflowModelPair = {
-    id: "planning" | "execution" | "validator" | "planning-fallback" | "validator-fallback" | "title-summarizer-fallback";
+    id: "planning" | "execution" | "validator" | "planning-fallback" | "validator-fallback";
     providerId: string;
     modelId: string;
+    thinkingId?: string;
     label: string;
     help: string;
 };
 const DEFAULT_WORKFLOW_ID = "builtin:coding";
 /*
 FNXC:SettingsModels 2026-06-16-19:58:
-Fallback model lanes must be configurable in all Settings surfaces: General uses the global Fallback Model, Workflow Values uses declared workflow settings, and Project Models exposes only fallback pairs declared by the active default workflow so saves never PATCH undeclared keys.
+Fallback model lanes must be configurable in all Settings surfaces: General uses the global Fallback Model, Workflow Values uses declared workflow settings, and Project Models exposes workflow fallback pairs declared by the active default workflow plus project-scoped title-summarizer fallback keys so saves never PATCH undeclared keys.
+
+FNXC:Settings-ThinkingLevel 2026-07-10-12:08:
+Workflow fallback lanes may expose an inline thinking selector only when the active workflow declares the matching companion setting, while the title-summarizer fallback uses project-scoped keys below. Reset must clear both the model pair and the thinking companion; undeclared rows intentionally render no orphan thinking shell.
 */
 const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
     {
         id: "planning",
         providerId: "planningProvider",
         modelId: "planningModelId",
+        thinkingId: "planningThinkingLevel",
         label: "Plan/Triage Model",
         help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the workflow default.",
     },
@@ -33,6 +38,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         id: "execution",
         providerId: "executionProvider",
         modelId: "executionModelId",
+        thinkingId: "executionThinkingLevel",
         label: "Executor Model",
         help: "Provider and model used while executing workflow steps. Leave unset to inherit from the workflow default.",
     },
@@ -40,6 +46,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         id: "validator",
         providerId: "validatorProvider",
         modelId: "validatorModelId",
+        thinkingId: "validatorThinkingLevel",
         label: "Reviewer Model",
         help: "Provider and model used for workflow review or validation lanes. Leave unset to inherit from the workflow default.",
     },
@@ -47,6 +54,7 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         id: "planning-fallback",
         providerId: "planningFallbackProvider",
         modelId: "planningFallbackModelId",
+        thinkingId: "planningFallbackThinkingLevel",
         label: "Planning Fallback Model",
         help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
     },
@@ -54,15 +62,9 @@ const WORKFLOW_MODEL_PAIRS: WorkflowModelPair[] = [
         id: "validator-fallback",
         providerId: "validatorFallbackProvider",
         modelId: "validatorFallbackModelId",
+        thinkingId: "validatorFallbackThinkingLevel",
         label: "Reviewer Fallback Model",
         help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
-    },
-    {
-        id: "title-summarizer-fallback",
-        providerId: "titleSummarizerFallbackProvider",
-        modelId: "titleSummarizerFallbackModelId",
-        label: "Title Summarizer Fallback Model",
-        help: "Fallback provider and model used when the primary Title Summarizer model cannot be used.",
     },
 ];
 function declaredWorkflowModelPairs(settings?: WorkflowSettingDefinition[]): WorkflowModelPair[] {
@@ -70,7 +72,8 @@ function declaredWorkflowModelPairs(settings?: WorkflowSettingDefinition[]): Wor
     return WORKFLOW_MODEL_PAIRS.filter((pair) => {
         const provider = settingsById.get(pair.providerId);
         const model = settingsById.get(pair.modelId);
-        return provider?.type === "string" && model?.type === "string";
+        const thinking = pair.thinkingId ? settingsById.get(pair.thinkingId) : undefined;
+        return provider?.type === "string" && model?.type === "string" && (!pair.thinkingId || thinking?.type === "enum" || thinking?.type === "string");
     });
 }
 function modelPairValue(values: Record<string, unknown>, pair: WorkflowModelPair): string {
@@ -94,6 +97,9 @@ export interface ProjectModelsSectionModelProps {
     getLaneValue: (lane: ModelLane) => string;
     updateLaneValue: (lane: ModelLane, value: string) => void;
     resetLaneValue: (lane: ModelLane) => void;
+    getLaneThinkingValue: (lane: ModelLane) => string;
+    updateLaneThinkingValue: (lane: ModelLane, level: string) => void;
+    resetLaneThinkingValue: (lane: ModelLane) => void;
     availableModels: ModelInfo[];
     modelsLoading: boolean;
     favoriteProviders: string[];
@@ -129,7 +135,7 @@ export interface ProjectModelsSectionProps extends SectionBaseProps {
 }
 export function ProjectModelsSection({ scopeBanner, form, setForm, models, projectId, onOpenWorkflowSettings, registerWorkflowLaneSaver, }: ProjectModelsSectionProps) {
     const { t } = useTranslation("app");
-    const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
+    const { modelLanes, getLaneStatus, getLaneValue, updateLaneValue, resetLaneValue, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, availableModels, modelsLoading, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, editingPresetId, setEditingPresetId, presetDraft, setPresetDraft, onSavePresetDraft, confirmDelete, } = models;
     const presets = form.modelPresets || [];
     const presetOptions = presets.map((preset) => ({ id: preset.id, name: preset.name }));
     const inUsePresetIds = new Set(Object.values(form.defaultPresetBySize || {}).filter(Boolean));
@@ -210,9 +216,22 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
             };
         });
     }, []);
+    const setWorkflowThinkingValue = useCallback((pair: WorkflowModelPair, value: string) => {
+        if (!pair.thinkingId)
+            return;
+        setWorkflowRejections((current) => {
+            if (!pair.thinkingId || !current[pair.thinkingId])
+                return current;
+            const next = { ...current };
+            delete next[pair.thinkingId];
+            return next;
+        });
+        setWorkflowPending((current) => ({ ...current, [pair.thinkingId as string]: value || null }));
+    }, []);
     const resetWorkflowPairValue = useCallback((pair: WorkflowModelPair) => {
         setWorkflowPairValue(pair, "");
-    }, [setWorkflowPairValue]);
+        setWorkflowThinkingValue(pair, "");
+    }, [setWorkflowPairValue, setWorkflowThinkingValue]);
     const saveWorkflowLanes = useCallback(async () => {
         if (!projectId || !workflowDirty)
             return;
@@ -272,6 +291,31 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
         }
         return lane.helperText;
     };
+    const titleSummarizerFallbackValue = form.titleSummarizerFallbackProvider && form.titleSummarizerFallbackModelId
+        ? `${form.titleSummarizerFallbackProvider}/${form.titleSummarizerFallbackModelId}`
+        : "";
+    const titleSummarizerFallbackThinkingValue = typeof form.titleSummarizerFallbackThinkingLevel === "string"
+        ? form.titleSummarizerFallbackThinkingLevel
+        : "";
+    const titleSummarizerFallbackCustomized = Boolean(titleSummarizerFallbackValue || titleSummarizerFallbackThinkingValue);
+    const setTitleSummarizerFallbackValue = (value: string) => {
+        if (!value) {
+            setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined } as SettingsFormState));
+            return;
+        }
+        const slashIdx = value.indexOf("/");
+        setForm((f) => ({
+            ...f,
+            titleSummarizerFallbackProvider: value.slice(0, slashIdx),
+            titleSummarizerFallbackModelId: value.slice(slashIdx + 1),
+        } as SettingsFormState));
+    };
+    const setTitleSummarizerFallbackThinkingValue = (value: string) => {
+        setForm((f) => ({ ...f, titleSummarizerFallbackThinkingLevel: value || undefined } as SettingsFormState));
+    };
+    const resetTitleSummarizerFallbackValue = () => {
+        setForm((f) => ({ ...f, titleSummarizerFallbackProvider: undefined, titleSummarizerFallbackModelId: undefined, titleSummarizerFallbackThinkingLevel: undefined } as SettingsFormState));
+    };
     return (<>
       {scopeBanner}
 
@@ -296,7 +340,8 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
           {projectModelLanes.map((lane) => {
                 const status = getLaneStatus(lane);
                 const value = getLaneValue(lane);
-                const isOverridden = status === "overridden";
+                const thinkingValue = getLaneThinkingValue(lane);
+                const isOverridden = status === "overridden" || Boolean(thinkingValue);
                 const laneLabel = getProjectLaneLabel(lane);
                 return (<div className="form-group" key={lane.laneId}>
                 <div className="settings-model-lane-label-row">
@@ -307,15 +352,31 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
                 </div>
                 <div className="settings-model-lane-control-row">
                   <div className="settings-model-lane-control-main">
-                    <CustomModelDropdown id={`${lane.laneId}Model`} label={laneLabel} models={availableModels} value={value} onChange={(val) => updateLaneValue(lane, val)} placeholder={lane.laneId === "default" ? "Use global default" : "Use global"} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable"/>
+                    <CustomModelDropdown id={`${lane.laneId}Model`} label={laneLabel} models={availableModels} value={value} onChange={(val) => updateLaneValue(lane, val)} placeholder={lane.laneId === "default" ? "Use global default" : "Use global"} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(lane.projectThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
                   </div>
-                  {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => resetLaneValue(lane)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+                  {isOverridden && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={() => { resetLaneValue(lane); resetLaneThinkingValue(lane); }} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
                 </div>
                 <small>
                   {getProjectLaneHelperText(lane)}{t("settings.projectModels.fallsBackTo", " Falls back to: ")}{lane.fallbackOrder}.
                 </small>
               </div>);
             })}
+          {/* FNXC:Settings-ThinkingLevel 2026-07-10-12:08: Title-summarizer fallback provider/model/thinking settings are project-scoped, not workflow-declared. Render this fallback beside the project summarization lane so saves use project null-as-delete semantics instead of the workflow-values API. */}
+          <div className="form-group" data-testid="project-model-lane-title-summarizer-fallback">
+            <div className="settings-model-lane-label-row">
+              <label htmlFor="titleSummarizerFallbackModel">{t("settings.projectModels.titleSummarizerFallbackModel", "Title Summarizer Fallback Model")}</label>
+              <span className={`settings-lane-badge ${titleSummarizerFallbackCustomized ? "settings-lane-badge--override" : "settings-lane-badge--inherited"}`} title={titleSummarizerFallbackCustomized ? "Explicitly set for this project" : "Inherited from global settings"}>
+                {titleSummarizerFallbackCustomized ? "Override (Project)" : "Inherited (Global)"}
+              </span>
+            </div>
+            <div className="settings-model-lane-control-row">
+              <div className="settings-model-lane-control-main">
+                <CustomModelDropdown id="titleSummarizerFallbackModel" label="Title Summarizer Fallback Model" models={availableModels} value={titleSummarizerFallbackValue} onChange={setTitleSummarizerFallbackValue} placeholder={t("settings.projectModels.useGlobal", "Use global")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={true} thinkingLevel={titleSummarizerFallbackThinkingValue} onThinkingLevelChange={setTitleSummarizerFallbackThinkingValue} defaultThinkingLevel={form.defaultThinkingLevel}/>
+              </div>
+              {titleSummarizerFallbackCustomized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromGlobal", "Reset to inherit from global")} onClick={resetTitleSummarizerFallbackValue} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
+            </div>
+            <small>{t("settings.projectModels.titleSummarizerFallbackHelp", "Fallback provider and model used when the primary Title Summarizer model cannot be used. Falls back to the global summarization lane and then the default model chain.")}</small>
+          </div>
         </>)}
 
       {/* --- Default workflow model lanes --- */}
@@ -325,11 +386,19 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
       {!projectId ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.openAProjectToEditWorkflowModelLanes", "Open a project to edit workflow model lanes.")}</div>) : workflowLoading ? (<div className="settings-empty-state"><LoadingSpinner label={t("settings.projectModels.loadingWorkflowModelLanes", "Loading workflow model lanes\u2026")} /></div>) : availableModels.length === 0 ? (<div className="settings-empty-state settings-muted">{t("settings.projectModels.noModelsAvailableConfigureAuthenticationBeforeSelectingWorkflow", " No models available. Configure authentication before selecting workflow model lanes. ")}</div>) : (<>
           {workflowModelPairs.map((pair) => {
                 const value = modelPairValue(effectiveWorkflowValues, pair);
-                const customized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
+                const rawThinkingValue = pair.thinkingId ? effectiveWorkflowValues[pair.thinkingId] : undefined;
+                const thinkingValue: string = typeof rawThinkingValue === "string" ? rawThinkingValue : "";
+                const modelCustomized = Object.prototype.hasOwnProperty.call(workflowPending, pair.providerId)
                     ? workflowPending[pair.providerId] !== null
                     : Boolean(workflowPayload?.stored && (Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.providerId)
                         || Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.modelId)));
-                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message;
+                const thinkingCustomized = pair.thinkingId
+                    ? (Object.prototype.hasOwnProperty.call(workflowPending, pair.thinkingId)
+                        ? workflowPending[pair.thinkingId] !== null
+                        : Boolean(workflowPayload?.stored && Object.prototype.hasOwnProperty.call(workflowPayload.stored, pair.thinkingId)))
+                    : false;
+                const customized = modelCustomized || thinkingCustomized;
+                const error = workflowRejections[pair.providerId]?.message ?? workflowRejections[pair.modelId]?.message ?? (pair.thinkingId ? workflowRejections[pair.thinkingId]?.message : undefined);
                 return (<div className="form-group" key={pair.id} data-testid={`workflow-model-lane-${pair.id}`}>
                 <div className="settings-model-lane-label-row">
                   <label htmlFor={`workflow-${pair.id}-model`}>{pair.label}</label>
@@ -339,7 +408,7 @@ export function ProjectModelsSection({ scopeBanner, form, setForm, models, proje
                 </div>
                 <div className="settings-model-lane-control-row">
                   <div className="settings-model-lane-control-main">
-                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable"/>
+                    <CustomModelDropdown id={`workflow-${pair.id}-model`} label={pair.label} models={availableModels} value={value} onChange={(next) => setWorkflowPairValue(pair, next)} placeholder={t("settings.projectModels.useWorkflowDefault", "Use workflow default")} defaultOptionLabel="Use workflow default" favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} menuWidth="readable" showThinkingLevel={Boolean(pair.thinkingId)} thinkingLevel={thinkingValue} onThinkingLevelChange={pair.thinkingId ? (level) => setWorkflowThinkingValue(pair, level) : undefined} defaultThinkingLevel={typeof form.defaultThinkingLevel === "string" ? form.defaultThinkingLevel : "off"}/>
                   </div>
                   {customized && (<button type="button" className="btn btn-ghost btn-sm" title={t("settings.projectModels.resetToInheritFromWorkflow", "Reset to inherit from workflow")} onClick={() => resetWorkflowPairValue(pair)} style={{ whiteSpace: "nowrap" }}>{t("settings.projectModels.reset", " Reset ")}</button>)}
                 </div>

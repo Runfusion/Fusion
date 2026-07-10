@@ -98,6 +98,11 @@ export interface AgentRuntimeOptions {
   fallbackProvider?: string;
   /** Optional fallback model ID */
   fallbackModelId?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Runtime session options carry the fallback model's own thinking level so a fallback swap can apply it, or fall back to `defaultThinkingLevel` when unset.
+   */
+  fallbackThinkingLevel?: string;
   /** Default thinking effort level (e.g. "medium", "high") */
   defaultThinkingLevel?: string;
   /** Optional pre-configured SessionManager for persistence */

@@ -40,10 +40,25 @@ vi.mock("@fusion/core", () => ({
     restoreBackup: mockRestoreBackup,
   })),
   runMemoryBackupCommand: mockRunMemoryBackupCommand,
+  isSqliteLockError: (error: unknown) => /database is locked/i.test(error instanceof Error ? error.message : String(error)),
 }));
 
 vi.mock("../../project-context.js", () => ({
   resolveProject: mockResolveProject,
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => Promise<void> } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort, mirrors production closeProjectStore
+    }
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
 }));
 
 import { runMemoryBackupCreate, runMemoryBackupList, runMemoryBackupRestore } from "../memory-backup.js";

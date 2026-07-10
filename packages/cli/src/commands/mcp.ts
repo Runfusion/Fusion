@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import {
+import { TaskStore,
   GlobalSettingsStore,
   exportMcpServersJson,
   importMcpServersJson,
@@ -17,7 +17,8 @@ import {
   type SecretScope,
   type Settings,
 } from "@fusion/core";
-import { resolveProject, createLocalStore, type ProjectContext } from "../project-context.js";
+import { resolveProject, createLocalStore, closeProjectStore, asLocalProjectContext, type ProjectContext } from "../project-context.js";
+import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
 
 export type McpScope = "global" | "project";
 export type McpTransportInput = "stdio" | "sse" | "http" | "streamable-http";
@@ -44,9 +45,34 @@ export interface McpMutationOptions extends McpSensitiveInputOptions {
   enabled?: boolean;
 }
 
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00:
+ * FN-7739 audit finding: `loadContext` resolves an optional cached project
+ * `TaskStore` (via `resolveProject`), and `getSecretsStore` may separately
+ * build an UNCACHED `new TaskStore(process.cwd())` (when no project is in
+ * scope) — before this change, NEITHER was ever closed on any exit path, so
+ * every `runMcp*` read and mutation leaked a live SQLite/WAL handle that
+ * kept the CLI process's event loop alive after the command finished. Only
+ * the project-scope `writeScopedSettings` -> `store.updateSettings` call
+ * ever touches the board DB; it did not retry through a momentary
+ * `database is locked`. `GlobalSettingsStore` is file-backed
+ * (`~/.fusion/settings.json`, no SQLite handle, no `close()`) — it is
+ * intentionally left with no close/retry (confirmed via
+ * packages/core/src/global-settings.ts). `McpContext.secretsStore` caches
+ * the uncached ad-hoc secrets `TaskStore` per-invocation (created lazily by
+ * `getSecretsStore`, which may be called multiple times inside a single
+ * mutation's `buildSensitiveMap` loop) so it is opened at most once and
+ * closed exactly once via `closeMcpContext`, which closes BOTH the cached
+ * project store (`closeProjectStore`) and the ad-hoc secrets store
+ * (`asLocalProjectContext` + `closeProjectStore`) on every exit path.
+ * Reuses the FN-7731/FN-7738 `retryOnLock`/`closeProjectStore` helpers — no
+ * forked implementation.
+ */
 interface McpContext {
   project?: ProjectContext;
   globalStore: GlobalSettingsStore;
+  /** Ad-hoc uncached secrets store, created lazily; closed via closeMcpContext. */
+  secretsStore?: TaskStore;
 }
 
 const DEFAULT_SCOPE: McpScope = "project";
@@ -66,6 +92,29 @@ async function loadContext(projectName?: string, requireProject = false): Promis
     if (requireProject || projectName) throw error;
   }
   return { project, globalStore };
+}
+
+/**
+ * Close the cached project store (if resolved) AND the ad-hoc uncached
+ * secrets store (if one was created) on every exit path. Best-effort and
+ * idempotent — see `closeProjectStore`.
+ */
+async function closeMcpContext(context: McpContext): Promise<void> {
+  if (context.project) {
+    await closeProjectStore(context.project);
+  }
+  if (context.secretsStore) {
+    await closeProjectStore(asLocalProjectContext(context.secretsStore));
+  }
+}
+
+async function failMcpCommand(error: unknown, context?: McpContext): Promise<never> {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(message);
+  if (context) {
+    await closeMcpContext(context);
+  }
+  return process.exit(1);
 }
 
 function normalizeScope(scope?: McpScope): McpScope {
@@ -100,10 +149,17 @@ function mcpSettings(settings?: Pick<GlobalSettings | ProjectSettings | Settings
 async function readScopedSettings(context: McpContext, scope: McpScope): Promise<McpServersSettings> {
   if (scope === "global") return mcpSettings(await context.globalStore.getSettings());
   const project = ensureProject(context);
-  const scoped = await project.store.getSettingsByScope();
+  const scoped = await retryOnLock(async () => project.store.getSettingsByScope(), { id: "mcp-settings", action: "read project MCP settings" });
   return mcpSettings(scoped.project);
 }
 
+/**
+ * Global-scope writes target the file-backed `GlobalSettingsStore` (no
+ * SQLite handle behind it) and are NOT retried for lock. Only the
+ * project-scope `store.updateSettings` board write is wrapped in
+ * `retryOnLock` — it is the discrete SQLite interaction that can race a
+ * momentary engine/agent writer.
+ */
 async function writeScopedSettings(context: McpContext, scope: McpScope, next: McpServersSettings): Promise<void> {
   const validation = validateMcpServerDefinitionsDetailed(next.servers ?? [], "mcpServers.servers");
   if (validation.errors.length > 0) {
@@ -115,7 +171,10 @@ async function writeScopedSettings(context: McpContext, scope: McpScope, next: M
     return;
   }
   const project = ensureProject(context);
-  await project.store.updateSettings({ mcpServers: normalized } as Partial<Settings>);
+  await retryOnLock(
+    async () => project.store.updateSettings({ mcpServers: normalized } as Partial<Settings>),
+    { id: "mcp-settings", action: "write project MCP settings" },
+  );
 }
 
 function upsertServer(servers: McpServerDefinition[], server: McpServerDefinition): McpServerDefinition[] {
@@ -145,19 +204,31 @@ function assertNoPlaintextSensitiveOptions(opts: McpSensitiveInputOptions): void
   }
 }
 
+/**
+ * Return the secrets store for this context, reusing the cached project
+ * store when in scope, or lazily creating (and caching on `context`) the
+ * uncached ad-hoc `TaskStore(process.cwd())` fallback exactly once per
+ * invocation so repeated calls inside `buildSensitiveMap` do not open a new
+ * handle each time — `closeMcpContext` closes it on every exit path.
+ */
 async function getSecretsStore(context: McpContext) {
   const project = context.project;
-  // FNXC:PostgresCutover 2026-07-05-12:00: boot the cwd fallback through the
-  // PostgreSQL startup factory; bare `new TaskStore` throws in backend mode.
-  const store = project?.store ?? (await createLocalStore(process.cwd()));
-  return store.getSecretsStore();
+  if (project) {
+    return project.store.getSecretsStore();
+  }
+  if (!context.secretsStore) {
+    // FNXC:PostgresCutover 2026-07-05-12:00: boot the cwd fallback through the
+    // PostgreSQL startup factory; bare `new TaskStore` throws in backend mode.
+    context.secretsStore = await createLocalStore(process.cwd());
+  }
+  return context.secretsStore.getSecretsStore();
 }
 
 async function resolveExistingSecret(context: McpContext, secretRef: string, scope: SecretScope): Promise<McpSecretRef> {
   const secrets = await getSecretsStore(context);
   const byId = await secrets.getSecretMetadata(secretRef, scope);
   if (byId) return { secretRef: byId.id, scope };
-  const byKey = (await secrets.listSecrets(scope)).find((secret) => secret.key === secretRef);
+  const byKey = (await secrets.listSecrets(scope)).find((secret: { id: string; key: string }) => secret.key === secretRef);
   if (!byKey) {
     throw new Error(`Secret "${secretRef}" not found in ${scope} scope. Create it first or use --create-secret-env/--create-secret-header.`);
   }
@@ -269,24 +340,37 @@ function serverLine(server: McpServerDefinition, source: string, effectiveNames:
  * Listing must show global declarations, project declarations, and the project-over-global effective result without exposing secret material. Sensitive env/header fields are summarized as Fusion secret references only.
  */
 export async function runMcpList(opts: { projectName?: string; json?: boolean } = {}): Promise<void> {
-  const context = await loadContext(opts.projectName, false);
-  const globalSettings = mcpSettings(await context.globalStore.getSettings());
-  const projectSettings = context.project ? mcpSettings((await context.project.store.getSettingsByScope()).project) : undefined;
-  const effective = resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
-  if (opts.json) {
-    console.log(JSON.stringify({ global: globalSettings.servers ?? [], project: projectSettings?.servers ?? [], effective }, null, 2));
-    return;
+  let context: McpContext | undefined;
+  try {
+    context = await loadContext(opts.projectName, false);
+    const globalSettings = mcpSettings(await context.globalStore.getSettings());
+    const project = context.project;
+    const projectSettings = project ? mcpSettings((await retryOnLock(async () => project.store.getSettingsByScope(), { id: "mcp-settings", action: "read project MCP settings" })).project) : undefined;
+    const effective = resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
+    if (opts.json) {
+      console.log(JSON.stringify({ global: globalSettings.servers ?? [], project: projectSettings?.servers ?? [], effective }, null, 2));
+      return;
+    }
+    console.log();
+    console.log("  MCP servers");
+    console.log("  " + "─".repeat(80));
+    const effectiveNames = new Set(effective.map((server) => server.name));
+    for (const server of globalSettings.servers ?? []) console.log(serverLine(server, "global", effectiveNames));
+    for (const server of projectSettings?.servers ?? []) console.log(serverLine(server, "project", effectiveNames));
+    if ((globalSettings.servers?.length ?? 0) === 0 && (projectSettings?.servers?.length ?? 0) === 0) console.log("  No MCP servers configured.");
+    console.log();
+    console.log(`  Effective: ${effective.map((server) => server.name).join(", ") || "none"}`);
+    console.log();
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
   }
-  console.log();
-  console.log("  MCP servers");
-  console.log("  " + "─".repeat(80));
-  const effectiveNames = new Set(effective.map((server) => server.name));
-  for (const server of globalSettings.servers ?? []) console.log(serverLine(server, "global", effectiveNames));
-  for (const server of projectSettings?.servers ?? []) console.log(serverLine(server, "project", effectiveNames));
-  if ((globalSettings.servers?.length ?? 0) === 0 && (projectSettings?.servers?.length ?? 0) === 0) console.log("  No MCP servers configured.");
-  console.log();
-  console.log(`  Effective: ${effective.map((server) => server.name).join(", ") || "none"}`);
-  console.log();
 }
 
 /**
@@ -294,13 +378,25 @@ export async function runMcpList(opts: { projectName?: string; json?: boolean } 
  * Add persists an MCP server at the chosen global/project scope and lets the shared resolver decide project-over-global behavior. Env/header/token material must be an existing Fusion secret reference or be created in SecretsStore before validation; raw values never enter settings.
  */
 export async function runMcpAdd(name: string, opts: McpMutationOptions = {}): Promise<void> {
-  const scope = normalizeScope(opts.scope);
-  const context = await loadContext(opts.projectName, scope === "project");
-  const current = await readScopedSettings(context, scope);
-  if ((current.servers ?? []).some((server) => server.name === name)) throw new Error(`MCP server "${name}" already exists in ${scope} scope. Use edit to update it.`);
-  const server = await buildServerDefinition(context, name, opts);
-  await writeScopedSettings(context, scope, { enabled: true, servers: upsertServer(current.servers ?? [], server) });
-  console.log(`✓ Added MCP server "${name}" to ${scope} scope`);
+  let context: McpContext | undefined;
+  try {
+    const scope = normalizeScope(opts.scope);
+    context = await loadContext(opts.projectName, scope === "project");
+    const current = await readScopedSettings(context, scope);
+    if ((current.servers ?? []).some((server) => server.name === name)) throw new Error(`MCP server "${name}" already exists in ${scope} scope. Use edit to update it.`);
+    const server = await buildServerDefinition(context, name, opts);
+    await writeScopedSettings(context, scope, { enabled: true, servers: upsertServer(current.servers ?? [], server) });
+    console.log(`✓ Added MCP server "${name}" to ${scope} scope`);
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
+  }
 }
 
 /**
@@ -308,14 +404,26 @@ export async function runMcpAdd(name: string, opts: McpMutationOptions = {}): Pr
  * Edit updates only the selected scope; project definitions override same-named globals and may be disabled locally. Secret-bearing fields are replaced only with Fusion secret references or newly created SecretsStore records.
  */
 export async function runMcpEdit(name: string, opts: McpMutationOptions = {}): Promise<void> {
-  const scope = normalizeScope(opts.scope);
-  const context = await loadContext(opts.projectName, scope === "project");
-  const current = await readScopedSettings(context, scope);
-  const existing = (current.servers ?? []).find((server) => server.name === name);
-  if (!existing) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
-  const server = await buildServerDefinition(context, name, opts, existing);
-  await writeScopedSettings(context, scope, { enabled: true, servers: upsertServer(current.servers ?? [], server) });
-  console.log(`✓ Updated MCP server "${name}" in ${scope} scope`);
+  let context: McpContext | undefined;
+  try {
+    const scope = normalizeScope(opts.scope);
+    context = await loadContext(opts.projectName, scope === "project");
+    const current = await readScopedSettings(context, scope);
+    const existing = (current.servers ?? []).find((server) => server.name === name);
+    if (!existing) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
+    const server = await buildServerDefinition(context, name, opts, existing);
+    await writeScopedSettings(context, scope, { enabled: true, servers: upsertServer(current.servers ?? [], server) });
+    console.log(`✓ Updated MCP server "${name}" in ${scope} scope`);
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
+  }
 }
 
 /**
@@ -323,23 +431,47 @@ export async function runMcpEdit(name: string, opts: McpMutationOptions = {}): P
  * Remove deletes only the scoped declaration. Removing a project override can reveal an inherited global declaration again because effective MCP resolution is project-over-global by server name.
  */
 export async function runMcpRemove(name: string, opts: { projectName?: string; scope?: McpScope } = {}): Promise<void> {
-  const scope = normalizeScope(opts.scope);
-  const context = await loadContext(opts.projectName, scope === "project");
-  const current = await readScopedSettings(context, scope);
-  const next = removeServer(current.servers ?? [], name);
-  if (!next.removed) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
-  await writeScopedSettings(context, scope, { enabled: current.enabled ?? true, servers: next.servers });
-  console.log(`✓ Removed MCP server "${name}" from ${scope} scope`);
+  let context: McpContext | undefined;
+  try {
+    const scope = normalizeScope(opts.scope);
+    context = await loadContext(opts.projectName, scope === "project");
+    const current = await readScopedSettings(context, scope);
+    const next = removeServer(current.servers ?? [], name);
+    if (!next.removed) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
+    await writeScopedSettings(context, scope, { enabled: current.enabled ?? true, servers: next.servers });
+    console.log(`✓ Removed MCP server "${name}" from ${scope} scope`);
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
+  }
 }
 
 async function setEnabled(name: string, enabled: boolean, opts: { projectName?: string; scope?: McpScope } = {}): Promise<void> {
-  const scope = normalizeScope(opts.scope);
-  const context = await loadContext(opts.projectName, scope === "project");
-  const current = await readScopedSettings(context, scope);
-  const existing = (current.servers ?? []).find((server) => server.name === name);
-  if (!existing) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
-  await writeScopedSettings(context, scope, { enabled: current.enabled ?? true, servers: upsertServer(current.servers ?? [], { ...existing, enabled }) });
-  console.log(`✓ ${enabled ? "Enabled" : "Disabled"} MCP server "${name}" in ${scope} scope`);
+  let context: McpContext | undefined;
+  try {
+    const scope = normalizeScope(opts.scope);
+    context = await loadContext(opts.projectName, scope === "project");
+    const current = await readScopedSettings(context, scope);
+    const existing = (current.servers ?? []).find((server) => server.name === name);
+    if (!existing) throw new Error(`MCP server "${name}" not found in ${scope} scope.`);
+    await writeScopedSettings(context, scope, { enabled: current.enabled ?? true, servers: upsertServer(current.servers ?? [], { ...existing, enabled }) });
+    console.log(`✓ ${enabled ? "Enabled" : "Disabled"} MCP server "${name}" in ${scope} scope`);
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
+  }
 }
 
 /**
@@ -363,33 +495,45 @@ export async function runMcpDisable(name: string, opts: { projectName?: string; 
  * Claude Desktop imports must delegate parsing to the core importer. Any plaintext env/header values returned by the importer are immediately converted into SecretsStore records, then settings receive only the resulting Fusion secret references.
  */
 export async function runMcpImport(filePath: string, opts: { projectName?: string; scope?: McpScope; yes?: boolean } = {}): Promise<void> {
-  const scope = normalizeScope(opts.scope);
-  const context = await loadContext(opts.projectName, scope === "project");
-  const resolvedPath = resolve(filePath);
-  if (!existsSync(resolvedPath)) throw new Error(`File not found: ${filePath}`);
-  const imported = importMcpServersJson(await readFile(resolvedPath, "utf-8"), { scope });
-  if (imported.errors.length > 0) throw new Error(`Invalid MCP import file:\n${imported.errors.map((error) => `  - ${error}`).join("\n")}`);
-  console.log();
-  console.log("  MCP Import Summary:");
-  console.log(`  Source: ${resolvedPath}`);
-  console.log(`  Scope: ${scope}`);
-  console.log(`  Servers: ${imported.definitions.length}`);
-  console.log(`  Secrets to create: ${imported.secretsToCreate.length}`);
-  console.log();
-  if (!opts.yes) throw new Error("Use --yes to confirm this import operation");
-  const replacements = new Map<string, McpSecretRef>();
-  for (const secret of imported.secretsToCreate) {
-    replacements.set(`${secret.serverName}:${secret.field}:${secret.key}:${secret.suggestedKey}`, await createSecretRef(context, {
-      scope: secret.scope,
-      key: secret.suggestedKey,
-      plaintextValue: secret.plaintextValue,
-      description: `Imported MCP ${secret.field} ${secret.key} for ${secret.serverName}`,
-    }));
+  let context: McpContext | undefined;
+  try {
+    const scope = normalizeScope(opts.scope);
+    context = await loadContext(opts.projectName, scope === "project");
+    const resolvedPath = resolve(filePath);
+    if (!existsSync(resolvedPath)) throw new Error(`File not found: ${filePath}`);
+    const imported = importMcpServersJson(await readFile(resolvedPath, "utf-8"), { scope });
+    if (imported.errors.length > 0) throw new Error(`Invalid MCP import file:\n${imported.errors.map((error) => `  - ${error}`).join("\n")}`);
+    console.log();
+    console.log("  MCP Import Summary:");
+    console.log(`  Source: ${resolvedPath}`);
+    console.log(`  Scope: ${scope}`);
+    console.log(`  Servers: ${imported.definitions.length}`);
+    console.log(`  Secrets to create: ${imported.secretsToCreate.length}`);
+    console.log();
+    if (!opts.yes) throw new Error("Use --yes to confirm this import operation");
+    const replacements = new Map<string, McpSecretRef>();
+    for (const secret of imported.secretsToCreate) {
+      replacements.set(`${secret.serverName}:${secret.field}:${secret.key}:${secret.suggestedKey}`, await createSecretRef(context, {
+        scope: secret.scope,
+        key: secret.suggestedKey,
+        plaintextValue: secret.plaintextValue,
+        description: `Imported MCP ${secret.field} ${secret.key} for ${secret.serverName}`,
+      }));
+    }
+    const definitions = imported.definitions.map((server) => rewriteImportedSecretRefs(server, replacements));
+    const current = await readScopedSettings(context, scope);
+    await writeScopedSettings(context, scope, { enabled: true, servers: [...(current.servers ?? []).filter((server) => !definitions.some((entry) => entry.name === server.name)), ...definitions] });
+    console.log(`✓ Imported ${definitions.length} MCP server(s) into ${scope} scope`);
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
   }
-  const definitions = imported.definitions.map((server) => rewriteImportedSecretRefs(server, replacements));
-  const current = await readScopedSettings(context, scope);
-  await writeScopedSettings(context, scope, { enabled: true, servers: [...(current.servers ?? []).filter((server) => !definitions.some((entry) => entry.name === server.name)), ...definitions] });
-  console.log(`✓ Imported ${definitions.length} MCP server(s) into ${scope} scope`);
 }
 
 function rewriteImportedSecretRefs(server: McpServerDefinition, replacements: Map<string, McpSecretRef>): McpServerDefinition {
@@ -411,23 +555,36 @@ function rewriteImportedSecretRefs(server: McpServerDefinition, replacements: Ma
  * MCP export uses the core JSON exporter so secret-backed fields stay as descriptors and are never materialized. The default export is effective project-over-global configuration; explicit scope exports preserve stored declarations.
  */
 export async function runMcpExport(opts: { projectName?: string; scope?: McpScope | "effective"; output?: string; json?: boolean } = {}): Promise<void> {
-  const context = await loadContext(opts.projectName, opts.scope === "project");
-  const scope = opts.scope ?? "effective";
-  const globalSettings = mcpSettings(await context.globalStore.getSettings());
-  const projectSettings = context.project ? mcpSettings((await context.project.store.getSettingsByScope()).project) : undefined;
-  const definitions = scope === "global"
-    ? globalSettings.servers ?? []
-    : scope === "project"
-      ? projectSettings?.servers ?? []
-      : resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
-  const exported = exportMcpServersJson(definitions);
-  const json = JSON.stringify(exported, null, 2);
-  if (opts.output) {
-    await writeFile(resolve(opts.output), json);
-    console.log(`✓ Exported MCP servers to ${resolve(opts.output)}`);
-    return;
+  let context: McpContext | undefined;
+  try {
+    context = await loadContext(opts.projectName, opts.scope === "project");
+    const scope = opts.scope ?? "effective";
+    const globalSettings = mcpSettings(await context.globalStore.getSettings());
+    const project = context.project;
+    const projectSettings = project ? mcpSettings((await retryOnLock(async () => project.store.getSettingsByScope(), { id: "mcp-settings", action: "read project MCP settings" })).project) : undefined;
+    const definitions = scope === "global"
+      ? globalSettings.servers ?? []
+      : scope === "project"
+        ? projectSettings?.servers ?? []
+        : resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
+    const exported = exportMcpServersJson(definitions);
+    const json = JSON.stringify(exported, null, 2);
+    if (opts.output) {
+      await writeFile(resolve(opts.output), json);
+      console.log(`✓ Exported MCP servers to ${resolve(opts.output)}`);
+      return;
+    }
+    console.log(json);
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
   }
-  console.log(json);
 }
 
 /**
@@ -435,21 +592,34 @@ export async function runMcpExport(opts: { projectName?: string; scope?: McpScop
  * Validate is intentionally list-only until an optional MCP reachability service exists. It still uses the foundation validator so transport requirements and plaintext-secret rejection match every other MCP settings write path.
  */
 export async function runMcpValidate(opts: { projectName?: string; scope?: McpScope | "effective"; json?: boolean } = {}): Promise<void> {
-  const context = await loadContext(opts.projectName, opts.scope === "project");
-  const scope = opts.scope ?? "effective";
-  const globalSettings = mcpSettings(await context.globalStore.getSettings());
-  const projectSettings = context.project ? mcpSettings((await context.project.store.getSettingsByScope()).project) : undefined;
-  const definitions = scope === "global"
-    ? globalSettings.servers ?? []
-    : scope === "project"
-      ? projectSettings?.servers ?? []
-      : resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
-  const validation = validateMcpServerDefinitionsDetailed(definitions);
-  const result = { ok: validation.errors.length === 0, servers: definitions.length, errors: validation.errors };
-  if (opts.json) {
-    console.log(JSON.stringify(result, null, 2));
-    return;
+  let context: McpContext | undefined;
+  try {
+    context = await loadContext(opts.projectName, opts.scope === "project");
+    const scope = opts.scope ?? "effective";
+    const globalSettings = mcpSettings(await context.globalStore.getSettings());
+    const project = context.project;
+    const projectSettings = project ? mcpSettings((await retryOnLock(async () => project.store.getSettingsByScope(), { id: "mcp-settings", action: "read project MCP settings" })).project) : undefined;
+    const definitions = scope === "global"
+      ? globalSettings.servers ?? []
+      : scope === "project"
+        ? projectSettings?.servers ?? []
+        : resolveEffectiveMcpServers({ mcpServers: globalSettings }, projectSettings ? { mcpServers: projectSettings } : null);
+    const validation = validateMcpServerDefinitionsDetailed(definitions);
+    const result = { ok: validation.errors.length === 0, servers: definitions.length, errors: validation.errors };
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.ok) console.log(`✓ ${definitions.length} MCP server definition(s) valid`);
+    else throw new Error(formatValidationErrors(validation.errors));
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await failMcpCommand(error, context);
+    }
+    throw error;
+  } finally {
+    if (context) {
+      await closeMcpContext(context);
+    }
   }
-  if (result.ok) console.log(`✓ ${definitions.length} MCP server definition(s) valid`);
-  else throw new Error(formatValidationErrors(validation.errors));
 }

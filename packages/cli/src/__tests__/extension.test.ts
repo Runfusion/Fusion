@@ -235,6 +235,7 @@ legacyDescribe("fn pi extension (legacy exhaustive suite)", () => {
         "fn_task_pause",
         "fn_task_unpause",
         "fn_task_retry",
+        "fn_task_bypass_review",
         "fn_task_duplicate",
         "fn_task_refine",
         "fn_task_import_github",

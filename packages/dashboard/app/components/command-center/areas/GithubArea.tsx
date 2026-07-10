@@ -30,11 +30,12 @@ function formatResolvedAt(value: string, fallback: string): string {
   return date.toLocaleString();
 }
 
-export function GithubArea({ range }: { range: DateRange }) {
+export function GithubArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const { data, isLoading, error } = useAnalyticsArea<GithubIssueAnalytics>(
     "/command-center/github",
     range,
+    { projectId },
   );
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState<BackfillAggregate | null>(null);

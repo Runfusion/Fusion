@@ -326,6 +326,105 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
   const { t } = useTranslation("app");
   const agentRoles = getAgentRoles(t);
   const [showSystemAgents, setShowSystemAgents] = useState(false);
+
+  /*
+  FNXC:RuntimeFallback 2026-07-08-00:00:
+  Real IntersectionObserver-backed viewport gating for RuntimeFallbackBadge
+  instances rendered per-card (board + list views), matching TaskCard.tsx's
+  pattern. Cards are rendered inline inside a .map() rather than as their own
+  components, so a single shared observer keyed by a per-card string
+  (`board:{agentId}` / `list:{agentId}`, kept distinct so board and list never
+  share visibility state for the same agent) replaces the per-card
+  useRef/useState/useEffect triplet TaskCard uses for its single card root.
+
+  registerAgentCardRef(key) is invoked inline in JSX on every render, so it MUST
+  return a cached, stable callback per key (agentCardRefCallbacksRef) rather than
+  a fresh closure. A fresh closure each render looks like an unmount+remount to
+  React; in environments without IntersectionObserver the mount callback calls
+  setVisibleAgentCardKeys, which re-renders, producing another fresh closure — an
+  infinite re-render loop (including jsdom). The cached entry is evicted when the
+  element truly unmounts (el === null) so the Map cannot grow without bound across
+  created/deleted agents.
+  */
+  const agentCardElsRef = useRef<Map<string, Element>>(new Map());
+  const agentCardKeyByElRef = useRef<Map<Element, string>>(new Map());
+  const agentCardRefCallbacksRef = useRef<Map<string, (el: HTMLDivElement | null) => void>>(new Map());
+  const [visibleAgentCardKeys, setVisibleAgentCardKeys] = useState<Set<string>>(new Set());
+  const agentCardObserverRef = useRef<IntersectionObserver | null>(null);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisibleAgentCardKeys((prev) => {
+          let changed = false;
+          const next = new Set(prev);
+          for (const entry of entries) {
+            const key = agentCardKeyByElRef.current.get(entry.target);
+            if (!key) continue;
+            if (entry.isIntersecting) {
+              if (!next.has(key)) {
+                next.add(key);
+                changed = true;
+              }
+            } else if (next.has(key)) {
+              next.delete(key);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      },
+      { rootMargin: "200px" },
+    );
+    agentCardObserverRef.current = observer;
+    agentCardElsRef.current.forEach((el) => observer.observe(el));
+    return () => {
+      observer.disconnect();
+      agentCardObserverRef.current = null;
+    };
+  }, []);
+
+  const registerAgentCardRef = useCallback((key: string) => {
+    const cached = agentCardRefCallbacksRef.current.get(key);
+    if (cached) return cached;
+    const callback = (el: HTMLDivElement | null) => {
+      const prevEl = agentCardElsRef.current.get(key);
+      if (prevEl) {
+        agentCardObserverRef.current?.unobserve(prevEl);
+        agentCardKeyByElRef.current.delete(prevEl);
+      }
+      if (el) {
+        agentCardElsRef.current.set(key, el);
+        agentCardKeyByElRef.current.set(el, key);
+        if (agentCardObserverRef.current) {
+          agentCardObserverRef.current.observe(el);
+        } else {
+          // No IntersectionObserver support: treat as always visible, same
+          // synchronous-true fallback TaskCard.tsx uses.
+          setVisibleAgentCardKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+        }
+      } else {
+        agentCardElsRef.current.delete(key);
+        agentCardRefCallbacksRef.current.delete(key);
+        setVisibleAgentCardKeys((prev) => {
+          if (!prev.has(key)) return prev;
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+    };
+    agentCardRefCallbacksRef.current.set(key, callback);
+    return callback;
+  }, []);
+
+  const isAgentCardInViewport = useCallback(
+    (key: string) => (typeof IntersectionObserver === "undefined" ? true : visibleAgentCardKeys.has(key)),
+    [visibleAgentCardKeys],
+  );
   const viewportMode = useViewportMode();
   const isMobileViewport = viewportMode === "mobile";
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => readAgentsSidebarWidth(projectId));
@@ -1693,6 +1792,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                 return (
                   <div key={agent.id} className={`agent-board-card ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}>
                     <div
+                      ref={registerAgentCardRef(`board:${agent.id}`)}
                       className="agent-board-clickable"
                       onClick={() => openAgentDetail(agent.id)}
                       role="button"
@@ -1720,7 +1820,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       <div className="agent-board-name">{agent.name}</div>
                       <div className="agent-board-id">{agent.id}</div>
                       {agent.taskId && (
-                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
+                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isAgentCardInViewport(`board:${agent.id}`)} projectId={projectId} />
                       )}
                       <div className="agent-board-health" style={{ color: health.color }} title={healthSummary.title}>
                         {health.icon}{healthSummary.label ? ` ${healthSummary.label}` : ""}
@@ -1760,6 +1860,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
               return (
                 <div
                   key={agent.id}
+                  ref={registerAgentCardRef(`list:${agent.id}`)}
                   className={`agent-card agent-card--clickable ${stateCardClass}${selectedAgentId === agent.id ? " agent-card--selected" : ""}`}
                   onClick={(e) => {
                     // Open detail when the user clicks the card body, but
@@ -1892,7 +1993,7 @@ export function AgentsView({ addToast, projectId, onOpenTaskLogs, agentOnboardin
                       <div className="agent-task">
                         <span className="text-secondary">{t("agents.workingOn", "Working on:")}</span>
                         <span className="badge"><AgentTaskBadge taskId={agent.taskId} taskColumn={agent.taskColumn} /></span>
-                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={true} projectId={projectId} />
+                        <RuntimeFallbackBadge taskId={agent.taskId} isInViewport={isAgentCardInViewport(`list:${agent.id}`)} projectId={projectId} />
                       </div>
                     )}
                     <div className="agent-heartbeat-control">

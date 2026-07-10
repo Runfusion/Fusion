@@ -3,6 +3,7 @@ export const RUNTIME_PLUGIN_IDS = [
   "fusion-plugin-openclaw-runtime",
   "fusion-plugin-paperclip-runtime",
   "fusion-plugin-cursor-runtime",
+  "fusion-plugin-grok-runtime",
   "fusion-plugin-droid-runtime",
   "fusion-plugin-acp-runtime",
 ] as const;

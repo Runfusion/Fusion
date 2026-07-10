@@ -42,14 +42,19 @@ type MovedProjectSettingsKey =
   | "reflectionEnabled"
   | "executionProvider"
   | "executionModelId"
+  | "executionThinkingLevel"
   | "planningProvider"
   | "planningModelId"
+  | "planningThinkingLevel"
   | "planningFallbackProvider"
   | "planningFallbackModelId"
+  | "planningFallbackThinkingLevel"
   | "validatorProvider"
   | "validatorModelId"
+  | "validatorThinkingLevel"
   | "validatorFallbackProvider"
-  | "validatorFallbackModelId";
+  | "validatorFallbackModelId"
+  | "validatorFallbackThinkingLevel";
 
 type ProjectSettingsSchema = Omit<ProjectSettings, MovedProjectSettingsKey>;
 
@@ -105,6 +110,11 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   mergeRequestContractShadowEnabled: false,
   fallbackProvider: undefined,
   fallbackModelId: undefined,
+  /*
+  FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
+  Fallback thinking levels mirror their provider/model scope: global fallbackThinkingLevel is global, planning/validator fallback thinking levels are workflow-moved, and titleSummarizerFallbackThinkingLevel stays project-scoped. Undefined preserves inheritance until runtime/UI follow-ups consume the stored values.
+  */
+  fallbackThinkingLevel: undefined,
   defaultThinkingLevel: undefined,
   ntfyEnabled: false,
   ntfyTopic: undefined,
@@ -167,6 +177,12 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   Cursor CLI binary overrides are global operator settings because executable locations are machine-local. Blank/undefined preserves PATH auto-detection through cursor-agent and cursor.
   */
   cursorCliBinaryPath: undefined,
+  useGrokCli: undefined,
+  /*
+  FNXC:GrokCli 2026-07-08-00:00:
+  Grok CLI binary overrides are global operator settings because executable locations are machine-local. Blank/undefined preserves PATH auto-detection through grok.
+  */
+  grokCliBinaryPath: undefined,
   // Global baseline lanes for per-role model selection
   executionGlobalProvider: undefined,
   executionGlobalModelId: undefined,
@@ -176,6 +192,14 @@ export const DEFAULT_GLOBAL_SETTINGS = {
   validatorGlobalModelId: undefined,
   titleSummarizerGlobalProvider: undefined,
   titleSummarizerGlobalModelId: undefined,
+  /*
+  FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+  Global model lanes can override the default thinking effort independently. Undefined preserves the existing inheritance to `defaultThinkingLevel`.
+  */
+  executionGlobalThinkingLevel: undefined,
+  planningGlobalThinkingLevel: undefined,
+  validatorGlobalThinkingLevel: undefined,
+  titleSummarizerGlobalThinkingLevel: undefined,
   // Daemon mode settings
   daemonToken: undefined,
   daemonPort: 4040,
@@ -394,6 +418,11 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // Project-level default override (NOT moved — stays project-scoped)
   defaultProviderOverride: undefined,
   defaultModelIdOverride: undefined,
+  /*
+  FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+  Project model lanes can carry optional thinking overrides. Undefined means inherit the global default thinking effort; runtime precedence remains task > lane override > global default.
+  */
+  defaultThinkingLevelOverride: undefined,
   modelPresets: [],
   autoSelectModelPreset: false,
   completionDocumentationMode: "off",
@@ -555,8 +584,10 @@ export const DEFAULT_PROJECT_SETTINGS = {
   // Title-summarizer model lanes stay project-scoped (not moved in U4).
   titleSummarizerProvider: undefined,
   titleSummarizerModelId: undefined,
+  titleSummarizerThinkingLevel: undefined,
   titleSummarizerFallbackProvider: undefined,
   titleSummarizerFallbackModelId: undefined,
+  titleSummarizerFallbackThinkingLevel: undefined,
   prTitlePromptInstructions: undefined,
   prDescriptionPromptInstructions: undefined,
   scripts: undefined,

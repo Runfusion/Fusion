@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { createPortal } from "react-dom";
 import type { ToastType } from "../hooks/useToast";
 import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, getErrorMessage } from "@fusion/core";
-import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep } from "@fusion/core";
+import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, ThinkingLevel } from "@fusion/core";
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
@@ -177,6 +177,8 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: inline quick-entry bar carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
+  const [thinkingLevel, setThinkingLevel] = useState<string>("");
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const modelMenuPortalRef = useRef<HTMLDivElement>(null);
   const agentPickerRef = useRef<HTMLDivElement>(null);
@@ -607,6 +609,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     setValidatorModelId(undefined);
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
+    setThinkingLevel("");
     setSelectedPresetId(undefined);
     setEnabledOptionalStepIds(optionalSteps.filter((step) => step.defaultOn).map((step) => step.templateId));
     setIsFastMode(false);
@@ -731,6 +734,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
         validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
         planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
         planningModelId: hasPlanningOverride ? planningModelId : undefined,
+        thinkingLevel: thinkingLevel !== "" ? (thinkingLevel as ThinkingLevel) : undefined,
         /*
         FNXC:QuickAddWorkflowSteps 2026-06-29-01:31:
         Quick Add optional-step toggles are explicit task intent. When the workflow exposes optional steps and the user unchecks every one, submit an empty array instead of omitting the field so default-on Plan Review / Code Review do not reappear on the created task.
@@ -780,6 +784,7 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     hasPlanningOverride,
     planningProvider,
     planningModelId,
+    thinkingLevel,
     enabledOptionalStepIds,
     isFastMode,
     settings,
@@ -1495,6 +1500,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
     const next = parseModelSelection(value);
     setValidatorProvider(next.provider);
     setValidatorModelId(next.modelId);
+  }, []);
+
+  const handleThinkingLevelChange = useCallback((value: string) => {
+    setThinkingLevel(value);
   }, []);
 
   const handleToggleFavorite = useCallback(async (provider: string) => {
@@ -2383,6 +2392,9 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                     onToggleFavorite={handleToggleFavorite}
                     favoriteModels={effectiveFavoriteModels}
                     onToggleModelFavorite={handleToggleModelFavorite}
+                    thinkingLevel={activeModelSubmenu === "executor" ? thinkingLevel : undefined}
+                    onThinkingLevelChange={activeModelSubmenu === "executor" ? handleThinkingLevelChange : undefined}
+                    defaultThinkingLevel={activeModelSubmenu === "executor" ? settings?.defaultThinkingLevel ?? "off" : undefined}
                   />
                   {modelsError && (
                     <div className="model-submenu-error">

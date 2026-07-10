@@ -39,6 +39,12 @@ const unrestrictedPolicy: AgentPermissionPolicy = {
     "command_execution": "allow",
     "network_api": "allow",
     "task_agent_mutation": "allow",
+    // FN-7728: review_gate_bypass is intentionally allow here so tests targeting this fixture's other
+    // categories are unaffected; dedicated review_gate_bypass disposition coverage lives below.
+    "review_gate_bypass": "allow",
+    // FN-7737: file_scope is intentionally allow here (matches its uniform grant-all default); dedicated
+    // file_scope disposition coverage lives below.
+    "file_scope": "allow",
   },
 };
 
@@ -50,6 +56,8 @@ const lockedDownPolicy: AgentPermissionPolicy = {
     "command_execution": "block",
     "network_api": "block",
     "task_agent_mutation": "block",
+    "review_gate_bypass": "block",
+    "file_scope": "block",
   },
 };
 
@@ -62,6 +70,8 @@ const approvalPolicy: AgentPermissionPolicy = {
     "command_execution": "require-approval",
     "network_api": "require-approval",
     "task_agent_mutation": "require-approval",
+    "review_gate_bypass": "require-approval",
+    "file_scope": "require-approval",
   },
 };
 
@@ -134,6 +144,87 @@ describe("agent-action-gate", () => {
     expect(approvalDecision.disposition).toBe("require-approval");
     expect(blockedDecision.category).toBe("task_agent_mutation");
     expect(blockedDecision.disposition).toBe("block");
+  });
+
+  // FN-7728: fn_task_bypass_review must classify as its own review_gate_bypass category,
+  // not task_agent_mutation, and must never fall through to the unrecognized-tool exempt fallback.
+  it("classifies fn_task_bypass_review as review_gate_bypass, distinct from task_agent_mutation and exempt", () => {
+    const decision = evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_bypass_review", args: {}, permissionPolicy: unrestrictedPolicy });
+    expect(decision.category).toBe("review_gate_bypass");
+    expect(decision.category).not.toBe("task_agent_mutation");
+    expect(decision.category).not.toBe("exempt");
+    expect(decision.resourceType).toBe("task");
+  });
+
+  it.each([
+    ["allow" as const, "allow" as const],
+    ["require-approval" as const, "require-approval" as const],
+    ["block" as const, "block" as const],
+  ])("honors review_gate_bypass disposition %s for fn_task_bypass_review", (ruleDisposition, expectedDisposition) => {
+    const policy: AgentPermissionPolicy = {
+      ...unrestrictedPolicy,
+      presetId: "custom",
+      rules: { ...unrestrictedPolicy.rules, review_gate_bypass: ruleDisposition },
+    };
+    const decision = evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_bypass_review", args: {}, permissionPolicy: policy });
+    expect(decision.category).toBe("review_gate_bypass");
+    expect(decision.disposition).toBe(expectedDisposition);
+  });
+
+  it("lets an exact toolRules.fn_task_bypass_review override win over the review_gate_bypass category rule", () => {
+    const policy: AgentPermissionPolicy = {
+      ...unrestrictedPolicy,
+      presetId: "custom",
+      rules: { ...unrestrictedPolicy.rules, review_gate_bypass: "block" },
+      toolRules: { fn_task_bypass_review: "allow" },
+    };
+    const decision = evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_bypass_review", args: {}, permissionPolicy: policy });
+    expect(decision.category).toBe("review_gate_bypass");
+    expect(decision.disposition).toBe("allow");
+    expect(decision.metadata).toMatchObject({
+      permissionPolicyMatch: { type: "toolRule", toolName: "fn_task_bypass_review", disposition: "allow" },
+    });
+  });
+
+  // FN-7737: fn_task_file_scope_add must classify as its own file_scope category,
+  // not task_agent_mutation/file_write_delete, and must never fall through to the unrecognized-tool exempt fallback.
+  it("classifies fn_task_file_scope_add as file_scope, distinct from task_agent_mutation/file_write_delete and exempt", () => {
+    const decision = evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_file_scope_add", args: {}, permissionPolicy: unrestrictedPolicy });
+    expect(decision.category).toBe("file_scope");
+    expect(decision.category).not.toBe("task_agent_mutation");
+    expect(decision.category).not.toBe("file_write_delete");
+    expect(decision.category).not.toBe("exempt");
+    expect(decision.resourceType).toBe("file");
+  });
+
+  it.each([
+    ["allow" as const, "allow" as const],
+    ["require-approval" as const, "require-approval" as const],
+    ["block" as const, "block" as const],
+  ])("honors file_scope disposition %s for fn_task_file_scope_add", (ruleDisposition, expectedDisposition) => {
+    const policy: AgentPermissionPolicy = {
+      ...unrestrictedPolicy,
+      presetId: "custom",
+      rules: { ...unrestrictedPolicy.rules, file_scope: ruleDisposition },
+    };
+    const decision = evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_file_scope_add", args: {}, permissionPolicy: policy });
+    expect(decision.category).toBe("file_scope");
+    expect(decision.disposition).toBe(expectedDisposition);
+  });
+
+  it("lets an exact toolRules.fn_task_file_scope_add override win over the file_scope category rule", () => {
+    const policy: AgentPermissionPolicy = {
+      ...unrestrictedPolicy,
+      presetId: "custom",
+      rules: { ...unrestrictedPolicy.rules, file_scope: "block" },
+      toolRules: { fn_task_file_scope_add: "allow" },
+    };
+    const decision = evaluateAgentActionGate({ agentId: "a1", toolName: "fn_task_file_scope_add", args: {}, permissionPolicy: policy });
+    expect(decision.category).toBe("file_scope");
+    expect(decision.disposition).toBe("allow");
+    expect(decision.metadata).toMatchObject({
+      permissionPolicyMatch: { type: "toolRule", toolName: "fn_task_file_scope_add", disposition: "allow" },
+    });
   });
 
   it("uses exact tool overrides before task-agent category rules", () => {

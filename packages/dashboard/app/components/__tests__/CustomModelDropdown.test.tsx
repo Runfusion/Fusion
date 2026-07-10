@@ -50,6 +50,96 @@ describe("CustomModelDropdown", () => {
     expect(css).not.toMatch(/(^|\n)\s*html\s*\*/);
   });
 
+  it("keeps the Thinking Level select styled with dark theme tokens", () => {
+    const css = readFileSync(
+      resolve(__dirname, "../CustomModelDropdown.css"),
+      "utf-8",
+    );
+    const rule = css.match(/\.model-combobox-dropdown\s+\.thinking-level-select\s*\{[^}]*\}/)?.[0] ?? "";
+    const optionRule = css.match(/\.model-combobox-dropdown\s+\.thinking-level-select\s+option\s*\{[^}]*\}/)?.[0] ?? "";
+
+    expect(css).not.toMatch(/\.model-combobox\s+\.thinking-level-select/);
+    expect(rule).toContain("background: var(--surface);");
+    expect(rule).toContain("border: var(--btn-border-width) solid var(--border);");
+    expect(rule).toContain("color: var(--text);");
+    expect(rule).toContain("appearance: none;");
+    expect(optionRule).toContain("background: var(--surface);");
+    expect(optionRule).toContain("color: var(--text);");
+  });
+
+  it("renders opt-in thinking control with default option and calls back for concrete and inherited values", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onThinkingLevelChange = vi.fn();
+
+    render(
+      <CustomModelDropdown
+        label="Executor Model"
+        value="openai/gpt-4o"
+        onChange={onChange}
+        models={MOCK_MODELS}
+        thinkingLevel="high"
+        onThinkingLevelChange={onThinkingLevelChange}
+        defaultThinkingLevel="off"
+      />,
+    );
+
+    expect(screen.getByTestId("custom-model-dropdown-thinking-badge")).toHaveTextContent("High");
+    await user.click(screen.getByRole("button", { name: "Executor Model" }));
+
+    const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
+    expect(thinkingSelect).toHaveAccessibleName("Thinking Level");
+    expect(thinkingSelect.closest(".model-combobox-dropdown")).not.toBeNull();
+    expect(within(thinkingSelect).getByRole("option", { name: "Default (off)" })).toBeTruthy();
+    for (const optionName of ["Off", "Minimal", "Low", "Medium", "High", "Very High"]) {
+      expect(within(thinkingSelect).getByRole("option", { name: optionName })).toBeTruthy();
+    }
+
+    await user.selectOptions(thinkingSelect, "xhigh");
+    expect(onThinkingLevelChange).toHaveBeenLastCalledWith("xhigh");
+    await user.selectOptions(thinkingSelect, "");
+    expect(onThinkingLevelChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("renders concrete-only thinking control without Default when no defaultThinkingLevel is supplied", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CustomModelDropdown
+        label="Agent Model"
+        value=""
+        onChange={vi.fn()}
+        models={MOCK_MODELS}
+        thinkingLevel="off"
+        onThinkingLevelChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Agent Model" }));
+    const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
+
+    expect(within(thinkingSelect).queryByRole("option", { name: /Default/ })).toBeNull();
+    expect(within(thinkingSelect).getAllByRole("option")).toHaveLength(6);
+  });
+
+  it("keeps thinking control inert when callers do not opt in", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CustomModelDropdown
+        label="Settings Model"
+        value=""
+        onChange={vi.fn()}
+        models={MOCK_MODELS}
+      />,
+    );
+
+    expect(screen.queryByTestId("custom-model-dropdown-thinking-badge")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Settings Model" }));
+
+    expect(screen.queryByTestId("custom-model-dropdown-thinking")).toBeNull();
+  });
+
   it("renders the open dropdown in a portal attached to document.body", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -74,6 +164,76 @@ describe("CustomModelDropdown", () => {
 
     const hostSurface = screen.getByTestId("host-surface");
     expect(hostSurface.contains(portal)).toBe(false);
+  });
+
+  it.each([
+    { width: 390, height: 844, query: "(max-width: 640px)", expectedMaxHeight: "360px" },
+    { width: 700, height: 900, query: "(max-width: 768px)", expectedMaxHeight: "420px" },
+  ])("keeps the portaled model list touch-scrollable at $query", async ({ width, height, query, expectedMaxHeight }) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const css = readFileSync(resolve(__dirname, "../CustomModelDropdown.css"), "utf-8");
+    const listRule = css.match(/\.model-combobox-list\s*\{[^}]*\}/)?.[0] ?? "";
+    const overflowingModels = Array.from({ length: 30 }, (_, index) => ({
+      provider: index % 2 === 0 ? "openai" : "anthropic",
+      id: `model-${index}`,
+      name: `Model ${index}`,
+      reasoning: index % 3 === 0,
+      contextWindow: 128000 + index,
+    }));
+
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(width);
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(height);
+    vi.spyOn(window, "matchMedia").mockImplementation((mediaQuery: string) => ({
+      matches: mediaQuery === query || (width <= 640 && mediaQuery === "(max-width: 768px)"),
+      media: mediaQuery,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    } as MediaQueryList));
+
+    render(
+      <CustomModelDropdown
+        label="Executor Model"
+        value=""
+        onChange={onChange}
+        models={overflowingModels}
+        favoriteModels={["openai/model-0", "anthropic/model-1"]}
+        onToggleModelFavorite={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Executor Model" });
+    vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue({
+      x: 24,
+      y: 80,
+      width: 320,
+      height: 36,
+      top: 80,
+      right: 344,
+      bottom: 116,
+      left: 24,
+      toJSON: () => ({}),
+    });
+
+    await user.click(trigger);
+
+    const portal = await screen.findByTestId("model-combobox-portal");
+    const list = portal.querySelector(".model-combobox-list");
+
+    expect(portal.classList.contains("model-combobox-dropdown--portal")).toBe(true);
+    expect(portal.style.maxHeight).toBe(expectedMaxHeight);
+    expect(list).toBeInstanceOf(HTMLElement);
+    expect(within(portal).getAllByRole("option").length).toBeGreaterThan(20);
+    expect(listRule).toContain("overflow-y: auto;");
+    expect(listRule).toContain("overflow-x: hidden;");
+    expect(listRule).toContain("-webkit-overflow-scrolling: touch;");
+    expect(listRule).toContain("overscroll-behavior: contain;");
+    expect(listRule).toContain("touch-action: pan-y;");
+    expect(listRule).not.toContain("touch-action: none");
   });
 
   it("supports an explicit No change sentinel while keeping Use default available", async () => {

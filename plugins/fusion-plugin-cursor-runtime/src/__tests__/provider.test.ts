@@ -54,4 +54,27 @@ describe("discoverCursorProviderModels", () => {
       reason: "Configured Cursor CLI binary '/missing/cursor-agent' failed; PATH fallback cursor-agent/cursor also failed",
     });
   });
+
+  it("carries reasoning/contextWindow metadata through when the discovery result reports it", async () => {
+    vi.mocked(probeCursorBinary).mockResolvedValue({
+      available: true,
+      authenticated: true,
+      binaryName: "cursor-agent",
+      binaryPath: "cursor-agent",
+      probeDurationMs: 5,
+    });
+    vi.mocked(discoverCursorModels).mockResolvedValue({
+      models: ["cursor/a", "cursor/b"],
+      source: "models-json",
+      fallbackUsed: false,
+      modelMeta: { "cursor/a": { reasoning: true, contextWindow: 200000 } },
+    });
+
+    const result = await discoverCursorProviderModels();
+
+    expect(result.models).toEqual([
+      { id: "cursor/a", label: "cursor/a", reasoning: true, contextWindow: 200000 },
+      { id: "cursor/b", label: "cursor/b" },
+    ]);
+  });
 });

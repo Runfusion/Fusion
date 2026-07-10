@@ -120,6 +120,24 @@ export interface DecidePlannerRecoveryInput {
   snapshot: PlannerRecoveryObservation | null | undefined;
   /** Current attempt state for this `(taskId, watchedStage)`; omit for a fresh stage. */
   attemptState?: PlannerRecoveryAttemptState;
+  /**
+   * FNXC:PlannerOversight 2026-07-08-00:00:
+   * FN-7692 requirement: additive, messaging-only signal for whether the
+   * active auto-merge policy will advance a `merger`/`pull-request`
+   * `"await_confirmation"` decision WITHOUT a human clicking approve
+   * (`allowsAutoMergeProcessing(task, settings)` from `@fusion/core`'s
+   * `task-merge.ts`, computed by the caller). This ONLY shapes the `reason`
+   * string built for that branch below — it must never influence `action`,
+   * `requiresConfirmation`, `sideEffectClass`, `proposedAction`, attempt
+   * accounting, or any other decision field. `true` = auto-merge will
+   * proceed unattended (the confirmation is advisory, not a real block);
+   * `false` = the stage genuinely will not advance without human approval;
+   * `undefined` = policy unknown to the caller — use neutral, non-
+   * overclaiming wording that asserts neither outcome. Fixes FN-7689's
+   * misleading "requires explicit confirmation" copy shown even though
+   * auto-merge proceeded unattended a few minutes later.
+   */
+  autoMergeWillProceed?: boolean;
 }
 
 /**
@@ -213,9 +231,25 @@ export function decidePlannerRecovery(input: DecidePlannerRecoveryInput): Planne
     if (snapshot.stage === "merger" || snapshot.stage === "pull-request") {
       const proposedAction = snapshot.stage === "merger" ? "advance_merge" : "advance_pull_request";
       const sideEffectClass = classifyPlannerActionSideEffect({ watchedStage: snapshot.stage, proposedAction });
+      const actionPhrase = proposedAction.replace(/_/g, " ");
+      // FNXC:PlannerOversight 2026-07-08-00:00:
+      // FN-7692 fix: this `reason` string previously read "requires explicit
+      // confirmation before ... may run" UNCONDITIONALLY, which is false when
+      // the active auto-merge policy will advance the merge/PR unattended
+      // (observed on FN-7689: the Intervention Timeline claimed a hard block
+      // that the merge sailed past ~4 minutes later with no human approval).
+      // `input.autoMergeWillProceed` (threaded by the engine controller from
+      // the existing `allowsAutoMergeProcessing` predicate) selects accurate
+      // wording per policy state; it is messaging-only and does not change
+      // `action`/`requiresConfirmation`/`sideEffectClass` below.
+      const reason = input.autoMergeWillProceed === true
+        ? `Stage "${snapshot.stage}" will ${actionPhrase} automatically under the active auto-merge policy — this confirmation checkpoint is advisory and does not block progress`
+        : input.autoMergeWillProceed === false
+          ? `Stage "${snapshot.stage}" will not ${actionPhrase} until a human explicitly approves — auto-merge is not enabled for this task`
+          : `Stage "${snapshot.stage}" is awaiting confirmation before ${actionPhrase} may run`;
       return {
         action: "await_confirmation",
-        reason: `Stage "${snapshot.stage}" requires explicit confirmation before ${proposedAction.replace(/_/g, " ")} may run`,
+        reason,
         attemptCount,
         attemptLimit,
         exhausted: false,

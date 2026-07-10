@@ -391,6 +391,16 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     }
   }, [isEditing]);
   const failureInfo = isAssistantMessage ? message.failureInfo : undefined;
+  /*
+   * FNXC:ChatEmptyMessage 2026-07-10-00:00:
+   * Empty assistant responses, including Grok CLI runs that finish with no text, must show a muted "No message" placeholder instead of a blank bubble. Only final persisted assistant messages with no renderable body qualify; tool calls, thinking output, attachments, or failure info already carry meaningful content and must not trigger the placeholder.
+   */
+  const isEmptyAssistantMessage = isAssistantMessage
+    && message.content.trim().length === 0
+    && !failureInfo
+    && (!message.toolCalls || message.toolCalls.length === 0)
+    && !message.thinkingOutput
+    && (!message.attachments || message.attachments.length === 0);
   const showAssistantIdentity = isAssistantMessage && (!hideAssistantIdentity || Boolean(failureInfo));
   const renderedUserContent = useMemo<ReactNode>(() => {
     if (isAssistantMessage) return null;
@@ -436,8 +446,11 @@ export const StandardChatMessageItem = memo(function StandardChatMessageItem({
     if (failureInfo) {
       return <div className="chat-message-content chat-message-content--failure"><div className="chat-message-failure-summary-row"><span className="status-dot status-dot--error" aria-hidden="true" /><span className="chat-message-failure-label">{t("chat.responseFailed", "Response failed")}</span></div><div className="chat-message-failure-summary">{failureInfo.summary}</div>{(failureInfo.errorClass || failureInfo.code) && <div className="chat-message-failure-badges">{failureInfo.errorClass && <span className="chat-message-failure-badge">{failureInfo.errorClass}</span>}{failureInfo.code && <span className="chat-message-failure-badge">{failureInfo.code}</span>}</div>}{(failureInfo.detail || failureInfo.reference) && <details className="chat-message-failure-details"><summary><TriangleAlert size={14} aria-hidden="true" /><span>{t("chat.failureDetails", "Failure details")}</span></summary>{failureInfo.detail && <pre className="chat-message-failure-detail">{linkifyFilePaths(failureInfo.detail)}</pre>}{renderFailureReference(failureInfo.reference, t)}</details>}</div>;
     }
+    if (isEmptyAssistantMessage) {
+      return <div className="chat-message-content chat-message-content--empty" data-testid="chat-message-empty">{t("chat.noMessage", "No message")}</div>;
+    }
     return renderStandardAssistantContent(message.content, forcePlain);
-  }, [failureInfo, forcePlain, isAssistantMessage, message.content, t]);
+  }, [failureInfo, forcePlain, isAssistantMessage, isEmptyAssistantMessage, message.content, t]);
   return (
     <div className={`chat-message chat-message--${message.role}${failureInfo ? " chat-message--failure" : ""}${isEditing ? " chat-message--editing" : ""}`} data-testid={`chat-message-${message.id}`} data-message-id={message.id}>
       {showAssistantIdentity && <div className="chat-message-avatar">{activeModelProvider ? <ProviderIcon provider={activeModelProvider} size="sm" /> : <Bot size={14} />}<span>{agentName}</span>{showAssistantModelTag && activeModelTag && <span className="chat-model-tag">{activeModelTag}</span>}</div>}

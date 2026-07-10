@@ -4,6 +4,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../project-context.js", () => ({
   resolveProject: vi.fn(),
+  closeProjectStore: vi.fn(async (context: { store?: { close?: () => Promise<void> } }) => {
+    await context.store?.close?.().catch(() => {});
+  }),
+  asLocalProjectContext: (store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  }),
 }));
 
 const promoteBranchGroupMock = vi.fn();

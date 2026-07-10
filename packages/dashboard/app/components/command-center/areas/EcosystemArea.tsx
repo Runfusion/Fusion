@@ -21,15 +21,17 @@ import { formatCount } from "./areaShared";
  * FNXC:CommandCenterEcosystem 2026-06-19-08:10:
  * Plugin activations now come from recorded load/reload events. Show a real count only when the activation endpoint reports in-range rows; no rows, loading, or plugin-analytics errors must keep the honest `—` sentinel.
  */
-export function EcosystemArea({ range }: { range: DateRange }) {
+export function EcosystemArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const { data, isLoading, error } = useAnalyticsArea<TokenAnalytics>(
     "/command-center/tokens?groupBy=model&granularity=day",
     range,
+    { projectId },
   );
   const { data: pluginActivations, isLoading: pluginActivationsLoading } = useAnalyticsArea<PluginActivationAnalytics>(
     "/command-center/plugin-activations",
     range,
+    { projectId },
   );
 
   const models = useMemo(

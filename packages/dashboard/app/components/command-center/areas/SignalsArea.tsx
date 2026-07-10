@@ -38,12 +38,15 @@ FNXC:CommandCenterSignals 2026-06-25-22:40:
 Empty Signals copy is driven by the connectors-status endpoint, not fabricated metrics. Operators must see "no connector configured" when no HMAC secret exists and "configured, awaiting signals" when ingestion is ready but quiet; loading the status should keep the normal loading-before-empty behavior.
 */
 
-export function SignalsArea({ range }: { range: DateRange }) {
+export function SignalsArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
-  const { data, isLoading } = useAnalyticsArea<SignalsAnalyticsWithConnectors>("/command-center/signals", range);
+  const { data, isLoading } = useAnalyticsArea<SignalsAnalyticsWithConnectors>("/command-center/signals", range, {
+    projectId,
+  });
   const { data: connectorsData, isLoading: isConnectorsLoading } = useAnalyticsArea<SignalConnectorsResponse>(
     "/command-center/signals/connectors",
     range,
+    { projectId },
   );
 
   const sourceBars = useMemo(

@@ -2503,8 +2503,59 @@ The desktop table needs a token-scale min-width and non-anywhere model-name wrap
 
 .task-summary-work-list li {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
+}
+
+.task-summary-work-list-row {
+  display: flex;
   align-items: center;
   gap: var(--space-sm);
+}
+
+/*
+FNXC:WorkflowStepResults 2026-07-09-00:45:
+FN-7727: bounded, read-only history of prior failed pre-merge review attempts
+(`WorkflowStepResult.priorAttempts`), surfaced as a collapsed <details> so it
+does not clutter the default workflow-results view. Rendered only when a step
+has history; no shell appears otherwise.
+*/
+.task-summary-prior-attempts {
+  margin-left: calc(var(--space-sm) * 2);
+  font-size: calc(var(--space-sm) + var(--space-xs) * 0.5);
+  color: var(--text-muted);
+}
+
+.task-summary-prior-attempts summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.task-summary-prior-attempts-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-xs) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-summary-prior-attempts-list li {
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+}
+
+.task-summary-prior-attempts-timestamp {
+  margin-left: var(--space-sm);
+  color: var(--text-muted);
+}
+
+.task-summary-prior-attempts-output {
+  margin: var(--space-xs) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
 }
 
 .task-summary-status {
@@ -2628,6 +2679,10 @@ The desktop table needs a token-scale min-width and non-anywhere model-name wrap
 
   .task-summary-work-list li {
     align-items: flex-start;
+  }
+
+  .task-summary-prior-attempts {
+    margin-left: 0;
   }
 }
 

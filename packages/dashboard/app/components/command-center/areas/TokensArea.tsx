@@ -90,12 +90,13 @@ function sortGroups(groups: TokenGroupSummary[], key: SortKey, dir: 1 | -1): Tok
  * Tokens area: per-model token totals + derived USD cost, plus a bar chart of
  * tokens by model. Grouped by model via the `?groupBy=model` endpoint param.
  */
-export function TokensArea({ range }: { range: DateRange }) {
+export function TokensArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const [granularity, setGranularity] = useState<TokenTimeGranularity>("day");
   const endpoint = `/command-center/tokens?groupBy=model&granularity=${granularity}`;
   const { data, isLoading, error } = useAnalyticsArea<TokenAnalytics>(endpoint, range, {
     pollMs: TOKENS_LIVE_REFRESH_MS,
+    projectId,
   });
 
   const groups = useMemo(() => data?.groups ?? [], [data?.groups]);

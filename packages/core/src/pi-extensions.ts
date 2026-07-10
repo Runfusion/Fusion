@@ -86,7 +86,121 @@ export function getProjectRootFromWorktree(
   return null;
 }
 
+/**
+ * FNXC:Storage 2026-07-09-00:00:
+ * FN-7730 root cause: board mutations issued from a pi-extension tool session
+ * (fn_task_update, etc.) resolve their TaskStore against `resolveProjectRoot(cwd)`
+ * in packages/cli/src/extension.ts, which calls getProjectRootFromWorktree(cwd)
+ * with NO worktreesDirCandidates. When a project configures a non-default
+ * `settings.worktreesDir` (packages/engine/src/worktree-paths.ts
+ * resolveWorktreesDir supports an arbitrary relative/absolute location — common in
+ * containerized deployments), neither hardcoded regex above matches, and the ONLY
+ * remaining path was getProjectRootFromGitLinkedWorktree(), which shelled out to
+ * `git rev-parse` via spawnSync. A failing git invocation (missing `git` binary in
+ * a minimal container, Docker's "detected dubious ownership" safe.directory
+ * refusal on a bind-mounted repo owned by a different UID, or any other non-zero
+ * exit) returned null with NO thrown error — by design, so a non-worktree cwd
+ * doesn't explode — but with no non-git fallback. resolveProjectRoot's caller then
+ * fell back to a naive upward walk for the first ancestor with a `.fusion` dir,
+ * which matched IMMEDIATELY at the task's own worktree (hydrateWorktreeDb's
+ * ensureWorktreeSchema already created a local, one-way-hydrated `.fusion/fusion.db`
+ * there for the dependency-closure copy). Every write tool call then silently
+ * landed in that throwaway worktree-local db — never synced back to the project
+ * root — with zero error surfaced. See task FN-7730 `research` document for the
+ * full investigation.
+ *
+ * Fix: resolve the linked-worktree relationship directly from git's own on-disk
+ * worktree metadata (the `.git` file + its `commondir` sidecar) FIRST. This is
+ * pure filesystem I/O — no subprocess, no git-binary dependency, unaffected by
+ * Docker UID/safe.directory restrictions. The `git rev-parse` CLI path is kept as
+ * a secondary fallback for any layout the fs parser can't resolve (e.g. detached
+ * gitdir configurations outside the standard worktree layout), preserving prior
+ * behavior for those edge cases.
+ */
+function getMainRepoRootFromGitFile(cwd: string): string | null {
+  let current = resolve(cwd);
+  const visited = new Set<string>();
+
+  while (!visited.has(current)) {
+    visited.add(current);
+    const gitPath = join(current, ".git");
+    let gitStat: ReturnType<typeof statSync> | undefined;
+    try {
+      gitStat = statSync(gitPath);
+    } catch {
+      gitStat = undefined;
+    }
+
+    if (gitStat?.isDirectory()) {
+      // A `.git` directory means `current` IS a normal repo root (or the main
+      // worktree), not itself a linked worktree — no linked-worktree parent
+      // to resolve at this level.
+      return null;
+    }
+
+    if (gitStat?.isFile()) {
+      const commonGitDir = resolveCommonGitDirFromWorktreeGitFile(gitPath, current);
+      if (!commonGitDir) {
+        return null;
+      }
+      const parentRoot = commonGitDir.endsWith(`${sep}.git`) ? dirname(commonGitDir) : commonGitDir;
+      return existsSync(join(parentRoot, ".fusion")) ? parentRoot : null;
+    }
+
+    const parent = resolve(current, "..");
+    if (parent === current) {
+      return null;
+    }
+    current = parent;
+  }
+
+  return null;
+}
+
+/**
+ * Parse a linked worktree's `.git` file (`gitdir: <path>`) and its sidecar
+ * `commondir` file (relative or absolute path to the shared `.git` directory) —
+ * the same on-disk contract `git worktree add` writes and `git rev-parse
+ * --git-common-dir` reads, but via plain file reads instead of a subprocess.
+ */
+function resolveCommonGitDirFromWorktreeGitFile(gitFilePath: string, gitFileDir: string): string | null {
+  let gitFileContent: string;
+  try {
+    gitFileContent = readFileSync(gitFilePath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const match = gitFileContent.match(/^gitdir:\s*(.+)\s*$/m);
+  if (!match) {
+    return null;
+  }
+  const worktreeGitDir = resolve(gitFileDir, match[1]!.trim());
+
+  const commondirPath = join(worktreeGitDir, "commondir");
+  try {
+    const commondirContent = readFileSync(commondirPath, "utf8").trim();
+    if (commondirContent) {
+      return resolve(worktreeGitDir, commondirContent);
+    }
+  } catch {
+    // commondir sidecar missing/unreadable — fall through to the pattern-based
+    // derivation below.
+  }
+
+  // Standard worktree gitdir shape: `<repo>/.git/worktrees/<name>`. Strip the
+  // `worktrees/<name>` suffix to recover `<repo>/.git`.
+  const worktreesSuffix = /^(.*[\\/]\.git)[\\/]worktrees[\\/][^\\/]+[\\/]?$/;
+  const suffixMatch = worktreeGitDir.match(worktreesSuffix);
+  return suffixMatch ? suffixMatch[1]! : null;
+}
+
 function getProjectRootFromGitLinkedWorktree(cwd: string): string | null {
+  const fsResolvedRoot = getMainRepoRootFromGitFile(cwd);
+  if (fsResolvedRoot) {
+    return fsResolvedRoot;
+  }
+
   const spawnSync = getSpawnSync();
   if (!spawnSync) {
     return null;

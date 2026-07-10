@@ -112,4 +112,17 @@ describe("agent permission policy resolution", () => {
 
     expect(isPolicyBroaderThanDefault(agentPolicy, defaultPolicy)).toBe(false);
   });
+
+  // FN-7737: file_scope escalation regression coverage.
+  it("detects a file_scope escalation when an agent sets allow over a stricter project default", () => {
+    const defaultPolicy = resolveEffectiveAgentPermissionPolicy(undefined, {
+      rules: { file_scope: "require-approval" },
+    });
+    const agentPolicy = resolveEffectiveAgentPermissionPolicy({
+      presetId: "custom",
+      rules: { file_scope: "allow" },
+    });
+
+    expect(isPolicyBroaderThanDefault(agentPolicy, defaultPolicy)).toBe(true);
+  });
 });

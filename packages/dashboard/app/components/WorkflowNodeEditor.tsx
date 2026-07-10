@@ -37,6 +37,7 @@ import {
   fetchPluginWorkflowStepTemplates,
   fetchWorkflowPromptOverrides,
   updateWorkflowPromptOverrides,
+  fetchSettings,
   type ModelInfo,
   type WorkflowPromptOverridesPayload,
 } from "../api";
@@ -322,6 +323,11 @@ function stepTemplateToNode(tpl: WorkflowStepTemplate): {
     config.modelProvider = tpl.modelProvider;
     config.modelId = tpl.modelId;
   }
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Template-seeded prompt nodes preserve reasoning effort independently from model selection so authors can inherit a model while pinning per-node thinking.
+   */
+  if (tpl.thinkingLevel) config.thinkingLevel = tpl.thinkingLevel;
   return { kind: "prompt", label: tpl.name, config };
 }
 
@@ -1734,7 +1740,17 @@ function InnerEditor({
                         config:
                           typeof patch.config === "function"
                             ? patch.config((n.data.config ?? {}) as Record<string, unknown>)
-                            : { ...(n.data.config ?? {}), ...patch.config },
+                            : (() => {
+                                const nextConfig = { ...(n.data.config ?? {}), ...patch.config };
+                                /*
+                                 * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+                                 * Inspector controls use `undefined` as the clear signal for optional config keys such as `thinkingLevel`; remove those keys so saved IR has absence, not an undefined shell.
+                                 */
+                                for (const key of Object.keys(nextConfig)) {
+                                  if (nextConfig[key] === undefined) delete nextConfig[key];
+                                }
+                                return nextConfig;
+                              })(),
                       }
                     : patch),
                 },
@@ -2249,6 +2265,7 @@ function InnerEditor({
   // summaries; the inspector selects reuse the same state. Failures are
   // non-fatal — summaries fall back to raw ids — so the prefetch is toastless.
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [projectDefaultThinkingLevel, setProjectDefaultThinkingLevel] = useState("off");
   const [agents, setAgents] = useState<Agent[]>([]);
   // The agent fetches are project-scoped, but this cache survives project
   // switches — both load paths short-circuit on agents.length > 0, which would
@@ -2282,6 +2299,13 @@ function InnerEditor({
         if (!cancelled && Array.isArray(res)) setSkills(res);
       })
       .catch(() => {});
+    Promise.resolve(fetchSettings(projectId))
+      .then((res) => {
+        if (!cancelled) setProjectDefaultThinkingLevel(res?.defaultThinkingLevel ?? "off");
+      })
+      .catch(() => {
+        if (!cancelled) setProjectDefaultThinkingLevel("off");
+      });
     return () => {
       cancelled = true;
     };
@@ -3837,6 +3861,14 @@ function InnerEditor({
                           const { provider, modelId } = parseModelDropdownValue(value);
                           updateSelectedData({ config: { modelProvider: provider || undefined, modelId: modelId || undefined } });
                         }}
+                        /*
+                         * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+                         * Prompt model nodes expose the shared inline thinking selector only for the model executor, persisting `config.thinkingLevel` with Default clearing the key.
+                         */
+                        showThinkingLevel
+                        thinkingLevel={String(selectedNode.data.config?.thinkingLevel ?? "")}
+                        onThinkingLevelChange={(value) => updateSelectedData({ config: { thinkingLevel: value || undefined } })}
+                        defaultThinkingLevel={projectDefaultThinkingLevel ?? "off"}
                       />
                     </label>
                   )}
@@ -4568,6 +4600,14 @@ function InnerEditor({
                           },
                         });
                       }}
+                      /*
+                       * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+                       * Step-review nodes share the model dropdown thinking selector so review sessions can pin reasoning effort with the same node > task > settings precedence as executor steps.
+                       */
+                      showThinkingLevel
+                      thinkingLevel={String(selectedNode.data.config?.thinkingLevel ?? "")}
+                      onThinkingLevelChange={(value) => updateSelectedData({ config: { thinkingLevel: value || undefined } })}
+                      defaultThinkingLevel={projectDefaultThinkingLevel ?? "off"}
                     />
                   </label>
                   <p className="wf-inspector-note wf-inspector-note--info">

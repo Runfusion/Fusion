@@ -353,6 +353,13 @@ export interface TaskDetailModalProps {
   onRevertTask?: (id: string, body?: RevertTaskOptions) => Promise<RevertTaskResult>;
   onMergeTask: (id: string) => Promise<MergeResult>;
   onRetryTask?: (id: string) => Promise<Task>;
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Operator-only review-lane bypass (FN-7720). Only wired here (Task Detail) so
+  it never appears in the Board/List card context menus — single canonical
+  affordance surface for this policy-gated escape hatch.
+  */
+  onBypassReview?: (id: string, reason: string) => Promise<Task>;
   onResetTask?: (id: string) => Promise<Task>;
   onDuplicateTask?: (id: string) => Promise<Task>;
   onTaskUpdated?: (task: Task) => void;
@@ -622,6 +629,7 @@ export function TaskDetailContent({
   onRevertTask,
   onMergeTask,
   onRetryTask,
+  onBypassReview,
   onResetTask,
   onDuplicateTask,
   onTaskUpdated,
@@ -1047,6 +1055,9 @@ export function TaskDetailContent({
   const [editExecutionMode, setEditExecutionMode] = useState<"standard" | "fast">(normalizeExecutionModeValue(task.executionMode));
   const [editSelectedPresetId, setEditSelectedPresetId] = useState("");
   const [editSelectedWorkflowSteps, setEditSelectedWorkflowSteps] = useState<string[]>(task.enabledWorkflowSteps || []);
+  const handleEditWorkflowStepsChange = useCallback((enabledWorkflowSteps: string[]) => {
+    setEditSelectedWorkflowSteps(enabledWorkflowSteps);
+  }, []);
   const [editSourceIssueProvider, setEditSourceIssueProvider] = useState(task.sourceIssue?.provider ?? "");
   const [editSourceIssueRepository, setEditSourceIssueRepository] = useState(task.sourceIssue?.repository ?? "");
   const [editSourceIssueExternalId, setEditSourceIssueExternalId] = useState(task.sourceIssue?.externalIssueId ?? "");
@@ -2513,6 +2524,31 @@ export function TaskDetailContent({
       });
   }, [task.id, onRetryTask, requestClose, addToast]);
 
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Operator-only review-lane bypass (FN-7720). Requires a non-empty reason
+  before firing — mirrors handleReset's window.confirm gate but needs free
+  text, so it uses window.prompt rather than the checkbox-only confirm
+  dialog. Does NOT close the modal (unlike handleRetry): the operator should
+  see the bypassed step's state update in place via onTaskUpdated instead of
+  losing detail context.
+  */
+  const handleBypassReview = useCallback(() => {
+    if (!onBypassReview) return;
+    const reason = window.prompt(
+      t("taskDetail.bypassReview.promptMessage", "Reason for bypassing the failed pre-merge review step (required, audit-logged):"),
+    );
+    if (!reason || !reason.trim()) return;
+    onBypassReview(task.id, reason.trim())
+      .then((updated) => {
+        onTaskUpdated?.(updated);
+        addToast(t("taskDetail.bypassReview.success", "Bypassed failed review lane for {{id}}", { id: task.id }), "success");
+      })
+      .catch((err) => {
+        addToast(getErrorMessage(err), "error");
+      });
+  }, [task.id, onBypassReview, onTaskUpdated, addToast, t]);
+
   const handleReset = useCallback(() => {
     if (!onResetTask) return;
     if (!window.confirm(t("taskDetail.reset.confirmMessage", "This will erase all progress for {{id}} and start the task from scratch. Continue?", { id: task.id }))) return;
@@ -2634,17 +2670,9 @@ export function TaskDetailContent({
   }, [onRevertTask, confirm, task.id, addToast, t]);
 
   const isTaskPaused = task.paused || task.userPaused;
-  /*
-   * FNXC:PlanApproval 2026-07-04-21:35:
-   * FN-7559: release-authorization holds and manual plan-approval holds both
-   * use status "awaiting-approval" (auto-approve-all intentionally bypasses only
-   * the manual gate — see FNXC:PlanApproval in types.ts). Gate the manual
-   * Approve/Reject Plan affordance to genuine manual holds only — clicking
-   * "Approve Plan" on a release-authorization hold would let a release-class
-   * spec bypass FN-6481's explicit-marker requirement via a plain button click.
-   */
+  // A legacy row carrying awaitingApprovalReason === "release-authorization" is an
+  // ordinary manual plan-approval hold (FN-7732) — no distinct treatment needed.
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
-  const isReleaseAuthorizationHold = isAwaitingApproval && task.awaitingApprovalReason === "release-authorization";
 
   const handleTogglePause = useCallback(async () => {
     try {
@@ -3229,6 +3257,7 @@ export function TaskDetailContent({
     hasDuplicateHandler: Boolean(onDuplicateTask),
     hasRetryHandler: Boolean(onRetryTask),
     hasResetHandler: Boolean(onResetTask),
+    hasBypassReviewHandler: Boolean(onBypassReview),
     mergeStrategy,
     autoMergeEnabled: effectiveAutoMerge,
     prAutomationLabel,
@@ -3243,6 +3272,7 @@ export function TaskDetailContent({
     onMerge: handleMergeMenuItemClick,
     onStartPrReview: handleStartPrReviewMenuItemClick,
     onCheckPrStatus: handleCheckPrStatus,
+    onBypassReview: handleBypassReview,
   }), [
     task,
     t,
@@ -3251,6 +3281,7 @@ export function TaskDetailContent({
     onDuplicateTask,
     onRetryTask,
     onResetTask,
+    onBypassReview,
     mergeStrategy,
     effectiveAutoMerge,
     prAutomationLabel,
@@ -3265,6 +3296,7 @@ export function TaskDetailContent({
     handleMergeMenuItemClick,
     handleStartPrReviewMenuItemClick,
     handleCheckPrStatus,
+    handleBypassReview,
   ]);
   const primaryMoveTransition = taskActionMenuModel.moveTransitions[0]?.column;
   const secondaryMoveTransitions = taskActionMenuModel.moveTransitions.slice(1);
@@ -3783,6 +3815,9 @@ export function TaskDetailContent({
                 onPresetModeChange={setEditPresetMode}
                 selectedPresetId={editSelectedPresetId}
                 onSelectedPresetIdChange={setEditSelectedPresetId}
+                optionalStepsWorkflowId={taskWorkflowBadge?.id}
+                enabledWorkflowSteps={editSelectedWorkflowSteps}
+                onEnabledWorkflowStepsChange={handleEditWorkflowStepsChange}
                 pendingImages={editPendingImages}
                 onImagesChange={setEditPendingImages}
                 tasks={tasks.filter((t) => t.id !== task.id)}
@@ -5630,10 +5665,9 @@ export function TaskDetailContent({
             </>
           ) : (
             <>
-              {/* Approve/Reject Plan buttons — only for genuine manual plan-approval
-                  holds (FN-7559: a release-authorization hold shares the same
-                  status but must never be resolvable via this plain button click). */}
-              {isAwaitingApproval && !isReleaseAuthorizationHold && workingTask.prompt && (
+              {/* Approve/Reject Plan buttons for manual plan-approval holds (also covers
+                  legacy rows with awaitingApprovalReason === "release-authorization"). */}
+              {isAwaitingApproval && workingTask.prompt && (
                 <>
                   <button className="btn btn-primary btn-sm" onClick={handleApprovePlan}>
                     {t("taskDetail.plan.approveBtn", "Approve Plan")}
@@ -5644,26 +5678,10 @@ export function TaskDetailContent({
                 </>
               )}
 
-              {/* FN-7559: release-authorization holds are surfaced with a truthful,
-                  distinct reason instead of the manual Approve/Reject affordance —
-                  auto-approve-all does not (and must not) bypass this gate, and
-                  resolving it requires the explicit authorization marker in a
-                  regenerated spec, not a plain approval click. */}
-              {isReleaseAuthorizationHold && (
-                <span className="modal-hold-reason modal-hold-reason--release-authorization">
-                  {t(
-                    "taskDetail.plan.releaseAuthorizationHold",
-                    "Awaiting release authorization — add the explicit authorization marker to the spec and resubmit.",
-                  )}
-                </span>
-              )}
-
               {/* Standalone Delete button for triage-column tasks — triage tasks
                   hide the Actions dropdown (see condition below) so the user has
-                  no quick way to delete a freshly-created task otherwise. Release-
-                  authorization holds no longer render the Approve/Reject affordance,
-                  so Delete remains available for them too (FN-7559). */}
-              {task.column === "triage" && (!isAwaitingApproval || isReleaseAuthorizationHold) && !canRetryTask && (
+                  no quick way to delete a freshly-created task otherwise. */}
+              {task.column === "triage" && !isAwaitingApproval && !canRetryTask && (
                 <button
                   className="btn btn-sm btn-danger"
                   onClick={handleDelete}

@@ -1382,6 +1382,9 @@ export const chatSessions = projectSchema.table("chat_sessions", {
   projectId: text("project_id"),
   modelProvider: text("model_provider"),
   modelId: text("model_id"),
+  // FNXC:ChatThinkingLevel 2026-07-10: FN-7775 per-chat thinking-level override
+  // persisted alongside the session's model selection.
+  thinkingLevel: text("thinking_level"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   cliSessionFile: text("cli_session_file"),

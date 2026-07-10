@@ -354,22 +354,25 @@ describe("SettingsModal", () => {
       }
     });
 
-    const declaredWorkflowModelSettings = (ids: string[]) => ids.map((id) => ({ id, name: id, type: "string" as const }));
+    const declaredWorkflowModelSettings = (ids: string[]) => ids.map((id) => ({ id, name: id, type: id.endsWith("ThinkingLevel") ? "enum" as const : "string" as const, options: id.endsWith("ThinkingLevel") ? [{ value: "high", label: "High" }] : undefined }));
     const primaryWorkflowModelSettingIds = [
       "planningProvider",
       "planningModelId",
+      "planningThinkingLevel",
       "executionProvider",
       "executionModelId",
+      "executionThinkingLevel",
       "validatorProvider",
       "validatorModelId",
+      "validatorThinkingLevel",
     ];
     const fallbackWorkflowModelSettingIds = [
       "planningFallbackProvider",
       "planningFallbackModelId",
+      "planningFallbackThinkingLevel",
       "validatorFallbackProvider",
       "validatorFallbackModelId",
-      "titleSummarizerFallbackProvider",
-      "titleSummarizerFallbackModelId",
+      "validatorFallbackThinkingLevel",
     ];
 
     async function setupWorkflowModelLaneTest({
@@ -480,7 +483,7 @@ describe("SettingsModal", () => {
 
       expect(screen.getByTestId("workflow-model-lane-planning-fallback")).toBeInTheDocument();
       expect(screen.getByTestId("workflow-model-lane-validator-fallback")).toBeInTheDocument();
-      expect(screen.getByTestId("workflow-model-lane-title-summarizer-fallback")).toBeInTheDocument();
+      expect(screen.getByTestId("project-model-lane-title-summarizer-fallback")).toBeInTheDocument();
 
       cleanup();
       mockFetchWorkflow.mockClear();
@@ -490,10 +493,9 @@ describe("SettingsModal", () => {
 
       expect(screen.queryByTestId("workflow-model-lane-planning-fallback")).not.toBeInTheDocument();
       expect(screen.queryByTestId("workflow-model-lane-validator-fallback")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("workflow-model-lane-title-summarizer-fallback")).not.toBeInTheDocument();
+      expect(screen.getByTestId("project-model-lane-title-summarizer-fallback")).toBeInTheDocument();
       expect(screen.queryByText("Planning Fallback Model")).not.toBeInTheDocument();
       expect(screen.queryByText("Reviewer Fallback Model")).not.toBeInTheDocument();
-      expect(screen.queryByText("Title Summarizer Fallback Model")).not.toBeInTheDocument();
     });
 
     it("persists fallback workflow model lane edits through the primary Settings Save", async () => {
@@ -534,7 +536,7 @@ describe("SettingsModal", () => {
       await waitFor(() => {
         expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
           "workflow-custom",
-          { validatorFallbackProvider: null, validatorFallbackModelId: null },
+          { validatorFallbackProvider: null, validatorFallbackModelId: null, validatorFallbackThinkingLevel: null },
           "proj-1",
         );
       });
@@ -573,7 +575,7 @@ describe("SettingsModal", () => {
       await waitFor(() => {
         expect(mockUpdateWorkflowSettingValues).toHaveBeenCalledWith(
           "workflow-custom",
-          { executionProvider: null, executionModelId: null },
+          { executionProvider: null, executionModelId: null, executionThinkingLevel: null },
           "proj-1",
         );
       });

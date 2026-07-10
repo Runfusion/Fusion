@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "병합 작업트리 재확보됨",
       "nearDuplicateFlagged": "유사 중복 표시됨",
       "projectIsolationTransition": "프로젝트 격리 전환",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "설정 업데이트됨",
       "taskCreated": "작업 생성됨",
       "taskDeleted": "작업 삭제됨",
@@ -169,6 +168,10 @@
       "taskAgentMutation": {
         "description": "작업 상태 변경, 위임 또는 에이전트 수명 주기 작업.",
         "label": "작업/에이전트 변경"
+      },
+      "fileScope": {
+        "description": "",
+        "label": ""
       }
     },
     "categoryExamples": "{{label}} 예시",
@@ -3954,7 +3957,8 @@
       "medium": "중간",
       "minimal": "최소",
       "off": "끔",
-      "xhigh": "매우 높음"
+      "xhigh": "매우 높음",
+      "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
       "selectExecutor": "실행자 모델 선택…",
@@ -3990,6 +3994,8 @@
     "preset": "프리셋",
     "reviewerModel": "검토자 모델",
     "reviewerPlaceholder": "검토자 모델 선택…",
+    "thinkingDefault": "",
+    "thinkingModel": "",
     "title": "모델 선택",
     "useDefault": "기본값 사용",
     "usingDefault": "기본값 사용 중"
@@ -6526,6 +6532,8 @@
       "addIgnoredPath": "",
       "archiveAgentLog": "",
       "archiveCompletedTasksAfterDays": "",
+      "autoArchiveDuplicateTasks": "",
+      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -7384,6 +7392,11 @@
       "skipped": "{{id}}의 브랜치 재연결을 건너뜀: {{reason}}",
       "skippedResult": "재연결 건너뜀: {{reason}}"
     },
+    "bypassReview": {
+      "btn": "실패한 리뷰 건너뛰기",
+      "promptMessage": "실패한 병합 전 리뷰 단계를 건너뛰는 이유(필수, 감사 로그에 기록됨):",
+      "success": "{{id}}의 실패한 리뷰 단계를 건너뛰었습니다"
+    },
     "cacheBreakdown": "(읽기 {{read}} / 쓰기 {{write}} / 입력 {{input}})",
     "cacheHitRatio": "캐시 적중률:",
     "cacheRead": "캐시 읽기",
@@ -7599,8 +7612,7 @@
       "rejected": "계획 거부됨 — {{id}}이(가) 재계획을 위해 Planning으로 반환됨",
       "rejectMessage": "이 계획을 거부하시겠습니까? 명세가 삭제되고 재생성됩니다.",
       "rejectTitle": "계획 거부",
-      "replanning": "{{id}} 재계획 중…",
-      "releaseAuthorizationHold": ""
+      "replanning": "{{id}} 재계획 중…"
     },
     "pr": {
       "awaitingChecks": "PR 검사 대기 중",
@@ -8240,7 +8252,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

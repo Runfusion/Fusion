@@ -2,6 +2,20 @@ import React from "react";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 import { TaskCard, formatElapsedDurationDone, __test_areTaskCardPropsEqual } from "../TaskCard";
+
+// Pre-existing gap (unrelated to FN-7676): TaskCard unconditionally renders
+// RuntimeFallbackBadge, which calls the shared useToast() hook directly (not
+// via the addToast prop). This file renders <TaskCard> outside a
+// ToastProvider, so mock the hook the same way sibling suites
+// (PlanningModeModal.*.test.tsx) already do to avoid a widespread
+// "useToast must be used within ToastProvider" failure across this file.
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
 import { NavigationHistoryProvider, useNavigationHistory } from "../../hooks/useNavigationHistory";
 import { useOverlayDismiss } from "../../hooks/useOverlayDismiss";
 import type { ConfirmOptions } from "../../hooks/useConfirm";
@@ -1934,25 +1948,12 @@ describe("TaskCard", () => {
   });
 
   /*
-   * FN-7559: release-authorization holds and manual plan-approval holds both
-   * use status "awaiting-approval" (auto-approve-all intentionally bypasses
-   * only the manual gate), so the card badge must render a distinct label and
-   * class for a release-authorization hold instead of the generic "Awaiting
-   * Approval" manual-gate badge.
+   * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the triage release-authorization
+   * gate was removed. A legacy release-authorization hold now renders the generic
+   * "Awaiting Approval" badge like any manual plan-approval hold — no distinct
+   * release-authorization label or badge class.
    */
-  it("renders a distinct badge for a release-authorization hold vs a manual approval hold", () => {
-    const { container: manualContainer, unmount: unmountManual } = render(
-      <TaskCard
-        task={makeTask({ column: "triage", status: "awaiting-approval" })}
-        onOpenDetail={noop}
-        addToast={noop}
-      />,
-    );
-    expect(within(manualContainer).getByText("Awaiting Approval")).toBeDefined();
-    const manualBadge = manualContainer.querySelector(".card-status-badge") as HTMLElement;
-    expect(manualBadge.className).not.toContain("awaiting-release-authorization");
-    unmountManual();
-
+  it("renders the generic Awaiting Approval badge for a legacy release-authorization hold", () => {
     const { container: releaseContainer } = render(
       <TaskCard
         task={makeTask({ column: "triage", status: "awaiting-approval", awaitingApprovalReason: "release-authorization" } as any)}
@@ -1960,10 +1961,10 @@ describe("TaskCard", () => {
         addToast={noop}
       />,
     );
-    expect(within(releaseContainer).getByText("Awaiting Release Authorization")).toBeDefined();
-    expect(within(releaseContainer).queryByText("Awaiting Approval")).toBeNull();
+    expect(within(releaseContainer).getByText("Awaiting Approval")).toBeDefined();
+    expect(within(releaseContainer).queryByText("Awaiting Release Authorization")).toBeNull();
     const releaseBadge = releaseContainer.querySelector(".card-status-badge") as HTMLElement;
-    expect(releaseBadge.className).toContain("awaiting-release-authorization");
+    expect(releaseBadge.className).not.toContain("awaiting-release-authorization");
   });
 
   it("renders stalled badge with visible reason when stalledReview is set", () => {
@@ -2593,7 +2594,7 @@ describe("TaskCard", () => {
   });
 
 
-  it("keeps priority, fast mode, and agent-created in meta while time moves to footer", () => {
+  it("keeps priority and fast mode in meta while agent-created and time move to bottom rows", () => {
 
     const { container } = render(
       <TaskCard
@@ -2617,7 +2618,6 @@ describe("TaskCard", () => {
     const expectedMetaSelectors = [
       ".card-priority-badge",
       ".card-execution-mode-badge",
-      ".card-agent-created-badge",
     ];
     expectedMetaSelectors.forEach((selector) => {
 
@@ -2636,10 +2636,15 @@ describe("TaskCard", () => {
     // longer renders a per-card badge (FN-7539) — an inherited default is not
     // meaningfully-configured oversight, so it does not appear among the
     // opt-in meta badges here.
+    const agentBadge = container.querySelector(".card-agent-created-badge");
+    expect(agentBadge).not.toBeNull();
+    expect(agentBadge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(agentBadge?.closest(".card-meta-badges")).toBeNull();
+    expect(agentBadge?.closest(".card-header")).toBeNull();
+
     expect(Array.from(group?.children ?? []).map((child) => child.className)).toEqual([
       "card-priority-badge card-priority-badge--high",
       "card-execution-mode-badge card-execution-mode-badge--fast",
-      "card-agent-created-badge",
     ]);
   });
 
@@ -2662,7 +2667,8 @@ describe("TaskCard", () => {
     expect(group).not.toBeNull();
     expect(group?.querySelector(".card-priority-badge")).not.toBeNull();
     expect(group?.querySelector(".card-execution-mode-badge")).not.toBeNull();
-    expect(group?.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(group?.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-created-badge")?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(group?.querySelector(".card-time-indicator")).toBeNull();
     expect(container.querySelector(".card-footer-row")).toBeNull();
     expect(container.querySelector(".card-footer-row-right")).toBeNull();
@@ -2705,6 +2711,7 @@ describe("TaskCard", () => {
     expect(container.querySelector(".card-priority-badge")).toBeNull();
     expect(container.querySelector(".card-execution-mode-badge")).toBeNull();
     expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-badge-row")).toBeNull();
 
   });
 
@@ -2882,9 +2889,12 @@ describe("TaskCard", () => {
     expect(screen.getByText("1 active")).toBeDefined();
     expect(screen.getByText("active")).toBeDefined();
     expect(container.querySelector(".card-step-name.active")?.textContent).toBe("Step 1");
+    // FN-7676: the steps breakdown must still render once a task is out of Planning (`in-progress`/`executing`).
+    expect(container.querySelector(".card-steps-toggle")).not.toBeNull();
+    expect(container.querySelector(".card-progress")).not.toBeNull();
   });
 
-  it("shows running Plan Review progress while the task is still in triage", () => {
+  it("hides the steps breakdown while the task is still in triage, even with a running Plan Review", () => {
     const { container } = render(
       <TaskCard
         task={makeTask({
@@ -2906,16 +2916,31 @@ describe("TaskCard", () => {
       />,
     );
 
-    expect(screen.getByText("0/2")).toBeDefined();
-    expect(screen.getByText("1 active")).toBeDefined();
+    expect(container.querySelector(".card-progress")).toBeNull();
+    expect(container.querySelector(".card-steps-toggle")).toBeNull();
+    expect(container.querySelector(".card-steps-list")).toBeNull();
+    expect(screen.queryByText("0/2")).toBeNull();
+    expect(screen.queryByText("1 active")).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Show steps" }));
+  it("does not render the steps toggle for a triage card with populated steps", () => {
+    const { container } = render(
+      <TaskCard
+        task={makeTask({
+          column: "triage",
+          status: "planning" as any,
+          steps: Array.from({ length: 10 }, (_, i) => ({ name: `Step ${i}`, status: "pending" as const })),
+        })}
+        onOpenDetail={noop}
+        addToast={noop}
+      />,
+    );
 
-    expect(container.querySelector(".card-step-name.active")?.textContent).toBe("Plan Review");
-    expect(container.querySelector(".card-step-active-badge")?.textContent).toBe("active");
-    const dots = container.querySelectorAll(".card-step-dot");
-    expect(dots[0]?.className).toContain("card-step-dot--running");
-    expect(dots[0]?.className).not.toContain("card-step-dot--pending");
+    expect(container.querySelector(".card-progress")).toBeNull();
+    expect(container.querySelector(".card-steps-toggle")).toBeNull();
+    expect(container.querySelector(".card-steps-list")).toBeNull();
+    expect(screen.queryByText("0/10")).toBeNull();
+    expect(screen.queryByText("10 steps")).toBeNull();
   });
 
   it("does not show a false triage active indicator for enabled-but-not-started Plan Review", () => {
@@ -4478,7 +4503,10 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(badge?.closest(".card-header")).toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Task Robot");
+    expect(badge?.getAttribute("aria-label")).toBe("Created by agent: Task Robot");
     expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Task Robot");
     expect(badge?.querySelector(".visually-hidden")?.textContent).toBe("Created by agent: Task Robot");
   });
@@ -4499,6 +4527,8 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
+    expect(badge?.closest(".card-meta-badges")).toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Scheduler Bot");
     expect(badge?.getAttribute("aria-label")).toBe("Created by agent: Scheduler Bot");
   });
@@ -4520,6 +4550,7 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent: Legacy Robot");
     expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Legacy Robot");
   });
@@ -4540,7 +4571,9 @@ describe("TaskCard", () => {
 
     const badge = container.querySelector(".card-agent-created-badge");
     expect(badge).not.toBeNull();
+    expect(badge?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(badge?.getAttribute("title")).toBe("Created by agent");
+    expect(badge?.getAttribute("aria-label")).toBe("Created by agent");
     expect(badge?.querySelector("span[aria-hidden='true']")?.textContent).toBe("Agent");
     expect(badge?.querySelector(".visually-hidden")?.textContent).toBe("Created by agent");
   });
@@ -4560,6 +4593,7 @@ describe("TaskCard", () => {
     );
 
     expect(container.querySelector(".card-agent-created-badge")).toBeNull();
+    expect(container.querySelector(".card-agent-badge-row")).toBeNull();
   });
 
   it("coexists with GitHub badge and timer metadata", () => {
@@ -4587,7 +4621,7 @@ describe("TaskCard", () => {
 
     expect(container.querySelector(".card-github-badge")).not.toBeNull();
     expect(container.querySelector(".card-source-provenance")).not.toBeNull();
-    expect(container.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(container.querySelector(".card-agent-created-badge")?.closest(".card-agent-badge-row")).not.toBeNull();
     expect(container.querySelector(".card-time-indicator")).not.toBeNull();
   });
 
@@ -5794,7 +5828,7 @@ describe("TaskCard workflow badges", () => {
     expect(screen.queryByTestId("card-workflow-badge-row")).toBeNull();
   });
 
-  it("keeps top badges in the meta cluster while rendering workflow identity below card rows", () => {
+  it("keeps top badges in the meta cluster while rendering agent and workflow identity below card rows", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T12:10:00.000Z"));
 
@@ -5820,11 +5854,16 @@ describe("TaskCard workflow badges", () => {
     const metaBadges = screen.getByTestId("card-meta-badges");
     const badge = screen.getByTestId("card-workflow-badge");
     const workflowRow = screen.getByTestId("card-workflow-badge-row");
+    const agentRow = screen.getByTestId("card-agent-badge-row");
+    const agentBadge = container.querySelector(".card-agent-created-badge");
     expect(metaBadges.querySelector(".card-priority-badge")).not.toBeNull();
     expect(metaBadges.querySelector(".card-execution-mode-badge")).not.toBeNull();
-    expect(metaBadges.querySelector(".card-agent-created-badge")).not.toBeNull();
+    expect(metaBadges.querySelector(".card-agent-created-badge")).toBeNull();
     expect(metaBadges.querySelector(".card-workflow-badge")).toBeNull();
+    expect(agentRow).toContainElement(agentBadge as HTMLElement);
+    expect(agentBadge?.closest(".card-header")).toBeNull();
     expect(workflowRow).toContainElement(badge);
+    expect(agentRow.compareDocumentPosition(workflowRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     [".card-footer-row", ".card-meta", ".card-agent-row"].forEach((selector) => {
       const row = container.querySelector(selector);

@@ -86,7 +86,7 @@
   display: inline-flex;
   align-items: center;
   border-radius: var(--radius-full);
-  padding: var(--space-2xs) var(--space-xs);
+  padding: var(--space-xs) var(--space-xs);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
   border: var(--border-width) solid var(--border);
@@ -128,7 +128,7 @@
   display: inline-flex;
   align-items: center;
   border-radius: var(--radius-full);
-  padding: var(--space-2xs) var(--space-xs);
+  padding: var(--space-xs) var(--space-xs);
   border: var(--border-width) solid var(--border);
   color: inherit;
 }

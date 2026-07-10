@@ -37,6 +37,7 @@ export interface ChatSessionInfo {
   status: string;
   modelProvider?: string | null;
   modelId?: string | null;
+  thinkingLevel?: string | null;
   createdAt: string;
   updatedAt: string;
   lastMessagePreview?: string;
@@ -92,7 +93,7 @@ export interface UseChatReturn {
   // Session operations
   selectSession: (id: string, sessionOverride?: ChatSessionInfo) => void;
   createSession: (
-    input: { agentId: string; title?: string; modelProvider?: string; modelId?: string },
+    input: { agentId: string; title?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string },
   ) => Promise<ChatSessionInfo>;
   archiveSession: (id: string) => Promise<void>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -888,7 +889,7 @@ export function useChat(
 
   // Create a new session
   const createSession = useCallback(
-    async (input: { agentId: string; title?: string; modelProvider?: string; modelId?: string }) => {
+    async (input: { agentId: string; title?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string }) => {
       const previousSessionId = activeSessionRef.current?.id;
       const data = await apiCreateChatSession(input, projectId);
 
@@ -904,6 +905,7 @@ export function useChat(
         status: data.session.status,
         modelProvider: data.session.modelProvider,
         modelId: data.session.modelId,
+        thinkingLevel: data.session.thinkingLevel,
         createdAt: data.session.createdAt,
         updatedAt: data.session.updatedAt,
       };

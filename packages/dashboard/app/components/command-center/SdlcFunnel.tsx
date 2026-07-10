@@ -59,12 +59,13 @@ function formatThroughput(value: number): string {
  * (which it derives by workflow trait, not column name), so custom workflow
  * columns surface correctly and unknown columns appear under "Other".
  */
-export function SdlcFunnel({ range }: { range: DateRange }) {
+export function SdlcFunnel({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const labelFor = useStageLabels();
   const { data, isLoading, error } = useAnalyticsArea<ActivityAnalytics>(
     "/command-center/activity",
     range,
+    { projectId },
   );
 
   const funnel: SdlcFunnelData | null = data?.funnel ?? null;

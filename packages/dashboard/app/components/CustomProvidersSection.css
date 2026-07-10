@@ -145,6 +145,30 @@
   margin-top: var(--space-xs);
 }
 
+/*
+FNXC:ProviderAuth 2026-07-08-00:00:
+FN-7689: checkbox row + hint text for the Anthropic prompt-caching opt-in on custom
+openai-compatible/openai-responses providers. Follows the existing form-row token pattern
+(no hardcoded colors/px) and reuses --text-muted for the hint, matching other secondary text.
+*/
+.custom-provider-form-checkbox-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.custom-provider-form-checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.custom-provider-form-hint {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  margin: 0;
+}
+
 .custom-provider-spin {
   animation: custom-provider-spin calc(var(--duration-slow) * 4) linear infinite;
 }

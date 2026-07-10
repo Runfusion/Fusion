@@ -209,10 +209,19 @@
   pointer-events: none;
 }
 
+/*
+FNXC:FileBrowser 2026-07-08-00:00:
+Search input left padding must exceed the leading icon's offset + width so the
+magnifier never overlaps placeholder/typed text. The prior calc(--space-lg + --space-md)
+collided exactly with the icon's right edge (--space-sm offset + 16px icon) under the
+compact spacing theme (space-sm:4px, space-md:8px, space-lg:12px -> 12+8=20 == 4+16),
+leaving zero gap. Anchor the padding to the same --space-sm offset the icon uses, plus
+the icon's box width, plus a visible gap, so the relationship stays theme-invariant.
+*/
 .file-browser-search-input {
   width: 100%;
   min-width: 0;
-  padding-left: calc(var(--space-lg) + var(--space-md));
+  padding-left: calc(var(--space-sm) + 16px + var(--space-sm));
 }
 
 .file-browser-create-button {

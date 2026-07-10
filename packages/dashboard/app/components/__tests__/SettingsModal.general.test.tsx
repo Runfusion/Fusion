@@ -240,6 +240,9 @@ describe("SettingsModal", () => {
     renderModal();
     await waitForSettingsModalReady();
 
+    // FN-7713: this file mocks useViewportMode to "mobile", so the search row starts collapsed
+    // behind the toggle — expand it before interacting with the search input.
+    await settingsModalUser.click(screen.getByLabelText("Show search"));
     const search = screen.getByTestId("settings-search-input");
     expect(screen.getByRole("button", { name: /^General$/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Project General$/ })).toBeInTheDocument();
@@ -275,6 +278,8 @@ describe("SettingsModal", () => {
     renderModal();
     await waitForSettingsModalReady();
 
+    // FN-7713: search row is collapsed by default under the "mobile" viewport mock — expand it first.
+    await settingsModalUser.click(screen.getByLabelText("Show search"));
     const search = screen.getByTestId("settings-search-input");
     await settingsModalUser.type(search, "mcp");
 
@@ -345,6 +350,8 @@ describe("SettingsModal", () => {
       renderModal({ presentation: "embedded", onClose });
       await waitForSettingsModalReady();
 
+      // FN-7713: embedded mobile-mocked viewport starts the search row collapsed — expand it first.
+      await settingsModalUser.click(screen.getByLabelText("Show search"));
       const search = screen.getByTestId("settings-search-input");
       await settingsModalUser.type(search, "model pricing");
       expect(screen.getByRole("button", { name: /^Models$/ })).toBeInTheDocument();

@@ -807,20 +807,26 @@ describe("TerminalModal", () => {
     expect(belowRule).not.toContain("position: fixed;");
     expect(belowRule).toContain("height: var(--terminal-below-height);");
 
-    // FN-7560: the `.terminal-status-bar` footer is a MOBILE-ONLY affordance
-    // (isMobileTerminal, which itself excludes below mode) — it must exist only
-    // scoped inside a `@media (max-width: 768px)` block, never as a global/
-    // unscoped rule that could leak a footer shell into desktop/floating/
-    // pinned-below. Strip every mobile media-query block out of the
-    // stylesheet and confirm no `.terminal-status-bar` rule remains outside it.
-    const cssWithoutMobileMediaBlocks = terminalModalCss.replace(
-      /@media \(max-width: 768px\) \{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g,
-      "",
-    );
-    expect(cssWithoutMobileMediaBlocks).not.toMatch(/\.terminal-status-bar\s*\{/);
+    // FN-7560/FN-7684: the `.terminal-status-bar` footer is a MOBILE + TABLET-ONLY
+    // affordance (isMobileTerminal || isTabletTerminal, both of which exclude
+    // below mode's true-desktop display) — it must exist only scoped inside the
+    // mobile `@media (max-width: 768px)` block or the tablet
+    // `@media (min-width: 769px) and (max-width: 1024px)` block, never as a
+    // global/unscoped rule that could leak a footer shell into true-desktop
+    // (>1024px) docked/floating/pinned-below. Strip every mobile AND tablet
+    // media-query block out of the stylesheet and confirm no `.terminal-status-bar`
+    // rule remains outside them.
+    const cssWithoutMobileAndTabletMediaBlocks = terminalModalCss
+      .replace(/@media \(max-width: 768px\) \{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "")
+      .replace(/@media \(min-width: 769px\) and \(max-width: 1024px\) \{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+    expect(cssWithoutMobileAndTabletMediaBlocks).not.toMatch(/\.terminal-status-bar\s*\{/);
     const mobileFooterRule =
       terminalModalCss.match(/@media \(max-width: 768px\) \{[\s\S]*?\.terminal-status-bar\s*\{/);
     expect(mobileFooterRule).not.toBeNull();
+    const tabletFooterRule = terminalModalCss.match(
+      /@media \(min-width: 769px\) and \(max-width: 1024px\) \{[\s\S]*?\.terminal-status-bar\s*\{/,
+    );
+    expect(tabletFooterRule).not.toBeNull();
   });
 
   it("exposes floating drag and resize handles and refits after floating resize", async () => {
@@ -1495,6 +1501,30 @@ describe("TerminalModal", () => {
         terminalModalCss.match(/@media \(max-width: 768px\) \{[\s\S]*?\.terminal-status-bar\s*\{([^}]*)\}/)?.[1] ?? "";
       expect(footerRule).toContain("overflow-x: auto;");
       expect(footerRule).toContain("min-width: 0;");
+    });
+
+    it("gives the tablet footer bar the same horizontal-scroll pattern (FN-7684)", () => {
+      // FN-7684: the tablet-tier action-control footer mirrors the FN-7560
+      // mobile footer's min-width: 0 + overflow-x: auto flex-scroll pattern.
+      const tabletFooterRule =
+        terminalModalCss.match(
+          /@media \(min-width: 769px\) and \(max-width: 1024px\) \{[\s\S]*?\.terminal-status-bar\s*\{([^}]*)\}/,
+        )?.[1] ?? "";
+      expect(tabletFooterRule).toContain("overflow-x: auto;");
+      expect(tabletFooterRule).toContain("min-width: 0;");
+      expect(tabletFooterRule).toContain("touch-action: pan-x pan-y;");
+
+      // Unlike mobile, the tablet-scoped mobile `display: none` hide for the
+      // help text and connection status must NOT apply at the tablet tier.
+      const mobileHideBlock = terminalModalCss.match(
+        /@media \(max-width: 768px\) \{[\s\S]*?\.terminal-shortcuts--header,\s*\n\s*\.terminal-connection-status \{[\s\S]*?\}\s*\n\}/,
+      );
+      expect(mobileHideBlock).not.toBeNull();
+      const tabletBlock = terminalModalCss.match(
+        /@media \(min-width: 769px\) and \(max-width: 1024px\) \{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+      expect(tabletBlock).not.toMatch(/\.terminal-shortcuts--header/);
+      expect(tabletBlock).not.toMatch(/\.terminal-connection-status/);
     });
 
     describe("real-CSS mobile cascade (FN-7621 recurrence #3)", () => {
@@ -3553,9 +3583,10 @@ describe("TerminalModal — mobile layout contract", () => {
   });
 
   it("header actions show connection state without a footer status-bar shell (desktop, FN-7502)", async () => {
-    // FN-7560: explicitly desktop-width — the footer only exists on the mobile
-    // (isMobileTerminal) path; desktop/floating/pinned-below keep the FN-7502
-    // header-actions contract with NO footer shell rendered.
+    // FN-7560/FN-7684: explicitly TRUE-desktop-width (>1024px) — the footer
+    // only exists on the mobile (isMobileTerminal) and tablet (isTabletTerminal)
+    // paths; true desktop/floating/pinned-below keep the FN-7502 header-actions
+    // contract with NO footer shell rendered.
     const previousInnerWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { value: 1280, configurable: true });
 
@@ -3616,6 +3647,73 @@ describe("TerminalModal — mobile layout contract", () => {
       });
     } finally {
       Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+    }
+  });
+
+  it("renders terminal action controls in a tablet footer, not the header, and keeps pin/pop-out toggles (FN-7684)", async () => {
+    // FN-7684: tablet width (769-1024px) must relocate the same shared
+    // terminalActionControls fragment into the footer, exactly as FN-7560
+    // did for mobile — but unlike mobile, tablet keeps the desktop pin/
+    // pop-out toggles and the desktop tab strip / workspace picker.
+    const previousInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+    fireEvent(window, new Event("resize"));
+
+    try {
+      render(<TerminalModal isOpen={true} onClose={mockOnClose} />);
+
+      await waitFor(() => {
+        const footer = screen.getByTestId("terminal-footer-actions");
+        expect(footer.className).toContain("terminal-status-bar");
+
+        const clearBtn = screen.getByTestId("terminal-clear-btn");
+        const shortcutToggle = screen.getByTestId("terminal-shortcut-toggle");
+        const preferencesToggle = screen.getByTestId("terminal-preferences-toggle");
+        const fontSizeValue = screen.getByTestId("terminal-font-size-value");
+        const pinToggle = screen.getByTestId("terminal-pin-toggle");
+        const popoutToggle = screen.getByTestId("terminal-popout-toggle");
+
+        // Controls live inside the footer region, including the desktop-only
+        // pin/pop-out toggles (tablet keeps docked/floating/pinned-below modes)...
+        expect(footer.contains(clearBtn)).toBe(true);
+        expect(footer.contains(shortcutToggle)).toBe(true);
+        expect(footer.contains(preferencesToggle)).toBe(true);
+        expect(footer.contains(fontSizeValue)).toBe(true);
+        expect(footer.contains(pinToggle)).toBe(true);
+        expect(footer.contains(popoutToggle)).toBe(true);
+
+        // ...and NOT inside the header.
+        const header = document.querySelector(".terminal-header");
+        expect(header).toBeTruthy();
+        expect(header?.contains(clearBtn)).toBe(false);
+        expect(header?.contains(shortcutToggle)).toBe(false);
+        expect(header?.contains(preferencesToggle)).toBe(false);
+        expect(header?.contains(fontSizeValue)).toBe(false);
+        expect(header?.contains(pinToggle)).toBe(false);
+        expect(header?.contains(popoutToggle)).toBe(false);
+
+        // No empty .terminal-actions shell renders in the tablet header.
+        expect(header?.querySelector(".terminal-actions")).toBeNull();
+
+        // The close button, the desktop tab strip (not the mobile dropdown),
+        // and the workspace picker remain in the header.
+        const closeBtn = screen.getByTestId("terminal-close-btn");
+        expect(header?.contains(closeBtn)).toBe(true);
+        expect(footer.contains(closeBtn)).toBe(false);
+        expect(screen.queryByTestId("terminal-mobile-tabs")).toBeNull();
+        const tabs = screen.queryByTestId("terminal-tabs");
+        expect(tabs).toBeTruthy();
+        expect(header?.contains(tabs)).toBe(true);
+        // The workspace picker only renders when workspaces exist (default mock
+        // has none) — assert it stays in the header when present.
+        const workspacePicker = screen.queryByTestId("terminal-workspace-picker");
+        if (workspacePicker) {
+          expect(header?.contains(workspacePicker)).toBe(true);
+        }
+      });
+    } finally {
+      Object.defineProperty(window, "innerWidth", { value: previousInnerWidth, configurable: true });
+      fireEvent(window, new Event("resize"));
     }
   });
 

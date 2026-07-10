@@ -274,6 +274,13 @@ The Planner Chat streaming Stop button must occupy the same width footprint as t
   /*
   FNXC:TaskDetailPlannerChat 2026-07-01-08:09:
   Mobile Planner Chat hides compact action text labels, but the shared thinking/streaming stop affordance draws its icon with `.chat-input-stop-icon` on a span. Exclude that icon span so the stop button never becomes an empty-looking shell while preserving the first-tap send/stop button contract.
+
+  FNXC:TaskDetailPlannerChat 2026-07-08-00:00:
+  FN-7685 removed the idle send button's visible "Send" text span (it now renders icon-only,
+  matching regular chat), so this rule no longer needs to hide send text. Kept as-is: it is
+  still the defensive guard governing any non-icon span on the shared `.task-planner-chat-send`
+  class, and it remains load-bearing for the streaming Stop button's FN-7594 icon-visibility
+  contract exercised by the FN-7634 parity tests.
   */
   .task-planner-chat-send span:not(.chat-input-stop-icon) {
     position: absolute;

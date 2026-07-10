@@ -73,4 +73,48 @@ describe("FN-5544 session:runtime-resolved audit event", () => {
     expect(events).toHaveLength(1);
     expect(events[0]?.metadata).toEqual(expect.objectContaining({ sessionPurpose: "heartbeat", runtimeHint: "hermes", testModeActive: true }));
   });
+
+  it("warns and audits the runtime built-in fallback when no non-mock model resolves", async () => {
+    resolveRuntimeMock.mockResolvedValue({
+      runtime: {
+        id: "pi",
+        name: "pi",
+        createSession: vi.fn().mockResolvedValue({ session: { model: { provider: "anthropic", id: "claude-opus-4-8" }, prompt: vi.fn() } }),
+        promptWithFallback: vi.fn(),
+        describeModel: vi.fn(() => "anthropic/claude-opus-4-8"),
+      },
+      runtimeId: "pi",
+      wasConfigured: false,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const auditor = createRunAuditor(store, { runId: "r5", agentId: "a1", taskId: "FN-7787", phase: "execute", source: "executor" });
+
+    await createResolvedAgentSession({ sessionPurpose: "executor", cwd: "/tmp/project", systemPrompt: "system", runAuditor: auditor, settings: {} as any });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("built-in fallback model \"anthropic/claude-opus-4-8\""));
+    const events = store.getRunAuditEvents({ mutationType: "session:runtime-resolved" });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata).toEqual(expect.objectContaining({
+      provider: null,
+      modelId: null,
+      noModelResolved: true,
+      runtimeBuiltInFallbackModel: "anthropic/claude-opus-4-8",
+    }));
+    warnSpy.mockRestore();
+  });
+
+  it("does not warn about built-in fallback for mock, test-mode, or fully resolved sessions", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const auditor = createRunAuditor(store, { runId: "r6", agentId: "a1", taskId: "FN-7787", phase: "execute", source: "executor" });
+
+    await createResolvedAgentSession({ sessionPurpose: "executor", cwd: "/tmp/project", systemPrompt: "system", defaultProvider: MOCK_PROVIDER_ID, defaultModelId: "scripted", runAuditor: auditor });
+    await createResolvedAgentSession({ sessionPurpose: "executor", cwd: "/tmp/project", systemPrompt: "system", runAuditor: auditor, settings: { testMode: true } as any });
+    await createResolvedAgentSession({ sessionPurpose: "executor", cwd: "/tmp/project", systemPrompt: "system", defaultProvider: "anthropic", defaultModelId: "claude-fable-5", runAuditor: auditor });
+
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("no complete provider/model resolved"));
+    const events = store.getRunAuditEvents({ mutationType: "session:runtime-resolved" });
+    expect(events).toHaveLength(3);
+    expect(events.every((event) => !(event.metadata as Record<string, unknown>).noModelResolved)).toBe(true);
+    warnSpy.mockRestore();
+  });
 });

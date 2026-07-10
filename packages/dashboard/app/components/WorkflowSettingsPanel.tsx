@@ -504,6 +504,7 @@ export interface WorkflowModelLanePair {
   id: string;
   providerId: string;
   modelId: string;
+  thinkingId?: string;
   label: string;
   help: string;
 }
@@ -511,12 +512,16 @@ export interface WorkflowModelLanePair {
 /*
 FNXC:WorkflowSettings 2026-06-17-09:13:
 Title summarization is owned by project/global Settings → Project Models, not workflow Values. Keep this workflow-editor catalog limited to workflow-executed model lanes so custom declarations cannot create misleading title-summarizer dropdowns whose values are orphaned for built-in workflows.
+
+FNXC:Settings-ThinkingLevel 2026-07-10-12:03:
+Workflow Values renders thinking controls inline with declared primary and fallback model lanes. The companion setting ids are excluded from generic enum rendering so operators get one inherit/override/reset affordance and undeclared lanes leave no empty control shell.
 */
 export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
   {
     id: "planning",
     providerId: "planningProvider",
     modelId: "planningModelId",
+    thinkingId: "planningThinkingLevel",
     label: "Plan/Triage Model",
     help: "Provider and model used when planning or triaging tasks. Leave unset to inherit from the default lane.",
   },
@@ -524,6 +529,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     id: "execution",
     providerId: "executionProvider",
     modelId: "executionModelId",
+    thinkingId: "executionThinkingLevel",
     label: "Executor Model",
     help: "Provider and model used by task implementation agents. Leave unset to inherit from the default lane.",
   },
@@ -531,6 +537,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     id: "validator",
     providerId: "validatorProvider",
     modelId: "validatorModelId",
+    thinkingId: "validatorThinkingLevel",
     label: "Reviewer Model",
     help: "Provider and model used by review and validation agents. Leave unset to inherit from the default lane.",
   },
@@ -538,6 +545,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     id: "planning-fallback",
     providerId: "planningFallbackProvider",
     modelId: "planningFallbackModelId",
+    thinkingId: "planningFallbackThinkingLevel",
     label: "Planning Fallback Model",
     help: "Fallback provider and model used when the primary Plan/Triage model cannot be used.",
   },
@@ -545,6 +553,7 @@ export const WORKFLOW_MODEL_LANE_CATALOG: WorkflowModelLanePair[] = [
     id: "validator-fallback",
     providerId: "validatorFallbackProvider",
     modelId: "validatorFallbackModelId",
+    thinkingId: "validatorFallbackThinkingLevel",
     label: "Reviewer Fallback Model",
     help: "Fallback provider and model used when the primary Reviewer model cannot be used.",
   },
@@ -593,12 +602,13 @@ function ValuesTab({
       WORKFLOW_MODEL_LANE_CATALOG.filter((pair) => {
         const provider = settingsById.get(pair.providerId);
         const model = settingsById.get(pair.modelId);
-        return provider?.type === "string" && model?.type === "string";
+        const thinking = pair.thinkingId ? settingsById.get(pair.thinkingId) : undefined;
+        return provider?.type === "string" && model?.type === "string" && (!pair.thinkingId || thinking?.type === "enum" || thinking?.type === "string");
       }),
     [settingsById],
   );
   const modelPairSettingIds = useMemo(
-    () => new Set(modelLanePairs.flatMap((pair) => [pair.providerId, pair.modelId])),
+    () => new Set(modelLanePairs.flatMap((pair) => [pair.providerId, pair.modelId, ...(pair.thinkingId ? [pair.thinkingId] : [])])),
     [modelLanePairs],
   );
 
@@ -716,6 +726,16 @@ function ValuesTab({
     });
   };
 
+  const setModelPairThinkingValue = (pair: WorkflowModelLanePair, value: string) => {
+    if (!pair.thinkingId) return;
+    setValue(pair.thinkingId, value || null);
+  };
+
+  const clearModelPairValue = (pair: WorkflowModelLanePair) => {
+    setModelPairValue(pair, "");
+    setModelPairThinkingValue(pair, "");
+  };
+
   const dirty = Object.keys(pending).length > 0;
 
   const save = useCallback(async () => {
@@ -773,8 +793,11 @@ function ValuesTab({
     const providerValue = valueOfSettingId(pair.providerId);
     const modelValue = valueOfSettingId(pair.modelId);
     const value = typeof providerValue === "string" && typeof modelValue === "string" ? `${providerValue}/${modelValue}` : "";
-    const error = rejections[pair.providerId]?.message ?? rejections[pair.modelId]?.message;
-    const customized = isCustomizedId(pair.providerId) || isCustomizedId(pair.modelId);
+    const thinkingValue = pair.thinkingId && typeof valueOfSettingId(pair.thinkingId) === "string"
+      ? (valueOfSettingId(pair.thinkingId) as string)
+      : "";
+    const error = rejections[pair.providerId]?.message ?? rejections[pair.modelId]?.message ?? (pair.thinkingId ? rejections[pair.thinkingId]?.message : undefined);
+    const customized = isCustomizedId(pair.providerId) || isCustomizedId(pair.modelId) || Boolean(pair.thinkingId && isCustomizedId(pair.thinkingId));
     const dropdownDisabled = modelsLoading || availableModels.length === 0;
     const emptyHelp =
       !modelsLoading && availableModels.length === 0
@@ -791,7 +814,7 @@ function ValuesTab({
           scope="project"
           disabled={modelsLoading}
           clearable={customized}
-          onClear={() => setModelPairValue(pair, "")}
+          onClear={() => clearModelPairValue(pair)}
         >
           <CustomModelDropdown
             id={`wf-model-lane-${pair.id}`}
@@ -804,6 +827,10 @@ function ValuesTab({
             disabled={dropdownDisabled}
             favoriteProviders={favoriteProviders}
             favoriteModels={favoriteModels}
+            showThinkingLevel={Boolean(pair.thinkingId)}
+            thinkingLevel={thinkingValue}
+            onThinkingLevelChange={pair.thinkingId ? (level) => setModelPairThinkingValue(pair, level) : undefined}
+            defaultThinkingLevel="off"
           />
         </SettingsFieldRow>
         {customized && (

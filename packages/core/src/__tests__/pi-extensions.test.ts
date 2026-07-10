@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 import { getProjectRootFromWorktree, resolvePiExtensionProjectRoot } from "../pi-extensions.js";
@@ -83,6 +83,91 @@ describe("getProjectRootFromWorktree", () => {
         // best effort cleanup
       }
       rmSync(worktreeRoot, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // FNXC:Storage 2026-07-09-00:00: FN-7730 regression — a non-standard-location
+  // linked worktree (settings.worktreesDir configured off the default
+  // `.worktrees`, e.g. containerized deployments) must resolve to the true
+  // project root via git's own on-disk `.git`/`commondir` worktree metadata,
+  // WITHOUT depending on the `git` CLI succeeding. Previously the only
+  // non-standard-location resolution path was `git rev-parse`, which silently
+  // returns null (no thrown error) when the `git` binary is unavailable or
+  // fails (e.g. Docker "detected dubious ownership" safe.directory refusal on a
+  // bind-mounted repo) — collapsing resolution to a naive `.fusion` upward walk
+  // that stops at the worktree's OWN locally-hydrated `.fusion/fusion.db`
+  // instead of the real project root.
+  it("resolves a non-standard-location linked worktree via .git/commondir metadata even when the git CLI is unavailable", async () => {
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      spawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "fatal: detected dubious ownership" })),
+      execSync: vi.fn(),
+    }));
+
+    const root = mkdtempSync(join(tmpdir(), "fn-7730-root-"));
+    // Deliberately NOT under a `.worktrees`/`.fusion/worktrees` path so the
+    // hardcoded regex fast paths in getProjectRootFromWorktree cannot match.
+    const worktreeDir = mkdtempSync(join(tmpdir(), "fn-7730-custom-wt-"));
+    try {
+      const expectedRoot = resolve(root);
+      mkdirSync(join(root, ".fusion"), { recursive: true });
+
+      // Fabricate the on-disk linked-worktree metadata git itself would write
+      // for `git worktree add <worktreeDir>` — no real git repo/binary needed.
+      const worktreeGitDir = join(root, ".git", "worktrees", "custom-wt");
+      mkdirSync(worktreeGitDir, { recursive: true });
+      writeFileSync(join(worktreeGitDir, "commondir"), "../..\n");
+      writeFileSync(join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
+
+      const { getProjectRootFromWorktree: fresh } = await import("../pi-extensions.js");
+      expect(fresh(worktreeDir)).toBe(expectedRoot);
+      expect(fresh(join(worktreeDir, "subdir", "file.ts"))).toBe(expectedRoot);
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+      rmSync(worktreeDir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // FNXC:Storage 2026-07-09-00:00: FN-7730 symptom verification — reproduces the
+  // exact silent-write-loss shape: a non-standard-location worktree that ALSO
+  // already has its own locally-hydrated `.fusion/fusion.db` (created by
+  // hydrateWorktreeDb for dependency-closure hydration) must still resolve to
+  // the TRUE project root, not the worktree's decoy `.fusion` — even with the
+  // git CLI unavailable. Before the fix this returned the worktree itself,
+  // silently redirecting every fn_task_update-style write into the throwaway
+  // hydration copy.
+  it("prefers the true project root over a worktree's own hydrated .fusion when git is unavailable (FN-7730)", async () => {
+    vi.resetModules();
+    vi.doMock("node:child_process", () => ({
+      spawnSync: vi.fn(() => ({ status: 1, stdout: "", stderr: "fatal: detected dubious ownership" })),
+      execSync: vi.fn(),
+    }));
+
+    const root = mkdtempSync(join(tmpdir(), "fn-7730-root2-"));
+    const worktreeDir = mkdtempSync(join(tmpdir(), "fn-7730-custom-wt2-"));
+    try {
+      const expectedRoot = resolve(root);
+      mkdirSync(join(root, ".fusion"), { recursive: true });
+
+      const worktreeGitDir = join(root, ".git", "worktrees", "custom-wt2");
+      mkdirSync(worktreeGitDir, { recursive: true });
+      writeFileSync(join(worktreeGitDir, "commondir"), "../..\n");
+      writeFileSync(join(worktreeDir, ".git"), `gitdir: ${worktreeGitDir}\n`);
+
+      // Simulate hydrateWorktreeDb's ensureWorktreeSchema: the worktree gets its
+      // own local `.fusion` directory as a hydration/decoy target.
+      mkdirSync(join(worktreeDir, ".fusion"), { recursive: true });
+
+      const { resolvePiExtensionProjectRoot: fresh } = await import("../pi-extensions.js");
+      expect(fresh(worktreeDir)).toBe(expectedRoot);
+      expect(fresh(worktreeDir)).not.toBe(resolve(worktreeDir));
+    } finally {
+      vi.doUnmock("node:child_process");
+      vi.resetModules();
+      rmSync(worktreeDir, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
   });

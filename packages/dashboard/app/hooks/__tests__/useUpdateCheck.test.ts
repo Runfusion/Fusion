@@ -32,6 +32,31 @@ describe("useUpdateCheck", () => {
     expect(result.current.currentVersion).toBe("0.6.0");
   });
 
+
+  it("only exposes an update notification for a strictly newer release", async () => {
+    /*
+     * FNXC:UpdateNotifications 2026-07-09-00:00:
+     * The banner hook must be a pass-through notification gate: newer API results become visible banner state, while equal, older, disabled, and unresolved results remain silent.
+     */
+    const cases = [
+      { response: { currentVersion: "1.2.3", latestVersion: "1.2.4", updateAvailable: true }, expected: true },
+      { response: { currentVersion: "1.2.3", latestVersion: "1.2.3", updateAvailable: false }, expected: false },
+      { response: { currentVersion: "1.2.3", latestVersion: "1.2.2", updateAvailable: false }, expected: false },
+      { response: { currentVersion: "0.0.0", latestVersion: null, updateAvailable: false, error: "Current Fusion version is unavailable" }, expected: false },
+      { response: { currentVersion: "1.2.3", latestVersion: null, updateAvailable: false, disabled: true }, expected: false },
+    ];
+
+    for (const testCase of cases) {
+      mockCheckForUpdate.mockResolvedValueOnce(testCase.response);
+      const { result, unmount } = renderHook(() => useUpdateCheck());
+
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      expect(result.current.updateAvailable).toBe(testCase.expected);
+      unmount();
+    }
+  });
+
   it("dismiss stores session flag", async () => {
     mockCheckForUpdate.mockResolvedValueOnce({
       currentVersion: "0.6.0",

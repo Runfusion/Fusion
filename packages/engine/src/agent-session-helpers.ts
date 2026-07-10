@@ -12,8 +12,11 @@ import type { SkillSelectionContext } from "./skill-resolver.js";
 import type { PluginRunner } from "./plugin-runner.js";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import {
+  GROK_CLI_PROVIDER_ID,
+  isGrokApiKeyFusionVisible,
   isTestModeActive,
   resolveExecutionSettingsModel,
+  resolvePhaseThinkingLevel,
   resolveProjectDefaultModel,
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
@@ -21,6 +24,7 @@ import {
   TEST_MODE_RESOLVED,
   type ResolvedModelSelection,
   type Settings,
+  type ThinkingLevel,
 } from "@fusion/core";
 import { resolveRuntime, buildRuntimeResolutionContext, isMockProviderId, type SessionPurpose } from "./runtime-resolution.js";
 import { createLogger } from "./logger.js";
@@ -88,6 +92,18 @@ export interface ResolvedSessionResult {
 /**
  * Extract runtime hint from untyped runtimeConfig payload.
  *
+ * FNXC:GrokCli 2026-07-09-00:00:
+ * FN-7725: this is the exact seam the decided Grok CLI routing wiring (option
+ * (a) in docs/grok-cli-contract.md "Wiring") depends on. When an agent's
+ * Runtime Source is set to "Runtime" (NewAgentDialog.tsx/AgentDetailView.tsx)
+ * with the bundled Grok Runtime plugin selected, `runtimeConfig.runtimeHint`
+ * is `"grok"`, and this value flows unchanged into `resolveRuntime()`
+ * (runtime-resolution.ts), which resolves the Grok plugin's `GrokRuntimeAdapter`
+ * generically — the same chain already used by the hermes/droid plugin
+ * runtimes, so no Grok-specific logic lives here. The direct xAI
+ * OpenAI-compatible model path (grok-provider.ts) is untouched and remains
+ * the default; this hint-based path is opt-in and additive.
+ *
  * @param runtimeConfig - Agent/task runtime configuration
  * @returns normalized runtime hint or undefined when missing/invalid
  */
@@ -134,10 +150,175 @@ export function extractRuntimeModel(
   };
 }
 
+
+function firstThinkingLevel(...levels: Array<ThinkingLevel | string | undefined | null>): string | undefined {
+  for (const level of levels) {
+    if (typeof level === "string" && level.trim().length > 0) {
+      return level.trim();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+ * Model-lane thinking overrides must resolve through the same session option (`defaultThinkingLevel`) pi.ts already guards with the thinking/reasoning conflict fallback. Keep node/step thinking first when supplied by callers, then task, workflow lane, global lane, project default thinking override, and global default.
+ */
+export function resolveExecutorThinkingLevel(
+  taskThinkingLevel: ThinkingLevel | string | undefined,
+  settings: Partial<Settings> | undefined,
+): string | undefined {
+  return resolvePhaseThinkingLevel("execution", settings, taskThinkingLevel);
+}
+
+export function resolvePlanningThinkingLevel(
+  settings: Partial<Settings> | undefined,
+  taskThinkingLevel?: ThinkingLevel | string,
+): string | undefined {
+  return resolvePhaseThinkingLevel("planning", settings, taskThinkingLevel);
+}
+
+export function resolveValidatorThinkingLevel(
+  taskThinkingLevel: ThinkingLevel | string | undefined,
+  settings: Partial<Settings> | undefined,
+): string | undefined {
+  return resolvePhaseThinkingLevel("validation", settings, taskThinkingLevel);
+}
+
+export function resolveTitleSummarizerThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+  return firstThinkingLevel(
+    settings?.titleSummarizerThinkingLevel,
+    settings?.titleSummarizerGlobalThinkingLevel,
+    settings?.defaultThinkingLevelOverride,
+    settings?.defaultThinkingLevel,
+  );
+}
+
+/**
+ * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+ * `resolveMergerSessionModel` intentionally resolves the merger's model from the
+ * project/global DEFAULT lane, not the title-summarizer lane. The thinking level
+ * threaded into merger sessions (mutating merge agent, stash-conflict resolver,
+ * commit agent, PR-response agent) must follow that same default-lane precedence
+ * so a `titleSummarizerThinkingLevel` override (meant only for title/commit-message
+ * summarization sessions) does not leak into full merge-agent runs.
+ */
+export function resolveMergerThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+  return firstThinkingLevel(settings?.defaultThinkingLevelOverride, settings?.defaultThinkingLevel);
+}
+
+/**
+ * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+ * Fallback thinking resolvers mirror fallback provider/model precedence: lane-specific fallback thinking wins where a lane can select a lane fallback model, then global fallback thinking, then the primary lane/default thinking chain for compatibility when no fallback-specific value is configured.
+ */
+export function resolveExecutorFallbackThinkingLevel(
+  taskThinkingLevel: ThinkingLevel | string | undefined,
+  settings: Partial<Settings> | undefined,
+): string | undefined {
+  return firstThinkingLevel(
+    settings?.fallbackThinkingLevel,
+    resolveExecutorThinkingLevel(taskThinkingLevel, settings),
+  );
+}
+
+export function resolvePlanningFallbackThinkingLevel(
+  settings: Partial<Settings> | undefined,
+  taskThinkingLevel?: ThinkingLevel | string,
+): string | undefined {
+  return firstThinkingLevel(
+    settings?.planningFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
+    resolvePlanningThinkingLevel(settings, taskThinkingLevel),
+  );
+}
+
+export function resolveValidatorFallbackThinkingLevel(
+  taskThinkingLevel: ThinkingLevel | string | undefined,
+  settings: Partial<Settings> | undefined,
+): string | undefined {
+  return firstThinkingLevel(
+    settings?.validatorFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
+    resolveValidatorThinkingLevel(taskThinkingLevel, settings),
+  );
+}
+
+export function resolveTitleSummarizerFallbackThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+  return firstThinkingLevel(
+    settings?.titleSummarizerFallbackThinkingLevel,
+    settings?.fallbackThinkingLevel,
+    resolveTitleSummarizerThinkingLevel(settings),
+  );
+}
+
+export function resolveMergerFallbackThinkingLevel(settings: Partial<Settings> | undefined): string | undefined {
+  return firstThinkingLevel(settings?.fallbackThinkingLevel, resolveMergerThinkingLevel(settings));
+}
+
 function hasCompleteRuntimeModel(
   model: ResolvedModelSelection,
 ): model is { provider: string; modelId: string } {
   return Boolean(model.provider && model.modelId);
+}
+
+function stripGrokCliModelProviderPrefix(modelId: string | undefined): string | undefined {
+  const normalized = modelId?.trim();
+  if (!normalized) return normalized;
+  const grokCliPrefix = `${GROK_CLI_PROVIDER_ID}/`;
+  return normalized.startsWith(grokCliPrefix)
+    ? normalized.slice(grokCliPrefix.length)
+    : normalized;
+}
+
+function buildMissingGrokRuntimeError(): Error {
+  return new Error(
+    "Grok CLI models require the bundled Grok CLI runtime when no Fusion-visible GROK_API_KEY is set. "
+    + "Install and enable the Grok CLI runtime plugin, or set GROK_API_KEY to use the direct xAI endpoint.",
+  );
+}
+
+function deriveGrokRuntimeHintForNoVisibleKey(
+  runtimeOptions: AgentRuntimeOptions,
+  pluginRunner: PluginRunner | undefined,
+): string | undefined {
+  if (runtimeOptions.defaultProvider !== GROK_CLI_PROVIDER_ID
+    && runtimeOptions.fallbackProvider !== GROK_CLI_PROVIDER_ID) return undefined;
+  if (isGrokApiKeyFusionVisible()) return undefined;
+  try {
+    if (pluginRunner?.getRuntimeById("grok")) return "grok";
+  } catch {
+    throw buildMissingGrokRuntimeError();
+  }
+  throw buildMissingGrokRuntimeError();
+}
+
+function applyGrokCliNoKeyRuntimeOptions(
+  runtimeOptions: AgentRuntimeOptions,
+): AgentRuntimeOptions {
+  if (runtimeOptions.defaultProvider === GROK_CLI_PROVIDER_ID) {
+    return {
+      ...runtimeOptions,
+      defaultModelId: stripGrokCliModelProviderPrefix(runtimeOptions.defaultModelId),
+    };
+  }
+
+  if (runtimeOptions.fallbackProvider === GROK_CLI_PROVIDER_ID) {
+    return {
+      ...runtimeOptions,
+      defaultProvider: runtimeOptions.fallbackProvider,
+      defaultModelId: stripGrokCliModelProviderPrefix(runtimeOptions.fallbackModelId),
+      /*
+       * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+       * When the no-visible-key Grok CLI fallback is promoted to the primary runtime, promote its fallback thinking level too; the cleared fallback pair must not leave the Grok CLI session using the superseded primary model's thinking level.
+       */
+      defaultThinkingLevel: runtimeOptions.fallbackThinkingLevel ?? runtimeOptions.defaultThinkingLevel,
+      fallbackProvider: undefined,
+      fallbackModelId: undefined,
+      fallbackThinkingLevel: undefined,
+    };
+  }
+
+  return runtimeOptions;
 }
 
 function pickSettingsThenRuntimeModel(
@@ -210,6 +391,47 @@ export function resolvePlanningSessionModel(
   );
 
   return pickSettingsThenRuntimeModel(resolvedTaskPlanningModel, assignedAgentRuntimeConfig);
+}
+
+/**
+ * FNXC:TriageModelFallback 2026-07-09-00:00:
+ * When no explicit `planningFallback*`/global `fallback*` pair is configured, the
+ * planning lane must still get a working fallback. Derive one implicitly from the
+ * resolved project/global default (execution) model — the same resolver
+ * `resolveHeartbeatSessionModels`/`resolveMergerSessionModel` use — so a retryable
+ * primary-planner failure (e.g. provider 404/429) recovers via one distinct swap
+ * instead of failing triage permanently (see FN-7719). Guard against self-swap
+ * (implicit fallback === primary planning model) and skip entirely in test mode,
+ * so the single-swap `usingFallback` ceiling in pi.ts and the terminal
+ * ModelFallbackExhaustedError path are preserved unchanged.
+ */
+export function resolveImplicitPlanningFallbackModel(
+  settings: Partial<Settings> | undefined,
+  primaryProvider: string | undefined,
+  primaryModelId: string | undefined,
+  assignedAgentRuntimeConfig?: Record<string, unknown>,
+): { provider: string | undefined; modelId: string | undefined } {
+  if (isTestModeActive(settings)) {
+    return { provider: undefined, modelId: undefined };
+  }
+
+  const defaultModel = resolveProjectDefaultModel(settings);
+  const resolvedModel = pickSettingsThenRuntimeModel(defaultModel, assignedAgentRuntimeConfig);
+
+  if (!resolvedModel.provider || !resolvedModel.modelId) {
+    return { provider: undefined, modelId: undefined };
+  }
+
+  // Self-swap guard: an implicit fallback identical to the primary planner
+  // model would produce a misleading "fallback configured" message while
+  // still hitting the terminal ModelFallbackExhaustedError path in pi.ts
+  // (hasDistinctFallback requires the models to differ). Leave both fields
+  // undefined so the existing terminal behavior is preserved cleanly.
+  if (resolvedModel.provider === primaryProvider && resolvedModel.modelId === primaryModelId) {
+    return { provider: undefined, modelId: undefined };
+  }
+
+  return resolvedModel;
 }
 
 export function resolveValidatorSessionModel(
@@ -322,17 +544,61 @@ export async function createResolvedAgentSession(
     }
     : runtimeOptions;
 
+  /*
+  FNXC:GrokCliRouting 2026-07-09-00:00:
+  FN-7753: when Built-in Model mode selects `grok-cli/*` but Fusion cannot see a GROK_API_KEY,
+  derive the existing Grok plugin runtime hint automatically so the `grok` binary owns auth end-to-end.
+  Explicit runtime hints always win, visible keys keep the direct xAI endpoint default, and mock/test-mode
+  provider routing stays on the mock runtime. Strip only the provider-qualified model prefix so the CLI
+  receives the concrete selected model via GrokRuntimeAdapter without changing non-grok sessions.
+
+  FNXC:GrokCliRouting 2026-07-09-22:10:
+  FN-7758 extends the no-visible-key invariant to configured fallback models. Pi resolves fallback models
+  during session creation and prompt-time swaps through the key-requiring provider registry, so a grok-cli
+  fallback must select the Grok CLI runtime up front and promote the fallback model into the CLI session.
+
+  FNXC:GrokCliRouting 2026-07-09-23:05:
+  FN-7761 closes the packaged serve/daemon/dashboard gap: if grok-cli is selected and no Fusion-visible key exists, this seam must never silently fall through to the key-requiring pi/openai-completions runtime when the Grok plugin was not pre-installed. The hosts eagerly install/load the bundled runtime; if that genuinely fails, throw an operator-actionable error naming the two supported remediations.
+  */
+  const autoGrokRuntimeHint = !useMockRuntime && !runtimeHint
+    ? deriveGrokRuntimeHintForNoVisibleKey(runtimeOptions, pluginRunner)
+    : undefined;
+  const effectiveRuntimeHint = autoGrokRuntimeHint ?? runtimeHint;
+  const effectiveRuntimeOptionsWithModel: AgentRuntimeOptions = autoGrokRuntimeHint
+    ? applyGrokCliNoKeyRuntimeOptions(effectiveRuntimeOptions)
+    : effectiveRuntimeOptions;
+
   const resolved = useMockRuntime
     ? {
       runtime: mockRuntimeSingleton,
       runtimeId: mockRuntimeSingleton.id,
       wasConfigured: true,
     }
-    : await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, runtimeHint));
+    : await resolveRuntime(buildRuntimeResolutionContext(sessionPurpose, pluginRunner, effectiveRuntimeHint));
 
   sessionLog.log(
     `[${sessionPurpose}] Using runtime "${resolved.runtimeId}" (configured=${resolved.wasConfigured})`,
   );
+
+  // Forward `beforeSpawnSession` to the runtime so it fires at the true
+  // latest sync point (just before LLM session instantiation) rather than
+  // here, before the runtime's own awaited setup work runs. See
+  // AgentRuntimeOptions.beforeSpawnSession for the contract.
+  const result = await resolved.runtime.createSession(effectiveRuntimeOptionsWithModel);
+
+  const testModeActive = settings ? isTestModeActive(settings) : false;
+  const mockProviderActive = isMockProviderId(runtimeOptions.defaultProvider);
+  const noModelResolved = !mockProviderActive && !testModeActive && (!runtimeOptions.defaultProvider || !runtimeOptions.defaultModelId);
+  const runtimeBuiltInFallbackModel = noModelResolved ? resolved.runtime.describeModel(result.session) : undefined;
+  if (noModelResolved) {
+    /*
+    FNXC:ModelResolution 2026-07-10-00:00:
+    Fusion#1984 showed that non-mock/non-test task sessions could resolve no provider+model pair and then quietly run the pi runtime's built-in default, creating unexpected spend. Keep the fallback non-fatal for existing default-model deployments, but warn and audit the actual runtime model so the drift is visible.
+    */
+    sessionLog.warn(
+      `[${sessionPurpose}] no complete provider/model resolved; runtime "${resolved.runtimeId}" is using built-in fallback model "${runtimeBuiltInFallbackModel ?? "unknown model"}"`,
+    );
+  }
 
   try {
     await runAuditor?.database({
@@ -344,21 +610,17 @@ export async function createResolvedAgentSession(
         wasConfigured: resolved.wasConfigured,
         provider: runtimeOptions.defaultProvider ?? null,
         modelId: runtimeOptions.defaultModelId ?? null,
-        mockProviderActive: isMockProviderId(runtimeOptions.defaultProvider),
-        testModeActive: settings ? isTestModeActive(settings) : false,
-        ...(runtimeHint ? { runtimeHint } : {}),
-        ...("fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
+        mockProviderActive,
+        testModeActive,
+        ...(noModelResolved ? { noModelResolved: true, runtimeBuiltInFallbackModel } : {}),
+        ...(effectiveRuntimeHint ? { runtimeHint: effectiveRuntimeHint } : {}),
+        ...(autoGrokRuntimeHint ? { reason: "grok-cli-no-visible-key" } : {}),
+        ...(!autoGrokRuntimeHint && "fallbackReason" in resolved && resolved.fallbackReason ? { reason: resolved.fallbackReason } : {}),
       },
     });
   } catch (err) {
     sessionLog.warn(`[${sessionPurpose}] failed to record session:runtime-resolved audit: ${String(err)}`);
   }
-
-  // Forward `beforeSpawnSession` to the runtime so it fires at the true
-  // latest sync point (just before LLM session instantiation) rather than
-  // here, before the runtime's own awaited setup work runs. See
-  // AgentRuntimeOptions.beforeSpawnSession for the contract.
-  const result = await resolved.runtime.createSession(effectiveRuntimeOptions);
 
   // Attach the resolved runtime's promptWithFallback as a bound method on the
   // session object when it is not already present. This is the dispatch hook

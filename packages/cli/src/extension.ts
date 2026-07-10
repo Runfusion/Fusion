@@ -1508,6 +1508,65 @@ export default function kbExtension(pi: ExtensionAPI) {
     },
   });
 
+  // ── fn_task_bypass_review ────────────────────────────────────────
+
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * Policy-gated escape hatch (FN-7720) for a card stranded in `in-review`
+   * solely by a failed pre-merge review step — the leading real-world cause
+   * being the Runfusion/Fusion#1946 `(no feedback captured)` no-verdict
+   * dispatch defect. Registered ONLY on this pi-extension/CLI operator tool
+   * surface — deliberately NOT wired into packages/engine/src/executor.ts or
+   * packages/engine/src/agent-heartbeat.ts autonomous per-role tool lists, and
+   * NOT part of packages/dashboard/src/planning-board-tools.ts read-only
+   * planning tools — so headless executor/reviewer/triage agent runs never
+   * gain the bypass. Requires a mandatory reason; audit-logged via
+   * store.bypassFailedPreMergeReviewStep's run-audit event.
+   */
+  pi.registerTool({
+    name: "fn_task_bypass_review",
+    label: "fn: Bypass Failed Review Step",
+    description:
+      "Policy-gated escape hatch for an in-review task stranded solely by a failed pre-merge " +
+      "review lane (leading real-world cause: the Runfusion/Fusion#1946 '(no feedback captured)' " +
+      "no-verdict dispatch defect), not a real REVISE. Rewrites the latest failed pre-merge " +
+      "WorkflowStepResult to a terminal non-blocking status with explicit bypass audit metadata " +
+      "(who/when/why/prior status) — it never fabricates a reviewer verdict. Requires a mandatory " +
+      "reason and is audit-logged. Clears ONLY the failed-pre-merge-step merge blocker; paused, " +
+      "incomplete-step, blocking-status, and still-pending conditions still block, and an " +
+      "autoMerge:false task is not force-merged.",
+    promptSnippet:
+      "Bypass a failed pre-merge review step on an in-review Fusion task (policy-gated, mandatory reason, audit-logged)",
+    parameters: Type.Object({
+      id: Type.String({ description: "Task ID (e.g. FN-001)" }),
+      reason: Type.String({ description: "Mandatory justification for the bypass (audit-logged)" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const store = await getStore(ctx.cwd);
+      const fnCtx = ctx as typeof ctx & { agentId?: string };
+      const actor = fnCtx.agentId ?? "cli-operator";
+
+      try {
+        const task = await store.bypassFailedPreMergeReviewStep(params.id, {
+          reason: params.reason,
+          actor,
+        });
+        return {
+          content: [{ type: "text", text: `Bypassed failed pre-merge review step for ${task.id}` }],
+          details: { taskId: task.id },
+        };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: `ERROR: Failed to bypass review lane for ${params.id}: ${err?.message ?? err}` }],
+          isError: true,
+          details: { taskId: params.id, error: String(err?.message ?? err) },
+        };
+      }
+    },
+  });
+
   // ── fn_task_duplicate ─────────────────────────────────────────────
 
   pi.registerTool({

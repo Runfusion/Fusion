@@ -893,6 +893,12 @@ describe("GET /auth/status", () => {
       reason: "mocked unavailable",
       probeDurationMs: 0,
     });
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
     vi.spyOn(llamaCppProbeModule, "probeLlamaCpp").mockResolvedValue({
       available: false,
       reason: "mocked unavailable",
@@ -934,7 +940,7 @@ describe("GET /auth/status", () => {
     expect(res.status).toBe(200);
     // Filter out synthetic CLI providers — they have dedicated route tests.
     // Structural assertions here are about OAuth + API-key paths only.
-    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "llama-cpp");
+    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "llama-cpp");
     /*
     FN-7625: the static catalog (anthropic-subscription/github-copilot/openai-codex
     OAuth + the full API-key catalog) is always present, unioned with whatever the
@@ -1051,7 +1057,7 @@ describe("GET /auth/status", () => {
     const res = await GET(app, "/api/auth/status");
 
     expect(res.status).toBe(200);
-    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "llama-cpp");
+    const providers = res.body.providers.filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "llama-cpp");
     /*
     FN-7625: catalog ids remain present even though storage only reported a
     narrow subset, and a storage-reported id NOT in the catalog ("acme-extension")
@@ -1538,7 +1544,7 @@ describe("GET /auth/status", () => {
 
     function nonCliProviderIds(res: any): string[] {
       return res.body.providers
-        .filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "llama-cpp")
+        .filter((p: any) => p.id !== "claude-cli" && p.id !== "droid-cli" && p.id !== "cursor-cli" && p.id !== "grok-cli" && p.id !== "llama-cpp")
         .map((p: any) => p.id);
     }
 
@@ -1811,6 +1817,12 @@ describe("Droid CLI auth routes", () => {
     });
     vi.spyOn(runtimeProviderProbesModule, "probeCursorCliProvider").mockResolvedValue({
       available: false,
+      reason: "mocked unavailable",
+      probeDurationMs: 0,
+    });
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
       reason: "mocked unavailable",
       probeDurationMs: 0,
     });
@@ -2219,6 +2231,286 @@ describe("Droid CLI auth routes", () => {
     });
 
     const res = await GET(buildApp(), "/api/providers/cursor-cli/status");
+    expect(res.status).toBe(200);
+    expect(res.body.ready).toBe(false);
+  });
+
+  it("POST /auth/grok-cli enables when grok binary is available", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "grok 1.0.0",
+      probeDurationMs: 8,
+    });
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useGrokCli: true });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ enabled: true }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true, restartRequired: false });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ useGrokCli: true });
+  });
+
+  it("POST /auth/grok-cli saves a validated binary path without toggling", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "grok 1.0.0",
+      binaryPath: "/opt/Grok/grok",
+      configuredBinaryPath: "/opt/Grok/grok",
+      usingConfiguredBinaryPath: true,
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: false }),
+    });
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useGrokCli: false, grokCliBinaryPath: "/opt/Grok/grok" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ binaryPath: "  /opt/Grok/grok  " }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, binaryPath: "/opt/Grok/grok", restartRequired: false });
+    expect(runtimeProviderProbesModule.probeGrokCliProvider).toHaveBeenCalledWith({ binaryPath: "/opt/Grok/grok" });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ grokCliBinaryPath: "/opt/Grok/grok" });
+  });
+
+  it("POST /auth/grok-cli rejects invalid binaryPath values", async () => {
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ enabled: false, binaryPath: 123 }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("binaryPath must be a string or null");
+  });
+
+  it("POST /auth/grok-cli rejects configured paths that only succeed via PATH fallback", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "grok 1.0.0",
+      binaryPath: "grok",
+      configuredBinaryPath: "/missing/grok",
+      usingConfiguredBinaryPath: false,
+      reason: "Configured Grok CLI binary '/missing/grok' failed; PATH fallback succeeded",
+      probeDurationMs: 8,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ binaryPath: "/missing/grok" }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Cannot save Grok CLI binary path");
+    expect(store.updateGlobalSettings).not.toHaveBeenCalled();
+  });
+
+  it("POST /auth/grok-cli clears the binary path and restores PATH auto-detection", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "grok 1.0.0",
+      binaryPath: "grok",
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: true, grokCliBinaryPath: "/opt/Grok/grok" }),
+    });
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useGrokCli: true });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ binaryPath: "   " }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: true, restartRequired: false });
+    expect(runtimeProviderProbesModule.probeGrokCliProvider).toHaveBeenCalledWith({ binaryPath: undefined });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ grokCliBinaryPath: null });
+  });
+
+  it("POST /auth/grok-cli enables using the stored binary override", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      version: "grok 1.0.0",
+      binaryPath: "/opt/Grok/grok",
+      configuredBinaryPath: "/opt/Grok/grok",
+      usingConfiguredBinaryPath: true,
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ grokCliBinaryPath: "/opt/Grok/grok" }),
+    });
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useGrokCli: true, grokCliBinaryPath: "/opt/Grok/grok" });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ enabled: true }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(runtimeProviderProbesModule.probeGrokCliProvider).toHaveBeenCalledWith({ binaryPath: "/opt/Grok/grok" });
+    expect(store.updateGlobalSettings).toHaveBeenCalledWith({ useGrokCli: true });
+  });
+
+  it("POST /auth/grok-cli returns 400 when enabling without binary", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "grok not found",
+      probeDurationMs: 8,
+    });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ enabled: true }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Cannot enable Grok CLI routing");
+  });
+
+  it("POST /auth/grok-cli disables without probing binary", async () => {
+    const probeSpy = vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider");
+    probeSpy.mockClear();
+    store.updateGlobalSettings = vi.fn().mockResolvedValue({ useGrokCli: false });
+
+    const res = await REQUEST(buildApp(), "POST", "/api/auth/grok-cli", JSON.stringify({ enabled: false }), {
+      "Content-Type": "application/json",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ enabled: false, restartRequired: false });
+    expect(probeSpy).not.toHaveBeenCalled();
+  });
+
+  it("GET /providers/grok-cli/status returns readiness from toggle and binary, passing through apiKeyDetected as informational", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      apiKeyDetected: false,
+      version: "grok 1.0.0",
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: true, grokCliBinaryPath: "/opt/Grok/grok" }),
+    });
+
+    const res = await GET(buildApp(), "/api/providers/grok-cli/status");
+    expect(res.status).toBe(200);
+    expect(runtimeProviderProbesModule.probeGrokCliProvider).toHaveBeenCalledWith({ binaryPath: "/opt/Grok/grok" });
+    expect(res.body.ready).toBe(true);
+    expect(res.body.enabled).toBe(true);
+    expect(res.body.binaryPath).toBe("/opt/Grok/grok");
+    expect(res.body.binary.available).toBe(true);
+    expect(res.body.binary.authenticated).toBe(true);
+    expect(res.body.binary.apiKeyDetected).toBe(false);
+  });
+
+  it("GET /auth/status probes Grok CLI with the stored override and derives authenticated:true from toggle+binary availability only", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      apiKeyDetected: true,
+      version: "grok 1.0.0",
+      binaryPath: "/opt/Grok/grok",
+      configuredBinaryPath: "/opt/Grok/grok",
+      usingConfiguredBinaryPath: true,
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: true, grokCliBinaryPath: "/opt/Grok/grok" }),
+    });
+
+    const res = await GET(buildApp(), "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    expect(runtimeProviderProbesModule.probeGrokCliProvider).toHaveBeenCalledWith({ binaryPath: "/opt/Grok/grok" });
+    expect(res.body.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "grok-cli", authenticated: true }),
+      ]),
+    );
+  });
+
+  /*
+  FNXC:GrokCli 2026-07-09-00:00:
+  FN-7716 Symptom Verification: exact reproduction of the original
+  false-negative at the route layer — `useGrokCli` enabled, binary available,
+  but no Fusion-visible API key (probe reports `authenticated: false` with a
+  "GROK_API_KEY is not set" style reason under the OLD probe contract; under
+  the NEW contract the probe itself now reports `authenticated: true` with
+  `apiKeyDetected: false`). This test asserts the injected `grok-cli`
+  `/auth/status` provider is `authenticated: true` in that state (mirroring
+  Cursor's `cursorEnabled && cursorBinary.available` — no key requirement),
+  proving the false negative is resolved end-to-end through the route.
+  */
+  it("GET /auth/status reports grok-cli authenticated:true when the binary is available but no API key is detected — proves the original false-negative is resolved", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: true,
+      authenticated: true,
+      apiKeyDetected: false,
+      reason: "No Grok API key detected by Fusion (GROK_API_KEY unset, ~/.grok/user-settings.json not found); the CLI will use its own credentials.",
+      version: "grok 1.0.0",
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: true }),
+    });
+
+    const res = await GET(buildApp(), "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "grok-cli", authenticated: true }),
+      ]),
+    );
+  });
+
+  it("GET /auth/status reports grok-cli authenticated:false when the binary is unavailable, regardless of the enabled toggle", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      apiKeyDetected: false,
+      reason: "grok not found on PATH",
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: true }),
+    });
+
+    const res = await GET(buildApp(), "/api/auth/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body.providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "grok-cli", authenticated: false }),
+      ]),
+    );
+  });
+
+  it("GET /providers/grok-cli/status returns ready false when binary unavailable", async () => {
+    vi.spyOn(runtimeProviderProbesModule, "probeGrokCliProvider").mockResolvedValue({
+      available: false,
+      authenticated: false,
+      reason: "missing",
+      probeDurationMs: 8,
+    });
+    store.getGlobalSettingsStore = vi.fn().mockReturnValue({
+      ...createMockGlobalSettingsStore(),
+      getSettings: vi.fn().mockResolvedValue({ useGrokCli: true }),
+    });
+
+    const res = await GET(buildApp(), "/api/providers/grok-cli/status");
     expect(res.status).toBe(200);
     expect(res.body.ready).toBe(false);
   });

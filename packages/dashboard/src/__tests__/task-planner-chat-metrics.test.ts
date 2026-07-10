@@ -150,6 +150,27 @@ describe("formatTaskPlannerChatMetrics", () => {
     expect(result.summaryText).toContain("estimated cost $0.0085");
   });
 
+  it("prices current OpenAI Codex runtime identities in task-planner chat metrics", () => {
+    const result = formatTaskPlannerChatMetrics(makeTask({
+      tokenUsage: {
+        inputTokens: 1_000_000,
+        outputTokens: 200_000,
+        cachedTokens: 500_000,
+        cacheWriteTokens: 100_000,
+        totalTokens: 1_800_000,
+        firstUsedAt: "2026-07-01T10:00:00.000Z",
+        lastUsedAt: "2026-07-01T10:30:00.000Z",
+        modelProvider: "openai-codex",
+        modelId: "gpt-5.5",
+      },
+    }), { nowMs: Date.parse("2026-07-01T10:31:00.000Z") });
+
+    expect(result.metrics.tokens.cost).toEqual({ usd: 11.25, costUnavailable: false, pricingStale: false });
+    expect(result.metrics.tokens.perModel[0].cost).toEqual({ usd: 11.25, costUnavailable: false, pricingStale: false });
+    expect(result.summaryText).toContain("estimated cost $11.2500");
+    expect(result.summaryText).not.toContain("cost unavailable");
+  });
+
   it("marks unpriced and stale model costs unavailable instead of reporting zero", () => {
     const result = formatTaskPlannerChatMetrics(makeTask({
       tokenUsage: {

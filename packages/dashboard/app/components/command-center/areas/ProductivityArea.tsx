@@ -41,12 +41,13 @@ ProductivityAnalytics exposes a categorical language distribution but no per-day
  * FNXC:CommandCenterProductivity 2026-06-20-03:41:
  * Every productivity metric sub-object is defaulted to the unavailable sentinel so a partial or contract-incomplete payload, including future field additions, renders "—" instead of throwing an uncaught error that crashes Command Center and pollutes the shared jsdom worker.
  */
-export function ProductivityArea({ range }: { range: DateRange }) {
+export function ProductivityArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   const { data, isLoading, error } = useAnalyticsArea<ProductivityAnalytics>(
     "/command-center/productivity",
     range,
+    { projectId },
   );
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [backfillReport, setBackfillReport] = useState<CommitAssociationDiffBackfillReport | null>(null);

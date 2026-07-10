@@ -1,5 +1,5 @@
 import { schedulerLog } from "../logger.js";
-import type { AuthStorageLike } from "./oauth-expiry-monitor.js";
+import { resolveEffectiveOAuthCredential, type AuthStorageLike } from "./oauth-expiry-monitor.js";
 import { OAuthAlertStateStore } from "./oauth-alert-state.js";
 
 const DEFAULT_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -57,7 +57,10 @@ export class OAuthValidityLogger {
 
     for (const provider of providers) {
       try {
-        const credential = this.opts.authStorage.get?.(provider.id);
+        // FNXC:ClaudeOAuth 2026-07-08-20:55: evaluate the freshest aliased Anthropic
+        // credential (anthropic / anthropic-subscription) so a stale legacy row does not
+        // log a false expiry while the subscription token is fresh. See the monitor.
+        const credential = resolveEffectiveOAuthCredential(this.opts.authStorage, provider.id);
         if (credential?.type !== "oauth" || typeof credential.expires !== "number") {
           continue;
         }

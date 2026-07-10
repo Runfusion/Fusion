@@ -31,6 +31,8 @@ const toggleEnginePauseMock = mocks.toggleEnginePause;
 const appSettingsMock = mocks.appSettings;
 vi.mock("../../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => mocks.api(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   apiBackfillGithubSourceIssueClosedAt: (options?: { offset?: number; limit?: number }, projectId?: string) =>
     mocks.backfillGithubSourceIssueClosedAt(options, projectId),
   backfillCommitAssociationDiffStats: (options?: { dryRun?: boolean }, projectId?: string) =>
@@ -173,6 +175,27 @@ describe("useAnalyticsArea", () => {
       await Promise.resolve();
     });
     expect(apiMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("appends projectId to the request path when supplied, and omits it when not", async () => {
+    apiMock.mockResolvedValue({ ok: true });
+
+    const { rerender } = renderHook(
+      ({ projectId }: { projectId?: string }) =>
+        useAnalyticsArea<{ ok: boolean }>("/command-center/tokens", range7d, { projectId }),
+      { initialProps: { projectId: undefined as string | undefined } },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe("/command-center/tokens?from=2026-06-08");
+
+    rerender({ projectId: "proj-123" });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe("/command-center/tokens?from=2026-06-08&projectId=proj-123");
   });
 
   it("refetches with distinct request keys for each default preset", async () => {
@@ -1506,5 +1529,93 @@ describe("EcosystemArea", () => {
     expect(screen.getByTestId("cc-ecosystem-line")).toBeTruthy();
     expect(screen.getByTestId("cc-area-ecosystem").textContent).not.toContain("NaN");
     expect(screen.getByTestId("cc-area-ecosystem").textContent).not.toContain("Infinity");
+  });
+});
+
+/*
+FNXC:CommandCenter 2026-07-08-00:00:
+FUX-037 regression: every Command Center area must thread a supplied projectId prop
+through to its underlying api() request path (fixing the always-queries-wrong-project
+bug), and must omit the param entirely when projectId is not supplied (no regression
+for legacy/no-project contexts).
+*/
+describe("FUX-037: projectId scoping across Command Center areas", () => {
+  it("TokensArea appends projectId to its tokens request", async () => {
+    apiMock.mockResolvedValue(tokenFixture());
+    render(<TokensArea range={range7d} projectId="proj-1" />);
+    await waitFor(() => expect(apiMock).toHaveBeenCalled());
+    expect(apiMock.mock.calls.some(([path]) => typeof path === "string" && path.includes("projectId=proj-1"))).toBe(true);
+
+    apiMock.mockClear();
+    apiMock.mockResolvedValue(tokenFixture());
+    render(<TokensArea range={range7d} />);
+    await waitFor(() => expect(apiMock).toHaveBeenCalled());
+    expect(apiMock.mock.calls.every(([path]) => typeof path === "string" && !path.includes("projectId"))).toBe(true);
+  });
+
+  it("ToolsArea appends projectId to its tools request", async () => {
+    apiMock.mockResolvedValue({
+      toolCalls: 0,
+      autonomyRatio: 0,
+      fullyAutonomous: false,
+      byCategory: [],
+      interventions: { approvals: 0, userSteers: 0, total: 0 },
+    });
+    render(<ToolsArea range={range7d} projectId="proj-2" />);
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith("/command-center/tools?from=2026-06-08&projectId=proj-2", undefined),
+    );
+  });
+
+  it("ActivityArea appends projectId to its activity request", async () => {
+    apiMock.mockResolvedValue(activityFixture());
+    render(<ActivityArea range={range7d} projectId="proj-3" />);
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith("/command-center/activity?from=2026-06-08&projectId=proj-3", undefined),
+    );
+  });
+
+  it("ProductivityArea appends projectId to its productivity request", async () => {
+    apiMock.mockResolvedValue(productivityFixture());
+    render(<ProductivityArea range={range7d} projectId="proj-4" />);
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith("/command-center/productivity?from=2026-06-08&projectId=proj-4", undefined),
+    );
+  });
+
+  it("EcosystemArea appends projectId to both its requests", async () => {
+    apiMock.mockResolvedValue(tokenFixture());
+    render(<EcosystemArea range={range7d} projectId="proj-5" />);
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
+    expect(apiMock.mock.calls.every(([path]) => typeof path === "string" && path.includes("projectId=proj-5"))).toBe(true);
+  });
+
+  it("TeamArea appends projectId to its team analytics request (already-received prop, previously missed)", async () => {
+    apiMock.mockResolvedValue(emptyTeamFixture());
+    render(
+      <ConfirmDialogProvider>
+        <TeamArea range={range7d} projectId="proj-6" />
+      </ConfirmDialogProvider>,
+    );
+    await waitFor(() =>
+      expect(apiMock).toHaveBeenCalledWith("/command-center/team?from=2026-06-08&projectId=proj-6", undefined),
+    );
+  });
+
+  it("renders distinct fixture data for two different projects without cross-project leakage", async () => {
+    const fixtureA = tokenFixture(1_000);
+    const fixtureB = tokenFixture(9_000);
+    apiMock.mockImplementation((path: string) => {
+      if (path.includes("projectId=proj-a")) return Promise.resolve(fixtureA);
+      if (path.includes("projectId=proj-b")) return Promise.resolve(fixtureB);
+      return Promise.reject(new Error(`unexpected path in two-project test: ${path}`));
+    });
+
+    const { rerender } = render(<TokensArea range={range7d} projectId="proj-a" />);
+    await screen.findByTestId("cc-area-tokens");
+    expect(screen.getByTestId("cc-area-tokens").textContent).toContain("1");
+
+    rerender(<TokensArea range={range7d} projectId="proj-b" />);
+    await waitFor(() => expect(apiMock.mock.calls.some(([path]) => typeof path === "string" && path.includes("projectId=proj-b"))).toBe(true));
   });
 });

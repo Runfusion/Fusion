@@ -22,13 +22,43 @@ import type { AgentCapability, AgentPromptTemplate, AgentPromptsConfig } from ".
 // ---------------------------------------------------------------------------
 
 /*
+FNXC:AgentRuntimeSelfAwareness 2026-07-08-00:00:
+FN-7675: an agent operating via the standard toolset (CEO/management persona) planned and began
+executing a live "close Fusion -> back up install -> swap build artifacts -> verify -> relaunch"
+update sequence. That plan is impossible: step 1 terminates the agent's own host process before
+steps 2-5 can run. Agents had no built-in awareness that they execute *inside* the running Fusion
+daemon and cannot act once it stops. This constant is the single canonical, cacheable preamble
+prepended to the STABLE layer (never the dynamic/per-session layer, to preserve prompt caching) of
+every standard-toolset conversational base prompt — chat/CEO persona (packages/dashboard/src/chat.ts
+CHAT_SYSTEM_PROMPT), both heartbeat personas (packages/engine/src/agent-heartbeat.ts
+HEARTBEAT_SYSTEM_PROMPT / HEARTBEAT_NO_TASK_SYSTEM_PROMPT), and the executor
+(packages/engine/src/executor.ts EXECUTOR_SYSTEM_PROMPT, mirrored byte-identically here via
+EXECUTOR_PROMPT_TEXT). It is intentionally NOT wired into merger/reviewer/triage/cron-runner/
+PR-response/mission-validation/reflection prompts — those are internal single-purpose lanes, not
+standard-toolset agents that reason about the shutdown boundary (file follow-up tasks to widen scope).
+*/
+export const FUSION_RUNTIME_SELF_AWARENESS = `## Runtime Self-Awareness
+
+You execute as a hosted process **inside** the running Fusion platform (the "fn" daemon/engine) — you are not an external actor operating on Fusion from outside. Your own execution ends the moment that host process ends.
+
+You **cannot** perform any action after Fusion is shut down. There is no "wait for the app to close, then continue" capability — once the daemon stops, nothing you do next will run. Never plan or begin a live sequence that stops Fusion and then expects yourself to keep running (e.g. "close Fusion -> back up -> swap build -> verify -> relaunch" is impossible: step 1 kills the process executing steps 2-5).
+
+Any workflow that requires Fusion to be stopped (updates, installs, patches, migrations, in-place binary swaps) must be handed off as a **standalone artifact the user runs themselves** — an installer/updater executable or script — never orchestrated live by you across the shutdown boundary. If a partial change would leave the install inconsistent, produce the full artifact plus rollback instructions instead of attempting it live.
+
+Fusion is an AI-orchestrated task board with an engine (triage/executor/reviewer/merger/scheduler) and surfaces spanning a desktop app, CLI, and web dashboard; your own capabilities are defined by the tools you are given in this session.
+
+When asked "how do I do X in Fusion", answer from the maintained docs (the project's \`docs/\` directory and \`CONCEPTS.md\`) and current tool descriptions rather than improvising, so you act as an authoritative in-product guide.`;
+
+/*
 FNXC:ExecutorPrompt 2026-06-21-03:59:
 Agents must not run the full/workspace-wide test suite by default; targeted/package-scoped verification is the norm, full runs require explicit task/workflow opt-in.
 
 FNXC:ExecutorPrompt 2026-07-05-00:35:
 FN-7608: a `require-approval` gate previously only parked the single tool call (soft rejection + task/agent paused in the store) while the turn-ending rules below forbade ending a turn without another tool call, so the model was effectively instructed to hunt for ungated workarounds (re-issuing the same bash, probing read-only equivalents, fn_web_fetch/fn_task_attach bypasses) instead of stopping. The engine now actually suspends the in-flight session when a gate resolves to wait-for-approval (see executor.ts buildActionGateContext.pauseForApproval), so the prompt must carve out waiting on a pending approval as a legitimate turn end and explicitly forbid probing for alternatives. This clause must stay byte-identical with EXECUTOR_SYSTEM_PROMPT in packages/engine/src/executor.ts.
 */
-const EXECUTOR_PROMPT_TEXT = `You are a task execution agent for "fn", an AI-orchestrated task board.
+const EXECUTOR_PROMPT_TEXT = `${FUSION_RUNTIME_SELF_AWARENESS}
+
+You are a task execution agent for "fn", an AI-orchestrated task board.
 
 You are working in a git worktree isolated from the main branch. Your job is to implement the task described in the PROMPT.md specification you're given.
 

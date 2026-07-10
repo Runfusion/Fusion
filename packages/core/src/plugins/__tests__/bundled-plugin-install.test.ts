@@ -38,6 +38,7 @@ import {
   BUNDLED_PLUGIN_IDS,
   ensureBundledDependencyGraphPluginInstalled,
   ensureBundledCursorRuntimePluginInstalled,
+  ensureBundledGrokRuntimePluginInstalled,
   ensureBundledPluginInstalled,
   type BundledPluginDirResolver,
 } from "../bundled-plugin-install.js";
@@ -47,6 +48,7 @@ import {
 const BUNDLED_PLUGIN_ID = "fusion-plugin-dependency-graph";
 const HERMES_PLUGIN_ID = "fusion-plugin-hermes-runtime";
 const CURSOR_PLUGIN_ID = "fusion-plugin-cursor-runtime";
+const GROK_PLUGIN_ID = "fusion-plugin-grok-runtime";
 const ROADMAP_PLUGIN_ID = "fusion-plugin-roadmap";
 const REPORTS_PLUGIN_ID = "fusion-plugin-reports";
 const LINEAR_IMPORT_PLUGIN_ID = "fusion-plugin-linear-import";
@@ -189,6 +191,7 @@ describe("ensureBundledPluginInstalled (host-agnostic shared helper)", () => {
     expect(BUNDLED_PLUGIN_IDS).toContain(REPORTS_PLUGIN_ID);
     expect(BUNDLED_PLUGIN_IDS).toContain(LINEAR_IMPORT_PLUGIN_ID);
     expect(BUNDLED_PLUGIN_IDS).toContain(HERMES_PLUGIN_ID);
+    expect(BUNDLED_PLUGIN_IDS).toContain(GROK_PLUGIN_ID);
   });
 
   it("fresh install: registers and loads the plugin when not in DB (CLI-shaped resolver)", async () => {
@@ -348,6 +351,20 @@ describe("ensureBundledPluginInstalled (host-agnostic shared helper)", () => {
     expect(store.registerPlugin).toHaveBeenCalledWith(
       expect.objectContaining({ manifest: expect.objectContaining({ id: CURSOR_PLUGIN_ID }) }),
     );
+  });
+
+  it("registers and loads the Grok runtime through the dedicated helper", async () => {
+    setupBundleExists(cliShapedResolver, { id: GROK_PLUGIN_ID });
+    const store = makePluginStore();
+    const loader = makePluginLoader();
+
+    const result = await ensureBundledGrokRuntimePluginInstalled(store as never, loader as never, cliShapedResolver);
+
+    expect(result).toBe("installed");
+    expect(store.registerPlugin).toHaveBeenCalledWith(
+      expect.objectContaining({ manifest: expect.objectContaining({ id: GROK_PLUGIN_ID }) }),
+    );
+    expect(loader.loadPlugin).toHaveBeenCalledWith(GROK_PLUGIN_ID);
   });
 
   it("registers Dependency Graph through the deprecated dedicated helper", async () => {

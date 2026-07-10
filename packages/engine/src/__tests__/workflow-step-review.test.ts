@@ -98,6 +98,59 @@ describe("WorkflowGraphExecutor step-review (U5)", () => {
     expect(doneMarks).toEqual([{ index: 0, status: "done" }]);
   });
 
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Regression for a node's own `config.thinkingLevel` being dropped by resolveStepReviewConfig
+   * before it reached `seams.stepReview` — the FN-7771 per-node override would silently never
+   * apply to review sessions even though the dashboard persisted it on the node.
+   */
+  it("threads the review node's own config.thinkingLevel into the stepReview seam config", async () => {
+    const seenThinkingLevels: Array<string | undefined> = [];
+    const seams = baseSeams({
+      stepExecute: async () => ({ outcome: "success", value: "step-done" }),
+      stepReview: async (_t, _ctx, cfg) => {
+        seenThinkingLevels.push(cfg.thinkingLevel);
+        return { verdict: "APPROVE" };
+      },
+    });
+    const executor = new WorkflowGraphExecutor({ seams });
+    const result = await executor.run(
+      taskWithSteps(1),
+      settingsOn(),
+      reviewForeachIr({ config: {} }),
+    );
+    void result;
+
+    // Baseline: no thinkingLevel on the node -> undefined reaches the seam.
+    expect(seenThinkingLevels).toEqual([undefined]);
+
+    // Now with a pinned node-level thinkingLevel on the review node itself.
+    const template = {
+      nodes: [
+        { id: "exec", kind: "prompt" as const, config: { seam: "step-execute" } },
+        { id: "review", kind: "step-review" as const, config: { type: "code", thinkingLevel: "high" } },
+      ] as WorkflowIrNode[],
+      edges: [{ from: "exec", to: "review", condition: "success" }],
+    };
+    const ir: WorkflowIr = {
+      version: "v2",
+      name: "review-thinking-test",
+      columns: [{ id: "work", name: "Work", traits: [] }],
+      nodes: [
+        { id: "start", kind: "start" },
+        { id: "fe", kind: "foreach", config: { source: "task-steps", template } },
+        { id: "end", kind: "end" },
+      ],
+      edges: [
+        { from: "start", to: "fe" },
+        { from: "fe", to: "end", condition: "success" },
+      ],
+    };
+    seenThinkingLevels.length = 0;
+    await executor.run(taskWithSteps(1), settingsOn(), ir);
+    expect(seenThinkingLevels).toEqual(["high"]);
+  });
+
   it("REVISE routes a rework edge without triggering a reset", async () => {
     const resets: string[] = [];
     let reviewCalls = 0;

@@ -800,6 +800,35 @@ describe("createSkillsAdapter - plugin skill merge", () => {
     expect(byName.get("ce-plan")!.id).toContain("::");
   });
 
+  it("passes the requesting project root into async plugin-skill discovery", async () => {
+    const daemonRoot = "/tmp/daemon-root";
+    const projectRoot = "/tmp/managed-project";
+    const getPluginSkills = vi.fn(async (rootDir: string) => {
+      if (rootDir === projectRoot) {
+        return [{ pluginId: "project-plugin", skill: { name: "project-only-skill" } }];
+      }
+      if (rootDir === daemonRoot) {
+        return [{ pluginId: "daemon-plugin", skill: { name: "daemon-only-skill" } }];
+      }
+      return [];
+    });
+    const adapter = createSkillsAdapter({
+      packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [] }) },
+      getSettingsPath: () => "/tmp/does-not-exist-settings.json",
+      getPluginSkills,
+    });
+
+    const projectSkills = await adapter.discoverSkills(projectRoot);
+    const daemonSkills = await adapter.discoverSkills(daemonRoot);
+
+    expect(getPluginSkills).toHaveBeenCalledWith(projectRoot);
+    expect(getPluginSkills).toHaveBeenCalledWith(daemonRoot);
+    expect(projectSkills.map((skill) => skill.metadata.source)).toEqual(["plugin:project-plugin"]);
+    expect(projectSkills.map((skill) => skill.name)).toEqual(["project-only-skill"]);
+    expect(daemonSkills.map((skill) => skill.metadata.source)).toEqual(["plugin:daemon-plugin"]);
+    expect(daemonSkills.map((skill) => skill.name)).toEqual(["daemon-only-skill"]);
+  });
+
   it("dedups a plugin skill that is already discovered on disk (by bare name)", async () => {
     const adapter = createSkillsAdapter({
       packageManager: { resolve: vi.fn().mockResolvedValue({ skills: [diskSkillResource] }) },

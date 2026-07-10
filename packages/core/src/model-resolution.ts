@@ -1,4 +1,4 @@
-import type { Settings } from "./types.js";
+import type { Settings, ThinkingLevel } from "./types.js";
 import type {
   ModelGovernancePredicate,
   RouterDecision,
@@ -11,6 +11,8 @@ export interface ResolvedModelSelection {
   provider?: string;
   modelId?: string;
 }
+
+export type ModelThinkingPhase = "execution" | "planning" | "validation";
 
 export const TEST_MODE_RESOLVED: ResolvedModelSelection = { provider: "mock", modelId: "scripted" };
 
@@ -53,6 +55,47 @@ function pickFirstModelPair(...pairs: ModelPair[]): ResolvedModelSelection {
     }
   }
   return {};
+}
+
+function firstThinkingLevel(...levels: Array<ThinkingLevel | string | undefined | null>): string | undefined {
+  for (const level of levels) {
+    if (typeof level === "string" && level.trim().length > 0) {
+      return level.trim();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+ * Workflow model-lane thinking companions are workflow-declared settings whose unset state means inherit. Resolve them centrally so executor, reviewer, triage, step sessions, and merger-adjacent validation agree on precedence: node/step override > task thinking > workflow lane > global lane > project default thinking override > global default thinking level.
+ */
+export function resolveSettingsLaneThinkingLevel(
+  phase: ModelThinkingPhase,
+  settings?: Partial<Settings>,
+): ThinkingLevel | undefined {
+  if (phase === "execution") return settings?.executionThinkingLevel;
+  if (phase === "planning") return settings?.planningThinkingLevel;
+  return settings?.validatorThinkingLevel;
+}
+
+export function resolvePhaseThinkingLevel(
+  phase: ModelThinkingPhase,
+  settings: Partial<Settings> | undefined,
+  nodeOrTaskThinkingLevel?: ThinkingLevel | string,
+): string | undefined {
+  const globalLane = phase === "execution"
+    ? settings?.executionGlobalThinkingLevel
+    : phase === "planning"
+      ? settings?.planningGlobalThinkingLevel
+      : settings?.validatorGlobalThinkingLevel;
+  return firstThinkingLevel(
+    nodeOrTaskThinkingLevel,
+    resolveSettingsLaneThinkingLevel(phase, settings),
+    globalLane,
+    settings?.defaultThinkingLevelOverride,
+    settings?.defaultThinkingLevel,
+  );
 }
 
 export function resolveProjectDefaultModel(settings?: Partial<Settings>): ResolvedModelSelection {

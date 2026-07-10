@@ -73,21 +73,43 @@ vi.mock("../CustomModelDropdown", () => ({
     value,
     onChange,
     label,
+    showThinkingLevel,
+    thinkingLevel,
+    onThinkingLevelChange,
+    defaultThinkingLevel,
   }: {
     value: string;
     onChange: (value: string) => void;
     label: string;
+    showThinkingLevel?: boolean;
+    thinkingLevel?: string;
+    onThinkingLevelChange?: (value: string) => void;
+    defaultThinkingLevel?: string;
   }) => (
-    <select
-      data-testid="mock-model-dropdown"
-      aria-label={label}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">Use default</option>
-      <option value="anthropic/claude-sonnet-4-5">Claude Sonnet 4.5</option>
-      <option value="openai/gpt-4o">GPT-4o</option>
-    </select>
+    <div>
+      <select
+        data-testid="mock-model-dropdown"
+        aria-label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Use default</option>
+        <option value="anthropic/claude-sonnet-4-5">Claude Sonnet 4.5</option>
+        <option value="openai/gpt-4o">GPT-4o</option>
+      </select>
+      {showThinkingLevel && (
+        <select
+          data-testid="mock-thinking-level"
+          aria-label="Thinking Level"
+          value={thinkingLevel || ""}
+          onChange={(event) => onThinkingLevelChange?.(event.target.value)}
+        >
+          <option value="">Default ({defaultThinkingLevel ?? "off"})</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+        </select>
+      )}
+    </div>
   ),
 }));
 
@@ -1032,6 +1054,39 @@ describe("ChatView core interactions", () => {
     expect(within(emptyState!).getByRole("button", { name: /new chat/i })).toBeInTheDocument();
     // Should NOT have an agent selector in empty state
     expect(emptyState?.querySelector("select")).toBeNull();
+  });
+
+  it("creates a model-mode new chat with the selected thinking level", async () => {
+    const createSession = vi.fn().mockResolvedValue({ id: "session-new", agentId: "__fn_agent__", status: "active", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" });
+    setupMockChat({ sessions: [], filteredSessions: [], createSession });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+    await userEvent.click(screen.getByTestId("chat-new-dialog-mode-model"));
+    expect(await screen.findByTestId("mock-thinking-level")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByTestId("mock-thinking-level"), "high");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith({
+        agentId: "__fn_agent__",
+        modelProvider: "anthropic",
+        modelId: "claude-sonnet-4-5",
+        thinkingLevel: "high",
+      });
+    });
+  });
+
+  it("does not render a thinking-level control in agent-mode new chat", async () => {
+    setupMockChat({ sessions: [], filteredSessions: [], createSession: vi.fn() });
+
+    await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+
+    await userEvent.click(screen.getByTestId("chat-new-btn"));
+
+    expect(screen.queryByTestId("mock-thinking-level")).not.toBeInTheDocument();
   });
 
   it("shows context menu on right-click", async () => {

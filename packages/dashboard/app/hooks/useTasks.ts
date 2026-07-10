@@ -839,6 +839,45 @@ export function useTasks(options?: UseTasksOptions) {
     return retriedTask;
   }, [projectId]);
 
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Operator review-lane bypass action (FN-7720), mirroring retryTask's success-state
+  wiring so the affordance does not depend on SSE/polling to clear the stale
+  failed-step indicator after the operator receives server confirmation.
+  */
+  const bypassReview = useCallback(async (id: string, reason: string): Promise<Task> => {
+    const bypassedTask = normalizeTask(await api.bypassReview(id, reason, projectId));
+    fetchVersionRef.current++;
+
+    const projectUpdatedTasks = (currentTasks: Task[]) => currentTasks.map((task) => (task.id === id ? bypassedTask : task));
+
+    if (projectId) {
+      const cacheKey = `${SWR_CACHE_KEYS.TASKS_PREFIX}${projectId}`;
+      const cachedTasks = readCache<unknown>(cacheKey, { maxAgeMs: SWR_TASKS_MAX_AGE_MS });
+      if (Array.isArray(cachedTasks)) {
+        const cacheContainsOnlyTaskRows = cachedTasks.every((task) => Boolean(task && typeof task === "object" && typeof (task as Task).id === "string"));
+        if (cacheContainsOnlyTaskRows) {
+          const nextCachedTasks = cachedTasks.map((task) => ((task as Task).id === id ? bypassedTask : normalizeTask(task as Task)));
+          writeCache(cacheKey, nextCachedTasks.length > 500 ? nextCachedTasks.slice(0, 500) : nextCachedTasks, { maxBytes: 500_000 });
+        } else {
+          clearCache(cacheKey);
+        }
+      } else if (cachedTasks === null) {
+        const nextCurrentTasks = projectUpdatedTasks(tasksRef.current);
+        writeCache(cacheKey, nextCurrentTasks.length > 500 ? nextCurrentTasks.slice(0, 500) : nextCurrentTasks, { maxBytes: 500_000 });
+      } else {
+        clearCache(cacheKey);
+      }
+    }
+
+    setTasks((prev) => {
+      const next = projectUpdatedTasks(prev);
+      tasksRef.current = next;
+      return next;
+    });
+    return bypassedTask;
+  }, [projectId]);
+
   const resetTask = useCallback(async (id: string): Promise<Task> => {
     return normalizeTask(await api.resetTask(id, projectId));
   }, [projectId]);
@@ -974,5 +1013,5 @@ export function useTasks(options?: UseTasksOptions) {
     lastFetchTimeMs.current = Date.now();
   }, []);
 
-  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
+  return { tasks, isStale, lastRefreshErrorAt, createTask, moveTask, pauseTask, unpauseTask, deleteTask, mergeTask, retryTask, bypassReview, resetTask, duplicateTask, updateTask, archiveTask, unarchiveTask, revertTask, archiveAllDone, loadArchivedTasks, loadMoreArchivedTasks, archivedHasMore, archivedLoadingMore, includeArchived, refreshTasks, ingestCreatedTasks, lastFetchTimeMs: lastFetchTimeMs.current };
 }

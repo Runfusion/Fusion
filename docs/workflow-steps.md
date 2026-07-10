@@ -213,11 +213,11 @@ The default built-in catalog entry `builtin:coding` is backed by a Stepwise-deri
 
 If the Plan Review reviewer is unavailable before producing a verdict, the task stays in triage as `status: "plan-review-unavailable"` with a short backoff. That retry state is not a replan: Fusion rereads the existing non-empty `PROMPT.md`, preserves it unchanged, and reruns only Plan Review/finalization while holding a global agent concurrency slot for the reviewer lane. A reviewer revision verdict moves the task to `needs-replan`; missing/empty/invalid prompt content fails clearly instead of restarting the planner.
 
-Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes; it does not disable Plan Review, release authorization, or other explicit safety gates.
+Workflow Plan Review is separate from manual plan approval. Project `planApprovalMode: "auto-approve-all"` bypasses only the final manual `awaiting-approval` plan gate after the plan is specified and any enabled Plan Review passes; it does not disable Plan Review or other explicit safety gates.
 
-**FN-7559 — telling the three holds apart:** Plan Review parks a task with its own distinct statuses (`needs-replan` for a revision verdict, `plan-review-unavailable` for a reviewer-outage retry), so it never renders identically to a plan-approval hold. The release-authorization gate and the manual plan-approval gate, however, both use `status: "awaiting-approval"` — auto-approve-all bypasses the manual gate but never the release-authorization gate, so a release-class task (or a user-authored task missing the explicit authorization marker) still parks even with auto-approve-all on. To make that unambiguous to the operator, the task carries `awaitingApprovalReason: "release-authorization"` only when the release-authorization gate is the one holding it; the dashboard renders a distinct "Awaiting Release Authorization" label and hides the Approve/Reject Plan buttons for that hold instead of showing the generic manual-approval affordance.
+**FN-7559 (superseded by FN-7732) — telling the holds apart:** Plan Review parks a task with its own distinct statuses (`needs-replan` for a revision verdict, `plan-review-unavailable` for a reviewer-outage retry), so it never renders identically to a plan-approval hold. A separate triage release-authorization gate used to also use `status: "awaiting-approval"` with a distinct `awaitingApprovalReason: "release-authorization"` discriminator and its own dashboard label; that gate was removed (it over-fired on AI-authored specs that merely mentioned release tooling — see `b5b0458`, FN-7732). Releases are kept out of Fusion by agent instruction instead (AGENTS.md → "Releasing"), not by an engine/UI gate. The `Task.awaitingApprovalReason` field and its `"release-authorization"` value are kept only so legacy rows deserialize; any task that still carries the legacy value now renders as an ordinary manual plan-approval hold.
 
-**FN-7569 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the exact approved `PROMPT.md`. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — and produces byte-identical `PROMPT.md` content, the manual gate detects the match and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`. A genuinely revised plan still produces a different fingerprint and re-asks as before, and using Reject Plan clears the fingerprint so the regenerated plan is always treated as new. This idempotency check runs only inside the manual gate, strictly after release authorization and Plan Review have already made their independent decisions, and never applies under `planApprovalMode: "auto-approve-all"` (which bypasses the manual gate entirely).
+**FN-7569 — manual plan approval is idempotent against unchanged plans:** approving a plan under the manual gate records a fingerprint of the exact approved `PROMPT.md`. If the same task is later re-specified — a `needs-replan` replan, a Plan Review reviewer-outage retry, or a self-healing rebound back to `triage` — and produces byte-identical `PROMPT.md` content, the manual gate detects the match and proceeds straight to `todo` instead of re-parking at `status: "awaiting-approval"`. A genuinely revised plan still produces a different fingerprint and re-asks as before, and using Reject Plan clears the fingerprint so the regenerated plan is always treated as new. This idempotency check runs only inside the manual gate, strictly after Plan Review has already made its independent decision, and never applies under `planApprovalMode: "auto-approve-all"` (which bypasses the manual gate entirely).
 
 `builtin:legacy-coding` is backed by the original monolithic `BUILTIN_CODING_WORKFLOW_IR`: `planning` → `execute` → optional quality gates → `review` → merge region.
 
@@ -542,14 +542,20 @@ There is no longer a Settings → Workflow Steps manager or step CRUD form. To a
 
 Plugin palette templates (above) can be dropped in as a starting point instead of authoring a node from scratch.
 
-## Model Overrides for Prompt Steps
+## Model Overrides for Workflow Nodes
+
+<!--
+FNXC:WorkflowModelBinding 2026-07-10-00:00:
+FN-7771 lets workflow authors bind reasoning effort per session-running node, independently from provider/model. FN-7772 adds workflow-declared primary lane thinking companions, but node-level thinking remains strongest so a custom workflow can pin a high-effort review or low-effort execution seam without changing task-wide or lane defaults.
+-->
 
 A prompt-mode gate node can set its own model with:
 
 - `modelProvider`
 - `modelId`
+- `thinkingLevel` (`"off" | "minimal" | "low" | "medium" | "high" | "xhigh"`)
 
-If both are set, node execution uses that model; otherwise it falls back to default model selection. Dashboard node summaries show that unpinned prompt-node state as **Default model**.
+If both model fields are set, node execution uses that provider/model pair; otherwise it falls back to default model selection. `thinkingLevel` is stored as `config.thinkingLevel` and can be set or cleared independently from the model pair. Runtime reasoning-effort precedence is **node/step `thinkingLevel` → task `thinkingLevel` → workflow lane thinking override (`executionThinkingLevel`, `planningThinkingLevel`, or `validatorThinkingLevel`) → global lane thinking override → project default thinking override → global `defaultThinkingLevel`**. The lane settings accept `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`; unset means inherit. This applies to prompt/gate custom nodes, the `execute` and `step-execute` seams, triage/planning, and `step-review` reviewer sessions. Dashboard node summaries show unpinned provider/model state as **Default model**; the inspector's inline thinking selector shows the resolved project default (e.g. "Default (off)") when no node-level thinking value is pinned.
 
 ## Default-On Behavior for New Tasks
 
@@ -746,6 +752,20 @@ Post-merge optional groups never trigger this send-back path because merge has a
 
 Advisory failures are intentionally excluded from merge blocking and self-healing auto-revive after a task is already in review; their live-run fix pass is only the bounded pre-review remediation described above.
 
+#### Review-lane bypass (operator escape hatch, FN-7720)
+
+Self-healing recovery re-runs the *same* dispatch that produced a failed pre-merge review step. When that step failed for infrastructure reasons rather than a genuine `REVISE` verdict — the leading real-world cause being the `(no feedback captured)` no-verdict dispatch defect (Runfusion/Fusion#1946) — recovery keeps re-running the defective dispatch instead of unblocking the card. For that situation, Fusion exposes a supported, audit-logged **review-lane bypass** primitive so a privileged operator can advance the card without waiting on the underlying engine fix:
+
+- **Store primitive:** `TaskStore.bypassFailedPreMergeReviewStep(id, { reason, actor })` in `@fusion/core`.
+- **Dashboard:** `POST /tasks/:id/bypass-review` (requires a body `{ reason }`), and a **Bypass failed review** action in the Task Detail actions menu — shown only when the task is `in-review` and carries a failed pre-merge review step. The operator must type a reason before it fires.
+- **CLI / pi extension:** `fn_task_bypass_review` (params: `id`, required `reason`). This tool is registered **only** on the CLI/pi-extension operator surface — it is never exposed to executor, reviewer, or triage agent tool lists, so autonomous task execution cannot self-bypass a review it failed.
+
+**A reason is always mandatory** and every bypass is audit-logged (actor, timestamp, reason, and the prior step status it superseded) via a `task:bypass-review` run-audit event plus a task log entry.
+
+The bypass targets the **most-recently-completed failed pre-merge** `WorkflowStepResult` (any lane — Code Review, Code Review Remediation, Plan Review, Browser Verification) and rewrites it in place: `status` becomes `"skipped"` (a terminal, non-blocking value `getTaskMergeBlocker` does not match), and the result is stamped with `bypassedBy`, `bypassedAt`, `bypassReason`, and `bypassedFromStatus` (the prior `"failed"` status) plus `bypassedFromVerdict` when one was present. **The bypass never fabricates a reviewer `verdict`** (no synthetic `APPROVE`) — it is an honest record that the gate was overridden, not that the change was reviewed and approved.
+
+The bypass clears **only** the `"task has failed pre-merge workflow steps"` merge-blocker reason. It does **not** touch any other `getTaskMergeBlocker` condition: a paused task, incomplete steps, a blocking task status, or a still-`pending` pre-merge step all continue to block exactly as before. It also does not itself move the task to `done` or force a merge — an `autoMerge:false` task remains terminal-until-human-merge after the bypass, same as before (FN-5147). Because the bypassed step's `status` is no longer `"failed"`, self-healing's recovery sweep (`recoverReviewTasksWithFailedPreMergeSteps`) no longer selects it for re-dispatch.
+
 ## Viewing Results
 
 <!--
@@ -754,6 +774,21 @@ Results now live on `task.workflowStepResults` (written by the graph executor, k
 -->
 
 Gate results are recorded on the task's **`workflowStepResults`** field (`WorkflowStepResult[]`), written by the graph executor and keyed by the optional-group node id. Each entry carries `status`, optional `verdict`, `notes`, `output`, and `phase`. The unified progress bar and the Workflow tab read this field directly.
+
+<!--
+FNXC:WorkflowStepResults 2026-07-09-01:10:
+FN-7727: a self-healing recovery re-run of a failed pre-merge review node
+(code-review, plan-review, browser-verification) re-executes the SAME
+`workflowStepId` in place. Every recorder now upserts through the shared
+`upsertWorkflowStepResult` core helper (`packages/core/src/workflow-step-results.ts`),
+which snapshots a replaced `failed`/`advisory_failure` entry into the new
+entry's `priorAttempts` (bounded, single-level, oldest-dropped) instead of
+silently overwriting it. `priorAttempts` is READ-ONLY history: self-healing
+recovery selection, `getTaskMergeBlocker`, and progress/timing all read only
+the current (latest) entry and never inspect `priorAttempts`.
+-->
+
+A step re-executed after a prior failed attempt (most commonly via self-healing's `recoverReviewTasksWithFailedPreMergeSteps` recovery sweep) preserves that prior attempt's `output`/`notes`/`verdict`/timestamps in a bounded `priorAttempts` array on the surviving entry, rather than losing them. This history is read-only — it never affects merge-blocking, recovery selection, or progress computation — and is surfaced in the task-detail Summary tab as a collapsed "previous failed attempts" disclosure when present.
 
 The persisted `status` values are `pending`, `passed`, `failed`, `advisory_failure`, and `skipped`. The verdict→status mapping is: `APPROVE` / `APPROVE_WITH_NOTES` → `passed`; an advisory `REVISE` (success outcome) → `advisory_failure` (non-blocking); a gate `REVISE` or hard failure → `failed`. The UI derives an additional **`running`** display state from a `pending` entry that has a `startedAt` and no `completedAt`. Advisory failures (`advisory_failure`) are shown as polish feedback and never block merge; only `failed` blocks.
 

@@ -2,6 +2,13 @@
 
 Date: 2026-05-07
 
+<!--
+FNXC:CursorCli 2026-07-08-00:00:
+The original FN-3396 preflight assumed model discovery via JSON-flagged subcommand variants with a plain-text fallback, and stated no auth-status command was confirmed. FN-7697 captured and shipped the real `cursor-agent` CLI contract: model discovery is `cursor-agent models` (plain text `id - Label` lines, no JSON flag) and authentication is derived from `cursor-agent status --format json` (`isAuthenticated`). This doc was corrected on 2026-07-08 to match the verified contract; see FN-7697 for the implementation.
+-->
+
+**Update history:** 2026-07-08 — corrected the model-discovery and auth-status contract from FN-3396's assumed `--json` commands to the verified `cursor-agent models` / `cursor-agent status --format json` contract captured and implemented in FN-7697.
+
 ## Research method
 
 - Local runtime inspection in the task environment (`which`, direct command execution).
@@ -54,7 +61,8 @@ On Windows, `cursor-agent`, `cursor`, and manual override paths can resolve to `
 The Windows shell-backed path applies to every Cursor CLI command Fusion currently runs through the shared runner:
 
 - Configured binary / `cursor-agent --version` / `cursor --version` probe attempts.
-- Model discovery attempts against the effective probe-selected binary: `models --json`, `model list --json`, and `models`.
+- Auth-status probe against the effective probe-selected binary: `cursor-agent status --format json`.
+- Model discovery against the effective probe-selected binary: `cursor-agent models` (plain text, no `--json` flag).
 
 Non-Windows probes and discovery continue to use direct spawn. Spawn errors such as `ENOENT` or `EACCES` are included in the unavailable probe reason in bounded diagnostic form so a working terminal command is distinguishable from known Cursor runtime/auth states; Fusion does not dump PATH, environment variables, or unbounded stdout/stderr.
 
@@ -75,29 +83,36 @@ Observed command behavior in this environment:
 
 ## Structured output and model discovery
 
-- **No stable model-list command was conclusively confirmed in this preflight** due CLI gating by keychain lock and inability to complete bounded remote research in this run.
-- No contract evidence yet for a guaranteed `--json` or dedicated model enumeration command.
+- **Confirmed:** `cursor-agent models` is the model-list command. Output is plain text — passing an unsupported JSON output flag (e.g. appending `--json` to the `models` subcommand) fails with `error: unknown option '--json'`.
+- Output shape: an `Available models` header line, a blank line, then one model per line formatted as `<id> - <Label>` (e.g. `auto - Auto (default)`, `claude-4.5-sonnet - Sonnet 4.5`), followed by a trailing tip line: `Tip: use --model <id> (or /model <id> in interactive mode) to switch.`.
+- Empty-account state: `No models available for this account.` (no model lines follow).
+- `cursor-agent --list-models` exists but is unreliable — it can report "No models available for this account." even while the CLI is authenticated with models available. Prefer `cursor-agent models`.
 
-### Fallback model discovery strategy (to use in implementation)
+### Model discovery parsing strategy (implemented)
 
-1. Attempt known structured/listing command variants with short timeouts (plugin-defined sequence).
-2. If structured output is unavailable but text output exists, parse tolerant line-based IDs.
-3. Normalize and dedupe model IDs.
-4. If discovery is unavailable/fails, return an empty discovered set with:
-   - `source` marking probe mode,
-   - `fallbackUsed: true`,
-   - machine-readable reason.
-5. Host should only surface Cursor models when provider readiness + discovery usability conditions are met.
+1. Run `cursor-agent models` (or the effective probe-selected binary) with a short timeout.
+2. Split stdout into lines; extract the bare model id as the segment before the first ` - ` on each line.
+3. Filter out the `Available models` header, the trailing `Tip:` line, the `No models available for this account.` empty-state line, and blank lines.
+4. Normalize and dedupe the remaining ids into the discovered model set.
+5. If the command is unavailable or fails, return an empty discovered set with a machine-readable reason; host surfaces Cursor models only when provider readiness + discovery usability conditions are met.
+
+### Authentication / status
+
+- **Confirmed:** authentication state is derived from `cursor-agent status --format json` (alias `whoami`), which returns a JSON object with `isAuthenticated` (boolean), plus `status`, `hasAccessToken`, and `userInfo`.
+- Use `isAuthenticated` as the auth signal instead of treating a successful `--version` probe as a proxy for readiness. `--version` remains the availability/version probe (bare version string), separate from auth.
+- Keychain-locked and missing-IDE-install remain distinct expected failure modes on top of this (see "Confirmed error/auth/runtime signals" above) — a locked keychain or missing IDE surfaces as its own runtime-blocked state rather than folding into `isAuthenticated: false`.
 
 ## Provider ID decision
 
 - Use **`cursor-cli`** as the provider ID.
 - Rationale: aligns with task requirement; no conflicting provider ID observed in current codebase scan.
 
-## Contract freeze for FN-3396
+## Contract freeze for FN-3396 (superseded by the verified contract below)
 
-Implementation should treat the following as canonical for this task unless stronger evidence is found during code-level integration tests:
+The original FN-3396 preflight treated the following as canonical pending stronger evidence:
 
 - Binary candidates: `cursor-agent`, `cursor`.
 - Expected failure states include: missing binary, missing IDE installation, keychain locked, unauthenticated/not-ready CLI.
 - Model discovery must be dynamic-first with resilient fallback and no hardcoded static catalog by default.
+
+Binary candidates and expected failure states above remain accurate. The dynamic-first/no-static-catalog principle also still holds, but the specific commands are now confirmed rather than assumed — see "Structured output and model discovery" and "Windows PATH shim invocation" above for the verified `cursor-agent models` / `cursor-agent status --format json` contract that replaces the earlier `--json`-flag guesswork.

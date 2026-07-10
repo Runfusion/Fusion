@@ -139,6 +139,37 @@ describe("GitHubImportModal", () => {
     expect(source).toContain(".modal.github-import-modal:not(.github-import-modal--embedded) {");
   });
 
+  it("FN-7694: does not viewport-cap the embedded preview pane in the tablet @media (max-width: 860px) band", () => {
+    const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
+    const tabletBlock = source.match(/@media \(max-width: 860px\) \{[\s\S]*?\n\}\n/)?.[0] ?? "";
+    expect(tabletBlock).not.toBe("");
+
+    // The regressed leak: an UNSCOPED `.github-import-preview-pane { ... max-height: 50% ... }`
+    // (or `.github-import-list-pane`) rule inside the tablet media block would apply to the
+    // embedded surface too, clipping a tall selected issue/PR preview (FN-7694 symptom).
+    expect(tabletBlock).not.toMatch(/(?:^|\n)\s*\.github-import-preview-pane\s*\{[^}]*max-height:\s*50%/);
+    expect(tabletBlock).not.toMatch(/(?:^|\n)\s*\.github-import-list-pane\s*\{[^}]*max-height:\s*50%/);
+
+    // Every pane/layout rule in the tablet block must be scoped to the non-embedded dialog only.
+    expect(tabletBlock).toContain(
+      ".github-import-modal:not(.github-import-modal--embedded) .github-import-preview-pane {\n    flex: none;\n    max-height: 50%;\n  }",
+    );
+    expect(tabletBlock).toContain(".github-import-modal:not(.github-import-modal--embedded) .github-import-list-pane {");
+    expect(tabletBlock).toContain(".github-import-modal:not(.github-import-modal--embedded) .github-import-workspace {");
+    expect(tabletBlock).toContain(".github-import-modal:not(.github-import-modal--embedded) .github-import-workspace__resize-handle {");
+
+    // Guard: the dialog path must still receive the tablet stacking/cap behavior (unchanged for non-embedded).
+    expect(tabletBlock).toMatch(
+      /\.github-import-modal:not\(\.github-import-modal--embedded\) \.github-import-list-pane \{[^}]*max-height:\s*50%[^}]*\}/,
+    );
+
+    // The embedded wide two-pane preview rule must keep its own non-capped layout so the fix
+    // cannot be silently reverted by re-adding a viewport cap.
+    const wideContainerBlock = source.match(/@container github-import-embedded \(min-width: 720px\) \{[\s\S]*?\n\}\n/)?.[0] ?? "";
+    expect(wideContainerBlock).toContain(".github-import-modal--embedded .github-import-preview-pane {\n    flex: 1 1 auto;\n    min-height: 0;\n  }");
+    expect(wideContainerBlock).not.toContain("max-height: 50%");
+  });
+
   it("styles import type tabs like the Artifacts button bar", () => {
     const source = readFileSync(resolve(__dirname, "../GitHubImportModal.css"), "utf8");
     const tabsRule = source.match(/\.github-import-tabs\s*\{[^}]*\}/)?.[0] ?? "";

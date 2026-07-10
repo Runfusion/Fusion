@@ -12,9 +12,15 @@
   border-color: var(--todo);
 }
 
+/*
+FNXC:DashboardTokens 2026-07-08-00:00:
+--space-2xs is intentionally undefined (FN-5934 decision); the guard in
+app/__tests__/space-token-defined.test.ts asserts it stays undefined. Use the
+smallest defined token, --space-xs (4px), instead of reintroducing --space-2xs.
+*/
 .quick-entry-box--drag-over {
   border-color: var(--triage);
-  box-shadow: 0 0 0 var(--space-2xs) color-mix(in srgb, var(--triage) 35%, transparent);
+  box-shadow: 0 0 0 var(--space-xs) color-mix(in srgb, var(--triage) 35%, transparent);
 }
 
 .quick-entry-drop-target {
@@ -26,7 +32,7 @@
   justify-content: center;
   gap: var(--space-xs);
   padding: var(--space-sm);
-  border: var(--space-2xs) dashed var(--triage);
+  border: var(--space-xs) dashed var(--triage);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--card) 86%, var(--triage));
   color: var(--text);
@@ -38,12 +44,12 @@
 .quick-entry-attach-button {
   position: relative;
   min-width: calc(var(--space-xl) + var(--space-xs));
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
 }
 
 .quick-entry-attach-count {
   min-width: var(--space-md);
-  padding: 0 var(--space-2xs);
+  padding: 0 var(--space-xs);
   border-radius: calc(var(--radius) * 4);
   background: var(--triage);
   color: var(--provider-icon-contrast);
@@ -54,7 +60,7 @@
 
 @media (max-width: 768px) {
   .quick-entry-drop-target {
-    inset: var(--space-2xs);
+    inset: var(--space-xs);
     padding: var(--space-xs);
     text-align: center;
   }
@@ -185,6 +191,64 @@ The global `.description-with-refine textarea { padding-right: 70px }` (styles.c
 }
 
 /*
+FNXC:QuickAddActionRow 2026-07-08-00:00:
+FN-7680 — Save (`btn btn-task-create btn-sm`) rendered a different box height
+than its `.quick-entry-actions` siblings. Root cause is content-height drift
+across button variants, not one single property: text buttons (Save, Fast,
+Subtask, the workflow/priority/deps `.dep-trigger` triggers) get an 18px line
+box from the inherited body line-height at 12px font-size, while icon-only
+buttons (Attach, GitHub toggle) collapse to their bare ~14px icon because
+`.btn-icon` sets `line-height: 0`; separately, `.dep-trigger` buttons (Priority,
+Deps, and — pre-FN-7677 — the workflow trigger) inherit the shared
+`.dep-trigger, .inline-create-model-trigger` rule's shorter 3px/8px padding
+instead of `.btn-sm`'s 4px/10px. Rather than chase each contributor
+individually (padding, line-height, icon size) per button variant, assert one
+uniform `min-height` scoped to this row: with the project-wide
+`box-sizing: border-box` reset, min-height normalizes every `.btn` variant in
+`.quick-entry-actions` (plus the non-`.btn` optional-steps trigger) to the same
+total box height regardless of its individual content/padding, without editing
+the shared `.btn`, `.btn-sm`, `.btn-icon`, `.btn-task-create`, or `.dep-trigger`
+rules in styles.css (those still back InlineCreateCard/NewTaskModal/
+TaskDetailModal/TaskForm). This is the desktop-width counterpart to the
+existing mobile touch-target min-height block further down this file (the
+"max-width: 768px" rule) — that block already applies the same
+normalization pattern for mobile; this rule closes the gap for desktop widths
+so the invariant holds at both breakpoints (FN-5751 lesson: no mobile-only or
+desktop-only fix).
+
+FNXC:QuickAddActionRow 2026-07-08-10:15:
+FN-7683 — a bare `min-height` floor is not sufficient: it only guarantees a
+button is AT LEAST that tall, it never clamps a variant whose natural content
+box (line-height + padding + inline icon) already resolves TALLER than the
+floor. Save (`btn btn-task-create btn-sm`) renders text plus an inline
+`<Save size={12}>` icon as two separate inline boxes inside the button; that
+combination, together with the inherited (non-tokenized) body line-height at
+12px font-size, can resolve a content/line box taller than the
+`calc(--space-xl + --space-xs)` (28px) floor, so `min-height` alone left Save
+measurably taller than shorter siblings (Attach's `.btn-icon`, whose
+`line-height: 0` collapses it to its bare icon). A floor cannot shrink an
+over-tall variant back down — only a FIXED box height can. Upgrade the
+contract: pair `min-height` with an equal `max-height` (a true fixed box, not
+just a floor) and set an explicit tokenized `line-height` plus
+`align-items: center` so every control's content — text-only, icon-only, or
+text+icon — is vertically centered and clipped to the same resolved height
+regardless of its natural content box. This keeps `box-sizing: border-box`
+working as before (padding/border still absorbed into the declared height)
+while guaranteeing IDENTICAL resolved height across Save, workflow trigger,
+Attach, GitHub toggle, Fast, Priority, Deps, Subtask, and the optional-steps
+trigger — not merely all-at-least-28px. Applies at both this desktop rule and
+the mobile touch-target block below (FN-5751: never a breakpoint-only fix).
+*/
+.quick-entry-actions .btn,
+.quick-entry-actions .wf-optional-steps-dropdown-trigger {
+  min-height: calc(var(--space-xl) + var(--space-xs));
+  max-height: calc(var(--space-xl) + var(--space-xs));
+  line-height: var(--line-height-tight);
+  align-items: center;
+  overflow: hidden;
+}
+
+/*
 FNXC:QuickAddWorkflow 2026-06-30-00:00:
 Quick-add workflow targeting sits in the action row as a compact existing-button dropdown. Use tokenized sizing/colors so the selector wraps with Save/Plan controls on narrow Board and List surfaces without introducing a separate visual hierarchy.
 
@@ -209,6 +273,13 @@ The wide menu is portaled and fixed-positioned by QuickEntryBox so right-side bo
   max-width: min(calc(var(--space-xl) * 5), 100%);
 }
 
+/*
+FNXC:QuickAddWorkflow 2026-07-08-00:00:
+FN-7677 — the workflow trigger shares `.btn.btn-sm.dep-trigger` classes with other surfaces (InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm), but the shared `.dep-trigger, .inline-create-model-trigger` rule in styles.css sets `padding: 3px 8px`, overriding `.btn-sm`'s `padding: 4px 10px` and making this trigger ~2px shorter than its Save/Fast/Subtask `.btn.btn-sm` siblings in `.quick-entry-actions`. Re-assert `.btn-sm`'s own padding value scoped to this selector only (do not touch the shared global `.dep-trigger` rule — other surfaces still depend on its 3px/8px sizing) so the quick-add action row reads as one uniform height.
+
+FNXC:QuickAddWorkflow 2026-07-08-09:30:
+FN-7682 — the tokenized-CSS test forbids raw px in the workflow-selector rules, so the `4px 10px` literal is replaced with `var(--space-sm) var(--space-md)` (vertical then horizontal). Height parity is unaffected: box height for this trigger is governed by the FN-7680 `.quick-entry-actions .btn, .quick-entry-actions .wf-optional-steps-dropdown-trigger { min-height: calc(var(--space-xl) + var(--space-xs)); }` normalization (desktop and the matching mobile block), not by this element's own padding — the padding only controls internal content spacing and stays at or below that min-height.
+*/
 .quick-entry-workflow-trigger {
   display: inline-flex;
   align-items: center;
@@ -217,6 +288,7 @@ The wide menu is portaled and fixed-positioned by QuickEntryBox so right-side bo
   width: auto;
   min-width: 0;
   max-width: min(calc(var(--space-xl) * 5), calc(100vw - var(--space-lg)));
+  padding: var(--space-sm) var(--space-md);
 }
 
 .quick-entry-workflow-icon {
@@ -252,7 +324,7 @@ The wide menu is portaled and fixed-positioned by QuickEntryBox so right-side bo
 .quick-entry-workflow-option-copy {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
   min-width: 0;
 }
 
@@ -588,7 +660,33 @@ The wide menu is portaled and fixed-positioned by QuickEntryBox so right-side bo
   .quick-entry-actions .btn,
   .quick-entry-actions .wf-optional-steps-dropdown-trigger {
     /* FNXC:WorkflowOptionalSteps 2026-06-25-00:00: The optional-steps trigger is not a `.btn`, so opt it into the same mobile quick-entry touch-target contract as the surrounding action buttons without adding a wrapper that could leave an empty shell for zero-step workflows. */
+    /* FNXC:QuickAddActionRow 2026-07-08-10:15: FN-7683 — mirror the desktop upgrade: a bare min-height floor cannot equalize a variant (e.g. Save's text+icon content) that naturally resolves taller than the touch-target height. Pair min-height with an equal max-height plus centered, tokenized line-height so every control lands on the SAME resolved touch-target height at this breakpoint, not merely >= it. */
     min-height: calc(var(--space-2xl) + var(--space-xs));
+    max-height: calc(var(--space-2xl) + var(--space-xs));
+    line-height: var(--line-height-tight);
+    align-items: center;
+    overflow: hidden;
+  }
+
+  /*
+  FNXC:QuickAddActionRow 2026-07-08-11:30:
+  FN-7683 follow-up (operator feedback) — desktop/tablet parity from the fix
+  above stays untouched, and so does the shared mobile touch-target contract
+  applied to every sibling control. On real mobile browsers, Save (`btn
+  btn-task-create btn-sm`) still renders visibly taller than its shorter
+  siblings (Fast, the workflow trigger) at this breakpoint: its inline
+  `<Save size={12}>` icon plus text naturally claims more vertical space than
+  the fixed box, so the excess was only being silently clipped by the shared
+  rule's `overflow: hidden` rather than the button shrinking cleanly. Scope a
+  Save-only correction (via its existing `quick-entry-save` test id, not a new
+  wrapper) that removes the extra vertical padding and tightens line-height so
+  Save's natural content fits the SAME fixed box as its siblings without
+  relying on clipping — mobile-only; desktop/tablet Save sizing is unaffected.
+  */
+  .quick-entry-actions [data-testid="quick-entry-save"] {
+    padding-top: 0;
+    padding-bottom: 0;
+    line-height: 1;
   }
 
   .quick-entry-box .dep-dropdown {

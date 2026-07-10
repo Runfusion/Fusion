@@ -3,7 +3,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Brain, Link, ListTree, Zap, ChevronDown, ChevronUp, Bot, Maximize2, Minimize2, Server } from "lucide-react";
-import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type ResolvedWorkflowOptionalStep } from "@fusion/core";
+import { DEFAULT_TASK_PRIORITY, TASK_PRIORITIES, type Task, type TaskPriority, type Settings, type ResolvedWorkflowOptionalStep, type ThinkingLevel } from "@fusion/core";
 import { getErrorMessage } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { checkDuplicateTasks, fetchModels, uploadAttachment, fetchSettings, updateGlobalSettings, fetchAgents, fetchWorkflowOptionalSteps, DuplicateCandidatesError } from "../api";
@@ -122,6 +122,8 @@ export function InlineCreateCard({
   const [validatorModelId, setValidatorModelId] = useState<string | undefined>(undefined);
   const [planningProvider, setPlanningProvider] = useState<string | undefined>(undefined);
   const [planningModelId, setPlanningModelId] = useState<string | undefined>(undefined);
+  /* FNXC:Settings-ThinkingLevel 2026-07-09-00:00: quick-create board card carries the same per-task thinking-level override as the full New Task modal; "" means "use default". */
+  const [thinkingLevel, setThinkingLevel] = useState<string>("");
   const [optionalSteps, setOptionalSteps] = useState<ResolvedWorkflowOptionalStep[]>([]);
   const [enabledOptionalStepIds, setEnabledOptionalStepIds] = useState<string[]>([]);
   const [priority, setPriority] = useState<TaskPriority>(DEFAULT_TASK_PRIORITY);
@@ -433,6 +435,7 @@ export function InlineCreateCard({
       setValidatorModelId(undefined);
       setPlanningProvider(undefined);
       setPlanningModelId(undefined);
+      setThinkingLevel("");
       setEnabledOptionalStepIds([]);
       setPriority(DEFAULT_TASK_PRIORITY);
       setDependencies([]);
@@ -490,6 +493,7 @@ export function InlineCreateCard({
       validatorModelId: hasValidatorOverride ? validatorModelId : undefined,
       planningModelProvider: hasPlanningOverride ? planningProvider : undefined,
       planningModelId: hasPlanningOverride ? planningModelId : undefined,
+      thinkingLevel: thinkingLevel !== "" ? (thinkingLevel as ThinkingLevel) : undefined,
       /*
       FNXC:InlineCreateWorkflowSteps 2026-06-29-02:45:
       Inline create optional-step toggles are explicit task intent. When a workflow exposes optional steps and the operator unchecks all of them, submit `[]` so default-on Plan Review / Code Review stay disabled on the created task instead of reappearing from workflow defaults.
@@ -511,7 +515,7 @@ export function InlineCreateCard({
     }
 
     await submitTask(input);
-  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
+  }, [description, submitting, selectedWorkflowId, dependencies, selectedAgentId, selectedPresetId, hasExecutorOverride, executorProvider, executorModelId, hasValidatorOverride, validatorProvider, validatorModelId, hasPlanningOverride, planningProvider, planningModelId, thinkingLevel, optionalSteps.length, enabledOptionalStepIds, priority, effectiveNodeId, projectId, addToast, submitTask]);
 
   const handleDuplicateProceed = useCallback(async () => {
     const matches = duplicateMatches;
@@ -660,6 +664,10 @@ export function InlineCreateCard({
     setPlanningModelId(next.modelId);
   }, []);
 
+  const handleThinkingLevelChange = useCallback((value: string) => {
+    setThinkingLevel(value);
+  }, []);
+
   const handleToggleFavorite = useCallback(async (provider: string) => {
     const currentFavorites = favoriteProviders;
     const isFavorite = currentFavorites.includes(provider);
@@ -730,6 +738,7 @@ export function InlineCreateCard({
     setValidatorModelId(undefined);
     setPlanningProvider(undefined);
     setPlanningModelId(undefined);
+    setThinkingLevel("");
     setEnabledOptionalStepIds([]);
     setSelectedPresetId(undefined);
     setSelectedAgentId(null);
@@ -1218,6 +1227,9 @@ export function InlineCreateCard({
               onExecutorChange={handleExecutorChange}
               onValidatorChange={handleValidatorChange}
               onPlanningChange={handlePlanningModelChange}
+              thinkingLevel={thinkingLevel}
+              onThinkingLevelChange={handleThinkingLevelChange}
+              defaultThinkingLevel={settings?.defaultThinkingLevel}
               modelsLoading={modelsLoading}
               modelsError={modelsError}
               onRetry={loadModels}

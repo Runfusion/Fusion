@@ -53,6 +53,8 @@ export {
 // node still declaring `config.seam: "workflow-step"` is no longer a recognized
 // seam: `resolveSeamName` throws a WorkflowIrError for it (fails loud, never a
 // silent no-op).
+export const SEAM_THINKING_LEVEL_CONTEXT_KEY = "workflow:seamThinkingLevel";
+
 export type WorkflowSeamName =
   | "planning"
   | "execute"
@@ -112,6 +114,8 @@ export interface WorkflowLegacySeams {
 export interface StepReviewConfig {
   type: "plan" | "code";
   model?: string;
+  /** Optional per-node reasoning-effort override for the review session. */
+  thinkingLevel?: string;
   /** Single-writer rule (KTD-4): true when the node is inside a split branch, so
    *  the review is advisory-only — no projection write, no authoritative verdict. */
   advisory?: boolean;
@@ -296,6 +300,15 @@ export function createPromptLikeHandler(
         active.stepIndex,
         node.id,
       );
+      /*
+       * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+       * Step-execute nodes carry per-node reasoning effort through workflow context so the implementation session can resolve node/step > task > settings precedence.
+       */
+      if (typeof node.config?.thinkingLevel === "string") {
+        context.context[SEAM_THINKING_LEVEL_CONTEXT_KEY] = node.config.thinkingLevel;
+      } else {
+        delete context.context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
+      }
       return seams.stepExecute(context.task, context.context);
     }
     if (seam) {
@@ -303,6 +316,11 @@ export function createPromptLikeHandler(
       // IS the seam node, so its declared column drives the binding. (Other seams
       // — planning/review/merge/schedule — stamp it too; only execute reads it.)
       context.context[SEAM_GOVERNING_NODE_CONTEXT_KEY] = node.id;
+      if (typeof node.config?.thinkingLevel === "string") {
+        context.context[SEAM_THINKING_LEVEL_CONTEXT_KEY] = node.config.thinkingLevel;
+      } else {
+        delete context.context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
+      }
       return seams[seam]!(context.task, context.context);
     }
     if (!runCustomNode) {
@@ -429,10 +447,17 @@ const STEP_REVIEW_UNAVAILABLE_RETRY_CAP = 2;
 /** Resolve a step-review node's config (KTD-4). Defaults `type` to `code` (the
  *  enforcing review level — matches the legacy code-review authority). */
 function resolveStepReviewConfig(node: WorkflowIrNode, advisory: boolean): StepReviewConfig {
-  const raw = (node.config ?? {}) as { type?: unknown; model?: unknown };
+  const raw = (node.config ?? {}) as { type?: unknown; model?: unknown; thinkingLevel?: unknown };
   const type = raw.type === "plan" ? "plan" : "code";
   const model = typeof raw.model === "string" ? raw.model : undefined;
-  return { type, model, advisory };
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * step-review nodes persist their own `config.thinkingLevel` (WorkflowNodeEditor); without
+   * reading it here the executor.ts seam's node-level-override precedence was dead code — the
+   * config object it receives never carried the node's pinned reasoning effort.
+   */
+  const thinkingLevel = typeof raw.thinkingLevel === "string" ? raw.thinkingLevel : undefined;
+  return { type, model, thinkingLevel, advisory };
 }
 
 /**

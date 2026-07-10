@@ -182,6 +182,65 @@ describe("useViewportMode", () => {
     }
   });
 
+  /*
+  FNXC:ViewportMode 2026-07-08-00:00:
+  FN-7687: reproduce the reported foldable regression literally — a fold->unfold->refold cycle
+  driven purely through `visualViewport`'s own `resize` event (not a matchMedia change), matching
+  how a real Android/Chrome foldable notifies the page when its folded pane changes width while the
+  CSS layout viewport can lag behind. Confirms `useViewportMode` recomputes back to `mobile` on
+  refold rather than getting stuck on the wide (unfolded) `desktop` mode it resolved to mid-cycle.
+  */
+  it("resolves back to mobile after a fold -> unfold -> refold visualViewport resize cycle", () => {
+    stubScreen(390, 844);
+    // Foldable quirk: the CSS layout viewport (and therefore matchMedia) can stay wide/desktop-shaped
+    // even while the folded visualViewport pane is narrow, so none of the width/height/tablet media
+    // queries match here — only the touch-primary visualViewport check should drive mobile detection.
+    installViewportMedia({ width: false, height: false, tablet: false });
+    const originalVisualViewport = window.visualViewport;
+    const originalMaxTouchPoints = navigator.maxTouchPoints;
+    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 1 });
+
+    let currentWidth = 350; // folded pane
+    const resizeListeners = new Set<() => void>();
+    Object.defineProperty(window, "visualViewport", {
+      configurable: true,
+      value: {
+        get width() {
+          return currentWidth;
+        },
+        height: 700,
+        offsetTop: 0,
+        offsetLeft: 0,
+        addEventListener: vi.fn((event: string, listener: () => void) => {
+          if (event === "resize") resizeListeners.add(listener);
+        }),
+        removeEventListener: vi.fn((event: string, listener: () => void) => {
+          resizeListeners.delete(listener);
+        }),
+      },
+    });
+
+    try {
+      const { result } = renderHook(() => useViewportMode());
+      expect(result.current).toBe("mobile");
+
+      act(() => {
+        currentWidth = 1024; // unfold: wide pane
+        for (const listener of [...resizeListeners]) listener();
+      });
+      expect(result.current).toBe("desktop");
+
+      act(() => {
+        currentWidth = 350; // refold: narrow pane again
+        for (const listener of [...resizeListeners]) listener();
+      });
+      expect(result.current).toBe("mobile");
+    } finally {
+      Object.defineProperty(window, "visualViewport", { configurable: true, value: originalVisualViewport });
+      Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: originalMaxTouchPoints });
+    }
+  });
+
   it("falls back to width-only mobile detection when screen data is unavailable", () => {
     stubMissingScreen();
     installViewportMedia({ width: false, height: true, tablet: true });

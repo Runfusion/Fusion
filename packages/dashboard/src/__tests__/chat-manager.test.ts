@@ -113,6 +113,10 @@ function createChatManagerWithSettings(settings: {
   fallbackModelId?: string;
   defaultProvider?: string;
   defaultModelId?: string;
+  defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  defaultThinkingLevelOverride?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  executionThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  executionGlobalThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }): ChatManager {
   return new ChatManager(
     mockChatStore as any,
@@ -199,6 +203,133 @@ describe("ChatManager.sendMessage", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("routes model-less QuickChat through configured default grok-cli provider", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          model: { provider: "grok-cli", id: "grok-4.5" },
+          state: { messages: [{ role: "assistant", content: "Grok response" }] },
+        },
+        runtimeId: "grok",
+        wasConfigured: true,
+      } as any;
+    });
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      status: "active",
+      projectId: "project-a",
+    });
+    mockChatStore.addMessage.mockImplementation((_sessionId, input) => ({
+      id: input.role === "assistant" ? "assistant-msg" : "user-msg",
+      sessionId: "chat-001",
+      role: input.role,
+      content: input.content,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    }));
+
+    const chatManager = createChatManagerWithSettings({
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-cli/grok-4.5",
+    });
+    await chatManager.sendMessage("chat-001", "Hello Grok");
+
+    expect(createOptions).toMatchObject({
+      sessionPurpose: "executor",
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-cli/grok-4.5",
+    });
+  });
+
+  it("passes the chat session thinking level to model-loop session options", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          model: { provider: "anthropic", id: "claude-sonnet-4-5" },
+          state: { messages: [{ role: "assistant", content: "Thoughtful response" }] },
+        },
+        runtimeId: "anthropic",
+        wasConfigured: true,
+      } as any;
+    });
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      projectId: "project-a",
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-5",
+      thinkingLevel: "high",
+    });
+
+    const chatManager = createChatManagerWithSettings({ defaultThinkingLevel: "low" });
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.defaultThinkingLevel).toBe("high");
+  });
+
+  it("falls back to settings when chat session thinking level is empty", async () => {
+    let createOptions: any;
+    __setCreateResolvedAgentSession(async (options: any) => {
+      createOptions = options;
+      return {
+        session: {
+          prompt: vi.fn().mockResolvedValue(undefined),
+          dispose: vi.fn(),
+          model: { provider: "anthropic", id: "claude-sonnet-4-5" },
+          state: { messages: [{ role: "assistant", content: "Default-thinking response" }] },
+        },
+        runtimeId: "anthropic",
+        wasConfigured: true,
+      } as any;
+    });
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      projectId: "project-a",
+      thinkingLevel: null,
+    });
+
+    const chatManager = createChatManagerWithSettings({ executionThinkingLevel: "medium", defaultThinkingLevel: "low" });
+    await chatManager.sendMessage("chat-001", "Hello");
+
+    expect(createOptions.defaultThinkingLevel).toBe("medium");
+  });
+
+  it("does not thread thinking level into CLI-agent-backed chat", async () => {
+    const createResolvedSpy = vi.fn();
+    __setCreateResolvedAgentSession(createResolvedSpy as any);
+    mockChatStore.getSession.mockReturnValue({
+      id: "chat-001",
+      agentId: "agent-001",
+      status: "active",
+      projectId: "project-a",
+      cliExecutorAdapterId: "adapter-1",
+      thinkingLevel: "high",
+    });
+    const runner = {
+      ensureSession: vi.fn().mockResolvedValue("cli-session-1"),
+      send: vi.fn().mockResolvedValue("sent"),
+      getTokenUsageSnapshot: vi.fn().mockResolvedValue(undefined),
+      getSessionStats: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const chatManager = createChatManagerWithSettings({ defaultThinkingLevel: "low" });
+    chatManager.setCliChatRunner(runner as any, "project-a");
+    await chatManager.sendMessage("chat-001", "Hello CLI");
+
+    expect(runner.send).toHaveBeenCalledWith("chat-001", "Hello CLI");
+    expect(createResolvedSpy).not.toHaveBeenCalled();
   });
 
   it("records successful chat session token usage from provider stats", async () => {
@@ -504,6 +635,96 @@ describe("ChatManager.sendMessage", () => {
     );
     expect(assistantCall).toBeDefined();
     expect(assistantCall?.[1].content).toBe("Hello world!");
+  });
+
+  it("persists streamed replies and broadcasts done for no-state plugin runtime sessions", async () => {
+    const events: Array<{ type: string; data: any }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
+      events.push(event);
+    });
+    mockChatStore.addMessage.mockImplementation((_sessionId, input) => ({
+      id: input.role === "assistant" ? "assistant-msg" : "user-msg",
+      sessionId: "chat-001",
+      role: input.role,
+      content: input.content,
+      thinkingOutput: input.thinkingOutput,
+      metadata: input.metadata,
+      createdAt: "2026-07-10T00:00:00.000Z",
+    }));
+
+    __setCreateFnAgent(async (options: any) => ({
+      session: {
+        prompt: vi.fn().mockImplementation(async () => {
+          options.onText?.("Grok CLI streamed reply");
+        }),
+        dispose: vi.fn(),
+        messages: [],
+      },
+    }));
+
+    const chatManager = createChatManager();
+    await expect(chatManager.sendMessage("chat-001", "Hello Grok")).resolves.toBeUndefined();
+    unsubscribe();
+
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]?.[1].content).toBe("Grok CLI streamed reply");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "done",
+      data: expect.objectContaining({
+        message: expect.objectContaining({ content: "Grok CLI streamed reply" }),
+      }),
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "error" }));
+    expect(assistantCalls[0]?.[1].content).not.toContain("Response failed");
+  });
+
+  it("does not crash when a no-state plugin runtime streams no text", async () => {
+    const events: Array<{ type: string; data: any }> = [];
+    const unsubscribe = chatStreamManager.subscribe("chat-001", (event) => {
+      events.push(event);
+    });
+    mockChatStore.addMessage.mockImplementation((_sessionId, input) => ({
+      id: input.role === "assistant" ? "assistant-msg" : "user-msg",
+      sessionId: "chat-001",
+      role: input.role,
+      content: input.content,
+      createdAt: "2026-07-10T00:00:00.000Z",
+    }));
+
+    __setCreateFnAgent(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        messages: [],
+      },
+    }));
+
+    const chatManager = createChatManager();
+    await expect(chatManager.sendMessage("chat-001", "Hello Grok")).resolves.toBeUndefined();
+    unsubscribe();
+
+    const assistantCalls = mockChatStore.addMessage.mock.calls.filter((call) => call[1].role === "assistant");
+    expect(assistantCalls).toHaveLength(1);
+    expect(assistantCalls[0]?.[1].content).toBe("");
+    expect(events).toContainEqual(expect.objectContaining({ type: "done" }));
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "error" }));
+  });
+
+  it("falls back to top-level messages for no-state plugin runtime sessions", async () => {
+    __setCreateFnAgent(async () => ({
+      session: {
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        messages: [{ role: "assistant", content: "Top-level Grok message" }],
+      },
+    }));
+
+    const chatManager = createChatManager();
+    await expect(chatManager.sendMessage("chat-001", "Hello Grok")).resolves.toBeUndefined();
+
+    const assistantCall = mockChatStore.addMessage.mock.calls.find((call) => call[1].role === "assistant");
+    expect(assistantCall?.[1].content).toBe("Top-level Grok message");
   });
 
   // U11 / R12 drift guard: the chat lane must expose workflow discovery,

@@ -14,10 +14,66 @@
  * This hook only polls while `enabled` is true (callers should pass
  * `isInViewport` so off-screen cards do not generate background traffic).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchTaskRuntimeFallback, type TaskRuntimeFallbackResponse } from "../api/legacy";
 
 const POLL_INTERVAL_MS = 30_000;
+
+// Toast dedupe must be shared across ALL hook instances in the process, not
+// scoped per-instance: the same task/event can be observed simultaneously by
+// multiple mounted badges (e.g. ActiveAgentsPanel + AgentsView board/list +
+// TaskCard all rendering the same in-progress task at once), each running
+// its own useRuntimeFallbackStatus() call. A per-instance ref only dedupes
+// within one component instance's own poll history, so the same eventId
+// would independently look "newly observed" to every instance and fire one
+// toast each. Module-level state is shared across every call site because
+// there is exactly one copy of this module per process/bundle.
+//
+// Keyed by `${taskId}:${eventId}` (not eventId alone) so ids are unambiguous
+// even if two different tasks' audit logs ever produced colliding event ids.
+// Bounded via a simple FIFO eviction (insertion order === Map iteration
+// order) so a long-lived dashboard session touching many tasks over many
+// hours cannot grow this unboundedly; runtime-fallback events are rare
+// (at most one per agent session), so a few hundred entries comfortably
+// covers realistic session lengths without needing TTL bookkeeping.
+const MAX_TOASTED_EVENTS = 500;
+const toastedEventKeys = new Map<string, true>();
+
+function toastKey(taskId: string, eventId: string): string {
+  return `${taskId}:${eventId}`;
+}
+
+/**
+ * Returns true and records the key the first time it is seen; returns false
+ * on every subsequent call for the same key, regardless of which hook
+ * instance/component asks. This is the single shared gate all simultaneously
+ * mounted badge instances for the same task funnel through.
+ */
+function claimToastOnce(taskId: string, eventId: string): boolean {
+  const key = toastKey(taskId, eventId);
+  if (toastedEventKeys.has(key)) {
+    return false;
+  }
+  toastedEventKeys.set(key, true);
+  if (toastedEventKeys.size > MAX_TOASTED_EVENTS) {
+    const oldestKey = toastedEventKeys.keys().next().value;
+    if (oldestKey !== undefined) {
+      toastedEventKeys.delete(oldestKey);
+    }
+  }
+  return true;
+}
+
+/**
+ * Test-only escape hatch: clears the shared module-level dedupe store between
+ * test cases so one test's "already toasted" state cannot leak into the next.
+ * Guarded to a no-op outside the test build (import.meta.env.MODE) so it can
+ * never affect production code paths.
+ */
+export function __resetRuntimeFallbackToastDedupeStoreForTests(): void {
+  if (import.meta.env.MODE !== "test") return;
+  toastedEventKeys.clear();
+}
 
 export interface RuntimeFallbackStatus {
   /** True only when the latest resolution has wasConfigured=false and a non-empty runtimeHint. */
@@ -55,10 +111,6 @@ export function useRuntimeFallbackStatus(
   projectId?: string,
 ): RuntimeFallbackStatus {
   const [status, setStatus] = useState<RuntimeFallbackStatus>(IDLE_STATUS);
-  // Dedupe key for toasts: last audit event ID we already toasted for. Persists across
-  // polls/re-renders for the lifetime of the component so the toast fires exactly once
-  // per newly-observed fallback session, not on every poll.
-  const lastToastedEventIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled || !taskId) {
@@ -83,10 +135,10 @@ export function useRuntimeFallbackStatus(
         return;
       }
 
-      const isNewlyObserved = data.eventId !== null && data.eventId !== lastToastedEventIdRef.current;
-      if (isNewlyObserved && data.eventId) {
-        lastToastedEventIdRef.current = data.eventId;
-      }
+      // Dedupe against the shared module-level store (not a per-instance ref)
+      // so a fallback event toasts exactly once across every simultaneously
+      // mounted badge instance for this task, not once per instance.
+      const isNewlyObserved = data.eventId !== null && taskId !== undefined && claimToastOnce(taskId, data.eventId);
 
       setStatus({
         showBadge: true,

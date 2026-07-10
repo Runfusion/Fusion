@@ -1,4 +1,4 @@
-import type { Settings } from "./types.js";
+import { THINKING_LEVELS, type Settings } from "./types.js";
 import type { WorkflowSettingDefinition } from "./workflow-ir-types.js";
 
 /**
@@ -203,6 +203,13 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
   // ── Per-phase model lanes ──────────────────────────────────────────────
   // Legacy defaults are all `undefined`; `default` is omitted so resolution
   // falls through to the global lane / project default (KTD-7).
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Workflow-declared primary model lanes may pin a thinking effort per (workflow, project). Empty values inherit through the lane/global/default chain, enum options are validated against THINKING_LEVELS.
+   *
+   * FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
+   * FN-7793: planning/validator fallback lanes now get their own companion thinking-level settings (`planningFallbackThinkingLevel`/`validatorFallbackThinkingLevel`, declared below), matching the global `fallbackThinkingLevel` and project `titleSummarizerFallbackThinkingLevel` keys — fallback lanes no longer merely reuse their primary lane's thinking level.
+   */
   {
     id: "executionProvider",
     name: "Execution provider",
@@ -214,6 +221,13 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Execution model",
     type: "string",
     description: "Model id for the execution phase. Empty falls through to the global lane.",
+  },
+  {
+    id: "executionThinkingLevel",
+    name: "Execution thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the execution phase. Empty inherits from the task or default thinking level.",
   },
   {
     id: "planningProvider",
@@ -228,6 +242,13 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     description: "Model id for the planning phase. Empty falls through to the global lane.",
   },
   {
+    id: "planningThinkingLevel",
+    name: "Planning thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the planning phase. Empty inherits from the task or default thinking level.",
+  },
+  {
     id: "planningFallbackProvider",
     name: "Planning fallback provider",
     type: "string",
@@ -238,6 +259,17 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Planning fallback model",
     type: "string",
     description: "Fallback model id for the planning phase.",
+  },
+  {
+    /*
+     * FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
+     * Planning and validator fallback thinking levels are workflow-declared companions to their fallback provider/model lanes, persisted per (workflow, project). Empty means inherit; FN-7793 only declares the storage surface.
+     */
+    id: "planningFallbackThinkingLevel",
+    name: "Planning fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the planning fallback model. Empty inherits from the task or default thinking level.",
   },
   {
     id: "validatorProvider",
@@ -252,6 +284,13 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     description: "Model id for the validation phase. Empty falls through to the global lane.",
   },
   {
+    id: "validatorThinkingLevel",
+    name: "Validator thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the validation/review phase. Empty inherits from the task or default thinking level.",
+  },
+  {
     id: "validatorFallbackProvider",
     name: "Validator fallback provider",
     type: "string",
@@ -262,6 +301,13 @@ export const BUILTIN_MOVED_WORKFLOW_SETTINGS: WorkflowSettingDefinition[] = [
     name: "Validator fallback model",
     type: "string",
     description: "Fallback model id for the validation phase.",
+  },
+  {
+    id: "validatorFallbackThinkingLevel",
+    name: "Validator fallback thinking level",
+    type: "enum",
+    options: THINKING_LEVELS.map((level) => ({ value: level, label: level })),
+    description: "Thinking effort for the validator fallback model. Empty inherits from the task or default thinking level.",
   },
 ];
 
@@ -439,6 +485,24 @@ export const BUILTIN_REVIEW_REVISION_SETTINGS: WorkflowSettingDefinition[] = [
  * FNXC:PlannerOversight 2026-07-04-12:00:
  * FN-7518 adds `plannerOversightNotificationLevel`, a sibling workflow-native enum letting operators configure how noisy planner-overseer notifications are: Silent suppresses all, Errors only notifies on failures/escalations, Important (the default) notifies on interventions/recovery actions plus errors, and All notifies on every observation. Default is `important` (not `all`) to avoid noisy-by-default behavior. This setting stays workflow-native (out of project/global settings schemas and `MOVED_SETTINGS_KEYS`) and resolves through the generic `resolveEffectiveSettings` default path with no special-casing. This task only declares the setting — the emission gating that reads it lands downstream in FN-7519 (intervention timeline) and FN-7520 (run-audit/activity events).
  */
+/**
+ * FNXC:PlannerOversight 2026-07-09-00:00:
+ * FN-7743 requirement: an ordinary in-progress task (FN-7732) sat stuck for hours
+ * with no recovery action because the executor-stage overseer observation had no
+ * staleness detection — it always reported `signal: "progressing"` regardless of
+ * inactivity. `plannerOverseerExecutorStuckAfterMs` is the configurable inactivity
+ * threshold: once a non-paused in-progress task's last execution activity
+ * (`columnMovedAt ?? updatedAt`) is older than this, the executor stage reports
+ * `signal: "stuck"` instead, which already flows through `decidePlannerRecovery`
+ * into bounded `inject_guidance` recovery. Default 2 hours (7,200,000ms): long
+ * enough that a healthy, actively-working step (the vast majority of which finish
+ * well under 2h) is never nagged, short enough to actually recover a task that has
+ * gone dark for "hours" (the FN-7732 symptom) — mirrors the existing 2-hour
+ * convention `metaTaskStallAutoCloseMs` already uses for a comparable stall
+ * judgment call elsewhere in this codebase.
+ */
+export const DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS = 2 * 60 * 60 * 1000;
+
 export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
   {
     id: "plannerOversightLevel",
@@ -467,6 +531,14 @@ export const BUILTIN_OVERSIGHT_SETTINGS: WorkflowSettingDefinition[] = [
     ],
     description:
       "Planner overseer notification verbosity: Silent suppresses overseer notifications; Errors only notifies on failures/escalations; Important notifies on interventions/recovery actions and errors; All notifies on every observation. Notification-emission gating that reads this value is follow-up work (FN-7519/FN-7520).",
+  },
+  {
+    id: "plannerOverseerExecutorStuckAfterMs",
+    name: "Executor stall threshold (ms)",
+    type: "number",
+    default: DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS,
+    description:
+      "Milliseconds of executor-stage inactivity (no progress since the task's last column move/update) before the planner overseer reports the in-progress task as stuck, triggering bounded autonomous recovery (Autonomous level only). Default 7200000 (2 hours). Set higher to avoid nagging long-running steps; set lower to recover hung executors faster.",
   },
 ];
 

@@ -35,11 +35,6 @@ const TYPE_CONFIG: Record<ActivityFeedEntry["type"], {
   "task:deleted": { label: "Deleted", icon: XCircle, color: "var(--color-error)" },
   "task:merged": { label: "Merged", icon: GitMerge, color: "var(--color-success)" },
   "task:failed": { label: "Failed", icon: AlertTriangle, color: "var(--color-error)" },
-  /*
-  FNXC:ReleaseAuthorizationGate 2026-06-15-04:00:
-  Release-authorization blocks are operator-actionable security events, so activity surfaces must render the event instead of hiding it behind an exhaustive type gap.
-  */
-  "task:release-authorization-required": { label: "Release Authorization Required", icon: AlertTriangle, color: "var(--color-warning)" },
   "task:duplicate-warning-overridden": { label: "Duplicate Override", icon: AlertTriangle, color: "var(--color-warning)" },
   "task:auto-archived-ghost-bug": { label: "Auto-Archived (Ghost Bug)", icon: AlertTriangle, color: "var(--color-warning)" },
   "task:auto-archived-duplicate": { label: "Auto-Archived (Duplicate)", icon: Trash2, color: "var(--text-muted)" },

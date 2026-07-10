@@ -167,8 +167,18 @@ export function CursorCliProviderCard({ authenticated, compact = false, onToggle
           </div>
           <div className="auth-provider-cli-actions">{actions}</div>
         </div>
-        <small className="settings-muted">{statusText}</small>
-        {binaryPathControl}
+        {/*
+        FNXC:CursorCli 2026-07-08-00:00:
+        `.auth-provider-card` has no padding of its own (padding:0; overflow:hidden) — only
+        `.auth-provider-header` supplies the horizontal inset via `padding: var(--space-sm) var(--space-md)`.
+        The status line and binary-path control below the header must be wrapped in a padded body
+        so they line up with the header instead of rendering flush against the card edges,
+        mirroring `.auth-provider-cli-details-body` on the Claude CLI card. See FN-7695.
+        */}
+        <div className="cursor-cli-provider-card__body" data-testid="cursor-cli-provider-card-body">
+          <small className="settings-muted">{statusText}</small>
+          {binaryPathControl}
+        </div>
       </div>
     );
   }

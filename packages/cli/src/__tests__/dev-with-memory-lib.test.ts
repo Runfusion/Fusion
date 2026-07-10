@@ -69,22 +69,17 @@ describe("dev-with-memory prebuild options", () => {
     ]);
   });
 
-  it("rebuilds core + engine + dashboard (UI) for dashboard startup, not the full workspace", () => {
+  it("rebuilds core + engine + dashboard (UI) + changed plugins for dashboard startup, not the full workspace", () => {
     // FN-6638/stale-dist: dev dashboard must refresh engine + core dist (not
     // just the client bundle) so landed fixes are not silently stale.
+    // FN-7779/stale-plugin-dist: it must ALSO incrementally rebuild changed
+    // plugins (plugin dist loads at runtime), so the client prebuild is now a
+    // single orchestrator command covering both.
     expect(resolvePrebuildMode("auto", ["dashboard", "--port", "4050"])).toBe("client");
     expect(getPrebuildCommand("client")).toEqual({
-      command: "pnpm",
-      args: [
-        "--filter",
-        "@fusion/core",
-        "--filter",
-        "@fusion/engine",
-        "--filter",
-        "@fusion/dashboard",
-        "build",
-      ],
-      label: "core + engine + dashboard build",
+      command: "node",
+      args: ["scripts/dev-prebuild-client.mjs"],
+      label: "core + engine + dashboard + changed plugins build",
     });
   });
 

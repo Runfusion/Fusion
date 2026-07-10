@@ -683,7 +683,7 @@ Runtime action-gate flow (v1):
   - Worktrees-dir sweeps that list direct children of `<worktreesDir>` (pool idle scan, orphan cleanup/reap, self-healing unregistered-orphan reap, and cap enforcement) must exclude the `.ai-merge` container by name; those one-level sweeps never inspect or recycle clean rooms beneath it. Batch 1 sweeps stale AI merge clean-room worktrees under the new `<worktreesDir>/.ai-merge/` root and still scans legacy `.fusion/ai-merge/` plus legacy `tmpdir()` locations for pre-relocation leftovers; candidates are bounded to names starting with `fusion-ai-merge-`. `runAiMerge` registers each live clean-room worktree in `activeSessionRegistry` with kind `ai-merge` as soon as the directory exists and keeps both raw and canonical paths registered for the duration of the merge, so the dedicated periodic sweep and pre-merge prune defer when either path is active (including concurrent same-task merge attempts). The default age gate is 2 hours; task-aware cleanup uses a 10-minute grace period for `done`/`archived` tasks and for genuinely missing/deleted task rows, and every removal path is clamped by the same 10-minute minimum-age floor so a freshly created worktree is never reaped. Transient `getTask` lookup failures (for example SQLite busy/parse errors) are not treated as deletion evidence; they log a warning, emit `lookup-error` only if eventually removed, and retain the conservative 2-hour gate. The sweep canonicalizes paths before checking `activeSessionRegistry`, attempts `git worktree remove --force <path>` before filesystem removal, runs `git worktree prune` after cleanup attempts, and emits `worktree:tempdir-sweep` run-audit telemetry for removal attempts and failures. Fresh directories, active-session paths, and individual removal failures are skipped/logged without aborting the maintenance cycle.
 
   - `recoverGhostReviewTasks()` is a fallback only for idle, non-terminal `in-review` states. Terminal/actionable states (notably `status: "failed"`) are preserved and **not** auto-kicked back to `todo`.
-  - `recoverPausedAbortFailures()` clears executor pause/resume abort parks only when the durable row is safe to recover. `todo`/`in-progress` rows are requeued for normal scheduling, while clean `in-review` rows (completed steps, not paused/user-paused/executing, auto-merge eligible, no confirmed or terminal merge evidence) have `status`/`error` cleared in place so review progression can continue. User hard-cancel, global/user pause, `autoMerge:false`, terminal merge, and live-execution guards remain operator-actionable. Successful recovery emits `task:auto-recover-paused-abort-park` with `preservedInReview` metadata.
+  - `recoverPausedAbortFailures()` clears executor pause/resume abort parks only when the durable row is safe to recover. `todo`/`in-progress` rows are requeued for normal scheduling, while clean `in-review` rows (completed steps, not paused/user-paused/executing, auto-merge eligible, no confirmed or terminal merge evidence) have `status`/`error` cleared in place so review progression can continue. FN-7749 adds the manual-hold exception to the prior `autoMerge:false` guard: a benign hard-cancel pause/resume abort at a merge-region/manual-hold node is the healthy Merge & Close resting state, so already-parked rows of that exact shape are cleared in place without moving backward (FN-5147-compliant). User hard-cancel, global/user pause, terminal merge, live-execution, and other `autoMerge:false` guards remain operator-actionable. Successful recovery emits `task:auto-recover-paused-abort-park` with `preservedInReview` metadata.
   - Workflow graph pause/resume is node-reentrant for typed engine-internal interruptions. When `WorkflowGraphExecutor` sees the graph abort signal or a node returns `value: "aborted"`, it stamps the interrupted node and `engine-pause` abort kind into graph context. `TaskExecutor` then uses the existing bounded `graphResumeRetryCount` budget to clear the transient abort, suppress failure notification with an `Auto-recovered:` task log, and re-enter the graph/task only under the same safety guards: no user/active global pause, no merge/finalize provenance, no genuine node failure, no terminal merge value, no `autoMerge:false` protected review row, and no active execution owner. Global-pause provenance from the graph-controller abort is re-entrant once the global pause has been lifted because it represents the same in-flight node interruption. Generic legacy pause-abort parks without the typed node marker remain operator-action failures except for the narrow `in-review`/`plan` stale-replay shape: hard-cancel pause provenance, `node:plan:value === "aborted"`, no typed interrupted node, no active task/user/global pause, no terminal merge value, no confirmed merge, auto-merge eligibility, and only a clean row or the exact stale plan pause-abort failure. That path logs `stale replay ignored`, clears only the stale failure state when present, preserves `in-review`, and never re-enters planning or moves the task to `todo`.
   - `reattach-orphaned-assigned-executions` is a forward-resume safety net for durable-agent assignments. During startup recovery and periodic maintenance, after orphaned-agent and stale-heartbeat-run repairs, self-healing finds `in-progress` tasks with an `assignedAgentId` whose agent has no active heartbeat run and no active executor session after the orphan grace window. It re-dispatches in place via `executor.resumeTaskForAgent(agentId)` (the same seam used by clean `HeartbeatMonitor.onRunCompleted` and guarded by executor double-execution checks), emits `task:reattach-orphaned-execution`, and never moves the task backward. This complements engine-start `executor.resumeOrphaned()` and leaves unassigned/role-based execution recovery to the existing startup/limbo/stuck-task paths.
   - Durable `Agent.taskId` is a running assignment for parked `todo`/`triage` task rows only when the agent has live proof: a fresh active heartbeat run or an executor-active/tracked heartbeat signal. Scheduler overlap requeues, task move sync, self-healing, and Reports Health Check share this invariant: stale durable links are cleared or rendered as stale while `status: "queued"` and `overlapBlockedBy` remain on the task row so file-scope lease blocking is not weakened. `fn_list_agents` and `fn_agent_show` render the linked task column next to `Current Task` (for example `Current Task: FN-1234 (triage)` or `Current Task: FN-1234 (not active — done)`) so parked-column planning ownership is not misread as in-progress execution drift.
@@ -1353,6 +1353,9 @@ Limits are controlled by project settings (`maxSpawnedAgentsPerParent`, `maxSpaw
   - on-demand runs
 - Assignment triggers skipped because a heartbeat run is already active are deferred and re-fired from `HeartbeatMonitor.onRunCompleted`, preserving the existing completion recovery path while avoiding timer-dependent stalls.
 - FN-7645: `HeartbeatTriggerScheduler.auditTimerRegistrations` (60s cadence) repairs both MISSING timer registrations and "zombie" ones — a timer map entry that stays present after its underlying `setInterval` silently stops firing. When a tickable, heartbeat-managed agent's `lastHeartbeatAt` exceeds the repair-stale threshold (`heartbeatIntervalMs * heartbeatRepairStaleMultiplier`, default 2x) even though a timer entry already exists, the audit clears and re-registers it (phase-aligned via `computeInitialDelayMs`), logging `reason=zombie-timer-rearmed`. This closes the gap where long-interval (~1h) agents could silently drift stale for hours because their sparse cadence meant a single lost tick was never re-armed by the previous missing-registration-only repair; short-interval agents were unaffected because their frequent ticks self-heal within minutes. All existing guards are preserved: pause suppression (`globalPause`/`enginePaused`) still gates dispatch in `onTimerTick`, FN-4119 stale active-run reaping still runs first for agents with a live run, ephemeral/task-worker agents stay excluded via `isTimerEligibleAgent`, and `registrationEpochs` staleness protection is untouched.
+- FN-7718: CLI-driven `fn agent stop`/`start` mutate the agent row from a SEPARATE process, so the in-process `agent:updated` listener never fires for those transitions — the 60s audit is the ONLY cross-process reconciliation path. The audit now invalidates a stopped/non-eligible agent's lingering timer entry (state made non-tickable, `runtimeConfig.enabled === false`, or ephemeral/`!isHeartbeatManaged`) instead of bare-`continue`ing past it, so the entry never survives to become an orphaned/"zombie" registration. `syncTimerForAgent` mirrors this for the in-process start seam: an eligible agent whose present timer entry is already stale beyond the same repair threshold is force-cleared and re-armed rather than left in place by the "already ticking" no-op. Net effect: a `stop`/`start` cycle durably clears the zombie-timer condition in one audit cycle instead of deferring repair to the FN-7645 stale-repair path minutes later.
+- FN-7723 (follow-up from FN-7718): `AgentStore` (`packages/core/src/agent-store.ts`) now supports an opt-in cross-process change-detection fast-path over the FN-7645/FN-7718 audit backstop — `startWatching()`/`stopWatching()`/`checkForChanges()`, modeled directly on `TaskStore`'s `fs.watch`+poll pattern (`packages/core/src/store.ts`): an `fs.watch` on the project's `.fusion` dir as a fail-soft fast-path nudge, plus an always-on poll fallback (default 2s) gated by `db.getLastModified()` so an unchanged DB costs one cheap `__meta` read. On a detected change it diffs current agent rows against a last-seen per-instance snapshot (comparing `state` explicitly, not just `updatedAt`, since two rapid writes can land in the same ISO-millisecond and mask a genuine transition) and re-emits the EXISTING `agent:updated`/`agent:stateChanged` events — no new event names, so `HeartbeatTriggerScheduler.watchAgentLifecycle`'s current listener reacts unchanged, funneling through the same `syncTimerForAgent` seam (including FN-7718's stale-present-entry force-re-arm). Only the long-lived engine `AgentStore` instance opts in (started/stopped alongside `HeartbeatTriggerScheduler` in `packages/engine/src/runtimes/in-process-runtime.ts`); the CLI's short-lived `AgentStore` (`packages/cli/src/commands/agent.ts`) and per-request dashboard stores never call `startWatching()`. The 60s `auditTimerRegistrations` sweep is UNCHANGED and remains the durable backstop — this is a purely additive latency improvement, not a replacement: a `fn agent stop`/`start` is now typically observed within one poll interval (~2s) instead of up to 60s.
+- FN-7726 (follow-up from FN-7723): the mechanical fs.watch+poll lifecycle `TaskStore.watch()` and `AgentStore.startWatching()` each hand-rolled (fail-soft `fs.watch` setup with its two canonical warn strings, the `setInterval` poll fallback, and idempotent teardown) is now a single shared `FsWatchPollController` (`packages/core/src/fs-watch-poll-controller.ts`). The controller owns ONLY that mechanism — `start({dir, recursive?, pollIntervalMs, onPoll, log, errorContext?})`/`stop()`/`isWatching()`/`watcher` (a live-handle getter kept for test seams). It does NOT own diff/emit logic or gating: `getLastModified()`-vs-`lastKnownModified` gating and the `pollingInProgress` re-entrancy guard remain private fields on each store, evaluated inside each store's own `checkForChanges()` (the function passed to the controller as `onPoll`) exactly as before extraction — a deliberate scoping decision (see FN-7726's task `plan` document) to avoid coupling the shared controller to each store's very different diff bodies (TaskStore's delete/archive/artifact-cursor diff vs. AgentStore's snapshot state compare). `TaskStore` and `AgentStore` each hold a private `watchPoll: FsWatchPollController` instance and pass their own logger (`storeLog`/`agentStoreLog`) so the `[task-store]`-prefixed and agent-prefixed fail-soft warn strings are unchanged. Public method names/signatures (`watch()`/`stopWatching()` on `TaskStore`; `startWatching()`/`stopWatching()`/`isWatching()`/`checkForChanges()` on `AgentStore`) and all existing events/latencies/gating are unchanged — this is a behavior-preserving internal refactor, not a new mechanism.
 
 ### Custom instructions
 `packages/engine/src/agent-instructions.ts` resolves per-agent instruction text/path with path-traversal and extension validation.
@@ -1382,6 +1385,37 @@ This layer is **records-only**: no lifecycle mutation, retry, merge, notificatio
 call happens here, and it emits no run-audit events or dashboard UI. Steering/recovery, confirmation
 gates, human-control safeguards, and dashboard/UI/run-audit surfaces are deferred to FN-7512 through
 FN-7520; this module is the seam those subtasks read observations from.
+
+#### Executor-stage stall detection (FN-7743)
+
+/*
+FNXC:PlannerOversight 2026-07-09-00:00:
+FN-7743 requirement: an ordinary in-progress task (FN-7732) sat stuck for hours with no recovery action
+because `deriveSignalAndSources`'s `case "executor"` had NO staleness check — a non-paused in-progress
+task always reported `signal: "progressing"` regardless of how long it had been idle, so
+`decidePlannerRecovery` always returned `action: "none"`.
+*/
+
+The executor stage now detects a stalled/idle non-paused `in-progress` task and reports `signal: "stuck"`
+instead of always `"progressing"`. `PlannerOverseerMonitor#observeTask` accepts an optional
+`{ now?: () => number; executorStuckAfterMs?: number }` (both default: `Date.now` and the declared
+`plannerOverseerExecutorStuckAfterMs` workflow-setting default) and threads them into the still-pure,
+still-never-reads-settings `deriveSignalAndSources`. The staleness input is `task.columnMovedAt ??
+task.updatedAt` (mirroring the existing "age is measured from columnMovedAt when present, otherwise
+updatedAt" convention already used by `stalePausedReviewThresholdMs`/`stalePausedTodoThresholdMs`) — the
+best available store-backed proxy for "last execution activity" at this poll seam, since the live
+in-session `StuckTaskDetector` heartbeat state (`packages/engine/src/stuck-task-detector.ts`) is
+in-memory-only and unavailable here. A missing or unparseable timestamp degrades to `"progressing"`
+(fail-safe — never fabricate a stall). The `stuck` reason buckets inactivity to whole hours so the FN-7577
+`stage|signal|reason` feed dedup stays effective (it must never embed an ever-changing millisecond value).
+
+`ProjectEngine.pollPlannerOverseer` resolves `plannerOverseerExecutorStuckAfterMs` from the task's
+already-fetched effective workflow settings (`resolveExecutorStuckAfterMs`, fail-safe default 2 hours) once
+per task per poll cycle — the same `workflowEffective` fetch already used for `plannerOversightLevel` — and
+passes it into `observeTask`. `decidePlannerRecovery` already mapped executor `stuck` → `inject_guidance`
+(no change needed there); the human-control withhold guard in `evaluateOverseerHumanControl` still runs
+BEFORE any recovery decision, so a stuck-but-user-paused/approval-blocked/autoMerge-off task is still fully
+withheld.
 
 ### Planner overseer bounded autonomous recovery (FN-7512)
 
@@ -1510,8 +1544,14 @@ other rule (level gate, attempt bound, exhaustion) is unchanged.
   transitions.
 
 `ProjectEngine` wires the concrete handlers in `buildPlannerRecoveryHandlers`: `requestConfirmation`
-posts a `[planner-oversight] confirmation required (...)` steering comment (reusing the same
-`addSteeringComment` channel as bounded recovery, so a human sees it). `executeMergePrAction` branches
+posts a `[planner-oversight] merge checkpoint (...)` steering comment (reusing the same
+`addSteeringComment` channel as bounded recovery, so a human sees it). FN-7692: the wrapper prefix is
+deliberately neutral ("checkpoint", not "confirmation required") because the trailing `reason` string
+accurately states whether the merge/PR will advance automatically under the active auto-merge policy
+(advisory) or genuinely awaits a human approval (blocking) — `decidePlannerRecovery`'s additive
+`autoMergeWillProceed` input, threaded from the existing `allowsAutoMergeProcessing` predicate, selects
+the accurate wording; this is messaging-only and does not change `action`/`requiresConfirmation`/
+`sideEffectClass`. `executeMergePrAction` branches
 on `request.proposedAction` (falling back to `request.watchedStage` defensively) rather than treating
 every approved `"merge_pr"` request identically: ONLY `"advance_merge"` (the `merger` stage) reuses the
 EXISTING `store.mergeTask(taskId)` merge mechanism; `"advance_pull_request"` (the `pull-request` stage)
@@ -1531,20 +1571,27 @@ are implemented elsewhere.
 FN-7514 supplies the comprehensive human-control safeguard the FN-7512/FN-7513 layers deferred: the
 overseer must be fully inert — no steering, retry, targeted-fix, or FN-7513 confirmation-required action
 (merge/PR progression, destructive/external-service side effect) may fire, and no pending confirmation
-may even be recorded — whenever a task is (a) user-paused, or (b) ineligible for auto-merge processing
-per the FN-5147 `autoMerge:false` / PR-based human-review terminal contract.
+may even be recorded — whenever a task is (a) user-paused, (b) blocked on a pending human approval
+decision (FN-7736), or (c) ineligible for auto-merge processing per the FN-5147 `autoMerge:false` /
+PR-based human-review terminal contract.
 
 `packages/engine/src/overseer-human-control-policy.ts` exports the pure predicate
 `evaluateOverseerHumanControl(task, settings)` (no I/O, mirrors the `recovery-policy.ts` style), returning
-`{ withhold: boolean; reason?: "user-paused" | "auto-merge-off-human-review" }`. It reuses
-`allowsAutoMergeProcessing` from `@fusion/core` VERBATIM for the auto-merge-off half — never re-derives
-the predicate inline. For the pause half, it distinguishes:
+`{ withhold: boolean; reason?: "user-paused" | "approval-blocked" | "auto-merge-off-human-review" }`. It
+reuses `allowsAutoMergeProcessing` from `@fusion/core` VERBATIM for the auto-merge-off half, and
+`isTaskBlockedOnApproval` from `@fusion/core` VERBATIM for the approval-hold half (checked FIRST, ahead of
+the user-pause/auto-merge-off checks — see the approval-hold contract below) — never re-derives either
+predicate inline. For the pause half, it distinguishes:
 
 - Explicit user pause: `task.userPaused === true`, OR `task.paused === true` with NO `task.pausedReason`
   (the `fn_task_pause` tool / `TaskStore.pauseTask` never stamps a `pausedReason`).
 - Engine/self-healing park (NOT user pause): `task.paused === true` WITH a `pausedReason` (every
   self-healing park path — branch-conflict-unrecoverable, token_budget_exceeded,
   in-review-stall-deadlock, worktrunk_operation_failed, etc. — always stamps one).
+- Approval hold (also NOT user pause, checked before the user-pause branch above so it is never
+  shadowed): `task.paused === true` WITH `task.pausedReason === "awaiting-approval"` (the canonical
+  `AWAITING_APPROVAL_PAUSE_REASON`), OR `task.status === "awaiting-approval"`. See the approval-hold
+  contract section below for the full rationale.
 
 `PlannerRecoveryController.tick()` (`planner-recovery-controller.ts`) consults this guard FIRST — before
 the snapshot lookup, before `decidePlannerRecovery`, before FN-7513's confirmation classification. When
@@ -1564,6 +1611,53 @@ same settings self-healing already gates lifecycle mutation on.
 
 **Downstream ownership (not this layer):** the dashboard UI/badges surfacing withheld state (FN-7515+),
 a persisted intervention timeline (FN-7519), and richer run-audit/activity presentation (FN-7520).
+
+### Approval-hold contract for recovery and oversight (FN-7736)
+
+A task can be blocked awaiting a human approval decision via two distinct mechanisms, and every
+automated recovery (self-healing) and oversight (planner overseer) path must refuse to rebound, requeue,
+resume, re-plan, or otherwise advance a task while either hold is active:
+
+1. **Triage plan-approval gate** — parks the task spec at `status: "awaiting-approval"`. Already a member
+   of `HARD_BLOCKING_TASK_STATUSES` (`packages/core/src/task-merge.ts`) and preserved by
+   `GHOST_REVIEW_PRESERVED_STATUSES` in `self-healing.ts`; `POST /api/tasks/:id/approve-plan` is the only
+   route that clears it.
+2. **Runtime tool-approval gate** — a gated tool call parks a RUNNING task via `pauseForApproval`
+   (`executor.ts` and `agent-heartbeat.ts`), which calls `store.pauseTask(taskId, true, ..., {
+   pausedByAgentId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON })`. Before FN-7736 this call stamped
+   only `paused: true` with NO durable `pausedReason`, so recovery/oversight code keying on
+   `pausedReason` could not recognize the hold, and self-healing's `autoReboundPausedScopeDecay` could
+   rebound the held task back to `todo` (defeating the approval gate) once a follower task's scope-decay
+   threshold elapsed.
+
+`packages/core/src/task-merge.ts` exports the canonical `AWAITING_APPROVAL_PAUSE_REASON =
+"awaiting-approval"` constant and the shared pure predicate `isTaskBlockedOnApproval(task)`, which returns
+`true` for EITHER hold shape (`task.paused === true && task.pausedReason ===
+AWAITING_APPROVAL_PAUSE_REASON`, or `task.status === "awaiting-approval"`). Both are re-exported via
+`index.ts`/`index.gate.ts` for engine consumption. Consulted at:
+
+- **`SelfHealingManager.PAUSED_SCOPE_DECAY_EXCLUDED_REASONS`** (`self-healing.ts`) — includes
+  `AWAITING_APPROVAL_PAUSE_REASON` alongside `branch-conflict-unrecoverable`, `worktrunk_operation_failed`,
+  and `token_budget_exceeded`, so `autoReboundPausedScopeDecay` skips an approval-held holder task even
+  when a follower is present and the age threshold has elapsed.
+- **`classifyPausedAbortWorkflowRecovery`** (`self-healing.ts`) — already skips any `task.paused === true`
+  row before this task; the approval-hold shape is covered by that generic guard (regression-tested
+  explicitly rather than relying on the incidental coverage).
+- **`evaluateOverseerHumanControl`** (`overseer-human-control-policy.ts`) — checks `isTaskBlockedOnApproval`
+  FIRST, ahead of the accidental "paused with no reason" user-pause heuristic, returning
+  `{ withhold: true, reason: "approval-blocked" }`. This ordering is load-bearing: once FN-7736 started
+  stamping a durable `pausedReason` on the tool-approval hold, the old no-reason heuristic would stop
+  matching it — the explicit `approval-blocked` branch prevents that from silently flipping the overseer
+  from withhold to act.
+- **Every other self-healing sweep** that gates on generic `task.paused === true` (or `task.paused ||
+  task.userPaused`) before taking a lifecycle-advancing action already skips an approval-held task
+  regardless of `pausedReason`, and needed no change.
+
+`TaskStore.pauseTask(id, paused, runContext?, agentOptions?)` accepts an optional `agentOptions.pausedReason`
+seam (widened for FN-7736) so the durable reason lands atomically with the pause write, avoiding a second
+racy `updateTask` call; unpausing (`pauseTask(id, false)`, used by the approval-resolution route) clears
+the caller-supplied `pausedReason` the same way it already clears `pausedByAgentId`/`userPaused`, so the
+hold is not sticky once the operator decides.
 
 ### Planner overseer runtime-state exposure (FN-7531)
 
@@ -2073,7 +2167,7 @@ This section preserves the detailed lifecycle/self-healing contracts that were f
 - **Worktrunk-managed lifecycles**: when `worktrunk.enabled`, self-healing defers prune/idle/worktree-cap sweeps to the worktrunk backend; branch-level stale/ conflict reclaim stays native. Orphan `fusion/*` branches are operator-managed via standard git tooling (no auto-rescue task filing).
 - **Post-finalize verification no-op (FN-4944)**: when auto-merge receives a delayed `VerificationError` after a task is already `done` with `mergeDetails.mergeConfirmed === true` (already-on-main fast-path), it must log one `[verification] ... no action` diagnostic and must not bounce the task back to `in-progress` / `merging-fix`. Defense-in-depth now re-checks the done+mergeConfirmed condition immediately before each verification-failure status write site, and emits `task:post-finalize-verification-no-op` database audit events with failure metadata for forensics.
 - **Transient auto-merge retry classification (FN-5697)**: non-conflict auto-merge errors now run through `isTransientError(...)` before terminal parking. Transient provider/network failures (for example `This operation was aborted`, `socket hang up`, and `server_error` payloads) are retried with bounded exponential backoff (`5s/10s/20s`) and `status=null` for both direct and pull-request merge strategies; once `MAX_AUTO_MERGE_TRANSIENT_RETRIES` is exhausted, tasks are parked `in-review/failed` with explicit transient-exhaustion logs.
-- **Merge-seam abort provenance (FN-6568/FN-6735)**: workflow graph merge-node failures must not be classified as pause/resume aborts merely because the merge seam hard-canceled an in-flight session. `TaskExecutor` tracks paused-abort provenance separately (`global-pause`, `merge-seam`, `hard-cancel`); genuine user/global pauses still preserve FN-6478/FN-5147 parking, while non-paused merge-seam graph failures (`merge`, `requestMerge`, built-in merge-region node ids, `merge-manual-hold`, and `merge-retry`) route back into the bounded auto-merge retry path instead of being parked `status:"failed"` with `mergeRetries=NULL`. Benign pause/resume aborts at these seams are also retryable when the task is already `in-review`, has no durable failure/status, has not confirmed a merge, remains auto-merge eligible (or is a shared-branch local integration), and has merge retries remaining. Conflict/contamination/foreign-work/retry-exhaustion values, `autoMerge:false` human-gated review tasks, pre-existing failures, global/user pauses, and post-confirmation partial landings remain terminal operator-action evidence.
+- **Merge-seam abort provenance (FN-6568/FN-6735/FN-7749)**: workflow graph merge-node failures must not be classified as pause/resume aborts merely because the merge seam hard-canceled an in-flight session. `TaskExecutor` tracks paused-abort provenance separately (`global-pause`, `merge-seam`, `hard-cancel`); genuine user/global pauses still preserve FN-6478/FN-5147 parking, while non-paused merge-seam graph failures (`merge`, `requestMerge`, built-in merge-region node ids, `merge-manual-hold`, and `merge-retry`) route back into the bounded auto-merge retry path instead of being parked `status:"failed"` with `mergeRetries=NULL`. Benign pause/resume aborts at these seams are retryable when the task is already `in-review`, has no durable failure/status, has not confirmed a merge, remains auto-merge eligible (or is a shared-branch local integration), and has merge retries remaining. When auto-merge is off (`settings.autoMerge:false` or an explicit task-level `autoMerge:false`), a benign hard-cancel at a non-terminal merge-region/manual-hold node is instead preserved cleanly in `in-review` for human Merge & Close; stale pause-abort status/error of this exact shape is cleared in place and never requeued. Conflict/contamination/foreign-work/retry-exhaustion values, pre-existing failures, global/user pauses, shared-branch member integrations, and post-confirmation partial landings retain their existing terminal/retry/finalize behavior.
 - **Worktree pool exclusivity (FN-4954)**: `WorktreePool.acquire(taskId)` / `release(path, taskId?)` track a `leased` map so every pooled path is either idle or leased, never both. Cross-task double-lease detection throws `PoolDoubleLeaseError` and emits `worktree:pool-double-lease-detected`; merger Step 8 now detaches HEAD and clears `task.worktree` / `task.branch` before releasing paths back to the pool.
 - **Stale registration recovery (FN-5056)**: `NativeWorktreeBackend.create` and `executor.tryCreateWorktree` detect `missing but already registered worktree` failures, run `git worktree prune` (plus `remove --force` / `add -f` fallbacks) before retrying, and emit `worktree:stale-registration-{detected,recovered,recovery-failed}` audit events.
 - **Raw worktree deletion must be paired with prune (FN-5058)**: any direct filesystem deletion of a worktree directory (`rm -rf` / `rmSync`) must be followed by best-effort `git worktree prune` via `pruneWorktreeAdminEntries` so `.git/worktrees/*` admin entries are not stranded in a missing-but-registered state (FN-5056 class).
@@ -2096,6 +2190,7 @@ This section preserves the detailed lifecycle/self-healing contracts that were f
 - **Landed-files attribution (FN-5103)**: Rebase-strategy `mergeDetails.landedFiles` / `filesChanged` / `insertions` / `deletions` are captured from task-attributable commits only via `filterFilesToOwnTaskCommits` (subject-prefix + trailer + bracket-prefix evidence), tagged `landedFilesAttributionRestricted: true`. Zero own commits → `landedFiles: []` and `noOpVerifiedShortCircuit: true`. FN-5304 guard: when `<rebaseBaseSha>..HEAD` reports zero own commits, merger must also validate the source `fusion/<id>` tip; if that source tip still has attributable own commits relative to `rebaseBaseSha`, throw `SilentNoOpAttributionMismatchError`, refuse writing `mergeConfirmed: true`, park the task in `in-review` with `status: "failed"`, and emit `merge:no-op-attribution-mismatch`. If source ref is unavailable, skip with diagnostic + `merge:no-op-attribution-mismatch-skipped` (`reason: "source-ref-unavailable"`). Attribution-helper failures fall back to the unrestricted `rebaseBaseSha..sha` walk and set `landedFilesCaptureFallback: 'attribution-failed'`. Self-healing `recoverDoneTaskMergeMetadata` skips reconcile when `landedFilesAttributionRestricted` or `noOpVerifiedShortCircuit` is set so the narrower set is not overwritten with the full range. Squash-strategy capture is unchanged.
 - **Soft-delete scheduler invalidation (FN-5137)**: `task:deleted` events must invalidate `AutoClaimSnapshotManager` and clear scheduler bookkeeping (`pausedTaskIds`, `failedTaskIds`, `wasNodeDispatchValidationBlocked`, `wasNodeBlocked`); `executor.execute()` / `resumeOrphaned()` / `resumeTaskForAgent()` refuse any task with `deletedAt` set.
 - **Soft-delete in-flight abort (FN-5142)**: `task:deleted` must immediately abort/dispose active executor work (`activeSessions`, `activeStepExecutors`, `activeWorkflowStepSessions`, reviewer subagents), interrupt active merge state (`mergeAbortController`, `activeMergeSession`, `activeMergeTaskId`, `mergeActive`, `mergeQueue`, `pausedReviewTaskIds`), and abort triage specify/subagent sessions for that id. Handlers are per-task and idempotent.
+- **Archive releases active-session locks (FN-7717)**: `task:moved` with `to === "archived"` (from ANY column, including in-progress via a direct single-hop `fn_task_archive`, and triage/planning where Plan Review and other workflow-step sessions run) now disposes in-flight session surfaces via `awaitAbortInFlightTaskWork` and sweeps any remaining `activeSessionRegistry` paths for the task, so a leaked lock can never survive archive and block a successor task's `registerPath` on the same session path. The `to === "archived"` check is ordered BEFORE the `from === "in-progress"` branch so a direct in-progress→archived move gets the same full cleanup instead of falling into the narrower in-progress-only branch. `to === "done"`/`"in-review"` are deliberately excluded — those columns legitimately hold `ai-merge`/`workspace-repo-land` merge leases.
 - **Soft-delete audit + column reconcile (FN-5175)**: `TaskStore.deleteTask` records a `runAuditEvents` row (`mutationType: "task:deleted"`, `domain: "database"`) inside the same transaction that sets `deletedAt`, and sets `"column" = 'archived'` on the row. Callers without a heartbeat run context (`fn task delete`, pi extension, dashboard delete route) pass an `auditContext` with `agentId: "system"` and a synthetic `runId`. The watcher cross-instance emit path does NOT re-record the audit event. The row stays in `tasks` (not `archivedTasks`); `archiveTask` is unchanged.
 - **Soft-delete resurrection guard (FN-5208)**: `TaskStore.readTaskJson()` must never fall back to `.fusion/tasks/<id>/task.json` when the DB row exists with `deletedAt` set — it throws `TaskDeletedError`. `atomicCreateTaskJson` / `atomicWriteTaskJson` / `atomicWriteTaskJsonWithAudit` refuse to upsert a task whose row is currently soft-deleted (unless the in-memory task carries `deletedAt` itself, for soft-delete maintenance paths), emit a `[soft-delete-resurrection-blocked]` log line, and record a `task:resurrection-blocked` run-audit event. Stale in-flight planner/triage writes for a soft-deleted ID surface `TaskDeletedError` and abort cleanly without emitting `task:created`.
 - **Exhausted in-review visibility surfaces (FN-5513/FN-6569)**: retry-exhausted merge failures (`column='in-review'`, `status='failed'`, `mergeRetries >= maxAutoMergeRetries`, default `3`) can remain soft-deleted for lifecycle safety, but are now intentionally discoverable through opt-in read paths: `TaskStore.listExhaustedInReviewTasks({ includeDeleted })`, `GET /api/tasks/exhausted-in-review`, `GET /api/tasks/:id?includeDeleted=true`, CLI `fn_task_show` soft-delete fallback marker, CLI `fn_task_list({ includeDeleted: true })`, and the dashboard ReliabilityView "Exhausted in-review (hidden blockers)" panel. This complements FN-5488/FN-5496 downstream blocker healing by surfacing the upstream blocker without mutating lifecycle state.

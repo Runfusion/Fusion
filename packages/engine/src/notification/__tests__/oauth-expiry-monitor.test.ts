@@ -68,6 +68,84 @@ describe("OAuthExpiryMonitor", () => {
     monitor.stop();
   });
 
+  /*
+  FNXC:ClaudeOAuth 2026-07-08-20:55:
+  Regression: getOAuthProviders() only yields base `anthropic`, and get("anthropic") can
+  return a STALE legacy row (e.g. ~/.pi/agent/auth.json) while the fresh, actually-used
+  token lives under `anthropic-subscription`. The monitor must evaluate the freshest of
+  the two aliased ids and NOT fire a false "expired" alert when the subscription token is
+  live. Reproduces the user-reported false ntfy while the token had refreshed successfully.
+  */
+  it("does not fire for a stale legacy anthropic row when anthropic-subscription is fresh", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const dispatch = vi.fn(async () => undefined);
+    const authStorage: AuthStorageLike = {
+      reload: vi.fn(),
+      getOAuthProviders: () => [{ id: "anthropic", name: "Anthropic" }],
+      get: (providerId: string) => {
+        if (providerId === "anthropic") {
+          return { type: "oauth", expires: now - 60 * 24 * 60 * 60 * 1000 }; // stale (~60d ago)
+        }
+        if (providerId === "anthropic-subscription") {
+          return { type: "oauth", expires: now + 5 * 60 * 60 * 1000 }; // fresh (+5h)
+        }
+        return undefined;
+      },
+    };
+
+    const monitor = new OAuthExpiryMonitor({
+      authStorage,
+      notificationService: { dispatch } as any,
+      intervalMs: 100,
+      clock: () => now,
+      alertState: new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now }),
+    });
+
+    await monitor.start();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(dispatch).not.toHaveBeenCalled();
+    monitor.stop();
+  });
+
+  it("still fires for anthropic when both the legacy row and the subscription alias are expired", async () => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const dispatch = vi.fn(async () => undefined);
+    const authStorage: AuthStorageLike = {
+      reload: vi.fn(),
+      getOAuthProviders: () => [{ id: "anthropic", name: "Anthropic" }],
+      get: (providerId: string) => {
+        if (providerId === "anthropic") {
+          return { type: "oauth", expires: now - 60 * 24 * 60 * 60 * 1000 };
+        }
+        if (providerId === "anthropic-subscription") {
+          return { type: "oauth", expires: now - 1_000 }; // also expired
+        }
+        return undefined;
+      },
+    };
+
+    const monitor = new OAuthExpiryMonitor({
+      authStorage,
+      notificationService: { dispatch } as any,
+      intervalMs: 100,
+      clock: () => now,
+      alertState: new OAuthAlertStateStore({ statePath: createStatePath(), clock: () => now }),
+    });
+
+    await monitor.start();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith(
+      "oauth-token-expired",
+      expect.objectContaining({ metadata: expect.objectContaining({ providerId: "anthropic" }) }),
+    );
+    monitor.stop();
+  });
+
   it("does not fire for non-expired/non-oauth credentials", async () => {
     vi.useFakeTimers();
     const dispatch = vi.fn(async () => undefined);

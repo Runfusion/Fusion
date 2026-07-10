@@ -772,11 +772,12 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
     const lines = cleanOutput.split("\n").map((l) => l.trim()).filter(Boolean);
 
     // Find sections by looking for known headers (use LAST occurrence since PTY output has redraws)
-    const sections: { label: string; windowMs: number }[] = [
+    const sections: { label: string; windowMs: number; displayLabel?: string }[] = [
       { label: "Current session", windowMs: 5 * 60 * 60 * 1000 },
       { label: "Current week (all models)", windowMs: 7 * 24 * 60 * 60 * 1000 },
       { label: "Current week (Sonnet", windowMs: 7 * 24 * 60 * 60 * 1000 },
       { label: "Current week (Opus", windowMs: 7 * 24 * 60 * 60 * 1000 },
+      { label: "Current week (Fable", windowMs: 7 * 24 * 60 * 60 * 1000, displayLabel: "Weekly (Fable)" },
     ];
 
     usage.status = "ok";
@@ -806,7 +807,7 @@ async function fetchClaudeUsageViaCli(): Promise<ProviderUsage> {
 
       if (percentUsed !== null) {
         const window: UsageWindow = {
-          label: section.label,
+          label: section.displayLabel ?? section.label,
           percentUsed: Math.min(100, Math.max(0, percentUsed)),
           percentLeft: Math.min(100, Math.max(0, 100 - percentUsed)),
           resetText,
@@ -1117,11 +1118,21 @@ async function fetchClaudeUsage(authStorage?: AuthStorageLike): Promise<Provider
     const sevenDay = parseWindow("seven_day", "Weekly", SEVEN_DAYS_MS);
     const sonnet = parseWindow("seven_day_sonnet", "Weekly (Sonnet)", SEVEN_DAYS_MS);
     const opus = parseWindow("seven_day_opus", "Weekly (Opus)", SEVEN_DAYS_MS);
+    /*
+    FNXC:UsageIndicator 2026-07-10-00:00:
+    Claude Fable 5 is a first-class Anthropic model, so the Usage dropdown must mirror the Sonnet/Opus per-model weekly windows when Anthropic returns a Fable usage bucket. `seven_day_fable` follows the existing API naming convention but remains an assumed primary key until a live OAuth usage payload confirms it; tolerant fallbacks keep the operator-visible window working if Anthropic ships a nearby field name.
+    */
+    const fable = parseWindow("seven_day_fable", "Weekly (Fable)", SEVEN_DAYS_MS, [
+      "seven_day_claude_fable",
+      "fable",
+      "seven_day_fable_5",
+    ]);
 
     if (fiveHour) usage.windows.push(fiveHour);
     if (sevenDay) usage.windows.push(sevenDay);
     if (sonnet) usage.windows.push(sonnet);
     if (opus) usage.windows.push(opus);
+    if (fable) usage.windows.push(fable);
   } catch (e: unknown) {
     usage.status = "error";
     usage.error = e instanceof Error ? e.message : "Failed to fetch Claude usage";

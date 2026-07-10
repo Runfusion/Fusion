@@ -155,6 +155,48 @@ describe("parseWorkflowIr — v2 columns & placement", () => {
     expect(() => parseWorkflowIr(ir)).toThrow(/duplicate column id 'dup'/);
   });
 
+  it("validates optional node thinkingLevel values", () => {
+    const valid = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        { id: "a", kind: "prompt", column: "only", config: { thinkingLevel: "high" } },
+        { id: "review", kind: "step-review", column: "only", config: { type: "code", thinkingLevel: "low" } },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [
+        { from: "start", to: "a" },
+        { from: "a", to: "review" },
+        { from: "review", to: "end", condition: "outcome:approve" },
+        { from: "review", to: "end", condition: "outcome:revise" },
+      ],
+    );
+    expect(() => parseWorkflowIr(valid)).not.toThrow();
+
+    const absent = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        { id: "a", kind: "prompt", column: "only" },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [{ from: "start", to: "a" }, { from: "a", to: "end" }],
+    );
+    expect(() => parseWorkflowIr(absent)).not.toThrow();
+
+    const invalid = v2(
+      [{ id: "only", name: "Only", traits: [] }],
+      [
+        { id: "start", kind: "start", column: "only" },
+        { id: "a", kind: "prompt", column: "only", config: { thinkingLevel: "ultra" } },
+        { id: "end", kind: "end", column: "only" },
+      ],
+      [{ from: "start", to: "a" }, { from: "a", to: "end" }],
+    );
+    expect(() => parseWorkflowIr(invalid)).toThrow(WorkflowIrError);
+    expect(() => parseWorkflowIr(invalid)).toThrow(/Workflow node 'a' thinkingLevel must be one of/);
+  });
+
   it("rejects duplicate top-level node ids before Map de-duplication can mask them", () => {
     const ir = v2(
       [{ id: "only", name: "Only", traits: [] }],

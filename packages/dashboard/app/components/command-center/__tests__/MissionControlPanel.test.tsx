@@ -6,6 +6,8 @@ import type { LiveSnapshot } from "@fusion/core";
 const apiMock = vi.fn();
 vi.mock("../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
 }));
 
 // Mock the SSE bus, capturing the subscription so tests can fire events and
@@ -94,6 +96,20 @@ describe("MissionControlPanel — KTD5 push + poll convergence", () => {
 
     expect(screen.queryByTestId("mission-control-session-s1")).toBeNull();
     expect(screen.getByTestId("mission-control-idle")).toBeTruthy();
+  });
+
+  it("appends projectId to the live snapshot request when supplied, and omits it when not", async () => {
+    apiMock.mockResolvedValue(snapshot());
+    const { unmount } = render(<MissionControlPanel />);
+    await flush();
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe("/command-center/live");
+    unmount();
+
+    apiMock.mockClear();
+    apiMock.mockResolvedValue(snapshot());
+    render(<MissionControlPanel projectId="proj-abc" />);
+    await flush();
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe("/command-center/live?projectId=proj-abc");
   });
 
   it("does NOT schedule a poll interval when idle (zero active sessions)", async () => {

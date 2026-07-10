@@ -123,6 +123,8 @@ describe("reliability interactions: paused scope decay", () => {
     { name: "excluded paused reason", holder: { paused: true, pausedReason: "branch-conflict-unrecoverable" as const } },
     { name: "not paused", holder: { paused: false } },
     { name: "age below threshold", holder: { paused: true }, settings: { pausedScopeDecayMs: 60_000 }, ageMs: 500 },
+    // FN-7736: the canonical approval-hold reason must be excluded too.
+    { name: "approval-held (canonical reason)", holder: { paused: true, pausedReason: "awaiting-approval" as const } },
   ])("no-op: $name", async ({ holder, settings, ageMs }) => {
     const now = Date.now();
     const effectiveAgeMs = ageMs ?? 31 * 60_000;
@@ -135,5 +137,47 @@ describe("reliability interactions: paused scope decay", () => {
     const { store } = makeStore([pausedHolder, follower], settings);
     const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getExecutingTaskIds: () => new Set() });
     expect(await manager.autoReboundPausedScopeDecay()).toBe(0);
+  });
+
+  /*
+   * FNXC:ApprovalHold 2026-07-09-00:20:
+   * FN-7736 symptom-verification regression. Reproduces the exact original
+   * failure shape (approval-held in-progress task, no pausedReason, follower
+   * present, decay threshold elapsed) alongside a same-shaped control task
+   * that IS paused but for an unrelated (non-approval) reason, proving the
+   * assertion actually exercises the exclusion mechanism rather than a
+   * vacuously-true "nothing ever reboundeds" check.
+   */
+  it("symptom verification: leaves an approval-held task in place while still rebounding a control paused task", async () => {
+    const now = Date.now();
+    const approvalHeld = makeTask("FN-APPROVAL", {
+      column: "in-progress",
+      paused: true,
+      pausedReason: "awaiting-approval",
+      executionStartedAt: new Date(now - 31 * 60_000).toISOString(),
+      columnMovedAt: new Date(now - 31 * 60_000).toISOString(),
+    });
+    const approvalFollower = makeTask("FN-APPROVAL-FOLLOWER", { column: "todo", blockedBy: "FN-APPROVAL" });
+    const controlPaused = makeTask("FN-CONTROL", {
+      column: "in-progress",
+      paused: true,
+      pausedReason: "some-other-reason",
+      executionStartedAt: new Date(now - 31 * 60_000).toISOString(),
+      columnMovedAt: new Date(now - 31 * 60_000).toISOString(),
+    });
+    const controlFollower = makeTask("FN-CONTROL-FOLLOWER", { column: "todo", blockedBy: "FN-CONTROL" });
+    const { store, byId } = makeStore([approvalHeld, approvalFollower, controlPaused, controlFollower]);
+    const manager = new SelfHealingManager(store, { rootDir: process.cwd(), getExecutingTaskIds: () => new Set() });
+
+    const count = await manager.autoReboundPausedScopeDecay();
+
+    // Only the control task is rebounded -- the approval-held task is untouched.
+    expect(count).toBe(1);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-CONTROL", "todo", expect.anything());
+    expect(store.moveTask).not.toHaveBeenCalledWith("FN-APPROVAL", "todo", expect.anything());
+    expect(byId.get("FN-APPROVAL")?.column).toBe("in-progress");
+    expect(byId.get("FN-APPROVAL")?.paused).toBe(true);
+    expect(byId.get("FN-APPROVAL")?.pausedReason).toBe("awaiting-approval");
+    expect(byId.get("FN-CONTROL")?.column).toBe("todo");
   });
 });

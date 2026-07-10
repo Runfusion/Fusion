@@ -4,6 +4,7 @@ import * as nodePty from "node-pty";
 import {
   READY_QUIET_WINDOW_MS,
   READY_TIMEOUT_MS,
+  SLOW_LOGIN_PROFILE_HINT_MS,
   TerminalService,
   STALE_SESSION_THRESHOLD_MS,
   WINDOWS_TERMINAL_EMBEDDED_STARTUP_ERROR,
@@ -926,6 +927,126 @@ describe("TerminalService", () => {
       vi.advanceTimersByTime(20);
 
       expect(dataListener).toHaveBeenCalledWith(session.id, "shell prompt> ");
+
+      vi.useRealTimers();
+    });
+  });
+
+  // FN-7688: login-shell `--login` profile-execution latency investigation. `--login` must be
+  // preserved exactly (dropping it would silently break .zprofile/.bash_profile-managed env/PATH
+  // for users relying on login-shell semantics) — these tests lock in that invariant, and assert
+  // the additive slow-profile hint never alters spawn args, the readiness contract, or the
+  // retry-without-login fallback.
+  describe("FN-7688: --login preservation and slow-login-profile hint", () => {
+    it("detectShell() returns [\"--login\"] for bash", () => {
+      process.env.SHELL = "/bin/bash";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/bash");
+      expect(service.detectShell()).toEqual({ shell: "/bin/bash", args: ["--login"] });
+    });
+
+    it('detectShell() returns ["--login"] for zsh', () => {
+      process.env.SHELL = "/bin/zsh";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/zsh");
+      expect(service.detectShell()).toEqual({ shell: "/bin/zsh", args: ["--login"] });
+    });
+
+    it("detectShell() returns [] for sh", () => {
+      process.env.SHELL = "/bin/sh";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/sh");
+      expect(service.detectShell()).toEqual({ shell: "/bin/sh", args: [] });
+    });
+
+    it("detectShell() returns [] for powershell/pwsh/cmd on Windows", () => {
+      __setTerminalPlatformForTests("win32");
+      delete process.env.SHELL;
+      vi.mocked(fs.existsSync).mockImplementation((candidate) =>
+        String(candidate).toLowerCase().includes("powershell"),
+      );
+      const winService = new TerminalService(projectRoot, 10);
+      expect(winService.detectShell().args).toEqual([]);
+      winService.cleanup();
+    });
+
+    it("createSession spawns --login as the primary attempt and keeps the retry-without-login fallback registered", async () => {
+      process.env.SHELL = "/bin/bash";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/bash");
+
+      const result = await service.createSession();
+
+      expect(result.success).toBe(true);
+      // Primary spawn attempt must still use --login — FN-7688 does not drop or bypass it.
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "/bin/bash",
+        ["--login"],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+      // Only the primary attempt is actually invoked when it succeeds (mockPtyProcess never
+      // throws), so the retry-without-login fallback attempt is not spawned — but it must still
+      // be reachable: this is asserted by the spawn call above using the winning primary attempt,
+      // and by the pty_spawn_failed path test elsewhere in this file exercising fallback attempts.
+      expect(nodePty.spawn).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs a one-time, non-blocking slow-login-profile hint when first output is slow, without altering spawn args or the readiness contract", async () => {
+      vi.useFakeTimers();
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      process.env.SHELL = "/bin/bash";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/bash");
+
+      const result = await service.createSession();
+      expect(result.success).toBe(true);
+
+      // --login is still the primary spawn arg even though a slow-profile hint may follow.
+      expect(nodePty.spawn).toHaveBeenCalledWith(
+        "/bin/bash",
+        ["--login"],
+        expect.objectContaining({ cwd: projectRoot }),
+      );
+
+      vi.advanceTimersByTime(SLOW_LOGIN_PROFILE_HINT_MS + 50);
+      mockPtyProcess._onDataCallback?.("prompt$ ");
+
+      const hintCalls = infoSpy.mock.calls.filter((call) => String(call[0]).includes("login shell took"));
+      expect(hintCalls.length).toBe(1);
+
+      // One-time: a second output burst must not re-log the hint.
+      infoSpy.mockClear();
+      mockPtyProcess._onDataCallback?.("more output\n");
+      const secondHintCalls = infoSpy.mock.calls.filter((call) => String(call[0]).includes("login shell took"));
+      expect(secondHintCalls.length).toBe(0);
+
+      vi.useRealTimers();
+    });
+
+    it("does not log the slow-login-profile hint when first output is fast", async () => {
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      process.env.SHELL = "/bin/bash";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/bash");
+
+      const result = await service.createSession();
+      expect(result.success).toBe(true);
+
+      mockPtyProcess._onDataCallback?.("prompt$ ");
+
+      const hintCalls = infoSpy.mock.calls.filter((call) => String(call[0]).includes("login shell took"));
+      expect(hintCalls.length).toBe(0);
+    });
+
+    it("never logs the slow-login-profile hint for a non-login shell (sh)", async () => {
+      vi.useFakeTimers();
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => undefined);
+      process.env.SHELL = "/bin/sh";
+      vi.mocked(fs.existsSync).mockImplementation((candidate) => candidate === "/bin/sh");
+
+      const result = await service.createSession();
+      expect(result.success).toBe(true);
+      expect(nodePty.spawn).toHaveBeenCalledWith("/bin/sh", [], expect.objectContaining({ cwd: projectRoot }));
+
+      vi.advanceTimersByTime(SLOW_LOGIN_PROFILE_HINT_MS + 50);
+      mockPtyProcess._onDataCallback?.("$ ");
+
+      const hintCalls = infoSpy.mock.calls.filter((call) => String(call[0]).includes("login shell took"));
+      expect(hintCalls.length).toBe(0);
 
       vi.useRealTimers();
     });

@@ -3484,6 +3484,29 @@ Toast text must contrast its status background across every dashboard theme and 
     max-inline-size: 100%;
   }
 
+  /*
+  FNXC:Terminal 2026-07-08-17:10:
+  FN-7693 (real root cause of the mobile blank terminal — supersedes the FN-7620/FN-7686 remeasure
+  attempts): the universal `* { max-width: 100% }` reset above ALSO matches xterm's hidden character-
+  measurement subtree (`.xterm-helpers` and its `.xterm-char-measure-element`). That subtree's containing
+  block (`.xterm-helpers`) is a 0x0 absolutely-positioned box, so `max-width: 100%` resolves to
+  `max-width: 0` and hard-caps xterm's character-cell measurement at 0. FitAddon.fit() then proposes 0
+  columns/rows and `.xterm-screen` (plus the WebGL renderer canvas) collapses to 0x0 — the shell prompt
+  DOES stream in and IS written into xterm's row DOM, but paints into a zero-size box, so the terminal is
+  blank. This bites ONLY on mobile because the reset is mobile-scoped (this @media block), which is why the
+  terminal renders fine at desktop widths. Exempt xterm's measurement subtree so the cell width measures
+  its true content width. Verified live via mobile emulation: with this exemption
+  `.xterm-char-measure-element` measures ~295px (was 0) and `.xterm-screen` gets a real width (was 0x0),
+  rendering the prompt. Applies to both terminal surfaces (TerminalModal + SessionTerminal) since
+  `.xterm-helpers` is xterm's own class.
+  */
+  .xterm-helpers,
+  .xterm-helpers *,
+  .xterm-char-measure-element {
+    max-width: none !important;
+    max-inline-size: none !important;
+  }
+
   pre,
   code,
   .code-block {

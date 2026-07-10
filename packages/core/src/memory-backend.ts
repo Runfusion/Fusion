@@ -988,9 +988,19 @@ async function searchWithQmd(rootDir: string, options: MemorySearchOptions): Pro
   const command = "qmd";
   const limit = Math.max(1, Math.min(options.limit ?? 5, 20));
   try {
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
+    // FNXC:ProjectMemory 2026-07-08-00:00:
+    // searchWithQmd used to carry its own inline `promisify(execFile)` copy — a
+    // second, un-unref'd executor separate from the hardened default below — to
+    // spawn `qmd collection add` and `qmd search`. Even though the search is
+    // awaited (unlike the fire-and-forget background refresh fixed by FN-7706), a
+    // short-lived caller (e.g. a one-shot CLI memory search) could be held open
+    // for up to the 4s awaited timeout: per the documented nextTick re-ref pitfall
+    // (see getDefaultExecFileAsync's doc comment / .fusion/memory/MEMORY.md),
+    // `promisify(execFile)`'s internal stdout/stderr buffering re-refs the pipe
+    // handles on a later tick, so even a manual `.unref()` wouldn't have stuck.
+    // Reuse the same hardened, spawn-based, synchronously-unref'd executor FN-7706
+    // established for the refresh path instead of carrying a second leaky copy.
+    const execFileAsync = await getDefaultExecFileAsync();
     await ensureQmdProjectMemoryCollection(rootDir, execFileAsync);
     scheduleQmdProjectMemoryRefresh(rootDir);
     const args = buildQmdSearchArgs(rootDir, options);
@@ -1048,10 +1058,127 @@ async function ensureQmdProjectMemoryCollection(
   return collectionName;
 }
 
+/**
+ * FNXC:ProjectMemory 2026-07-08-00:00:
+ * Fire-and-forget background qmd refresh (scheduleQmdProjectMemoryRefresh /
+ * scheduleQmdAgentMemoryRefresh / scheduleQmdInstallAndRefresh) must never hold a
+ * short-lived caller's event loop open. A repro showed 5 Socket + 1 ChildProcess
+ * (`spawnfile: qmd`) handles persisting for the child's full 15-30s runtime, keeping
+ * a short-lived Node process (e.g. `fn agent stop <id>`) alive well after its own
+ * work finished.
+ *
+ * `promisify(execFile)` looks like the obvious fix (its returned promise exposes a
+ * `.child` ChildProcess we can `.unref()`), but it does NOT stick: execFile's
+ * internal stdout/stderr accumulation calls `stream.resume()`, which defers the
+ * actual `readStart()` (and an internal re-ref of the pipe handle) to a later
+ * `process.nextTick` tick — AFTER our synchronous `unref()` call runs — so the
+ * handle silently becomes ref'd again and the process hangs for the child's full
+ * runtime regardless of calling `.unref()`. Verified via `process._getActiveHandles()`
+ * repro: unref immediately after spawn briefly shows zero active handles, yet the
+ * process still doesn't exit until the child does.
+ *
+ * The reliable fix is to bypass `execFile`'s internal buffering entirely and drive a
+ * plain `spawn()` child ourselves: unref the child + its stdio synchronously right
+ * after spawn (nothing internal to execFile re-refs them later), and accumulate
+ * stdout/stderr via our own `data` listeners. This preserves the `{stdout, stderr}`
+ * resolve shape and reject-on-nonzero-exit / reject-on-spawn-error behavior that
+ * callers (e.g. `ensureQmdProjectMemoryCollection`'s "already exists" stderr check)
+ * depend on, so a long-lived caller that stays alive anyway still sees the refresh
+ * resolve/reject normally and complete. This lives only in the DEFAULT real executor;
+ * injected mock `execFileAsync` implementations (used by tests) are untouched.
+ */
+export function unrefQmdChildProcess(childProcessLike: unknown): void {
+  if (!childProcessLike || typeof childProcessLike !== "object") {
+    return;
+  }
+  const child = childProcessLike as {
+    unref?: () => void;
+    stdout?: { unref?: () => void } | null;
+    stderr?: { unref?: () => void } | null;
+    stdin?: { unref?: () => void } | null;
+  };
+  child.unref?.();
+  child.stdout?.unref?.();
+  child.stderr?.unref?.();
+  child.stdin?.unref?.();
+}
+
+interface QmdExecError extends Error {
+  code?: number | null;
+  signal?: NodeJS.Signals | null;
+  stdout?: string;
+  stderr?: string;
+}
+
 async function getDefaultExecFileAsync(): Promise<ExecFileAsync> {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  return promisify(execFile);
+  const { spawn } = await import("node:child_process");
+
+  return (file, args, options) =>
+    new Promise<{ stdout: string; stderr: string }>((resolvePromise, reject) => {
+      const child = spawn(file, args as string[], {
+        cwd: options?.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      // FNXC:ProjectMemory 2026-07-08-00:00: unref synchronously right after spawn —
+      // see the doc comment above this function for why this must NOT go through
+      // promisify(execFile).
+      unrefQmdChildProcess(child);
+
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      let killedForMaxBuffer = false;
+      const maxBuffer = options?.maxBuffer;
+
+      const timeoutHandle = options?.timeout
+        ? setTimeout(() => {
+            child.kill("SIGTERM");
+          }, options.timeout)
+        : undefined;
+      timeoutHandle?.unref?.();
+
+      const checkMaxBuffer = () => {
+        if (maxBuffer && !killedForMaxBuffer && (stdout.length > maxBuffer || stderr.length > maxBuffer)) {
+          killedForMaxBuffer = true;
+          child.kill();
+        }
+      };
+
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+        checkMaxBuffer();
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+        checkMaxBuffer();
+      });
+
+      child.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        reject(err);
+      });
+
+      child.on("close", (code, signal) => {
+        if (settled) return;
+        settled = true;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        if (code === 0) {
+          resolvePromise({ stdout, stderr });
+          return;
+        }
+        const error: QmdExecError = new Error(
+          `Command failed: ${file} ${args.join(" ")}\n${stderr || stdout}`,
+        );
+        error.code = code;
+        error.signal = signal;
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+      });
+    });
 }
 
 export async function refreshQmdProjectMemoryIndex(

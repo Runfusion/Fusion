@@ -226,4 +226,47 @@ pgTest("Command Center remaining analytics aggregators (PostgreSQL backend mode)
     expect(columnCounts["done"]).toBe(2); // FN-WF-1 + FN-GH-2
     expect(columnCounts["in-progress"]).toBe(1); // FN-GH-1
   });
+
+  /*
+   * FNXC:CommandCenter 2026-07-10:
+   * FN-7786 (PG port of the upstream sqlite regression): workflow cost
+   * analytics must price the actually-used token-usage model snapshot
+   * (token_usage_model_provider/id) before the legacy task model columns, so
+   * a task whose model columns are NULL still prices instead of reporting an
+   * unavailable/zero estimated cost.
+   */
+  it("prices token usage from the actually-used model snapshot when task model columns are empty", async () => {
+    const store = h.store();
+    const adminDb = h.adminDb();
+
+    await store.createTaskWithReservedId(
+      { description: "snapshot priced", column: "todo" },
+      { taskId: "FN-SNAP-1", createdAt: IN_RANGE, updatedAt: IN_RANGE, applyDefaultWorkflowSteps: false },
+    );
+    await adminDb.execute(sql`
+      UPDATE project.tasks SET
+        token_usage_input_tokens = 1000000,
+        token_usage_output_tokens = 200000,
+        token_usage_cached_tokens = 0,
+        token_usage_cache_write_tokens = 0,
+        token_usage_total_tokens = 1200000,
+        token_usage_last_used_at = ${IN_RANGE},
+        model_provider = NULL,
+        model_id = NULL,
+        token_usage_model_provider = 'anthropic',
+        token_usage_model_id = 'claude-sonnet-5'
+      WHERE id = 'FN-SNAP-1'
+    `);
+
+    const layer = h.layer();
+    const workflow = await aggregateWorkflowAnalytics(layer, {
+      from: FROM,
+      to: TO,
+      defaultWorkflowId: "builtin:coding",
+    });
+
+    expect(workflow.workflows[0].cost).toMatchObject({ unavailable: false, stale: false });
+    expect(workflow.workflows[0].cost.usd).toBeCloseTo(4, 2);
+    expect(workflow.totals.cost.usd).toBeCloseTo(4, 2);
+  });
 });

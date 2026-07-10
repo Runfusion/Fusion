@@ -19,22 +19,56 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
 }
 
 const mockStoreInit = vi.fn().mockResolvedValue(undefined);
+const mockStoreClose = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("node:fs", () => ({
   existsSync: vi.fn(),
 }));
 
+// FN-7740: `runSettingsImport` now imports `retryOnLock` (which imports
+// `isSqliteLockError` from @fusion/core) and closes its store via
+// `asLocalProjectContext`/`closeProjectStore`. Per project memory, a fully
+// mocked `@fusion/core` module must stub `isSqliteLockError` once any
+// command under test transitively imports `lock-retry.js`, and the mocked
+// `TaskStore` needs a `close()` so the close-before-exit path is exercised.
 vi.mock("@fusion/core", () => ({
   TaskStore: makeConstructibleMock(() => ({
     init: mockStoreInit,
+    close: mockStoreClose,
   })),
   importSettings: vi.fn(),
   readExportFile: vi.fn(),
   validateImportData: vi.fn(),
+  isSqliteLockError: vi.fn(() => false),
 }));
 
+// FN-7740: `runSettingsImport` now resolves the name→path via
+// `resolveProjectPathOnly` (path-only) instead of using `resolveProject`'s
+// `.store` directly, and wraps its own uncached store via
+// `asLocalProjectContext`/`closeProjectStore` before every `process.exit()`.
+// Stub all four so existing assertions on `resolveProject` call args keep
+// working (see project memory on this test-mock pitfall).
 vi.mock("../../project-context.js", () => ({
   resolveProject: vi.fn(),
+  resolveProjectPathOnly: vi.fn(async (projectName?: string) => {
+    const { resolveProject: resolveProjectMock } = await import("../../project-context.js");
+    const context = await (resolveProjectMock as ReturnType<typeof vi.fn>)(projectName);
+    return context.projectPath;
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: "cwd",
+    projectPath: "cwd",
+    projectName: "cwd",
+    isRegistered: false,
+    store,
+  })),
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => Promise<void> } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort
+    }
+  }),
 }));
 
 import { runSettingsImport } from "../settings-import.js";

@@ -577,6 +577,83 @@ fn task logs FN-001 --follow --limit 50 --type tool
 - unavailable-node policy value
 - source provenance line (`Source: <origin>`), including parent task / GitHub issue URL context when present
 
+Every `fn task` subcommand that touches the board retries on lock (FN-7731,
+generalized to all subcommands in FN-7734): if the board database
+(`.fusion/fusion.db`) is momentarily locked by the engine or another agent,
+the command retries with bounded exponential backoff instead of failing
+outright. If the lock hasn't cleared once the retry deadline (default 15s)
+is reached, the command fails fast with a clear, actionable, non-zero-exit
+error naming the task and operation rather than hanging. Override the
+deadline with `FUSION_CLI_LOCK_RETRY_MS` (milliseconds). The resolved
+`TaskStore` is always closed on exit (success, not-found, or lock-exhaustion)
+so the CLI process exits promptly, for both a registered/cached project
+store and the uncached CWD-fallback resolution branch.
+
+Multi-step commands (`fn task create`, `fn task retry`, `fn task delete`,
+`fn task merge`, the GitHub/GitLab bulk-import commands) retry each discrete
+board write independently rather than retrying the whole flow, so a lock
+error on a later step never redoes an already-committed earlier write (e.g.
+double-creating a task). Long-lived/interactive commands (`fn task plan`,
+interactive GitHub import, `fn task logs --follow`) keep their interactive
+prompt loop or tail session un-retried by design but still close the
+resolved store on every exit path, including on `Ctrl+C`.
+
+The same retry-on-lock and deterministic-teardown behavior extends to
+`fn branch-group *` (`list`/`show`/`abandon`/`promote`) and `fn pr *`
+(`create`/`list`/`show`/`approve`/`respond`/`retry`/`merge`/`close`/
+`automerge`/`automerge-cleanup`) (FN-7738). Discrete board reads/writes
+retry through a momentary `database is locked` (subject to the same
+`FUSION_CLI_LOCK_RETRY_MS` deadline override); external GitHub API calls and
+workflow-release side effects are not retried, to avoid re-issuing an
+already-completed side effect. The resolved `TaskStore` — whether resolved
+from the registered/default project or the uncached CWD-fallback project —
+is always closed on exit so the CLI process exits promptly.
+
+FN-7739 extends the same pattern to `fn backup *` (`create`/`list`/
+`restore`/`cleanup`), `fn memory-backup *` (`create`/`list`/`restore`),
+`fn mcp *` (`list`/`add`/`edit`/`remove`/`enable`/`disable`/`import`/
+`export`/`validate`), and `fn db vacuum`. `fn backup`/`fn memory-backup`
+retry their `getSettings()` board read; `fn mcp` retries project-scope
+`updateSettings` writes (mutations) and reads, and closes BOTH the cached
+project `TaskStore` and the ad-hoc uncached secrets `TaskStore` opened by
+`--secret-ref`/`--create-secret-*` resolution when no project is in scope;
+`fn db vacuum` retries the VACUUM call itself (VACUUM requires an exclusive
+lock, the canonical transient-lock case) and closes the resolved store
+BEFORE each `process.exit()` call, since `runDbVacuum` always exits
+explicitly and a pending `finally` does not run after `process.exit()`. MCP
+global-scope settings live in the file-backed `GlobalSettingsStore`
+(`~/.fusion/settings.json`, no SQLite handle) and are intentionally left
+with no close and no lock-retry. All of the above honor the same
+`FUSION_CLI_LOCK_RETRY_MS` deadline override.
+
+The same class of fix (FN-7740) also covers `fn research *`
+(`create`/`list`/`show`/`export`/`cancel`/`retry`), `fn settings import`,
+`fn agent export`, `fn git *` (`status`/`fetch`/`pull`/`push`), and
+`fn project *` (`list`/`add`/`remove`/`show`/`set-default`/`detect`):
+
+- `fn git *` and `fn agent export` never write the board, so they are
+  **teardown-only** — the resolved project path is now obtained via the
+  path-only helper (no cached, never-closed `TaskStore` left behind), and
+  `fn agent export` additionally closes the `AgentStore` it opens on every
+  exit path (success and the no-agents-to-export guard).
+- `fn project list`/`show` compute per-project task counts against an
+  uncached `TaskStore` per registered project; that store is now closed
+  after every call (so `fn project list` no longer leaks one store per
+  registered project), and the count read retries a momentary
+  `database is locked` instead of silently reporting zero tasks.
+- `fn settings import`'s `importSettings` write and `fn research create`
+  (settings read) / `fn research export`'s `createExport` write retry
+  through a momentary `database is locked` — subject to the same
+  `FUSION_CLI_LOCK_RETRY_MS` deadline override as `fn task`/`fn branch-group`/
+  `fn pr` — and the resolved store is closed BEFORE every `process.exit()`
+  call (a pending `finally` does not run after `process.exit()`).
+- `fn research create` without `--wait-for-completion` is the ONE
+  intentionally-long-lived exception in the CLI: the research run continues
+  in the background against the same store after the command returns, so
+  that store is deliberately NOT closed on this path (closing it would
+  truncate the in-flight run). Every other `fn research *` path, including
+  `--wait-for-completion`, closes its store on exit.
+
 ### Execution and status
 
 ```bash
@@ -795,11 +872,13 @@ Pause a running/active agent by transitioning its state to `paused`.
 - If the agent is already paused, this is a no-op and prints `Agent <id> is already paused`.
 - Invalid state transitions are rejected with `Cannot stop agent <id> — current state '<state>' cannot transition to 'paused'`.
 - On success, prints `✓ Agent <id> stopped`.
+- The command always closes its store connections and exits promptly on every path (success, already-paused, not-found, invalid-transition) — it never hangs. The underlying state-store write is bounded by a fast-fail deadline (default 10s, override via `FUSION_AGENT_CMD_TIMEOUT_MS`); if it cannot complete in time, the command prints a clear error naming the agent and operation and exits non-zero instead of hanging. Safe to drive from an automated recovery watcher.
 
 **Examples:**
 ```bash
 fn agent stop AGENT-001
 fn agent stop AGENT-001 --project my-project
+FUSION_AGENT_CMD_TIMEOUT_MS=5000 fn agent stop AGENT-001  # tighter fast-fail deadline
 ```
 
 ### `fn agent start`
@@ -817,6 +896,7 @@ Resume a paused agent by transitioning its state to `active`.
 - If the agent is already `active` or `running`, this is a no-op and prints `Agent <id> is already running (<state>)`.
 - Invalid state transitions are rejected with `Cannot start agent <id> — current state '<state>' cannot transition to 'active'`.
 - On success, prints `✓ Agent <id> started`.
+- Same deterministic-exit and fast-fail-timeout behavior as `fn agent stop` (see above) — the command always closes its store connections and exits promptly, and the state-store write is bounded by `FUSION_AGENT_CMD_TIMEOUT_MS` (default 10s).
 
 **Examples:**
 ```bash

@@ -151,6 +151,16 @@ function parseCreateBody(body: unknown): Omit<CustomProvider, "id"> {
     }
   }
 
+  // FNXC:ProviderAuth 2026-07-08-00:00:
+  // FN-7689: accept the Anthropic prompt-caching opt-in from the dashboard editor so it survives
+  // the round trip to registerCustomProviders/reregisterCustomProviders (custom-provider-registry.ts).
+  if (row.anthropicPromptCaching !== undefined) {
+    if (typeof row.anthropicPromptCaching !== "boolean") {
+      throw badRequest("anthropicPromptCaching must be a boolean");
+    }
+    provider.anthropicPromptCaching = row.anthropicPromptCaching;
+  }
+
   const models = validateModels(row.models);
   if (models) {
     provider.models = models;
@@ -574,6 +584,12 @@ function parseUpdateBody(body: unknown): Partial<Omit<CustomProvider, "id">> {
     if (!isMaskedApiKey(row.apiKey)) {
       updates.apiKey = row.apiKey.trim().length > 0 ? row.apiKey : undefined;
     }
+  }
+  if (row.anthropicPromptCaching !== undefined) {
+    if (typeof row.anthropicPromptCaching !== "boolean") {
+      throw badRequest("anthropicPromptCaching must be a boolean");
+    }
+    updates.anthropicPromptCaching = row.anthropicPromptCaching;
   }
   if (row.models !== undefined) {
     updates.models = validateModels(row.models);

@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import type { ReactElement } from "react";
 import i18next from "i18next";
 import { loadAllAppCss } from "../../test/cssFixture";
 import { AgentsView } from "../AgentsView";
+import { ToastProvider } from "../../hooks/useToast";
 import * as apiModule from "../../api";
 import type { Agent, AgentState, AgentCapability, OrgTreeNode } from "../../api";
 import { scopedKey } from "../../utils/projectStorage";
@@ -101,6 +103,13 @@ const mockUpdateSettings = vi.mocked((apiModule as any).updateSettings);
 const mockClipboardWriteText = vi.fn();
 const mockResizeObserverObserve = vi.fn();
 const mockResizeObserverDisconnect = vi.fn();
+
+// RuntimeFallbackBadge (rendered on both board and list agent cards) calls useToast()
+// unconditionally, so every AgentsView mount must be wrapped in a real ToastProvider
+// (see RuntimeFallbackBadge.test.tsx for the reference pattern this replicates).
+function renderView(ui: ReactElement) {
+  return render(<ToastProvider>{ui}</ToastProvider>);
+}
 
 describe("AgentsView", () => {
   const mockAddToast = vi.fn();
@@ -214,14 +223,14 @@ describe("AgentsView", () => {
 
   describe("rendering", () => {
     it("renders the agents view header", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
       });
     });
 
     it("renders agent list on mount", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await waitFor(() => {
         // Active agents may appear in both ActiveAgentsPanel and main list
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThanOrEqual(1);
@@ -235,7 +244,7 @@ describe("AgentsView", () => {
       ]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Pending approvals")).toBeInTheDocument();
@@ -256,7 +265,7 @@ describe("AgentsView", () => {
       ]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: {}, byRole: {} });
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("review")).toBeInTheDocument();
@@ -295,7 +304,7 @@ describe("AgentsView", () => {
       mockFetchAgents.mockResolvedValueOnce(modelAgents);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 4, byState: {}, byRole: {} });
 
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("Provider Model Agent")).toBeInTheDocument();
@@ -316,7 +325,7 @@ describe("AgentsView", () => {
     });
 
     it("renders cross-pane overview above split layout", async () => {
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(container.querySelector(".agents-overview-bar")).toBeTruthy();
@@ -341,7 +350,7 @@ describe("AgentsView", () => {
     });
 
     it("opens inline detail pane and marks selected card", async () => {
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       const detailButton = await screen.findByRole("button", { name: "View details for Test Agent 1" });
       fireEvent.click(detailButton);
@@ -354,7 +363,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps desktop selection in detail pane without rendering sidebar quick-controls strip", async () => {
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       const detailButton = await screen.findByRole("button", { name: "View details for Test Agent 2" });
       fireEvent.click(detailButton);
@@ -369,7 +378,7 @@ describe("AgentsView", () => {
 
     it.each(["desktop", "tablet"] as const)("renders an accessible resize handle on %s split layouts", async (mode) => {
       mockViewportMode.mockReturnValue(mode);
-      const { container } = render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
       expect(handle).toHaveAttribute("role", "separator");
@@ -382,7 +391,7 @@ describe("AgentsView", () => {
 
     it("does not render the resize handle or inline split width on mobile", async () => {
       mockViewportMode.mockReturnValue("mobile");
-      const { container } = render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
@@ -403,7 +412,7 @@ describe("AgentsView", () => {
         localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), stored);
       }
 
-      const { container } = render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
       expect(handle).toHaveAttribute("aria-valuenow", String(expected));
@@ -412,7 +421,7 @@ describe("AgentsView", () => {
 
     it("supports keyboard resizing with project-scoped persistence and clamping", async () => {
       localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), "515");
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
 
@@ -433,7 +442,7 @@ describe("AgentsView", () => {
 
     it("clamps keyboard resizing at the minimum width", async () => {
       localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), "260");
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
       fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true });
@@ -444,7 +453,7 @@ describe("AgentsView", () => {
 
     it("supports pointer drag resizing with capture, cleanup, persistence, and max clamping", async () => {
       localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), "500");
-      const { container } = render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
       const setPointerCapture = vi.fn();
       const releasePointerCapture = vi.fn();
@@ -469,7 +478,7 @@ describe("AgentsView", () => {
 
     it("supports pointer drag resizing with min clamping", async () => {
       localStorage.setItem(scopedKey(agentsSidebarWidthKey, projectId), "300");
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       const handle = await screen.findByTestId("agents-sidebar-resize-handle");
 
       fireEvent.pointerDown(handle, { pointerId: 2, clientX: 300 });
@@ -484,7 +493,7 @@ describe("AgentsView", () => {
 
     it("supports mobile drill-in detail with back navigation", async () => {
       mockViewportMode.mockReturnValue("mobile");
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(container.querySelector(".agents-split-layout")).toBeTruthy();
       expect(container.querySelector(".agents-view-content")).toBeTruthy();
@@ -526,7 +535,7 @@ describe("AgentsView", () => {
         },
       ]);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       fireEvent.click(await screen.findByRole("button", { name: "View details for Test Agent 1" }));
       await waitFor(() => {
@@ -544,7 +553,7 @@ describe("AgentsView", () => {
 
     it("collapses mobile overview after selecting an active agent card", async () => {
       mockViewportMode.mockReturnValue("mobile");
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       const overviewToggle = await openOverviewPanel();
       fireEvent.click(await screen.findByRole("button", { name: /select agent test agent 2/i }));
@@ -557,7 +566,7 @@ describe("AgentsView", () => {
 
     it("keeps desktop overview open after selecting an active agent card", async () => {
       mockViewportMode.mockReturnValue("desktop");
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       const overviewToggle = await openOverviewPanel();
       fireEvent.click(await screen.findByRole("button", { name: /select agent test agent 2/i }));
@@ -577,7 +586,7 @@ describe("AgentsView", () => {
           }),
       );
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       const loadingStatus = await screen.findByRole("status");
       expect(loadingStatus).toHaveTextContent("Loading agents...");
@@ -598,7 +607,7 @@ describe("AgentsView", () => {
           }),
       );
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(await screen.findByText("Loading agents...")).toBeTruthy();
 
@@ -611,7 +620,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps existing agents visible during refresh loads", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThan(0);
@@ -639,7 +648,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps New Agent directly accessible on desktop while controls live in popup", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(screen.getByRole("button", { name: "New Agent" })).toBeTruthy();
       expect(screen.queryByRole("dialog", { name: "Agent controls" })).toBeNull();
@@ -654,7 +663,7 @@ describe("AgentsView", () => {
 
     it("moves import and new-agent actions into the controls popup on mobile", async () => {
       mockViewportMode.mockReturnValue("mobile");
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
       expect(screen.queryByRole("button", { name: "New Agent" })).toBeNull();
@@ -665,7 +674,7 @@ describe("AgentsView", () => {
     });
 
     it("closes controls popup on Escape and outside click", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       const trigger = await openControlsPanel();
 
       fireEvent.keyDown(document, { key: "Escape" });
@@ -686,7 +695,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps metrics and active agents collapsed behind overview disclosure by default", async () => {
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(container.querySelector(".agent-list")).toBeTruthy();
@@ -707,7 +716,7 @@ describe("AgentsView", () => {
     });
 
     it("fetches agents only once on mount (regression: no duplicate initial load path)", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(mockFetchAgents).toHaveBeenCalledTimes(1);
@@ -720,7 +729,7 @@ describe("AgentsView", () => {
     });
 
     it("renders token stats derived from the currently displayed agents", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       // Token-usage panel now lives inside the controls popup, not in the
       // main view body — open the controls panel before asserting.
@@ -743,7 +752,7 @@ describe("AgentsView", () => {
     });
 
     it("passes projectId to agent fetches", async () => {
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await waitFor(() => {
         expect(mockFetchAgents).toHaveBeenCalledWith({ includeEphemeral: false }, projectId);
       });
@@ -751,7 +760,7 @@ describe("AgentsView", () => {
 
     it("renders empty state when no agents", async () => {
       mockFetchAgents.mockResolvedValue([]);
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await waitFor(() => {
         expect(screen.getByText("No agents found")).toBeTruthy();
         expect(screen.getByText("Create an agent to get started")).toBeTruthy();
@@ -761,7 +770,7 @@ describe("AgentsView", () => {
 
     it("opens the create dialog from the empty state CTA", async () => {
       mockFetchAgents.mockResolvedValue([]);
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       const cta = await screen.findByRole("button", { name: "Create Agent" });
       fireEvent.click(cta);
@@ -772,7 +781,7 @@ describe("AgentsView", () => {
     });
 
     it("displays agent states", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await waitFor(() => {
         expect(screen.getAllByText("idle").length).toBeGreaterThanOrEqual(1);
         expect(screen.getAllByText("active").length).toBeGreaterThanOrEqual(1);
@@ -797,7 +806,7 @@ describe("AgentsView", () => {
         mockFetchAgentStats.mockResolvedValue({ total: 1, byState: { [state]: 1 }, byRole: { executor: 1 } });
         mockFetchOrgTree.mockResolvedValue([{ agent: highlightAgent, children: [] }]);
 
-        render(<AgentsView addToast={mockAddToast} />);
+        renderView(<AgentsView addToast={mockAddToast} />);
 
         await waitFor(() => {
           expect(document.querySelector(`.agent-card--${state}`)).toBeTruthy();
@@ -815,7 +824,7 @@ describe("AgentsView", () => {
       });
 
       it("keeps paused agents out of active highlight classes", async () => {
-        render(<AgentsView addToast={mockAddToast} />);
+        renderView(<AgentsView addToast={mockAddToast} />);
 
         const pausedAgentCard = await screen.findByText("Test Agent 3");
         const pausedCard = pausedAgentCard.closest(".agent-card");
@@ -835,7 +844,7 @@ describe("AgentsView", () => {
       ]);
       mockFetchAgentStats.mockResolvedValue({ total: 4, byState: { active: 1, running: 1 }, byRole: { executor: 2 } });
 
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getAllByText((_, el) => el?.textContent === "FN-TRIAGE · Planning").length).toBeGreaterThanOrEqual(1);
@@ -846,14 +855,14 @@ describe("AgentsView", () => {
     });
 
     it("displays unresolved context when task column is missing", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await waitFor(() => {
         expect(screen.getAllByText((_, el) => el?.textContent === "FN-001 · Unresolved task").length).toBeGreaterThanOrEqual(1);
       });
     });
 
     it("renders explicit View Details button on list cards", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "View details for Test Agent 1" })).toBeTruthy();
@@ -864,7 +873,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps a visible icon affordance on split-sidebar action buttons when labels are compacted", async () => {
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       const sidebarCard = await waitFor(() => {
         const card = container.querySelector(".agents-split-sidebar .agent-card");
@@ -897,7 +906,7 @@ describe("AgentsView", () => {
     });
 
     it("opens matching detail view when clicking View Details button", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "View details for Test Agent 3" })).toBeTruthy();
@@ -918,7 +927,7 @@ describe("AgentsView", () => {
           ...mockAgents.slice(1),
         ]);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThan(0);
@@ -934,7 +943,7 @@ describe("AgentsView", () => {
     });
 
     it("opens detail view when clicking anywhere on the agent card body", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThan(0);
@@ -975,7 +984,7 @@ describe("AgentsView", () => {
       mockFetchAgents.mockResolvedValue([runningAgent]);
       mockFetchAgentStats.mockResolvedValue({ total: 1, byState: { running: 1 }, byRole: { executor: 1 } });
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       const runningButton = await screen.findByRole("button", { name: "View live run details for Runner" });
       fireEvent.click(runningButton);
@@ -990,7 +999,7 @@ describe("AgentsView", () => {
     });
 
     it("shows heartbeat interval control on agent cards with 5m minimum presets", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1033,7 +1042,7 @@ describe("AgentsView", () => {
       ]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: { active: 1 }, byRole: { triage: 1 } });
 
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       const lastAt = new Date(lastHeartbeatAt);
       const nextAt = new Date(lastAt.getTime() + 300000);
@@ -1064,7 +1073,7 @@ describe("AgentsView", () => {
         },
       ]);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1076,7 +1085,7 @@ describe("AgentsView", () => {
     });
 
     it("updates agent heartbeat interval from preset dropdown", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1098,7 +1107,7 @@ describe("AgentsView", () => {
     });
 
     it("shows Custom... option in dropdown that reveals typed input", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1118,7 +1127,7 @@ describe("AgentsView", () => {
     });
 
     it("can enter custom minutes value and save it", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1152,7 +1161,7 @@ describe("AgentsView", () => {
     });
 
     it("clamps custom value 1-4 minutes to 5 minutes with info toast", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1191,7 +1200,7 @@ describe("AgentsView", () => {
     });
 
     it("does not save when custom input is empty", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1227,7 +1236,7 @@ describe("AgentsView", () => {
     });
 
     it("does not save when custom input is non-numeric", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1263,7 +1272,7 @@ describe("AgentsView", () => {
     });
 
     it("does not save when custom input is zero or negative", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByLabelText("Set heartbeat interval for Test Agent 2")).toBeTruthy();
@@ -1309,7 +1318,7 @@ describe("AgentsView", () => {
       mockFetchAgents.mockResolvedValueOnce([errorAgent]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 1, byState: { error: 1 }, byRole: { executor: 1 } });
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByRole("button", { name: "Open error details" })).toBeTruthy();
@@ -1345,7 +1354,7 @@ describe("AgentsView", () => {
       ]);
       mockFetchAgentStats.mockResolvedValueOnce({ total: 2, byState: { error: 1, active: 1 }, byRole: { executor: 2 } });
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("Error No Text")).toBeTruthy();
@@ -1357,7 +1366,7 @@ describe("AgentsView", () => {
     });
 
     it("shows refresh button", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       // Use findBy to ensure React has flushed all pending state updates before asserting.
       // This prevents act(...) warnings from any async effects triggered during render.
       const refreshBtn = await screen.findByTitle("Refresh");
@@ -1367,7 +1376,7 @@ describe("AgentsView", () => {
 
   describe("view toggle (list/board)", () => {
     it("can toggle between list and board view", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThanOrEqual(1);
@@ -1392,7 +1401,7 @@ describe("AgentsView", () => {
     });
 
     it("board view shows compact cards", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
@@ -1407,7 +1416,7 @@ describe("AgentsView", () => {
     });
 
     it("persists view toggle preference to project-scoped localStorage", async () => {
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
@@ -1421,7 +1430,7 @@ describe("AgentsView", () => {
     });
 
     it("defaults to list view when no localStorage preference exists", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const listContainer = document.querySelector(".agent-list");
@@ -1430,7 +1439,7 @@ describe("AgentsView", () => {
     });
 
     it("marks board view button as active when in board mode", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
@@ -1519,7 +1528,7 @@ describe("AgentsView", () => {
 
     it("renders org chart toggle with aria attributes and activates org view", async () => {
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const orgButton = screen.getByRole("button", { name: "Org Chart view" });
       expect(orgButton.getAttribute("aria-pressed")).toBe("false");
@@ -1538,7 +1547,7 @@ describe("AgentsView", () => {
 
     it("does not render the split resize handle in org chart view", async () => {
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       expect(await screen.findByTestId("agents-sidebar-resize-handle")).toBeTruthy();
 
@@ -1554,7 +1563,7 @@ describe("AgentsView", () => {
 
     it("renders org chart nodes and opens detail view when clicking a node", async () => {
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      const { container } = render(<AgentsView addToast={mockAddToast} />);
+      const { container } = renderView(<AgentsView addToast={mockAddToast} />);
 
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
@@ -1589,7 +1598,7 @@ describe("AgentsView", () => {
 
     it("keeps org chart node metadata compact without skill badges", async () => {
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
@@ -1635,7 +1644,7 @@ describe("AgentsView", () => {
     it("switches org chart to vertical layout mode when estimated width exceeds viewport", async () => {
       const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(320);
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
@@ -1655,7 +1664,7 @@ describe("AgentsView", () => {
     it("keeps org chart horizontal layout mode when viewport is wide enough", async () => {
       const clientWidthSpy = vi.spyOn(window.HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1920);
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
@@ -1672,7 +1681,7 @@ describe("AgentsView", () => {
       localStorage.setItem(scopedKey("fn-agent-view", projectId), "org");
       localStorage.setItem(scopedKey(ORG_CHART_LAYOUT_STORAGE_KEY, projectId), "vertical");
       mockFetchOrgTree.mockResolvedValue(orgTree);
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const chart = await screen.findByTestId("agent-org-chart");
       const toggle = screen.getByTestId("agent-org-chart-layout-toggle");
@@ -1716,7 +1725,7 @@ describe("AgentsView", () => {
 
     it("shows org chart empty state when API returns no nodes", async () => {
       mockFetchOrgTree.mockResolvedValue([]);
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
@@ -1736,7 +1745,7 @@ describe("AgentsView", () => {
           }),
       );
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       fireEvent.click(screen.getByRole("button", { name: "Org Chart view" }));
 
       await waitFor(() => {
@@ -1753,7 +1762,7 @@ describe("AgentsView", () => {
 
   describe("filter agents by state", () => {
     it("renders the state filter with styled container", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       // Styled filter container exists
@@ -1766,7 +1775,7 @@ describe("AgentsView", () => {
     });
 
     it("can filter agents by state", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       const filterSelect = screen.getByLabelText("Filter agents by state");
@@ -1778,7 +1787,7 @@ describe("AgentsView", () => {
     });
 
     it("clears filter when selecting 'all'", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       const filterSelect = screen.getByLabelText("Filter agents by state");
@@ -1798,7 +1807,7 @@ describe("AgentsView", () => {
 
   describe("show system agents toggle", () => {
     it("renders the system agents checkbox", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       // Checkbox should be unchecked by default
@@ -1807,7 +1816,7 @@ describe("AgentsView", () => {
     });
 
     it("passes includeEphemeral: false by default to fetchAgents", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       // Default call should include includeEphemeral: false
       await waitFor(() => {
@@ -1816,7 +1825,7 @@ describe("AgentsView", () => {
     });
 
     it("toggles system agents visibility when checkbox is clicked", async () => {
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await openControlsPanel();
 
       const checkbox = screen.getByLabelText("Show system agents");
@@ -1828,7 +1837,7 @@ describe("AgentsView", () => {
     });
 
     it("combines system agents toggle with state filter", async () => {
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await openControlsPanel();
 
       // First enable system agents toggle
@@ -1865,7 +1874,7 @@ describe("AgentsView", () => {
       // client-side filtering still hides it unless the toggle is enabled.
       mockFetchAgents.mockResolvedValue([...mockAgents.slice(0, 3), ...systemAgents]);
 
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       await waitFor(() => {
         expect(screen.getAllByText("Test Agent 1").length).toBeGreaterThan(0);
@@ -1886,7 +1895,7 @@ describe("AgentsView", () => {
 
   describe("create new agent", () => {
     it("can create new agent via multi-step dialog", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -1921,7 +1930,7 @@ describe("AgentsView", () => {
     });
 
     it("shows create dialog when clicking New Agent button", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -1938,7 +1947,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps legacy dialog launch when agent onboarding flag is disabled", async () => {
-      render(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={false} />);
+      renderView(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={false} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -1953,7 +1962,7 @@ describe("AgentsView", () => {
     });
 
     it("keeps New Agent launch on the standard dialog when agent onboarding flag is enabled", async () => {
-      render(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={true} />);
+      renderView(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={true} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -1968,7 +1977,7 @@ describe("AgentsView", () => {
     });
 
     it("launches interview from AgentsView and only applies draft after review confirmation", async () => {
-      render(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={true} />);
+      renderView(<AgentsView addToast={mockAddToast} agentOnboardingEnabled={true} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -2003,7 +2012,7 @@ describe("AgentsView", () => {
     });
 
     it("does not allow proceeding with empty name", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -2025,7 +2034,7 @@ describe("AgentsView", () => {
     it("handles creation error gracefully", async () => {
       mockCreateAgent.mockRejectedValue(new Error("Creation failed"));
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("New Agent")).toBeTruthy();
@@ -2053,7 +2062,7 @@ describe("AgentsView", () => {
 
   describe("change agent state", () => {
     it("can change agent state - activate idle agent", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Activate")).toBeTruthy();
@@ -2073,7 +2082,7 @@ describe("AgentsView", () => {
     });
 
     it("can pause active agent", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const agentCards = document.querySelectorAll(".agent-card");
@@ -2096,7 +2105,7 @@ describe("AgentsView", () => {
     });
 
     it("can resume paused agent without manual run trigger", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Resume")).toBeTruthy();
@@ -2118,7 +2127,7 @@ describe("AgentsView", () => {
       });
       mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Activate")).toBeTruthy();
@@ -2146,7 +2155,7 @@ describe("AgentsView", () => {
       });
       mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Activate")).toBeTruthy();
@@ -2181,7 +2190,7 @@ describe("AgentsView", () => {
       });
       mockUpdateAgentState.mockImplementationOnce(() => transitionPromise);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Activate")).toBeTruthy();
@@ -2215,7 +2224,7 @@ describe("AgentsView", () => {
     it("handles state change error gracefully", async () => {
       mockUpdateAgentState.mockRejectedValue(new Error("State change failed"));
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Activate")).toBeTruthy();
@@ -2232,7 +2241,7 @@ describe("AgentsView", () => {
     });
 
     it("does not start run when pausing agent", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const agentCards = document.querySelectorAll(".agent-card");
@@ -2267,7 +2276,7 @@ describe("AgentsView", () => {
         mockAgents[3],
       ]);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       const runNowButton = await screen.findByTitle("Run Now");
       const pauseButton = await screen.findByTitle("Pause");
@@ -2291,7 +2300,7 @@ describe("AgentsView", () => {
         mockAgents[3],
       ]);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Run Now")).toBeTruthy();
@@ -2308,7 +2317,7 @@ describe("AgentsView", () => {
         mockAgents[3],
       ]);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Run Now")).toBeTruthy();
@@ -2331,7 +2340,7 @@ describe("AgentsView", () => {
 
   describe("delete agent", () => {
     it("shows Delete button for idle, paused, and error agents in default view", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const deleteButtons = screen.getAllByTitle("Delete");
@@ -2340,7 +2349,7 @@ describe("AgentsView", () => {
     });
 
     it("does not show Delete button for active agents", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const allCards = Array.from(document.querySelectorAll(".agent-card"));
@@ -2351,7 +2360,7 @@ describe("AgentsView", () => {
     });
 
     it("shows Delete button for paused agents", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const allCards = Array.from(document.querySelectorAll(".agent-card"));
@@ -2362,7 +2371,7 @@ describe("AgentsView", () => {
     });
 
     it("shows Delete button for error agents in board view", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
@@ -2380,7 +2389,7 @@ describe("AgentsView", () => {
 
     it("deletes idle agent after confirmation (from default view)", async () => {
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const deleteButtons = screen.getAllByTitle("Delete");
@@ -2405,7 +2414,7 @@ describe("AgentsView", () => {
     });
 
     it("deletes paused agent after confirmation (from default view)", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         const pausedCard = Array.from(document.querySelectorAll(".agent-card")).find(
@@ -2422,7 +2431,7 @@ describe("AgentsView", () => {
     });
 
     it("deletes error agent after confirmation (from board view)", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByText("Agents")).toBeTruthy();
@@ -2447,7 +2456,7 @@ describe("AgentsView", () => {
 
   describe("refresh functionality", () => {
     it("refreshes agent list when clicking refresh button", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
 
       await waitFor(() => {
         expect(screen.getByTitle("Refresh")).toBeTruthy();
@@ -2465,7 +2474,7 @@ describe("AgentsView", () => {
   describe("active agents panel selection", () => {
     it("renders active agents panel when agents are active", async () => {
       // agent-002 is active with taskId FN-001
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2478,7 +2487,7 @@ describe("AgentsView", () => {
     });
 
     it("opens AgentDetailView when clicking an active agent card", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2498,7 +2507,7 @@ describe("AgentsView", () => {
     });
 
     it("opens AgentDetailView when pressing Enter on an active agent card", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2519,7 +2528,7 @@ describe("AgentsView", () => {
     });
 
     it("opens AgentDetailView when pressing Space on an active agent card", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2540,7 +2549,7 @@ describe("AgentsView", () => {
     });
 
     it("live agent cards have proper accessibility attributes", async () => {
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2571,7 +2580,7 @@ describe("AgentsView", () => {
       ];
       mockFetchAgents.mockResolvedValue(inactiveAgents);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2597,7 +2606,7 @@ describe("AgentsView", () => {
       ];
       mockFetchAgents.mockResolvedValue(spawnedAgents);
 
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openOverviewPanel();
 
       await waitFor(() => {
@@ -2673,7 +2682,7 @@ describe("AgentsView", () => {
 
     it("loads bulk eligibility when controls open and shows count hints", async () => {
       mockFetchAgents.mockResolvedValue(bulkAgents);
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
 
       const initialFetchCount = mockFetchAgents.mock.calls.length;
       await openControlsPanel();
@@ -2690,7 +2699,7 @@ describe("AgentsView", () => {
         { ...bulkAgents[3] },
         { ...bulkAgents[4], state: "paused" as AgentState },
       ]);
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await openControlsPanel();
 
       await waitFor(() => {
@@ -2703,7 +2712,7 @@ describe("AgentsView", () => {
 
     it("pauses eligible non-ephemeral agents after confirmation", async () => {
       mockFetchAgents.mockResolvedValue(bulkAgents);
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await openControlsPanel();
 
       fireEvent.click(screen.getByRole("menuitem", { name: /Pause All Agents/i }));
@@ -2727,7 +2736,7 @@ describe("AgentsView", () => {
 
     it("resumes paused agents only", async () => {
       mockFetchAgents.mockResolvedValue(bulkAgents);
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await openControlsPanel();
 
       fireEvent.click(screen.getByRole("menuitem", { name: /Resume All Agents/i }));
@@ -2751,7 +2760,7 @@ describe("AgentsView", () => {
         }
         return { ...bulkAgents[0], id: agentId, state: newState };
       });
-      render(<AgentsView addToast={mockAddToast} projectId={projectId} />);
+      renderView(<AgentsView addToast={mockAddToast} projectId={projectId} />);
       await openControlsPanel();
 
       fireEvent.click(screen.getByRole("menuitem", { name: /Pause All Agents/i }));
@@ -2768,7 +2777,7 @@ describe("AgentsView", () => {
   describe("global heartbeat multiplier", () => {
     it("renders the global heartbeat speed control", async () => {
       mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       // Check the slider and preset are rendered
@@ -2781,7 +2790,7 @@ describe("AgentsView", () => {
 
     it("loads heartbeat multiplier from settings", async () => {
       mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 2.5 });
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       const slider = screen.getByRole("slider", { name: "Heartbeat Speed" }) as HTMLInputElement;
@@ -2790,7 +2799,7 @@ describe("AgentsView", () => {
 
     it("saves heartbeat multiplier when slider changes", async () => {
       mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       // Change the slider
@@ -2805,7 +2814,7 @@ describe("AgentsView", () => {
 
     it("saves heartbeat multiplier when preset is selected", async () => {
       mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       // Change the preset
@@ -2820,7 +2829,7 @@ describe("AgentsView", () => {
     it("disables control while saving", async () => {
       mockFetchSettings.mockResolvedValue({ heartbeatMultiplier: 1 });
       mockUpdateSettings.mockImplementation(() => new Promise(resolve => setTimeout(resolve, 100)));
-      render(<AgentsView addToast={mockAddToast} />);
+      renderView(<AgentsView addToast={mockAddToast} />);
       await openControlsPanel();
 
       // Change the slider - this should start the save

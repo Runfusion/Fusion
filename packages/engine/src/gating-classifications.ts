@@ -103,6 +103,18 @@ export const PERMANENT_AGENT_TASK_MUTATION_TOOLS: ReadonlySet<string> = new Set(
   ...PERMANENT_TASK_AGENT_ONLY_TOOLS,
 ]);
 
+/**
+ * FNXC:ToolGovernance 2026-07-09-00:00:
+ * FN-7728 gives `fn_task_bypass_review` (FN-7720's merge-gate override, CLI/pi-extension operator-tool-only — never on executor/reviewer/triage agent tool lists) its own `review_gate_bypass` classification, distinct from `task_agent_mutation`, so operators can govern "who may bypass a failed review gate" independently of ordinary task mutations and it can never fall through to the unrecognized-tool exempt fallback. Both evaluateAgentActionGate (agent-action-gate.ts) and the permanent-agent gate (permanent-agent-gating.ts) must consume this same set so the two gate paths cannot drift.
+ */
+export const REVIEW_GATE_BYPASS_FN_TOOLS: ReadonlySet<string> = new Set(["fn_task_bypass_review"]);
+
+/**
+ * FNXC:ToolGovernance 2026-07-09-08:30:
+ * FN-7737 gives `fn_task_file_scope_add` (the File Scope additional-approval action — lets an executing agent extend its task's declared `## File Scope` beyond the initial spec at runtime) its own `file_scope` classification, distinct from `task_agent_mutation`/`file_write_delete`, so operators can independently allow/require-approval/block it. Preflight confirmed the tool was previously unclassified in both gate paths and fell through to the exempt/allow fallback; it is now positively recognized here so it can never silently bypass policy. Both evaluateAgentActionGate (agent-action-gate.ts) and the permanent-agent gate (permanent-agent-gating.ts) must consume this same set so the two gate paths cannot drift.
+ */
+export const FILE_SCOPE_FN_TOOLS: ReadonlySet<string> = new Set(["fn_task_file_scope_add"]);
+
 export const FILE_WRITE_DELETE_FN_TOOLS: ReadonlySet<string> = new Set(["fn_task_attach"]);
 
 export const NETWORK_API_TOOLS: ReadonlySet<string> = new Set([

@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import * as os from "node:os";
-import { CentralCore, TaskStore, createTaskStoreForBackend } from "@fusion/core";
+import { CentralCore, PluginLoader, TaskStore, createTaskStoreForBackend } from "@fusion/core";
 import { createServer } from "@fusion/dashboard";
 import { ProjectEngineManager } from "@fusion/engine";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
@@ -75,10 +75,25 @@ async function startDashboardRuntime(rootDir: string, paused: boolean, noAuth: b
         })
       : undefined;
 
+    /*
+     * FNXC:PluginSubsystem 2026-07-08-00:00:
+     * `fusion desktop` is a separate createServer(...) call site from the Electron
+     * app's packages/desktop/src local runtime (same "desktop" name, different
+     * package). It had the same gap: no PluginStore/PluginLoader passed in, so
+     * plugin install and Browse registry failed here too. Mirror
+     * packages/cli/src/commands/dashboard.ts's construction.
+     */
+    const pluginStore = store.getPluginStore();
+    await pluginStore.init();
+    const pluginLoader = new PluginLoader({ pluginStore, taskStore: store });
+
     const app = createServer(store, {
       engine: cwdEngine,
       engineManager,
       centralCore,
+      pluginStore,
+      pluginLoader,
+      pluginRunner: pluginLoader,
       /*
        * FNXC:DesktopLauncher 2026-07-01-20:19:
        * `fusion desktop --no-auth` is a compatibility flag for users who learned the dashboard launcher semantics. Propagate it to the embedded dashboard server explicitly so desktop routing never treats it as an unknown flag or falls back to source-workspace discovery.

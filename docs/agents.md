@@ -31,7 +31,7 @@ fn chat <agent-id> [message…] [--once] [--non-interactive] [--poll-ms <n>]
 - `fn chat <agent-id>` opens an interactive REPL.
 - Each message is stored as a `user-to-agent` MessageStore message from `cli` with `metadata.wakeRecipient=true`.
 - Agent replies are polled from your inbox and printed as they arrive.
-- Dashboard-created agent chat sessions request the target agent's declared `metadata.skills` plus enabled plugin-contributed skills, so skills such as `ce-debug` are available in chat when the contributing plugin is enabled. Model-only QuickChat sessions request enabled plugin skills, and room responder sessions request the responder agent's skills.
+- Dashboard-created agent chat sessions request the target agent's declared `metadata.skills` plus enabled plugin-contributed skills, so skills such as `ce-debug` are available in chat when the contributing plugin is enabled for the requesting project. Model-only QuickChat sessions request enabled plugin skills, and room responder sessions request the responder agent's skills.
 - Agent-acting session lanes share the same skill-injection contract as executor sessions: executor, merger, triage, reviewer, heartbeat, step-session, dashboard chat/room responders, CLI agent execution, planning, mission interview, milestone/slice interview, agent-onboarding interview, workflow design, memory dreams/insight extraction, and scheduled cron automation all request agent/fallback skills plus enabled plugin-contributed skills when a plugin runner is available. Utility-only lanes that only summarize/extract/generate JSON (title/PR summaries, memory compaction, subtask breakdown, text refinement, agent generation, PR metadata generation, evaluator/research synthesis, and similar one-shot helpers) intentionally stay exempt to avoid loading skills where no agent-style tool loop can use them.
 - In dashboard model-loop chat (main chat, QuickChat, and room responders), typing `/skill:{name}` requests that skill for the current AI session and strips the slash token from the prompt sent to the model. Slash and catalog-style names such as `/skill:review/pr`, `/skill:review/pr/SKILL.md`, and `source::skills/review/pr/SKILL.md` resolve to the matching discovered bare skill token across chat and agent session lanes. The requested skill is still subject to the normal enabled/disabled execution-skill filters; CLI-agent-backed PTY chat keeps raw terminal input semantics and does not interpret this command.
 - Dashboard chat and planning sessions with a scoped task store expose `fn_task_document_write` and `fn_task_document_read`; because neither lane has an ambient task, both tools require an explicit `task_id`.
@@ -147,9 +147,11 @@ V1 runtime action categories:
 - `command_execution`
 - `network_api`
 - `task_agent_mutation`
+- `review_gate_bypass` (FN-7728; governs the `fn_task_bypass_review` merge-gate override — the `unrestricted`/grant-all preset overrides it to `require-approval` instead of `allow`, stricter than the uniform preset disposition)
+- `file_scope` (FN-7737; governs the `fn_task_file_scope_add` File Scope additional-approval action — stays on the UNIFORM per-preset disposition, so `unrestricted`/grant-all resolves it to `allow` like every other plain category)
 - `none` (classifier-only read-only result; never stored as a policy rule key)
 
-`permissionPolicy` uses the five sensitive categories above (everything except `none`) plus optional exact `toolRules`, with the FN-3545 disposition contract:
+`permissionPolicy` uses the sensitive categories above (everything except `none`) plus optional exact `toolRules`, with the FN-3545 disposition contract:
 
 - `allow`
 - `block`
@@ -166,6 +168,8 @@ The engine classifies tool calls by behavior (not namespace alone):
 - `git_write`: mutating git shell commands run via `bash`
 - `network_api`: external/network-facing tools (for example `fn_research_run`, `fn_research_cancel`, `fn_web_fetch`, `worktrunk_install`; `fn_research_retry` is permanent-agent network-classified and remains action-gate read-only/exception behavior)
 - `task_agent_mutation`: task/agent/workflow mutation tools (for example `fn_update_agent_config`, `fn_task_pause`, `fn_spawn_agent`, `fn_task_create`, `fn_task_update`, `fn_task_promote`, `fn_task_refine`, and workflow mutators such as `fn_workflow_create`, `fn_workflow_update`, `fn_workflow_delete`, `fn_workflow_settings`, `fn_workflow_select`; action-gate-only task coordination tools like `fn_delegate_task`, `fn_task_import_github`, and `fn_task_import_github_issue` use this category in action-gate evaluation)
+- `review_gate_bypass` (FN-7728): the operator-only `fn_task_bypass_review` merge-gate override, classified via the shared `REVIEW_GATE_BYPASS_FN_TOOLS` set in `gating-classifications.ts` so both gate paths agree; never falls back to `task_agent_mutation` or the unrecognized-tool exempt fallback.
+- `file_scope` (FN-7737): `fn_task_file_scope_add`, the tool an executing agent uses to extend its task's declared `## File Scope` beyond the initial spec at runtime, classified via the shared `FILE_SCOPE_FN_TOOLS` set in `gating-classifications.ts` so both gate paths agree; distinct from `task_agent_mutation`/`file_write_delete` and never falls back to the unrecognized-tool exempt fallback.
 - Dashboard permission editors now show per-category example tools sourced from `AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES` in `@fusion/core`, exact-tool override controls, plus a read-only exempt-tools panel for coordination/messaging bypass tools.
 - `none`: positively recognized read-only tools (`read`, `grep`, `find`, `ls`, list/show/get-style `fn_*` tools, plus permanent-agent coordination helpers like `fn_delegate_task`, `fn_task_import_github`, and `fn_task_import_github_issue`). Artifact tools mirror `fn_task_document_write` in the shipped allow-lists: `fn_artifact_register`, `fn_artifact_list`, and `fn_artifact_view` are present in `READONLY_FN_TOOLS` and `COORDINATION_EXEMPT_TOOLS`, so registration is treated as coordination/registry publication instead of a broad mutation approval.
 
@@ -309,6 +313,7 @@ Layered enforcement:
 - **Heartbeat reconciliation (`packages/engine/src/agent-heartbeat.ts`)**: `reconcileOrphanedRunningAgents()` repairs persisted `state="running"` drift when no active run exists, or when a persisted active run is untracked and older than `heartbeatTimeoutMs × 3` (work-budget grace; see inline FN-4278/FN-4255 comment near that check).
 - **Heartbeat scheduler stale-run reap (`packages/engine/src/agent-heartbeat.ts`)**: `HeartbeatTriggerScheduler.maybeReapStaleActiveRun()` repairs stale persisted `status="active"` heartbeat runs using `heartbeatTimeoutMs × heartbeatRepairStaleMultiplier` (default multiplier `2`).
 - **Self-healing reconciler (`packages/engine/src/self-healing.ts`)**: `recoverAgentsRunningOnInactiveTasks()` and `recoverStaleHeartbeatRuns()` use task-column mismatch checks plus PID/young-run/age guards (including the 6h stale active-run max age) rather than a simple timeout multiplier.
+- **Cross-process CLI stop/start notification (FN-7723, follow-up from FN-7718):** `fn agent stop`/`start` mutate the agent row from a separate short-lived CLI process. The long-lived engine `AgentStore` now opts into a bounded `fs.watch`+poll change-detection fast-path (`startWatching()`/`checkForChanges()`, modeled on `TaskStore`'s own watcher — see `docs/architecture.md`'s FN-7723 note) that re-emits the existing `agent:updated`/`agent:stateChanged` events, so `HeartbeatTriggerScheduler` typically observes a CLI-driven stop/start within one poll interval (~2s) instead of waiting on the 60s `auditTimerRegistrations` sweep, which remains the durable backstop.
 
 Manual recovery for pre-fix stuck rows:
 1. Open the agent in Dashboard → Agent Detail.
@@ -540,6 +545,23 @@ Expected behavior and boundaries:
 - Research runs require the project engine to be running for processing; `fn_research_run` creates the run but does not block for completion unless `wait_for_completion` is set
 
 For the full research workflow, builtin-default behavior, optional external provider setup, CLI commands, and API reference, see the [Research guide](./research.md).
+
+## Runtime Self-Awareness Preamble
+
+**FN-7675:** every standard-toolset conversational base prompt — chat/CEO persona, both heartbeat personas (task-bound and no-task), and the executor — is prefixed with a single canonical, cacheable preamble: `FUSION_RUNTIME_SELF_AWARENESS`, exported from `packages/core/src/agent-prompts.ts` (re-exported from `@fusion/core`). The preamble encodes:
+
+- The agent executes as a **hosted process inside** the running Fusion daemon; its own execution ends the moment that process ends. There is no "wait for Fusion to close, then keep going" capability.
+- **Shutdown-crossing workflows** (updates, installs, patches, migrations, in-place binary swaps) must be handed off as a **standalone artifact the user runs themselves** — never orchestrated live across the shutdown boundary. This closes a real failure mode: an agent planned a live "close Fusion → back up → swap build → verify → relaunch" sequence, which is impossible because step 1 kills the process running steps 2–5.
+- A short, current description of the platform (task board + engine + desktop/CLI/web surfaces).
+- A pointer to the maintained docs (`docs/` and `CONCEPTS.md`) so the agent answers "how do I do X in Fusion" from real documentation instead of improvising.
+
+The preamble is prepended to the **stable** (cacheable) prompt layer — `basePrompt` in `buildPromptLayers()` — at each surface, so it is byte-identical across sessions and does not break prompt-cache discounts:
+
+- Chat: `CHAT_SYSTEM_PROMPT` in `packages/dashboard/src/chat.ts`.
+- Heartbeat: `HEARTBEAT_SYSTEM_PROMPT` and `HEARTBEAT_NO_TASK_SYSTEM_PROMPT` in `packages/engine/src/agent-heartbeat.ts`.
+- Executor: `EXECUTOR_SYSTEM_PROMPT` in `packages/engine/src/executor.ts` (mirrored via `EXECUTOR_PROMPT_TEXT` in `packages/core/src/agent-prompts.ts`).
+
+It is intentionally **not** wired into merger, reviewer, triage, cron-runner, PR-response, mission-validation, or reflection prompts — those are internal single-purpose lanes, not standard-toolset agents reasoning about the shutdown boundary.
 
 ## Built-In Agent Prompt Templates
 
@@ -1269,6 +1291,8 @@ Dashboard surfacing path:
 - `useAgents` already refreshes on `agent:updated`/`agent:stateChanged` (`packages/dashboard/app/hooks/useAgents.ts`)
 - No new SSE event is introduced; stale durable agents become dashboard-visible as `Unresponsive` through the existing refresh path
 
+**Orphaned-timer invalidation on stop (FN-7718):** CLI-driven `fn agent stop`/`start` mutate the agent row from a separate process, so the in-process `agent:updated` listener never fires for those transitions — the 60s audit is the only cross-process reconciliation path. The audit now unregisters a lingering timer entry for any agent that fails eligibility (non-tickable state, `runtimeConfig.enabled === false`, or ephemeral/non-heartbeat-managed) instead of skipping past it, so a stopped agent never keeps an orphaned/"zombie" registration. `syncTimerForAgent`'s in-process start seam mirrors this: an eligible agent with a present-but-stale timer entry is force-cleared and re-armed rather than left as a no-op. This means a `stop`/`start` cycle is a durable fix — it no longer relies on the FN-7645 stale-repair path eventually catching the drift minutes later.
+
 ### Timer State Lifecycle (FN-2289)
 
 Heartbeat timers are armed for agents in valid working states and remain armed across state transitions:
@@ -1544,12 +1568,14 @@ POST /api/agents/:id/ratings
 
 ## Permission Policies
 
-Permanent-agent sensitive actions are gated across five categories:
+Permanent-agent sensitive actions are gated across these categories:
 - `git_write`
 - `file_write_delete`
 - `command_execution`
 - `network_api`
 - `task_agent_mutation`
+- `review_gate_bypass` (FN-7728; overridden to `require-approval` under `unrestricted`/grant-all)
+- `file_scope` (FN-7737; uniform disposition, so `unrestricted`/grant-all resolves it to `allow`)
 
 Each category can be set to one disposition:
 - `allow`

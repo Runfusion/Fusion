@@ -56,6 +56,8 @@ interface TaskTokenRow {
   totalTokens: number | null;
   modelProvider: string | null;
   modelId: string | null;
+  tokenUsageModelProvider: string | null;
+  tokenUsageModelId: string | null;
 }
 
 interface CountByWorkflowRow {
@@ -125,7 +127,14 @@ function addRowCost(
       cachedTokens: row.cachedTokens ?? 0,
       cacheWriteTokens: row.cacheWriteTokens ?? 0,
     },
-    { provider: row.modelProvider, model: row.modelId },
+    {
+      /*
+       * FNXC:CommandCenter 2026-07-10-08:25:
+       * Workflow cost analytics must mirror token analytics by pricing the actually-used token-usage model snapshot before legacy task model columns. FN-7757's static catalog rows could not help rows whose legacy model columns are NULL, so this fixes the durable resolution path without guessing prices for unknown models.
+       */
+      provider: row.tokenUsageModelProvider ?? row.modelProvider,
+      model: row.tokenUsageModelId ?? row.modelId,
+    },
     now,
     pricingOverrides,
   );
@@ -349,7 +358,9 @@ export async function aggregateWorkflowAnalytics(
          t.tokenUsageCacheWriteTokens AS cacheWriteTokens,
          t.tokenUsageTotalTokens AS totalTokens,
          t.modelProvider,
-         t.modelId
+         t.modelId,
+         t.tokenUsageModelProvider,
+         t.tokenUsageModelId
        FROM tasks t
        LEFT JOIN task_workflow_selection s ON s.taskId = t.id
        WHERE ${tokenClauses.join(" AND ")}`,
@@ -433,7 +444,9 @@ async function aggregateWorkflowAnalyticsAsync(
           t.token_usage_cache_write_tokens     AS "cacheWriteTokens",
           t.token_usage_total_tokens           AS "totalTokens",
           t.model_provider                     AS "modelProvider",
-          t.model_id                           AS "modelId"
+          t.model_id                           AS "modelId",
+          t.token_usage_model_provider         AS "tokenUsageModelProvider",
+          t.token_usage_model_id               AS "tokenUsageModelId"
         FROM project.tasks t
         LEFT JOIN project.task_workflow_selection s ON s.task_id = t.id
         WHERE t.token_usage_last_used_at IS NOT NULL ${tokFrom} ${tokTo}`,
@@ -447,6 +460,8 @@ async function aggregateWorkflowAnalyticsAsync(
     totalTokens: r.totalTokens == null ? null : Number(r.totalTokens),
     modelProvider: (r.modelProvider as string | null) ?? null,
     modelId: (r.modelId as string | null) ?? null,
+    tokenUsageModelProvider: (r.tokenUsageModelProvider as string | null) ?? null,
+    tokenUsageModelId: (r.tokenUsageModelId as string | null) ?? null,
   }));
 
   const compFrom = query.from !== undefined ? sql`AND t.column_moved_at >= ${query.from}` : sql``;

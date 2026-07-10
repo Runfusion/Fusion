@@ -1161,24 +1161,30 @@ Across the thread: a top filter (All/Human/Bot) and prev/next chevrons live in t
 
 /* Responsive breakpoints */
 @media (max-width: 860px) {
-  /* FNXC:GitHubImport 2026-06-22-16:00: viewport-derived width is for the
-     dialog presentation only. :not(.github-import-modal--embedded) prevents
-     the embedded main-content view from being sized off the viewport — it
-     fills its own (potentially much narrower) content pane via the
-     container-query layout below. */
+  /* FNXC:GitHubImport 2026-07-08-00:00: the ENTIRE tablet-band responsive
+     pane layout below (column-stack, resize-handle hiding, and the
+     flex:none/max-height:50% caps on the list/preview panes) is for the
+     dialog presentation only. All selectors are scoped with
+     :not(.github-import-modal--embedded) so the embedded Import Tasks
+     surface is governed solely by the base embedded rules + the
+     @container github-import-embedded blocks below — never by the
+     viewport. Previously only the width rule was scoped; the unscoped
+     `.github-import-preview-pane { max-height: 50% }` leaked into the
+     embedded view on tablet-width viewports (640–860px), clipping a tall
+     selected issue/PR preview with no way to reach the rest (FN-7694). */
   .github-import-modal:not(.github-import-modal--embedded) {
     width: calc(100vw - (var(--space-lg) * 2));
   }
 
-  .github-import-workspace {
+  .github-import-modal:not(.github-import-modal--embedded) .github-import-workspace {
     flex-direction: column;
   }
 
-  .github-import-workspace__resize-handle {
+  .github-import-modal:not(.github-import-modal--embedded) .github-import-workspace__resize-handle {
     display: none;
   }
 
-  .github-import-list-pane {
+  .github-import-modal:not(.github-import-modal--embedded) .github-import-list-pane {
     flex: none;
     border-right: none;
     border-bottom: 1px solid var(--border);
@@ -1187,7 +1193,7 @@ Across the thread: a top filter (All/Human/Bot) and prev/next chevrons live in t
     max-height: 50%;
   }
 
-  .github-import-preview-pane {
+  .github-import-modal:not(.github-import-modal--embedded) .github-import-preview-pane {
     flex: none;
     max-height: 50%;
   }

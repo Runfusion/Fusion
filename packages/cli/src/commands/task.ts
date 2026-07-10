@@ -12,8 +12,9 @@ import {
   isGhAvailable,
   runGhJsonAsync,
 } from "@fusion/core/gh-cli";
-import { resolveProject, createLocalStore, type ProjectContext } from "../project-context.js";
+import { resolveProject, createLocalStore, closeProjectStore, type ProjectContext } from "../project-context.js";
 import { findNodeByNameOrId } from "./node.js";
+import { retryOnLock, LockRetryExhaustedError } from "../lock-retry.js";
 
 const STEP_STATUSES: StepStatus[] = ["pending", "in-progress", "done", "skipped"];
 
@@ -116,13 +117,12 @@ function formatTaskSource(task: {
   }
 }
 
-interface CommandContext {
-  store: TaskStore;
-  projectPath: string;
-  projectName?: string;
-  explicit: boolean;
-}
-
+// FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): the old bare-`TaskStore`
+// `getCommandContext`/`getStore` resolution path (which never closed the
+// store it opened) has been fully replaced by `getBoardCommandContext` +
+// `withBoardWrite`/`resolveBoardContext` below, which always resolve a full
+// `ProjectContext` and close/evict it on every exit path. Removed here
+// rather than left as an unused dead path.
 function asLocalProjectContext(store: TaskStore): ProjectContext {
   const cwd = process.cwd();
   return {
@@ -134,18 +134,25 @@ function asLocalProjectContext(store: TaskStore): ProjectContext {
   };
 }
 
-async function getCommandContext(projectName?: string): Promise<CommandContext> {
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00:
+ * Resolve the FULL `ProjectContext` (not just a bare `TaskStore`, unlike
+ * `getStore`/`getCommandContext` above) for board read/write commands
+ * (`runTaskShow`/`runTaskMove`) so they can deterministically close+evict
+ * the store they open via `closeProjectStore` on every exit path — mirroring
+ * the FN-7704 `fn agent stop/start` teardown fix. Covers all three
+ * project-resolution branches `getCommandContext` covers (explicit
+ * `--project`, default-project, and CWD-detected/unregistered fallback via
+ * `new TaskStore(process.cwd())`), reusing `asLocalProjectContext` for the
+ * fallback so `closeProjectStore` always receives a well-formed context.
+ */
+async function getBoardCommandContext(projectName?: string): Promise<ProjectContext> {
   if (projectName) {
     const context = await resolveProject(projectName);
     if (!context) {
       throw new Error(`Project ${projectName} not found`);
     }
-    return {
-      store: context.store,
-      projectPath: context.projectPath,
-      projectName: context.projectName,
-      explicit: true,
-    };
+    return context;
   }
 
   try {
@@ -153,45 +160,109 @@ async function getCommandContext(projectName?: string): Promise<CommandContext> 
     if (!context) {
       throw new Error("No project context");
     }
-    return {
-      store: context.store,
-      projectPath: context.projectPath,
-      projectName: context.projectName,
-      explicit: false,
-    };
+    return context;
   } catch {
     // FNXC:PostgresCutover 2026-07-05-12:00: the cwd fallback must boot through
     // the PostgreSQL startup factory (createLocalStore); a bare `new TaskStore`
     // resolves to the removed SQLite runtime, which throws on first DB access.
     const store = await createLocalStore(process.cwd());
-    return {
-      store,
-      projectPath: process.cwd(),
-      projectName: undefined,
-      explicit: false,
-    };
-  }
-}
-
-async function getStore(projectName?: string): Promise<TaskStore> {
-  return (await getCommandContext(projectName)).store;
-}
-
-async function getProjectContext(projectName?: string): Promise<ProjectContext | undefined> {
-  if (projectName) {
-    return resolveProject(projectName);
-  }
-
-  try {
-    return await resolveProject(undefined);
-  } catch {
-    const store = await getStore();
     return asLocalProjectContext(store);
   }
 }
 
-async function getProjectPath(projectName?: string): Promise<string> {
-  return (await getCommandContext(projectName)).projectPath;
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00:
+ * Translate a `LockRetryExhaustedError` (or any other error) from a board
+ * read/write into the CLI's standard "print + exit(1)" failure shape. A
+ * lock-exhaustion error already carries an actionable message (task id,
+ * operation, and the `FUSION_CLI_LOCK_RETRY_MS` override), so it is printed
+ * as-is rather than re-wrapped.
+ */
+function failBoardCommand(error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`\n  ✗ ${message}\n`);
+  process.exit(1);
+}
+
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734):
+ * Generalizes the FN-7731 `runTaskShow`/`runTaskMove` retry+teardown shape
+ * to every other `fn task` subcommand instead of forking a second copy of
+ * the pattern. Two shared shapes cover the ~26 remaining `runTask*`
+ * handlers:
+ *
+ *  - `withBoardWrite` mirrors runTaskShow/runTaskMove exactly: resolve
+ *    context + run the ENTIRE board interaction as one retryable unit,
+ *    closing the store on every attempt. Used for single-logical-unit
+ *    commands (even ones that are technically 2-3 store calls that must all
+ *    succeed/fail together, e.g. setNode's getTask+updateTask guard).
+ *  - `resolveBoardContext` + `retryBoardCall` + `closeBoardContextAndExit`
+ *    split resolution-retry from per-write-retry for MULTI-STEP flows
+ *    (create, retry, delete, merge, bulk imports, plan) where retrying the
+ *    WHOLE flow after a later step's lock error would redo an
+ *    already-committed earlier write (e.g. double-creating a task,
+ *    double-logging a retry entry). Only SQLite lock errors
+ *    (`isSqliteLockError`, via `retryOnLock`) are retried in either shape;
+ *    not-found/invalid-input errors propagate immediately without looping.
+ *
+ * Per MEMORY.md, `process.exit()` does NOT run pending `finally` blocks, so
+ * any exit that occurs AFTER context resolution must close the store
+ * explicitly first — `closeBoardContextAndExit` centralizes that.
+ */
+async function withBoardWrite<T>(
+  projectName: string | undefined,
+  context: { id: string; action: string },
+  fn: (ctx: ProjectContext) => Promise<T>,
+): Promise<T> {
+  try {
+    return await retryOnLock(
+      async () => {
+        const ctx = await getBoardCommandContext(projectName);
+        try {
+          return await fn(ctx);
+        } finally {
+          await closeProjectStore(ctx);
+        }
+      },
+      context,
+    );
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      failBoardCommand(error);
+    }
+    throw error;
+  }
+}
+
+/** Resolve project/store context, retrying ONLY the resolution step (which can itself hit `database is locked` inside `TaskStore.init()`). Used by multi-step commands that must not retry already-committed writes. */
+async function resolveBoardContext(projectName: string | undefined, id: string, action = "resolve project"): Promise<ProjectContext> {
+  try {
+    return await retryOnLock(() => getBoardCommandContext(projectName), { id, action });
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      failBoardCommand(error);
+    }
+    throw error;
+  }
+}
+
+/** Retry a single discrete board write/read within an already-resolved multi-step flow. On lock-exhaustion, closes the resolved context before failing (mirrors `failBoardCommand`, but store-aware). */
+async function retryBoardCall<T>(context: ProjectContext, id: string, action: string, op: () => Promise<T>): Promise<T> {
+  try {
+    return await retryOnLock(op, { id, action });
+  } catch (error) {
+    if (error instanceof LockRetryExhaustedError) {
+      await closeProjectStore(context).catch(() => {});
+      failBoardCommand(error);
+    }
+    throw error;
+  }
+}
+
+/** Close the resolved board context, then exit — used for exit paths reached AFTER context resolution, since `process.exit()` skips pending `finally` blocks. */
+async function closeBoardContextAndExit(context: ProjectContext, code: number): Promise<never> {
+  await closeProjectStore(context).catch(() => {});
+  process.exit(code);
 }
 
 async function resolveNodeByNameOrId(nodeNameOrId: string): Promise<{ id: string; name?: string }> {
@@ -323,7 +394,6 @@ async function runCliNearDuplicateCheck(args: {
 
 export async function runTaskCreate(descriptionArg?: string, attachFiles?: string[], depends?: string[], projectName?: string, nodeName?: string, noDedup = false) {
   let description = descriptionArg;
-  const projectContext = await getProjectContext(projectName);
 
   if (!description) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -335,139 +405,168 @@ export async function runTaskCreate(descriptionArg?: string, attachFiles?: strin
     console.error("Description is required");
     process.exit(1);
   }
+  const trimmedDescription = description.trim();
 
-  const store = projectContext?.store ?? await getStore(projectName);
-  const guard = await runDeterministicDuplicateGuard(
-    store,
-    { description: description.trim() },
-    {
-      lockScope: projectContext?.projectId ?? store.getRootDir?.() ?? process.cwd(),
-      bypass: noDedup,
-    },
-  );
-
-  let task = guard.existing;
-  let linkedExisting = false;
-
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation
+  // (duplicate guard -> createTask/link -> optional node update -> optional
+  // attachments). Resolution is retried once via `resolveBoardContext`; the
+  // dedup-guard+create step is naturally self-correcting on retry (a
+  // fingerprint match after a partial earlier success surfaces as
+  // guard.action==="duplicate", linking rather than re-creating), so it is
+  // retried as a unit via `retryBoardCall`. The subsequent node-update and
+  // attachment steps are each retried independently — NOT re-wrapped with
+  // the create step — so a later step's lock error never re-runs the
+  // already-committed create. The store is closed in a `finally` covering
+  // every exit path.
+  const context = await resolveBoardContext(projectName, "create", "resolve project");
+  const store = context.store;
   try {
-    if (guard.action === "duplicate" && guard.existing) {
-      task = guard.existing;
-      linkedExisting = true;
-    } else {
-      // FN-5171: create ordering remains deterministic duplicate (FN-4918) -> near-duplicate intent.
-      // Mirrors the dashboard FN-5152 guard while keeping CLI create fail-open.
-      const nearDuplicate = await runCliNearDuplicateCheck({
+    const task = await retryBoardCall(context, "create", "create task", async () => {
+      const guard = await runDeterministicDuplicateGuard(
         store,
-        description: description.trim(),
-        bypass: noDedup,
-      });
-      const sourceMetadata = {
-        ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
-        ...(hasIntentSignal(nearDuplicate.signature) ? { intentSignature: nearDuplicate.signature } : {}),
-      };
-      const created = await store.createTask({
-        description: description.trim(),
-        dependencies: depends,
-        source: {
-          sourceType: "cli",
-          sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
+        { description: trimmedDescription },
+        {
+          lockScope: context.projectId,
+          bypass: noDedup,
         },
-      });
+      );
 
-      const reconcileResult = await reconcileDeterministicDuplicate(store, {
-        createdTask: created,
-        fingerprint: guard.fingerprint,
-      });
-      task = reconcileResult.canonical;
-      linkedExisting = reconcileResult.outcome === "archived";
-    }
-  } finally {
-    guard.releaseLock();
-  }
+      let createdOrLinked = guard.existing;
+      let didLinkExisting = false;
 
-  if (!task) {
-    console.error("Failed to create or link task");
-    process.exit(1);
-  }
-
-  let resolvedNode: { id: string; name?: string } | undefined;
-  if (nodeName) {
-    try {
-      resolvedNode = await resolveNodeByNameOrId(nodeName);
-      await store.updateTask(task.id, { nodeId: resolvedNode.id });
-    } catch (error) {
-      console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-      process.exit(1);
-    }
-  }
-
-  const label = task.description.length > 60
-    ? task.description.slice(0, 60) + "…"
-    : task.description;
-
-  console.log();
-  if (projectContext) {
-    console.log(`  Project: ${projectContext.projectName}`);
-  }
-  if (linkedExisting) {
-    console.log(`  ✓ Linked existing ${task.id}: ${label}`);
-  } else {
-    console.log(`  ✓ Created ${task.id}: ${label}`);
-  }
-  console.log(`    Column: ${task.column}`);
-  if (task.dependencies.length > 0) {
-    console.log(`    Dependencies: ${task.dependencies.join(", ")}`);
-  }
-  if (resolvedNode) {
-    console.log(`    Node: ${resolvedNode.name || resolvedNode.id}`);
-  }
-  console.log(`    Path:   .fusion/tasks/${task.id}/`);
-
-  if (attachFiles && attachFiles.length > 0) {
-    const { readFile } = await import("node:fs/promises");
-    const { basename, extname, resolve } = await import("node:path");
-
-    for (const filePath of attachFiles) {
-      const resolvedPath = resolve(filePath);
-      const filename = basename(resolvedPath);
-      const ext = extname(filename).toLowerCase();
-      const mimeType = MIME_TYPES[ext];
-
-      if (!mimeType) {
-        console.error(`    ✗ Unsupported file type: ${ext} (${filename})`);
-        continue;
-      }
-
-      let content: Buffer;
       try {
-        content = await readFile(resolvedPath);
-      } catch {
-        console.error(`    ✗ Cannot read file: ${filePath}`);
-        continue;
+        if (guard.action === "duplicate" && guard.existing) {
+          createdOrLinked = guard.existing;
+          didLinkExisting = true;
+        } else {
+          // FN-5171: create ordering remains deterministic duplicate (FN-4918) -> near-duplicate intent.
+          // Mirrors the dashboard FN-5152 guard while keeping CLI create fail-open.
+          const nearDuplicate = await runCliNearDuplicateCheck({
+            store,
+            description: trimmedDescription,
+            bypass: noDedup,
+          });
+          const sourceMetadata = {
+            ...(guard.fingerprint ? { contentFingerprint: guard.fingerprint } : {}),
+            ...(hasIntentSignal(nearDuplicate.signature) ? { intentSignature: nearDuplicate.signature } : {}),
+          };
+          const created = await store.createTask({
+            description: trimmedDescription,
+            dependencies: depends,
+            source: {
+              sourceType: "cli",
+              sourceMetadata: Object.keys(sourceMetadata).length > 0 ? sourceMetadata : undefined,
+            },
+          });
+
+          const reconcileResult = await reconcileDeterministicDuplicate(store, {
+            createdTask: created,
+            fingerprint: guard.fingerprint,
+          });
+          createdOrLinked = reconcileResult.canonical;
+          didLinkExisting = reconcileResult.outcome === "archived";
+        }
+      } finally {
+        guard.releaseLock();
       }
 
-      const attachment = await store.addAttachment(task.id, filename, content, mimeType);
-      const sizeKB = (attachment.size / 1024).toFixed(1);
-      console.log(`    📎 Attached: ${attachment.originalName} (${sizeKB} KB)`);
-    }
-  }
+      return { task: createdOrLinked, linkedExisting: didLinkExisting };
+    });
 
-  console.log();
+    if (!task.task) {
+      console.error("Failed to create or link task");
+      await closeBoardContextAndExit(context, 1);
+      return;
+    }
+    const resolvedTask = task.task;
+    const linkedExisting = task.linkedExisting;
+
+    let resolvedNode: { id: string; name?: string } | undefined;
+    if (nodeName) {
+      try {
+        resolvedNode = await resolveNodeByNameOrId(nodeName);
+        await retryBoardCall(context, resolvedTask.id, "set node override", () => store.updateTask(resolvedTask.id, { nodeId: resolvedNode!.id }));
+      } catch (error) {
+        console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+        await closeBoardContextAndExit(context, 1);
+        return;
+      }
+    }
+
+    const label = resolvedTask.description.length > 60
+      ? resolvedTask.description.slice(0, 60) + "…"
+      : resolvedTask.description;
+
+    console.log();
+    if (context.projectName) {
+      console.log(`  Project: ${context.projectName}`);
+    }
+    if (linkedExisting) {
+      console.log(`  ✓ Linked existing ${resolvedTask.id}: ${label}`);
+    } else {
+      console.log(`  ✓ Created ${resolvedTask.id}: ${label}`);
+    }
+    console.log(`    Column: ${resolvedTask.column}`);
+    if (resolvedTask.dependencies.length > 0) {
+      console.log(`    Dependencies: ${resolvedTask.dependencies.join(", ")}`);
+    }
+    if (resolvedNode) {
+      console.log(`    Node: ${resolvedNode.name || resolvedNode.id}`);
+    }
+    console.log(`    Path:   .fusion/tasks/${resolvedTask.id}/`);
+
+    if (attachFiles && attachFiles.length > 0) {
+      const { readFile } = await import("node:fs/promises");
+      const { basename, extname, resolve } = await import("node:path");
+
+      for (const filePath of attachFiles) {
+        const resolvedPath = resolve(filePath);
+        const filename = basename(resolvedPath);
+        const ext = extname(filename).toLowerCase();
+        const mimeType = MIME_TYPES[ext];
+
+        if (!mimeType) {
+          console.error(`    ✗ Unsupported file type: ${ext} (${filename})`);
+          continue;
+        }
+
+        let content: Buffer;
+        try {
+          content = await readFile(resolvedPath);
+        } catch {
+          console.error(`    ✗ Cannot read file: ${filePath}`);
+          continue;
+        }
+
+        const attachment = await retryBoardCall(context, resolvedTask.id, "attach file", () => store.addAttachment(resolvedTask.id, filename, content, mimeType));
+        const sizeKB = (attachment.size / 1024).toFixed(1);
+        console.log(`    📎 Attached: ${attachment.originalName} (${sizeKB} KB)`);
+      }
+    }
+
+    console.log();
+  } finally {
+    await closeProjectStore(context).catch(() => {});
+  }
 }
 
 export async function runTaskList(projectName?: string) {
-  const projectContext = await getProjectContext(projectName);
-  const store = projectContext?.store ?? await getStore(projectName);
-  const tasks = await store.listTasks({ slim: true });
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board read.
+  // This command always calls `process.exit(0)` at the end (both branches),
+  // so the store must be closed explicitly before each exit — `finally`
+  // does not run past `process.exit()` (MEMORY.md).
+  const context = await resolveBoardContext(projectName, "list", "resolve project");
+  const tasks = await retryBoardCall(context, "list", "list tasks", () => context.store.listTasks({ slim: true }));
 
   if (tasks.length === 0) {
     console.log("\n  No tasks yet. Create one with: fn task create\n");
-    process.exit(0);
+    await closeBoardContextAndExit(context, 0);
+    return;
   }
 
   console.log();
-  if (projectContext && projectName) {
-    console.log(`  Tasks for project '${projectContext.projectName}':`);
+  if (context.projectName && projectName) {
+    console.log(`  Tasks for project '${context.projectName}':`);
     console.log();
   }
 
@@ -491,7 +590,7 @@ export async function runTaskList(projectName?: string) {
     console.log();
   }
 
-  process.exit(0);
+  await closeBoardContextAndExit(context, 0);
 }
 
 export async function runTaskUpdate(id: string, stepStr: string, status: string, projectName?: string) {
@@ -506,14 +605,18 @@ export async function runTaskUpdate(id: string, stepStr: string, status: string,
     process.exit(1);
   }
 
-  const store = await getStore(projectName);
-  const task = await store.updateStep(id, stepIndex, status as StepStatus);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write —
+  // wrap resolution+write in one retryable unit via `withBoardWrite`, closing
+  // the resolved store on every attempt.
+  await withBoardWrite(projectName, { id, action: "update step" }, async (context) => {
+    const task = await context.store.updateStep(id, stepIndex, status as StepStatus);
 
-  const step = task.steps[stepIndex];
-  console.log();
-  console.log(`  ✓ ${task.id} Step ${stepIndex} (${step.name}) → ${status}`);
-  console.log(`    Progress: ${task.steps.filter((s) => s.status === "done").length}/${task.steps.length} steps done`);
-  console.log();
+    const step = task.steps[stepIndex];
+    console.log();
+    console.log(`  ✓ ${task.id} Step ${stepIndex} (${step.name}) → ${status}`);
+    console.log(`    Progress: ${task.steps.filter((s) => s.status === "done").length}/${task.steps.length} steps done`);
+    console.log();
+  });
 }
 
 
@@ -523,7 +626,6 @@ export async function runTaskDeps(
   dependencyArgs: string[],
   projectName?: string,
 ) {
-  const store = await getStore(projectName);
   let mutation: TaskDependencyMutation;
   switch (operation) {
     case "add":
@@ -542,24 +644,30 @@ export async function runTaskDeps(
       mutation = { operation, dependencies: dependencyArgs };
       break;
   }
-  const task = await store.updateTaskDependencies(id, mutation);
-  console.log();
-  console.log(`  ✓ ${task.id}: dependencies → ${task.dependencies.length ? task.dependencies.join(", ") : "none"}`);
-  if (task.blockedBy) {
-    console.log(`    Blocked by: ${task.blockedBy}`);
-  } else {
-    console.log("    Blocked by: none");
-  }
-  console.log();
+
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "update dependencies" }, async (context) => {
+    const task = await context.store.updateTaskDependencies(id, mutation);
+    console.log();
+    console.log(`  ✓ ${task.id}: dependencies → ${task.dependencies.length ? task.dependencies.join(", ") : "none"}`);
+    if (task.blockedBy) {
+      console.log(`    Blocked by: ${task.blockedBy}`);
+    } else {
+      console.log("    Blocked by: none");
+    }
+    console.log();
+  });
 }
 
 export async function runTaskLog(id: string, message: string, outcome?: string, projectName?: string) {
-  const store = await getStore(projectName);
-  await store.logEntry(id, message, outcome);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "log entry" }, async (context) => {
+    await context.store.logEntry(id, message, outcome);
 
-  console.log();
-  console.log(`  ✓ ${id}: logged "${message}"`);
-  console.log();
+    console.log();
+    console.log(`  ✓ ${id}: logged "${message}"`);
+    console.log();
+  });
 }
 
 export interface LogsOptions {
@@ -637,27 +745,40 @@ function filterEntries(entries: AgentLogEntry[], options: LogsOptions): AgentLog
 
 
 export async function runTaskLogs(id: string, options: LogsOptions = {}, projectName?: string) {
-  const projectContext = await getProjectContext(projectName);
-  const store = projectContext?.store ?? await getStore(projectName);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): resolution + the
+  // existence-check/fetch board reads are retried as one unit. `--follow`
+  // mode is INTENTIONALLY long-lived (infinite tail until SIGINT) — per the
+  // Step 1 audit decision, the store is kept open for the life of the
+  // follow session (not retry-wrapped further) and closed explicitly in the
+  // SIGINT handler, since `process.exit()` skips pending `finally` blocks.
+  const context = await resolveBoardContext(projectName, id, "resolve project");
 
-  // Verify task exists
+  let entries: AgentLogEntry[];
   try {
-    await store.getTask(id);
-  } catch {
-    console.error(`Task ${id} not found`);
+    entries = await retryBoardCall(context, id, "read agent logs", async () => {
+      // Verify task exists
+      try {
+        await context.store.getTask(id);
+      } catch {
+        throw new Error(`Task ${id} not found`);
+      }
+      return context.store.getAgentLogs(id);
+    });
+  } catch (error) {
+    await closeProjectStore(context).catch(() => {});
+    console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
+    return;
   }
 
-  // Get agent logs
-  const entries = await store.getAgentLogs(id);
-
   if (entries.length === 0 && !options.follow) {
+    await closeProjectStore(context);
     console.log(`No agent logs found for ${id}`);
     return;
   }
 
-  if (projectContext && projectName) {
-    console.log(`  Logs for project '${projectContext.projectName}':`);
+  if (context.projectName && projectName) {
+    console.log(`  Logs for project '${context.projectName}':`);
   }
 
   // Print existing entries (filtered)
@@ -666,7 +787,7 @@ export async function runTaskLogs(id: string, options: LogsOptions = {}, project
 
   // Follow mode: watch for new entries
   if (options.follow) {
-    const projectPath = projectContext?.projectPath ?? process.cwd();
+    const projectPath = context.projectPath ?? process.cwd();
     const logPath = join(projectPath, ".fusion", "tasks", id, "agent.log");
 
     if (!existsSync(logPath)) {
@@ -695,7 +816,13 @@ export async function runTaskLogs(id: string, options: LogsOptions = {}, project
 
       unwatchFile(logPath);
       console.log("\n  (stopped following logs)");
-      process.exit(0);
+      void closeProjectStore(context).catch(() => {}).finally(() => {
+        try {
+          process.exit(0);
+        } catch {
+          // process.exit is mocked (non-throwing in production) in some test harnesses.
+        }
+      });
     };
 
     process.on("SIGINT", sigintHandler);
@@ -743,46 +870,76 @@ export async function runTaskLogs(id: string, options: LogsOptions = {}, project
     await new Promise(() => {
       // Infinite wait - SIGINT handler will exit
     });
-  }
-}
-
-export async function runTaskSetNode(id: string, nodeNameOrId: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.getTask(id);
-
-  if (task.column === "in-progress") {
-    console.error(`Cannot change node override: task ${id} is in progress`);
-    process.exit(1);
-  }
-
-  let resolvedNode: { id: string; name?: string };
-  try {
-    resolvedNode = await resolveNodeByNameOrId(nodeNameOrId);
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
     return;
   }
 
-  await store.updateTask(id, { nodeId: resolvedNode.id });
-  console.log(`✓ Set node override for ${id}: ${resolvedNode.name || resolvedNode.id}`);
+  await closeProjectStore(context);
+}
+
+export async function runTaskSetNode(id: string, nodeNameOrId: string, projectName?: string) {
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): getTask+updateTask are
+  // treated as ONE logical board write via `withBoardWrite`; the in-progress
+  // guard exit and node-resolution failure exit both occur AFTER context
+  // resolution, so they close the store explicitly before `process.exit()`
+  // (finally does not run past `process.exit()` — MEMORY.md).
+  await withBoardWrite(projectName, { id, action: "set node override" }, async (context) => {
+    const task = await context.store.getTask(id);
+
+    if (task.column === "in-progress") {
+      console.error(`Cannot change node override: task ${id} is in progress`);
+      await closeBoardContextAndExit(context, 1);
+      return;
+    }
+
+    let resolvedNode: { id: string; name?: string };
+    try {
+      resolvedNode = await resolveNodeByNameOrId(nodeNameOrId);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      await closeBoardContextAndExit(context, 1);
+      return;
+    }
+
+    await context.store.updateTask(id, { nodeId: resolvedNode.id });
+    console.log(`✓ Set node override for ${id}: ${resolvedNode.name || resolvedNode.id}`);
+  });
 }
 
 export async function runTaskClearNode(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.getTask(id);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): same shape as
+  // runTaskSetNode above.
+  await withBoardWrite(projectName, { id, action: "clear node override" }, async (context) => {
+    const task = await context.store.getTask(id);
 
-  if (task.column === "in-progress") {
-    console.error(`Cannot change node override: task ${id} is in progress`);
-    process.exit(1);
-  }
+    if (task.column === "in-progress") {
+      console.error(`Cannot change node override: task ${id} is in progress`);
+      await closeBoardContextAndExit(context, 1);
+      return;
+    }
 
-  await store.updateTask(id, { nodeId: null });
-  console.log(`✓ Cleared node override for ${id}`);
+    await context.store.updateTask(id, { nodeId: null });
+    console.log(`✓ Cleared node override for ${id}`);
+  });
 }
 
 export async function runTaskShow(id: string, projectName?: string) {
-  const store = await getStore(projectName);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (generalized by FN-7734's
+  // `withBoardWrite`): wrap the ENTIRE flow — project/store resolution
+  // (`getBoardCommandContext`, which can itself hit `database is locked`
+  // inside `TaskStore.init()` for the CWD-detected/unregistered fallback
+  // branch) AND the board read — in a single retryable unit, not just
+  // `store.getTask`. Each attempt resolves a fresh context and closes it in
+  // an inner `finally` before the next retry, so a failed attempt never
+  // leaks a store handle. Only SQLite lock errors are retried
+  // (`retryOnLock`); not-found and other errors propagate immediately
+  // without looping. FN-7734 promoted this shape into the shared
+  // `withBoardWrite` helper so every other `fn task` subcommand reuses it.
+  await withBoardWrite(projectName, { id, action: "read task" }, async (context) => {
+    await runTaskShowWithStore(id, context.store);
+  });
+}
+
+async function runTaskShowWithStore(id: string, store: TaskStore) {
   const task = await store.getTask(id);
   const settings: Partial<Settings> = "getSettings" in store ? await store.getSettings() : {};
 
@@ -849,8 +1006,18 @@ export async function runTaskShow(id: string, projectName?: string) {
 }
 
 export async function runTaskMerge(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const projectPath = await getProjectPath(projectName);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): resolve context ONCE
+  // (retried — replaces the previous double resolution via `getStore` +
+  // `getProjectPath`, each of which independently called `getCommandContext`)
+  // and close it in a `finally` covering EVERY exit path, including the
+  // `process.exit(1)` calls below. The AI merge (`runAiMerge`) and
+  // workspace-land (`landWorkspaceTask`) subflows are deliberately NOT
+  // retry-wrapped — they drive non-idempotent external git/AI operations,
+  // so retrying the whole flow on a lock blip could double-drive a merge or
+  // land (Step 1 audit decision).
+  const context = await resolveBoardContext(projectName, id, "resolve project");
+  const store = context.store;
+  const projectPath = context.projectPath;
 
   console.log(`\n  Merging ${id} with AI...\n`);
 
@@ -884,7 +1051,7 @@ export async function runTaskMerge(id: string, projectName?: string) {
       console.log(
         `\n  ${workspaceResult.allLanded ? "✓ All sub-repos landed — task finalized to done" : "✗ Partial land — see failures above (task remains in review; landed repos stay landed locally)"}\n`,
       );
-      if (!workspaceResult.allLanded) process.exit(1);
+      if (!workspaceResult.allLanded) await closeBoardContextAndExit(context, 1);
       return;
     }
 
@@ -905,7 +1072,9 @@ export async function runTaskMerge(id: string, projectName?: string) {
     console.log();
   } catch (err) {
     console.error(`\n  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    await closeBoardContextAndExit(context, 1);
+  } finally {
+    await closeProjectStore(context).catch(() => {});
   }
 }
 
@@ -949,33 +1118,41 @@ export async function runTaskAttach(id: string, filePath: string, projectName?: 
     process.exit(1);
   }
 
-  const store = await getStore(projectName);
-  const attachment = await store.addAttachment(id, filename, content, mimeType);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): the file read happens
+  // BEFORE store resolution (as before), so only the single board write
+  // (`addAttachment`) needs retry+close.
+  await withBoardWrite(projectName, { id, action: "attach file" }, async (context) => {
+    const attachment = await context.store.addAttachment(id, filename, content, mimeType);
 
-  const sizeKB = (attachment.size / 1024).toFixed(1);
-  console.log();
-  console.log(`  ✓ Attached to ${id}: ${attachment.originalName}`);
-  console.log(`    File: ${attachment.filename} (${sizeKB} KB)`);
-  console.log(`    Path: .fusion/tasks/${id}/attachments/${attachment.filename}`);
-  console.log();
+    const sizeKB = (attachment.size / 1024).toFixed(1);
+    console.log();
+    console.log(`  ✓ Attached to ${id}: ${attachment.originalName}`);
+    console.log(`    File: ${attachment.filename} (${sizeKB} KB)`);
+    console.log(`    Path: .fusion/tasks/${id}/attachments/${attachment.filename}`);
+    console.log();
+  });
 }
 
 export async function runTaskPause(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.pauseTask(id, true);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "pause task" }, async (context) => {
+    const task = await context.store.pauseTask(id, true);
 
-  console.log();
-  console.log(`  ✓ Paused ${task.id}`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Paused ${task.id}`);
+    console.log();
+  });
 }
 
 export async function runTaskUnpause(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.pauseTask(id, false);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "unpause task" }, async (context) => {
+    const task = await context.store.pauseTask(id, false);
 
-  console.log();
-  console.log(`  ✓ Unpaused ${task.id}`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Unpaused ${task.id}`);
+    console.log();
+  });
 }
 
 export async function runTaskMove(id: string, column: string, projectName?: string) {
@@ -985,28 +1162,37 @@ export async function runTaskMove(id: string, column: string, projectName?: stri
     process.exit(1);
   }
 
-  const store = await getStore(projectName);
-  const task = await store.moveTask(id, column as Column);
-
-  console.log();
-  console.log(`  ✓ Moved ${task.id} → ${columnLabel(task.column)}`);
-  console.log();
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (generalized by FN-7734's
+  // `withBoardWrite`): same rationale as runTaskShow above — wrap project/
+  // store resolution (`getBoardCommandContext`, which can itself hit
+  // `database is locked` inside `TaskStore.init()`) AND the write in one
+  // retryable unit, closing the resolved store in an inner `finally` on
+  // every attempt. Only `database is locked`/SQLITE_BUSY|LOCKED errors are
+  // retried; a genuinely invalid move (bad column, missing task) propagates
+  // immediately without looping.
+  await withBoardWrite(projectName, { id, action: "move task" }, async (context) => {
+    const task = await context.store.moveTask(id, column as Column);
+    console.log();
+    console.log(`  ✓ Moved ${task.id} → ${columnLabel(task.column)}`);
+    console.log();
+  });
 }
 
 export async function runTaskDuplicate(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const newTask = await store.duplicateTask(id);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "duplicate task" }, async (context) => {
+    const newTask = await context.store.duplicateTask(id);
 
-  console.log();
-  console.log(`  ✓ Duplicated ${id} → ${newTask.id}`);
-  console.log(`    Path: .fusion/tasks/${newTask.id}/`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Duplicated ${id} → ${newTask.id}`);
+    console.log(`    Path: .fusion/tasks/${newTask.id}/`);
+    console.log();
+  });
 }
 
 export async function runTaskRefine(id: string, feedbackArg?: string, projectName?: string) {
-  const store = await getStore(projectName);
-  
-  // Get feedback interactively only if not provided (undefined)
+  // Get feedback interactively only if not provided (undefined) — BEFORE
+  // store resolution, since this is not a board call.
   let feedback = feedbackArg;
   if (feedback === undefined) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -1025,149 +1211,177 @@ export async function runTaskRefine(id: string, feedbackArg?: string, projectNam
     process.exit(1);
   }
 
-  const newTask = await store.refineTask(id, feedback.trim());
+  const trimmedFeedback = feedback.trim();
 
-  console.log();
-  console.log(`  ✓ Created refinement ${newTask.id} for ${id}`);
-  console.log(`    Column: triage`);
-  console.log(`    Dependency: ${id}`);
-  console.log(`    Path: .fusion/tasks/${newTask.id}/`);
-  console.log();
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "refine task" }, async (context) => {
+    const newTask = await context.store.refineTask(id, trimmedFeedback);
+
+    console.log();
+    console.log(`  ✓ Created refinement ${newTask.id} for ${id}`);
+    console.log(`    Column: triage`);
+    console.log(`    Dependency: ${id}`);
+    console.log(`    Path: .fusion/tasks/${newTask.id}/`);
+    console.log();
+  });
 }
 
 export async function runTaskArchive(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.archiveTask(id);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "archive task" }, async (context) => {
+    const task = await context.store.archiveTask(id);
 
-  console.log();
-  console.log(`  ✓ Archived ${task.id} → ${columnLabel(task.column)}`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Archived ${task.id} → ${columnLabel(task.column)}`);
+    console.log();
+  });
 }
 
 export async function runTaskUnarchive(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.unarchiveTask(id);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "unarchive task" }, async (context) => {
+    const task = await context.store.unarchiveTask(id);
 
-  console.log();
-  console.log(`  ✓ Unarchived ${task.id} → ${columnLabel(task.column)}`);
-  console.log();
+    console.log();
+    console.log(`  ✓ Unarchived ${task.id} → ${columnLabel(task.column)}`);
+    console.log();
+  });
 }
 
 export async function runTaskRetry(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  
-  // Fetch task and validate it exists
-  let task;
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation
+  // (moveTask + updateTask + logEntry, in one of three branches). Resolution
+  // is retried once via `resolveBoardContext`; each discrete write is
+  // retried independently via `retryBoardCall` rather than retrying the
+  // WHOLE sequence, so a lock error on a LATER write does not redo an
+  // already-committed earlier one (e.g. double-moving to todo or
+  // double-logging the retry entry). The store is closed in a `finally`
+  // covering every return path.
+  const context = await resolveBoardContext(projectName, id, "resolve project");
   try {
-    task = await store.getTask(id);
-  } catch {
-    throw new Error(`Task ${id} not found`);
-  }
-  
-  const isInReviewStatusNone =
-    task.column === "in-review" && (task.status === null || task.status === undefined);
-  const hasIncompleteSteps = task.steps.some(
-    (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
-  );
-  // FN-4130 / PR #59 follow-up: zero-step review failures with no merge attempts
-  // (`mergeRetries ?? 0 === 0`) failed during execution, not merge finalization.
-  const isExecutionFailureInReview =
-    hasIncompleteSteps || (task.steps.length === 0 && (task.mergeRetries ?? 0) === 0);
-  const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
-  const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
-  const isInReviewRetry =
-    task.column === "in-review" &&
-    (task.status === "failed" ||
-      task.status === "stuck-killed" ||
-      isInReviewExecutionStall ||
-      isInReviewMergeRetryStall);
+    // Fetch task and validate it exists
+    let task;
+    try {
+      task = await retryBoardCall(context, id, "read task", () => context.store.getTask(id));
+    } catch {
+      throw new Error(`Task ${id} not found`);
+    }
 
-  // Validate task is in a retryable state
-  if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry) {
-    throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
-  }
-  
-  const autoPauseClearPatch = buildAutoPauseClearPatch(task);
-  const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
-  const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+    const isInReviewStatusNone =
+      task.column === "in-review" && (task.status === null || task.status === undefined);
+    const hasIncompleteSteps = task.steps.some(
+      (s: { status: string }) => s.status === "pending" || s.status === "in-progress",
+    );
+    // FN-4130 / PR #59 follow-up: zero-step review failures with no merge attempts
+    // (`mergeRetries ?? 0 === 0`) failed during execution, not merge finalization.
+    const isExecutionFailureInReview =
+      hasIncompleteSteps || (task.steps.length === 0 && (task.mergeRetries ?? 0) === 0);
+    const isInReviewExecutionStall = isInReviewStatusNone && isExecutionFailureInReview;
+    const isInReviewMergeRetryStall = isInReviewStatusNone && (task.mergeRetries ?? 0) > 0;
+    const isInReviewRetry =
+      task.column === "in-review" &&
+      (task.status === "failed" ||
+        task.status === "stuck-killed" ||
+        isInReviewExecutionStall ||
+        isInReviewMergeRetryStall);
 
-  // In-review retry: distinguish between execution failures (incomplete steps)
-  // and merge failures (all steps done).
-  if (isInReviewRetry) {
-    if (isExecutionFailureInReview) {
-      await store.moveTask(id, "todo", { preserveProgress: true });
-      await store.updateTask(id, {
+    // Validate task is in a retryable state
+    if (task.status !== 'failed' && task.status !== 'stuck-killed' && !isInReviewRetry) {
+      throw new Error(`Task ${id} is not in a retryable state (status: ${task.status || 'none'})`);
+    }
+
+    const autoPauseClearPatch = buildAutoPauseClearPatch(task);
+    const clearedDeadlockAutoPause = Object.keys(autoPauseClearPatch).length > 0;
+    const retryLogSuffix = clearedDeadlockAutoPause ? ", cleared deadlock auto-pause" : "";
+
+    // In-review retry: distinguish between execution failures (incomplete steps)
+    // and merge failures (all steps done).
+    if (isInReviewRetry) {
+      if (isExecutionFailureInReview) {
+        await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo", { preserveProgress: true }));
+        await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
+          status: null,
+          error: null,
+          ...autoPauseClearPatch,
+          ...buildManualRetryResetPatch(),
+        }));
+        await retryBoardCall(context, id, "log entry", () => context.store.logEntry(
+          id,
+          isInReviewExecutionStall
+            ? `Retry requested from CLI (stranded in-review execution retry → todo, preserving progress${retryLogSuffix})`
+            : `Retry requested from CLI (execution failure in-review → todo, preserving progress${retryLogSuffix})`,
+        ));
+
+        console.log();
+        console.log(`  ✓ Retried ${id} → todo (execution failure, preserving step progress)`);
+        console.log();
+        return;
+      }
+
+      await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, "todo"));
+      await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
         status: null,
         error: null,
         ...autoPauseClearPatch,
-        ...buildManualRetryResetPatch(),
-      });
-      await store.logEntry(
-        id,
-        isInReviewExecutionStall
-          ? `Retry requested from CLI (stranded in-review execution retry → todo, preserving progress${retryLogSuffix})`
-          : `Retry requested from CLI (execution failure in-review → todo, preserving progress${retryLogSuffix})`,
-      );
+        ...buildManualRetryResetPatch({ resetMergeRetries: true }),
+      }));
+      await retryBoardCall(context, id, "log entry", () => context.store.logEntry(id, `Retry requested from CLI (merge retry → todo, mergeRetries reset${retryLogSuffix})`));
 
       console.log();
-      console.log(`  ✓ Retried ${id} → todo (execution failure, preserving step progress)`);
+      console.log(`  ✓ Retried ${id} → todo (merge retry state cleared)`);
       console.log();
       return;
     }
 
-    await store.moveTask(id, "todo");
-    await store.updateTask(id, {
+    // Move to todo column before applying retry resets. `moveTask` reads from the
+    // store's durable index and may overwrite task.json-only updates, so apply the
+    // manual retry reset patch after the move to make the cleared counters stick.
+    await retryBoardCall(context, id, "move task", () => context.store.moveTask(id, 'todo'));
+
+    // Clear failure state and stale branch refs so retry can choose a fresh base.
+    await retryBoardCall(context, id, "update task", () => context.store.updateTask(id, {
       status: null,
       error: null,
+      worktree: null,
+      branch: null,
+      baseBranch: null,
+      baseCommitSha: null,
       ...autoPauseClearPatch,
       ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-    });
-    await store.logEntry(id, `Retry requested from CLI (merge retry → todo, mergeRetries reset${retryLogSuffix})`);
+    }));
+
+    // Log the retry action
+    await retryBoardCall(context, id, "log entry", () => context.store.logEntry(
+      id,
+      clearedDeadlockAutoPause ? "Retry requested from CLI (cleared deadlock auto-pause)" : "Retry requested from CLI",
+      "Task reset to todo for retry",
+    ));
 
     console.log();
-    console.log(`  ✓ Retried ${id} → todo (merge retry state cleared)`);
+    console.log(`  ✓ Retried ${id} → todo (failure state cleared)`);
     console.log();
-    return;
+  } finally {
+    await closeProjectStore(context).catch(() => {});
   }
-
-  // Move to todo column before applying retry resets. `moveTask` reads from the
-  // store's durable index and may overwrite task.json-only updates, so apply the
-  // manual retry reset patch after the move to make the cleared counters stick.
-  await store.moveTask(id, 'todo');
-
-  // Clear failure state and stale branch refs so retry can choose a fresh base.
-  await store.updateTask(id, {
-    status: null,
-    error: null,
-    worktree: null,
-    branch: null,
-    baseBranch: null,
-    baseCommitSha: null,
-    ...autoPauseClearPatch,
-    ...buildManualRetryResetPatch({ resetMergeRetries: true }),
-  });
-  
-  // Log the retry action
-  await store.logEntry(
-    id,
-    clearedDeadlockAutoPause ? "Retry requested from CLI (cleared deadlock auto-pause)" : "Retry requested from CLI",
-    "Task reset to todo for retry",
-  );
-  
-  console.log();
-  console.log(`  ✓ Retried ${id} → todo (failure state cleared)`);
-  console.log();
 }
 
 export async function runTaskDelete(id: string, force?: boolean, allowResurrection?: boolean, projectName?: string) {
-  const store = await getStore(projectName);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation
+  // (existence check, interactive confirm prompt, delete). Resolution and
+  // the existence check are retried together; the interactive confirm
+  // prompt runs with the context still open (no board call inside it, so no
+  // retry is needed there); the terminal `deleteTask` write is retried
+  // independently. Every exit path (not-found, cancel, delete failure,
+  // success) closes the context first, since `process.exit()` skips pending
+  // `finally` blocks.
+  const context = await resolveBoardContext(projectName, id, "resolve project");
 
   // Check if task exists first
   try {
-    await store.getTask(id);
+    await retryBoardCall(context, id, "read task", () => context.store.getTask(id));
   } catch {
     console.error(`✗ Task ${id} not found`);
-    process.exit(1);
+    await closeBoardContextAndExit(context, 1);
     return;
   }
 
@@ -1180,25 +1394,26 @@ export async function runTaskDelete(id: string, force?: boolean, allowResurrecti
     const trimmed = answer.trim().toLowerCase();
     if (trimmed !== "y" && trimmed !== "yes") {
       console.log("Cancelled.");
-      process.exit(0);
+      await closeBoardContextAndExit(context, 0);
       return;
     }
   }
 
   try {
-    await store.deleteTask(id, {
+    await retryBoardCall(context, id, "delete task", () => context.store.deleteTask(id, {
       allowResurrection: allowResurrection === true,
       auditContext: {
         agentId: "cli",
         runId: `synthetic-cli-delete-${id}-${Date.now()}`,
       },
-    });
+    }));
     console.log();
     console.log(`  ✓ Deleted ${id}`);
     console.log();
+    await closeProjectStore(context);
   } catch (err) {
     console.error(`✗ Failed to delete ${id}: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    await closeBoardContextAndExit(context, 1);
     return;
   }
 }
@@ -1221,129 +1436,142 @@ export async function runTaskImportGitHubInteractive(
 
   console.log(`\n  Fetching issues from ${owner}/${repo}...\n`);
 
-  const store = await getStore(projectName);
-  const existingTasks = await store.listTasks({ slim: true });
-
-  // Build a set of already-imported issue URLs
-  const importedUrls = new Map<string, string>();
-  for (const task of existingTasks) {
-    // Match Source URL anywhere in description (more robust than end-of-string anchor)
-    const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
-    if (sourceMatch) {
-      importedUrls.set(sourceMatch[1], task.id);
-    }
-  }
-
-  let issues: GitHubIssue[];
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): INTENTIONALLY
+  // interactive (issue-selection prompt) — per the Step 1 audit decision,
+  // resolution happens once and the store stays open for the interactive
+  // selection prompt (no board call inside the prompt itself, so no retry
+  // is needed there); only discrete board calls (the initial `listTasks`
+  // and each per-issue `createTask`) are retried. The store is closed in a
+  // `finally` covering every exit path.
+  const context = await resolveBoardContext(projectName, "import", "resolve project");
+  const store = context.store;
   try {
-    issues = await fetchGitHubIssues(owner, repo, { limit, labels });
-  } catch (err) {
-    console.error(`  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-  }
+    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: true }));
 
-  if (issues.length === 0) {
-    console.log(`  No open issues found in ${owner}/${repo}.\n`);
-    return;
-  }
+    // Build a set of already-imported issue URLs
+    const importedUrls = new Map<string, string>();
+    for (const task of existingTasks) {
+      // Match Source URL anywhere in description (more robust than end-of-string anchor)
+      const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
+      if (sourceMatch) {
+        importedUrls.set(sourceMatch[1], task.id);
+      }
+    }
 
-  // Display issues with numbers
-  console.log(`  Found ${issues.length} issues:\n`);
-  for (let i = 0; i < issues.length; i++) {
-    const issue = issues[i];
-    const alreadyImported = importedUrls.has(issue.html_url);
-    const status = alreadyImported ? ` [Imported as ${importedUrls.get(issue.html_url)}]` : "";
-    console.log(`  ${i + 1}. #${issue.number} ${issue.title.slice(0, 80)}${issue.title.length > 80 ? "…" : ""}${status}`);
-  }
+    let issues: GitHubIssue[];
+    try {
+      issues = await fetchGitHubIssues(owner, repo, { limit, labels });
+    } catch (err) {
+      console.error(`  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      await closeBoardContextAndExit(context, 1);
+      return;
+    }
 
-  console.log();
+    if (issues.length === 0) {
+      console.log(`  No open issues found in ${owner}/${repo}.\n`);
+      return;
+    }
 
-  // Create readline interface for interactive selection
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+    // Display issues with numbers
+    console.log(`  Found ${issues.length} issues:\n`);
+    for (let i = 0; i < issues.length; i++) {
+      const issue = issues[i];
+      const alreadyImported = importedUrls.has(issue.html_url);
+      const status = alreadyImported ? ` [Imported as ${importedUrls.get(issue.html_url)}]` : "";
+      console.log(`  ${i + 1}. #${issue.number} ${issue.title.slice(0, 80)}${issue.title.length > 80 ? "…" : ""}${status}`);
+    }
 
-  let selectedIndices: number[] = [];
-  let validInput = false;
+    console.log();
 
-  while (!validInput) {
-    const answer = await rl.question('  Enter numbers to import (comma-separated) or "all": ');
-    const trimmed = answer.trim().toLowerCase();
+    // Create readline interface for interactive selection
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
 
-    if (trimmed === "all") {
-      selectedIndices = issues.map((_, i) => i);
-      validInput = true;
-    } else {
-      const nums = trimmed
-        .split(",")
-        .map((s) => parseInt(s.trim(), 10))
-        .filter((n) => !isNaN(n));
+    let selectedIndices: number[] = [];
+    let validInput = false;
 
-      if (nums.length === 0) {
-        console.log("  Please enter at least one number or 'all'");
+    while (!validInput) {
+      const answer = await rl.question('  Enter numbers to import (comma-separated) or "all": ');
+      const trimmed = answer.trim().toLowerCase();
+
+      if (trimmed === "all") {
+        selectedIndices = issues.map((_, i) => i);
+        validInput = true;
+      } else {
+        const nums = trimmed
+          .split(",")
+          .map((s) => parseInt(s.trim(), 10))
+          .filter((n) => !isNaN(n));
+
+        if (nums.length === 0) {
+          console.log("  Please enter at least one number or 'all'");
+          continue;
+        }
+
+        const outOfRange = nums.filter((n) => n < 1 || n > issues.length);
+        if (outOfRange.length > 0) {
+          console.log(`  Invalid selection: ${outOfRange.join(", ")} (range: 1-${issues.length})`);
+          continue;
+        }
+
+        selectedIndices = nums.map((n) => n - 1); // Convert to 0-based
+        validInput = true;
+      }
+    }
+
+    rl.close();
+
+    console.log();
+
+    const importedIssueGithubTracking = await retryBoardCall(context, "import", "resolve github tracking", () => resolveImportedIssueGithubTracking(store));
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const idx of selectedIndices) {
+      const issue = issues[idx];
+
+      // Check if already imported
+      if (importedUrls.has(issue.html_url)) {
+        const existingId = importedUrls.get(issue.html_url)!;
+        console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
+        skipped++;
         continue;
       }
 
-      const outOfRange = nums.filter((n) => n < 1 || n > issues.length);
-      if (outOfRange.length > 0) {
-        console.log(`  Invalid selection: ${outOfRange.join(", ")} (range: 1-${issues.length})`);
-        continue;
-      }
+      // Prepare title (truncate to 200 chars)
+      const title = issue.title.slice(0, 200);
 
-      selectedIndices = nums.map((n) => n - 1); // Convert to 0-based
-      validInput = true;
-    }
-  }
+      // Prepare description
+      const body = issue.body?.trim() || "(no description)";
+      const description = `${body}\n\nSource: ${issue.html_url}`;
 
-  rl.close();
+      // Create the task
+      // FN-5060: intentional same-content sibling; deterministic guard skipped here.
+      const source = buildGitHubIssueSource(owner, repo, issue);
+      const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
+        title: title || undefined,
+        description,
+        column: "triage",
+        dependencies: [],
+        sourceIssue: source.sourceIssue,
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: source.sourceMetadata,
+        },
+        ...(importedIssueGithubTracking ? { githubTracking: importedIssueGithubTracking } : {}),
+      }));
 
-  console.log();
-
-  const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(store);
-
-  let created = 0;
-  let skipped = 0;
-
-  for (const idx of selectedIndices) {
-    const issue = issues[idx];
-
-    // Check if already imported
-    if (importedUrls.has(issue.html_url)) {
-      const existingId = importedUrls.get(issue.html_url)!;
-      console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
-      skipped++;
-      continue;
+      const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
+      console.log(`  ✓ Created ${task.id}: ${label}`);
+      created++;
     }
 
-    // Prepare title (truncate to 200 chars)
-    const title = issue.title.slice(0, 200);
-
-    // Prepare description
-    const body = issue.body?.trim() || "(no description)";
-    const description = `${body}\n\nSource: ${issue.html_url}`;
-
-    // Create the task
-    // FN-5060: intentional same-content sibling; deterministic guard skipped here.
-    const source = buildGitHubIssueSource(owner, repo, issue);
-    const task = await store.createTask({
-      title: title || undefined,
-      description,
-      column: "triage",
-      dependencies: [],
-      sourceIssue: source.sourceIssue,
-      source: {
-        sourceType: "github_import",
-        sourceMetadata: source.sourceMetadata,
-      },
-      ...(importedIssueGithubTracking ? { githubTracking: importedIssueGithubTracking } : {}),
-    });
-
-    const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
-    console.log(`  ✓ Created ${task.id}: ${label}`);
-    created++;
+    console.log();
+    console.log(`  ✓ Imported ${created} tasks from ${owner}/${repo}${skipped > 0 ? ` (${skipped} skipped)` : ""}`);
+    console.log();
+  } finally {
+    await closeProjectStore(context).catch(() => {});
   }
-
-  console.log();
-  console.log(`  ✓ Imported ${created} tasks from ${owner}/${repo}${skipped > 0 ? ` (${skipped} skipped)` : ""}`);
-  console.log();
 }
 
 // ── GitHub Issue Import ───────────────────────────────────────────
@@ -1451,77 +1679,89 @@ export async function runTaskImportFromGitHub(
 
   console.log(`\n  Importing issues from ${owner}/${repo}...\n`);
 
-  const store = await getStore(projectName);
-  const existingTasks = await store.listTasks({ slim: true });
-
-  // Build a set of already-imported issue URLs
-  const importedUrls = new Map<string, string>();
-  for (const task of existingTasks) {
-    // Match Source URL anywhere in description (more robust than end-of-string anchor)
-    const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
-    if (sourceMatch) {
-      importedUrls.set(sourceMatch[1], task.id);
-    }
-  }
-
-  let issues: GitHubIssue[];
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation
+  // (loop of creates, no interactivity). Resolution + initial list are
+  // retried once; each `createTask` call in the loop is retried
+  // independently — self-correcting on retry via the `importedUrls`
+  // already-imported check, so redoing an earlier iteration after a LATER
+  // one's lock error is harmless. Store closed in a `finally`.
+  const context = await resolveBoardContext(projectName, "import", "resolve project");
+  const store = context.store;
   try {
-    issues = await fetchGitHubIssues(owner, repo, { limit, labels });
-  } catch (err) {
-    console.error(`  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-  }
+    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: true }));
 
-  if (issues.length === 0) {
-    console.log(`  No open issues found in ${owner}/${repo}.\n`);
-    return;
-  }
-
-  const importedIssueGithubTracking = await resolveImportedIssueGithubTracking(store);
-
-  let created = 0;
-  let skipped = 0;
-
-  for (const issue of issues) {
-    // Check if already imported
-    if (importedUrls.has(issue.html_url)) {
-      const existingId = importedUrls.get(issue.html_url)!;
-      console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
-      skipped++;
-      continue;
+    // Build a set of already-imported issue URLs
+    const importedUrls = new Map<string, string>();
+    for (const task of existingTasks) {
+      // Match Source URL anywhere in description (more robust than end-of-string anchor)
+      const sourceMatch = task.description.match(/Source: (https:\/\/github\.com\/[^/]+\/[^/]+\/issues\/\d+)/);
+      if (sourceMatch) {
+        importedUrls.set(sourceMatch[1], task.id);
+      }
     }
 
-    // Prepare title (truncate to 200 chars)
-    const title = issue.title.slice(0, 200);
+    let issues: GitHubIssue[];
+    try {
+      issues = await fetchGitHubIssues(owner, repo, { limit, labels });
+    } catch (err) {
+      console.error(`  ✗ ${err instanceof Error ? err.message : String(err)}\n`);
+      await closeBoardContextAndExit(context, 1);
+      return;
+    }
 
-    // Prepare description
-    const body = issue.body?.trim() || "(no description)";
-    const description = `${body}\n\nSource: ${issue.html_url}`;
+    if (issues.length === 0) {
+      console.log(`  No open issues found in ${owner}/${repo}.\n`);
+      return;
+    }
 
-    // Create the task
-    // FN-5060: intentional same-content sibling; deterministic guard skipped here.
-    const source = buildGitHubIssueSource(owner, repo, issue);
-    const task = await store.createTask({
-      title: title || undefined,
-      description,
-      column: "triage",
-      dependencies: [],
-      sourceIssue: source.sourceIssue,
-      source: {
-        sourceType: "github_import",
-        sourceMetadata: source.sourceMetadata,
-      },
-      ...(importedIssueGithubTracking ? { githubTracking: importedIssueGithubTracking } : {}),
-    });
+    const importedIssueGithubTracking = await retryBoardCall(context, "import", "resolve github tracking", () => resolveImportedIssueGithubTracking(store));
 
-    const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
-    console.log(`  ✓ Created ${task.id}: ${label}`);
-    created++;
+    let created = 0;
+    let skipped = 0;
+
+    for (const issue of issues) {
+      // Check if already imported
+      if (importedUrls.has(issue.html_url)) {
+        const existingId = importedUrls.get(issue.html_url)!;
+        console.log(`  → Skipping #${issue.number}: already imported as ${existingId}`);
+        skipped++;
+        continue;
+      }
+
+      // Prepare title (truncate to 200 chars)
+      const title = issue.title.slice(0, 200);
+
+      // Prepare description
+      const body = issue.body?.trim() || "(no description)";
+      const description = `${body}\n\nSource: ${issue.html_url}`;
+
+      // Create the task
+      // FN-5060: intentional same-content sibling; deterministic guard skipped here.
+      const source = buildGitHubIssueSource(owner, repo, issue);
+      const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
+        title: title || undefined,
+        description,
+        column: "triage",
+        dependencies: [],
+        sourceIssue: source.sourceIssue,
+        source: {
+          sourceType: "github_import",
+          sourceMetadata: source.sourceMetadata,
+        },
+        ...(importedIssueGithubTracking ? { githubTracking: importedIssueGithubTracking } : {}),
+      }));
+
+      const label = task.title || task.description.slice(0, 60) + (task.description.length > 60 ? "…" : "");
+      console.log(`  ✓ Created ${task.id}: ${label}`);
+      created++;
+    }
+
+    console.log();
+    console.log(`  ✓ Imported ${created} tasks from ${owner}/${repo}${skipped > 0 ? ` (${skipped} skipped)` : ""}`);
+    console.log();
+  } finally {
+    await closeProjectStore(context).catch(() => {});
   }
-
-  console.log();
-  console.log(`  ✓ Imported ${created} tasks from ${owner}/${repo}${skipped > 0 ? ` (${skipped} skipped)` : ""}`);
-  console.log();
 }
 
 export type GitLabImportResource = "project-issues" | "group-issues" | "merge-requests";
@@ -1540,50 +1780,60 @@ export async function runTaskImportFromGitLab(
   projectName?: string,
 ): Promise<void> {
   const resource = options.resource ?? "project-issues";
-  const store = await getStore(projectName);
-  const client = await createGitLabClientForStore(store);
-  console.log(`\n  Importing GitLab ${resource} from ${target}...\n`);
-  const labelArray = options.labels ?? [];
-  const items = resource === "project-issues"
-    ? await client.listProjectIssues(target, { limit: options.limit, labels: labelArray })
-    : resource === "group-issues"
-      ? await client.listGroupIssues(target, { limit: options.limit, labels: labelArray })
-      : await client.listMergeRequests(target, { limit: options.limit, labels: labelArray });
-  if (items.length === 0) {
-    console.log("  No GitLab resources found.\n");
-    return;
-  }
-  const existingTasks = await store.listTasks({ slim: false, includeArchived: false });
-  let created = 0;
-  let skipped = 0;
-  for (const item of items) {
-    const provenance = dashboard.buildGitLabTaskProvenance({ auth: client.auth, resourceType: resource === "merge-requests" ? "merge_request" : resource === "group-issues" ? "group_issue" : "project_issue", item, projectInput: resource !== "group-issues" ? target : undefined, groupInput: resource === "group-issues" ? target : undefined });
-    if (existingTasks.some((task) => dashboard.isGitLabAlreadyImported(task, provenance))) {
-      console.log(`  → Skipping #${item.iid}: already imported`);
-      skipped += 1;
-      continue;
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): MULTI-STEP mutation
+  // (loop of creates+logs, no interactivity). Resolution + initial list are
+  // retried once; each per-item create+log pair is retried independently —
+  // self-correcting via the `isGitLabAlreadyImported` check, so redoing an
+  // earlier iteration after a LATER one's lock error is harmless. Store
+  // closed in a `finally`.
+  const context = await resolveBoardContext(projectName, "import", "resolve project");
+  const store = context.store;
+  try {
+    const client = await createGitLabClientForStore(store);
+    console.log(`\n  Importing GitLab ${resource} from ${target}...\n`);
+    const labelArray = options.labels ?? [];
+    const items = resource === "project-issues"
+      ? await client.listProjectIssues(target, { limit: options.limit, labels: labelArray })
+      : resource === "group-issues"
+        ? await client.listGroupIssues(target, { limit: options.limit, labels: labelArray })
+        : await client.listMergeRequests(target, { limit: options.limit, labels: labelArray });
+    if (items.length === 0) {
+      console.log("  No GitLab resources found.\n");
+      return;
     }
-    const title = resource === "merge-requests" ? `Review MR !${item.iid}: ${item.title.slice(0, 180)}` : item.title.slice(0, 200);
-    const task = await store.createTask({
-      title: title || undefined,
-      description: dashboard.buildGitLabTaskDescription(item),
-      column: "triage",
-      dependencies: [],
-      sourceIssue: provenance.sourceIssue,
-      gitlabTracking: provenance.gitlabTracking,
-      source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata },
-    });
-    await store.logEntry(task.id, resource === "merge-requests" ? "Imported merge request from GitLab" : "Imported from GitLab", item.webUrl);
-    existingTasks.push(task);
-    created += 1;
-    console.log(`  ✓ Created ${task.id}: ${task.title}`);
+    const existingTasks = await retryBoardCall(context, "import", "list tasks", () => store.listTasks({ slim: false, includeArchived: false }));
+    let created = 0;
+    let skipped = 0;
+    for (const item of items) {
+      const provenance = dashboard.buildGitLabTaskProvenance({ auth: client.auth, resourceType: resource === "merge-requests" ? "merge_request" : resource === "group-issues" ? "group_issue" : "project_issue", item, projectInput: resource !== "group-issues" ? target : undefined, groupInput: resource === "group-issues" ? target : undefined });
+      if (existingTasks.some((task) => dashboard.isGitLabAlreadyImported(task, provenance))) {
+        console.log(`  → Skipping #${item.iid}: already imported`);
+        skipped += 1;
+        continue;
+      }
+      const title = resource === "merge-requests" ? `Review MR !${item.iid}: ${item.title.slice(0, 180)}` : item.title.slice(0, 200);
+      const task = await retryBoardCall(context, "import", "create task", () => store.createTask({
+        title: title || undefined,
+        description: dashboard.buildGitLabTaskDescription(item),
+        column: "triage",
+        dependencies: [],
+        sourceIssue: provenance.sourceIssue,
+        gitlabTracking: provenance.gitlabTracking,
+        source: { sourceType: "gitlab_import", sourceMetadata: provenance.sourceMetadata },
+      }));
+      await retryBoardCall(context, task.id, "log entry", () => store.logEntry(task.id, resource === "merge-requests" ? "Imported merge request from GitLab" : "Imported from GitLab", item.webUrl));
+      existingTasks.push(task);
+      created += 1;
+      console.log(`  ✓ Created ${task.id}: ${task.title}`);
+    }
+    console.log(`\n  ✓ Imported ${created} GitLab tasks${skipped > 0 ? ` (${skipped} skipped)` : ""}\n`);
+  } finally {
+    await closeProjectStore(context).catch(() => {});
   }
-  console.log(`\n  ✓ Imported ${created} GitLab tasks${skipped > 0 ? ` (${skipped} skipped)` : ""}\n`);
 }
 
 export async function runTaskComment(id: string, message?: string, author = "user", projectName?: string) {
-  const store = await getStore(projectName);
-
+  // Interactive prompt runs BEFORE store resolution (not a board call).
   let text = message;
   if (text === undefined) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -1602,41 +1852,45 @@ export async function runTaskComment(id: string, message?: string, author = "use
     process.exit(1);
   }
 
-  const task = await store.addTaskComment(id, trimmed, author || "user");
-  const latestComment = task.comments?.[task.comments.length - 1];
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write.
+  await withBoardWrite(projectName, { id, action: "add comment" }, async (context) => {
+    const task = await context.store.addTaskComment(id, trimmed, author || "user");
+    const latestComment = task.comments?.[task.comments.length - 1];
 
-  console.log();
-  console.log(`  ✓ Comment added to ${task.id}`);
-  if (latestComment) {
-    console.log(`    ID: ${latestComment.id}`);
-  }
-  console.log();
+    console.log();
+    console.log(`  ✓ Comment added to ${task.id}`);
+    if (latestComment) {
+      console.log(`    ID: ${latestComment.id}`);
+    }
+    console.log();
+  });
 }
 
 export async function runTaskComments(id: string, projectName?: string) {
-  const store = await getStore(projectName);
-  const task = await store.getTask(id);
-  const comments = task.comments || [];
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board read.
+  await withBoardWrite(projectName, { id, action: "read comments" }, async (context) => {
+    const task = await context.store.getTask(id);
+    const comments = task.comments || [];
 
-  console.log();
-  if (comments.length === 0) {
-    console.log(`  No comments on ${id}`);
     console.log();
-    return;
-  }
+    if (comments.length === 0) {
+      console.log(`  No comments on ${id}`);
+      console.log();
+      return;
+    }
 
-  console.log(`  Comments for ${id}:`);
-  for (const comment of comments) {
-    console.log(`    ${comment.id} · ${comment.author} · ${new Date(comment.updatedAt || comment.createdAt).toLocaleString()}`);
-    console.log(`    ${comment.text}`);
-  }
-  console.log();
+    console.log(`  Comments for ${id}:`);
+    for (const comment of comments) {
+      console.log(`    ${comment.id} · ${comment.author} · ${new Date(comment.updatedAt || comment.createdAt).toLocaleString()}`);
+      console.log(`    ${comment.text}`);
+    }
+    console.log();
+  });
 }
 
 export async function runTaskSteer(id: string, message?: string, projectName?: string) {
-  const store = await getStore(projectName);
-
-  // Get message interactively if not provided as argument
+  // Get message interactively if not provided as argument — BEFORE store
+  // resolution (not a board call).
   let text = message;
   if (text === undefined) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -1656,24 +1910,28 @@ export async function runTaskSteer(id: string, message?: string, projectName?: s
     process.exit(1);
   }
 
-  // Add steering comment
-  let task;
-  try {
-    task = await store.addSteeringComment(id, trimmed, "user");
-  } catch (err) {
-    if (typeof err === "object" && err !== null && (err as Record<string, unknown>).code === "ENOENT") {
-      console.error(`Error: Task not found: ${id}`);
-      process.exit(1);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): single board write;
+  // preserves the existing ENOENT→not-found translation (a non-lock error,
+  // so it propagates immediately without retry-looping).
+  await withBoardWrite(projectName, { id, action: "add steering comment" }, async (context) => {
+    let task;
+    try {
+      task = await context.store.addSteeringComment(id, trimmed, "user");
+    } catch (err) {
+      if (typeof err === "object" && err !== null && (err as Record<string, unknown>).code === "ENOENT") {
+        console.error(`Error: Task not found: ${id}`);
+        await closeBoardContextAndExit(context, 1);
+      }
+      throw err;
     }
-    throw err;
-  }
 
-  // Show success with preview
-  const preview = trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed;
-  console.log();
-  console.log(`  ✓ Steering comment added to ${task.id}`);
-  console.log(`    "${preview}"`);
-  console.log();
+    // Show success with preview
+    const preview = trimmed.length > 60 ? trimmed.slice(0, 60) + "…" : trimmed;
+    console.log();
+    console.log(`  ✓ Steering comment added to ${task.id}`);
+    console.log(`    "${preview}"`);
+    console.log();
+  });
 }
 
 // ── PR Creation ─────────────────────────────────────────────────────────────
@@ -1915,7 +2173,17 @@ export async function runTaskPlan(
     }
   }
 
-  const store = await getStore(projectName);
+  // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): INTENTIONALLY
+  // long-lived/interactive (multi-turn planning Q&A loop with network
+  // planning-session calls) — per the Step 1 audit decision, the Q&A loop
+  // itself is NOT retry-wrapped (forbidden by this task's "Do NOT" list);
+  // only the ONE discrete board write (`store.createTask` on confirm) is
+  // retried via `retryBoardCall`. The resolved context is closed explicitly
+  // on every exit path (all `process.exit()` calls, the SIGINT handler, and
+  // both `return` paths), since `process.exit()` skips pending `finally`
+  // blocks (MEMORY.md).
+  const context = await resolveBoardContext(projectName, "plan", "resolve project");
+  const store = context.store;
 
   // Create planning session
   let sessionId: string;
@@ -1923,7 +2191,7 @@ export async function runTaskPlan(
 
   try {
     showThinking();
-    const projectPath = await getProjectPath(projectName);
+    const projectPath = context.projectPath;
     const result = await createSession("127.0.0.1", initialPlan.trim(), store, projectPath);
     clearThinking();
     sessionId = result.sessionId;
@@ -1933,11 +2201,13 @@ export async function runTaskPlan(
 
     if (err instanceof RateLimitError) {
       console.error("\n  Rate limit exceeded. Maximum 1000 planning sessions per hour.\n");
-      process.exit(1);
+      await closeBoardContextAndExit(context, 1);
+      return undefined;
     }
 
     console.error(`\n  Failed to start planning session: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
+    await closeBoardContextAndExit(context, 1);
+    return undefined;
   }
 
   // Interactive Q&A loop
@@ -1948,7 +2218,13 @@ export async function runTaskPlan(
   const handleSigint = () => {
     cancelled = true;
     console.log("\n\n  Planning session cancelled.\n");
-    process.exit(0);
+    void closeProjectStore(context).catch(() => {}).finally(() => {
+        try {
+          process.exit(0);
+        } catch {
+          // process.exit is mocked (non-throwing in production) in some test harnesses.
+        }
+      });
   };
 
   process.on("SIGINT", handleSigint);
@@ -1982,7 +2258,8 @@ export async function runTaskPlan(
           }
           default: {
             console.error(`\n  Unknown question type: ${String((currentQuestion as unknown as Record<string, unknown>).type)}`);
-            process.exit(1);
+            await closeBoardContextAndExit(context, 1);
+            return undefined;
           }
         }
       } catch (promptErr) {
@@ -2005,15 +2282,18 @@ export async function runTaskPlan(
 
         if (err instanceof SessionNotFoundError) {
           console.error("\n  Session expired. Please start again.\n");
-          process.exit(1);
+          await closeBoardContextAndExit(context, 1);
+          return undefined;
         }
         if (err instanceof InvalidSessionStateError) {
           console.error(`\n  Invalid session state: ${err.message}\n`);
-          process.exit(1);
+          await closeBoardContextAndExit(context, 1);
+          return undefined;
         }
 
         console.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`);
-        process.exit(1);
+        await closeBoardContextAndExit(context, 1);
+        return undefined;
       }
 
       if (result.type === "complete") {
@@ -2031,16 +2311,17 @@ export async function runTaskPlan(
         }
 
         if (confirmed) {
-          // Create the task
+          // Create the task — the ONE discrete board write in this flow,
+          // retried independently (FN-7734).
           // FN-5060: intentional same-content sibling; deterministic guard skipped here.
-          const task = await store.createTask({
+          const task = await retryBoardCall(context, "plan", "create task", () => store.createTask({
             title: result.data.title,
             description: result.data.description,
             column: "triage",
             dependencies: result.data.suggestedDependencies,
             baseBranch: baseBranch?.trim() || undefined,
             source: { sourceType: "cli" },
-          });
+          }));
 
           console.log();
           console.log(`  ✓ Created ${task.id}: ${task.title || task.description.slice(0, 60)}${task.description.length > 60 ? "…" : ""}`);
@@ -2063,5 +2344,6 @@ export async function runTaskPlan(
     }
   } finally {
     process.off("SIGINT", handleSigint);
+    await closeProjectStore(context).catch(() => {});
   }
 }

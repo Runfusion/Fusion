@@ -172,7 +172,28 @@ export function useTerminalSessions(projectId?: string): UseTerminalSessionsRetu
 
     const validateAndRestore = async () => {
       if (cancelled) return;
-      
+
+      /*
+      FNXC:Terminal 2026-07-08-10:00:
+      FN-7686: initial terminal load was slow because a fresh open (no
+      persisted kb-terminal-tabs) still paid for a full listTerminalSessions
+      HTTP round trip before auto-create could even begin, even though that
+      round trip's result is provably discarded when there are zero local
+      tabs to validate (remainingTabs is always [] regardless of what the
+      server returns). Fixed by skipping the list round trip entirely in
+      that case and marking bootstrap ready immediately, so auto-create (and
+      therefore the WebSocket connect that depends on it) is not serialized
+      behind a no-op validation call. Reload-with-persisted-tabs still awaits
+      the list call below, since its result IS decision-relevant there (which
+      sessionIds still exist server-side).
+      */
+      if (readTabsFromStorage(projectId).length === 0) {
+        if (cancelled || gen !== generationRef.current) return;
+        setServerAvailable(true);
+        setIsReady(true);
+        return;
+      }
+
       try {
         // Get active server sessions with bounded timeout
         const serverSessions = await withTimeout(

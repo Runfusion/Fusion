@@ -103,6 +103,72 @@ describe("decidePlannerRecovery", () => {
     }
   });
 
+  // FN-7692: the `reason` copy must accurately reflect whether the active
+  // auto-merge policy will advance the merge/PR unattended (advisory,
+  // non-blocking wording) or genuinely requires a human approval (blocking
+  // wording) — never the old unconditional "requires explicit confirmation
+  // before ... may run" claim, which was false whenever auto-merge would
+  // proceed on its own (observed on FN-7689). `action`/`requiresConfirmation`/
+  // `sideEffectClass` must stay byte-for-byte identical across all three
+  // `autoMergeWillProceed` states — this is messaging-only.
+  it("produces accurate advisory copy when auto-merge will proceed unattended, for both merger and pull-request stages", () => {
+    for (const stage of ["merger", "pull-request"] as const) {
+      const decision = decidePlannerRecovery({
+        snapshot: observation({ stage, signal: "failed" }),
+        autoMergeWillProceed: true,
+      });
+      expect(decision.action, `stage=${stage}`).toBe("await_confirmation");
+      expect(decision.requiresConfirmation, `stage=${stage}`).toBe(true);
+      expect(decision.sideEffectClass, `stage=${stage}`).toBe("merge_pr");
+      expect(decision.reason, `stage=${stage}`).not.toMatch(/requires explicit confirmation before .* may run/);
+      expect(decision.reason, `stage=${stage}`).toMatch(/automatically/i);
+      expect(decision.reason, `stage=${stage}`).toMatch(/advisory/i);
+    }
+  });
+
+  it("produces accurate blocking copy when auto-merge will NOT proceed unattended, for both merger and pull-request stages", () => {
+    for (const stage of ["merger", "pull-request"] as const) {
+      const decision = decidePlannerRecovery({
+        snapshot: observation({ stage, signal: "failed" }),
+        autoMergeWillProceed: false,
+      });
+      expect(decision.action, `stage=${stage}`).toBe("await_confirmation");
+      expect(decision.requiresConfirmation, `stage=${stage}`).toBe(true);
+      expect(decision.sideEffectClass, `stage=${stage}`).toBe("merge_pr");
+      expect(decision.reason, `stage=${stage}`).toMatch(/will not .* until a human explicitly approves/);
+      expect(decision.reason, `stage=${stage}`).not.toMatch(/advisory/i);
+    }
+  });
+
+  it("uses neutral, non-overclaiming copy when the auto-merge policy is unknown to the caller", () => {
+    for (const stage of ["merger", "pull-request"] as const) {
+      const decision = decidePlannerRecovery({ snapshot: observation({ stage, signal: "failed" }) });
+      expect(decision.reason, `stage=${stage}`).not.toMatch(/requires explicit confirmation before .* may run/);
+      expect(decision.reason, `stage=${stage}`).not.toMatch(/automatically/i);
+      expect(decision.reason, `stage=${stage}`).not.toMatch(/will not .* until a human explicitly approves/);
+    }
+  });
+
+  it("keeps action/requiresConfirmation/sideEffectClass byte-for-byte unchanged across autoMergeWillProceed states (messaging-only guard)", () => {
+    for (const stage of ["merger", "pull-request"] as const) {
+      const base = decidePlannerRecovery({ snapshot: observation({ stage, signal: "failed" }) });
+      const proceeds = decidePlannerRecovery({
+        snapshot: observation({ stage, signal: "failed" }),
+        autoMergeWillProceed: true,
+      });
+      const blocks = decidePlannerRecovery({
+        snapshot: observation({ stage, signal: "failed" }),
+        autoMergeWillProceed: false,
+      });
+      for (const decision of [base, proceeds, blocks]) {
+        expect(decision.action, `stage=${stage}`).toBe("await_confirmation");
+        expect(decision.requiresConfirmation, `stage=${stage}`).toBe(true);
+        expect(decision.sideEffectClass, `stage=${stage}`).toBe("merge_pr");
+        expect(decision.proposedAction, `stage=${stage}`).toBe(base.proposedAction);
+      }
+    }
+  });
+
   it("keeps requiresConfirmation false for bounded-recovery decisions", () => {
     const decision = decidePlannerRecovery({ snapshot: observation({ stage: "executor", signal: "failed" }) });
     expect(decision.requiresConfirmation).toBe(false);
@@ -145,5 +211,17 @@ describe("decidePlannerRecovery", () => {
     expect(decision.action).toBe("none");
     expect(decision.exhausted).toBe(true);
     expect(decision.attemptLimit).toBe(1);
+  });
+
+  // FN-7743 invariant lock: a stalled non-paused in-progress task (the FN-7732
+  // symptom) is surfaced by the overseer as `stage: "executor", signal: "stuck"`.
+  // This asserts the downstream mapping this fix depends on — executor `stuck`
+  // → `inject_guidance`, not `none` — already holds and stays locked, so a
+  // future regression here is caught even though FN-7743 itself only changes
+  // the observation INPUT, never this mapping.
+  it("FN-7743: maps an executor stuck signal to inject_guidance (the hung-executor recovery path)", () => {
+    const decision = decidePlannerRecovery({ snapshot: observation({ stage: "executor", signal: "stuck" }) });
+    expect(decision.action).toBe("inject_guidance");
+    expect(decision.requiresConfirmation).toBe(false);
   });
 });

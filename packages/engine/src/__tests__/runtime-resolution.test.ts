@@ -324,7 +324,10 @@ describe("runtime-resolution", () => {
         expect(result.fallbackReason).toBe("factory_error");
       });
 
-      it("should fall back to pi when createRuntimeContext returns null", async () => {
+      it("should fall back to pi with reason 'init_error' when createRuntimeContext returns null", async () => {
+        // Registration is found (getRuntimeById succeeds) but the plugin fails to
+        // produce a usable context -- this is an initialization failure, distinct
+        // from a registration that was never found in the first place.
         mockPluginRunner.createRuntimeContext.mockResolvedValue(null);
         const mockRuntime = createMockPluginRuntime("orphan", "Orphan Runtime");
         mockPluginRunner.getRuntimeById.mockReturnValue({
@@ -337,7 +340,7 @@ describe("runtime-resolution", () => {
 
         expect(result.runtimeId).toBe("pi");
         expect(result.wasConfigured).toBe(false);
-        expect(result.fallbackReason).toBe("not_found");
+        expect(result.fallbackReason).toBe("init_error");
       });
 
       it("should report reason 'not_found' distinct from 'factory_error' across the two hint failure modes", async () => {
@@ -359,6 +362,40 @@ describe("runtime-resolution", () => {
         expect(factoryErrorResult.fallbackReason).toBe("factory_error");
 
         expect(notFoundResult.fallbackReason).not.toBe(factoryErrorResult.fallbackReason);
+      });
+
+      it("should distinguish all three reachable FallbackReason values: not_found, init_error, factory_error", async () => {
+        // not_found: registration never existed for the requested runtimeId.
+        mockPluginRunner.getRuntimeById.mockReturnValueOnce(undefined);
+        const notFoundResult = await resolveRuntime(createContext("executor", "never-registered"));
+        expect(notFoundResult.fallbackReason).toBe("not_found");
+
+        // init_error: registration exists but the plugin fails to initialize a context.
+        mockPluginRunner.createRuntimeContext.mockResolvedValueOnce(null);
+        const initErrorRuntime = createMockPluginRuntime("uninitializable", "Uninitializable Runtime");
+        mockPluginRunner.getRuntimeById.mockReturnValueOnce({
+          pluginId: "uninitializable-plugin",
+          runtime: initErrorRuntime,
+        });
+        const initErrorResult = await resolveRuntime(createContext("executor", "uninitializable"));
+        expect(initErrorResult.fallbackReason).toBe("init_error");
+
+        // factory_error: registration exists, context initializes, but the factory itself fails.
+        const factoryErrorRuntime: PluginRuntimeRegistration = {
+          metadata: { runtimeId: "factory-broken", name: "Factory Broken Runtime" },
+          factory: vi.fn().mockRejectedValue(new Error("factory boom")),
+        };
+        mockPluginRunner.getRuntimeById.mockReturnValueOnce({
+          pluginId: "factory-broken-plugin",
+          runtime: factoryErrorRuntime,
+        });
+        const factoryErrorResult = await resolveRuntime(createContext("executor", "factory-broken"));
+        expect(factoryErrorResult.fallbackReason).toBe("factory_error");
+
+        // All three reasons must be pairwise distinct so a regression collapsing
+        // any two of them back together fails this assertion.
+        const reasons = [notFoundResult.fallbackReason, initErrorResult.fallbackReason, factoryErrorResult.fallbackReason];
+        expect(new Set(reasons).size).toBe(3);
       });
     });
   });

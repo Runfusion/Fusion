@@ -21,6 +21,28 @@ function summarizeFailure(binary: string, stdout: string, stderr: string): strin
   return `${binary}: ${truncated}`;
 }
 
+async function probeCursorAuthStatus(binary: string, timeoutMs: number): Promise<{ authenticated: boolean; reason?: string }> {
+  const status = await runCursorCommand(binary, ["status", "--format", "json"], timeoutMs);
+  const output = (status.stdout || "").trim();
+
+  if (status.code !== 0 || !output) {
+    return { authenticated: false, reason: "cursor-agent status --format json did not return output" };
+  }
+
+  try {
+    const parsed = JSON.parse(output) as { isAuthenticated?: unknown };
+    if (typeof parsed?.isAuthenticated === "boolean") {
+      return {
+        authenticated: parsed.isAuthenticated,
+        reason: parsed.isAuthenticated ? undefined : "cursor-agent reports not authenticated",
+      };
+    }
+    return { authenticated: false, reason: "cursor-agent status --format json missing isAuthenticated field" };
+  } catch {
+    return { authenticated: false, reason: "cursor-agent status --format json returned malformed JSON" };
+  }
+}
+
 export async function probeCursorBinary(options?: { timeoutMs?: number; binaryPath?: string }): Promise<CursorBinaryStatus> {
   const startedAt = Date.now();
   const timeoutMs = options?.timeoutMs ?? 3000;
@@ -40,15 +62,22 @@ export async function probeCursorBinary(options?: { timeoutMs?: number; binaryPa
       probeDurationMs: Date.now() - startedAt,
     };
     if (version.code === 0) {
-      // NOTE: Cursor CLI currently lacks a stable auth-status contract we can
-      // invoke without side effects. Treating successful --version as ready is
-      // a best-effort heuristic; keychain/auth errors are handled by fallback
-      // probes below when surfaced in stderr/stdout.
+      /*
+      FNXC:CursorCli 2026-07-08-00:00:
+      `cursor-agent status --format json` (alias `whoami`) is the real auth
+      contract, returning `{ isAuthenticated, status, hasAccessToken, userInfo }`.
+      We probe it with the SAME candidate binary that just succeeded --version
+      (never re-probing a different candidate), and fail closed to
+      `authenticated: false` with an actionable reason on any non-zero exit or
+      malformed/non-JSON output rather than throwing.
+      */
+      const auth = await probeCursorAuthStatus(binary, timeoutMs);
       return {
         available: true,
-        authenticated: true,
+        authenticated: auth.authenticated,
         ...common,
         version: version.stdout.trim() || undefined,
+        reason: auth.authenticated ? undefined : auth.reason,
       };
     }
 

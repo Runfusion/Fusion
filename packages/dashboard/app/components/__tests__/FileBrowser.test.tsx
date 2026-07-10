@@ -611,6 +611,58 @@ describe("FileBrowser", () => {
     expect(css).toMatch(/\.file-browser-context-menu__item\s*\{[^}]*min-height:\s*36px;/);
   });
 
+  // FN-7703: the leading magnifier icon in the "Search project files" input
+  // was overlapping the placeholder/typed text because the input's
+  // padding-left did not reserve enough clearance for the absolutely
+  // positioned icon. Under the compact spacing theme (--space-sm: 4px),
+  // the old formula calc(var(--space-lg) + var(--space-md)) == 12px + 8px
+  // == 20px collided exactly with the icon's occupied width
+  // (--space-sm offset 4px + 16px icon == 20px), leaving zero gap. This
+  // test encodes the invariant directly against the declared CSS formulas
+  // (rather than jsdom computed styles, which do not resolve calc()/var())
+  // so it fails against the pre-fix rule and passes once padding-left is
+  // anchored to the icon's own offset + width + a real gap.
+  it("reserves search input padding-left beyond the leading icon's offset + width under the compact spacing theme", () => {
+    const css = loadAllAppCss();
+
+    const iconRuleMatch = css.match(/\.file-browser-search-icon\s*\{([^}]*)\}/);
+    const inputRuleMatch = css.match(/\.file-browser-search-input\s*\{([^}]*)\}/);
+    expect(iconRuleMatch).toBeTruthy();
+    expect(inputRuleMatch).toBeTruthy();
+
+    const iconLeftMatch = iconRuleMatch![1].match(/left:\s*([^;]+);/);
+    const paddingLeftMatch = inputRuleMatch![1].match(/padding-left:\s*([^;]+);/);
+    expect(iconLeftMatch).toBeTruthy();
+    expect(paddingLeftMatch).toBeTruthy();
+
+    // Compact spacing scale from public/theme-data.css (the failing case).
+    const compactSpaceTokens: Record<string, number> = {
+      "--space-sm": 4,
+      "--space-md": 8,
+      "--space-lg": 12,
+    };
+
+    function resolvePx(expr: string): number {
+      let normalized = expr.trim();
+      if (normalized.startsWith("calc(") && normalized.endsWith(")")) {
+        normalized = normalized.slice(5, -1);
+      }
+      for (const [token, value] of Object.entries(compactSpaceTokens)) {
+        normalized = normalized.split(`var(${token})`).join(String(value));
+      }
+      normalized = normalized.replace(/px/g, "");
+      expect(normalized).toMatch(/^[0-9+\-*/.\s]+$/);
+      return Function(`"use strict"; return (${normalized});`)();
+    }
+
+    const iconLeftPx = resolvePx(iconLeftMatch![1]);
+    const paddingLeftPx = resolvePx(paddingLeftMatch![1]);
+    const iconWidthPx = 16; // Search size={16} in FileBrowser.tsx
+
+    // The regression: text must clear the icon's full occupied width, not just its offset.
+    expect(paddingLeftPx).toBeGreaterThan(iconLeftPx + iconWidthPx);
+  });
+
   // ── Download Actions ────────────────────────────────────────────────
 
   it("opens download URL for file when Download is clicked", () => {

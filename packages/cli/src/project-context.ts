@@ -349,3 +349,73 @@ export async function resolveAgentStoreBase(
     return { rootDir: process.cwd(), asyncLayer: null };
   }
 }
+
+/**
+ * FNXC:CliAgentControl 2026-07-08-00:00:
+ * Close a resolved project's `TaskStore` and evict it from `storeCache` when
+ * it is that store's owner. `resolveProject()` always constructs (and, for
+ * registered/CWD-detected projects, caches) a `TaskStore` even when a caller
+ * only needs the resolved `projectPath` — e.g. `fn agent stop/start`
+ * (packages/cli/src/commands/agent.ts) never touches `context.store` at all.
+ * An unclosed cached store keeps the underlying SQLite connection (and any
+ * handles it owns) alive, which can keep the CLI process's event loop alive
+ * past the point where the command's real work is done — the process never
+ * exits on its own, so a caller bounding the subprocess with a timeout (e.g.
+ * a recovery watcher) sees a false "hang" until it force-kills at its own
+ * deadline. Close+evict is best-effort and idempotent so it is safe even if
+ * another in-process caller already holds/closed the same cached instance.
+ */
+export async function closeProjectStore(context: ProjectContext): Promise<void> {
+  try {
+    await context.store.close();
+  } catch {
+    // Best-effort: an already-closed store (or one closed by a concurrent
+    // in-process caller) must not throw here.
+  }
+  if (storeCache.get(context.projectId) === context.store) {
+    storeCache.delete(context.projectId);
+  }
+}
+
+/**
+ * FNXC:CliAgentControl 2026-07-08-00:00:
+ * Resolve only the project PATH without leaking the `TaskStore` that
+ * `resolveProject()` constructs internally. Use this instead of
+ * `resolveProject()` when a command has no use for `context.store` (see
+ * `closeProjectStore` above for the underlying leak this avoids).
+ */
+export async function resolveProjectPathOnly(
+  projectNameFlag?: string,
+  cwd: string = process.cwd(),
+  globalDir?: string,
+): Promise<string> {
+  const context = await resolveProject(projectNameFlag, cwd, globalDir);
+  await closeProjectStore(context);
+  return context.projectPath;
+}
+
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00:
+ * Wrap an already-constructed, UNCACHED local `TaskStore` (the CWD-fallback
+ * branch several board command files build directly via
+ * `new TaskStore(process.cwd())` when `resolveProject` throws — e.g.
+ * `getBranchGroupContext`/`getPrContext` in `packages/cli/src/commands/
+ * branch-group.ts`/`pr.ts`, FN-7738) as a well-formed `ProjectContext` so
+ * `closeProjectStore` can close+evict it the same way it handles a cached
+ * context, even though `storeCache` holds no matching entry for it (eviction
+ * is then a harmless no-op; the `.close()` call is what matters). Mirrors
+ * `packages/cli/src/commands/task.ts`'s private `asLocalProjectContext`
+ * helper (kept private there per FN-7734/FN-7738 scope boundaries — this
+ * export exists so `branch-group.ts`/`pr.ts` do not need to fork a second
+ * copy).
+ */
+export function asLocalProjectContext(store: TaskStore): ProjectContext {
+  const cwd = process.cwd();
+  return {
+    projectId: cwd,
+    projectPath: cwd,
+    projectName: basename(cwd) || "current-project",
+    isRegistered: false,
+    store,
+  };
+}

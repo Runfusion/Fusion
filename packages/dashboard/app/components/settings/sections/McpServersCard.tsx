@@ -95,6 +95,13 @@ export interface McpServersCardProps {
 }
 
 const EMPTY_MCP_SETTINGS: McpServersSettings = { enabled: false, servers: [] };
+/*
+FNXC:McpConfig 2026-07-09-00:00:
+MCP-card buttons render inline lucide icons at the standard --icon-size-sm/--icon-size-md token values so icons align with button labels and match the rest of Settings.
+The global .btn > svg selector is intentionally unsized, so inline icons must opt in here or they fall back to lucide's 24px default.
+*/
+const MCP_BUTTON_ICON_SIZE_SM = 14;
+const MCP_BUTTON_ICON_SIZE_MD = 16;
 let rowCounter = 0;
 
 function nextRowId(): string {
@@ -518,7 +525,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
           {row.required ? null : <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeSensitive", "Remove secret reference")} onClick={() => setEditor((current) => current && { ...current, [field]: current[field].filter((candidate) => candidate.id !== row.id) })}><Trash2 aria-hidden="true" /></button>}
         </div>
       ))}
-      <button type="button" className="btn btn-sm touch-target" onClick={() => setEditor((current) => current && { ...current, [field]: [...current[field], { id: nextRowId(), key: "", secretRef: "", scope, createKey: "", createValue: "", required: false }] })}><Plus aria-hidden="true" /> {t("settings.mcp.addSecretRef", "Add secret reference")}</button>
+      <button type="button" className="btn btn-sm touch-target" onClick={() => setEditor((current) => current && { ...current, [field]: [...current[field], { id: nextRowId(), key: "", secretRef: "", scope, createKey: "", createValue: "", required: false }] })}><Plus aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.addSecretRef", "Add secret reference")}</button>
       {secretsError ? <p className="form-error">{secretsError}</p> : null}
     </div>
   );
@@ -530,7 +537,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
           <h5 className="mcp-servers-card__title">{scope === "global" ? t("settings.mcp.globalTitle", "Global MCP servers") : t("settings.mcp.projectTitle", "Project MCP servers")}</h5>
           <p className="mcp-servers-card__description">{scope === "global" ? t("settings.mcp.globalDescription", "Configure MCP servers shared by all projects. Project settings may override or disable these servers by name.") : t("settings.mcp.projectDescription", "Configure project-specific MCP servers, overrides, and disabled inherited servers.")}</p>
         </div>
-        <button type="button" className="btn btn-primary touch-target" onClick={() => { setEditor(draftFromServer()); setEditorError(null); }}><Plus aria-hidden="true" /> {t("settings.mcp.addServer", "Add server")}</button>
+        <button type="button" className="btn btn-primary touch-target" onClick={() => { setEditor(draftFromServer()); setEditorError(null); }}><Plus aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_MD} /> {t("settings.mcp.addServer", "Add server")}</button>
       </div>
 
       <label className="checkbox-label mcp-enabled-toggle">
@@ -545,7 +552,7 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
             <h6>{t("settings.mcp.discoveryTitle", "Discovered on this machine")}</h6>
             <p>{t("settings.mcp.discoveryDescription", "Read-only scan of Claude, Cursor, Windsurf, and VS Code MCP config files. Add a server to enable it in Fusion.")}</p>
           </div>
-          <button type="button" className="btn btn-sm touch-target" onClick={() => void scanDiscoveredServers()} disabled={discoveryLoading}><RefreshCw aria-hidden="true" /> {discoveryLoading ? t("settings.mcp.scanning", "Scanning…") : t("settings.mcp.scanAgain", "Scan again")}</button>
+          <button type="button" className="btn btn-sm touch-target" onClick={() => void scanDiscoveredServers()} disabled={discoveryLoading}><RefreshCw aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {discoveryLoading ? t("settings.mcp.scanning", "Scanning…") : t("settings.mcp.scanAgain", "Scan again")}</button>
         </div>
         {discoveryError ? <p className="form-error">{discoveryError}</p> : null}
         {(discovered?.errors?.length ?? 0) > 0 ? <div className="mcp-discovery__notes" role="note">{discovered?.errors?.map((error) => <p key={error}>{error}</p>)}</div> : null}
@@ -587,10 +594,10 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
                   <p className={`mcp-validation-status mcp-validation-status--${validation.status}`} data-testid={`mcp-validation-${server.name}`} aria-live="polite"><span className={getValidateDotClass(validation.status)} aria-hidden="true" /> <span className="mcp-validation-status__badge">{validation.status === "idle" ? t("settings.mcp.notTested", "Not tested") : getValidationLabel(validation.status)}</span>{validation.message ? <span>{validation.message}</span> : null}</p>
                 </div>
                 <div className="mcp-server-row__actions">
-                  <button type="button" className="btn btn-sm touch-target" onClick={() => void validateServer(server)} disabled={validation.status === "pending"}><Play aria-hidden="true" /> {validation.status === "pending" ? t("settings.mcp.testing", "Testing…") : t("settings.mcp.test", "Test")}</button>
-                  {state === "inherited" ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" /> {t("settings.mcp.override", "Override")}</button> : null}
+                  <button type="button" className="btn btn-sm touch-target" onClick={() => void validateServer(server)} disabled={validation.status === "pending"}><Play aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {validation.status === "pending" ? t("settings.mcp.testing", "Testing…") : t("settings.mcp.test", "Test")}</button>
+                  {state === "inherited" ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.override", "Override")}</button> : null}
                   {state === "inherited" ? <button type="button" className="btn btn-warning btn-sm touch-target" onClick={() => disableInheritedServer(server.name)}>{t("settings.mcp.disableInherited", "Disable")}</button> : null}
-                  {editable ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" /> {t("actions.edit", "Edit")}</button> : null}
+                  {editable ? <button type="button" className="btn btn-sm touch-target" onClick={() => { setEditor(draftFromServer(server)); setEditorError(null); }}><Pencil aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("actions.edit", "Edit")}</button> : null}
                   {editable ? <button type="button" className="btn btn-icon touch-target" aria-label={t("settings.mcp.removeServer", "Remove {{name}}", { name: server.name })} onClick={() => removeServer(server.name)}><Trash2 aria-hidden="true" /></button> : null}
                 </div>
               </article>
@@ -618,12 +625,12 @@ export function McpServersCard({ scope, form, setForm, globalSettings, projectId
           <h6>{t("settings.mcp.import", "Import")}</h6>
           <textarea className="input mcp-json-textarea" value={importText} onChange={(event) => setImportText(event.target.value)} placeholder={t("settings.mcp.importPlaceholder", "Paste Claude Desktop mcpServers JSON")} />
           <input ref={fileInputRef} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; void file.text().then(setImportText); event.target.value = ""; }} />
-          <div className="mcp-inline-actions"><button type="button" className="btn btn-sm touch-target" onClick={() => fileInputRef.current?.click()}><Upload aria-hidden="true" /> {t("settings.mcp.uploadJson", "Upload JSON")}</button><button type="button" className="btn btn-sm touch-target" onClick={() => void importServers(importText)}>{t("settings.mcp.import", "Import")}</button></div>
+          <div className="mcp-inline-actions"><button type="button" className="btn btn-sm touch-target" onClick={() => fileInputRef.current?.click()}><Upload aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.uploadJson", "Upload JSON")}</button><button type="button" className="btn btn-sm touch-target" onClick={() => void importServers(importText)}>{t("settings.mcp.import", "Import")}</button></div>
           {importError ? <p className="form-error">{importError}</p> : null}
         </div>
         <div className="mcp-import-export__pane">
           <h6>{t("settings.mcp.export", "Export")}</h6>
-          <button type="button" className="btn btn-sm touch-target" onClick={() => void exportServers()}><Download aria-hidden="true" /> {t("settings.mcp.copyExport", "Copy Fusion MCP JSON")}</button>
+          <button type="button" className="btn btn-sm touch-target" onClick={() => void exportServers()}><Download aria-hidden="true" size={MCP_BUTTON_ICON_SIZE_SM} /> {t("settings.mcp.copyExport", "Copy Fusion MCP JSON")}</button>
           {exportText ? <a className="btn btn-sm touch-target" download="fusion-mcp-servers.json" href={`data:application/json;charset=utf-8,${encodeURIComponent(exportText)}`}>{t("settings.mcp.downloadExport", "Download JSON")}</a> : null}
           {exportText ? <textarea className="input mcp-json-textarea" readOnly value={exportText} aria-label={t("settings.mcp.exportedJson", "Exported MCP JSON")} /> : null}
         </div>

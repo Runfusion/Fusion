@@ -320,14 +320,46 @@ describe("useArtifacts", () => {
     expect(unsubscribeMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not subscribe or fetch when no projectId is available", async () => {
+  /*
+   * FNXC:ArtifactRegistry 2026-07-10-00:00:
+   * The operator-visible "Artifacts tab always shows 0" repro was a single-project/default-scope dashboard mount where no currentProject id was threaded into useArtifacts. The server's real /api/artifacts route listed the agent-created image, but the hook short-circuited before fetch/SSE, so DocumentsView rendered a permanent 0 count.
+   */
+  it("fetches and subscribes to the default artifact scope when no projectId is available", async () => {
     const { result } = renderHook(() => useArtifacts());
+
+    expect(result.current.loading).toBe(true);
 
     await loadInitialArtifacts();
 
-    expect(result.current.loading).toBe(false);
-    expect(result.current.artifacts).toEqual([]);
-    expect(mockSubscribeSse).not.toHaveBeenCalled();
-    expect(mockFetchArtifacts).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.artifacts).toEqual(mockArtifacts);
+    expect(mockFetchArtifacts).toHaveBeenCalledWith({ q: undefined }, undefined);
+    expect(mockSubscribeSse).toHaveBeenCalledWith("/api/events", {
+      events: expect.objectContaining({
+        "artifact:registered": expect.any(Function),
+        "message:received": expect.any(Function),
+        "message:sent": expect.any(Function),
+      }),
+    });
+  });
+
+  it("refreshes default-scope artifacts when an unscoped artifact registration arrives", async () => {
+    const updatedArtifacts = [...mockArtifacts, newTaskArtifact];
+    const { result } = renderHook(() => useArtifacts());
+
+    await loadInitialArtifacts();
+    await waitFor(() => expect(result.current.artifacts).toEqual(mockArtifacts));
+
+    mockFetchArtifacts.mockClear();
+    mockFetchArtifacts.mockResolvedValue(updatedArtifacts);
+
+    await fireArtifactRegistration("artifact:registered", {
+      id: newTaskArtifact.id,
+      taskId: "FN-1",
+    });
+
+    await waitFor(() => expect(mockFetchArtifacts).toHaveBeenCalledTimes(1));
+    expect(mockFetchArtifacts).toHaveBeenCalledWith({ q: undefined }, undefined);
+    await waitFor(() => expect(result.current.artifacts).toEqual(updatedArtifacts));
   });
 });

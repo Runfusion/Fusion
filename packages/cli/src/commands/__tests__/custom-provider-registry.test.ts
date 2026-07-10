@@ -9,9 +9,24 @@ import {
 describe("custom-provider-registry", () => {
   it.each([
     ["openai-compatible", "openai-completions"],
-    ["anthropic-compatible", "anthropic"],
+    ["anthropic-compatible", "anthropic-messages"],
     ["openai-responses", "openai-responses"],
   ])("resolveApiType maps %s -> %s", (apiType, expectedApi) => {
+    expect(resolveApiType(apiType)).toBe(expectedApi);
+  });
+
+  // FN-7690: resolveApiType() (this module) and resolveCustomProviderApiType()
+  // (packages/engine/src/pi.ts, module-private) must agree on the pi-ai api key
+  // for every apiType input, or the registration path and the streaming path
+  // register/consume different (and possibly unregistered) api keys. pi.ts's
+  // resolver is not importable here, so we pin resolveApiType's outputs against
+  // the literal keys pi.ts is known (and tested) to return.
+  it.each([
+    ["openai-compatible", "openai-completions"],
+    ["anthropic-compatible", "anthropic-messages"],
+    ["openai-responses", "openai-responses"],
+    ["unknown-type", "openai-completions"],
+  ])("resolveApiType(%s) matches pi.ts resolveCustomProviderApiType's expected key (%s)", (apiType, expectedApi) => {
     expect(resolveApiType(apiType)).toBe(expectedApi);
   });
 
@@ -48,7 +63,7 @@ describe("custom-provider-registry", () => {
     }));
     expect(registerProvider).toHaveBeenNthCalledWith(2, "anthropic-custom", expect.objectContaining({
       baseUrl: "https://anthropic.test",
-      api: "anthropic",
+      api: "anthropic-messages",
       apiKey: "ANTHROPIC_KEY",
       models: [expect.objectContaining({ id: "claude-x", name: "Claude X" })],
     }));
@@ -161,7 +176,7 @@ describe("custom-provider-registry", () => {
     );
 
     expect(registerProvider).toHaveBeenCalledTimes(1);
-    expect(registerProvider).toHaveBeenCalledWith("new", expect.objectContaining({ api: "anthropic" }));
+    expect(registerProvider).toHaveBeenCalledWith("new", expect.objectContaining({ api: "anthropic-messages" }));
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 

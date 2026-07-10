@@ -185,7 +185,7 @@ export async function selectNextTaskForAgentImpl(store: TaskStore, agentId: stri
     return null;
   }
 
-export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string },): Promise<Task> {
+export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolean, runContext?: RunMutationContext, agentOptions?: { pausedByAgentId?: string; pausedReason?: string },): Promise<Task> {
     return store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const task = await store.readTaskJson(dir);
@@ -200,9 +200,25 @@ export async function pauseTaskImpl(store: TaskStore, id: string, paused: boolea
       if (paused && agentOptions?.pausedByAgentId) {
         task.pausedByAgentId = agentOptions.pausedByAgentId;
       }
+      /*
+       * FNXC:ApprovalHold 2026-07-09-00:05:
+       * FN-7736: `agentOptions.pausedReason` is the minimal seam for durably
+       * stamping WHY a task was paused (e.g. the canonical
+       * `AWAITING_APPROVAL_PAUSE_REASON` from a tool-approval gate). Widening
+       * this existing options bag avoids a second, racy `updateTask` write right
+       * after `pauseTask` — the reason lands atomically with the pause itself.
+       * On unpause the caller-supplied reason is cleared here (mirroring how
+       * `pausedByAgentId`/`userPaused` are already cleared below); sweep-set
+       * built-in reasons like `branch-conflict-unrecoverable` are cleared by
+       * their own dedicated resume code paths and are unaffected.
+       */
+      if (paused && agentOptions?.pausedReason) {
+        task.pausedReason = agentOptions.pausedReason;
+      }
       if (!paused) {
         task.pausedByAgentId = undefined;
         task.userPaused = undefined;
+        task.pausedReason = undefined;
       }
       // When pausing an in-progress/in-review task, set status so the UI can show the state.
       // When unpausing, clear the "paused" status.

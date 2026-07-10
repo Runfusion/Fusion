@@ -57,6 +57,10 @@ describe("mapThinkingEffort", () => {
     it("maps xhigh to high (downgrade for non-Opus)", () => {
       expect(mapThinkingEffort("xhigh", model, undefined)).toBe("high");
     });
+
+    it("maps max to high (downgrade for non-Opus)", () => {
+      expect(mapThinkingEffort("max", model, undefined)).toBe("high");
+    });
   });
 
   describe("Opus model mapping (elevated)", () => {
@@ -80,6 +84,10 @@ describe("mapThinkingEffort", () => {
 
     it("maps xhigh to max", () => {
       expect(mapThinkingEffort("xhigh", model, undefined)).toBe("max");
+    });
+
+    it("maps max to max", () => {
+      expect(mapThinkingEffort("max", model, undefined)).toBe("max");
     });
   });
 
@@ -136,6 +144,10 @@ describe("mapThinkingEffort", () => {
 
     it("does not return max for xhigh when modelId is undefined", () => {
       expect(mapThinkingEffort("xhigh", undefined, undefined)).toBe("high");
+    });
+
+    it("does not return max for max when modelId is undefined", () => {
+      expect(mapThinkingEffort("max", undefined, undefined)).toBe("high");
     });
   });
 });

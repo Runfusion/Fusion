@@ -9,6 +9,11 @@ const coreInteropMocks = vi.hoisted(() => ({
   readStoredCredentialsFromAuthFile: vi.fn(),
 }));
 
+const nodePtyMocks = vi.hoisted(() => ({
+  available: false,
+  spawn: vi.fn(),
+}));
+
 vi.mock("@fusion/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@fusion/core")>()),
   choosePreferredStoredCredential: coreInteropMocks.choosePreferredStoredCredential,
@@ -62,7 +67,10 @@ vi.mock("node:child_process", () => ({
 
 // Mock node-pty for CLI fallback — default: not available (simulates test env)
 vi.mock("node-pty", () => {
-  throw new Error("node-pty not available in test environment");
+  if (!nodePtyMocks.available) {
+    throw new Error("node-pty not available in test environment");
+  }
+  return { spawn: nodePtyMocks.spawn };
 });
 
 describe("usage", () => {
@@ -72,6 +80,8 @@ describe("usage", () => {
     mockRequest.mockClear();
     mockReadFile.mockClear();
     mockExecFileSync.mockClear();
+    nodePtyMocks.available = false;
+    nodePtyMocks.spawn.mockReset();
     mockExecFileSync.mockImplementation(() => {
       throw new Error("File not found");
     });
@@ -772,7 +782,54 @@ describe("usage", () => {
       expect(sessionWindow!.resetText).toContain("resets in");
     });
 
-    it("parses all four usage windows from API response", async () => {
+    it("parses all five usage windows from API response", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+          subscriptionType: "max",
+        },
+      });
+
+      setupClaudeApiResponse({
+        five_hour: {
+          utilization: 40.0,
+          resets_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day: {
+          utilization: 20.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day_sonnet: {
+          utilization: 15.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day_opus: {
+          utilization: 5.0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+        seven_day_fable: {
+          utilization: 0,
+          resets_at: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+        },
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(5);
+      expect(claude.windows.map((w) => w.label)).toEqual([
+        "Session (5h)",
+        "Weekly",
+        "Weekly (Sonnet)",
+        "Weekly (Opus)",
+        "Weekly (Fable)",
+      ]);
+      expect(claude.windows.find((w) => w.label === "Weekly (Fable)")?.percentUsed).toBe(0);
+    });
+
+    it("omits Weekly (Fable) when API response has no Fable window", async () => {
       setupClaudeMocks({
         credFileContent: {
           accessToken: "test-token",
@@ -804,13 +861,67 @@ describe("usage", () => {
       const claude = providers.find((p) => p.name === "Claude")!;
 
       expect(claude.status).toBe("ok");
-      expect(claude.windows).toHaveLength(4);
       expect(claude.windows.map((w) => w.label)).toEqual([
         "Session (5h)",
         "Weekly",
         "Weekly (Sonnet)",
         "Weekly (Opus)",
       ]);
+      expect(claude.windows.some((w) => w.label === "Weekly (Fable)")).toBe(false);
+    });
+
+    it("parses Weekly (Fable) from CLI fallback output after a 429 rate limit", async () => {
+      setupClaudeMocks({
+        credFileContent: {
+          accessToken: "test-token",
+          scopes: ["user:profile"],
+        },
+      });
+
+      _setSleepFn(async () => {});
+      nodePtyMocks.available = true;
+      nodePtyMocks.spawn.mockImplementation(() => ({
+        write: vi.fn(),
+        kill: vi.fn(),
+        onData: vi.fn((handler: (data: string) => void) => {
+          handler([
+            "Current week (Fable)",
+            "████ 12% used",
+            "Resets in 2d 4h",
+          ].join("\n"));
+        }),
+        onExit: vi.fn((handler: () => void) => {
+          handler();
+        }),
+      }));
+
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode: 429,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from('{"error":"rate_limited"}'));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+
+      const providers = await fetchAllProviderUsage();
+      const claude = providers.find((p) => p.name === "Claude")!;
+
+      expect(claude.status).toBe("ok");
+      expect(claude.windows).toHaveLength(1);
+      expect(claude.windows[0]).toMatchObject({
+        label: "Weekly (Fable)",
+        percentUsed: 12,
+        percentLeft: 88,
+      });
+      expect(mockRequest).toHaveBeenCalledTimes(3);
+
+      _resetSleepFn();
     });
 
     it("falls back to CLI parsing on 429 rate limit", async () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties, type MouseEvent } from "react";
-import { Globe, Folder, RefreshCw, Star, HelpCircle, Settings as SettingsIcon } from "lucide-react";
+import { Globe, Folder, RefreshCw, Star, HelpCircle, Settings as SettingsIcon, Search, X as SearchToggleCloseIcon } from "lucide-react";
 import {
   getErrorMessage,
   resolveGitlabConfig,
@@ -967,12 +967,29 @@ export function SettingsModal({
   const [activePluginsSubsection, setActivePluginsSubsection] = useState<PluginsSubsectionId>(() =>
     initialSection === "pi-extensions" ? "pi-extensions" : "fusion-plugins",
   );
+  /*
+  FNXC:Settings 2026-07-09-00:00:
+  Mobile Settings navigation is controlled by both the viewport hook and the CSS media query because tests and embedded shells can mock one surface independently. Treat either mobile signal as sufficient so the compact picker/search-toggle path stays available whenever Settings is in mobile mode.
+  */
   const [showMobileSectionPicker, setShowMobileSectionPicker] = useState(() =>
-    typeof window !== "undefined" && typeof window.matchMedia === "function"
+    viewportMode === "mobile" ||
+    (typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia(MOBILE_SETTINGS_MEDIA_QUERY)?.matches === true
-      : false,
+      : false),
   );
   const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
+  /*
+   * FNXC:Settings 2026-07-09-00:00:
+   * Mobile Settings previously always rendered the `.settings-search` row (label + input + result
+   * count) above the section picker, eating vertical space even when the user was not searching.
+   * On mobile only, the row now starts COLLAPSED behind a compact icon toggle; tapping it reveals
+   * the input, tapping again hides it. Desktop/tablet is untouched — the row is always visible
+   * there and the toggle never renders (see `isMobileSettingsSearch` below). Decision on the
+   * active-query edge case: `settingsSearchQuery` state is never cleared by collapsing, so
+   * re-expanding always restores the exact query and result count the user had before collapsing
+   * (no forced auto-expand — the toggle stays user-controlled).
+   */
+  const [mobileSearchRowExpanded, setMobileSearchRowExpanded] = useState(false);
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const [updateCheckLoading, setUpdateCheckLoading] = useState(false);
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResponse | null>(null);
@@ -1053,6 +1070,10 @@ export function SettingsModal({
   const searchableSectionOptions = searchMatchedSections.filter((section) => !section.isGroupHeader);
   const hasSettingsSearchQuery = normalizedSettingsSearchQuery.length > 0;
   const hasSettingsSearchResults = searchableSectionOptions.length > 0;
+  // FNXC:Settings 2026-07-09-00:00: desktop/tablet always show the search row and never render the
+  // toggle; mobile starts collapsed (`mobileSearchRowExpanded === false`) until the user taps it.
+  const isMobileSettingsSearch = viewportMode === "mobile";
+  const settingsSearchRowVisible = !isMobileSettingsSearch || mobileSearchRowExpanded;
   const firstSearchMatchedSectionId = resolveFirstSelectableSettingsSection(searchMatchedSections, firstVisibleSectionId);
 
   /** Get the scope of the currently active section */
@@ -1194,13 +1215,13 @@ export function SettingsModal({
       return;
     }
     const updateMobilePicker = (event?: MediaQueryListEvent) => {
-      setShowMobileSectionPicker(event ? event.matches : mediaQuery.matches);
+      setShowMobileSectionPicker(viewportMode === "mobile" || (event ? event.matches : mediaQuery.matches));
     };
 
     updateMobilePicker();
     mediaQuery.addEventListener("change", updateMobilePicker);
     return () => mediaQuery.removeEventListener("change", updateMobilePicker);
-  }, []);
+  }, [viewportMode]);
 
   /*
   FNXC:SettingsReset 2026-07-04-00:15:
@@ -2383,8 +2404,10 @@ export function SettingsModal({
     label: string;
     globalProviderKey: keyof GlobalSettings;
     globalModelKey: keyof GlobalSettings;
+    globalThinkingKey?: keyof GlobalSettings;
     projectProviderKey: keyof Settings;
     projectModelKey: keyof Settings;
+    projectThinkingKey?: keyof Settings;
     helperText: string;
     fallbackOrder: string;
   }
@@ -2398,6 +2421,7 @@ export function SettingsModal({
       globalModelKey: "defaultModelId",
       projectProviderKey: "defaultProviderOverride",
       projectModelKey: "defaultModelIdOverride",
+      projectThinkingKey: "defaultThinkingLevelOverride",
       helperText: "Default AI model used for task execution when no per-task override is set.",
       fallbackOrder: "Project override → Global default lane → Automatic resolution",
     },
@@ -2406,6 +2430,7 @@ export function SettingsModal({
       label: "Execution Model",
       globalProviderKey: "executionGlobalProvider",
       globalModelKey: "executionGlobalModelId",
+      globalThinkingKey: "executionGlobalThinkingLevel",
       projectProviderKey: "executionProvider",
       projectModelKey: "executionModelId",
       helperText: "AI model used for task implementation (executor agent).",
@@ -2416,6 +2441,7 @@ export function SettingsModal({
       label: "Planning Model",
       globalProviderKey: "planningGlobalProvider",
       globalModelKey: "planningGlobalModelId",
+      globalThinkingKey: "planningGlobalThinkingLevel",
       projectProviderKey: "planningProvider",
       projectModelKey: "planningModelId",
       helperText: "AI model used for task planning.",
@@ -2426,6 +2452,7 @@ export function SettingsModal({
       label: "Reviewer Model",
       globalProviderKey: "validatorGlobalProvider",
       globalModelKey: "validatorGlobalModelId",
+      globalThinkingKey: "validatorGlobalThinkingLevel",
       projectProviderKey: "validatorProvider",
       projectModelKey: "validatorModelId",
       helperText: "AI model used for code and specification review.",
@@ -2436,8 +2463,10 @@ export function SettingsModal({
       label: "Title and Git Commit Message Summarization Model",
       globalProviderKey: "titleSummarizerGlobalProvider",
       globalModelKey: "titleSummarizerGlobalModelId",
+      globalThinkingKey: "titleSummarizerGlobalThinkingLevel",
       projectProviderKey: "titleSummarizerProvider",
       projectModelKey: "titleSummarizerModelId",
+      projectThinkingKey: "titleSummarizerThinkingLevel",
       helperText: "AI model used for auto-generating task titles and merge commit summaries.",
         fallbackOrder: "Project override → Global summarization lane → Project planning lane → Project default lane → Global default lane → Automatic resolution",
     },
@@ -2508,6 +2537,29 @@ export function SettingsModal({
       [lane.projectProviderKey]: undefined,
       [lane.projectModelKey]: undefined,
     }));
+  }
+
+
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * SettingsModal owns lane thinking persistence just like lane model persistence. Empty values clear the override so the engine falls back through task > lane > global default without sections writing settings directly.
+   */
+  function getLaneThinkingValue(lane: ModelLane, scope: "project" | "global" = "project"): string {
+    const key = scope === "project" ? lane.projectThinkingKey : lane.globalThinkingKey;
+    return key ? ((form[key as keyof Settings] as string | undefined) ?? "") : "";
+  }
+
+  function updateLaneThinkingValue(lane: ModelLane, level: string, scope: "project" | "global" = "project"): void {
+    const key = scope === "project" ? lane.projectThinkingKey : lane.globalThinkingKey;
+    if (!key) return;
+    setForm((f) => ({
+      ...f,
+      [key]: level || undefined,
+    }));
+  }
+
+  function resetLaneThinkingValue(lane: ModelLane, scope: "project" | "global" = "project"): void {
+    updateLaneThinkingValue(lane, "", scope);
   }
 
   const openOverlapPathPicker = useCallback((index: number) => {
@@ -3197,6 +3249,9 @@ export function SettingsModal({
             availableModels={availableModels}
             modelsLoading={modelsLoading}
             globalModelLanes={MODEL_LANES.filter((lane) => lane.laneId !== "default")}
+            getLaneThinkingValue={(lane) => getLaneThinkingValue(lane, "global")}
+            updateLaneThinkingValue={(lane, level) => updateLaneThinkingValue(lane, level, "global")}
+            resetLaneThinkingValue={(lane) => resetLaneThinkingValue(lane, "global")}
             favoriteProviders={favoriteProviders}
             favoriteModels={favoriteModels}
             onToggleFavorite={handleToggleFavorite}
@@ -3246,6 +3301,9 @@ export function SettingsModal({
               getLaneValue,
               updateLaneValue,
               resetLaneValue,
+              getLaneThinkingValue,
+              updateLaneThinkingValue,
+              resetLaneThinkingValue,
               availableModels,
               modelsLoading,
               favoriteProviders,
@@ -3635,66 +3693,93 @@ export function SettingsModal({
         ) : (
           <div className="settings-layout">
             <aside className="settings-navigation" aria-label={t("settings.search.navigationLabel", "Settings navigation")}> 
-              <div className="settings-search" data-testid="settings-search">
-                <label className="settings-search-label" htmlFor="settings-search-input">
-                  {t("settings.search.label", "Search settings")}
-                </label>
-                <div className="settings-search-input-wrap">
-                  <input
-                    id="settings-search-input"
-                    data-testid="settings-search-input"
-                    className="input settings-search-input"
-                    type="search"
-                    value={settingsSearchQuery}
-                    onChange={(event) => setSettingsSearchQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape" && hasSettingsSearchQuery) {
-                        event.stopPropagation();
-                        setSettingsSearchQuery("");
-                      }
-                    }}
-                    placeholder={t("settings.search.placeholder", "Search by setting or section")}
-                    aria-describedby="settings-search-results"
-                  />
-                  {hasSettingsSearchQuery && (
-                    <button
-                      type="button"
-                      className="btn btn-sm settings-search-clear"
-                      onClick={() => setSettingsSearchQuery("")}
-                      aria-label={t("settings.search.clear", "Clear settings search")}
-                    >
-                      {t("actions.clear", "Clear")}
-                    </button>
-                  )}
-                </div>
-                <div id="settings-search-results" className="settings-search-results" aria-live="polite">
-                  {hasSettingsSearchQuery
-                    ? t("settings.search.resultCount", "{{count}} matching sections", { count: searchableSectionOptions.length })
-                    : t("settings.search.allSections", "Showing all settings sections")}
-                </div>
-              </div>
               {showMobileSectionPicker && (
                 <div className="settings-mobile-section-picker">
-                  <label htmlFor="settings-mobile-section">{t("settings.mobileNav.label", "Settings Section")}</label>
-                  {hasSettingsSearchResults ? (
-                    <select
-                      id="settings-mobile-section"
-                      className="select touch-target"
-                      value={activeSection}
-                      onChange={(event) => setActiveSection(event.target.value as SectionId)}
-                    >
-                      {searchableSectionOptions.map((section) => {
-                        const label = t(section.labelKey, section.label);
-                        return (
-                          <option key={section.id} value={section.id}>
-                            {resolveSettingsSectionOptionLabel(section, label)}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  ) : (
-                    <p className="settings-search-empty-hint">{t("settings.search.noMobileOptions", "No sections match this search.")}</p>
-                  )}
+                  {/**
+                   * FNXC:Settings 2026-07-09-00:00:
+                   * FN-7752 removes the visible mobile section-picker label to reclaim vertical space on narrow Settings screens. The select keeps "Settings Section" as its aria-label so screen readers and getByLabelText tests keep the same accessible name without an empty label shell.
+                   */}
+                  <div className="settings-mobile-section-picker-control-row">
+                    {hasSettingsSearchResults ? (
+                      <select
+                        id="settings-mobile-section"
+                        aria-label={t("settings.mobileNav.label", "Settings Section")}
+                        className="select touch-target"
+                        value={activeSection}
+                        onChange={(event) => setActiveSection(event.target.value as SectionId)}
+                      >
+                        {searchableSectionOptions.map((section) => {
+                          const label = t(section.labelKey, section.label);
+                          return (
+                            <option key={section.id} value={section.id}>
+                              {resolveSettingsSectionOptionLabel(section, label)}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    ) : (
+                      <p className="settings-search-empty-hint">{t("settings.search.noMobileOptions", "No sections match this search.")}</p>
+                    )}
+                    {isMobileSettingsSearch && (
+                      // FNXC:Settings 2026-07-09-12:00: mobile-only search toggle now lives inline beside the section picker control so section navigation and search read as one compact row; FN-7713 expand/hide behavior and active-query preservation remain unchanged.
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-icon settings-search-toggle"
+                        onClick={() => setMobileSearchRowExpanded((expanded) => !expanded)}
+                        aria-expanded={settingsSearchRowVisible}
+                        aria-controls="settings-search-row-region"
+                        aria-label={
+                          settingsSearchRowVisible
+                            ? t("settings.search.toggleHide", "Hide search")
+                            : t("settings.search.toggleShow", "Show search")
+                        }
+                      >
+                        {settingsSearchRowVisible ? <SearchToggleCloseIcon size={16} /> : <Search size={16} />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+              {settingsSearchRowVisible && (
+                <div className="settings-search" data-testid="settings-search">
+                  <div id="settings-search-row-region" className="settings-search-row">
+                    <label className="settings-search-label" htmlFor="settings-search-input">
+                      {t("settings.search.label", "Search settings")}
+                    </label>
+                    <div className="settings-search-input-wrap">
+                      <input
+                        id="settings-search-input"
+                        data-testid="settings-search-input"
+                        className="input settings-search-input"
+                        type="search"
+                        value={settingsSearchQuery}
+                        onChange={(event) => setSettingsSearchQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape" && hasSettingsSearchQuery) {
+                            event.stopPropagation();
+                            setSettingsSearchQuery("");
+                          }
+                        }}
+                        placeholder={t("settings.search.placeholder", "Search by setting or section")}
+                        aria-describedby="settings-search-results"
+                      />
+                      {hasSettingsSearchQuery && (
+                        <button
+                          type="button"
+                          className="btn btn-sm settings-search-clear"
+                          onClick={() => setSettingsSearchQuery("")}
+                          aria-label={t("settings.search.clear", "Clear settings search")}
+                        >
+                          {t("actions.clear", "Clear")}
+                        </button>
+                      )}
+                    </div>
+                    <div id="settings-search-results" className="settings-search-results" aria-live="polite">
+                      {hasSettingsSearchQuery
+                        ? t("settings.search.resultCount", "{{count}} matching sections", { count: searchableSectionOptions.length })
+                        : t("settings.search.allSections", "Showing all settings sections")}
+                    </div>
+                  </div>
                 </div>
               )}
               <nav className="settings-sidebar">

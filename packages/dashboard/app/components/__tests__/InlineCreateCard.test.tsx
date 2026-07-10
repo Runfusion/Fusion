@@ -40,6 +40,8 @@ vi.mock("../ModelSelectionModal", () => ({
     onExecutorChange,
     onValidatorChange,
     onPlanningChange,
+    thinkingLevel,
+    onThinkingLevelChange,
     modelsLoading,
     modelsError,
     onRetry,
@@ -58,6 +60,8 @@ vi.mock("../ModelSelectionModal", () => ({
     onExecutorChange: (value: string) => void;
     onValidatorChange: (value: string) => void;
     onPlanningChange: (value: string) => void;
+    thinkingLevel?: string;
+    onThinkingLevelChange?: (value: string) => void;
     modelsLoading: boolean;
     modelsError: string | null;
     onRetry: () => void;
@@ -73,6 +77,7 @@ vi.mock("../ModelSelectionModal", () => ({
         <div data-testid="modal-props-executor-value">{executorValue}</div>
         <div data-testid="modal-props-validator-value">{validatorValue}</div>
         <div data-testid="modal-props-planning-value">{planningValue}</div>
+        <div data-testid="modal-props-thinking-level">{thinkingLevel ?? ""}</div>
         <div data-testid="modal-props-loading">{modelsLoading ? "loading" : "not-loading"}</div>
         <div data-testid="modal-props-error">{modelsError || "no-error"}</div>
         <div data-testid="modal-props-favorite-models">{JSON.stringify(favoriteModels ?? [])}</div>
@@ -87,6 +92,8 @@ vi.mock("../ModelSelectionModal", () => ({
         <button data-testid="modal-clear-executor" onClick={() => onExecutorChange("")}>Clear Executor</button>
         <button data-testid="modal-clear-validator" onClick={() => onValidatorChange("")}>Clear Reviewer</button>
         <button data-testid="modal-clear-planning" onClick={() => onPlanningChange("")}>Clear Planning</button>
+        <button data-testid="modal-select-thinking" onClick={() => onThinkingLevelChange?.("high")}>Select Thinking</button>
+        <button data-testid="modal-clear-thinking" onClick={() => onThinkingLevelChange?.("")}>Clear Thinking</button>
         <button data-testid="modal-retry" onClick={onRetry}>Retry</button>
       </div>
     );
@@ -607,6 +614,69 @@ describe("InlineCreateCard model selector", () => {
           validatorModelId: "gpt-4o",
           planningModelProvider: "anthropic",
           planningModelId: "claude-sonnet-4-5",
+        }),
+      );
+    });
+  });
+
+  it("omits thinkingLevel from the submit payload when the thinking selector is left at default", async () => {
+    const { props } = renderCard();
+    expandCard();
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+
+    fireEvent.change(textarea, { target: { value: "Task using default thinking level" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(props.onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Task using default thinking level",
+          thinkingLevel: undefined,
+        }),
+      );
+    });
+  });
+
+  it("forwards a non-default thinkingLevel in the submit payload", async () => {
+    const { props } = renderCard();
+    expandCard();
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+
+    fireEvent.change(textarea, { target: { value: "Task with thinking level override" } });
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-thinking"));
+    fireEvent.click(screen.getByTestId("modal-close"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(props.onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Task with thinking level override",
+          thinkingLevel: "high",
+        }),
+      );
+    });
+  });
+
+  it("clears thinkingLevel back to undefined when reset to Default", async () => {
+    const { props } = renderCard();
+    expandCard();
+    const textarea = screen.getByPlaceholderText("What needs to be done?");
+
+    fireEvent.change(textarea, { target: { value: "Task clearing thinking level" } });
+    openModelModal();
+    fireEvent.click(screen.getByTestId("modal-select-thinking"));
+    expect(screen.getByTestId("modal-props-thinking-level").textContent).toBe("high");
+    fireEvent.click(screen.getByTestId("modal-clear-thinking"));
+    expect(screen.getByTestId("modal-props-thinking-level").textContent).toBe("");
+    fireEvent.click(screen.getByTestId("modal-close"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(props.onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: "Task clearing thinking level",
+          thinkingLevel: undefined,
         }),
       );
     });

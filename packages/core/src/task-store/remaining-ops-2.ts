@@ -35,6 +35,7 @@ import {updateBranchGroup as updateBranchGroupAsync, updatePrEntity as updatePrE
 import {recordCompletionHandoff as recordCompletionHandoffAsync, getCompletionHandoffMarker as getCompletionHandoffMarkerAsync} from "../task-store/async-workflow-workitems.js";
 import {getActivityLog as getActivityLogAsync} from "../task-store/async-audit.js";
 import {insertArtifactRow as insertArtifactRowAsync} from "../task-store/async-comments-attachments.js";
+import type { ArtifactRow } from "./row-types.js";
 import type {MergeQueueRow, CompletionHandoffMarkerRow, ActivityLogRow} from "../task-store/row-types.js";
 
 export function getTaskSelectClauseWithActivityLogLimitImpl(store: TaskStore, limit: number): string {
@@ -939,7 +940,7 @@ export async function addAttachmentImpl(store: TaskStore, id: string, filename: 
       );
     }
 
-    return store.withTaskLock(id, async () => {
+    const attachmentResult = await store.withTaskLock(id, async () => {
       const dir = store.taskDir(id);
       const attachDir = join(dir, "attachments");
       await mkdir(attachDir, { recursive: true });
@@ -968,7 +969,92 @@ export async function addAttachmentImpl(store: TaskStore, id: string, filename: 
 
       return attachment;
     });
+
+    if (mimeType.startsWith("image/")) {
+      /*
+       * FNXC:ArtifactRegistry 2026-07-10-00:00:
+       * FN-7791 requires image task attachments created by agents, dashboard uploads, and route callers to surface as normal image artifacts. Register a URI-only artifact that points at the already-written attachment file so the proven artifact listing/SSE/media pipeline is reused without duplicating bytes or re-entering addAttachment.
+       *
+       * FNXC:ArtifactRegistry 2026-07-10-00:00:
+       * registerArtifact() enforces the artifact-registry active/non-archived task rule (see registerArtifact's ACTIVE_TASKS_WHERE check), but addAttachment has never enforced that rule for attachments themselves — attachments may be added to archived or soft-deleted tasks. Without this guard, attaching an image to an archived/soft-deleted task would throw here AFTER the attachment file and task.json were already written, so the caller would see addAttachment fail even though the attachment actually succeeded. Bridging into the artifact registry is best-effort: swallow the expected archived/not-found rejection so addAttachment keeps its existing always-succeeds-for-a-valid-image contract, and only the artifact-gallery bridge is skipped.
+       */
+      try {
+        await store.registerArtifact({
+          type: "image",
+          title: attachmentResult.originalName,
+          description: "Image task attachment",
+          mimeType,
+          sizeBytes: attachmentResult.size,
+          uri: `attachments/${attachmentResult.filename}`,
+          authorId: "attachment",
+          authorType: "system",
+          taskId: id,
+          metadata: {
+            source: "attachment",
+            attachmentFilename: attachmentResult.filename,
+            originalName: attachmentResult.originalName,
+          },
+        });
+      } catch (err) {
+        console.warn(
+          `[fusion:store] Skipping artifact bridge for attachment ${attachmentResult.filename} on task ${id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    return attachmentResult;
   }
+
+/**
+ * FNXC:ArtifactRegistry 2026-07-10-00:00:
+ * FN-7791 cleanup path: when an attachment is deleted, remove the URI-only
+ * artifact row(s) the addAttachment image bridge registered for it, matched by
+ * metadata.source === "attachment" && metadata.attachmentFilename. Dual-mode:
+ * async Drizzle over project.artifacts in backend mode, sqlite otherwise.
+ */
+async function deleteAttachmentArtifactRows(store: TaskStore, taskId: string, filename: string): Promise<void> {
+    if (store.backendMode) {
+      const layer = store.asyncLayer!;
+      const artifacts = await getArtifactsForAttachmentCleanup(store, taskId);
+      const linkedArtifactIds = artifacts
+        .filter((artifact) => artifact.metadata?.source === "attachment" && artifact.metadata.attachmentFilename === filename)
+        .map((artifact) => artifact.id);
+      if (linkedArtifactIds.length === 0) return;
+      for (const artifactId of linkedArtifactIds) {
+        await layer.db.delete(schema.project.artifacts).where(eq(schema.project.artifacts.id, artifactId));
+      }
+      return;
+    }
+
+    const rows = store.db
+      .prepare("SELECT * FROM artifacts WHERE taskId = ?")
+      .all(taskId) as unknown as ArtifactRow[];
+    const linkedArtifactIds = rows
+      .map((row) => store.rowToArtifact(row))
+      .filter((artifact) => artifact.metadata?.source === "attachment" && artifact.metadata.attachmentFilename === filename)
+      .map((artifact) => artifact.id);
+
+    if (linkedArtifactIds.length === 0) {
+      return;
+    }
+
+    const deleteArtifact = store.db.prepare("DELETE FROM artifacts WHERE id = ?");
+    for (const artifactId of linkedArtifactIds) {
+      deleteArtifact.run(artifactId);
+    }
+    store.db.bumpLastModified();
+}
+
+async function getArtifactsForAttachmentCleanup(store: TaskStore, taskId: string): Promise<Artifact[]> {
+    // getArtifacts() filters to ACTIVE tasks; the cleanup must also cover
+    // attachments deleted from archived/soft-deleted tasks, so query directly.
+    const layer = store.asyncLayer!;
+    const rows = await layer.db
+      .select()
+      .from(schema.project.artifacts)
+      .where(eq(schema.project.artifacts.taskId, taskId));
+    return rows as unknown as Artifact[];
+}
 
 export async function deleteAttachmentImpl(store: TaskStore, id: string, filename: string): Promise<Task> {
     return store.withTaskLock(id, async () => {
@@ -982,6 +1068,8 @@ export async function deleteAttachmentImpl(store: TaskStore, id: string, filenam
         err.code = "ENOENT";
         throw err;
       }
+
+      await deleteAttachmentArtifactRows(store, id, filename);
 
       // Remove file from disk
       const filePath = join(dir, "attachments", filename);

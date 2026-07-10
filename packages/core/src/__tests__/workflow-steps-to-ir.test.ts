@@ -31,6 +31,7 @@ function step(overrides: Partial<WorkflowStep>): WorkflowStep {
     defaultOn: overrides.defaultOn,
     modelProvider: overrides.modelProvider,
     modelId: overrides.modelId,
+    thinkingLevel: overrides.thinkingLevel,
     migratedFragmentId: overrides.migratedFragmentId,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -69,6 +70,20 @@ describe("stepsToWorkflowIr — produces valid IR structure", () => {
     expect(ids.indexOf("merge")).toBeLessThan(ids.indexOf("step-3"));
     // The prompt node carries the source prompt through the lowering.
     expect(ir.nodes.find((n) => n.id === "step-1")?.config?.prompt).toBe("Implement the change");
+  });
+
+  it("lowers thinkingLevel independently from the model pair", () => {
+    const thinkingOnly = step({ id: "WS-thinking", name: "Think", mode: "prompt", gateMode: "advisory", prompt: "x", thinkingLevel: "high" });
+    const withoutThinking = step({ id: "WS-default", name: "Default", mode: "prompt", gateMode: "advisory", prompt: "y" });
+
+    const fragment = stepToFragmentIr(thinkingOnly);
+    expect(fragment.nodes.find((n) => n.id === "step-1")?.config).toMatchObject({ thinkingLevel: "high" });
+    expect(fragment.nodes.find((n) => n.id === "step-1")?.config).not.toHaveProperty("modelProvider");
+    expect(fragment.nodes.find((n) => n.id === "step-1")?.config).not.toHaveProperty("modelId");
+
+    const ir = stepsToWorkflowIr([thinkingOnly, withoutThinking], "Thinking");
+    expect(ir.nodes.find((n) => n.id === "step-1")?.config).toMatchObject({ thinkingLevel: "high" });
+    expect(ir.nodes.find((n) => n.id === "step-2")?.config).not.toHaveProperty("thinkingLevel");
   });
 
   it("empty step list yields a minimal valid IR (start + seams + end)", () => {

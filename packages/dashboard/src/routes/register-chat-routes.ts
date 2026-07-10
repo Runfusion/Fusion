@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
-import type { EnrichedChatSession, ChatAttachment } from "@fusion/core";
+import { THINKING_LEVELS, type EnrichedChatSession, type ChatAttachment } from "@fusion/core";
 import { ApiError, badRequest, notFound } from "../api-error.js";
 import { resolveProjectChatContext } from "../chat-project-services.js";
 import { CHAT_ALLOWED_MIME_TYPES, CHAT_MAX_ATTACHMENT_SIZE } from "./chat-attachment-config.js";
@@ -120,6 +120,21 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
     const pluginRunner = projectPluginRunner ?? options?.pluginRunner;
     return getOrCreateScopedChatManager(projectStore, chatStore, pluginRunner, Boolean(projectPluginRunner));
   }
+  const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS);
+
+  function validateThinkingLevel(value: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== "string") {
+      throw badRequest("thinkingLevel must be a string");
+    }
+    const normalized = value.trim();
+    if (!normalized) return undefined;
+    if (!THINKING_LEVEL_SET.has(normalized)) {
+      throw badRequest(`thinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`);
+    }
+    return normalized;
+  }
+
   function validateModelPair(modelProvider: unknown, modelId: unknown): { modelProvider?: string; modelId?: string } {
     let normalizedProvider: string | undefined;
     let normalizedModelId: string | undefined;
@@ -340,7 +355,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
   /**
    * POST /api/chat/sessions
    * Create a new chat session.
-   * Body: { agentId: string, title?: string, modelProvider?: string, modelId?: string }
+   * Body: { agentId: string, title?: string, modelProvider?: string, modelId?: string, thinkingLevel?: string }
    * If modelProvider and modelId are provided, those are used. Otherwise the model is
    * resolved from the agent's runtimeConfig.model setting.
    * The session is scoped to the project identified by projectId query param or header.
@@ -354,16 +369,19 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
       const agentStore = new AgentStore({ rootDir: scopedStore.getFusionDir(), asyncLayer: scopedStore.getAsyncLayer() ?? undefined });
       await agentStore.init();
 
-      const { agentId, title, modelProvider, modelId } = req.body as {
+      const { agentId, title, modelProvider, modelId, thinkingLevel: rawThinkingLevel } = req.body as {
         agentId?: string;
         title?: string;
         modelProvider?: string;
         modelId?: string;
+        thinkingLevel?: string;
       };
 
       if (!agentId || typeof agentId !== "string" || !agentId.trim()) {
         throw badRequest("agentId is required");
       }
+
+      const thinkingLevel = validateThinkingLevel(rawThinkingLevel);
 
       // Validate that if one model field is provided, the other must also be provided
       const hasClientModelProvider = typeof modelProvider === "string" && modelProvider.trim() !== "";
@@ -402,6 +420,7 @@ export function registerChatRoutes(ctx: ApiRoutesContext, deps: ChatRouteDeps): 
         projectId: projectId ?? null,
         modelProvider: resolvedProvider,
         modelId: resolvedModelId,
+        ...(thinkingLevel ? { thinkingLevel } : {}),
       });
 
       res.status(201).json({ session });

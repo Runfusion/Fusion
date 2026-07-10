@@ -963,7 +963,10 @@ export function TaskPlannerChatTab({ task, projectId, active, expanded = false, 
           classNameStop="btn btn-primary task-planner-chat-send chat-input-stop"
           sendLabel={t("taskDetail.plannerChat.send", "Send")}
           stopLabel={t("chat.stopGeneration", "Stop generation")}
-          showSendText
+          // FNXC:TaskPlannerChat 2026-07-08-00:00: FN-7685 made the idle send button
+          // icon-only (no visible "Send" text span) to match regular chat's TaskChatTab;
+          // sendLabel above still feeds the button's aria-label so the accessible name
+          // stays "Send" for screen readers.
           // FNXC:TaskPlannerChat 2026-07-07-00:00: planner stop button is icon-only
           // per FN-7655 — aria-label above keeps the accessible name "Stop generation".
           showStopText={false}

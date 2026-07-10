@@ -13,6 +13,22 @@ import { AgentStore, exportAgentsToDirectory } from "@fusion/core";
 
 import { resolveAgentStoreBase } from "../project-context.js";
 
+/**
+ * FNXC:CliAgentControl 2026-07-09-00:00:
+ * Mirrors `agent.ts`'s private `closeAgentStoreSafely` (FN-7704) — kept as
+ * a tiny local copy here per FN-7740 File Scope (do NOT edit `agent.ts`,
+ * and do NOT fork the `TaskStore` retry/teardown logic; this only closes
+ * the `AgentStore` this file itself opens). Best-effort: an already-closed
+ * store must never throw here.
+ */
+function closeAgentStoreSafely(agentStore: AgentStore): void {
+  try {
+    agentStore.close();
+  } catch {
+    // Best-effort teardown — never let a close failure block exit.
+  }
+}
+
 function printSummary(result: {
   outputDir: string;
   agentsExported: number;
@@ -55,21 +71,26 @@ export async function runAgentExport(
   const agentStore = new AgentStore({ rootDir: rootDir + "/.fusion", asyncLayer: asyncLayer ?? undefined });
   await agentStore.init();
 
-  const allAgents = await agentStore.listAgents();
-  const filterIds = options?.agentIds?.filter((id) => id.trim().length > 0);
-  const agents = filterIds && filterIds.length > 0
-    ? allAgents.filter((agent) => filterIds.includes(agent.id))
-    : allAgents;
+  try {
+    const allAgents = await agentStore.listAgents();
+    const filterIds = options?.agentIds?.filter((id) => id.trim().length > 0);
+    const agents = filterIds && filterIds.length > 0
+      ? allAgents.filter((agent) => filterIds.includes(agent.id))
+      : allAgents;
 
-  if (agents.length === 0) {
-    console.error("No agents found to export");
-    process.exit(1);
+    if (agents.length === 0) {
+      console.error("No agents found to export");
+      closeAgentStoreSafely(agentStore);
+      process.exit(1);
+    }
+
+    const result = await exportAgentsToDirectory(agents, resolve(outputDir), {
+      companyName: options?.companyName,
+      companySlug: options?.companySlug,
+    });
+
+    printSummary(result);
+  } finally {
+    closeAgentStoreSafely(agentStore);
   }
-
-  const result = await exportAgentsToDirectory(agents, resolve(outputDir), {
-    companyName: options?.companyName,
-    companySlug: options?.companySlug,
-  });
-
-  printSummary(result);
 }

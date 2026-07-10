@@ -208,6 +208,13 @@ describe("ChatView mobile behavior", () => {
     }));
   }
 
+  async function openMobileDirectThread(sessionId = "session-001") {
+    await userEvent.click(screen.getByTestId(`chat-session-${sessionId}`));
+    await waitFor(() => {
+      expect(screen.getByTestId("chat-back-btn")).toBeInTheDocument();
+    });
+  }
+
   async function focusComposerAndOpenKeyboard({
     listeners,
     mockVV,
@@ -259,10 +266,87 @@ describe("ChatView mobile behavior", () => {
     }
   });
 
+  it("mobile mode: restored direct active session keeps list header after remount", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    try {
+      setupMockChat({
+        sessions: [activeSessionFixture],
+        filteredSessions: [activeSessionFixture],
+        activeSession: activeSessionFixture,
+        messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Cached reply", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      const firstRender = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      firstRender.unmount();
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+      const sidebar = document.querySelector(".chat-sidebar") as HTMLElement;
+      expect(sidebar).toBeInTheDocument();
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
+      expect(screen.getByTestId("chat-sidebar-scope-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-session-session-001")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("chat-mobile-session-trigger")).not.toBeInTheDocument();
+      expect(document.querySelector(".chat-view--mobile-direct-thread")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Back to conversations")).not.toBeInTheDocument();
+    } finally {
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
+  it("mobile mode: restored room keeps list header after remount", async () => {
+    const restoreMatchMedia = mockMobileViewport();
+    const backendRoom = createRoomFixture("backend");
+    try {
+      localStorage.setItem("fusion:chat-scope", "rooms");
+      setupMockRooms({
+        rooms: [backendRoom],
+        activeRoom: backendRoom,
+        messages: [{ id: "room-msg-001", roomId: backendRoom.id, role: "assistant", senderAgentId: "agent-001", content: "Cached room reply", createdAt: "2026-04-08T00:00:00.000Z" }],
+      });
+
+      const firstRender = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+      firstRender.unmount();
+      await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
+
+      const sidebar = document.querySelector(".chat-sidebar") as HTMLElement;
+      expect(sidebar).toBeInTheDocument();
+      expect(sidebar).not.toHaveClass("chat-sidebar--hidden");
+      expect(screen.getByTestId("chat-sidebar-scope-toggle")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-room-item-backend")).toBeInTheDocument();
+      expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("chat-room-switcher-trigger")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Back to conversations")).not.toBeInTheDocument();
+    } finally {
+      localStorage.setItem("fusion:chat-scope", "direct");
+      restoreMatchMedia.mockRestore();
+    }
+  });
+
   it("mobile mode: collapses direct thread controls into one far-left ViewHeader row", async () => {
     const restoreMatchMedia = mockMobileViewport();
     try {
       setupMockChat({
+        sessions: [{
+          id: "session-001",
+          agentId: "__fn_agent__",
+          status: "active",
+          title: "Testing",
+          modelProvider: "minimax",
+          modelId: "m3",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        }],
+        filteredSessions: [{
+          id: "session-001",
+          agentId: "__fn_agent__",
+          status: "active",
+          title: "Testing",
+          modelProvider: "minimax",
+          modelId: "m3",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        }],
         activeSession: {
           id: "session-001",
           agentId: "__fn_agent__",
@@ -277,6 +361,7 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       expect(document.querySelector(".chat-thread-header")).not.toBeInTheDocument();
       expect(document.querySelector(".chat-view--mobile-direct-thread")).toBeInTheDocument();
@@ -316,6 +401,26 @@ describe("ChatView mobile behavior", () => {
     const restoreMatchMedia = mockMobileViewport();
     try {
       setupMockChat({
+        sessions: [{
+          id: "session-001",
+          agentId: "__fn_agent__",
+          status: "active",
+          title: null,
+          modelProvider: "minimax",
+          modelId: "m3",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        }],
+        filteredSessions: [{
+          id: "session-001",
+          agentId: "__fn_agent__",
+          status: "active",
+          title: null,
+          modelProvider: "minimax",
+          modelId: "m3",
+          createdAt: "2026-04-08T00:00:00.000Z",
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        }],
         activeSession: {
           id: "session-001",
           agentId: "__fn_agent__",
@@ -330,6 +435,7 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       const trigger = screen.getByTestId("chat-mobile-session-trigger");
       expect(trigger).toHaveTextContent("Untitled");
@@ -376,12 +482,15 @@ describe("ChatView mobile behavior", () => {
     const selectSession = vi.fn();
     try {
       setupMockChat({
-        activeSession: { id: "session-001", agentId: "agent-001", status: "active", title: "Test Chat", createdAt: "2026-04-08T00:00:00.000Z", updatedAt: "2026-04-08T00:00:00.000Z" },
+        sessions: [activeSessionFixture],
+        filteredSessions: [activeSessionFixture],
+        activeSession: activeSessionFixture,
         messages: [{ id: "msg-001", sessionId: "session-001", role: "assistant", content: "Hello", createdAt: "2026-04-08T00:00:00.000Z" }],
         selectSession,
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       const backBtn = screen.getByTestId("chat-back-btn");
       await userEvent.click(backBtn);
@@ -443,6 +552,8 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
+      selectSession.mockClear();
 
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
       await userEvent.click(screen.getByTestId("chat-mobile-session-rename-session-002"));
@@ -484,6 +595,7 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       const headerActions = document.querySelector(".view-header__actions") as HTMLElement;
       const backButton = screen.getByTestId("chat-back-btn");
@@ -522,6 +634,7 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       const trigger = screen.getByTestId("chat-mobile-session-trigger");
       expect(trigger).toHaveClass("btn", "chat-mobile-session-trigger");
@@ -542,8 +655,9 @@ describe("ChatView mobile behavior", () => {
   it("mobile mode: quick session switcher closes on outside click and is not shown for rooms", async () => {
     const restoreMatchMedia = mockMobileViewport();
     try {
-      setupMockChat({ activeSession: activeSessionFixture });
+      setupMockChat({ sessions: [activeSessionFixture], filteredSessions: [activeSessionFixture], activeSession: activeSessionFixture });
       const initialRender = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       expect(screen.queryByTestId("chat-mobile-session-trigger")).toBeInTheDocument();
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
@@ -557,20 +671,23 @@ describe("ChatView mobile behavior", () => {
       initialRender.unmount();
 
       localStorage.setItem("fusion:chat-scope", "rooms");
+      const backendRoom = {
+        id: "room-001",
+        projectId: "proj-123",
+        slug: "backend",
+        name: "backend",
+        createdAt: "2026-04-08T00:00:00.000Z",
+        updatedAt: "2026-04-08T00:00:00.000Z",
+      };
       setupMockRooms({
-        activeRoom: {
-          id: "room-001",
-          projectId: "proj-123",
-          name: "backend",
-          createdAt: "2026-04-08T00:00:00.000Z",
-          updatedAt: "2026-04-08T00:00:00.000Z",
-        },
+        rooms: [backendRoom],
+        activeRoom: backendRoom,
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />);
       expect(screen.queryByTestId("chat-mobile-session-trigger")).not.toBeInTheDocument();
       expect(screen.queryByTestId("chat-mobile-session-new")).not.toBeInTheDocument();
-      expect(screen.getByText("#backend")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-room-item-backend")).toBeInTheDocument();
     } finally {
       localStorage.setItem("fusion:chat-scope", "direct");
       restoreMatchMedia.mockRestore();
@@ -587,6 +704,7 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
       const dropdown = screen.getByTestId("chat-mobile-session-dropdown");
@@ -611,6 +729,7 @@ describe("ChatView mobile behavior", () => {
         activeSession: activeSessionFixture,
       });
       const singleRender = await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
       expect(screen.getByTestId("chat-mobile-session-new")).toBeInTheDocument();
@@ -632,6 +751,7 @@ describe("ChatView mobile behavior", () => {
         activeSession: activeSessionFixture,
       });
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} />);
+      await openMobileDirectThread();
 
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
       expect(screen.getByTestId("chat-mobile-session-new")).toBeInTheDocument();
@@ -672,6 +792,7 @@ describe("ChatView mobile behavior", () => {
       });
 
       await renderWithAct(<ChatView projectId="proj-123" addToast={vi.fn()} floating />);
+      await openMobileDirectThread();
 
       await userEvent.click(screen.getByTestId("chat-mobile-session-trigger"));
       expect(screen.getByTestId("chat-mobile-session-new")).toBeInTheDocument();

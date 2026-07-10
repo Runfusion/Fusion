@@ -955,7 +955,7 @@ describe("PluginRunner", () => {
       ]);
       mockPluginLoader.getPlugin.mockReturnValue(createMockPlugin({ state: "started" }));
       await pluginRunner.init();
-      const filtered = pluginRunner.getPromptContributionsForSurface("executor-system");
+      const filtered = await pluginRunner.getPromptContributionsForSurface("executor-system");
       expect(filtered).toHaveLength(1);
       expect(filtered[0].contribution.content).toBe("ok");
     });
@@ -966,8 +966,100 @@ describe("PluginRunner", () => {
       ]);
       mockPluginLoader.getPlugin.mockReturnValue(createMockPlugin({ state: "started" }));
       await pluginRunner.init();
-      expect(pluginRunner.getPromptContributionsForSurface("reviewer")).toEqual([]);
-      expect(pluginRunner.getPromptContributionsForSurface("executor-system")).toEqual([]);
+      await expect(pluginRunner.getPromptContributionsForSurface("reviewer")).resolves.toEqual([]);
+      await expect(pluginRunner.getPromptContributionsForSurface("executor-system")).resolves.toEqual([]);
+    });
+
+    it("evaluates prompt contribution conditions against effective plugin settings", async () => {
+      mockPluginLoader.getPluginPromptContributions.mockReturnValue([
+        {
+          pluginId: "test-plugin",
+          contribution: { surface: "executor-system", content: "minimal API guidance", condition: 'settings["api-style"] === "minimal-apis"' },
+          config: { enabledByDefault: true, contributions: [] },
+        },
+        {
+          pluginId: "test-plugin",
+          contribution: { surface: "executor-system", content: "always include" },
+          config: { enabledByDefault: true, contributions: [] },
+        },
+      ]);
+      mockPluginLoader.getPlugin.mockReturnValue(createMockPlugin({
+        state: "started",
+        manifest: {
+          id: "test-plugin",
+          name: "Test Plugin",
+          version: "1.0.0",
+          settingsSchema: {
+            "api-style": { type: "enum", enumValues: ["controllers", "minimal-apis"], defaultValue: "controllers" },
+          },
+        },
+      }));
+      mockPluginStore.getPlugin.mockResolvedValue({
+        id: "test-plugin",
+        name: "Test Plugin",
+        version: "1.0.0",
+        settings: {},
+        settingsSchema: {
+          "api-style": { type: "enum", enumValues: ["controllers", "minimal-apis"], defaultValue: "controllers" },
+        },
+      });
+
+      await pluginRunner.init();
+      await expect(pluginRunner.getPromptContributionsForSurface("executor-system")).resolves.toEqual([
+        expect.objectContaining({ contribution: expect.objectContaining({ content: "always include" }) }),
+      ]);
+
+      mockPluginStore.getPlugin.mockResolvedValue({
+        id: "test-plugin",
+        name: "Test Plugin",
+        version: "1.0.0",
+        settings: { "api-style": "controllers" },
+        settingsSchema: {
+          "api-style": { type: "enum", enumValues: ["controllers", "minimal-apis"], defaultValue: "controllers" },
+        },
+      });
+      const controllerContributions = await pluginRunner.getPromptContributionsForSurface("executor-system");
+      expect(controllerContributions.map((entry) => entry.contribution.content)).toEqual(["always include"]);
+
+      mockPluginStore.getPlugin.mockResolvedValue({
+        id: "test-plugin",
+        name: "Test Plugin",
+        version: "1.0.0",
+        settings: { "api-style": "minimal-apis" },
+        settingsSchema: {
+          "api-style": { type: "enum", enumValues: ["controllers", "minimal-apis"], defaultValue: "controllers" },
+        },
+      });
+      const minimalContributions = await pluginRunner.getPromptContributionsForSurface("executor-system");
+      expect(minimalContributions.map((entry) => entry.contribution.content)).toEqual(["minimal API guidance", "always include"]);
+    });
+
+    it("keeps plugin state, surface, and enabledByDefault filters before condition evaluation", async () => {
+      mockPluginLoader.getPluginPromptContributions.mockReturnValue([
+        {
+          pluginId: "test-plugin",
+          contribution: { surface: "executor-system", content: "wrong state", condition: 'settings["api-style"] !== "controllers"' },
+          config: { enabledByDefault: true, contributions: [] },
+        },
+        {
+          pluginId: "other-plugin",
+          contribution: { surface: "reviewer", content: "wrong surface", condition: 'settings["api-style"] !== "controllers"' },
+          config: { enabledByDefault: true, contributions: [] },
+        },
+        {
+          pluginId: "disabled-plugin",
+          contribution: { surface: "executor-system", content: "disabled", condition: 'settings["api-style"] !== "controllers"' },
+          config: { enabledByDefault: false, contributions: [] },
+        },
+      ]);
+      mockPluginLoader.getPlugin.mockImplementation((pluginId: string) => {
+        if (pluginId === "test-plugin") return createMockPlugin({ state: "stopped" });
+        return createMockPlugin({ manifest: { id: pluginId, name: pluginId, version: "1.0.0" }, state: "started" });
+      });
+      await pluginRunner.init();
+
+      await expect(pluginRunner.getPromptContributionsForSurface("executor-system")).resolves.toEqual([]);
+      expect(mockPluginStore.getPlugin).not.toHaveBeenCalled();
     });
 
     it("invalidates new contribution caches on state change and loader events", async () => {

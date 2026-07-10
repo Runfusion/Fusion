@@ -27,6 +27,7 @@ import type {
   PluginPromptContribution,
   PluginPromptContributions,
   PluginPromptSurface,
+  PluginSettingSchema,
   PluginSetupManifest,
   PluginSetupHooks,
   PluginSetupCheckResult,
@@ -38,6 +39,8 @@ import { isAbsolute } from "node:path";
 import {
   getTraitRegistry,
   getWorkflowExtensionRegistry,
+  evaluatePromptConditionDetailed,
+  resolveEffectivePluginSettings,
   resolveWorkflowIrForTask,
   workflowExtensionRegistryId,
 } from "@fusion/core";
@@ -860,21 +863,51 @@ export class PluginRunner {
     };
   }
 
-  getPromptContributionsForSurface(surface: PluginPromptSurface): Array<{
+  async getPromptContributionsForSurface(surface: PluginPromptSurface): Promise<Array<{
     pluginId: string;
     contribution: PluginPromptContribution;
     config: PluginPromptContributions;
-  }> {
-    return this.getPluginPromptContributions().filter(({ pluginId, contribution, config }) => {
+  }>> {
+    const settingsByPlugin = new Map<string, Record<string, unknown>>();
+    const contributions: Array<{
+      pluginId: string;
+      contribution: PluginPromptContribution;
+      config: PluginPromptContributions;
+    }> = [];
+
+    for (const entry of this.getPluginPromptContributions()) {
+      const { pluginId, contribution, config } = entry;
       const plugin = this.options.pluginLoader.getPlugin(pluginId);
       if (!plugin || plugin.state !== "started") {
-        return false;
+        continue;
       }
       if (contribution.surface !== surface) {
-        return false;
+        continue;
       }
-      return config.enabledByDefault !== false;
-    });
+      if (config.enabledByDefault === false) {
+        continue;
+      }
+
+      let effectiveSettings = settingsByPlugin.get(pluginId);
+      if (!effectiveSettings) {
+        effectiveSettings = await this.getEffectivePluginSettings(pluginId);
+        settingsByPlugin.set(pluginId, effectiveSettings);
+      }
+
+      const evaluation = evaluatePromptConditionDetailed(contribution.condition, effectiveSettings);
+      if (!evaluation.included) {
+        if (evaluation.reason) {
+          this.log.warn(`Excluded prompt contribution for plugin ${pluginId} on surface ${surface}: ${evaluation.reason}`);
+        } else if (process.env.DEBUG?.includes("plugins")) {
+          this.log.log(`Excluded prompt contribution for plugin ${pluginId} on surface ${surface}: condition evaluated false`);
+        }
+        continue;
+      }
+
+      contributions.push(entry);
+    }
+
+    return contributions;
   }
 
   /**
@@ -1254,6 +1287,23 @@ export class PluginRunner {
       return plugin.settings;
     } catch (err) {
       this.log.warn(`Failed to get settings for plugin ${pluginId}: ${err instanceof Error ? err.message : String(err)}`);
+      return {};
+    }
+  }
+
+  /**
+   * FNXC:PluginPrompt 2026-07-10-00:00:
+   * Prompt contribution conditions must evaluate against per-project effective settings, not raw stored overrides.
+   * Read each plugin installation once per assembly and layer schema defaults under stored values so settings-panel defaults can gate prompt guidance.
+   */
+  private async getEffectivePluginSettings(pluginId: string): Promise<Record<string, unknown>> {
+    try {
+      const installation = await this.options.pluginStore.getPlugin(pluginId);
+      const loadedSchema = this.options.pluginLoader.getPlugin(pluginId)?.manifest.settingsSchema;
+      const schema: Record<string, PluginSettingSchema> | undefined = installation.settingsSchema ?? loadedSchema;
+      return resolveEffectivePluginSettings(installation.settings, schema);
+    } catch (err) {
+      this.log.warn(`Failed to get effective settings for plugin ${pluginId}: ${err instanceof Error ? err.message : String(err)}`);
       return {};
     }
   }

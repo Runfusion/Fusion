@@ -2768,15 +2768,15 @@ describe("requirePlanApproval setting", () => {
   });
 
   /*
-   * FNXC:PlanApproval 2026-07-04-12:28:
-   * FN-7526 — auto-approve-all must NOT bypass the independent release-authorization
-   * gate. Both gates set status: "awaiting-approval", so this asserts the release
-   * gate's own activity/log evidence (recordActivity type
-   * "task:release-authorization-required", distinct log copy) fires instead of the
-   * ordinary manual-approval log line, proving the release gate — not the manual
-   * gate — is what parked the task.
+   * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+   * The triage release-authorization gate was removed (it over-fired on AI-authored
+   * specs that merely mention release tooling and stranded ordinary tasks in
+   * awaiting-approval). A release-class spec now flows through triage like any other
+   * task; releases are kept out of Fusion by agent instruction, not an engine gate.
+   * Two former gate regression tests (release-class parks under auto-approve-all;
+   * release-vs-manual awaitingApprovalReason distinction) were deleted with it.
    */
-  it("release-authorization gate still parks a release-class task even when auto-approve-all is on", async () => {
+  it("does not park a release-class task in awaiting-approval when auto-approve-all is on", async () => {
     const task = createTriageTask({
       id: "FN-RELEASE",
       title: "Release @runfusion/fusion patch",
@@ -2798,74 +2798,8 @@ describe("requirePlanApproval setting", () => {
       { requirePlanApproval: false, planApprovalMode: "auto-approve-all" } as Settings,
     );
 
-    /*
-     * FN-7559: also assert the release gate stamps awaitingApprovalReason so
-     * the dashboard can distinguish this hold from a manual-approval hold that
-     * shares the same status — this is the actual fix for "tasks wait for
-     * approval even though auto-approve is on".
-     */
-    expect(store.updateTask).toHaveBeenCalledWith("FN-RELEASE", expect.objectContaining({ status: "awaiting-approval", awaitingApprovalReason: "release-authorization" }));
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({ type: "task:release-authorization-required" }));
-    expect(store.logEntry).toHaveBeenCalledWith(
-      "FN-RELEASE",
-      "Release authorization required — leaving task in triage awaiting release authorization",
-      expect.any(String),
-    );
-  });
-
-  /*
-   * FNXC:PlanApproval 2026-07-04-21:35:
-   * FN-7559 — root cause + fix regression test. Confirms all three symptom cases
-   * from the task's "Symptom Verification" section in one place: (a) a
-   * release-class hold still parks with a distinct awaitingApprovalReason even
-   * under auto-approve-all, (b) the manual gate's own awaiting-approval write
-   * always clears/omits that reason (never "release-authorization"), proving the
-   * operator can always tell the two holds apart from the persisted task state
-   * alone — not just from log text.
-   */
-  it("FN-7559: release-authorization hold carries a reason distinct from the manual gate's own awaiting-approval write", async () => {
-    const releaseTask = createTriageTask({
-      id: "FN-RELEASE2",
-      title: "Release @runfusion/fusion patch",
-      status: "planning",
-      sourceType: "agent_heartbeat",
-    } as Partial<Task>);
-    const releaseStore = createMockStore({
-      getTask: vi.fn().mockResolvedValue(releaseTask),
-    } as Partial<TaskStore>);
-    const releaseProcessor = new TriageProcessor(releaseStore, rootDir);
-    await (releaseProcessor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      releaseTask,
-      "# Task: FN-RELEASE2 - Release @runfusion/fusion patch\n\n## Mission\n\nRun pnpm release --yes.\n",
-      { requirePlanApproval: false, planApprovalMode: "auto-approve-all" } as Settings,
-    );
-    const releaseUpdateCall = (releaseStore.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(
-      (call: unknown[]) => (call[1] as Record<string, unknown>)?.status === "awaiting-approval",
-    );
-    expect(releaseUpdateCall?.[1]).toMatchObject({ awaitingApprovalReason: "release-authorization" });
-
-    const manualTask = createTriageTask({
-      id: "FN-MANUAL2",
-      status: "planning",
-    } as Partial<Task>);
-    const manualStore = createMockStore({
-      getTask: vi.fn().mockResolvedValue(manualTask),
-    } as Partial<TaskStore>);
-    const manualProcessor = new TriageProcessor(manualStore, rootDir);
-    await (manualProcessor as unknown as {
-      finalizeApprovedTask(task: Task, writtenInput: string, settings: Settings): Promise<void>;
-    }).finalizeApprovedTask(
-      manualTask,
-      "# Task: FN-MANUAL2 - Ordinary task\n\n## Mission\n\nDo the thing.\n",
-      { requirePlanApproval: true, planApprovalMode: "require-all" } as Settings,
-    );
-    const manualUpdateCall = (manualStore.updateTask as ReturnType<typeof vi.fn>).mock.calls.find(
-      (call: unknown[]) => (call[1] as Record<string, unknown>)?.status === "awaiting-approval",
-    );
-    expect(manualUpdateCall?.[1]).toMatchObject({ awaitingApprovalReason: null });
+    expect(store.updateTask).not.toHaveBeenCalledWith("FN-RELEASE", expect.objectContaining({ awaitingApprovalReason: "release-authorization" }));
+    expect(recordActivity).not.toHaveBeenCalledWith(expect.objectContaining({ type: "task:release-authorization-required" }));
   });
 
   /*
@@ -4261,6 +4195,243 @@ describe("taskCreate tool model inheritance", () => {
         status: "failed",
         error: expect.stringContaining("fallback session state error: 403 forbidden"),
       }));
+    });
+
+    describe("implicit planning fallback (FN-7719)", () => {
+      const baseSession = () => ({
+        prompt: vi.fn().mockResolvedValue(undefined),
+        dispose: vi.fn(),
+        sessionManager: {
+          getLeafId: vi.fn().mockReturnValue(null),
+          navigateTree: vi.fn(),
+        },
+      });
+
+      it("recovers from the reported 404/429 planner failure via a derived implicit fallback", async () => {
+        const task = {
+          id: "FN-7719",
+          description: "Bug: 9router/Planning 404 on nvidia/moonshotai/kimi-k2.6",
+          column: "triage",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as Task;
+        const onSpecifyError = vi.fn();
+        const store = createMockStore({
+          getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            pollIntervalMs: 10000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+            // Primary planner lane ("9router/Planning") — distinct from the project default.
+            planningProvider: "9router",
+            planningModelId: "nvidia/moonshotai/kimi-k2.6",
+            defaultProvider: "openai",
+            defaultModelId: "gpt-4o",
+            // No planningFallback*/global fallback* configured — this is the reported gap.
+            defaultThinkingLevel: "low",
+          } as Settings),
+        });
+        mockCreateFnAgent.mockResolvedValue({ session: baseSession() });
+
+        const { promptWithFallback } = await import("../pi.js");
+        // With a distinct implicit fallback now supplied, pi.ts's real single-swap
+        // loop (covered by pi.test.ts) recovers instead of throwing
+        // ModelFallbackExhaustedError — simulate that recovered outcome here.
+        (promptWithFallback as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+
+        const processor = new TriageProcessor(store, "/test/root", {
+          pollIntervalMs: 100_000,
+          onSpecifyError,
+        });
+
+        await processor.specifyTask(task);
+
+        expect(mockCreateFnAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            defaultProvider: "9router",
+            defaultModelId: "nvidia/moonshotai/kimi-k2.6",
+            fallbackProvider: "openai",
+            fallbackModelId: "gpt-4o",
+          }),
+        );
+        expect(store.updateTask).not.toHaveBeenCalledWith("FN-7719", expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining("no fallback configured"),
+        }));
+      });
+
+      it("stays terminal when the implicit fallback would equal the primary planner model (self-swap guard)", async () => {
+        const task = {
+          id: "FN-7719-SELF-SWAP",
+          description: "No distinct default model available for implicit fallback",
+          column: "triage",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as Task;
+        const onSpecifyError = vi.fn();
+        const store = createMockStore({
+          getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            pollIntervalMs: 10000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+            // No planningProvider/planningModelId — the primary planning model
+            // resolves through to the project default itself, so the implicit
+            // fallback would equal the primary. Must NOT self-swap.
+            defaultProvider: "openai",
+            defaultModelId: "gpt-4o",
+            defaultThinkingLevel: "low",
+          } as Settings),
+        });
+        mockCreateFnAgent.mockResolvedValue({ session: baseSession() });
+
+        const { ModelFallbackExhaustedError, promptWithFallback } = await import("../pi.js");
+        (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+          new ModelFallbackExhaustedError({
+            primaryModel: "openai/gpt-4o",
+            triggerPoint: "prompt-time",
+            attempts: 1,
+            underlyingReason: "model not found: no distinct fallback available",
+          }),
+        );
+
+        const processor = new TriageProcessor(store, "/test/root", {
+          pollIntervalMs: 100_000,
+          onSpecifyError,
+        });
+
+        await processor.specifyTask(task);
+
+        expect(mockCreateFnAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            defaultProvider: "openai",
+            defaultModelId: "gpt-4o",
+            fallbackProvider: undefined,
+            fallbackModelId: undefined,
+          }),
+        );
+        expect(store.updateTask).toHaveBeenCalledWith("FN-7719-SELF-SWAP", expect.objectContaining({
+          status: "failed",
+          recoveryRetryCount: null,
+          nextRecoveryAt: null,
+        }));
+        expect(onSpecifyError).toHaveBeenCalledTimes(1);
+      });
+
+      it("does not override an explicitly configured planningFallback* pair", async () => {
+        const task = {
+          id: "FN-7719-EXPLICIT-PLANNING",
+          description: "Explicit planning fallback stays authoritative",
+          column: "triage",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as Task;
+        const store = createMockStore({
+          getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            pollIntervalMs: 10000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+            planningProvider: "9router",
+            planningModelId: "nvidia/moonshotai/kimi-k2.6",
+            defaultProvider: "openai",
+            defaultModelId: "gpt-4o",
+            planningFallbackProvider: "anthropic",
+            planningFallbackModelId: "claude-3-5-haiku-20241022",
+          } as Settings),
+        });
+        mockCreateFnAgent.mockResolvedValue({ session: baseSession() });
+
+        const { promptWithFallback } = await import("../pi.js");
+        (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+          new Error("test stop after model check"),
+        );
+
+        const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+        await processor.specifyTask(task);
+
+        expect(mockCreateFnAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            defaultProvider: "9router",
+            defaultModelId: "nvidia/moonshotai/kimi-k2.6",
+            fallbackProvider: "anthropic",
+            fallbackModelId: "claude-3-5-haiku-20241022",
+          }),
+        );
+      });
+
+      it("does not override an explicitly configured global fallback* pair", async () => {
+        const task = {
+          id: "FN-7719-EXPLICIT-GLOBAL",
+          description: "Explicit global fallback stays authoritative",
+          column: "triage",
+          dependencies: [],
+          steps: [],
+          currentStep: 0,
+          log: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as unknown as Task;
+        const store = createMockStore({
+          getTask: vi.fn().mockResolvedValue({ ...task, attachments: [] }),
+          getSettings: vi.fn().mockResolvedValue({
+            maxConcurrent: 2,
+            maxWorktrees: 4,
+            pollIntervalMs: 10000,
+            groupOverlappingFiles: false,
+            autoMerge: true,
+            planningProvider: "9router",
+            planningModelId: "nvidia/moonshotai/kimi-k2.6",
+            defaultProvider: "openai",
+            defaultModelId: "gpt-4o",
+            fallbackProvider: "google",
+            fallbackModelId: "gemini-2.5-pro",
+          } as Settings),
+        });
+        mockCreateFnAgent.mockResolvedValue({ session: baseSession() });
+
+        const { promptWithFallback } = await import("../pi.js");
+        (promptWithFallback as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+          new Error("test stop after model check"),
+        );
+
+        const processor = new TriageProcessor(store, "/test/root", { pollIntervalMs: 100_000 });
+        await processor.specifyTask(task);
+
+        expect(mockCreateFnAgent).toHaveBeenCalledWith(
+          expect.objectContaining({
+            defaultProvider: "9router",
+            defaultModelId: "nvidia/moonshotai/kimi-k2.6",
+            fallbackProvider: "google",
+            fallbackModelId: "gemini-2.5-pro",
+          }),
+        );
+      });
+
+      // NOTE: test-mode exclusion (isTestModeActive -> no implicit fallback
+      // injected) is covered directly at the resolver-unit level in
+      // agent-session-helpers.test.ts ("resolveImplicitPlanningFallbackModel
+      // (FN-7719)"). The mock runtime used by createResolvedAgentSession in
+      // test mode does not route through createFnAgent, so it cannot assert
+      // fallbackProvider/fallbackModelId via mockCreateFnAgent call args here.
     });
 
     it("escalates to error state when triage retries are exhausted via specifyTask", async () => {

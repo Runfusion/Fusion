@@ -1505,4 +1505,82 @@ describe("Header", () => {
       expect(lastItem.textContent).toBe("Settings");
     });
   });
+
+  /*
+  FNXC:DashboardHeader 2026-07-08-00:00:
+  FN-7687 regression: the top header must stay structurally single-line at mobile widths
+  regardless of which mobile-only children are mounted (project switch, workflow slot,
+  view toggle, search/usage triggers) — the row must never rely on the CSS width media
+  query alone to prevent wrapping, since a foldable's layout viewport can lag its
+  visualViewport pane during a fold/unfold/refold resize. Assert the computed
+  `flex-wrap: nowrap` + shrink/min-width-0 contract across populated and empty data states.
+  */
+  describe("single-line header layout (FN-7687)", () => {
+    const projects = [
+      { id: "1", name: "Project One", path: "/path/one", status: "active" as const },
+    ];
+
+    function assertSingleLineContract(container: HTMLElement) {
+      const header = container.querySelector(".header");
+      const headerLeft = container.querySelector(".header-left");
+      const headerActions = container.querySelector(".header-actions");
+      expect(header).not.toBeNull();
+      expect(headerLeft).not.toBeNull();
+      expect(headerActions).not.toBeNull();
+
+      const headerStyle = window.getComputedStyle(header!);
+      expect(headerStyle.flexWrap).toBe("nowrap");
+      expect(headerStyle.display).toBe("flex");
+
+      const leftStyle = window.getComputedStyle(headerLeft!);
+      expect(leftStyle.minWidth).toBe("0px");
+      expect(leftStyle.flexShrink).toBe("1");
+
+      const actionsStyle = window.getComputedStyle(headerActions!);
+      expect(actionsStyle.minWidth).toBe("0px");
+      expect(actionsStyle.flexGrow).toBe("0");
+    }
+
+    it("enforces the single-line contract on mobile with no project and no workflow slot", () => {
+      const { container } = renderHeader({}, "mobile");
+      assertSingleLineContract(container);
+    });
+
+    it("enforces the single-line contract on mobile with a selected project (mobile project switch present)", () => {
+      const { container } = renderHeader(
+        { projects, currentProject: projects[0], onSelectProject: vi.fn() },
+        "mobile",
+      );
+      expect(screen.getByTestId("mobile-project-switch-trigger")).toBeDefined();
+      assertSingleLineContract(container);
+    });
+
+    it("enforces the single-line contract on mobile with the workflow slot populated", () => {
+      const { container } = renderHeader(
+        { onChangeView: noop, leftSidebarNavActive: true, mobileNavEnabled: true },
+        "mobile",
+      );
+      const workflowSlot = screen.getByTestId("header-workflow-slot");
+      // Simulate the board/list workflow portal rendering content into the slot.
+      workflowSlot.innerHTML = '<div class="board-workflow-toolbar"><button class="workflow-switcher-trigger">Coding</button></div>';
+      assertSingleLineContract(container);
+    });
+
+    it("enforces the single-line contract on mobile with search open and mobile nav active", () => {
+      const { container } = renderHeader(
+        { onSearchChange: vi.fn(), onChangeView: noop, mobileNavEnabled: true },
+        "mobile",
+      );
+      fireEvent.click(screen.getByTestId("mobile-header-search-btn"));
+      assertSingleLineContract(container);
+    });
+
+    it("enforces the single-line contract on desktop and tablet (non-mobile) as well", () => {
+      const desktop = renderHeader({}, "desktop");
+      assertSingleLineContract(desktop.container);
+
+      const tablet = renderHeader({}, "tablet");
+      assertSingleLineContract(tablet.container);
+    });
+  });
 });

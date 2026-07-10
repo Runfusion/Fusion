@@ -234,6 +234,18 @@ All workflows cards need workflow identity at the bottom-left below every other 
 FNXC:WorkflowBadges 2026-06-30-00:00:
 Workflow badges need a slight token-based gap between icon and label so compact workflow identity remains readable without changing placement, clickability, or truncation behavior.
 */
+/*
+FNXC:TaskCardLayout 2026-07-10-00:00:
+FN-7780 anchors the created-by-agent badge in its own bottom-left row before workflow identity, matching the existing workflow-row layout so the header ID/status/action row no longer wraps because of the agent chip on narrow/mobile cards.
+*/
+.card-agent-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: var(--space-xs);
+}
+
 .card-workflow-badge-row {
   display: flex;
   align-items: center;
@@ -378,17 +390,6 @@ Workflow badges need a slight token-based gap between icon and label so compact 
 .card-status-badge.awaiting-approval {
   background: var(--status-triage-bg-deep);
   color: var(--triage);
-}
-
-/*
-FNXC:PlanApproval 2026-07-04-21:35:
-FN-7559: release-authorization holds share the awaiting-approval status/badge
-base styling with the manual gate but get a subtle border so the distinct
-"Awaiting Release Authorization" label reads as a genuinely different hold,
-not a restyle of the ordinary manual-approval badge.
-*/
-.card-status-badge.awaiting-release-authorization {
-  border: 1px solid color-mix(in srgb, var(--triage) 55%, transparent);
 }
 
 .card-status-badge.awaiting-input {

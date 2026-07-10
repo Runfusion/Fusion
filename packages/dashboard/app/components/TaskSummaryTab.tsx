@@ -307,12 +307,42 @@ export function TaskSummaryTab({ task, pricingOverrides }: TaskSummaryTabProps) 
             <div className="task-summary-subsection">
               <h5>{t("taskDetail.summaryTab.workflowResults", "Workflow results")}</h5>
               <ul className="task-summary-work-list">
-                {workflowResults.map((result) => (
-                  <li key={`${result.workflowStepId}-${result.completedAt ?? result.startedAt ?? result.workflowStepName}`}>
-                    <span className={`task-summary-status task-summary-status--${result.status}`}>{result.status.replace("_", " ")}</span>
-                    <span>{result.workflowStepName}</span>
-                  </li>
-                ))}
+                {workflowResults.map((result) => {
+                  /*
+                  FNXC:WorkflowStepResults 2026-07-09-00:40:
+                  FN-7727: `priorAttempts` is bounded, read-only history
+                  populated by the shared `upsertWorkflowStepResult` core
+                  helper when a pre-merge review node (code-review,
+                  plan-review, browser-verification) is re-run after a prior
+                  failed attempt. Render it only when present — steps with no
+                  history render no extra affordance (no orphaned shell).
+                  */
+                  const priorAttempts = result.priorAttempts ?? [];
+                  return (
+                    <li key={`${result.workflowStepId}-${result.completedAt ?? result.startedAt ?? result.workflowStepName}`}>
+                      <div className="task-summary-work-list-row">
+                        <span className={`task-summary-status task-summary-status--${result.status}`}>{result.status.replace("_", " ")}</span>
+                        <span>{result.workflowStepName}</span>
+                      </div>
+                      {priorAttempts.length > 0 && (
+                        <details className="task-summary-prior-attempts" data-testid="task-summary-prior-attempts">
+                          <summary>
+                            {t("taskDetail.summaryTab.priorAttempts", "{{count}} previous failed attempt{{plural}}", { count: priorAttempts.length, plural: priorAttempts.length === 1 ? "" : "s" })}
+                          </summary>
+                          <ul className="task-summary-prior-attempts-list">
+                            {priorAttempts.map((attempt, index) => (
+                              <li key={`${attempt.workflowStepId}-${attempt.startedAt ?? index}`}>
+                                <span className={`task-summary-status task-summary-status--${attempt.status}`}>{attempt.status.replace("_", " ")}</span>
+                                {attempt.startedAt && <span className="task-summary-prior-attempts-timestamp">{attempt.startedAt}</span>}
+                                {attempt.output && <p className="task-summary-prior-attempts-output">{attempt.output}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}

@@ -312,6 +312,40 @@ describe("TaskDetailModal Summary tab", () => {
     expect(within(rows[0]).getByText("7,014")).toBeTruthy();
   });
 
+  it("renders a dollar amount for the current runtime token-usage model snapshot", () => {
+    render(
+      <TaskSummaryTab
+        task={doneTask({
+          tokenUsage: tokenUsage({
+            inputTokens: 1_000_000,
+            outputTokens: 200_000,
+            cachedTokens: 0,
+            cacheWriteTokens: 0,
+            totalTokens: 1_200_000,
+            modelProvider: "anthropic",
+            modelId: "claude-sonnet-5",
+            perModel: [
+              {
+                modelProvider: "anthropic",
+                modelId: "claude-sonnet-5",
+                inputTokens: 1_000_000,
+                outputTokens: 200_000,
+                cachedTokens: 0,
+                cacheWriteTokens: 0,
+                totalTokens: 1_200_000,
+                firstUsedAt: "2026-07-10T15:22:50.837Z",
+                lastUsedAt: "2026-07-10T15:22:50.837Z",
+              },
+            ],
+          }),
+        })}
+      />,
+    );
+
+    expect(screen.getAllByText("$4.00").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("claude-sonnet-5")).toBeTruthy();
+  });
+
   it("applies pricing overrides passed into the summary component", () => {
     const pricingOverrides: ModelPricingOverrides = {
       "custom:override-model": {

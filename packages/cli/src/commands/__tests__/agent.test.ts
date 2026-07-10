@@ -17,9 +17,19 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
 
 // ── Mock AgentStore ──────────────────────────────────────────────────
 
-const mockGetAgent = vi.fn();
-const mockUpdateAgentState = vi.fn();
-const mockInit = vi.fn().mockResolvedValue(undefined);
+// FN-7704: `vi.hoisted` guarantees these mock fns exist before either
+// `vi.mock` factory below runs, regardless of source order between the two
+// mock blocks (a prior plain-`const` version of the project-context mock
+// hit "Cannot access before initialization" because Vitest's hoisting only
+// reliably hoists `mock`-prefixed consts declared ahead of the FIRST
+// `vi.mock` call in the file).
+const { mockGetAgent, mockUpdateAgentState, mockInit, mockClose, mockResolveProjectPathOnly } = vi.hoisted(() => ({
+  mockGetAgent: vi.fn(),
+  mockUpdateAgentState: vi.fn(),
+  mockInit: vi.fn().mockResolvedValue(undefined),
+  mockClose: vi.fn(),
+  mockResolveProjectPathOnly: vi.fn().mockResolvedValue("/tmp/test-project"),
+}));
 
 // AgentStore mock — vi.fn() with mockImplementation works with `new` in vitest.
 // We return a plain object from the constructor which becomes the instance.
@@ -28,6 +38,7 @@ vi.mock("@fusion/core", () => ({
     init: mockInit,
     getAgent: mockGetAgent,
     updateAgentState: mockUpdateAgentState,
+    close: mockClose,
   })),
   AGENT_VALID_TRANSITIONS: {
     idle: ["active"],
@@ -40,14 +51,19 @@ vi.mock("@fusion/core", () => ({
 
 // ── Mock project-context ─────────────────────────────────────────────
 
-vi.mock("../project-context.js", () => ({
-  resolveProject: vi.fn().mockResolvedValue({
-    projectId: "test-project",
-    projectPath: "/tmp/test-project",
-    projectName: "test-project",
-    isRegistered: true,
-    store: {},
-  }),
+// FN-7704: this test lives in src/commands/__tests__/, so the module under
+// test's "../project-context.js" import resolves to src/project-context.js
+// — the mock path here must match that resolved module ("../../
+// project-context.js" from this file), not agent.ts's own relative import
+// string. A prior version of this mock pointed at "../project-context.js"
+// (i.e. the nonexistent src/commands/project-context.js) and silently never
+// applied — getProjectPath's try/catch fallback to the REAL resolveProject
+// masked it because only the mocked AgentStore mattered for these tests'
+// assertions. Fixed alongside FN-7704 so the mock now actually intercepts
+// the call, which enabled asserting resolveProjectPathOnly is used (i.e.
+// that no TaskStore is leaked).
+vi.mock("../../project-context.js", () => ({
+  resolveProjectPathOnly: mockResolveProjectPathOnly,
 }));
 
 // ── Spies ────────────────────────────────────────────────────────────
@@ -94,6 +110,9 @@ describe("runAgentStop", () => {
 
     expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "paused");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("✓ Agent agent-test123 stopped"));
+    // FN-7704: store must be closed on the happy path so the CLI process
+    // does not keep a lingering SQLite handle alive after work is done.
+    expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
   it("should stop an active agent", async () => {
@@ -103,6 +122,7 @@ describe("runAgentStop", () => {
 
     expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "paused");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("✓ Agent agent-test123 stopped"));
+    expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
   it("should report when agent is not found", async () => {
@@ -111,6 +131,11 @@ describe("runAgentStop", () => {
     await expect(runAgentStop("agent-nonexistent")).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("agent-nonexistent not found"));
     expect(exitSpy).toHaveBeenCalledWith(1);
+    // FN-7704: store must be closed before process.exit on the not-found path.
+    // (closeAgentStoreSafely may run twice here: once explicitly before
+    // process.exit, and once more via the outer catch when the mocked
+    // process.exit throws to unwind the test — both are safe/idempotent.)
+    expect(mockClose).toHaveBeenCalled();
   });
 
   it("should report when agent is already paused", async () => {
@@ -121,6 +146,8 @@ describe("runAgentStop", () => {
     // Should NOT call updateAgentState
     expect(mockUpdateAgentState).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already paused"));
+    // FN-7704: store must be closed on the already-in-state early-return path.
+    expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
   it("should reject stopping an idle agent (invalid transition)", async () => {
@@ -129,6 +156,8 @@ describe("runAgentStop", () => {
     await expect(runAgentStop("agent-test123")).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("cannot transition to 'paused'"));
     expect(exitSpy).toHaveBeenCalledWith(1);
+    // FN-7704: store must be closed on the invalid-transition path.
+    expect(mockClose).toHaveBeenCalled();
   });
 
   it("should reject stopping an error agent (invalid transition)", async () => {
@@ -137,7 +166,41 @@ describe("runAgentStop", () => {
     await expect(runAgentStop("agent-test123")).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("cannot transition to 'paused'"));
     expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(mockClose).toHaveBeenCalled();
   });
+
+  it("should close the store and resolve the project path without leaking a TaskStore", async () => {
+    await runAgentStop("agent-test123");
+
+    // FN-7704: agent commands must resolve the project path via
+    // resolveProjectPathOnly (not resolveProject) so no TaskStore this
+    // command never touches is left open/cached.
+    expect(mockResolveProjectPathOnly).toHaveBeenCalled();
+  });
+
+  it("fast-fails with a clear error and non-zero exit when the store mutation never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      // Simulate a store mutation that never resolves (e.g. a stuck/contended write).
+      mockUpdateAgentState.mockImplementation(() => new Promise(() => {}));
+
+      const resultPromise = runAgentStop("agent-test123");
+      // Suppress unhandled rejection warnings until we assert below.
+      resultPromise.catch(() => {});
+
+      // Advance past the default bounded fast-fail deadline (10s).
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(resultPromise).rejects.toThrow("process.exit");
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(`Failed to stop agent agent-test123`));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      // Even on the fast-fail timeout path, the store must still be closed so
+      // the CLI process exits promptly instead of hanging on the stuck op.
+      expect(mockClose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 15_000);
 });
 
 describe("runAgentStart", () => {
@@ -156,6 +219,8 @@ describe("runAgentStart", () => {
 
     expect(mockUpdateAgentState).toHaveBeenCalledWith("agent-test123", "active");
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("✓ Agent agent-test123 started"));
+    // FN-7704: store must be closed on the happy path.
+    expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
   it("should start an idle agent", async () => {
@@ -184,6 +249,8 @@ describe("runAgentStart", () => {
     await expect(runAgentStart("agent-nonexistent")).rejects.toThrow("process.exit");
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("agent-nonexistent not found"));
     expect(exitSpy).toHaveBeenCalledWith(1);
+    // FN-7704: store must be closed on the not-found path.
+    expect(mockClose).toHaveBeenCalled();
   });
 
   it("should report when agent is already active", async () => {
@@ -193,6 +260,8 @@ describe("runAgentStart", () => {
 
     expect(mockUpdateAgentState).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already running"));
+    // FN-7704: store must be closed on the already-in-state early-return path.
+    expect(mockClose).toHaveBeenCalledTimes(1);
   });
 
   it("should report when agent is already running", async () => {
@@ -202,5 +271,25 @@ describe("runAgentStart", () => {
 
     expect(mockUpdateAgentState).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("already running"));
+    expect(mockClose).toHaveBeenCalledTimes(1);
   });
+
+  it("fast-fails with a clear error and non-zero exit when the store mutation never resolves", async () => {
+    vi.useFakeTimers();
+    try {
+      mockUpdateAgentState.mockImplementation(() => new Promise(() => {}));
+
+      const resultPromise = runAgentStart("agent-test123");
+      resultPromise.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(resultPromise).rejects.toThrow("process.exit");
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(`Failed to start agent agent-test123`));
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(mockClose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 15_000);
 });

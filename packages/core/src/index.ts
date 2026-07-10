@@ -23,9 +23,24 @@ export {
   mergeSupplementalAnthropicModels,
 } from "./anthropic-models.js";
 export type { AnthropicProviderRegistration } from "./anthropic-models.js";
+export {
+  OPENAI_CODEX_PROVIDER_ID,
+  GPT_5_6_LUNA_MODEL_ID,
+  GPT_5_6_SOL_MODEL_ID,
+  GPT_5_6_TERRA_MODEL_ID,
+  SUPPLEMENTAL_OPENAI_CODEX_PROVIDER_REGISTRATION,
+  mergeSupplementalOpenAiCodexModels,
+} from "./openai-models.js";
+export type { OpenAiCodexProviderRegistration } from "./openai-models.js";
 export { detectImageMimeFromBytes } from "./image-mime.js";
 export type { DetectedImageMime } from "./image-mime.js";
 export { redactSecrets } from "./redact-secrets.js";
+export {
+  evaluatePromptCondition,
+  evaluatePromptConditionDetailed,
+  resolveEffectivePluginSettings,
+} from "./plugin-prompt-condition.js";
+export type { PromptConditionEvaluationResult } from "./plugin-prompt-condition.js";
 export { computePlanApprovalFingerprint, resolvePlanApprovalRequired } from "./plan-approval.js";
 export type { PlanApprovalMode } from "./plan-approval.js";
 export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
@@ -53,6 +68,14 @@ export {
   registerBuiltInZaiProvider,
 } from "./zai-provider.js";
 export type { ZaiProviderRegistration } from "./zai-provider.js";
+export {
+  GROK_CLI_PROVIDER_ID,
+  GROK_PROVIDER_REGISTRATION,
+  isGrokApiKeyFusionVisible,
+  mergeBuiltInGrokProviderModels,
+  registerBuiltInGrokProvider,
+} from "./grok-provider.js";
+export type { GrokProviderRegistration } from "./grok-provider.js";
 export {
   resolveWorktrunkSettings,
   requiresWorktrunkInstallVerification,
@@ -108,6 +131,7 @@ export {
   resolveAgentPrompt,
   getAvailableTemplates,
   getTemplatesForRole,
+  FUSION_RUNTIME_SELF_AWARENESS,
 } from "./agent-prompts.js";
 export {
   parseWorkflowIr,
@@ -199,6 +223,7 @@ export {
   BUILTIN_MOVED_WORKFLOW_SETTINGS,
   BUILTIN_TRIAGE_POLICY_SETTINGS,
   BUILTIN_OVERSIGHT_SETTINGS,
+  DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS,
   renderTriagePolicyPlaceholders,
 } from "./builtin-workflow-settings.js";
 export {
@@ -823,6 +848,11 @@ export {
   // FNXC:CoreTests 2026-06-25-16:30: test-only migrated-DB snapshot hook so
   // cross-package suites (dashboard route tests) can amortize db.init() cost.
   setInMemoryTemplateSnapshot,
+  // FNXC:CliBoardMutation 2026-07-09-00:00: exported so the CLI-level
+  // lock-retry wrapper (packages/cli/src/lock-retry.ts, FN-7731) can classify
+  // SQLite lock errors identically to the DB layer's own runWithLockRecovery,
+  // instead of re-implementing (and risking drift in) the detection regex.
+  isSqliteLockError,
 } from "./db.js";
 export {
   ProjectIdentityConflictError,
@@ -887,12 +917,16 @@ export {
   getTaskMergeBlocker,
   getTaskHardMergeBlocker,
   getTaskCompletionBlocker,
+  getLatestFailedPreMergeReviewStep,
   isTaskReadyForMerge,
   allowsAutoMergeProcessing,
   isSharedBranchGroupMemberIntegration,
+  isLiveSharedBranchGroupMemberIntegration,
   resolveEffectiveAutoMerge,
   resolveEffectiveGroupAutoMerge,
   resolveTaskMergeTarget,
+  AWAITING_APPROVAL_PAUSE_REASON,
+  isTaskBlockedOnApproval,
   type MergeTargetResolution,
   type MergeTargetResolverOptions,
 } from "./task-merge.js";
@@ -1241,6 +1275,7 @@ export {
   ensureBundledPluginInstalled,
   ensureBundledDependencyGraphPluginInstalled,
   ensureBundledCursorRuntimePluginInstalled,
+  ensureBundledGrokRuntimePluginInstalled,
 } from "./plugins/bundled-plugin-install.js";
 export type { BundledPluginId, EnsureBundledResult, BundledPluginDirResolver } from "./plugins/bundled-plugin-install.js";
 export { scanPluginSecurity } from "./plugin-security-scan.js";
@@ -1329,8 +1364,10 @@ export {
   applyTestModeOverrides,
   isTestModeActive,
   resolveExecutionSettingsModel,
+  resolvePhaseThinkingLevel,
   resolvePlanningSettingsModel,
   resolveProjectDefaultModel,
+  resolveSettingsLaneThinkingLevel,
   resolveTaskExecutionModel,
   resolveTaskPlanningModel,
   resolveTaskValidatorModel,
@@ -1341,7 +1378,7 @@ export {
   routeTaskPlanningModel,
   routeTaskValidatorModel,
 } from "./model-resolution.js";
-export type { ResolvedModelSelection, RouterLaneOptions } from "./model-resolution.js";
+export type { ModelThinkingPhase, ResolvedModelSelection, RouterLaneOptions } from "./model-resolution.js";
 export {
   routeModel,
   routeModelAndEmit,
@@ -2276,3 +2313,7 @@ export { sql as drizzleSql } from "drizzle-orm";
 // postgres internals. The shape definitions are harmless to expose: they only
 // describe tables the AsyncDataLayer can already reach.
 export { schema as postgresSchema } from "./postgres/index.js";
+export {
+  upsertWorkflowStepResult,
+  MAX_WORKFLOW_STEP_PRIOR_ATTEMPTS,
+} from "./workflow-step-results.js";

@@ -698,7 +698,9 @@ describe("TaskPlannerChatTab", () => {
     const sendButton = screen.getByTestId("chat-send-btn");
     expect(sendButton).toHaveAccessibleName("Send");
     expect(sendButton.querySelector("svg")).toBeTruthy();
-    expect(sendButton.querySelector("span")).toHaveTextContent("Send");
+    // FN-7685: the idle send button is icon-only — no visible "Send" text span,
+    // even though the accessible name (aria-label) above still resolves to "Send".
+    expect(sendButton.querySelector("span")).toBeNull();
 
     fireEvent.pointerDown(sendButton, { pointerType: "touch" });
     act(() => {

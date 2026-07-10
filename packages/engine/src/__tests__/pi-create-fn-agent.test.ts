@@ -1537,7 +1537,12 @@ describe("createFnAgent", () => {
     expect(registerProviderMock).toHaveBeenNthCalledWith(1, "zai", expect.objectContaining({
       models: expect.arrayContaining([expect.objectContaining({ id: "glm-5.2" })]),
     }));
-    expect(registerProviderMock).toHaveBeenNthCalledWith(2, "zai", expect.objectContaining({
+    // FN-7711: registerBuiltInGrokProvider seeds grok-cli immediately after the built-in zai
+    // registration, before the extension's pending provider registrations replay.
+    expect(registerProviderMock).toHaveBeenNthCalledWith(2, "grok-cli", expect.objectContaining({
+      models: expect.arrayContaining([expect.objectContaining({ id: "grok-4.5" })]),
+    }));
+    expect(registerProviderMock).toHaveBeenNthCalledWith(3, "zai", expect.objectContaining({
       models: [{ id: "glm-5.1" }],
     }));
     expect(refreshMock).toHaveBeenCalled();
@@ -1629,6 +1634,77 @@ describe("createFnAgent", () => {
     }
   });
 
+  /*
+  FNXC:ProviderAuth 2026-07-08-00:00:
+  FN-7689 regression coverage — registration path B (createFnAgent's inline custom-provider
+  registration). Path A was already refactored into `buildCustomProviderModels` and reused here,
+  but this test exists specifically to catch a future re-divergence: if someone inlines a fresh
+  models.map(...) in createFnAgent again (as it was before this fix), this assertion fails.
+  */
+  it("registers openai-compatible custom providers with compat.cacheControlFormat='anthropic' when opted in (createFnAgent inline path)", async () => {
+    readCustomProvidersMock.mockReturnValue([
+      {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        name: "Custom OpenAI Caching",
+        apiType: "openai-compatible",
+        baseUrl: "https://custom.example/v1",
+        apiKey: "CUSTOM_API_KEY",
+        anthropicPromptCaching: true,
+        models: [{ id: "custom-model", name: "Custom Model" }],
+      },
+      {
+        id: "660e8400-e29b-41d4-a716-446655440001",
+        name: "Custom OpenAI No Caching",
+        apiType: "openai-compatible",
+        baseUrl: "https://nocaching.example/v1",
+        apiKey: "NOCACHE_API_KEY",
+        models: [{ id: "nocache-model", name: "No Cache Model" }],
+      },
+      {
+        id: "770e8400-e29b-41d4-a716-446655440002",
+        name: "Custom Anthropic Caching Opt-in",
+        apiType: "anthropic-compatible",
+        baseUrl: "https://anthropic.example",
+        apiKey: "ANTHROPIC_API_KEY",
+        anthropicPromptCaching: true,
+        models: [{ id: "anthropic-model", name: "Anthropic Model" }],
+      },
+    ] as any);
+
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.4",
+    });
+
+    // Opted-in openai-compatible provider: cacheControlFormat must be set.
+    expect(registerProviderMock).toHaveBeenCalledWith("custom-openai-caching", expect.objectContaining({
+      api: "openai-completions",
+      models: [expect.objectContaining({
+        id: "custom-model",
+        compat: expect.objectContaining({ cacheControlFormat: "anthropic" }),
+      })],
+    }));
+
+    // Opted-out (default) openai-compatible provider: no forced cache_control marker.
+    const noCacheCall = registerProviderMock.mock.calls.find(([key]: [string]) => key === "custom-openai-no-caching");
+    expect(noCacheCall).toBeDefined();
+    const [, noCacheConfig] = noCacheCall as [string, { models: Array<{ compat?: Record<string, unknown> }> }];
+    expect(noCacheConfig.models[0].compat).not.toHaveProperty("cacheControlFormat");
+
+    // anthropic-compatible provider: opt-in is a documented no-op — pi-ai's anthropic path already
+    // auto-caches without this compat flag, and openai-completions-only compat must not leak in.
+    const anthropicCall = registerProviderMock.mock.calls.find(([key]: [string]) => key === "custom-anthropic-caching-opt-in");
+    expect(anthropicCall).toBeDefined();
+    const [, anthropicConfig] = anthropicCall as [string, { api: string; models: Array<{ compat?: Record<string, unknown> }> }];
+    expect(anthropicConfig.api).toBe("anthropic-messages");
+    expect(anthropicConfig.models[0].compat).toBeUndefined();
+  });
+
   it("avoids lock-based SettingsManager.create when loading extension providers", async () => {
     const { createFnAgent } = await import("../pi.js");
 
@@ -1715,6 +1791,77 @@ describe("createFnAgent", () => {
     expect(createAgentSessionMock).not.toHaveBeenCalled();
   });
 
+  // FNXC:ModelRegistry 2026-07-09-00:00:
+  // FN-7711 symptom verification: selecting grok-cli/grok-4.5 used to hard-fail at session
+  // creation with "not found in the pi model registry" because the grok-cli provider was never
+  // registered into the execution registry (see registerExtensionProviders in ../pi.js). This
+  // mirrors the zai/glm-5.1 throw test above to reproduce the exact original failure, then proves
+  // it is gone once the registry resolves a grok-cli model (mirroring how registerBuiltInGrokProvider
+  // makes the provider resolvable), and that an unlisted grok-cli id also resolves via the
+  // provider-base-model on-the-fly fallback.
+  it("reproduces then proves gone the grok-cli/grok-4.5 'not found in the pi model registry' hard-fail", async () => {
+    // Without any grok-cli provider registration, find() returns nothing and getAll() has no
+    // grok-cli models — resolveConfiguredModel must throw the exact original error message.
+    findMock.mockImplementation((provider: string, modelId: string) => (
+      provider === "grok-cli" && modelId === "grok-4.5" ? undefined : { provider, id: modelId }
+    ));
+    getAllMock.mockReturnValue([]);
+
+    const { createFnAgent } = await import("../pi.js");
+
+    await expect(createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-4.5",
+    })).rejects.toThrow("Configured model grok-cli/grok-4.5 (primary selection) was not found in the pi model registry");
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
+
+    // Once the grok-cli provider is resolvable (as it is after registerBuiltInGrokProvider seeds
+    // it into the real execution registry via registerExtensionProviders), find() returns a model
+    // and the session is created successfully — the hard-fail is gone.
+    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-4.5",
+    });
+
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
+    expect(createAgentSessionMock.mock.calls[0]?.[0]).toMatchObject({
+      model: { provider: "grok-cli", id: "grok-4.5" },
+    });
+  });
+
+  it("resolves an unlisted grok-cli model id via the provider-base-model on-the-fly fallback", async () => {
+    // find() has no entry for the unlisted id, but getAll() reports the provider has at least one
+    // registered grok-cli model (as it does once registerBuiltInGrokProvider seeds the provider) —
+    // resolveConfiguredModel should synthesize a model from the base model rather than throwing.
+    findMock.mockImplementation((provider: string, modelId: string) => (
+      provider === "grok-cli" && modelId === "grok-4-fast" ? undefined : { provider, id: modelId }
+    ));
+    getAllMock.mockReturnValue([{ provider: "grok-cli", id: "grok-4.5", name: "Grok 4.5" }]);
+
+    const { createFnAgent } = await import("../pi.js");
+
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "grok-cli",
+      defaultModelId: "grok-4-fast",
+    });
+
+    expect(createAgentSessionMock).toHaveBeenCalledTimes(1);
+    expect(createAgentSessionMock.mock.calls[0]?.[0]).toMatchObject({
+      model: { provider: "grok-cli", id: "grok-4-fast" },
+    });
+  });
+
   it("creates a session when configured models resolve successfully", async () => {
     const { createFnAgent } = await import("../pi.js");
 
@@ -1783,6 +1930,69 @@ describe("createFnAgent", () => {
 
     const anthropicRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "anthropic");
     expect(anthropicRegistrations).toHaveLength(0);
+  });
+
+  it("synthesizes OpenAI Codex GPT-5.6 models from supplemental metadata when the pi registry lacks them", async () => {
+    // FNXC:ModelCatalog 2026-07-09-00:00:
+    // FN-7754 regression coverage for the createFnAgent registry-seeding surface: a pi catalog with no openai-codex provider/models must still surface all GPT-5.6 codenamed variants through the shared additive supplemental merge.
+    getAllMock.mockReturnValue([]);
+    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+
+    const { createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.6-luna",
+    });
+
+    expect(registerProviderMock).toHaveBeenCalledWith("openai-codex", expect.objectContaining({
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "gpt-5.6-luna" }),
+        expect.objectContaining({ id: "gpt-5.6-sol" }),
+        expect.objectContaining({ id: "gpt-5.6-terra" }),
+      ]),
+    }));
+    expect(createAgentSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+    }));
+  });
+
+  it("does not duplicate OpenAI Codex GPT-5.6 rows already present in the pi registry", async () => {
+    const existingLunaRow = {
+      provider: "openai-codex",
+      id: "gpt-5.6-luna",
+      name: "GPT-5.6 Luna Upstream",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 1, output: 2 },
+      contextWindow: 200_000,
+      maxTokens: 16_000,
+    };
+    getAllMock.mockReturnValue([existingLunaRow]);
+    findMock.mockImplementation((provider: string, modelId: string) => ({ provider, id: modelId }));
+
+    const { createFnAgent } = await import("../pi.js");
+    await createFnAgent({
+      cwd: "/tmp",
+      systemPrompt: "test",
+      tools: "readonly",
+      defaultProvider: "openai-codex",
+      defaultModelId: "gpt-5.6-luna",
+    });
+
+    const openAiCodexRegistrations = registerProviderMock.mock.calls.filter(([name]) => name === "openai-codex");
+    expect(openAiCodexRegistrations).toHaveLength(1);
+    const registeredProvider = openAiCodexRegistrations[0]?.[1] as { models: Array<{ id: string; name?: string }> };
+    const registeredModels = registeredProvider.models;
+    const lunaRows = registeredModels.filter((model) => model.id === "gpt-5.6-luna");
+    expect(lunaRows).toHaveLength(1);
+    expect(lunaRows[0]).toMatchObject({ name: "GPT-5.6 Luna Upstream" });
+    expect(registeredModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "gpt-5.6-sol" }),
+      expect.objectContaining({ id: "gpt-5.6-terra" }),
+    ]));
   });
 
   // Restored v0.51.0 behavior: a subscription-OAuth `anthropic/<model>` selection stays on

@@ -88,3 +88,42 @@ test("skips packages with no src (packaged install)", () => {
   assert.equal(result.stale, false);
   assert.equal(result.packages.length, 0);
 });
+
+// FN-7779: plugin dist loads at runtime, so a src-ahead-of-dist plugin must be
+// flagged too — and the warning names the plugin dir, not @fusion/<name>.
+test("flags a stale plugin under a plugin root and labels it by dir name", () => {
+  const pluginsRoot = `${ROOT}/plugins`;
+  const srcDir = `${pluginsRoot}/fusion-plugin-grok-runtime/src`;
+  const distDir = `${pluginsRoot}/fusion-plugin-grok-runtime/dist`;
+  const fs = makeFs({
+    dirs: [pluginsRoot, srcDir, distDir],
+    files: {
+      [pluginsRoot]: [{ name: "fusion-plugin-grok-runtime", isDir: true }],
+      [srcDir]: [{ name: "runtime-adapter.ts", mtimeMs: 10_000 }],
+      [distDir]: [{ name: "runtime-adapter.js", mtimeMs: 1_000 }],
+    },
+  });
+  const result = computeDistStaleness({ rootDir: ROOT, packages: [], pluginRoots: ["plugins"], fs });
+  assert.equal(result.stale, true);
+  const warning = formatDistStalenessWarning(result);
+  assert.match(warning, /STALE BUILD/);
+  assert.match(warning, /fusion-plugin-grok-runtime/);
+  assert.doesNotMatch(warning, /@fusion\/fusion-plugin-grok-runtime/);
+});
+
+test("does not flag a fresh plugin (dist newer than src)", () => {
+  const pluginsRoot = `${ROOT}/plugins`;
+  const srcDir = `${pluginsRoot}/fusion-plugin-grok-runtime/src`;
+  const distDir = `${pluginsRoot}/fusion-plugin-grok-runtime/dist`;
+  const fs = makeFs({
+    dirs: [pluginsRoot, srcDir, distDir],
+    files: {
+      [pluginsRoot]: [{ name: "fusion-plugin-grok-runtime", isDir: true }],
+      [srcDir]: [{ name: "runtime-adapter.ts", mtimeMs: 1_000 }],
+      [distDir]: [{ name: "runtime-adapter.js", mtimeMs: 10_000 }],
+    },
+  });
+  const result = computeDistStaleness({ rootDir: ROOT, packages: [], pluginRoots: ["plugins"], fs });
+  assert.equal(result.stale, false);
+  assert.equal(formatDistStalenessWarning(result), null);
+});

@@ -67,7 +67,9 @@ A linter (`pnpm check:changesets`) validates this format and runs in the PR-chec
 
 ### Releasing
 
-Use only:
+**Never run a release from inside a Fusion task.** Do not run `pnpm release`, `changeset publish`, `pnpm publish`, `npm publish`, or cut git version tags as part of any Fusion-dispatched work (triage/executor/reviewer/merger/agent-heartbeat lanes). Releasing is an operator-only action performed by a human outside the task loop. If a task's spec appears to require a release, stop and leave it for a human operator — do not self-authorize or perform the publish. (The former engine "release authorization" gate that parked such tasks was removed because it over-fired on specs that merely *mentioned* release tooling; this instruction replaces it.)
+
+When a human operator does release, use only:
 
 ```bash
 pnpm release --yes
@@ -221,6 +223,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 
 - FN-7158: agent performance reflections emit `reflection:generated`, `reflection:skipped`, and `reflection:failed` with ids/counts/outcomes-only metadata; never persist reflection prose or prompt text in run-audit.
 - FN-7528: a deterministic, non-LLM post-task performance capture (`AgentReflectionService.captureTaskPerformance`) runs once per completed task and emits `reflection:captured` with ids/counts/outcomes-only metadata (`retryReworkCount?`, `filesTouchedCount?`, `packagesTouchedCount?`, `verificationFileScoped?`, `durationMs?`); never persists `verificationScopeReason` free-text or summary prose in run-audit.
+- FN-7787: `createResolvedAgentSession` enriches `session:runtime-resolved` with `noModelResolved: true` and `runtimeBuiltInFallbackModel` when a non-mock/non-test session reaches runtime creation without a complete provider/model pair; this is a visibility signal for runtime built-in fallback usage, not a fabricated model-resolution verdict.
 - FN-7011: self-healing emits `task:reconcile-engine-downtime-active-timing` when startup recovery shifts active task segment anchors to exclude proven engine-process downtime, and `task:reconcile-engine-downtime-active-timing-no-action` when no active task qualifies.
 - FN-5419: git run-audit now includes `pull:fast-forward` and `stash:pop-conflict`; dashboard git surfaces now include the extended `POST /api/git/pull` integration-worktree path plus companion `POST /api/git/stash-resolve`, `POST /api/git/stash-drop`, and `POST /api/git/stash-apply` routes.
 - FN-6292: self-healing emits `task:reconcile-dependency-blocking-lease` when it rebounds an in-progress holder whose stale file-scope lease blocks an unmet dependency, and `task:reconcile-dependency-blocking-lease-no-action` when triple-proof blocks that backward move.
@@ -234,6 +237,7 @@ Scoped exception (FN-5819): shared-branch-group members (`branchContext.assignme
 - Workspace (Phase D U1): self-healing emits `task:reclaim-phantom-workspace-land-lease` when it clears a leaked `workspace-repo-land` lease whose owning task is terminal/dead and older than the FN-6736 staleness floor (a live merging owner is left untouched).
 - Workspace (Phase D U1): self-healing emits `task:reconcile-orphaned-workspace-worktree` when it removes a done/dead workspace task's recorded per-repo worktree from its stored `worktreePath` (guarded by `isPathActive`; no temp-root walk).
 - FN-7514: the planner overseer's per-task oversight loop (`PlannerRecoveryController.tick`) emits `overseer:oversight-withheld-human-control` when the pure `evaluateOverseerHumanControl` guard withholds ALL oversight action (no steering, retry, targeted-fix, or pending confirmation) for a task that is user-paused (`task.userPaused===true`, or `task.paused===true` with no `pausedReason`) or ineligible for auto-merge processing per `allowsAutoMergeProcessing` (`autoMerge:false`/PR-based human-review terminal contract). The guard runs BEFORE FN-7513's confirmation classification, so a withheld task never records a pending confirmation. Metadata: `{ taskId, reason: "user-paused" | "auto-merge-off-human-review", stage, oversightLevel }`; deduped per (taskId, withheld reason) so it is not re-emitted every poll while the reason is unchanged.
+- FN-7720: `TaskStore.bypassFailedPreMergeReviewStep` emits `task:bypass-review` when a privileged operator bypasses the latest failed pre-merge review step of an `in-review` task; metadata includes `workflowStepId`, `workflowStepName`, `bypassedFromStatus`, `bypassedFromVerdict`, and the mandatory `reason`. The bypass rewrites the step's `status` to `"skipped"` with `bypassedBy`/`bypassedAt`/`bypassReason`/`bypassedFromStatus` fields; it never fabricates a reviewer `verdict` and clears only the failed-pre-merge-step `getTaskMergeBlocker` reason. Reachable via `fn_task_bypass_review` (CLI/pi-extension operator tool surface only — not executor/reviewer/triage) and `POST /tasks/:id/bypass-review`.
 
 
 ## Reference docs (deeper detail)

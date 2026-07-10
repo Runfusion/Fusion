@@ -1,5 +1,211 @@
 # @runfusion/fusion
 
+## 0.57.0
+
+### Minor Changes
+
+- 03161ad: summary: Archived tasks now load newest-first in pages of 100 with a Show more button.
+  category: feature
+  dev: Adds ArchiveDatabase.listPage / TaskStore.listArchivedTasks and GET /tasks/archived for a bounded SQL LIMIT/OFFSET read ordered archivedAt DESC. useTasks.loadArchivedTasks fetches page 1 on first Archived-column expand; loadMoreArchivedTasks fetches subsequent pages. No schema change; the legacy merged listTasks({includeArchived}) path is unchanged.
+- e444581: summary: Planning Mode's "go deeper" prompt now suggests plan-specific topics instead of generic buckets.
+  category: feature
+  dev: AI completion payload gains optional `deepeningThemes`; the deepening checkpoint prefers them (via buildDeepeningCheckpointOptions) and falls back to the existing regex-derived themes when absent.
+- 42009cf: summary: Edit a chat message and resume the conversation from that point.
+  category: feature
+  dev: Adds ChatStore.deleteMessagesFrom + PATCH /api/chat/sessions/:id/messages/:messageId; rewinds the pi SessionManager (createBranchedSession) so the model forgets discarded turns. Direct model-loop chats only.
+- 0f2bfa5: summary: Built-in runtime plugins (Hermes, Paperclip, OpenClaw, Droid) can now be disabled and stay disabled across restarts.
+  category: feature
+  dev: renderBuiltinPluginSection now renders a durable enable/disable toggle for runtime built-ins independent of installed status, replacing the dead-end "Built-in metadata only" CTA for the not-installed / activated-without-record case. Chosen persistence path: on disable, a not-yet-installed built-in runtime is first registered via the existing installPlugin path (mirroring the CLI's ensureBundledPluginInstalled lazy-install), then disablePlugin is called immediately so a plugin_installs row + project state exists with enabled=false — no new persistence primitive needed since loadAllPlugins/loadPlugin already skip disabled plugins and recordActivationEvent only fires on actual load, so a disabled runtime is never re-activated on restart. HermesRuntimeCard/OpenClawRuntimeCard/PaperclipRuntimeCard now reflect the Plugin Manager disabled state ("Disabled in Plugin Manager") instead of showing a stale detected/connected status.
+- 6777eea: summary: Chat search now matches message content, with a "Search in title only" toggle.
+  category: feature
+  dev: ChatStore.searchSessionsByMessageContent (parameterized LIKE ... ESCAPE); GET /chat/sessions gains q/titleOnly params; useChat exposes searchInTitleOnly.
+- 5b243f1: summary: Hermes-configured models now appear in Fusion's model picker when the Hermes runtime is available.
+  category: feature
+  dev: /api/models additively merges `hermes profile list` results under the `hermes` provider via a short-TTL, single-flight cache (no per-request CLI spawn); rows are deduped by provider/id and never displace existing entries. Deferred item 1 of FN-7630.
+- 1b7bb1f: summary: Edit and resend a message in task-detail Planner Chat.
+  category: feature
+  dev: Wires FN-7628's edit affordance (editChatMessage + rewindSessionForEdit) into TaskPlannerChatTab for synthetic task-planner:<id> sessions; already-applied steering comments and refinement tasks are not reverted when a turn is discarded.
+- f7d9509: summary: Duplicate tasks are no longer auto-archived on creation by default — they are flagged for review instead.
+  category: feature
+  dev: Adds project setting `autoArchiveDuplicateTasksEnabled` (default false) gating the FN-4892 same-agent duplicate intake path in store `_maybeAutoArchiveSameAgentDuplicate`; disabled path uses new `flagSameAgentDuplicate` and sets `nearDuplicateOf` metadata. Tombstone-resurrection blocking is unchanged.
+- dd9fa2d: summary: fn_task_archive and fn_task_delete now accept removeLineageReferences to clear a lineage-parent block.
+  category: fix
+  dev: Forwards the boolean to store.archiveTask/deleteTask (FN-7661); resolves the tools referencing a parameter their schema never exposed.
+- 8ee8f15: summary: Agents now know they run inside Fusion and won't plan actions across a platform shutdown.
+  category: fix
+  dev: Adds a shared runtime self-awareness + capability-grounding preamble (packages/core/src/agent-prompts.ts, FUSION_RUNTIME_SELF_AWARENESS) prepended to the chat, heartbeat, and executor base prompts' stable layer.
+- 461a4a2: summary: Custom providers can now enable Anthropic-style prompt caching to stop re-billing the full context each turn.
+  category: fix
+  dev: Sets pi-ai `compat.cacheControlFormat="anthropic"` on opted-in custom-provider models across both registration paths (custom-provider-registry `toProviderConfig` and `pi.ts` createFnAgent). Opt-in via new `CustomProvider.anthropicPromptCaching` flag (FN-7689).
+
+### Patch Changes
+
+- 4444262: summary: Approval cards now show the gated command/arguments and dedupe repeated pending requests.
+  category: fix
+  dev: Permanent-agent gate persists approvalDedupeKey in targetAction.context and a payload-bearing summary (buildAgentGatedActionSummary); MailboxView renders GatedActionApprovalDetails for source="agent-gating".
+- 1b1e1f1: summary: Fix Planning Mode Back button showing a generation screen instead of the previous question.
+  category: fix
+  dev: handleBack in PlanningModeModal no longer transitions to the loading view during the deterministic rewindPlanningSession; Back returns directly to the previous question form (success and error paths) and never renders .planning-loading.
+- ebe9b9f: summary: Auto-approve plan toggle now appears only on the planning column, not Todo.
+  category: fix
+  dev: Board.tsx gated the plan auto-approve prop pair on intake||hold; the built-in Coding workflow's Todo is a hold column, leaking the control. Gate is now intake-only (legacy triage path unchanged).
+- 13570e8: summary: Fix Quick Add action-row buttons (Save, Attach, Fast, workflow trigger) rendering at mismatched heights.
+  category: fix
+  dev: Adds a scoped `min-height` on `.quick-entry-actions .btn` and `.wf-optional-steps-dropdown-trigger` in `QuickEntryBox.css` (desktop base rule, alongside the existing mobile touch-target block) so every action-row control resolves one uniform box height regardless of icon-only vs text content or `.dep-trigger` padding differences. No shared `.btn`/`.btn-sm`/`.btn-icon`/`.btn-task-create`/`.dep-trigger` rules in `styles.css` were touched.
+- 9a5a8d2: summary: Quick Add action-row controls now resolve one identical box height, not just a min-height floor.
+  category: fix
+  dev: Upgraded `.quick-entry-actions .btn, .quick-entry-actions .wf-optional-steps-dropdown-trigger` in QuickEntryBox.css from a bare min-height floor to a fixed box height (min-height paired with an equal max-height) plus tokenized line-height and centered alignment, at both the desktop base rule and the <=768px touch-target media block. Follow-up: a mobile-only Save-specific override (no vertical padding, line-height:1) further corrects Save's mobile sizing to match siblings without affecting desktop/tablet.
+- 1762229: summary: Warn when changing a workflow's model surfaces tasks still pinned to the old model, including default-workflow tasks.
+  category: fix
+  dev: PATCH /workflows/:id/setting-values now returns `modelDrift` for execution/planning/validator lanes. Drift baseline is captured inside the settings write transaction (no stale-read race), and default-workflow patches pass `includeNullSelection` so no-workflow-selection tasks are counted. New `TaskStore.updateWorkflowSettingValuesWithPrevious` and `getModelLaneDrift(..., { includeNullSelection })`.
+- a486e0b: summary: Retry transient OAuth token-rotation errors so in-flight agent calls survive rotation without failing the task.
+  category: fix
+  dev: withRateLimitRetry now retries transient auth errors (authentication_error, invalid credentials, token_expired) on a separate ~5s flat-delay budget that does not consume rate-limit attempts. OAuth scope/permission failures are explicitly excluded (operator must re-authorize) so they surface immediately instead of retrying pointlessly.
+- 9e5c025: summary: Executors now block on pending approvals instead of probing for ungated workarounds.
+  category: fix
+  dev: wait-for-approval now suspends the in-flight executor session via awaitAbortInFlightTaskWork and dedupes identical pending approvals; executor prompts carve out awaiting-approval as a legitimate turn end.
+- 60081fb: summary: Fix workspace-mode tasks failing auto-merge under the pull-request merge strategy.
+  category: fix
+  dev: Engine merge dispatch now checks isWorkspaceTask before the mergeStrategy branch, routing workspace tasks to landWorkspaceTask instead of processPullRequestMerge (which threw "could not determine repository" against the non-git workspace root). processPullRequestMergeTask/syncGroupPrCallback now throw the named WorkspaceTaskMergeError for workspace tasks as defense-in-depth.
+- 203f879: summary: New tasks now land in the selected workflow's intake column instead of always jumping to Planning/triage.
+  category: fix
+  dev: Removed hardcoded `column: "triage"` overrides in `fn_task_create` (engine `createTaskCreateTool` and pi extension) and in signal/GitHub-import/planning create surfaces that had no `workflowId` or (for planning subtask routes) accepted one but still forced `column`. `TaskStore.createTask` already resolves `input.column || resolvedEntryColumn || "triage"`; callers no longer defeat that resolution. A custom workflow's non-triage `intake`-trait column (e.g. `Inbox`) now correctly captures new cards inert until released, while the default builtin:coding workflow still lands cards in `triage` byte-identically. The pi-extension `fn_task_create` response text now echoes the actual landing column instead of a fixed `"Column: triage"` string.
+- 81fbb65: summary: Yes/No chat question buttons now show a clear selected state after clicking.
+  category: fix
+  dev: Strengthened `.chat-question-response__confirm--selected` CSS specificity (compound selector + dedicated hover/focus-visible rules) so the CTA-token selected fill/border beats the global `.btn`/`.btn:hover` rules; added `aria-pressed` and a regression test asserting the selected class toggles correctly between Yes/No.
+- 5631c88: summary: Planning Mode "needs input" now shows a yellow nav badge instead of a top banner.
+  category: fix
+  dev: Excludes planning `awaiting_input` sessions from SessionNotificationBanner and adds a `status-dot--pending` dot to the Planning nav destination (LeftSidebarNav + MobileNavBar More item/tab), driven by a new `planningNeedsInput` flag.
+- 1ea3c86: summary: Task-detail Oversight button now matches Priority/Execution-mode height on desktop.
+  category: fix
+  dev: `.detail-oversight-menu-dropdown` (the popover-positioning wrapper) is now `inline-flex; align-items: stretch` so it participates in `.detail-meta-inline-controls`'s stretch, and `.detail-oversight-menu-trigger` gets `align-self: stretch` to fill it — matching Priority/Execution-mode's direct-child stretch behavior without any new hardcoded height.
+- ca84473: summary: fn_task_attach now refuses to read files outside the task worktree boundary.
+  category: security
+  dev: Adds a path-containment guard (confine to ctx.cwd) before readFile in the fn_task_attach tool; rejects traversal/absolute/@-prefixed escaping paths. Regression tests in packages/cli/src/**tests**/extension.test.ts. Fixes FN-7619 (flagged out-of-scope during FN-7608).
+- 8d73b18: summary: Fix mobile dashboard terminal sometimes rendering completely blank on open.
+  category: fix
+  dev: TerminalModal now attaches a persistent ResizeObserver directly on the xterm container (mirroring SessionTerminal's existing pattern), so a container that reports a zero/collapsed box at the first post-open fit recovers as soon as its real box settles, instead of staying at FitAddon's degenerate 2x1-cell floor forever.
+- ca7c987: summary: Fix the mobile terminal shortcut bar so it truly scrolls horizontally to reach every key.
+  category: fix
+  dev: FN-7550's leaf `min-width:0`/`overflow-x:auto`/`touch-action:pan-x` on `.terminal-shortcut-panel` were already correct, but styles.css's mobile `@media(max-width:768px)` lockdown resets `touch-action` to `pan-y` on `*` and re-locks it explicitly on `.modal-overlay:not(.confirm-dialog-overlay)`/`#root`/`html`/`body` — the terminal's own overlay/modal ancestors were never carved back into `pan-x`, so the panel's own correct touch-action was defeated by ancestor-chain intersection on real mobile devices. Added `touch-action: pan-x pan-y` to `.modal-overlay.terminal-modal-overlay`, `.modal.terminal-modal(.terminal-modal--mobile)` (both mobile paths), and `.terminal-status-bar` (FN-7560 footer, same gap). Locked in with a real-CSS `getComputedStyle` layout test (`loadAllAppCss()`) that resolves the panel + full ancestor chain, replacing reliance on a leaf-rule string match that stayed green through this recurrence.
+- fe5a595: summary: Fix desktop app showing a truncated provider/model list vs. the web build.
+  category: fix
+  dev: The Electron desktop app's in-process dashboard server (local-runtime.ts, local-server.ts) now routes through a shared `@fusion/engine` `seedDashboardProviders()` helper that mirrors the CLI serve/dashboard/daemon startup sequence (built-in Zai/API-key provider seeding, `wrapAuthStorageWithApiKeyProviders`, `registerCustomProviders`). `provider-auth.ts` and `custom-provider-registry.ts` moved from `@fusion/cli` into `@fusion/engine`; the CLI files are now re-export shims with unchanged observable behavior.
+- d54ab80: summary: Fix desktop app plugin install and Browse registry (plugin subsystem now wired into the embedded server).
+  category: fix
+  dev: local-runtime.ts / local-server.ts now build a PluginStore + PluginLoader and pass pluginStore/pluginLoader/pluginRunner into createServer, mirroring the CLI dashboard command (FN-7623, issue #1937). Plugin subsystem init is fail-soft — a broken plugin (e.g. corrupt manifest) logs/traces via strace(...) but no longer blocks embedded dashboard startup.
+- a4f5fbc: summary: Fix onboarding GitHub sign-in button erroring instead of starting GitHub auth.
+  category: fix
+  dev: The onboarding/settings GitHub step no longer offers dashboard-managed OAuth login when no `github` OAuth provider is registered (pi ships only anthropic/github-copilot/openai-codex); it now presents gh CLI (`gh auth login`) guidance. `/api/auth/login` returns a clear unknown-provider error for `github` instead of a misleading "model not found".
+- a6c60e1: summary: Authentication settings always lists all supported providers, regardless of connected runtime plugins.
+  category: fix
+  dev: GET /api/auth/status now enumerates a static supported-provider catalog (union with storage-reported providers) and uses runtime/auth state only to annotate per-provider status; connecting a runtime plugin (e.g. Hermes Runtime) no longer collapses the provider list.
+- ebf8f87: summary: Add a close button to the Settings screen on mobile.
+  category: fix
+  dev: The embedded Settings header now renders a mobile-only `modal-close` control gated on `isEmbedded && viewportMode === "mobile"`, wired to the existing `onClose` prop (navigates back to the board and refreshes app settings). Desktop/tablet embedded and the standalone modal presentation are unchanged.
+- 6bf0090: summary: Hermes Runtime is now additive — connecting it no longer hides your custom providers, models, or auth options.
+  category: fix
+  dev: Audited the Hermes Runtime plugin (onLoad/onUnload, CLI-spawn/probe seams) and register-model-routes.ts/register-auth-routes.ts against GitHub #1931. Confirmed the reported customProviders suppression was already fixed generically (unrelated to Hermes) and that Hermes's PluginContext has no reference to AuthStorage/ModelRegistry, so it cannot mutate either store. Added FNXC documentation comments locking in the additive-runtime invariant and regression coverage across the model-picker (/api/models), custom-provider CRUD, and auth-status surfaces proving a connected Hermes runtime never narrows them. Item 3 (static auth catalog) remains owned by FN-7625; item 1 (additive Hermes-model surfacing in the picker) is deferred to a follow-up task (FN-7636) pending a non-blocking CLI-spawn caching strategy.
+- 413ef1d: summary: Align Priority and Execution-mode control heights with the Oversight dropdown in task detail.
+  category: fix
+  dev: `.detail-priority-chip`, `.detail-execution-mode-toggle`, and `.detail-oversight-menu-trigger` in TaskDetailModal.css now all pin an explicit `height` (not just `min-height`) from the shared `--detail-priority-control-min-height` token, so none can outgrow or undershoot the others regardless of flex stretch behavior; extends the FN-7585/FN-7618 shared-token pattern.
+- 51e3891: summary: Fix the task-detail Planner Chat stop button rendering narrower than its send button.
+  category: fix
+  dev: `TaskPlannerChatTab.css` now declares a locally-scoped `--chat-input-control-size` on `.task-planner-chat-composer` (same formula as `ChatView.css`'s `.chat-input-row`) and applies it as a `min-inline-size` floor on `.task-planner-chat-send`, so the shared `.chat-input-send`/`.chat-input-stop` classes (which previously read an undefined custom property inside the Planner composer and fell back to `width: auto`) never render the streaming Stop button narrower than the idle Send button on desktop or mobile.
+- 4e8c621: summary: Fix cards stranded after workspace/out-of-band merges land; node-override end no longer silently no-ops.
+  category: fix
+  dev: store.moveTask now allows proven-merge recoveryRehome from legacy columns (e.g. todo→done); nodeId='end' finalizes on durable merge proof or returns an explicit error across the dashboard route, CLI task-update tool, and store.updateTask.
+- f1db313: summary: Code Review/Plan Review/CE gate failures now record a diagnostic instead of "(no feedback captured)".
+  category: fix
+  dev: When an enabled optional-group (`code-review`, `plan-review`, `browser-verification`) or CE `source:"node"` skill-gate template node fails via a dispatch/infra exception rather than a reviewer verdict, `WorkflowGraphExecutor` now synthesizes a non-blank `WorkflowStepResult.output` from the underlying `node:<id>:error` context-patch key (falling back to the failure `value`, then a stable sentinel) instead of leaving `output`/`notes` field-absent. Fixes Runfusion/Fusion#1946. `status`, verdict extraction, edge routing, and self-healing's `latestFailedPreMergeStep` selection are unchanged.
+- 923bba7: summary: Fix agents on long heartbeat intervals silently going stale for hours.
+  category: fix
+  dev: HeartbeatTriggerScheduler timer audit now re-arms non-advancing long-interval registrations (stale lastHeartbeatAt with a live timer entry), not just missing ones (FN-7645).
+- 009ce26: summary: Fix provider API keys being wiped when the desktop and CLI apps share credentials on one machine.
+  category: fix
+  dev: createFusionAuthStorage() now reloads before persisting a refreshed OAuth credential so a concurrent Fusion process's newer login is not overwritten; adds cross-process regression coverage over ~/.fusion/agent/auth.json. Relies on the pi-coding-agent FileAuthStorageBackend locked per-provider merge (floor >=0.80.x).
+- 563a8c6: summary: Route node settings-sync and mesh credential writes through the coordinated auth store to prevent concurrent clobbers.
+  category: fix
+  dev: register-settings-sync-routes.ts, register-settings-sync-inbound-routes.ts, and register-mesh-routes.ts now persist received credentials via @fusion/engine createFusionAuthStorage() instead of raw AuthStorage.create(getFusionAuthPath()), sharing FN-7646's reload-before-persist + per-provider locked-merge path over ~/.fusion/agent/auth.json. Adds route-level regression coverage.
+- bec8987: summary: Fix tasks in planning/intake columns starting execution before they were specified.
+  category: fix
+  dev: The hold-release entry guard (reserveSlot in scheduler.ts, issueRelease in hold-release.ts) is now trait-based (isUnplannedForExecution resolves the `intake` trait plus `status:"planning"`/bootstrap-stub PROMPT.md) instead of keyed on the literal `todo` column id, so renamed custom intake columns (e.g. `ideas`, `Inbox`) are covered too. promoteHeldTask/releaseHeldTaskByEvent also route through the same guard (FN-7648).
+- ce4f173: summary: Switching projects now lands on the Board instead of Settings when the last-visited view was Settings.
+  category: fix
+  dev: Extended resolveLandingTaskView in useViewState.ts to resolve "settings" (in addition to "command-center") to "board" for the auto-restored/hydrated landing view only; deep links (?view=settings) and explicit navigation still open Settings.
+- efabdd6: summary: Removed the chat "Search in title only" toggle; chat search always matches message content and title.
+  category: fix
+  dev: Dropped searchInTitleOnly/setSearchInTitleOnly from useChat and the ChatView toggle button; content-search path (q param, matchedMessagePreview) is now always-on. Server GET /chat/sessions titleOnly param retained but unused by the client.
+- 7c7b22e: summary: Automation live output no longer shows "Run failed" for runs that actually succeed.
+  category: fix
+  dev: Reconciles the live-run panel terminal status (ScheduledTasksModal/RoutineCard) to the authoritative POST/registry result and gates benign SSE teardown (post-terminal close, reconnect exhaustion) from being surfaced as a failure across both `/routines/:id/run/stream` and `/automations/:id/run/stream`.
+- dfb084c: summary: Planner chat stop button now shows just the stop icon, not a text label.
+  category: fix
+  dev: StandardChatActionButton gains showStopText (defaults to showSendText); TaskPlannerChatTab sets showStopText={false}. aria-label "Stop generation" retained.
+- e29fea3: summary: Restore the chat "Working…" indicator immediately when returning to a session with an active generation.
+  category: fix
+  dev: `useChat.ts` `selectSession` now reattaches on the authoritative `fetchChatSession` refresh whenever `isGenerating===true`, instead of requiring a populated `inFlightGeneration` snapshot that is null pre-first-delta. Guards against races (stale active session, already-open stream) and reuses `attachIfGenerating` (FN-7656).
+- 511bcaf: summary: Retain GitHub issue import state when leaving and returning to Import Tasks.
+  category: fix
+  dev: Persists GitHubImportModal provider/tab/label filter/remote/selection per project via projectStorage (`kb-dashboard-github-import-state`) and hydrates on remount; falls back to the existing default-remote auto-detect when nothing is persisted.
+- 97e4667: summary: Built-in workflow boards and Automations editors now label the intake column "Planning", not "Triage".
+  category: fix
+  dev: board-workflows canonical label map BUILTIN_WORKFLOW_COLUMN_LABELS.triage was still "Triage", overriding FN-7599's IR rename; set to "Planning". English schedule.columnTriage/taskColumnTriage/triageColumn set to "Planning" and dashboard locale copy re-synced. Also fixed board.triage (AgentDetailView task-column badge) and docs/dashboard-guide.md references. Column id "triage" unchanged.
+- 7cf70b3: summary: The Command Center SDLC funnel now labels the intake stage "Planning", matching the renamed board column.
+  category: fix
+  dev: commandCenter.funnel.stage.triage, enteredInRange, and completionRateAria English strings (and SdlcFunnel.tsx t() fallbacks) changed to "Planning"/"Entered planning"/"in-range planning entrants"; dashboard locale copy re-synced. Aggregator stage key "triage" and the i18n key names are unchanged.
+- aa534c1: summary: Auto-recover durable agents stuck in transient error state even when their manager is active.
+  category: fix
+  dev: SelfHealingManager durable-error recovery no longer requires a missing manager; manager-present durable non-ephemeral agents with a transient lastError and no active run are recovered under the existing cooldown/backoff/retry-budget guards (FN-7672).
+- 297c744: summary: Task cards no longer show the steps breakdown while in the Planning column.
+  category: fix
+  dev: TaskCard `showProgressSection` now excludes the `triage` column, matching ListView; the breakdown appears once a task leaves Planning.
+- a4fce60: summary: Align the quick-add workflow dropdown button height with Save/Fast/Subtask buttons.
+  category: fix
+  dev: `.quick-entry-workflow-trigger` in QuickEntryBox.css now re-asserts `.btn-sm`'s `padding: 4px 10px` locally so the shared global `.dep-trigger` `padding: 3px 8px` no longer shortens it by ~2px; other `.dep-trigger` surfaces (InlineCreateCard, NewTaskModal, TaskDetailModal, TaskForm) are unaffected (FN-7677).
+- 83e7743: summary: On tablet widths, move terminal shortcuts/zoom controls into the bottom footer so they no longer overlap header icons.
+  category: fix
+  dev: Adds an isTabletTerminal flag (769–1024px, non-mobile) that renders the shared terminalActionControls fragment in the .terminal-status-bar footer (as FN-7560 did for mobile) instead of the header; true desktop (>1024px) keeps the header layout. Tablet footer keeps the desktop pin/pop-out toggles.
+- a832b79: summary: Fix dashboard terminal showing a blank screen for seconds before the first prompt appears on open.
+  category: performance
+  dev: `useTerminalSessions` no longer awaits a discardable `listTerminalSessions()` round trip before auto-creating the first session when there are no persisted `kb-terminal-tabs`; the round trip only produced a no-op filter result in that case. Reload-with-persisted-tabs is unaffected — it still awaits session-list validation.
+- fd541bb: summary: Keep the mobile top header on a single line after a foldable phone is unfolded and refolded.
+  category: fix
+  dev: `.header` now pins `flex-wrap: nowrap` explicitly and `.header-left`/`.header-actions` get an explicit `flex`/`min-width: 0` shrink-and-truncate contract promoted to the base rule (not gated to the `@media (max-width: 768px)` block), so the row cannot wrap even while a foldable's CSS layout viewport lags its `visualViewport` pane mid fold/unfold/refold. `useViewportMode` was audited and already recomputes correctly on that resize sequence (regression test added; no hook change needed).
+- 07507f5: summary: Add a one-time server log hint pointing to shell-profile-hygiene docs when a login shell is slow to prompt.
+  category: performance
+  dev: FN-7688 investigated whether `--login` in `TerminalService.detectShell()`/`createSession()` is a meaningful first-prompt latency contributor. Finding: negligible on lean profiles, additive (~800ms+) when `.zprofile`/`.bash_profile` eagerly sources something slow (e.g. version manager init). `--login` is preserved unconditionally per FN-7686; added `SLOW_LOGIN_PROFILE_HINT_MS` (2000ms) threshold and a one-time, non-blocking `console.info` hint in `createSession()`'s PTY `onData` handler — never alters spawn args, timeouts, or the `retry-without-login` fallback. See `docs/solutions/developer-experience/login-shell-profile-latency.md`.
+- 64d4bb7: summary: Fix Anthropic-compatible custom providers registering under an unregistered API key.
+  category: fix
+  dev: Aligns custom-provider-registry `resolveApiType("anthropic-compatible")` on "anthropic-messages" (the registered pi-ai api key), matching pi.ts `resolveCustomProviderApiType` and removing the latent "No API provider registered for api: anthropic" drift (FN-7690).
+- 67cc027: summary: Fix merger awaiting-confirmation copy that implied a hard block when auto-merge proceeds automatically.
+  category: fix
+  dev: `decidePlannerRecovery` now accepts an additive `autoMergeWillProceed` flag (threaded from `allowsAutoMergeProcessing` in `PlannerRecoveryController.tick`) that only shapes the confirmation `reason` string; no gating/behavior change to `action`/`requiresConfirmation`/`sideEffectClass`.
+- 0755fc5: summary: Fix the terminal rendering blank on mobile even though the shell prompt already loaded.
+  category: fix
+  dev: The global mobile `@media (max-width: 768px) { * { max-width: 100% } }` reset in styles.css also matched xterm's hidden character-measurement subtree (`.xterm-helpers` / `.xterm-char-measure-element`). That subtree's containing block is a 0x0 box, so `max-width: 100%` resolved to 0 and hard-capped xterm's character-cell measurement at 0 — FitAddon.fit() then proposed 0 columns and `.xterm-screen` (plus the WebGL canvas) collapsed to 0x0, so the prompt painted into a zero-size box. Exempt xterm's measurement subtree from that reset (`max-width: none`). Mobile-only; desktop was unaffected. Recurrence of FN-7620/FN-7686.
+- 0c1a20b: summary: Fix workspace partial-land recovery losing the already-landed sub-repo sha.
+  category: fix
+  dev: merger-ai.ts landWorkspaceTask now recovers the EXACT proven landed commit (the task's own Fusion-Task-Id trailer commit, or the recorded landedSha when it is still an ancestor) via findProvenLandedCommit, instead of dropping it when the A1 trailer-fallback proved a sub-repo landed but its sha was never persisted. This avoids attributing a later unrelated integration tip to the repo after an intervening sub-repo land, so finalizeWorkspaceTask builds durable merge proof and the partial-land retry completes to done.
+- 0c1a20b: summary: Fix workspace sub-repo worktree creation failing on absent shared branch.
+  category: fix
+  dev: worktree-acquisition.ts acquireWorkspaceRepoWorktree now strips the shared project integrationBranch/baseBranch overrides before forwarding to acquireTaskWorktree, so FN-7360's freshStartPoint resolution no longer tries to git-worktree-add a branch absent from the sub-repo.
+- d8ce3f4: summary: Prevent redundant polling and a re-render loop in agent-card runtime-fallback badges.
+  category: fix
+  dev: AgentsView now caches one stable ref callback per viewport key (avoids an infinite re-render loop when IntersectionObserver is unavailable) and evicts it on unmount; the test-only toast-dedupe reset is guarded to a no-op in production builds.
+- 3744fbc: summary: Clear stale generated mission fix features after their source feature passes validation.
+  category: fix
+  dev: Reconciles obsolete generated Fix Feature chains during validator pass handling and active mission recovery.
+- a8c018f: summary: Stop the false "OAuth token expired" push notification on startup.
+  category: fix
+  dev: In ProjectEngine.start, OAuthRefreshScheduler.start() now runs before OAuthExpiryMonitor.start() so the proactive refresh renews a stale-but-refreshable access token before the refresh-blind monitor's first awaited check() reads `expires`. Ordering locked by an invocationCallOrder assertion in project-engine.test.ts.
+- a734d9f: summary: Preserve Hermes chat session state and project runtime routing more reliably.
+  category: fix
+  dev: Refreshes cached project chat plugin runners and hardens Hermes CLI session/error handling.
+- ac719d1: summary: Stop the usage telemetry log from growing without bound and bloating the Fusion database.
+  category: fix
+  dev: usage_events was absent from operational-log retention, so it grew unbounded (observed ~187k rows / ~28MB with nothing ever aged out). pruneOperationalLogs now prunes usage_events on the same operationalLogRetentionDays cadence, keyed off its `ts` column (not `timestamp`). Existing rows still require a one-time VACUUM to reclaim on-disk space.
+
 ## 0.56.1
 
 ### Patch Changes

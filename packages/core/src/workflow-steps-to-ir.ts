@@ -69,6 +69,11 @@ function stepInputToNode(step: WorkflowStep, id: string): WorkflowIrNode {
     config.modelProvider = step.modelProvider;
     config.modelId = step.modelId;
   }
+  /*
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * A workflow step can pin reasoning effort while inheriting its model, so lower `thinkingLevel` independently from the model-provider/model-id pair.
+   */
+  if (step.thinkingLevel) config.thinkingLevel = step.thinkingLevel;
   return { id, kind: "prompt", config };
 }
 

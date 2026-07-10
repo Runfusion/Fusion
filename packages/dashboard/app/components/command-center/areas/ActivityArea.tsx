@@ -20,9 +20,11 @@ The Activity surface must add FN-6682 recharts affordances without replacing the
  * FNXC:CommandCenter 2026-06-18-14:29:
  * Activity metrics surface as live, animated line charts auto-refreshed via reload() on a bounded interval; motion is decorative and reduced-motion-safe, uses the existing activity endpoint, and keeps prior data visible during polling revalidation.
  */
-export function ActivityArea({ range }: { range: DateRange }) {
+export function ActivityArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
-  const { data, isLoading, error, reload } = useAnalyticsArea<ActivityAnalytics>("/command-center/activity", range);
+  const { data, isLoading, error, reload } = useAnalyticsArea<ActivityAnalytics>("/command-center/activity", range, {
+    projectId,
+  });
 
   const daily = useMemo(() => data?.daily ?? [], [data?.daily]);
   const messagesSeries = useMemo(() => daily.map((d) => d.messages), [daily]);

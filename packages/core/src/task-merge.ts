@@ -63,7 +63,7 @@ export function resolveEffectiveAutoMerge(
  * FNXC:PrAutoMergeGate 2026-06-28-00:33:
  * FN-7182: a dashboard-created open PR is a human handoff, so exclude it from all automatic merge processing and self-healing recovery until the human merges or closes the PR.
  * This mirrors the `autoMerge:false` in-review gate while preserving manual Merge PR/manual done paths and pipeline PRs without `manual: true`.
- * Shared-branch member integration still bypasses this function via `allowInReviewMergeProcessing(... ) || isSharedBranchGroupMemberIntegration(task)`, so a manual PR on a shared member can still be integrated to its group branch; group-to-default promotion remains gated separately.
+ * Shared-branch member integration still bypasses this function via `allowInReviewMergeProcessing(... ) || isLiveSharedBranchGroupMemberIntegration(task, group)`, so a manual PR on a live shared member can still be integrated to its group branch; group-to-default promotion remains gated separately.
  */
 export function allowsAutoMergeProcessing(
   task: Pick<Task, "autoMerge" | "prInfo" | "prInfos">,
@@ -91,6 +91,17 @@ export function isSharedBranchGroupMemberIntegration(
 ): boolean {
   return task.branchContext?.assignmentMode === "shared"
     && Boolean(task.branchContext.groupId?.trim());
+}
+
+/**
+ * FNXC:AutoMergeHold 2026-07-09-16:42:
+ * FN-7750 / Runfusion#1980: the `autoMerge:false` exemption for shared-branch members is valid only while the branch group is live. Missing, finalized, abandoned, or dissolved groups must degrade to the standalone manual-hold path so operator Merge & Close control is honored regardless of whether the task was API-, user-, or engine-created.
+ */
+export function isLiveSharedBranchGroupMemberIntegration(
+  task: Pick<Task, "branchContext">,
+  group: Pick<BranchGroup, "status"> | null | undefined,
+): boolean {
+  return isSharedBranchGroupMemberIntegration(task) && group != null && group.status === "open";
 }
 
 export function resolveTaskMergeTarget(
@@ -139,6 +150,40 @@ export function resolveTaskMergeTarget(
 
   const legacyFallback = options.legacyFallbackBranch?.trim() || "main";
   return { branch: legacyFallback, source: "legacy-main", rejected };
+}
+
+/*
+ * FNXC:ApprovalHold 2026-07-09-00:00:
+ * FN-7736: two distinct mechanisms park a task on a pending human approval —
+ * (1) the triage plan-approval gate sets `task.status === "awaiting-approval"`
+ * (already a HARD_BLOCKING_TASK_STATUSES member below), and (2) a gated tool
+ * call parks a RUNNING task via `pauseForApproval` -> `store.pauseTask(id,
+ * true, ...)`, which historically only set `paused:true` with no durable
+ * `pausedReason`, so recovery/oversight code keying on `pausedReason` could
+ * not recognize it and at least one sweep (self-healing's
+ * `autoReboundPausedScopeDecay`) could rebound the held task back to `todo`
+ * before the operator ever decided. `AWAITING_APPROVAL_PAUSE_REASON` is the
+ * canonical, durable marker both `executor.ts` and `agent-heartbeat.ts`
+ * `pauseForApproval` now stamp via `TaskStore.pauseTask`'s `pausedReason`
+ * option, and `isTaskBlockedOnApproval` is the single shared predicate core
+ * and engine code must consult before rebounding, requeuing, resuming,
+ * re-planning, or otherwise advancing a task — it must return `true` for
+ * EITHER hold shape so callers never have to special-case which mechanism
+ * parked the task.
+ */
+export const AWAITING_APPROVAL_PAUSE_REASON = "awaiting-approval";
+
+/**
+ * Returns true when `task` is blocked on a pending human approval decision,
+ * via either hold mechanism (see FNXC:ApprovalHold above). Every automated
+ * recovery (self-healing) and oversight (planner overseer) path must treat
+ * `true` as "take no lifecycle-advancing action on this task".
+ */
+export function isTaskBlockedOnApproval(
+  task: Pick<Task, "paused" | "pausedReason" | "status">,
+): boolean {
+  if (task.paused === true && task.pausedReason === AWAITING_APPROVAL_PAUSE_REASON) return true;
+  return task.status === "awaiting-approval";
 }
 
 export const HARD_BLOCKING_TASK_STATUSES = new Set([
@@ -225,6 +270,15 @@ export function getTaskMergeBlocker(
     return "task has incomplete or failed pre-merge workflow steps";
   }
 
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * `bypassFailedPreMergeReviewStep` (store.ts) recovers a card stranded here by
+   * rewriting the selected step's `status` from `"failed"` to `"skipped"` (see
+   * `getLatestFailedPreMergeReviewStep` below) plus bypass audit metadata. A
+   * bypassed step therefore no longer matches this branch, so this function
+   * stays byte-identical in logic — the bypass works upstream of the blocker,
+   * not by special-casing it here (FN-7720).
+   */
   if (
     task.workflowStepResults?.some((result) => {
       const phase = result.phase || "pre-merge";
@@ -235,6 +289,27 @@ export function getTaskMergeBlocker(
   }
 
   return undefined;
+}
+
+/**
+ * Returns the most-recently-completed `status:"failed"` pre-merge workflow
+ * step result on a task, or `undefined` when none exists. Mirrors the sort
+ * (most-recent `completedAt`/`startedAt` first) used by self-healing's
+ * `latestFailedPreMergeStep` (packages/engine/src/self-healing.ts) so the
+ * bypass primitive and the recovery sweep select the identical step
+ * (FN-7720). Post-merge failed steps are excluded — they do not block merge
+ * and are out of scope for the bypass.
+ */
+export function getLatestFailedPreMergeReviewStep(
+  task: Pick<Task, "workflowStepResults">,
+): WorkflowStepResult | undefined {
+  return (task.workflowStepResults ?? [])
+    .filter((result) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed")
+    .sort((a, b) => {
+      const aTs = Date.parse(a.completedAt || a.startedAt || "");
+      const bTs = Date.parse(b.completedAt || b.startedAt || "");
+      return (Number.isFinite(bTs) ? bTs : 0) - (Number.isFinite(aTs) ? aTs : 0);
+    })[0];
 }
 
 export function getTaskHardMergeBlocker(

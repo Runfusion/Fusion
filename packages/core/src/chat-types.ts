@@ -56,6 +56,8 @@ export interface ChatSession {
   modelProvider: string | null;
   /** AI model ID for this session (optional, overrides defaults) */
   modelId: string | null;
+  /** Optional thinking/reasoning-effort override for this session (optional, overrides defaults) */
+  thinkingLevel: string | null;
   /** When the session was created */
   createdAt: string;
   /** When the session was last updated */
@@ -212,6 +214,8 @@ export interface ChatSessionCreateInput {
   modelProvider?: string | null;
   /** Optional model ID override */
   modelId?: string | null;
+  /** Optional thinking/reasoning-effort override */
+  thinkingLevel?: string | null;
   /** Optional cli-agent adapter id; when set the chat is CLI-backed (U12) */
   cliExecutorAdapterId?: string | null;
 }
@@ -229,6 +233,8 @@ export interface ChatSessionUpdateInput {
   modelProvider?: string | null;
   /** Model ID override */
   modelId?: string | null;
+  /** Thinking/reasoning-effort override */
+  thinkingLevel?: string | null;
 }
 
 /**

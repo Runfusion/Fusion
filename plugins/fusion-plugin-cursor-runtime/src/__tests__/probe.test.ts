@@ -5,20 +5,80 @@ vi.mock("../cli-spawn.js", () => ({ runCursorCommand: vi.fn() }));
 import { runCursorCommand } from "../cli-spawn.js";
 import { probeCursorBinary } from "../probe.js";
 
+const AUTHENTICATED_STATUS = JSON.stringify({ isAuthenticated: true, status: "logged_in", hasAccessToken: true, userInfo: { email: "dev@example.com" } });
+const UNAUTHENTICATED_STATUS = JSON.stringify({ isAuthenticated: false, status: "logged_out", hasAccessToken: false });
+
 describe("probeCursorBinary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("reports available when probe succeeds", async () => {
-    vi.mocked(runCursorCommand).mockResolvedValue({ code: 0, stdout: "1.2.3", stderr: "" });
+  it("reports authenticated:true from status --format json isAuthenticated", async () => {
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 0, stdout: "1.2.3", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
+
     const result = await probeCursorBinary({ binaryPath: "/usr/local/bin/cursor-agent" });
-    expect(runCursorCommand).toHaveBeenCalledWith("/usr/local/bin/cursor-agent", ["--version"], 3000);
+
+    expect(runCursorCommand).toHaveBeenNthCalledWith(1, "/usr/local/bin/cursor-agent", ["--version"], 3000);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(2, "/usr/local/bin/cursor-agent", ["status", "--format", "json"], 3000);
     expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(true);
     expect(result.version).toBe("1.2.3");
     expect(result.binaryPath).toBe("/usr/local/bin/cursor-agent");
     expect(result.configuredBinaryPath).toBe("/usr/local/bin/cursor-agent");
     expect(result.usingConfiguredBinaryPath).toBe(true);
+  });
+
+  it("reports authenticated:false from status --format json isAuthenticated:false", async () => {
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 0, stdout: "1.2.3", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: UNAUTHENTICATED_STATUS, stderr: "" });
+
+    const result = await probeCursorBinary({ binaryPath: "cursor-agent" });
+
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.reason).toBe("cursor-agent reports not authenticated");
+  });
+
+  it("fails closed to authenticated:false with an actionable reason on malformed/non-JSON status output", async () => {
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 0, stdout: "1.2.3", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "not json at all", stderr: "" });
+
+    const result = await probeCursorBinary({ binaryPath: "cursor-agent" });
+
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.reason).toBe("cursor-agent status --format json returned malformed JSON");
+  });
+
+  it("fails closed to authenticated:false with an actionable reason when status exits non-zero", async () => {
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 0, stdout: "1.2.3", stderr: "" })
+      .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "unexpected error" });
+
+    const result = await probeCursorBinary({ binaryPath: "cursor-agent" });
+
+    expect(result.available).toBe(true);
+    expect(result.authenticated).toBe(false);
+    expect(result.reason).toBe("cursor-agent status --format json did not return output");
+  });
+
+  it("probes status against the SAME candidate binary that succeeded --version, never re-probing a different candidate", async () => {
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 127, stdout: "", stderr: "spawn error: ENOENT: cursor-agent" })
+      .mockResolvedValueOnce({ code: 0, stdout: "cursor 0.50.0\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
+
+    const result = await probeCursorBinary();
+
+    expect(runCursorCommand).toHaveBeenNthCalledWith(1, "cursor-agent", ["--version"], 3000);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(2, "cursor", ["--version"], 3000);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(3, "cursor", ["status", "--format", "json"], 3000);
+    expect(result.binaryName).toBe("cursor");
+    expect(result.authenticated).toBe(true);
   });
 
   it("reports keychain lock as auth failure", async () => {
@@ -38,12 +98,14 @@ describe("probeCursorBinary", () => {
   });
 
   it("probes cursor-agent before cursor and reports the first Windows shim success", async () => {
-    vi.mocked(runCursorCommand).mockResolvedValueOnce({ code: 0, stdout: "cursor-agent 0.50.0\n", stderr: "" });
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 0, stdout: "cursor-agent 0.50.0\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
 
     const result = await probeCursorBinary();
 
-    expect(runCursorCommand).toHaveBeenCalledWith("cursor-agent", ["--version"], 3000);
-    expect(runCursorCommand).toHaveBeenCalledTimes(1);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(1, "cursor-agent", ["--version"], 3000);
+    expect(runCursorCommand).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       available: true,
       authenticated: true,
@@ -56,7 +118,8 @@ describe("probeCursorBinary", () => {
   it("falls back to cursor when cursor-agent fails but cursor succeeds", async () => {
     vi.mocked(runCursorCommand)
       .mockResolvedValueOnce({ code: 127, stdout: "", stderr: "spawn error: ENOENT: cursor-agent" })
-      .mockResolvedValueOnce({ code: 0, stdout: "cursor 0.50.0\n", stderr: "" });
+      .mockResolvedValueOnce({ code: 0, stdout: "cursor 0.50.0\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
 
     const result = await probeCursorBinary();
 
@@ -80,13 +143,15 @@ describe("probeCursorBinary", () => {
   });
 
   it("tries a Windows path with spaces and .cmd shim before PATH fallback", async () => {
-    vi.mocked(runCursorCommand).mockResolvedValueOnce({ code: 0, stdout: "cursor-agent.cmd 0.50.0", stderr: "" });
+    vi.mocked(runCursorCommand)
+      .mockResolvedValueOnce({ code: 0, stdout: "cursor-agent.cmd 0.50.0", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
 
     const binaryPath = "C:\\Users\\A User\\AppData\\Roaming\\npm\\cursor-agent.cmd";
     const result = await probeCursorBinary({ binaryPath });
 
-    expect(runCursorCommand).toHaveBeenCalledWith(binaryPath, ["--version"], 3000);
-    expect(runCursorCommand).toHaveBeenCalledTimes(1);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(1, binaryPath, ["--version"], 3000);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(2, binaryPath, ["status", "--format", "json"], 3000);
     expect(result.binaryPath).toBe(binaryPath);
     expect(result.usingConfiguredBinaryPath).toBe(true);
   });
@@ -94,12 +159,14 @@ describe("probeCursorBinary", () => {
   it("falls back to PATH candidates when a configured binary fails", async () => {
     vi.mocked(runCursorCommand)
       .mockResolvedValueOnce({ code: 127, stdout: "", stderr: "spawn error: ENOENT: /missing/cursor-agent" })
-      .mockResolvedValueOnce({ code: 0, stdout: "cursor-agent 0.50.0\n", stderr: "" });
+      .mockResolvedValueOnce({ code: 0, stdout: "cursor-agent 0.50.0\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
 
     const result = await probeCursorBinary({ binaryPath: "/missing/cursor-agent" });
 
     expect(runCursorCommand).toHaveBeenNthCalledWith(1, "/missing/cursor-agent", ["--version"], 3000);
     expect(runCursorCommand).toHaveBeenNthCalledWith(2, "cursor-agent", ["--version"], 3000);
+    expect(runCursorCommand).toHaveBeenNthCalledWith(3, "cursor-agent", ["status", "--format", "json"], 3000);
     expect(result.available).toBe(true);
     expect(result.binaryPath).toBe("cursor-agent");
     expect(result.usingConfiguredBinaryPath).toBe(false);
@@ -124,11 +191,12 @@ describe("probeCursorBinary", () => {
   it("dedupes overrides equal to default PATH candidate names", async () => {
     vi.mocked(runCursorCommand)
       .mockResolvedValueOnce({ code: 127, stdout: "", stderr: "spawn error: ENOENT: cursor-agent" })
-      .mockResolvedValueOnce({ code: 0, stdout: "cursor 0.50.0\n", stderr: "" });
+      .mockResolvedValueOnce({ code: 0, stdout: "cursor 0.50.0\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: AUTHENTICATED_STATUS, stderr: "" });
 
     const result = await probeCursorBinary({ binaryPath: " cursor-agent " });
 
-    expect(runCursorCommand).toHaveBeenCalledTimes(2);
+    expect(runCursorCommand).toHaveBeenCalledTimes(3);
     expect(runCursorCommand).toHaveBeenNthCalledWith(1, "cursor-agent", ["--version"], 3000);
     expect(runCursorCommand).toHaveBeenNthCalledWith(2, "cursor", ["--version"], 3000);
     expect(result.binaryPath).toBe("cursor");

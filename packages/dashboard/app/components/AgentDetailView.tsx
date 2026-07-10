@@ -4806,6 +4806,10 @@ function ConfigTab({
                   command_execution: projectDefaultPermissionPolicy?.rules?.command_execution ?? "allow",
                   network_api: projectDefaultPermissionPolicy?.rules?.network_api ?? "allow",
                   task_agent_mutation: projectDefaultPermissionPolicy?.rules?.task_agent_mutation ?? "allow",
+                  // FNXC:ToolPermissions 2026-07-09-00:00: FN-7728 — review_gate_bypass defaults stricter than the other categories (require-approval, not allow) to mirror the unrestricted preset's targeted override for this merge-gate bypass category.
+                  review_gate_bypass: projectDefaultPermissionPolicy?.rules?.review_gate_bypass ?? "require-approval",
+                  // FNXC:ToolPermissions 2026-07-09-08:30: FN-7737 — file_scope keeps the uniform grant-all default (allow), unlike review_gate_bypass.
+                  file_scope: projectDefaultPermissionPolicy?.rules?.file_scope ?? "allow",
                 },
               })}
             >

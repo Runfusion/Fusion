@@ -156,6 +156,7 @@ export function resolvePluginWorkflowStepImpl(store: TaskStore, id: string): imp
       defaultOn: entry.template.defaultOn,
       modelProvider: entry.template.modelProvider,
       modelId: entry.template.modelId,
+      thinkingLevel: entry.template.thinkingLevel,
       createdAt: now,
       updatedAt: now,
     };

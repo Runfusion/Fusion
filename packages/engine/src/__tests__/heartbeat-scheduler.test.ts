@@ -228,6 +228,72 @@ describe("HeartbeatTriggerScheduler", () => {
       eventStore.emit("agent:created", afterStop);
       expect(scheduler.getRegisteredAgents()).not.toContain(afterStop.id);
     });
+
+    it("FN-7718: force re-arms a stale present timer entry on an in-process start transition instead of no-oping", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+      // Long interval so the default 2x-multiplier stale threshold (7.2M ms) is
+      // easy to cross deterministically within the test.
+      const agent = baseAgent("agent-stale-start", {
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 3_600_000 },
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+      });
+      const eventStore = createLifecycleStore([agent]);
+      scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+      scheduler.start();
+      eventStore.emit("agent:created", agent);
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+      // Advance well past the stale threshold with no lifecycle event firing —
+      // the timer entry stays present in `this.timers` (a live audit cycle
+      // would normally repair this, but this test isolates the in-process
+      // syncTimerForAgent seam specifically, independent of the audit).
+      await vi.advanceTimersByTimeAsync(8 * 60 * 60 * 1000); // 8 hours, no ticks fired (interval never elapses)
+      callback.mockClear();
+      vi.mocked(heartbeatLog.warn).mockClear();
+
+      // Simulate an in-process start transition (e.g. agent:updated firing for
+      // an in-process-driven resume) while the stale entry from before is still
+      // present. Previously syncTimerForAgent's bare `this.timers.has(...)`
+      // check would no-op here and leave the stale entry untouched.
+      const started = { ...eventStore.agents.get(agent.id)!, state: "active" as const };
+      eventStore.agents.set(agent.id, started);
+      eventStore.emit("agent:updated", started);
+
+      expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("Timer sync force re-armed stale present entry"));
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+      // Exactly one entry results — registerAgent clears before re-arming.
+      const timers = (scheduler as unknown as { timers: Map<string, unknown> }).timers;
+      expect(timers.has(agent.id)).toBe(true);
+    });
+
+    it("FN-7718: does not force re-arm a healthy fresh present timer entry on an unrelated in-process update", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+      const agent = baseAgent("agent-fresh-update", {
+        runtimeConfig: { enabled: true, heartbeatIntervalMs: 3_600_000 },
+        lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+      });
+      const eventStore = createLifecycleStore([agent]);
+      scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+      scheduler.start();
+      eventStore.emit("agent:created", agent);
+      expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+      // Well within the stale threshold — an unrelated update must not reset
+      // the interval or force a re-arm.
+      await vi.advanceTimersByTimeAsync(30 * 60_000); // 30 minutes
+      vi.mocked(heartbeatLog.warn).mockClear();
+
+      const renamed = { ...eventStore.agents.get(agent.id)!, name: "renamed-fresh" };
+      eventStore.agents.set(agent.id, renamed);
+      eventStore.emit("agent:updated", renamed);
+
+      expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("Timer sync force re-armed stale present entry"));
+    });
   });
 
   describe("scheduler timer audit", () => {
@@ -692,6 +758,410 @@ describe("HeartbeatTriggerScheduler", () => {
         expect(callback).not.toHaveBeenCalled();
         expect(scheduler.getRegisteredAgents()).not.toContain("agent-long");
         expect(heartbeatLog.log).toHaveBeenCalledWith("Timer audit skipped re-arm for agent-long (active run)");
+      });
+    });
+
+    describe("FN-7718: orphaned/zombie timer invalidation on stop/start", () => {
+      /**
+       * FNXC:AgentHeartbeat 2026-07-09-00:00:
+       * Regression coverage for FN-7718: `fn agent stop`/`start` mutate the
+       * agent row from a SEPARATE process, so the in-process `agent:updated`
+       * listener never fires for CLI-driven transitions — the 60s audit is the
+       * ONLY cross-process reconciliation path. Before the fix, the audit loop
+       * opened with `if (!this.isTimerEligibleAgent(agent)) continue;`, which
+       * skipped stopped/paused/disabled agents WITHOUT clearing any timer entry
+       * armed while they were running — an orphaned/zombie entry that then sat
+       * until the FN-7645 stale-repair path eventually fired minutes later on
+       * the next start, producing the recurring `zombie-timer-rearmed` symptom.
+       */
+      function buildAgent(overrides: Partial<Agent> & { id: string; heartbeatIntervalMs: number }): Agent {
+        const { heartbeatIntervalMs, ...rest } = overrides;
+        return {
+          name: rest.id,
+          role: "executor",
+          state: "active",
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+          runtimeConfig: { enabled: true, heartbeatIntervalMs },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+          ...rest,
+        } as Agent;
+      }
+
+      it("clears an orphaned timer entry within one audit cycle when an agent is stopped out-of-process, and the subsequent start arms exactly one fresh timer with no zombie-timer-rearmed repair", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        // listAgents is mutated in-place to simulate a CLI `fn agent stop`/`start`
+        // cycle mutating the DB out-of-process — no `agent:updated` event fires.
+        let agent = buildAgent({ id: "agent-cli", heartbeatIntervalMs: 300_000, state: "active" });
+        vi.mocked(store.listAgents).mockImplementation(async () => [agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(scheduler.getRegisteredAgents()).toContain("agent-cli");
+
+        // Simulate `fn agent stop`: DB now reports a non-tickable state, but no
+        // in-process event fires — the timer entry the scheduler armed earlier
+        // is still present until the next audit cycle reconciles it.
+        agent = { ...agent, state: "paused" };
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // Advance across several 60s audit cycles.
+        await vi.advanceTimersByTimeAsync(3 * 60_000);
+
+        // Assertion it is gone: the orphaned timer must be cleared within one
+        // audit cycle — no lingering registration for the stopped agent.
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-cli");
+
+        // Simulate `fn agent start` with a stale lastHeartbeatAt left over from
+        // before the stop (no heartbeat happened while paused).
+        agent = { ...agent, state: "active", lastHeartbeatAt: "2026-01-01T00:00:00.000Z" };
+        callback.mockClear();
+
+        await vi.advanceTimersByTimeAsync(60_000); // one more audit cycle picks up the start
+
+        // Exactly one fresh timer entry results — not zero, not two.
+        expect(scheduler.getRegisteredAgents()).toContain("agent-cli");
+        const timers = (scheduler as unknown as { timers: Map<string, unknown> }).timers;
+        expect(timers.has("agent-cli")).toBe(true);
+
+        // No zombie-timer-rearmed repair should ever have been needed for this
+        // agent — the orphaned entry was invalidated at stop time, so the start
+        // begins clean instead of requiring the FN-7645 stale-repair path.
+        expect(heartbeatLog.warn).not.toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+      });
+
+      it("clears a present timer for each ineligibility cause: non-tickable state, runtimeConfig.enabled:false, and ephemeral/non-heartbeat-managed", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agents: Record<string, Agent> = {
+          "agent-paused": buildAgent({ id: "agent-paused", heartbeatIntervalMs: 300_000 }),
+          "agent-disabled": buildAgent({ id: "agent-disabled", heartbeatIntervalMs: 300_000 }),
+          "agent-ephemeral": buildAgent({ id: "agent-ephemeral", heartbeatIntervalMs: 300_000, metadata: { agentKind: "task-worker" } }),
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => Object.values(agents));
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        // ephemeral/task-worker agents are never timer-eligible in the first
+        // place, so only the two heartbeat-managed agents get an initial entry.
+        expect(scheduler.getRegisteredAgents()).toContain("agent-paused");
+        expect(scheduler.getRegisteredAgents()).toContain("agent-disabled");
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-ephemeral");
+
+        // Flip each to a non-eligible condition out-of-process.
+        agents["agent-paused"] = { ...agents["agent-paused"], state: "paused" };
+        agents["agent-disabled"] = {
+          ...agents["agent-disabled"],
+          runtimeConfig: { ...(agents["agent-disabled"].runtimeConfig as Record<string, unknown>), enabled: false },
+        };
+
+        await vi.advanceTimersByTimeAsync(60_000); // one audit cycle
+
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-paused");
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-disabled");
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-ephemeral");
+      });
+
+      it("is a safe no-op for a non-eligible agent that never had a timer entry", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildAgent({ id: "agent-never-armed", heartbeatIntervalMs: 300_000, state: "paused" });
+        vi.mocked(store.listAgents).mockResolvedValue([agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-never-armed");
+
+        await expect(vi.advanceTimersByTimeAsync(3 * 60_000)).resolves.not.toThrow();
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-never-armed");
+      });
+
+      it("clears an orphaned entry for both short (300_000) and long (3_600_000) interval buckets, and does not regress the FN-7645 long-interval zombie re-arm for a still-eligible stale agent", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agents: Record<string, Agent> = {
+          "agent-short-stopped": buildAgent({ id: "agent-short-stopped", heartbeatIntervalMs: 300_000 }),
+          "agent-long-stopped": buildAgent({ id: "agent-long-stopped", heartbeatIntervalMs: 3_600_000 }),
+          "agent-long-zombie": buildAgent({ id: "agent-long-zombie", heartbeatIntervalMs: 3_600_000 }),
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => Object.values(agents));
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        for (const id of Object.keys(agents)) {
+          expect(scheduler.getRegisteredAgents()).toContain(id);
+        }
+
+        // Stop the short and long agents out-of-process; leave agent-long-zombie
+        // eligible but kill its live interval handle to reproduce the FN-7645
+        // present-but-non-advancing case, which must still self-heal.
+        agents["agent-short-stopped"] = { ...agents["agent-short-stopped"], state: "paused" };
+        agents["agent-long-stopped"] = { ...agents["agent-long-stopped"], state: "paused" };
+        const timers = (scheduler as unknown as { timers: Map<string, { handle: unknown; kind: string }> }).timers;
+        clearInterval(timers.get("agent-long-zombie")!.handle as ReturnType<typeof setInterval>);
+
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // 4 hours covers both the 60s stop-side audit reconciliation and the
+        // FN-7645 stale threshold (2x interval = 7.2M ms) for the still-eligible
+        // zombie agent.
+        await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
+
+        // Both stopped agents' orphaned timers were invalidated.
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-short-stopped");
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-long-stopped");
+
+        // The still-eligible long-interval zombie agent is unaffected by the
+        // stop-path fix and still gets FN-7645's stale re-arm + dispatch.
+        expect(scheduler.getRegisteredAgents()).toContain("agent-long-zombie");
+        expect(callback).toHaveBeenCalledWith("agent-long-zombie", "timer", expect.anything());
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("zombie-timer-rearmed"));
+      });
+
+      it("guards remain intact: globalPause suppresses dispatch, a healthy active run is untouched, and a healthy fresh short-interval agent is never force-re-armed", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agents: Record<string, Agent> = {
+          "agent-stopped": buildAgent({ id: "agent-stopped", heartbeatIntervalMs: 300_000 }),
+          "agent-healthy-run": buildAgent({ id: "agent-healthy-run", heartbeatIntervalMs: 300_000 }),
+          "agent-healthy-fresh": buildAgent({ id: "agent-healthy-fresh", heartbeatIntervalMs: 300_000 }),
+        };
+        (agents["agent-healthy-run"].runtimeConfig as Record<string, unknown>).heartbeatTimeoutMs = 24 * 60 * 60 * 1000;
+        vi.mocked(store.listAgents).mockImplementation(async () => Object.values(agents));
+        vi.mocked(store.getActiveHeartbeatRun).mockImplementation(async (agentId: string) =>
+          agentId === "agent-healthy-run" ? ({ id: "run-healthy", status: "active" } as any) : null,
+        );
+
+        const taskStore = {
+          getSettings: vi.fn().mockResolvedValue({ globalPause: false, enginePaused: false }),
+        } as unknown as TaskStore;
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback, taskStore);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        // agent-healthy-run never gets a bare timer armed while its run is live.
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-healthy-run");
+        expect(scheduler.getRegisteredAgents()).toContain("agent-healthy-fresh");
+
+        agents["agent-stopped"] = { ...agents["agent-stopped"], state: "paused" };
+        callback.mockClear();
+        vi.mocked(store.endHeartbeatRun).mockClear();
+
+        // Flip globalPause on for this cycle to confirm dispatch stays suppressed.
+        vi.mocked(taskStore.getSettings).mockResolvedValue({ globalPause: true, enginePaused: false } as any);
+
+        await vi.advanceTimersByTimeAsync(60_000);
+
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-stopped");
+        expect(store.endHeartbeatRun).not.toHaveBeenCalled();
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-healthy-run");
+        // Healthy fresh short-interval agent keeps its original entry — not
+        // force-cleared or re-armed just because an unrelated agent was stopped.
+        expect(scheduler.getRegisteredAgents()).toContain("agent-healthy-fresh");
+      });
+
+      it("a repeat stop (already-cleared orphaned timer) is a safe idempotent no-op", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        let agent = buildAgent({ id: "agent-repeat-stop", heartbeatIntervalMs: 300_000 });
+        vi.mocked(store.listAgents).mockImplementation(async () => [agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+
+        agent = { ...agent, state: "paused" };
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-repeat-stop");
+
+        // Multiple further audit cycles while still stopped must remain a
+        // cheap no-op — no throw, no re-entry into the timer map.
+        await expect(vi.advanceTimersByTimeAsync(3 * 60_000)).resolves.not.toThrow();
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-repeat-stop");
+      });
+    });
+
+    /*
+     * FNXC:AgentHeartbeat 2026-07-09-08:15:
+     * FN-7723 — the cross-process notification fast-path over the FN-7718/
+     * FN-7645 audit backstop. `AgentStore.checkForChanges()` re-emits the
+     * SAME `agent:updated`/`agent:stateChanged` events exercised by the
+     * "agent lifecycle seam registration" tests above; this describe proves
+     * `watchAgentLifecycle`'s existing listener reacts to a re-emitted
+     * EXTERNAL event (simulated here by emitting directly on the
+     * EventEmitter-backed store, exactly as AgentStore.checkForChanges()
+     * would after diffing a cross-process write) WITHOUT the 60s audit ever
+     * running, and that the audit still works as the backstop when no event
+     * arrives at all. No new engine-side listener/seam was added for this
+     * task — syncTimerForAgent handles the re-emitted event identically to
+     * an in-process one, so this is a pure regression/characterization
+     * suite over the existing wiring plus FN-7718's stale-repair guard.
+     */
+    describe("FN-7723: re-emitted external agent:updated drives the timer without the audit", () => {
+      // Self-contained EventEmitter-backed store mirroring `createLifecycleStore`
+      // from the "agent lifecycle seam registration" describe above (out of
+      // scope here since this sits inside "scheduler timer audit"). Emitting
+      // directly on this store simulates AgentStore.checkForChanges()'s
+      // re-emit of the EXISTING `agent:updated` event after diffing a
+      // cross-process write — no new event names, no engine-side seam.
+      type CrossProcessStore = EventEmitter & Pick<AgentStore, "getAgent" | "getActiveHeartbeatRun" | "getBudgetStatus" | "listAgents" | "getRecentRuns" | "updateAgent"> & {
+        agents: Map<string, Agent>;
+      };
+
+      function buildCrossProcessAgent(overrides: Partial<Agent> & { id: string; heartbeatIntervalMs: number }): Agent {
+        const { heartbeatIntervalMs, ...rest } = overrides;
+        return {
+          name: rest.id,
+          role: "executor",
+          state: "active",
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+          runtimeConfig: { enabled: true, heartbeatIntervalMs },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+          ...rest,
+        } as Agent;
+      }
+
+      function createCrossProcessStore(initialAgents: Agent[] = []): CrossProcessStore {
+        return Object.assign(new EventEmitter(), {
+          agents: new Map(initialAgents.map((agent) => [agent.id, agent])),
+          getAgent: vi.fn(async function(this: CrossProcessStore, agentId: string) {
+            return this.agents.get(agentId) ?? null;
+          }),
+          getActiveHeartbeatRun: vi.fn().mockResolvedValue(null),
+          getBudgetStatus: vi.fn().mockResolvedValue(createBudgetStatus()),
+          listAgents: vi.fn(async function(this: CrossProcessStore) {
+            return Array.from(this.agents.values());
+          }),
+          getRecentRuns: vi.fn().mockResolvedValue([]),
+          updateAgent: vi.fn(),
+        }) as CrossProcessStore;
+      }
+
+      it("a re-emitted external stop clears the timer and a re-emitted external start re-arms it, with zero audit cycles elapsed", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildCrossProcessAgent({ id: "agent-cross-process", heartbeatIntervalMs: 300_000 });
+        const eventStore = createCrossProcessStore([agent]);
+        scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+        scheduler.start();
+        eventStore.emit("agent:created", agent);
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+        // Simulate AgentStore.checkForChanges() re-emitting agent:updated for a
+        // CLI `fn agent stop` it detected on its next poll tick — well before
+        // the 60s audit interval elapses.
+        const stopped = { ...eventStore.agents.get(agent.id)!, state: "paused" as const };
+        eventStore.agents.set(agent.id, stopped);
+        await vi.advanceTimersByTimeAsync(2_000); // one AgentStore poll tick (2s default), zero audit cycles (60s)
+        eventStore.emit("agent:updated", stopped, "active");
+
+        expect(scheduler.getRegisteredAgents()).not.toContain(agent.id);
+
+        // Simulate the re-emitted external `fn agent start`, still with no
+        // audit cycle having elapsed.
+        const started = { ...eventStore.agents.get(agent.id)!, state: "active" as const };
+        eventStore.agents.set(agent.id, started);
+        await vi.advanceTimersByTimeAsync(2_000);
+        eventStore.emit("agent:updated", started, "paused");
+
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+        const timers = (scheduler as unknown as { timers: Map<string, unknown> }).timers;
+        expect(timers.has(agent.id)).toBe(true);
+
+        // Total elapsed time (4s) never reached a single 60s audit cycle.
+        expect(callback).not.toHaveBeenCalled();
+      });
+
+      it("honors FN-7718's stale-present-entry force-re-arm when the re-emitted event arrives after the timer entry went stale", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        const agent = buildCrossProcessAgent({ id: "agent-cross-process-stale", heartbeatIntervalMs: 3_600_000 });
+        const eventStore = createCrossProcessStore([agent]);
+        scheduler = new HeartbeatTriggerScheduler(eventStore as unknown as AgentStore, callback);
+        scheduler.start();
+        eventStore.emit("agent:created", agent);
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+
+        // Advance well past the 2x stale threshold (7.2M ms) with the entry
+        // still present — the audit is never driven here, only the poll-detected
+        // re-emit path.
+        await vi.advanceTimersByTimeAsync(8 * 60 * 60 * 1000);
+        vi.mocked(heartbeatLog.warn).mockClear();
+
+        // A re-emitted external start (CLI `fn agent start`, surfaced by
+        // AgentStore.checkForChanges()) while the stale entry is still present
+        // must force re-arm exactly like an in-process start would (FN-7718).
+        const started = { ...eventStore.agents.get(agent.id)!, state: "active" as const };
+        eventStore.agents.set(agent.id, started);
+        eventStore.emit("agent:updated", started, "paused");
+
+        expect(heartbeatLog.warn).toHaveBeenCalledWith(expect.stringContaining("Timer sync force re-armed stale present entry"));
+        expect(scheduler.getRegisteredAgents()).toContain(agent.id);
+      });
+
+      it("the 60s audit still reconciles a stop/start when NO re-emitted event ever arrives (backstop retained)", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+        // Use the plain (non-EventEmitter) mocked store so no agent:updated
+        // event can ever fire — the ONLY path that can reconcile this stop is
+        // the audit's listAgents() sweep, proving the backstop is untouched by
+        // this task's additive fast-path.
+        let agent: Agent = {
+          id: "agent-audit-backstop",
+          name: "agent-audit-backstop",
+          role: "executor",
+          state: "active",
+          lastHeartbeatAt: "2026-01-01T00:00:00.000Z",
+          runtimeConfig: { enabled: true, heartbeatIntervalMs: 300_000 },
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {},
+        };
+        vi.mocked(store.listAgents).mockImplementation(async () => [agent]);
+        vi.mocked(store.getActiveHeartbeatRun).mockResolvedValue(null);
+
+        scheduler = new HeartbeatTriggerScheduler(store, callback);
+        scheduler.start();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(scheduler.getRegisteredAgents()).toContain("agent-audit-backstop");
+
+        // Mutate the DB row out-of-process (no event, ever) — same shape as the
+        // FN-7718 "clears an orphaned timer entry" test, kept here to assert the
+        // audit backstop is unchanged by FN-7723's additive fast-path.
+        agent = { ...agent, state: "paused" };
+        await vi.advanceTimersByTimeAsync(3 * 60_000); // several audit cycles
+        expect(scheduler.getRegisteredAgents()).not.toContain("agent-audit-backstop");
+
+        agent = { ...agent, state: "active", lastHeartbeatAt: "2026-01-01T00:00:00.000Z" };
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(scheduler.getRegisteredAgents()).toContain("agent-audit-backstop");
       });
     });
   });

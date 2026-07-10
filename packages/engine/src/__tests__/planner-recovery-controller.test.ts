@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PLANNER_RECOVERY_MAX_ATTEMPTS } from "@fusion/core";
+import { AWAITING_APPROVAL_PAUSE_REASON, PLANNER_RECOVERY_MAX_ATTEMPTS } from "@fusion/core";
 import type { Task } from "@fusion/core";
 import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "../planner-recovery-controller.js";
 import type { OverseerStageObservation, OverseerWatchedStage } from "../planner-overseer.js";
@@ -188,5 +188,55 @@ describe("PlannerRecoveryController.tick", () => {
     const decision = await controller.tick(task());
     expect(decision?.action).toBe("retry_step");
     expect(retryStep).toHaveBeenCalledTimes(1);
+  });
+
+  // FN-7743: a `stuck` executor observation (a genuinely hung/idle in-progress
+  // task, the FN-7732 symptom) must reach bounded recovery exactly like a
+  // `failed`/`blocked` one — `inject_guidance`, dispatched once per tick, with
+  // the attempt budget incrementing — and a withheld (user-paused) task must
+  // still dispatch nothing even though its stage is `stuck`.
+  describe("FN-7743 stuck executor observation", () => {
+    it("dispatches inject_guidance exactly once and increments the attempt budget for a stuck executor stage", async () => {
+      const injectGuidance = vi.fn().mockResolvedValue(undefined);
+      const controller = makeController(observation({ stage: "executor", signal: "stuck", reason: "Executor stage inactive for over 3h with no execution activity" }), {
+        injectGuidance,
+      });
+
+      const decision = await controller.tick(task());
+      expect(decision?.action).toBe("inject_guidance");
+      expect(injectGuidance).toHaveBeenCalledTimes(1);
+      expect(controller.getAttemptCount("FN-1", "executor")).toBe(1);
+    });
+
+    it("dispatches nothing for a stuck executor stage when the task is user-paused (human-control withhold wins)", async () => {
+      const injectGuidance = vi.fn().mockResolvedValue(undefined);
+      const controller = makeController(observation({ stage: "executor", signal: "stuck" }), { injectGuidance });
+
+      const decision = await controller.tick(task({ userPaused: true }));
+      expect(decision).toBeNull();
+      expect(injectGuidance).not.toHaveBeenCalled();
+      expect(controller.getAttemptCount("FN-1", "executor")).toBe(0);
+    });
+
+    it("dispatches nothing for a stuck executor stage when the task is approval-blocked (human-control withhold wins)", async () => {
+      const injectGuidance = vi.fn().mockResolvedValue(undefined);
+      const controller = makeController(observation({ stage: "executor", signal: "stuck" }), { injectGuidance });
+
+      const decision = await controller.tick(task({ paused: true, pausedReason: AWAITING_APPROVAL_PAUSE_REASON }));
+      expect(decision).toBeNull();
+      expect(injectGuidance).not.toHaveBeenCalled();
+    });
+
+    it("is inert for a stuck executor stage when effectiveLevel is off/observe/steer (no autonomous dispatch)", async () => {
+      for (const level of ["off", "observe", "steer"] as const) {
+        const injectGuidance = vi.fn().mockResolvedValue(undefined);
+        const controller = makeController(observation({ stage: "executor", signal: "stuck", oversightLevel: level }), {
+          injectGuidance,
+        });
+        const decision = await controller.tick(task());
+        expect(decision?.action, `level=${level}`).toBe("none");
+        expect(injectGuidance).not.toHaveBeenCalled();
+      }
+    });
   });
 });

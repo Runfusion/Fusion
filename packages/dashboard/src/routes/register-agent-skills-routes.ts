@@ -50,14 +50,11 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
         return;
       }
 
-      const encodedSkillId = req.params.id as string;
-      let skillId = encodedSkillId;
-      try {
-        skillId = decodeURIComponent(encodedSkillId);
-      } catch {
-        res.status(400).json({ error: "Invalid skill ID", code: "invalid_skill_id" });
-        return;
-      }
+      /*
+      FNXC:Skills 2026-07-10-00:00:
+      Express 5 decodes route params once before this handler runs. Discovery IDs from computeSkillId intentionally keep only the source segment URL-encoded, so pass req.params.id through unchanged; a second decode corrupts plugin/npm/path sources and breaks exact-ID skill content lookup (FN-7777).
+      */
+      const skillId = req.params.id as string;
 
       const rootDir = scopedStore.getRootDir();
       const content = await skillsAdapter.readSkillContent(rootDir, skillId);
@@ -97,14 +94,11 @@ export function registerAgentSkillsRoutes(ctx: ApiRoutesContext): void {
         return;
       }
 
-      const encodedSkillId = req.params.id as string;
-      let skillId = encodedSkillId;
-      try {
-        skillId = decodeURIComponent(encodedSkillId);
-      } catch {
-        res.status(400).json({ error: "Invalid skill ID", code: "invalid_skill_id" });
-        return;
-      }
+      /*
+      FNXC:Skills 2026-07-10-00:00:
+      Express 5 decodes route params once before this handler runs. Discovery IDs from computeSkillId intentionally keep only the source segment URL-encoded, so pass req.params.id through unchanged; a second decode corrupts plugin/npm/path sources and breaks exact-ID supplementary file lookup (FN-7777).
+      */
+      const skillId = req.params.id as string;
 
       const rawPath = typeof req.query.path === "string" ? req.query.path : "";
       if (!rawPath.trim()) {

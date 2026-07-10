@@ -47,6 +47,7 @@ function rowToSession(row: Record<string, unknown>): ChatSession {
     projectId: (row.projectId as string | null) ?? null,
     modelProvider: (row.modelProvider as string | null) ?? null,
     modelId: (row.modelId as string | null) ?? null,
+    thinkingLevel: (row.thinkingLevel as string | null) ?? null,
     createdAt: row.createdAt as string,
     updatedAt: row.updatedAt as string,
     cliSessionFile: (row.cliSessionFile as string | null) ?? null,
@@ -120,6 +121,7 @@ export async function createChatSession(handle: QueryHandle, session: ChatSessio
     projectId: session.projectId,
     modelProvider: session.modelProvider,
     modelId: session.modelId,
+    thinkingLevel: session.thinkingLevel ?? null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     cliSessionFile: session.cliSessionFile,
@@ -509,6 +511,7 @@ export async function updateChatSession(
     status?: ChatSessionStatus;
     modelProvider?: string | null;
     modelId?: string | null;
+    thinkingLevel?: string | null;
   },
 ): Promise<ChatSession | undefined> {
   const existing = await getChatSession(handle, id);
@@ -520,6 +523,7 @@ export async function updateChatSession(
   if (input.status !== undefined) setValues.status = input.status;
   if (input.modelProvider !== undefined) setValues.modelProvider = input.modelProvider;
   if (input.modelId !== undefined) setValues.modelId = input.modelId;
+  if (input.thinkingLevel !== undefined) setValues.thinkingLevel = input.thinkingLevel;
 
   await handle
     .update(schema.project.chatSessions)

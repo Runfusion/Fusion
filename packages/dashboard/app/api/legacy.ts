@@ -831,6 +831,21 @@ export function retryTask(id: string, projectId?: string): Promise<Task> {
   return api<Task>(withProjectId(`/tasks/${id}/retry`, projectId), { method: "POST" });
 }
 
+/*
+FNXC:ReviewLaneBypass 2026-07-09-00:00:
+Operator/privileged review-lane bypass primitive (FN-7720). Bypasses the latest
+failed pre-merge review step of an in-review task so it can advance past the
+gate; a non-empty `reason` is mandatory and audited server-side. Mirrors
+`retryTask`'s client shape.
+*/
+export function bypassReview(id: string, reason: string, projectId?: string): Promise<Task> {
+  return api<Task>(withProjectId(`/tasks/${id}/bypass-review`, projectId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reason }),
+  });
+}
+
 export function relaunchCliSession(sessionId: string, projectId?: string): Promise<{ ok: boolean; taskId?: string }> {
   return api<{ ok: boolean; taskId?: string }>(
     withProjectId(`/cli-sessions/${encodeURIComponent(sessionId)}/relaunch`, projectId),
@@ -1968,6 +1983,27 @@ export interface CursorCliStatus {
   ready: boolean;
 }
 
+export interface GrokCliStatus {
+  binary: {
+    available: boolean;
+    /** FNXC:GrokCli 2026-07-09-00:00: FN-7716 — "ready" (binary available), not "key present"; the grok CLI owns auth. */
+    authenticated?: boolean;
+    /** FNXC:GrokCli 2026-07-09-00:00: FN-7716 — non-blocking informational hint that Fusion detected a Grok API key. Never gates readiness. */
+    apiKeyDetected?: boolean;
+    version?: string;
+    binaryPath?: string;
+    configuredBinaryPath?: string;
+    usingConfiguredBinaryPath?: boolean;
+    diagnostics?: string[];
+    reason?: string;
+    probeDurationMs: number;
+  };
+  enabled: boolean;
+  binaryPath?: string;
+  extension: null;
+  ready: boolean;
+}
+
 export interface LlamaCppStatus {
   enabled: boolean;
   extension: {
@@ -2038,6 +2074,10 @@ export function fetchDroidCliStatus(): Promise<DroidCliStatus> {
 
 export function fetchCursorCliStatus(): Promise<CursorCliStatus> {
   return api<CursorCliStatus>("/providers/cursor-cli/status");
+}
+
+export function fetchGrokCliStatus(): Promise<GrokCliStatus> {
+  return api<GrokCliStatus>("/providers/grok-cli/status");
 }
 
 /** Probe llama.cpp server + setting + extension state. */
@@ -2322,6 +2362,24 @@ export function setCursorCliBinaryPath(
   });
 }
 
+export function setGrokCliEnabled(
+  enabled: boolean,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export function setGrokCliBinaryPath(
+  binaryPath: string | null,
+): Promise<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }> {
+  return api<{ enabled: boolean; binaryPath?: string; restartRequired: boolean }>("/auth/grok-cli", {
+    method: "POST",
+    body: JSON.stringify({ binaryPath }),
+  });
+}
+
 /** Enable or disable the llama.cpp provider. */
 export function setLlamaCppEnabled(
   enabled: boolean,
@@ -2338,6 +2396,12 @@ export interface CustomProvider {
   apiType: "openai-compatible" | "anthropic-compatible" | "google-generative-ai" | "openai-responses";
   baseUrl: string;
   apiKey?: string;
+  /**
+   * FNXC:ProviderAuth 2026-07-08-00:00:
+   * FN-7689: dashboard-local mirror of @fusion/core's CustomProvider.anthropicPromptCaching
+   * opt-in. Keep in sync with packages/core/src/types.ts.
+   */
+  anthropicPromptCaching?: boolean;
   models?: { id: string; name: string }[];
 }
 
@@ -2352,6 +2416,7 @@ export async function fetchCustomProviders(): Promise<CustomProviderConfig[] & {
       : provider.apiType === "openai-responses" ? "openai-responses"
       : "openai-completions",
     apiKey: provider.apiKey,
+    anthropicPromptCaching: provider.anthropicPromptCaching,
     models: (provider.models ?? []).map((model) => ({ id: model.id, name: model.name })),
   } satisfies CustomProviderConfig));
   return Object.assign(legacyProviders, { providers: legacyProviders });
@@ -2373,6 +2438,9 @@ export function updateCustomProvider(
     ...(typeof legacy.name === "string" ? { name: legacy.name } : {}),
     ...(typeof legacy.baseUrl === "string" ? { baseUrl: legacy.baseUrl } : {}),
     ...(typeof legacy.apiKey === "string" ? { apiKey: legacy.apiKey } : {}),
+    ...("anthropicPromptCaching" in (updates as Record<string, unknown>)
+      ? { anthropicPromptCaching: (updates as Partial<Omit<CustomProvider, "id">>).anthropicPromptCaching }
+      : {}),
     ...(Array.isArray(legacy.models)
       ? {
           models: legacy.models.map((model) => ({
@@ -2433,6 +2501,8 @@ export interface CustomProviderConfig {
   baseUrl: string;
   api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
   apiKey?: string;
+  /** FNXC:ProviderAuth 2026-07-08-00:00: FN-7689 caching opt-in, carried through the legacy shape. */
+  anthropicPromptCaching?: boolean;
   models: CustomProviderModelInput[];
 }
 
@@ -6202,7 +6272,7 @@ export interface AgentPromptSizePoint {
   totalChars: number;
 }
 
-function withProjectId(path: string, projectId?: string): string {
+export function withProjectId(path: string, projectId?: string): string {
   if (!projectId) return path;
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}projectId=${encodeURIComponent(projectId)}`;
@@ -10164,7 +10234,7 @@ export async function fetchResumeChatSession(
 
 /** Create a new chat session */
 export function createChatSession(
-  input: { agentId: string; title?: string; modelProvider?: string; modelId?: string },
+  input: { agentId: string; title?: string; modelProvider?: string; modelId?: string; thinkingLevel?: string },
   projectId?: string,
 ): Promise<ChatSessionResponse> {
   return api<ChatSessionResponse>(withProjectId("/chat/sessions", projectId), {

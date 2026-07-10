@@ -407,25 +407,36 @@ function formatPlanLine(pkg) {
   return `${pkg.name} (${pkg.buildReason})`;
 }
 
-export function main({ rootDir = repoRoot, spawnFn = spawnSync, gitFn = defaultGitRunner } = {}) {
+/*
+ * FNXC:WorkspaceBuild 2026-07-10-15:40:
+ * FN-7779 stale-plugin-dist: `--plugins-only` narrows the plan to plugin
+ * packages so the fast `pnpm dev dashboard` prebuild can incrementally rebuild
+ * ONLY changed plugins (reusing the content-hash skip cache) without also
+ * rebuilding every non-plugin workspace package. Plugins load their built
+ * dist/ at runtime, so a never-rebuilt plugin dist silently runs phantom-old
+ * code — exactly the Grok "messages aren't sending" wrong-CLI-flags failure.
+ */
+export function main({ rootDir = repoRoot, spawnFn = spawnSync, gitFn = defaultGitRunner, pluginsOnly = false } = {}) {
   const cache = readPluginBuildCache(rootDir);
   const snapshot = createRepoContentSnapshot({ rootDir, gitFn });
   const plan = planWorkspaceBuild({ rootDir, cache, gitFn, snapshot });
-  const plannedNames = plan.plannedPackages.map(formatPlanLine);
+  const plannedPackages = pluginsOnly ? plan.plannedPackages.filter((pkg) => pkg.isPlugin) : plan.plannedPackages;
+  const plannedNames = plannedPackages.map(formatPlanLine);
   const skippedNames = plan.skippedPlugins.map((pkg) => pkg.name);
 
-  console.log(`[build-workspace] planned builds: ${plannedNames.join(", ") || "(none)"}`);
+  const scope = pluginsOnly ? "changed plugins" : "planned builds";
+  console.log(`[build-workspace] ${scope}: ${plannedNames.join(", ") || "(none)"}`);
   if (skippedNames.length > 0) {
     console.log(`[build-workspace] skipped unchanged plugins: ${skippedNames.join(", ")}`);
   }
 
-  const result = runPlannedBuilds(plan.plannedPackages, rootDir, spawnFn);
+  const result = runPlannedBuilds(plannedPackages, rootDir, spawnFn);
   if (result.status !== 0) {
     process.stderr.write(`[build-workspace] FAILED packages: ${result.packageNames.join(", ") || "(none)"}\n`);
     return result.status;
   }
 
-  recordSuccessfulPluginBuilds(plan.plannedPackages, { rootDir, cache, gitFn });
+  recordSuccessfulPluginBuilds(plannedPackages, { rootDir, cache, gitFn });
   return 0;
 }
 
@@ -439,5 +450,6 @@ export function main({ rootDir = repoRoot, spawnFn = spawnSync, gitFn = defaultG
  * file URL of argv[1] so the guard is correct on Windows, macOS, and Linux.
  */
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exit(main());
+  const pluginsOnly = process.argv.slice(2).includes("--plugins-only");
+  process.exit(main({ pluginsOnly }));
 }

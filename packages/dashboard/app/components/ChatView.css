@@ -1760,11 +1760,12 @@ CLI-agent sessions, or while streaming) — see StandardChatSurface.tsx `showEdi
   40% { opacity: 1; }
 }
 
-/* Chat waiting state */
-.chat-message-content--waiting {
+/* Chat waiting/empty states */
+.chat-message-content--waiting,
+.chat-message-content--empty {
   color: var(--text-muted);
   font-style: italic;
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 
 /* Input area */

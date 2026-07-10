@@ -49,6 +49,7 @@ vi.mock("@fusion/core", () => ({
     cleanupOldBackups: mockCleanupOldBackups,
   })),
   runBackupCommand: mockRunBackupCommand,
+  isSqliteLockError: (error: unknown) => /database is locked/i.test(error instanceof Error ? error.message : String(error)),
 }));
 
 vi.mock("../../project-context.js", () => ({
@@ -56,6 +57,20 @@ vi.mock("../../project-context.js", () => ({
   // FNXC:PostgresCutover 2026-07-05-12:00: cwd fallback now boots through
   // createLocalStore (PostgreSQL startup factory) instead of `new TaskStore`.
   createLocalStore: mockCreateLocalStore,
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => Promise<void> } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort, mirrors production closeProjectStore
+    }
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
 }));
 
 import { TaskStore } from "@fusion/core";

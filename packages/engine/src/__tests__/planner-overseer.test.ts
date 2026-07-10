@@ -318,3 +318,149 @@ describe("PlannerOverseerMonitor.observeTask", () => {
     await expect(monitor.observeTask(undefined as unknown as OverseerTaskRef, "autonomous")).resolves.toBeNull();
   });
 });
+
+// FN-7743: executor-stage stall detection. FN-7732 was a non-paused in-progress
+// task that sat stuck for hours while the overseer always reported
+// `signal: "progressing"` because there was no staleness check. These tests lock
+// the invariant across the enumerated data states: stale (stuck), recent
+// (progressing, unchanged), paused (blocked, unchanged), and missing/malformed
+// timestamp (fail-safe progressing).
+describe("PlannerOverseerMonitor.observeTask — FN-7743 executor stall detection", () => {
+  const THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2h, mirrors the declared setting default
+  const NOW = Date.UTC(2026, 6, 9, 12, 0, 0);
+
+  function isoMsAgo(ms: number): string {
+    return new Date(NOW - ms).toISOString();
+  }
+
+  it("reports stuck for a non-paused in-progress task whose last activity is older than the threshold", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      updatedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000), // 3h idle
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("stuck");
+    expect(observation?.stage).toBe("executor");
+    expect(observation?.reason).toMatch(/inactive for over \d+h/);
+  });
+
+  it("prefers columnMovedAt over updatedAt when both are present", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      // updatedAt looks fresh, but columnMovedAt (the more specific signal) is stale.
+      updatedAt: isoMsAgo(1000),
+      columnMovedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("stuck");
+  });
+
+  it("remains progressing for a non-paused in-progress task with recent activity", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      updatedAt: isoMsAgo(5 * 60 * 1000), // 5 minutes ago — well under threshold
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("remains progressing at exactly the threshold boundary minus one ms, and flips to stuck at/after the boundary", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const justUnder = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(THRESHOLD_MS - 1) });
+    const atThreshold = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(THRESHOLD_MS) });
+
+    const obsUnder = await monitor.observeTask(justUnder, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+    expect(obsUnder?.signal).toBe("progressing");
+
+    const obsAt = await monitor.observeTask(atThreshold, "autonomous", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+    expect(obsAt?.signal).toBe("stuck");
+  });
+
+  it("still reports blocked (unchanged) for a paused in-progress task even with a stale timestamp", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({
+      column: "in-progress",
+      paused: true,
+      pausedReason: "some-engine-park-reason",
+      updatedAt: isoMsAgo(THRESHOLD_MS + 60 * 60 * 1000),
+    });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("blocked");
+  });
+
+  it("fails safe to progressing when both updatedAt and columnMovedAt are missing", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({ column: "in-progress", updatedAt: undefined, columnMovedAt: undefined });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("fails safe to progressing when the timestamp is malformed/unparseable", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const task = taskFixture({ column: "in-progress", updatedAt: "not-a-real-date" });
+
+    const observation = await monitor.observeTask(task, "autonomous", {
+      now: () => NOW,
+      executorStuckAfterMs: THRESHOLD_MS,
+    });
+
+    expect(observation?.signal).toBe("progressing");
+  });
+
+  it("defaults executorStuckAfterMs to the declared 2h default when options are omitted", async () => {
+    const monitor = new PlannerOverseerMonitor();
+    const staleTask = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(3 * 60 * 60 * 1000) });
+    const freshTask = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(60 * 1000) });
+
+    const staleObs = await monitor.observeTask(staleTask, "autonomous", { now: () => NOW });
+    const freshObs = await monitor.observeTask(freshTask, "autonomous", { now: () => NOW });
+
+    expect(staleObs?.signal).toBe("stuck");
+    expect(freshObs?.signal).toBe("progressing");
+  });
+
+  // FN-7577: the dedup key must stay stable within an hour bucket so an ever-
+  // changing millisecond-precise duration in the reason does not defeat dedup.
+  it("keeps the stuck reason stable within the same inactivity-hour bucket for feed dedup", async () => {
+    const store = { logEntry: vi.fn().mockResolvedValue(undefined) };
+    const monitor = new PlannerOverseerMonitor({ store });
+    const task = taskFixture({ column: "in-progress", updatedAt: isoMsAgo(THRESHOLD_MS + 5 * 60 * 1000) });
+
+    // Two polls a few seconds apart within the same inactivity-hour bucket.
+    await monitor.observeTask(task, "observe", { now: () => NOW, executorStuckAfterMs: THRESHOLD_MS });
+    await monitor.observeTask(task, "observe", { now: () => NOW + 5000, executorStuckAfterMs: THRESHOLD_MS });
+    expect(store.logEntry).toHaveBeenCalledTimes(1);
+
+    // An hour-boundary crossing is a real state change — re-logs once.
+    await monitor.observeTask(task, "observe", { now: () => NOW + 60 * 60 * 1000, executorStuckAfterMs: THRESHOLD_MS });
+    expect(store.logEntry).toHaveBeenCalledTimes(2);
+  });
+});

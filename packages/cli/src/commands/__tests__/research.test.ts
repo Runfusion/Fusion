@@ -37,6 +37,7 @@ const researchStoreMock = {
 
 const storeMock = {
   init: vi.fn(),
+  close: vi.fn(async () => undefined),
   getSettings: vi.fn(async () => ({ researchSettings: { enabled: true }, researchGlobalWebSearchProvider: "tavily", researchGlobalTavilyApiKey: "x" })),
   getResearchStore: vi.fn(() => researchStoreMock),
 };
@@ -54,11 +55,17 @@ const { resolveResearchSettingsMock, providerRegistryMock, writeFileMock } = vi.
   writeFileMock: vi.fn(async () => undefined),
 }));
 
+// FN-7740: `research.ts` now imports `retryOnLock` (which imports
+// `isSqliteLockError` from @fusion/core), so a fully-mocked @fusion/core
+// module must stub it (project memory pitfall). `storeMock.close` above
+// backs the new close-on-every-exit-path discipline (except the documented
+// non-wait fire-and-forget branch in `runResearchCreate`).
 vi.mock("@fusion/core", () => ({
   TaskStore: makeConstructibleMock(() => storeMock),
   resolveResearchSettings: resolveResearchSettingsMock,
   RESEARCH_RUN_STATUSES: ["queued", "running", "cancelling", "retry_waiting", "completed", "failed", "cancelled", "timed_out", "retry_exhausted"],
   RESEARCH_EXPORT_FORMATS: ["json", "markdown", "pdf"],
+  isSqliteLockError: vi.fn(() => false),
 }));
 
 vi.mock("@fusion/engine", () => ({
@@ -67,7 +74,14 @@ vi.mock("@fusion/engine", () => ({
   ResearchOrchestrator: makeConstructibleMock(() => orchestratorMock),
 }));
 
-vi.mock("../../project-context.js", () => ({ resolveProject: vi.fn(async () => undefined) }));
+// FN-7740: `getStore` now resolves a name→path via `resolveProjectPathOnly`
+// instead of using `resolveProject`'s `.store` directly — stub both exports
+// (none of these tests pass `projectName`, so `resolveProjectPathOnly` is
+// unused at runtime here, but it must exist on the mock module).
+vi.mock("../../project-context.js", () => ({
+  resolveProject: vi.fn(async () => undefined),
+  resolveProjectPathOnly: vi.fn(async () => undefined),
+}));
 vi.mock("node:fs/promises", () => ({ writeFile: writeFileMock }));
 
 describe("research commands", () => {

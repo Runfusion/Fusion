@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ensureBundledCursorRuntimePluginInstalled as coreEnsureBundledCursorRuntimePluginInstalled,
+  ensureBundledGrokRuntimePluginInstalled as coreEnsureBundledGrokRuntimePluginInstalled,
   ensureBundledDependencyGraphPluginInstalled as coreEnsureBundledDependencyGraphPluginInstalled,
   ensureBundledPluginInstalled as coreEnsureBundledPluginInstalled,
   type EnsureBundledResult,
@@ -65,4 +66,11 @@ export async function ensureBundledCursorRuntimePluginInstalled(
   pluginLoader: PluginLoader,
 ): Promise<EnsureBundledResult> {
   return coreEnsureBundledCursorRuntimePluginInstalled(pluginStore, pluginLoader, getCandidatePluginDirs);
+}
+
+export async function ensureBundledGrokRuntimePluginInstalled(
+  pluginStore: PluginStore,
+  pluginLoader: PluginLoader,
+): Promise<EnsureBundledResult> {
+  return coreEnsureBundledGrokRuntimePluginInstalled(pluginStore, pluginLoader, getCandidatePluginDirs);
 }

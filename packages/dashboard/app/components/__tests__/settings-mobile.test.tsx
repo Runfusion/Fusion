@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SettingsModal } from "../SettingsModal";
+import { SettingsModal, SettingsView } from "../SettingsModal";
 import type { Settings } from "@fusion/core";
 
 
@@ -150,7 +150,7 @@ vi.mock("../../hooks/useMemoryBackendStatus", () => ({
   })),
 }));
 
-import { fetchSettings, updateSettings } from "../../api";
+import { fetchDashboardHealth, fetchSettings, updateSettings } from "../../api";
 
 function mockSettingsViewport(matches: boolean): void {
   Object.defineProperty(window, "matchMedia", {
@@ -240,19 +240,45 @@ describe("SettingsModal mobile adaptations", () => {
     expect(modalHeader?.contains(version)).toBe(false);
   });
 
-  it("keeps update-check button clickable from the footer", async () => {
+  it("keeps update-check button clickable from the standalone and embedded mobile footers", async () => {
     mockSettingsViewport(true);
     const user = userEvent.setup();
-    const { container } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    const standalone = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
-    const modalActions = container.querySelector(".modal-actions");
+    const standaloneActions = standalone.container.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
+    expect(standaloneActions).toBeTruthy();
+
+    const standaloneUpdateButton = within(standaloneActions as HTMLElement).getByRole("button", { name: "Check for updates" });
+    await user.click(standaloneUpdateButton);
+    expect(standaloneUpdateButton.closest(".settings-modal-footer-version")).toBeTruthy();
+
+    standalone.unmount();
+    vi.clearAllMocks();
+
+    const embedded = render(<SettingsView onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const embeddedActions = embedded.container.querySelector(".settings-modal--embedded .modal-actions");
+    expect(embeddedActions).toBeTruthy();
+    const embeddedUpdateButton = within(embeddedActions as HTMLElement).getByRole("button", { name: "Check for updates" });
+    await user.click(embeddedUpdateButton);
+    expect(embeddedUpdateButton.closest(".settings-modal-footer-version")).toBeTruthy();
+  });
+
+  it("omits the version button when appVersion is unavailable without removing the footer rail", async () => {
+    vi.mocked(fetchDashboardHealth).mockResolvedValueOnce({ status: "ok", version: "", uptime: 120 });
+    mockSettingsViewport(true);
+    const { container, queryByRole } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+    await waitFor(() => expect(fetchDashboardHealth).toHaveBeenCalled());
+
+    const modalActions = container.querySelector(".settings-modal:not(.settings-modal--embedded) .modal-actions");
     expect(modalActions).toBeTruthy();
-
-    const updateButton = within(modalActions as HTMLElement).getByRole("button", { name: "Check for updates" });
-    await user.click(updateButton);
-
-    expect(updateButton).toBeTruthy();
+    expect(within(modalActions as HTMLElement).getByRole("link", { name: "Help and discussions" })).toBeTruthy();
+    expect(queryByRole("button", { name: "Check for updates" })).toBeNull();
+    expect(container.querySelector(".settings-modal-footer-version")).toBeTruthy();
+    expect(container.querySelector(".settings-update-check")).toBeTruthy();
   });
 
   it("keeps update-now button reachable from the mobile footer", async () => {
@@ -270,6 +296,18 @@ describe("SettingsModal mobile adaptations", () => {
 
     await user.click(updateNow);
     expect(await findByText("Updated to v2.0.0 — restart Fusion to apply")).toBeTruthy();
+  });
+
+  it("preserves the mobile section picker accessible name without rendering a visible label", async () => {
+    mockSettingsViewport(true);
+    const { container, getByLabelText, queryByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+    await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+    const picker = getByLabelText("Settings Section") as HTMLSelectElement;
+    expect(picker.id).toBe("settings-mobile-section");
+    expect(picker.getAttribute("aria-label")).toBe("Settings Section");
+    expect(container.querySelector('label[for="settings-mobile-section"]')).toBeNull();
+    expect(queryByText("Settings Section", { selector: "label" })).toBeNull();
   });
 
   it("excludes research sections from mobile picker when researchView is disabled", async () => {
@@ -308,6 +346,8 @@ describe("SettingsModal mobile adaptations", () => {
     const { getByLabelText, getByTestId, queryByLabelText, getByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
     await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
 
+    // FN-7713: search row is collapsed by default on mobile — expand it first.
+    await user.click(getByLabelText("Show search"));
     const search = getByTestId("settings-search-input");
     await user.type(search, "mcp");
 
@@ -503,34 +543,75 @@ describe("SettingsModal mobile adaptations", () => {
 
     expectMobileRule(css, ".settings-layout", "flex-direction: column;");
     expectMobileRule(css, ".settings-mobile-section-picker", "display: flex;");
+    expectMobileRule(css, ".settings-mobile-section-picker", "padding: var(--space-sm) var(--space-md) var(--space-md);");
+    expectMobileRule(css, ".settings-mobile-section-picker-control-row", "display: flex;");
+    expectMobileRule(css, ".settings-mobile-section-picker-control-row", "align-items: center;");
+    expectMobileRule(css, ".settings-mobile-section-picker select", "flex: 1 1 auto;");
+    expectMobileRule(css, ".settings-mobile-section-picker .settings-search-empty-hint", "flex: 1 1 auto;");
     expectMobileRule(css, ".settings-navigation", "width: 100%;");
-    expectMobileRule(css, ".settings-search", "padding: var(--space-md) var(--space-lg) var(--space-sm);");
+    expectMobileRule(css, ".settings-search", "padding: var(--space-sm) var(--space-md) var(--space-sm);");
     expectMobileRule(css, ".settings-sidebar", "display: none;");
     expectMobileRule(css, ".settings-nav-item", "display: flex;");
     expectMobileRule(css, ".settings-nav-item", "align-items: center;");
     expectMobileRule(css, ".settings-nav-item", "justify-content: center;");
-    expectMobileRule(css, ".settings-nav-item", "gap: 4px;");
+    expectMobileRule(css, ".settings-nav-item", "gap: var(--space-xs);");
+    expectMobileRule(css, ".settings-content", "padding: var(--space-sm) var(--space-sm) var(--space-md);");
     expectMobileRule(css, ".settings-content textarea", "font-size: 16px;");
-    expectMobileRule(css, ".settings-section-heading", "padding: var(--space-lg) 0 var(--space-md);");
-    expectMobileRule(css, ".settings-section-heading", "margin: 0;");
+    expectMobileRule(css, ".settings-section-heading", "padding: var(--space-md) var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".settings-section-heading", "margin: 0 0 var(--space-sm);");
     expectMobileRule(css, ".settings-scope-icon", "margin-right: 0;");
-    expectMobileRule(css, ".settings-scope-banner", "padding: var(--space-sm) var(--space-lg);");
-    expectMobileRule(css, ".settings-empty-state", "padding: 12px 14px;");
-    expectMobileRule(css, ".settings-description", "padding: 0 var(--space-lg);");
-    expectMobileRule(css, ".theme-selector", "padding: 0 14px 14px;");
+    expectMobileRule(css, ".settings-scope-banner", "margin: 0 var(--space-sm) var(--space-xs);");
+    expectMobileRule(css, ".settings-scope-banner", "padding: var(--space-xs) var(--space-sm);");
+    expectMobileRule(css, ".settings-empty-state", "padding: var(--space-sm);");
+    expectMobileRule(css, ".settings-description", "padding: 0 var(--space-sm);");
+    expectMobileRule(css, ".theme-selector", "padding: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".settings-plugins-subsection-toggle", "padding: 0 var(--space-sm);");
+    expectMobileRule(css, ".settings-plugins-subsection-panel", "padding-left: var(--space-sm);");
+    expectMobileRule(css, ".form-group", "padding: 0 var(--space-sm);");
     expectMobileRule(css, ".settings-preset-item", "flex-direction: column;");
     expectMobileRule(css, ".settings-preset-item-actions", "justify-content: flex-start;");
+    expectMobileRule(css, ".settings-preset-item", "padding: var(--space-sm);");
+    expectMobileRule(css, ".settings-preset-editor", "padding: var(--space-sm);");
     expectMobileRule(css, ".settings-preset-size-grid", "grid-template-columns: 1fr;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "padding-block: var(--space-xs);");
+    expectMobileRule(css, ".settings-modal .modal-actions", "flex-wrap: nowrap;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .modal-actions", "overflow-x: auto;");
+    expectMobileRule(css, ".settings-modal .modal-actions-left", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .modal-actions-right", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "align-self: center;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "flex: 0 0 auto;");
+    expectMobileRule(css, ".settings-modal .settings-modal-footer-version", "min-width: max-content;");
+    expectMobileRule(css, ".settings-modal .settings-update-check", "align-items: center;");
+    expectMobileRule(css, ".settings-modal .settings-update-check", "flex-wrap: nowrap;");
+    expectMobileRule(css, ".settings-modal .settings-version-check-btn", "line-height: 1;");
+    expectMobileRule(css, ".settings-modal .settings-version-check-btn", "white-space: nowrap;");
+    expectMobileRule(css, ".settings-modal .settings-modal-version", "display: inline-flex;");
+    expectMobileRule(css, ".settings-modal .settings-modal-version", "line-height: 1;");
+    expectMobileRule(css, ".settings-modal .settings-modal-version", "white-space: nowrap;");
+    expect(css).toContain(".settings-modal .modal-header {\n    padding-block: var(--space-sm);");
+    expectMobileRule(css, ".auth-provider-row", "padding: var(--space-sm);");
+    expectMobileRule(css, ".auth-section-hint", "margin: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".auth-section-hint", "padding: var(--space-sm);");
+    expectMobileRule(css, ".auth-group-label", "padding: 0 var(--space-sm);");
+    expectMobileRule(css, ".auth-provider-card", "margin: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".auth-provider-header", "padding: var(--space-sm);");
     expectMobileRule(css, ".auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section)", "margin-left: auto;");
     expectMobileRule(css, ".auth-apikey-section", "align-items: flex-end;");
     expectMobileRule(css, ".auth-apikey-input-row", "justify-content: flex-end;");
     expectMobileRule(css, ".auth-apikey-input-row .btn", "margin-left: auto;");
+    expectMobileRule(css, ".auth-hint", "padding: var(--space-sm) var(--space-sm) 0;");
+    expectMobileRule(css, ".notification-provider-card", "margin: 0 var(--space-sm) var(--space-sm);");
     expectMobileRule(css, ".notification-provider-header", "padding: var(--space-sm) var(--space-md);");
     expectMobileRule(css, ".notification-provider-body", "padding: var(--space-md);");
+    expectMobileRule(css, ".memory-file-summary", "margin: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".memory-file-summary", "padding: var(--space-sm);");
+    expectMobileRule(css, ".settings-model-lane-actions", "padding: var(--space-sm) var(--space-sm) var(--space-md);");
+    expectMobileRule(css, ".settings-node-routing-note", "padding: var(--space-sm);");
 
-    // Remote Access header elements must use the same mobile gutter as other remote blocks
-    expectMobileRule(css, ".remote-status-bar", "margin: 0 var(--space-lg) var(--space-md);");
-    expectMobileRule(css, ".remote-share-block", "margin: 0 var(--space-lg) var(--space-md);");
+    // Remote Access header elements must use the same tightened mobile gutter as other settings blocks
+    expectMobileRule(css, ".remote-status-bar", "margin: 0 var(--space-sm) var(--space-sm);");
+    expectMobileRule(css, ".remote-share-block", "margin: 0 var(--space-sm) var(--space-sm);");
     expectMobileRule(css, ".settings-research-provider-advanced-details", "padding-inline-start: 0;");
     expectMobileRule(css, ".settings-research-source-grid", "grid-template-columns: 1fr;");
     expectMobileRule(css, ".settings-research-limits-grid", "grid-template-columns: 1fr;");
@@ -587,5 +668,98 @@ describe("SettingsModal mobile adaptations", () => {
     expectBaseRule(css, ".settings-section-heading", "padding: var(--space-lg) 0 var(--space-md);");
     expectBaseRule(css, ".settings-section-heading", "margin: 0;");
     expect(css).not.toMatch(/\.settings-section-heading\s*\{[^}]*border-bottom:\s*1px solid var\(--border\);/);
+  });
+
+  // FN-7713: mobile Settings search row collapses by default behind an icon toggle; desktop keeps
+  // the row always visible with no toggle.
+  describe("mobile settings search collapse toggle (FN-7713)", () => {
+    it("hides the search input by default on mobile and reveals it via the toggle", async () => {
+      mockSettingsViewport(true);
+      const user = userEvent.setup();
+      const { getByLabelText, queryByTestId, findByLabelText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      // Collapsed by default: no search input, toggle present and labeled "Show search".
+      expect(queryByTestId("settings-search-input")).toBeNull();
+      const toggle = getByLabelText("Show search");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(toggle.getAttribute("aria-controls")).toBe("settings-search-row-region");
+      const picker = toggle.closest(".settings-mobile-section-picker") as HTMLElement;
+      expect(picker).toBeTruthy();
+      expect(within(picker).getByLabelText("Settings Section")).toBeTruthy();
+      expect(queryByTestId("settings-search")).toBeNull();
+
+      await user.click(toggle);
+      const hideToggle = await findByLabelText("Hide search");
+      expect(hideToggle).toBeTruthy();
+      expect(hideToggle.getAttribute("aria-expanded")).toBe("true");
+      expect(hideToggle.closest(".settings-mobile-section-picker")).toBe(picker);
+      expect(document.getElementById("settings-search-row-region")).toBeTruthy();
+      expect(picker.nextElementSibling?.classList.contains("settings-search")).toBe(true);
+
+      await user.click(getByLabelText("Hide search"));
+      await waitFor(() => expect(queryByTestId("settings-search-input")).toBeNull());
+      expect(getByLabelText("Show search").getAttribute("aria-expanded")).toBe("false");
+      // No leftover shell for the search row or results region while collapsed.
+      expect(queryByTestId("settings-search")).toBeNull();
+      expect(document.getElementById("settings-search-row-region")).toBeNull();
+      expect(document.getElementById("settings-search-results")).toBeNull();
+    });
+
+    it("preserves an active search query across collapse/expand cycles", async () => {
+      mockSettingsViewport(true);
+      const user = userEvent.setup();
+      const { getByLabelText, getByTestId, queryByTestId } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      await user.click(getByLabelText("Show search"));
+      const search = getByTestId("settings-search-input");
+      await user.type(search, "mcp");
+      expect((getByTestId("settings-search-input") as HTMLInputElement).value).toBe("mcp");
+
+      // Collapse while a query is active: state is preserved, no forced auto-expand.
+      await user.click(getByLabelText("Hide search"));
+      expect(queryByTestId("settings-search-input")).toBeNull();
+
+      // Re-expanding restores the exact query and its results region.
+      await user.click(getByLabelText("Show search"));
+      expect((getByTestId("settings-search-input") as HTMLInputElement).value).toBe("mcp");
+      expect(document.getElementById("settings-search-results")?.textContent).toContain("matching sections");
+    });
+
+    it("keeps the desktop search row always visible with no toggle rendered", async () => {
+      mockSettingsViewport(false);
+      const { container, queryByLabelText, getByTestId } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      expect(getByTestId("settings-search-input")).toBeTruthy();
+      expect(queryByLabelText("Show search")).toBeNull();
+      expect(queryByLabelText("Hide search")).toBeNull();
+      expect(container.querySelector(".settings-mobile-section-picker .settings-search-toggle")).toBeNull();
+    });
+
+    it("keeps the inline toggle reachable when mobile search has no section results", async () => {
+      mockSettingsViewport(true);
+      const user = userEvent.setup();
+      const { getByLabelText, getByTestId, findByText } = render(<SettingsModal onClose={vi.fn()} addToast={vi.fn()} />);
+      await waitFor(() => expect(fetchSettings).toHaveBeenCalled());
+
+      await user.click(getByLabelText("Show search"));
+      await user.type(getByTestId("settings-search-input"), "zzzzzz-no-match");
+
+      const emptyHint = await findByText("No sections match this search.");
+      const picker = emptyHint.closest(".settings-mobile-section-picker") as HTMLElement;
+      expect(picker).toBeTruthy();
+      expect(within(picker).getByLabelText("Hide search")).toBeTruthy();
+      expect(picker.querySelector("#settings-mobile-section")).toBeNull();
+    });
+
+    it("contains the mobile-only toggle CSS override and hides it on desktop", () => {
+      const css = loadAllAppCss();
+
+      expectMobileRule(css, ".settings-search-toggle", "display: inline-flex;");
+      expectMobileRule(css, ".settings-search-toggle", "flex-shrink: 0;");
+      expectBaseRule(css, ".settings-search-toggle", "display: none;");
+    });
   });
 });

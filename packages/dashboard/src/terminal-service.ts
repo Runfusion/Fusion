@@ -41,6 +41,16 @@ Use a short quiet window to avoid writing into an actively streaming prompt/bann
 export const READY_QUIET_WINDOW_MS = 150;
 export const READY_TIMEOUT_MS = 5_000;
 
+/*
+FNXC:Terminal 2026-07-08-11:20:
+FN-7688: threshold for the one-time, non-blocking "slow shell profile" server-log hint.
+Measured typical --login overhead is single-digit ms; a first-output delay at or beyond this
+threshold is a signal the user's own .zprofile/.bash_profile (not the --login flag) is slow to
+source (e.g. an eagerly-loaded version manager). This never blocks session creation or alters
+the readiness contract — it only decides whether to log a doc pointer.
+*/
+export const SLOW_LOGIN_PROFILE_HINT_MS = 2_000;
+
 // Stale session threshold: sessions inactive for more than 5 minutes are eligible for eviction
 export const STALE_SESSION_THRESHOLD_MS = 300_000; // 5 minutes
 
@@ -117,6 +127,20 @@ export interface TerminalSession {
   readyQuietTimeout: NodeJS.Timeout | null;
   /** Internal flush callback set by createSession; used by resize debounce */
   _flushOutput: (() => void) | null;
+  /*
+  FNXC:Terminal 2026-07-08-11:20:
+  FN-7688 investigated whether login-shell `--login` profile execution (sourcing
+  .zprofile/.bash_profile) is a meaningful first-prompt latency contributor. Measurement
+  found the flag itself costs low single-digit ms on a typical/lean profile, but is fully
+  additive latency (confirmed ~800ms+ in a synthetic heavy-profile repro) when the user's
+  own .zprofile/.bash_profile eagerly sources something slow (e.g. a version manager init
+  script). `--login` is intentionally preserved per FN-7686 (dropping it would silently
+  break login-shell-managed env/PATH/secrets) — spawnStartedAt/loginProfileHintLogged exist
+  only to emit a one-time, non-blocking, server-log-only hint pointing operators at shell-
+  profile-hygiene docs; they never alter spawn args, timeouts, or the readiness contract.
+  */
+  spawnStartedAt: number;
+  loginProfileHintLogged: boolean;
 }
 
 export interface TerminalOptions {
@@ -572,14 +596,23 @@ export class TerminalService extends EventEmitter {
       addSpawnAttempt(allowedShell, fallbackArgs, "allowed-fallback");
     }
 
+    // FNXC:Terminal 2026-07-08-11:20: captured just before the first spawn attempt so the
+    // FN-7688 slow-login-profile hint measures wall-clock from "we start trying to spawn a
+    // shell" to first PTY output, not from unrelated createSession setup work above.
+    const spawnStartedAt = Date.now();
     let ptyProcess: IPty | undefined;
     let lastSpawnError: unknown;
+    // FNXC:Terminal 2026-07-08-11:20: tracks whether the spawn attempt that actually succeeded
+    // used --login, so the FN-7688 slow-profile hint only fires for login-shell sessions (it
+    // would be misleading to attribute a slow non-login shell's first output to profile cost).
+    let succeededWithLoginArgs = false;
     for (const attempt of spawnAttempts) {
       try {
         console.info(
           `[createSession] Spawning terminal via ${attempt.reason}: ${attempt.shell} ${attempt.args.join(" ")} in ${cwd}`,
         );
         ptyProcess = pty.spawn(attempt.shell, attempt.args, ptyOptions);
+        succeededWithLoginArgs = attempt.args.includes("--login");
         break;
       } catch (spawnError) {
         lastSpawnError = spawnError;
@@ -623,6 +656,8 @@ export class TerminalService extends EventEmitter {
       readyTimeout: null,
       readyQuietTimeout: null,
       _flushOutput: null,
+      spawnStartedAt,
+      loginProfileHintLogged: false,
     };
 
     session.readyTimeout = setTimeout(() => {
@@ -676,7 +711,29 @@ export class TerminalService extends EventEmitter {
 
     // Forward data events with throttling
     ptyProcess.onData((data: string) => {
+      const wasFirstOutput = !session.firstOutputSeen;
       this.observeReadinessOutput(session);
+
+      /*
+      FNXC:Terminal 2026-07-08-11:20:
+      FN-7688 finding: --login itself costs low single-digit ms on a typical/lean shell
+      profile, but sourcing .zprofile/.bash_profile is fully additive latency when the
+      user's own profile is slow (e.g. eagerly-sourced version manager init). This hint is
+      one-time, non-blocking (server log only, never surfaced as a UI toast/error), and
+      never changes spawn args, timeouts, or the readiness contract — it only points
+      operators at shell-profile-hygiene docs when the signal warrants it.
+      */
+      if (wasFirstOutput && succeededWithLoginArgs && !session.loginProfileHintLogged) {
+        const firstOutputMs = Date.now() - session.spawnStartedAt;
+        if (firstOutputMs >= SLOW_LOGIN_PROFILE_HINT_MS) {
+          session.loginProfileHintLogged = true;
+          console.info(
+            `[createSession] Session ${session.id}: login shell took ${firstOutputMs}ms to produce first output. ` +
+              `If this is consistently slow, your .zprofile/.bash_profile may be eagerly sourcing something slow ` +
+              `(e.g. a version manager init script). See docs/dashboard-guide.md "Slow first prompt / shell profile hygiene".`,
+          );
+        }
+      }
 
       // Always append to scrollback buffer so no output is lost
       session.scrollbackBuffer += data;

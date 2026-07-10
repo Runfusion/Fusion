@@ -1060,6 +1060,96 @@ describe("TaskDetailModal", () => {
       expect(screen.getByText("Workflow")).toBeTruthy();
     });
 
+    it("saves workflow step toggles from task edit mode", async () => {
+      const { fetchBoardWorkflows, fetchWorkflowOptionalSteps, updateTask } = await import("../../api");
+      vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
+        flagEnabled: true,
+        defaultWorkflowId: "wf-edit",
+        workflows: [{ id: "wf-edit", name: "Edit Workflow" }],
+        taskWorkflowIds: { "FN-099": "wf-edit" },
+      } as any);
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValueOnce([
+        { templateId: "code-review", name: "Code Review", phase: "pre-merge", defaultOn: true },
+        { templateId: "browser-verification", name: "Browser Verification", phase: "pre-merge", defaultOn: false },
+      ] as any);
+      vi.mocked(updateTask).mockResolvedValueOnce(makeTask({ enabledWorkflowSteps: ["browser-verification", "code-review"] }) as any);
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ column: "todo" as any, enabledWorkflowSteps: ["browser-verification"] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+      const trigger = await screen.findByTestId("task-form-edit-optional-steps");
+      expect(trigger).toHaveTextContent("Steps: 1 selected");
+      fireEvent.click(trigger);
+      fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-code-review"));
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(updateTask).toHaveBeenCalledWith(
+          "FN-099",
+          expect.objectContaining({ enabledWorkflowSteps: ["browser-verification", "code-review"] }),
+          undefined,
+        );
+      });
+    });
+
+    it("does not reset enabled workflow steps when saving unrelated edit fields", async () => {
+      const { fetchBoardWorkflows, fetchWorkflowOptionalSteps, updateTask } = await import("../../api");
+      vi.mocked(fetchBoardWorkflows).mockResolvedValueOnce({
+        flagEnabled: true,
+        defaultWorkflowId: "wf-edit",
+        workflows: [{ id: "wf-edit", name: "Edit Workflow" }],
+        taskWorkflowIds: { "FN-099": "wf-edit" },
+      } as any);
+      vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValueOnce([
+        { templateId: "code-review", name: "Code Review", phase: "pre-merge", defaultOn: true },
+        { templateId: "browser-verification", name: "Browser Verification", phase: "pre-merge", defaultOn: false },
+      ] as any);
+      vi.mocked(updateTask).mockResolvedValueOnce(makeTask({ title: "Edited title", enabledWorkflowSteps: ["browser-verification"] }) as any);
+
+      render(
+        <TaskDetailModal
+          initialTab="definition"
+          task={makeTask({ column: "todo" as any, title: "Original title", enabledWorkflowSteps: ["browser-verification"] })}
+          onClose={noop}
+          onMoveTask={noopMove}
+          onDeleteTask={noopDelete}
+          onMergeTask={noopMerge}
+          onOpenDetail={noopOpenDetail}
+          addToast={noop}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+      await screen.findByTestId("task-form-edit-optional-steps");
+      const titleInput = screen.getByRole("textbox", { name: /Title/i });
+      fireEvent.change(titleInput, { target: { value: "Edited title" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => {
+        expect(updateTask).toHaveBeenCalledWith(
+          "FN-099",
+          expect.not.objectContaining({ enabledWorkflowSteps: expect.anything() }),
+          undefined,
+        );
+      });
+      expect(updateTask).toHaveBeenCalledWith(
+        "FN-099",
+        expect.objectContaining({ title: "Edited title" }),
+        undefined,
+      );
+    });
+
     it("switches to Workflow tab and calls fetchWorkflowResults", async () => {
       const { fetchWorkflowResults } = await import("../../api");
       const mockFetch = vi.mocked(fetchWorkflowResults);

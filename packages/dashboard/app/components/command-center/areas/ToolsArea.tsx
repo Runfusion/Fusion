@@ -23,9 +23,9 @@ The Tools surface has categorical tool-call analytics but no per-day tool trend 
  * Tools area of the Command Center (PR #1683). Shows the autonomy ratio plus tool-category usage; display
  * order is re-sorted client-side so it never silently depends on server ordering.
  */
-export function ToolsArea({ range }: { range: DateRange }) {
+export function ToolsArea({ range, projectId }: { range: DateRange; projectId?: string }) {
   const { t } = useTranslation("app");
-  const { data, isLoading, error } = useAnalyticsArea<ToolAnalytics>("/command-center/tools", range);
+  const { data, isLoading, error } = useAnalyticsArea<ToolAnalytics>("/command-center/tools", range, { projectId });
 
   const sortedCategories = useMemo(
     () => [...(data?.byCategory ?? [])].sort((a, b) => b.count - a.count || a.category.localeCompare(b.category)),

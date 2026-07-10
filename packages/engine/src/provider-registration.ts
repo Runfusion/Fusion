@@ -14,7 +14,9 @@ DashboardAuthStorage callers MUST pass to `createServer(...)` (not the raw authS
 disposer to unsubscribe the settings listener on shutdown.
 */
 import {
+  mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
+  registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
   type CustomProvider,
   type TaskStore,
@@ -62,9 +64,11 @@ export async function seedDashboardProviders(
   const log = options.log ?? (() => {});
 
   registerBuiltInZaiProvider(modelRegistry, (message) => log("extensions", message));
+  registerBuiltInGrokProvider(modelRegistry, (message) => log("extensions", message));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
   mergeBuiltInZaiProviderModels(modelRegistry, (message) => log("extensions", message));
+  mergeBuiltInGrokProviderModels(modelRegistry, (message) => log("extensions", message));
   modelRegistry.refresh();
 
   try {

@@ -30,7 +30,7 @@ const BUILT_IN_PRESETS: Record<AgentPermissionPolicyPresetId, BuiltInAgentPermis
     id: "unrestricted",
     name: "Unrestricted",
     description: "Allows all runtime action categories (legacy-compatible default).",
-    rules: buildRules("allow"),
+    rules: withReviewGateBypassOverride(buildRules("allow")),
   },
   "approval-required": {
     id: "approval-required",
@@ -48,7 +48,7 @@ const BUILT_IN_PRESETS: Record<AgentPermissionPolicyPresetId, BuiltInAgentPermis
     id: "custom",
     name: "Custom",
     description: "Category-level custom overrides.",
-    rules: buildRules("allow"),
+    rules: withReviewGateBypassOverride(buildRules("allow")),
   },
 };
 
@@ -57,6 +57,14 @@ function buildRules(disposition: AgentPermissionPolicyDisposition): AgentPermiss
     acc[category] = disposition;
     return acc;
   }, {} as AgentPermissionPolicyRules);
+}
+
+/**
+ * FNXC:ToolPermissions 2026-07-09-00:00:
+ * FN-7728 — `review_gate_bypass` (governing the `fn_task_bypass_review` merge-gate override) intentionally diverges from the uniform per-preset disposition: even the `unrestricted` preset (and the `unrestricted`-seeded `custom` base) must never silently allow a review-gate bypass by default, since that is a stricter security posture than ordinary task mutation. `approval-required` (already `require-approval`) and `locked-down` (already `block`, stricter still) need no override — only the two presets whose uniform disposition would otherwise be `allow` are patched here, post-`buildRules`, so the single-disposition preset builder stays simple for every other category.
+ */
+function withReviewGateBypassOverride(rules: AgentPermissionPolicyRules): AgentPermissionPolicyRules {
+  return { ...rules, review_gate_bypass: "require-approval" };
 }
 
 export function isValidAgentPermissionPolicyDisposition(value: unknown): value is AgentPermissionPolicyDisposition {

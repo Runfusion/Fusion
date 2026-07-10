@@ -163,6 +163,11 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ table: string; column: st
   { table: "archived_tasks", column: "id", type: "text" },
   { table: "archived_tasks", column: "data", type: "text" },
   { table: "archived_tasks", column: "archived_at", type: "text" },
+  // chat_sessions — FN-7775 per-chat thinking level (added 2026-07-10); listed
+  // so existing embedded-PG databases self-heal the column via ALTER TABLE
+  // ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS alone never
+  // upgrades an existing table).
+  { table: "chat_sessions", column: "thinking_level", type: "text" },
 ];
 
 /**

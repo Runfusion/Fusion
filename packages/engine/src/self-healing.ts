@@ -30,7 +30,7 @@ import { setImmediate as setImmediateCb } from "node:timers";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
+import { IN_REVIEW_STALL_DEADLOCK_LOG_PREFIX, IN_REVIEW_STALL_LOG_PREFIX, IN_REVIEW_STALL_TERMINAL_LOG_PREFIX, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, countRecentIdenticalStallEntries, detectDependencyCycle, detectSelfDefeatingDependency, evaluateNoCommitsNoOpFinalize, getInReviewStalledSignal, getInReviewStallReason, getPrimaryPrInfo, getStalePausedReviewSignal, getStalePausedTodoSignal, getTaskHardMergeBlocker, getTaskMergeBlocker, isEphemeralAgent, isMergeRequestContractShadowEnabled, isWorkflowColumnsEnabled, isWorkspaceTask, isSharedBranchGroupMemberIntegration, parseExplicitDuplicateMarker, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, resolveWorkflowIrForTask, AWAITING_APPROVAL_PAUSE_REASON, type Agent, type AgentStore, type ChatStore, type MessageStore, type TaskStore, type Settings, type Task, type MergeDetails, type TaskPriority, type MergeResult, type WorkflowStepResult } from "@fusion/core";
 import type { MeshLeaseManager } from "./mesh-lease-manager.js";
 import { createLogger, schedulerLog } from "./logger.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
@@ -127,7 +127,7 @@ const MAX_NO_PROGRESS_RESUME_ATTEMPTS = 2;
 
 type WorkflowRecoveryRoute =
   | { kind: "node-requeue"; reason: "pause-abort-active-work" }
-  | { kind: "work-item-resume"; reason: "pause-abort-review-progress" }
+  | { kind: "work-item-resume"; reason: "pause-abort-review-progress" | "pause-abort-manual-merge-hold" }
   | { kind: "no-action"; reason: "not-pause-abort" | "unsafe-or-not-routable" };
 
 function extractTaskIdFromTempMergeDir(dirname: string): string | null {
@@ -781,10 +781,20 @@ export class SelfHealingManager {
     lastNtfyAt: number | null;
   } | null = null;
 
+  /*
+   * FNXC:ApprovalHold 2026-07-09-00:15:
+   * FN-7736: AWAITING_APPROVAL_PAUSE_REASON must be excluded here so a task
+   * parked mid-execution on a pending tool-approval decision (`pauseForApproval`
+   * -> `pauseTask(id, true, { pausedReason: AWAITING_APPROVAL_PAUSE_REASON })`)
+   * is never rebounded to `todo` by this scope-decay sweep before the operator
+   * approves or denies -- this was the reported symptom (a follower task's
+   * scope-decay threshold elapsing could silently defeat the approval gate).
+   */
   private static readonly PAUSED_SCOPE_DECAY_EXCLUDED_REASONS = new Set([
     "branch-conflict-unrecoverable",
     "worktrunk_operation_failed",
     "token_budget_exceeded",
+    AWAITING_APPROVAL_PAUSE_REASON,
   ]);
 
   constructor(
@@ -812,13 +822,22 @@ export class SelfHealingManager {
       || errorText.includes("retry-exhausted")
       || errorText.includes("retries exhausted")
       || errorText.includes("max retries");
+    const completedSteps = task.steps.length > 0
+      && task.steps.every((step) => step.status === "done" || step.status === "skipped");
+    const sharedBranchMember = isSharedBranchGroupMemberIntegration(task);
     const hasReviewProgress =
       task.column === "in-review"
       && allowsAutoMergeProcessing(task, settings)
       && task.mergeDetails?.mergeConfirmed !== true
       && !isTerminalMergePark
-      && task.steps.length > 0
-      && task.steps.every((step) => step.status === "done" || step.status === "skipped");
+      && completedSteps;
+    const hasManualMergeHoldProgress =
+      task.column === "in-review"
+      && (!allowsAutoMergeProcessing(task, settings) || resolveEffectiveAutoMerge(task, settings) === false)
+      && !sharedBranchMember
+      && task.mergeDetails?.mergeConfirmed !== true
+      && !isTerminalMergePark
+      && completedSteps;
 
     /*
     FNXC:WorkflowRecoveryRouter 2026-06-29-11:47:
@@ -826,7 +845,13 @@ export class SelfHealingManager {
     state. Active work routes to a workflow node requeue in todo; completed review
     progress routes to a work-item/review resume in-place. Unsafe rows stay
     untouched so invariant repair and human holds remain separate decisions.
+
+    FNXC:WorkflowRecoveryRouter 2026-07-09-14:59:
+    FN-7749 / FN-5147: an auto-merge-off manual merge hold is a human terminal `in-review` state. A stale pause-abort park in that state is recoverable only by clearing status/error in place; never move it backward, pause it, or re-enqueue it.
     */
+    if (hasManualMergeHoldProgress) {
+      return { kind: "work-item-resume", reason: "pause-abort-manual-merge-hold" };
+    }
     if (hasReviewProgress) {
       return { kind: "work-item-resume", reason: "pause-abort-review-progress" };
     }
@@ -5914,6 +5939,7 @@ export class SelfHealingManager {
         t.column === "in-review" &&
         allowsAutoMergeProcessing(t, settings) &&
         !t.paused &&
+        // FNXC:AutoMergeHold 2026-07-09-17:10: FN-7750 intentionally keeps the pure branchContext-shape predicate here. Stale shared-group members must stay OUT of solo no-op finalize even when their group is not live; only the positive auto-merge-off exemption gates use the live-group predicate.
         !isSharedBranchGroupMemberIntegration(t) &&
         // FNXC:Workspace 2026-06-22-14:10 (Phase D review A — workspace single-commit-finalize gate):
         // This no-op finalize classifies one branch against one base over `this.options.rootDir`

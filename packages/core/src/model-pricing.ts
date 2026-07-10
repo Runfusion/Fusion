@@ -28,7 +28,7 @@
  * The date the rates in {@link MODEL_PRICING} were last verified, ISO-8601.
  * Bump this whenever you edit a rate. Surfaced in the UI as "prices as of".
  */
-export const pricingAsOf = "2026-06-30";
+export const pricingAsOf = "2026-07-09";
 
 /**
  * Pricing entries older than this (relative to a caller-supplied `now`) are
@@ -291,6 +291,59 @@ export const MODEL_PRICING: Readonly<Record<string, ModelPricing>> = {
     outputPer1M: 10,
     cacheReadPer1M: 0.125,
     cacheWritePer1M: 1.25,
+    source: "openai.com/api/pricing",
+  },
+  /*
+   * FNXC:CommandCenter 2026-07-09-21:30:
+   * FN-7757 found that pi-ai 0.80.5 now persists OpenAI Codex model ids from the generated `openai-codex.models.js` catalog (`gpt-5.3-codex-spark`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, and codenamed GPT-5.6 variants). The old static table covered only earlier `gpt-5.x-codex` ids, so lookupPricing returned unavailable and every dashboard cost surface rendered `—`. Keep this block aligned with the pinned runtime catalog rates while preserving unknown-model `—` semantics.
+   */
+  "openai-codex:gpt-5.3-codex-spark": {
+    inputPer1M: 1.75,
+    outputPer1M: 14,
+    cacheReadPer1M: 0.175,
+    cacheWritePer1M: 0,
+    source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-5.4": {
+    inputPer1M: 2.5,
+    outputPer1M: 15,
+    cacheReadPer1M: 0.25,
+    cacheWritePer1M: 0,
+    source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-5.4-mini": {
+    inputPer1M: 0.75,
+    outputPer1M: 4.5,
+    cacheReadPer1M: 0.075,
+    cacheWritePer1M: 0,
+    source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-5.5": {
+    inputPer1M: 5,
+    outputPer1M: 30,
+    cacheReadPer1M: 0.5,
+    cacheWritePer1M: 0,
+    source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-5.6-luna": {
+    inputPer1M: 1,
+    outputPer1M: 6,
+    cacheReadPer1M: 0.1,
+    cacheWritePer1M: 0,
+    source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-5.6-sol": {
+    inputPer1M: 5,
+    outputPer1M: 30,
+    cacheReadPer1M: 0.5,
+    cacheWritePer1M: 0,
+    source: "openai.com/api/pricing",
+  },
+  "openai-codex:gpt-5.6-terra": {
+    inputPer1M: 2.5,
+    outputPer1M: 15,
+    cacheReadPer1M: 0.25,
+    cacheWritePer1M: 0,
     source: "openai.com/api/pricing",
   },
   "openai-codex:codex-mini-latest": {

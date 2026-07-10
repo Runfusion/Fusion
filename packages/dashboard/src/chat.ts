@@ -29,7 +29,7 @@ import type {
   TaskStore,
 } from "@fusion/core";
 import type { SkillSelectionContext } from "@fusion/engine";
-import { summarizeTitle } from "@fusion/core";
+import { summarizeTitle, FUSION_RUNTIME_SELF_AWARENESS } from "@fusion/core";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
@@ -54,6 +54,7 @@ import {
   createChatTaskDocumentTools,
   createWorkflowAuthoringTools,
   resolveMcpServersForStore,
+  resolveExecutorThinkingLevel,
 } from "@fusion/engine";
 import * as engineModule from "@fusion/engine";
 
@@ -212,7 +213,9 @@ async function ensureEngineReady(): Promise<void> {
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /** Chat system prompt for the AI agent */
-export const CHAT_SYSTEM_PROMPT = `You are a helpful AI assistant integrated into the fn task board system. You help users with questions about their project, code, architecture, and tasks. You have access to project files and can read them to provide informed responses, including referencing specific file paths and line numbers when possible. Response length policy: default to a short, crisp reply (a few sentences or a short bulleted list) that directly answers the user; avoid preamble, restating the question, and filler. If a thorough answer genuinely needs long-form content (for example multi-step plans, design proposals, deep analyses, or long file excerpts), keep the chat reply brief with a one- or two-sentence summary and then send the full write-up via \`fn_send_message\` using \`type: "agent-to-user"\` and \`to_id: "dashboard"\`. That mailbox follow-up must add new substantive detail and must not duplicate the chat reply.`;
+export const CHAT_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}
+
+You are a helpful AI assistant integrated into the fn task board system. You help users with questions about their project, code, architecture, and tasks. You have access to project files and can read them to provide informed responses, including referencing specific file paths and line numbers when possible. Response length policy: default to a short, crisp reply (a few sentences or a short bulleted list) that directly answers the user; avoid preamble, restating the question, and filler. If a thorough answer genuinely needs long-form content (for example multi-step plans, design proposals, deep analyses, or long file excerpts), keep the chat reply brief with a one- or two-sentence summary and then send the full write-up via \`fn_send_message\` using \`type: "agent-to-user"\` and \`to_id: "dashboard"\`. That mailbox follow-up must add new substantive detail and must not duplicate the chat reply.`;
 
 export const CHAT_AGENT_MESSAGE_ROUTING_GUIDANCE = `## Messaging Semantics\n\nYour chat reply is the primary response to the user. Do not also call \`fn_send_message\` with the same content just to mirror your chat response into mailbox.\n\nUse \`fn_send_message\` only when either (a) the user explicitly asks for mailbox/inbox/notification delivery (for example: "send me this in mail", "ntfy me when…", or "leave me a note in my inbox"), or (b) you are sending a genuinely longer follow-up that did not fit in a short chat reply. In either case, send with \`type: "agent-to-user"\` and target the dashboard user alias (\`to_id: "dashboard"\` is preferred), and ensure the mailbox message is additive rather than a duplicate of the chat reply. Never route that as a user/CLI → agent message.`;
 
@@ -1055,6 +1058,10 @@ export class ChatManager {
       | "fallbackModelId"
       | "defaultProvider"
       | "defaultModelId"
+      | "defaultThinkingLevel"
+      | "defaultThinkingLevelOverride"
+      | "executionThinkingLevel"
+      | "executionGlobalThinkingLevel"
       | "chatRoomRecentVerbatimMessages"
       | "chatRoomCompactionFetchLimit"
       | "chatRoomSummaryMaxChars"
@@ -1064,6 +1071,10 @@ export class ChatManager {
       | "fallbackModelId"
       | "defaultProvider"
       | "defaultModelId"
+      | "defaultThinkingLevel"
+      | "defaultThinkingLevelOverride"
+      | "executionThinkingLevel"
+      | "executionGlobalThinkingLevel"
       | "chatRoomRecentVerbatimMessages"
       | "chatRoomCompactionFetchLimit"
       | "chatRoomSummaryMaxChars"
@@ -1154,6 +1165,10 @@ export class ChatManager {
     fallbackModelId?: string;
     defaultProvider?: string;
     defaultModelId?: string;
+    defaultThinkingLevel?: Settings["defaultThinkingLevel"];
+    defaultThinkingLevelOverride?: Settings["defaultThinkingLevelOverride"];
+    executionThinkingLevel?: Settings["executionThinkingLevel"];
+    executionGlobalThinkingLevel?: Settings["executionGlobalThinkingLevel"];
   }> {
     if (!this.getSettings) {
       return {};
@@ -1166,6 +1181,10 @@ export class ChatManager {
         fallbackModelId: settings?.fallbackModelId ?? undefined,
         defaultProvider: settings?.defaultProvider ?? undefined,
         defaultModelId: settings?.defaultModelId ?? undefined,
+        defaultThinkingLevel: settings?.defaultThinkingLevel ?? undefined,
+        defaultThinkingLevelOverride: settings?.defaultThinkingLevelOverride ?? undefined,
+        executionThinkingLevel: settings?.executionThinkingLevel ?? undefined,
+        executionGlobalThinkingLevel: settings?.executionGlobalThinkingLevel ?? undefined,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1706,9 +1725,13 @@ export class ChatManager {
     const roomPrompt = roomPromptParts.join("\n\n");
 
     const responderRuntimeModel = extractRuntimeModel(input.responder.runtimeConfig);
-    const effectiveModelProvider = input.modelProvider ?? responderRuntimeModel.provider;
-    const effectiveModelId = input.modelId ?? responderRuntimeModel.modelId;
     const chatModelSettings = await this.getChatModelSettings();
+    /*
+     * FNXC:GrokCliRouting 2026-07-09-22:10:
+     * Room responders with no explicit send-time or responder runtime model still need the configured chat/project default to reach createResolvedAgentSession. Without forwarding a defaultProvider of grok-cli, the no-visible-key auto-derive seam cannot route to the Grok CLI runtime and pi can surface the direct xAI missing-key error.
+     */
+    const effectiveModelProvider = input.modelProvider ?? responderRuntimeModel.provider ?? chatModelSettings.defaultProvider;
+    const effectiveModelId = input.modelId ?? responderRuntimeModel.modelId ?? chatModelSettings.defaultModelId;
     /*
      * FNXC:ChatModels 2026-07-01-16:42:
      * Room responders should pass configured fallback models even when the room send chose an explicit model. The engine still swaps only for retryable provider/model-selection failures, so an unavailable Sonnet 5 can recover without making ordinary prompt errors ambiguous.
@@ -1775,7 +1798,13 @@ export class ChatManager {
       );
 
       type AgentMessage = { role?: string; type?: string; content?: string | Array<{ type?: string; text?: string }> };
-      const messages = (resolvedSession.session.state.messages as AgentMessage[]) ?? [];
+      /*
+       * FNXC:Chat 2026-07-10-00:00:
+       * Plugin CLI runtime sessions (grok/droid/cursor) expose top-level `messages` and stream via `onText` without a pi-shaped `state`, so room responders must read messages null-safely while preserving pi/openclaw state-backed sessions.
+       */
+      const roomSessionState = resolvedSession.session.state as { messages?: AgentMessage[]; errorMessage?: string } | undefined;
+      const roomTopLevelMessages = (resolvedSession.session as { messages?: AgentMessage[] }).messages;
+      const messages = roomSessionState?.messages ?? roomTopLevelMessages ?? [];
       const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant" || message.type === "assistant");
       let content = "";
       if (typeof lastAssistant?.content === "string") {
@@ -1786,7 +1815,7 @@ export class ChatManager {
           .join("");
       }
 
-      const stateError = (resolvedSession.session.state as { errorMessage?: string } | undefined)?.errorMessage;
+      const stateError = roomSessionState?.errorMessage;
       if (stateError?.trim()) {
         throw new Error(stateError.trim());
       }
@@ -2175,6 +2204,14 @@ export class ChatManager {
       }
 
       const chatModelSettings = await this.getChatModelSettings();
+      /*
+       * FNXC:GrokCliRouting 2026-07-09-22:10:
+       * Model-less Chat/QuickChat sessions must pass the configured default model into the shared engine session helper. This keeps grok-cli defaults on the Grok CLI runtime when Fusion has no visible key instead of bypassing FN-7753/FN-7758 routing by omitting defaultProvider entirely.
+       */
+      effectiveModelProvider ??= chatModelSettings.defaultProvider;
+      effectiveModelId ??= chatModelSettings.defaultModelId;
+      failureContextProvider = effectiveModelProvider;
+      failureContextModelId = effectiveModelId;
       const usesConfiguredDefaultModel =
         requestedModelProvider === chatModelSettings.defaultProvider
         && requestedModelId === chatModelSettings.defaultModelId
@@ -2188,6 +2225,11 @@ export class ChatManager {
         !hasExplicitAgentRuntimeModel
         || usesConfiguredDefaultModel
         || !!(requestedModelProvider && requestedModelId);
+      /*
+       * FNXC:Chat-ThinkingLevel 2026-07-10-00:00:
+       * Model-loop chat sessions apply the per-session thinking level through the engine `defaultThinkingLevel` session option; an empty session value inherits the project/global execution default resolved by resolveExecutorThinkingLevel.
+       */
+      const effectiveThinkingLevel = resolveExecutorThinkingLevel(session.thinkingLevel ?? undefined, chatModelSettings);
 
       const messagingTools = agent?.id && this.messageStore
         ? [
@@ -2240,6 +2282,7 @@ export class ChatManager {
               defaultModelId: effectiveModelId,
             }
           : {}),
+        ...(effectiveThinkingLevel ? { defaultThinkingLevel: effectiveThinkingLevel } : {}),
         ...(allowFallback && chatModelSettings.fallbackProvider && chatModelSettings.fallbackModelId
           ? {
               fallbackProvider: chatModelSettings.fallbackProvider,
@@ -2355,10 +2398,16 @@ export class ChatManager {
         return;
       }
 
-      // Some runtimes (e.g. plugin-backed Codex/openclaw) signal provider failures
-      // by setting session.state.errorMessage rather than throwing. Surface that
-      // as an error event instead of persisting a blank assistant reply.
-      const sessionErrorMessage = (agentResult.session.state as { errorMessage?: unknown }).errorMessage;
+      interface AgentMessage {
+        role: string;
+        content?: string | Array<{ type: string; text: string }>;
+      }
+      /*
+       * FNXC:Chat 2026-07-10-00:00:
+       * Plugin CLI runtime sessions (grok/droid/cursor) expose top-level `messages` and stream via `onText` without a pi-shaped `state`; keep `state.errorMessage` optional so successful streams do not become TypeErrors, while pi/openclaw/hermes provider errors still surface when set.
+       */
+      const agentSessionState = agentResult.session.state as { errorMessage?: unknown; messages?: AgentMessage[] } | undefined;
+      const sessionErrorMessage = agentSessionState?.errorMessage;
       if (typeof sessionErrorMessage === "string" && sessionErrorMessage.trim().length > 0
           && !accumulatedText && !accumulatedThinking && toolCallsAccum.length === 0) {
         const failureInfo = addModelContextToFailureInfo(
@@ -2377,11 +2426,12 @@ export class ChatManager {
 
       // Extract response text from agent state
       let responseText = "";
-      interface AgentMessage {
-        role: string;
-        content?: string | Array<{ type: string; text: string }>;
-      }
-      const lastMessage = (agentResult.session.state.messages as AgentMessage[])
+      /*
+       * FNXC:Chat 2026-07-10-00:00:
+       * Plugin CLI runtimes can omit `state` entirely; use streamed text first, then fall back through state-backed messages and top-level session messages so no-state sessions persist successful replies instead of crashing during extraction.
+       */
+      const agentMessages = agentSessionState?.messages ?? (agentResult.session as { messages?: AgentMessage[] }).messages ?? [];
+      const lastMessage = agentMessages
         .filter((m: AgentMessage) => m.role === "assistant")
         .pop();
 

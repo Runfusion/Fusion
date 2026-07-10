@@ -14,7 +14,7 @@
  * the seam every later planner-oversight subtask reads from.
  */
 
-import type { PlannerOversightLevel, PrInfo, Task } from "@fusion/core";
+import { DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS, type PlannerOversightLevel, type PrInfo, type Task } from "@fusion/core";
 
 /** Alias for the `Task.reviewState` shape without requiring a separate core export. */
 type OverseerTaskReviewState = NonNullable<Task["reviewState"]>;
@@ -53,7 +53,15 @@ export interface OverseerStageObservation {
  *  full `Task` interface. */
 export type OverseerTaskRef = Pick<
   Task,
-  "id" | "column" | "prInfo" | "reviewState" | "paused" | "pausedReason" | "workflowTransitionNotification"
+  | "id"
+  | "column"
+  | "prInfo"
+  | "reviewState"
+  | "paused"
+  | "pausedReason"
+  | "workflowTransitionNotification"
+  | "updatedAt"
+  | "columnMovedAt"
 >;
 
 /**
@@ -127,10 +135,40 @@ export function resolveWatchedStage(task: Partial<OverseerTaskRef> | null | unde
   }
 }
 
+/**
+ * FNXC:PlannerOversight 2026-07-09-00:00:
+ * FN-7743 stall-detection inputs for `deriveSignalAndSources`'s `executor` branch.
+ * Passed in already-resolved (never read from settings inside this pure function,
+ * per the FN-7743 "keep derivation pure and testable" requirement): `now` is an
+ * injectable clock (defaults to `Date.now` at the `observeTask` call site) and
+ * `executorStuckAfterMs` is the resolved `plannerOverseerExecutorStuckAfterMs`
+ * workflow setting value (or its declaration default).
+ */
+export interface ExecutorStallSignalInput {
+  now: () => number;
+  executorStuckAfterMs: number;
+}
+
+/**
+ * FNXC:PlannerOversight 2026-07-09-00:00:
+ * Validates a raw `plannerOverseerExecutorStuckAfterMs` workflow-setting value
+ * (which may be missing/malformed/legacy-orphaned per `resolveEffectiveSettings`'s
+ * never-throw contract) into a safe threshold, degrading to
+ * `DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS` for anything that is not a
+ * finite positive number. Pure, never throws.
+ */
+export function resolveExecutorStuckAfterMs(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+    return raw;
+  }
+  return DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS;
+}
+
 function deriveSignalAndSources(
   taskId: string,
   stage: OverseerWatchedStage,
   task: Partial<OverseerTaskRef>,
+  stallInput: ExecutorStallSignalInput,
 ): { signal: OverseerObservationSignal; reason: string; sources: OverseerSourceLink[] } {
   switch (stage) {
     case "executor": {
@@ -141,6 +179,32 @@ function deriveSignalAndSources(
           sources: [{ kind: "agent-log", ref: taskId }],
         };
       }
+
+      // FNXC:PlannerOversight 2026-07-09-00:00:
+      // FN-7743: a non-paused in-progress task whose executor session has gone
+      // silent (dead/hung agent, no commits/heartbeat) was previously ALWAYS
+      // reported "progressing" forever (FN-7732 symptom) since nothing here
+      // checked staleness. Use `columnMovedAt ?? updatedAt` as the best
+      // available store-backed "last execution activity" proxy at this poll
+      // seam (the live in-session `StuckTaskDetector` heartbeat state is
+      // in-memory-only and not available here). A missing/malformed timestamp
+      // degrades to "progressing" — never fabricate a stall. The reason is
+      // bucketed to whole hours so the FN-7577 `stage|signal|reason` feed dedup
+      // stays effective (it must not embed an ever-changing millisecond value).
+      const activityTimestamp = task.columnMovedAt ?? task.updatedAt;
+      const activityAtMs = activityTimestamp ? Date.parse(activityTimestamp) : NaN;
+      if (Number.isFinite(activityAtMs) && stallInput.executorStuckAfterMs > 0) {
+        const inactiveMs = stallInput.now() - activityAtMs;
+        if (inactiveMs >= stallInput.executorStuckAfterMs) {
+          const inactiveHours = Math.max(1, Math.floor(inactiveMs / 3_600_000));
+          return {
+            signal: "stuck",
+            reason: `Executor stage inactive for over ${inactiveHours}h with no execution activity`,
+            sources: [{ kind: "agent-log", ref: taskId }],
+          };
+        }
+      }
+
       return {
         signal: "progressing",
         reason: "Task is actively executing in-progress work",
@@ -280,8 +344,20 @@ export class PlannerOverseerMonitor {
    * Observe a task's current watched stage and record a gated observation.
    * Returns `null` when the level is `"off"` or when no stage is currently
    * monitorable. Never throws.
+   *
+   * FNXC:PlannerOversight 2026-07-09-00:00:
+   * FN-7743: `options.now`/`options.executorStuckAfterMs` thread the clock and
+   * the resolved executor-stall threshold into the pure `deriveSignalAndSources`
+   * derivation. Both default (`Date.now`, `DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS`)
+   * so existing callers keep working unchanged; the poll seam
+   * (`project-engine.ts#pollPlannerOverseer`) resolves the real workflow-setting
+   * value once per cycle and passes it in explicitly.
    */
-  async observeTask(task: OverseerTaskRef, level: PlannerOversightLevel): Promise<OverseerStageObservation | null> {
+  async observeTask(
+    task: OverseerTaskRef,
+    level: PlannerOversightLevel,
+    options?: { now?: () => number; executorStuckAfterMs?: number },
+  ): Promise<OverseerStageObservation | null> {
     try {
       if (level === "off") {
         return null;
@@ -292,13 +368,15 @@ export class PlannerOverseerMonitor {
         return null;
       }
 
-      const { signal, reason, sources } = deriveSignalAndSources(task.id, stage, task);
+      const now = options?.now ?? Date.now;
+      const executorStuckAfterMs = options?.executorStuckAfterMs ?? DEFAULT_PLANNER_OVERSEER_EXECUTOR_STUCK_AFTER_MS;
+      const { signal, reason, sources } = deriveSignalAndSources(task.id, stage, task, { now, executorStuckAfterMs });
       const observation: OverseerStageObservation = {
         taskId: task.id,
         stage,
         signal,
         oversightLevel: level,
-        observedAt: Date.now(),
+        observedAt: now(),
         reason,
         sources,
       };

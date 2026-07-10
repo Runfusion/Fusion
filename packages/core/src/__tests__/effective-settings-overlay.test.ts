@@ -23,8 +23,10 @@ describe("applyWorkflowSettingsOverlay", () => {
         planningModelId: "workflow-planner-model",
         planningFallbackProvider: "workflow-planner-fallback",
         planningFallbackModelId: "workflow-planner-fallback-model",
+        planningFallbackThinkingLevel: "high",
         validatorFallbackProvider: "workflow-validator-fallback",
         validatorFallbackModelId: "workflow-validator-fallback-model",
+        validatorFallbackThinkingLevel: "high",
         workflowStepTimeoutMs: 900_000,
         runStepsInNewSessions: false,
         maxParallelSteps: undefined,
@@ -38,8 +40,10 @@ describe("applyWorkflowSettingsOverlay", () => {
         "planningModelId",
         "planningFallbackProvider",
         "planningFallbackModelId",
+        "planningFallbackThinkingLevel",
         "validatorFallbackProvider",
         "validatorFallbackModelId",
+        "validatorFallbackThinkingLevel",
       ]),
     });
 
@@ -60,8 +64,10 @@ describe("applyWorkflowSettingsOverlay", () => {
       planningModelId: "workflow-planner-model",
       planningFallbackProvider: "workflow-planner-fallback",
       planningFallbackModelId: "workflow-planner-fallback-model",
+      planningFallbackThinkingLevel: "high",
       validatorFallbackProvider: "workflow-validator-fallback",
       validatorFallbackModelId: "workflow-validator-fallback-model",
+      validatorFallbackThinkingLevel: "high",
       workflowStepTimeoutMs: 10_000,
       runStepsInNewSessions: false,
     });

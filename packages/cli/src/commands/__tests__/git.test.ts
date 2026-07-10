@@ -46,8 +46,20 @@ vi.mock("node:readline/promises", () => ({
   })),
 }));
 
+// FN-7740: `resolveGitCwd` now calls `resolveProjectPathOnly` (which
+// resolves via `resolveProject` internally and closes+evicts the store) so
+// the mock delegates to the same mocked `resolveProject` implementation the
+// tests already configure, keeping existing assertions on `resolveProject`
+// call args meaningful (see project memory: once a command imports
+// `closeProjectStore`/`asLocalProjectContext`-adjacent helpers, tests that
+// only mocked `resolveProject` must stub the newly-imported exports too).
 vi.mock("../../project-context.js", () => ({
   resolveProject: vi.fn(),
+  resolveProjectPathOnly: vi.fn(async (projectName?: string) => {
+    const { resolveProject: resolveProjectMock } = await import("../../project-context.js");
+    const context = await (resolveProjectMock as ReturnType<typeof vi.fn>)(projectName);
+    return context.projectPath;
+  }),
 }));
 
 import { createInterface } from "node:readline/promises";

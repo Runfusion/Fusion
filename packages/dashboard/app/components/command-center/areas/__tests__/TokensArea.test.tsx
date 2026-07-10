@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import { costFor } from "@fusion/core";
 import { TokensArea } from "../TokensArea";
 import type { DateRange } from "../../DateRangePicker";
 
@@ -7,6 +8,8 @@ const apiMock = vi.fn();
 
 vi.mock("../../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => apiMock(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
 }));
 
 vi.mock("../../../ProviderIcon", () => ({
@@ -177,6 +180,28 @@ afterEach(() => {
 });
 
 describe("TokensArea provider model icons", () => {
+  it("renders current OpenAI Codex priced costs as dollars instead of the unavailable sentinel", async () => {
+    const usage = { inputTokens: 1_000_000, outputTokens: 200_000, cachedTokens: 500_000, cacheWriteTokens: 100_000 };
+    const cost = costFor(usage, { provider: "openai-codex", model: "gpt-5.5" });
+    expect(cost).toEqual({ usd: 11.25, unavailable: false, stale: false });
+
+    apiMock.mockResolvedValue({
+      from: "2026-06-08",
+      to: null,
+      groupBy: "model",
+      totals: { ...usage, totalTokens: 1_800_000, nTasks: 1 },
+      cost,
+      series: [{ bucket: "2026-06-18", ...usage, totalTokens: 1_800_000, nTasks: 1, cost }],
+      groups: [{ key: "gpt-5.5", ...usage, totalTokens: 1_800_000, nTasks: 1, cost }],
+    });
+    render(<TokensArea range={range7d} />);
+
+    await screen.findByTestId("cc-area-tokens");
+    expect(screen.getByTestId("cc-tokens-cost")).toHaveTextContent("$11.25");
+    expect(screen.getByTestId("cc-tokens-cost")).not.toHaveTextContent("—");
+    expect(screen.getByTestId("cc-tokens-row-gpt-5.5")).toHaveTextContent("$11.25");
+  });
+
   it("renders inferred provider icons in the per-model table and Tokens by model bars", async () => {
     render(<TokensArea range={range7d} />);
 
@@ -277,5 +302,15 @@ describe("TokensArea provider model icons", () => {
     }
     expect(screen.getByTestId("cc-tokens-row-unknown")).toHaveTextContent("(unknown)");
     expect(screen.getByTestId("cc-tokens-row-(unknown)")).toHaveTextContent("(unknown)");
+  });
+});
+
+describe("FUX-037: TokensArea projectId scoping", () => {
+  it("appends projectId to the tokens request when supplied, and omits it when not", async () => {
+    render(<TokensArea range={range7d} projectId="proj-tokens" />);
+    await screen.findByTestId("cc-tokens-table");
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe(
+      "/command-center/tokens?groupBy=model&granularity=day&from=2026-06-08&projectId=proj-tokens",
+    );
   });
 });

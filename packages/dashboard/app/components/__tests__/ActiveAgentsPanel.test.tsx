@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import type { ReactElement } from "react";
 import i18next from "i18next";
 import { ActiveAgentsPanel } from "../ActiveAgentsPanel";
+import { ToastProvider } from "../../hooks/useToast";
 import type { Agent } from "../../api";
 import { useLiveTranscript } from "../../hooks/useLiveTranscript";
 import esApp from "../../../../i18n/locales/es/app.json";
@@ -19,6 +21,13 @@ vi.mock("../../hooks/useLiveTranscript", () => ({
 }));
 
 const mockUseLiveTranscript = vi.mocked(useLiveTranscript);
+
+// RuntimeFallbackBadge (rendered inside LiveAgentCard) calls useToast() unconditionally,
+// so every mount must be wrapped in a real ToastProvider (see RuntimeFallbackBadge.test.tsx
+// for the reference pattern this replicates).
+function renderPanel(ui: ReactElement) {
+  return render(<ToastProvider>{ui}</ToastProvider>);
+}
 
 const nonEnglishAppCatalogs = [
   ["es", esApp],
@@ -65,7 +74,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     expect(screen.getByText("Processing request...")).toBeInTheDocument();
     expect(screen.getByText("Analyzing code...")).toBeInTheDocument();
@@ -81,7 +90,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} projectId="my-project" />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} projectId="my-project" />);
 
     // Verify the hook was called with the projectId
     expect(mockUseLiveTranscript).toHaveBeenCalledWith("FN-001", "my-project");
@@ -97,7 +106,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     // Verify the hook was called without projectId
     expect(mockUseLiveTranscript).toHaveBeenCalledWith("FN-001", undefined);
@@ -119,7 +128,7 @@ describe("ActiveAgentsPanel", () => {
         lastHeartbeatAt: new Date().toISOString(),
       } as Agent;
 
-      const futureRender = render(<ActiveAgentsPanel agents={[futureAgent]} />);
+      const futureRender = renderPanel(<ActiveAgentsPanel agents={[futureAgent]} />);
       const futureBadge = futureRender.container.querySelector(".live-agent-card-next-heartbeat");
       expect(futureBadge, `${locale} next-heartbeat badge`).toBeInTheDocument();
       expect(futureBadge?.textContent?.trim(), `${locale} next-heartbeat text`).not.toBe("");
@@ -135,7 +144,7 @@ describe("ActiveAgentsPanel", () => {
         lastHeartbeatAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
       } as Agent;
 
-      const overdueRender = render(<ActiveAgentsPanel agents={[overdueAgent]} />);
+      const overdueRender = renderPanel(<ActiveAgentsPanel agents={[overdueAgent]} />);
       const overdueBadge = overdueRender.container.querySelector(".live-agent-card-next-heartbeat");
       expect(overdueBadge, `${locale} heartbeat-overdue badge`).toBeInTheDocument();
       expect(overdueBadge?.textContent?.trim(), `${locale} heartbeat-overdue text`).not.toBe("");
@@ -161,7 +170,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     expect(screen.getByText("Connecting...")).toBeInTheDocument();
   });
@@ -181,7 +190,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     expect(screen.getByText("Waiting for output...")).toBeInTheDocument();
   });
@@ -201,7 +210,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     expect(screen.getByText("Idle — no task assigned")).toBeInTheDocument();
     expect(screen.queryByText("Connecting...")).toBeNull();
@@ -222,7 +231,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     expect(screen.getByText("Starting...")).toBeInTheDocument();
     expect(screen.queryByText("Connecting...")).toBeNull();
@@ -257,7 +266,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent1, mockAgent2]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent1, mockAgent2]} />);
 
     expect(screen.getByText("Agent 1 output")).toBeInTheDocument();
     expect(screen.getByText("Agent 2 output")).toBeInTheDocument();
@@ -287,7 +296,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     // Should show the first 20 entries (most recent first)
     // With reversed entries, slice(0, 20) gives us Line 24 through Line 5
@@ -296,7 +305,7 @@ describe("ActiveAgentsPanel", () => {
   });
 
   it("returns null when agents array is empty", async () => {
-    const { container } = render(<ActiveAgentsPanel agents={[]} />);
+    const { container } = renderPanel(<ActiveAgentsPanel agents={[]} />);
     expect(container.firstChild).toBeNull();
   });
 
@@ -343,7 +352,7 @@ describe("ActiveAgentsPanel", () => {
       } as Agent,
     ];
 
-    const { container } = render(<ActiveAgentsPanel agents={agents} />);
+    const { container } = renderPanel(<ActiveAgentsPanel agents={agents} />);
 
     expect(screen.getByText("Triage Agent")).toBeInTheDocument();
     expect(screen.getByText((_, el) => el?.textContent === "FN-TRIAGE · Planning")).toBeInTheDocument();
@@ -368,7 +377,7 @@ describe("ActiveAgentsPanel", () => {
     } as Agent;
 
     const handleSelect = vi.fn();
-    render(<ActiveAgentsPanel agents={[mockAgent]} onAgentSelect={handleSelect} />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent]} onAgentSelect={handleSelect} />);
 
     fireEvent.click(screen.getByRole("button", { name: /select agent test agent/i }));
 
@@ -390,7 +399,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    const { container } = render(<ActiveAgentsPanel agents={[mockAgent]} />);
+    const { container } = renderPanel(<ActiveAgentsPanel agents={[mockAgent]} />);
 
     // The streaming dot should be present when connected
     const streamingDot = container.querySelector(".live-agent-streaming-dot");
@@ -421,7 +430,7 @@ describe("ActiveAgentsPanel", () => {
       lastHeartbeatAt: new Date().toISOString(),
     } as Agent;
 
-    render(<ActiveAgentsPanel agents={[mockAgent1, mockAgent2]} projectId="shared-project" />);
+    renderPanel(<ActiveAgentsPanel agents={[mockAgent1, mockAgent2]} projectId="shared-project" />);
 
     // Both agents should receive the same projectId
     expect(mockUseLiveTranscript).toHaveBeenCalledWith("FN-001", "shared-project");

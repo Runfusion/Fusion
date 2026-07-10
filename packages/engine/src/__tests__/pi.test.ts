@@ -724,6 +724,142 @@ describe("session failure diagnostics", () => {
     expect(sessionWithThinking.setThinkingLevel).toHaveBeenCalledWith("xhigh");
   });
 
+  it("applies fallback thinking level after prompt-time fallback swap", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+
+    const primarySetThinkingLevel = vi.fn();
+    const fallbackSetThinkingLevel = vi.fn();
+    const primarySession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: vi.fn().mockRejectedValue(new Error("429 Too Many Requests")),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: primarySetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: fallbackSetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: primarySession } as any)
+      .mockResolvedValueOnce({ session: fallbackSession } as any);
+
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test fallback thinking",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      defaultThinkingLevel: "low",
+      fallbackThinkingLevel: "high",
+    });
+
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+
+    expect(primarySetThinkingLevel).toHaveBeenCalledWith("low");
+    expect(fallbackSetThinkingLevel).toHaveBeenCalledWith("high");
+    expect(fallbackSetThinkingLevel).not.toHaveBeenCalledWith("low");
+  });
+
+  it("uses default thinking level for fallback swap when fallback thinking is unset", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+
+    const primarySetThinkingLevel = vi.fn();
+    const fallbackSetThinkingLevel = vi.fn();
+    const primarySession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: vi.fn().mockRejectedValue(new Error("429 Too Many Requests")),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: primarySetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: fallbackSetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: primarySession } as any)
+      .mockResolvedValueOnce({ session: fallbackSession } as any);
+
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test fallback default thinking",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      defaultThinkingLevel: "low",
+    });
+
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+
+    expect(fallbackSetThinkingLevel).toHaveBeenCalledWith("low");
+  });
+
+  it("disables thinking when fallback session rejects thinking/reasoning compatibility", async () => {
+    const createAgentSessionMock = vi.mocked(createAgentSession);
+
+    const primarySetThinkingLevel = vi.fn();
+    const fallbackSetThinkingLevel = vi.fn(() => {
+      throw new Error("400 cannot specify both 'thinking' and 'reasoning_effort'");
+    });
+    const primarySession = {
+      model: { provider: "test", id: "primary-model" },
+      prompt: vi.fn().mockRejectedValue(new Error("429 Too Many Requests")),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: primarySetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+
+    const fallbackSession = {
+      model: { provider: "test", id: "fallback-model" },
+      prompt: vi.fn().mockResolvedValue(undefined),
+      subscribe: vi.fn(),
+      dispose: vi.fn(),
+      setThinkingLevel: fallbackSetThinkingLevel,
+      sessionFile: undefined,
+    } as unknown as AgentSession;
+
+    createAgentSessionMock.mockReset();
+    createAgentSessionMock
+      .mockResolvedValueOnce({ session: primarySession } as any)
+      .mockResolvedValueOnce({ session: fallbackSession } as any);
+
+    const { session } = await createFnAgent({
+      cwd: "/test/project",
+      systemPrompt: "Test fallback thinking conflict",
+      defaultProvider: "test",
+      defaultModelId: "primary-model",
+      fallbackProvider: "test",
+      fallbackModelId: "fallback-model",
+      defaultThinkingLevel: "low",
+      fallbackThinkingLevel: "high",
+    });
+
+    await expect((session as any).promptWithFallback("Run task")).resolves.toBeUndefined();
+
+    expect(fallbackSetThinkingLevel).toHaveBeenCalledTimes(1);
+    expect(fallbackSetThinkingLevel).toHaveBeenCalledWith("high");
+  });
+
   it("forwards materialized MCP servers into session creation and prompt options for supported providers", async () => {
     const createAgentSessionMock = vi.mocked(createAgentSession);
     const session = {

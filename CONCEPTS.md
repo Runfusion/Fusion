@@ -296,7 +296,9 @@ A server-owned PTY bound to a task or chat entity. It survives client disconnect
 
 ### Waiting-on-input
 The CLI Session state where the agent is blocked on the human (permission prompt, clarifying question), as distinct from idle-because-done. Entering it fires the notification configured on the workflow node; the task neither advances nor fails while in it.
-## Testing
+
+### Runtime Self-Awareness Preamble
+The shared, cacheable prompt preamble (`FUSION_RUNTIME_SELF_AWARENESS` in `packages/core/src/agent-prompts.ts`) prepended to the stable layer of every standard-toolset conversational base prompt (chat, both heartbeat personas, executor). Tells the agent it runs as a hosted process inside the Fusion daemon that ends when the daemon stops, that shutdown-crossing workflows (updates/installs/migrations) must be handed off as a standalone user-run artifact rather than orchestrated live, and points it at the maintained docs for capability grounding. See `docs/agents.md` → "Runtime Self-Awareness Preamble" for the full clause set.
 
 ### Merge Gate
 The minimal set of merge-blocking PR checks: lint, typecheck, build, a Boot Smoke, and a small curated engine test suite. The gate is the only test signal that can block a PR; all other tests run non-blocking after merge.

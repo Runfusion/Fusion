@@ -3,6 +3,13 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type React from "react";
 import type { Task } from "@fusion/core";
 import { GraphTaskNode } from "../GraphTaskNode";
+/*
+FNXC:DependencyGraphTests 2026-07-08-13:10:
+GraphTaskNode renders the REAL TaskCard; TaskCard's RuntimeFallbackBadge calls the dashboard's useToast() hook, and this file has no ToastProvider. Mock useToast (same as the dashboard's own TaskCard.test.tsx) to avoid "useToast must be used within ToastProvider".
+*/
+vi.mock("@fusion/dashboard/app/hooks/useToast", () => ({
+  useToast: () => ({ addToast: vi.fn(), removeToast: vi.fn(), toasts: [] }),
+}));
 
 function task(id = "FN-1"): Task {
   return { id, description: id, column: "todo", dependencies: [], steps: [], currentStep: 0, log: [] } as Task;

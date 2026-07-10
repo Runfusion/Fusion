@@ -67,7 +67,6 @@
       "mergeWorktreeReacquired": "Merge Worktree Reacquired",
       "nearDuplicateFlagged": "Near-Duplicate Flagged",
       "projectIsolationTransition": "Project Isolation Transition",
-      "releaseAuthorizationRequired": "Release Authorization Required",
       "settingsUpdated": "Settings Updated",
       "taskCreated": "Task Created",
       "taskDeleted": "Task Deleted",
@@ -163,6 +162,10 @@
       "commandExecution": {
         "description": "Runs shell commands and scripts.",
         "label": "Command execution"
+      },
+      "fileScope": {
+        "description": "Extending a task's declared File Scope beyond its initial spec at runtime.",
+        "label": "File Scope expansion"
       },
       "fileWriteDelete": {
         "description": "Create, edit, or remove files in the workspace.",
@@ -1313,6 +1316,7 @@
     "newChatTitle": "New Chat",
     "noAgentsAvailable": "No agents available",
     "noConversationsYet": "No conversations yet",
+    "noMessage": "No message",
     "noMessages": "No messages",
     "noMessagesYet": "No messages yet. Start the conversation!",
     "noRoomsYet": "No rooms yet.",
@@ -3964,7 +3968,8 @@
       "medium": "Medium",
       "minimal": "Minimal",
       "off": "Off",
-      "xhigh": "Very High"
+      "xhigh": "Very High",
+      "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
       "selectExecutor": "Select executor model…",
@@ -4000,6 +4005,8 @@
     "preset": "Preset",
     "reviewerModel": "Reviewer Model",
     "reviewerPlaceholder": "Select reviewer model…",
+    "thinkingDefault": "Default ({{level}})",
+    "thinkingModel": "Thinking",
     "title": "Select Models",
     "useDefault": "Use default",
     "usingDefault": "Using default"
@@ -7396,6 +7403,11 @@
       "skipped": "Branch reattachment skipped for {{id}}: {{reason}}",
       "skippedResult": "Reattachment skipped: {{reason}}"
     },
+    "bypassReview": {
+      "btn": "Bypass failed review",
+      "promptMessage": "Reason for bypassing the failed pre-merge review step (required, audit-logged):",
+      "success": "Bypassed failed review lane for {{id}}"
+    },
     "cacheBreakdown": "(read {{read}} / write {{write}} / input {{input}})",
     "cacheHitRatio": "Cache hit ratio:",
     "cacheRead": "Cache read",
@@ -7640,7 +7652,6 @@
       "rejected": "Plan rejected — {{id}} returned to Planning for replanning",
       "rejectMessage": "Reject this plan? The specification will be discarded and regenerated.",
       "rejectTitle": "Reject Plan",
-      "releaseAuthorizationHold": "Awaiting release authorization — add the explicit authorization marker to the spec and resubmit.",
       "replanning": "Replanning {{id}}…"
     },
     "pr": {
@@ -8073,7 +8084,6 @@
     "attachedFile": "Attached {{fileName}} to {{taskId}}",
     "attachFileFailed": "Failed to attach {{fileName}}: {{error}}",
     "awaitingApproval": "Awaiting Approval",
-    "awaitingReleaseAuthorization": "Awaiting Release Authorization",
     "baseBranch": "Base",
     "blockedByTooltip": "Blocked by {{taskId}} (file overlap)",
     "branch": "Branch",

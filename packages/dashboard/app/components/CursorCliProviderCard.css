@@ -5,6 +5,20 @@
   align-items: center;
 }
 
+/*
+FNXC:CursorCli 2026-07-08-00:00:
+Compact card body must be inset to match `.auth-provider-header`'s horizontal padding
+(`var(--space-sm) var(--space-md)`), mirroring `.auth-provider-cli-details-body` used by the
+Claude CLI card (`0 16px 12px` desktop / `0 14px 12px` mobile). Without this, the status line and
+binary-path control render flush against the card's left/right/bottom edges. See FN-7695.
+*/
+.cursor-cli-provider-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: 0 var(--space-md) var(--space-sm);
+}
+
 .cursor-cli-binary-path-control {
   display: grid;
   gap: var(--space-xs);
@@ -44,5 +58,10 @@
   .cursor-cli-binary-path-row .btn,
   .cursor-cli-binary-path-input {
     width: 100%;
+  }
+
+  /* FNXC:CursorCli 2026-07-08-00:00: mirror `.auth-provider-cli-details-body`'s 14px mobile inset. */
+  .cursor-cli-provider-card__body {
+    padding: 0 var(--space-sm) var(--space-sm);
   }
 }

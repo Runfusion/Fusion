@@ -11,6 +11,7 @@ import {
 type CapturedSession = {
   defaultProvider?: string;
   defaultModelId?: string;
+  defaultThinkingLevel?: string;
 };
 
 function captureSession(output = '{"verdict":"APPROVE","notes":""}'): { last?: CapturedSession } {
@@ -19,6 +20,7 @@ function captureSession(output = '{"verdict":"APPROVE","notes":""}'): { last?: C
     holder.last = {
       defaultProvider: opts.defaultProvider,
       defaultModelId: opts.defaultModelId,
+      defaultThinkingLevel: opts.defaultThinkingLevel,
     };
 
     const listeners: Array<(event: any) => void> = [];
@@ -230,6 +232,35 @@ describe("executor workflow-step model resolution", () => {
       defaultProvider: "mock",
       defaultModelId: "scripted",
     });
+  });
+
+  it("resolves workflow-step thinking level before task and settings defaults", async () => {
+    await expect(
+      runStepWithSettings(
+        {
+          defaultThinkingLevel: "low",
+        },
+        {
+          task: { thinkingLevel: "medium" },
+          step: { thinkingLevel: "high" },
+        },
+      ),
+    ).resolves.toMatchObject({ defaultThinkingLevel: "high" });
+
+    await expect(
+      runStepWithSettings(
+        {
+          defaultThinkingLevel: "low",
+        },
+        {
+          task: { thinkingLevel: "medium" },
+        },
+      ),
+    ).resolves.toMatchObject({ defaultThinkingLevel: "medium" });
+
+    await expect(
+      runStepWithSettings({ defaultThinkingLevel: "low" }),
+    ).resolves.toMatchObject({ defaultThinkingLevel: "low" });
   });
 
   it("logs workflow-step model rows with thinking effort before override annotations", async () => {

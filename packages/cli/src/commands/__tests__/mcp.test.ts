@@ -52,6 +52,20 @@ vi.mock("@fusion/core", async (importActual) => {
 });
 
 vi.mock("../../project-context.js", () => ({
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => Promise<void> } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort, mirrors production closeProjectStore
+    }
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
   resolveProject: vi.fn(async () => ({
     projectId: "proj-1",
     projectName: "demo",

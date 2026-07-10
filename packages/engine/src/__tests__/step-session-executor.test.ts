@@ -1399,7 +1399,15 @@ describe("StepSessionExecutor", () => {
         agentStore: { saveRun } as any,
       } as any);
 
-      const results = await executor.executeAll();
+      // FNXC:EngineTests 2026-07-09-06:00:
+      // executeAll retries the failing step 3× with sleep() delays between attempts. With
+      // useFakeTimers({ shouldAdvanceTime: true }) these sleeps advance REAL wall-clock time if
+      // the test awaits executeAll directly (was 22.6s, ballooning under CI load and busting the
+      // shard-2 watchdog). Fast-forward the retry sleeps via fake timers like the sibling retry
+      // tests below, so the loop completes in milliseconds.
+      const resultsPromise = executor.executeAll();
+      await vi.advanceTimersByTimeAsync(60_000);
+      const results = await resultsPromise;
 
       expect(results).toEqual([{ stepIndex: 0, success: false, error: "boom", retries: 3, tokenUsage: undefined }]);
       const terminalRun = saveRun.mock.calls.at(-1)?.[0];

@@ -3,15 +3,27 @@ import { promisify } from "node:util";
 
 const execAsync = promisify(exec);
 import { createInterface } from "node:readline/promises";
-import { resolveProject } from "../project-context.js";
+import { resolveProjectPathOnly } from "../project-context.js";
 
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00:
+ * FN-7740 audit finding: `git` commands never touch the board DB — they only
+ * need the resolved `projectPath` for the `execAsync` `cwd`. The prior
+ * `resolveProject(...).projectPath` call still constructed (and, for
+ * registered/CWD-detected projects, cached) a `TaskStore` that was never
+ * closed, leaking a SQLite/WAL handle that keeps the CLI event loop alive
+ * after the command's real work (a subprocess `git` call) is done. Use
+ * `resolveProjectPathOnly` (FN-7731/FN-7738), which resolves the path AND
+ * closes+evicts the store it constructs internally. No board access here →
+ * no `retryOnLock` needed.
+ */
 async function resolveGitCwd(projectName?: string): Promise<string> {
   if (projectName) {
-    return (await resolveProject(projectName)).projectPath;
+    return resolveProjectPathOnly(projectName);
   }
 
   try {
-    return (await resolveProject(undefined)).projectPath;
+    return await resolveProjectPathOnly(undefined);
   } catch {
     return process.cwd();
   }

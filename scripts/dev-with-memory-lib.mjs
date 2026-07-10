@@ -101,22 +101,22 @@ export function getPrebuildCommand(mode) {
       src), the running process and any dist-resolving consumer (plugins,
       sub-imports, a later non-dev `fn`/`pnpm local`) load built dist. Leaving
       engine/core dist stale is exactly how landed fixes (FN-6644/6647/6648,
-      etc.) silently failed to run for ~2 days. pnpm builds these in dependency
-      order (core → engine → dashboard); dashboard `build` runs the vite client
-      bundle + server tsc, so the UI is rebuilt too.
+      etc.) silently failed to run for ~2 days.
+
+      FNXC:DevWorkflow 2026-07-10-15:40:
+      FN-7779/stale-plugin-dist: the app-package build alone left plugin dist/
+      stale — a source-only plugin fix (the Grok CLI-flag fix behind "messages
+      aren't sending") never took effect until a manual rebuild. The client
+      prebuild is now an orchestrator (scripts/dev-prebuild-client.mjs) that
+      first runs the fast core → engine → dashboard build (dependency order;
+      dashboard `build` also runs the vite client bundle + server tsc) and then
+      incrementally rebuilds ONLY changed plugins via the content-hash skip
+      cache. A single node command keeps the spawn contract cross-platform.
       */
       return {
-        command: "pnpm",
-        args: [
-          "--filter",
-          "@fusion/core",
-          "--filter",
-          "@fusion/engine",
-          "--filter",
-          "@fusion/dashboard",
-          "build",
-        ],
-        label: "core + engine + dashboard build",
+        command: "node",
+        args: ["scripts/dev-prebuild-client.mjs"],
+        label: "core + engine + dashboard + changed plugins build",
       };
     case "none":
     case "auto":

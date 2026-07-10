@@ -68,6 +68,14 @@ describe("ProviderIcon", () => {
     expect(svg.parentElement).toHaveStyle({ color: "var(--provider-cursor-cli)" });
   });
 
+  it("renders grok-cli icon reusing the xAI brand mark", () => {
+    render(<ProviderIcon provider="grok-cli" />);
+    const svg = screen.getByTestId("xai-icon");
+    expect(svg).toBeInTheDocument();
+    expect(screen.getByLabelText("Grok — via Grok CLI")).toBeInTheDocument();
+    expect(svg.parentElement).toHaveStyle({ color: "var(--text)" });
+  });
+
   it("normalizes PI-Claude-CLI provider name to lowercase alias", () => {
     render(<ProviderIcon provider="PI-Claude-CLI" />);
     const svg = screen.getByTestId("claude-cli-icon");

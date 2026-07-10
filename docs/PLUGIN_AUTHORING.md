@@ -779,7 +779,7 @@ This catches stale `dist/` drift: `resolvePluginEntryPath` prefers `bundled.js` 
 
 <!-- FNXC:PluginLoader 2026-07-07-00:00: FN-7637 ported bundled-plugin auto-install into a shared, host-agnostic @fusion/core helper so the desktop embedded runtime auto-installs bundled runtime plugins the same way the CLI dashboard/serve/daemon commands do. Documented here so plugin authors and host maintainers know both hosts share one code path and only differ in bundle-directory resolution. -->
 
-The install/update/fail-soft-load logic for `BUNDLED_PLUGIN_IDS` (Dependency Graph, Hermes, OpenClaw, Paperclip, Cursor, CLI Printing Press, Compound Engineering, Linear Import, Reports, WhatsApp Chat, Roadmap) lives once in `packages/core/src/plugins/bundled-plugin-install.ts` as `ensureBundledPluginInstalled(pluginStore, pluginLoader, pluginId, getCandidatePluginDirs)`. The only host-specific input is `getCandidatePluginDirs` — the ordered list of directories to probe for a plugin's `manifest.json` — because the CLI and desktop stage bundled plugins differently:
+The install/update/fail-soft-load logic for `BUNDLED_PLUGIN_IDS` (Dependency Graph, Hermes, OpenClaw, Paperclip, Cursor, Grok, CLI Printing Press, Compound Engineering, Linear Import, Reports, WhatsApp Chat, Roadmap) lives once in `packages/core/src/plugins/bundled-plugin-install.ts` as `ensureBundledPluginInstalled(pluginStore, pluginLoader, pluginId, getCandidatePluginDirs)`. The only host-specific input is `getCandidatePluginDirs` — the ordered list of directories to probe for a plugin's `manifest.json` — because the CLI and desktop stage bundled plugins differently:
 
 - **CLI** (`packages/cli/src/plugins/bundled-plugin-install.ts`): resolves `<cli>/dist/plugins/<manifest-id>/` (plus source/dev fallbacks) from its own `import.meta.url`. The CLI module is now a thin adapter that supplies this resolver and re-exports the same public surface (`ensureBundledPluginInstalled`, `ensureBundledDependencyGraphPluginInstalled`, `ensureBundledCursorRuntimePluginInstalled`, `isBundledPluginId`, `BUNDLED_PLUGIN_IDS`, `resolvePluginEntryPath`) that `dashboard.ts`, `serve.ts`, and `daemon.ts` already depend on — no behavior change for CLI hosts.
 - **Desktop** (`packages/desktop/src/bundled-plugin-dirs.ts`): resolves each manifest id (`fusion-plugin-<short-name>`) to its staged `@fusion-plugin-examples/<short-name>` npm package directory via `import.meta.resolve` against the package's `"."` export, which works whether `node_modules` is flat/hoisted (the packaged `pnpm deploy` closure) or nested (workspace dev). These plugins are workspace dependencies of `@fusion/dashboard`, so `packages/desktop/scripts/workspace-tools.ts#stageDesktopDeploy` already materializes their `manifest.json` + `dist/index.js` into the desktop closure — no desktop-specific build/staging changes were needed. A bundled id desktop does not depend on (currently `reports`, `whatsapp-chat`, `linear-import`) resolves to no candidate directories and is correctly reported as `missing-bundle`, matching the CLI's "not found in this build" behavior for an unstaged plugin.
@@ -1495,6 +1495,8 @@ const skills: PluginSkillContribution[] = [
 
 `skillFiles` are relative to the plugin root. `skillId` must be kebab-case.
 
+Plugin skills are discovered per requesting project: the Skills view and workflow editor surface `plugin:<id>` skills only when that plugin is enabled for that project's plugin state, even if the daemon was started from a different directory.
+
 ## 16. Registering Workflow Steps
 
 Plugins can ship workflow step templates that users can enable like built-in quality gates.
@@ -1785,7 +1787,14 @@ Each contribution uses the `PluginPromptContribution` shape:
 - `surface`: one of the five supported surfaces
 - `content`: prompt text to inject
 - `position?`: `"append"` (default) or `"prepend"`
-- `condition?`: optional human-readable condition note
+- `condition?`: optional host-enforced gate evaluated against this plugin's per-project effective settings
+
+`condition` supports a deliberately small, injection-safe grammar:
+
+- `settings["key"] === "value"`
+- `settings["key"] !== "value"`
+
+Single or double quotes are accepted for both the setting key and string literal, and whitespace around `settings`, brackets, and operators is ignored. Fusion resolves effective settings by applying each `settingsSchema` `defaultValue` first, then overlaying stored per-project plugin settings. A missing or whitespace-only condition is treated as absent and includes the contribution; malformed or unsupported conditions fail closed and exclude the contribution. Comparisons are string-strict: non-string or missing setting values are not equal to a string literal, so `===` is false and `!==` is true.
 
 ```typescript
 import type { PluginPromptContributions } from "@fusion/plugin-sdk";
@@ -1796,8 +1805,8 @@ const promptContributions: PluginPromptContributions = {
     {
       surface: "executor-system",
       position: "append",
-      content: "Always summarize browser-derived evidence with source URLs.",
-      condition: "When browser tooling is available",
+      content: "Prefer .NET minimal APIs for route examples.",
+      condition: 'settings["api-style"] === "minimal-apis"',
     },
   ],
 };

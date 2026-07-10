@@ -11,7 +11,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PrEntity, Settings, TaskStore } from "@fusion/core";
 import { resolveAgentPrompt } from "@fusion/core";
-import { createResolvedAgentSession, resolveMergerSessionModel } from "./agent-session-helpers.js";
+import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel } from "./agent-session-helpers.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import { promptWithFallback } from "./pi.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
@@ -125,7 +125,7 @@ export function makePrResponseAgentRunner(
       defaultModelId: model.modelId,
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
-      defaultThinkingLevel: settings.defaultThinkingLevel,
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
       settings,
       taskId,
       mcpServers,

@@ -212,6 +212,79 @@ describe("useTerminalSessions", () => {
     });
   });
 
+  describe("bootstrap sequencing (FN-7686)", () => {
+    it("does not serialize auto-create behind a never-resolving session list on a fresh open", async () => {
+      // FNXC:Terminal 2026-07-08-10:00:
+      // Regression for FN-7686: on a fresh open (no persisted kb-terminal-tabs),
+      // the list-validation round trip has nothing to validate (there are no
+      // local tabs), so it must not block auto-create. This test holds
+      // listTerminalSessions() permanently pending to prove the auto-create
+      // path does not wait on it — asserting observable sequencing, not just
+      // that createTerminalSession was eventually called.
+      localStorageMock.getItem.mockReturnValue(null);
+      mockListTerminalSessions.mockReturnValue(new Promise(() => {})); // never resolves
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-fast",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      const { result } = renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Auto-create must complete even though listTerminalSessions never settles.
+      await waitFor(() => {
+        expect(result.current.tabs.length).toBe(1);
+      });
+      expect(result.current.activeTab?.sessionId).toBe("session-fast");
+      expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+    });
+
+    it("still awaits session-list validation before auto-create when tabs are persisted", async () => {
+      // Reload-with-persisted-tabs case: list validation IS decision-relevant
+      // (must know which sessionIds still exist), so auto-create must remain
+      // gated behind it. This guards against an overly-broad fix that skips
+      // validation unconditionally.
+      const storedTabs = [
+        {
+          id: "tab-1",
+          sessionId: "session-stale",
+          title: "bash",
+          isActive: true,
+          createdAt: Date.now(),
+        },
+      ];
+      localStorageMock.getItem.mockReturnValue(JSON.stringify(storedTabs));
+      let resolveList: (val: unknown[]) => void;
+      mockListTerminalSessions.mockReturnValue(
+        new Promise((resolve) => {
+          resolveList = resolve;
+        }),
+      );
+      mockCreateTerminalSession.mockResolvedValue({
+        sessionId: "session-new",
+        shell: "/bin/bash",
+        cwd: "/project",
+      });
+
+      renderHook(() => useTerminalSessions(TEST_PROJECT_ID));
+
+      // Give pending microtasks a chance to flush; auto-create must NOT have
+      // fired yet because list validation (decision-relevant here) is still pending.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(mockCreateTerminalSession).not.toHaveBeenCalled();
+
+      // Resolve the list call with no matching sessions (stale tab) — now
+      // auto-create should proceed.
+      await act(async () => {
+        resolveList!([]);
+      });
+
+      await waitFor(() => {
+        expect(mockCreateTerminalSession).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
   describe("creating additional tabs", () => {
     it("creates new tab with fresh session when createTab is called", async () => {
       localStorageMock.getItem.mockReturnValue(null);

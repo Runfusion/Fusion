@@ -758,7 +758,10 @@ describe("executeHeartbeat", () => {
       },
     });
 
-    expect(pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, { pausedByAgentId: "agent-001" });
+    // FN-7736: heartbeat pauseForApproval must mirror executor.ts and stamp
+    // the canonical AWAITING_APPROVAL_PAUSE_REASON on the task, not just the
+    // agent's pauseReason.
+    expect(pauseTask).toHaveBeenCalledWith("FN-001", true, undefined, { pausedByAgentId: "agent-001", pausedReason: "awaiting-approval" });
     expect((store.updateAgentState as any)).toHaveBeenCalledWith("agent-001", "paused");
     expect((store.updateAgent as any)).toHaveBeenCalledWith("agent-001", { pauseReason: "awaiting-approval" });
   });

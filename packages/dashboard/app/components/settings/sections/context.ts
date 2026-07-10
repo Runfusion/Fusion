@@ -23,8 +23,10 @@ export interface ModelLane {
   label: string;
   globalProviderKey: keyof GlobalSettings;
   globalModelKey: keyof GlobalSettings;
+  globalThinkingKey?: keyof GlobalSettings;
   projectProviderKey: keyof Settings;
   projectModelKey: keyof Settings;
+  projectThinkingKey?: keyof Settings;
   helperText: string;
   fallbackOrder: string;
 }

@@ -35,14 +35,18 @@ describe("FN-4224 GitHub tracking header layout", () => {
 
     const css = loadAllAppCss();
 
+    /*
+    FNXC:TaskDetailCSS 2026-07-08-13:00:
+    The github/gitlab tracking header rules were consolidated into a shared selector list (.detail-github-tracking-section .detail-source-header, .detail-gitlab-tracking-section .detail-source-header {…}), so the selector is no longer immediately followed by `{`. Allow the selector list (comma + sibling selector) between the tracked selector and the brace via [^{]* while still pinning the layout contract (flex-wrap/align-items/min-width).
+    */
     expect(css).toMatch(
-      /\.detail-github-tracking-section\s+\.detail-source-header\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*align-items:\s*center;[^}]*min-width:\s*0;/,
+      /\.detail-github-tracking-section\s+\.detail-source-header[^{]*\{[^}]*flex-wrap:\s*nowrap;[^}]*align-items:\s*center;[^}]*min-width:\s*0;/,
     );
     expect(css).toMatch(
-      /\.detail-github-tracking-section\s+\.detail-source-summary\s*\{[^}]*flex:\s*1 1 auto;[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*0;/,
+      /\.detail-github-tracking-section\s+\.detail-source-summary[^{]*\{[^}]*flex:\s*1 1 auto;[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*0;/,
     );
     expect(css).toMatch(
-      /@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.detail-github-tracking-section\s+\.detail-source-header\s*\{[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*0;[^}]*\}[\s\S]*?\.detail-github-tracking-section\s+\.detail-source-summary\s*\{[^}]*flex:\s*1 1 auto;[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*0;[^}]*\}/,
+      /@media[^{]*\(max-width:\s*768px\)[^{]*\{[\s\S]*?\.detail-github-tracking-section\s+\.detail-source-header[^{]*\{[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*0;[^}]*\}[\s\S]*?\.detail-github-tracking-section\s+\.detail-source-summary[^{]*\{[^}]*flex:\s*1 1 auto;[^}]*flex-wrap:\s*nowrap;[^}]*min-width:\s*0;[^}]*\}/,
     );
   });
 });

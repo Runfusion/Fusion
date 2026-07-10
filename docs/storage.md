@@ -76,7 +76,8 @@
 
 - `artifacts` is the first-class metadata registry for generated or uploaded task artifacts. Rows store ID, `type` (`document`, `image`, `video`, `audio`, or `other`), title/description, MIME type, size, author identity/type, optional task linkage, metadata JSON, textual `content`, a relative `uri`, and timestamps; binary bytes are not stored in SQLite.
 - `TaskStore.registerArtifact()` writes task-scoped binary payloads under `<rootDir>/.fusion/tasks/{ID}/artifacts/` and task-less registry payloads under `<rootDir>/.fusion/artifacts/`, then records a relative `artifacts/<file>` URI in SQLite. If the DB insert fails after a binary write, the store removes the orphaned file before surfacing the error.
-- Inline text/document artifacts may store `content` directly in SQLite and therefore have no media file. The dashboard media route streams `GET /api/artifacts/:id/media` from disk when `uri` is present, or returns inline `content` with the persisted MIME type when no `uri` exists.
+- Image task attachments (`image/png`, `image/jpeg`, `image/gif`, `image/webp`) are bridged into the artifact registry by `TaskStore.addAttachment()` as `image` rows with `metadata.source: "attachment"` and a relative `attachments/<file>` URI. This keeps one copy of the bytes under `<rootDir>/.fusion/tasks/{ID}/attachments/` while making the image discoverable through artifact list APIs and the Documents/Task Artifacts galleries. Non-image attachments remain attachment-only. Deleting an attachment also deletes its bridged artifact row before removing the attachment file so `/api/artifacts/:id/media` does not point at a deleted attachment.
+- Inline text/document artifacts may store `content` directly in SQLite and therefore have no media file. The dashboard media route streams `GET /api/artifacts/:id/media` from disk when `uri` is present, accepting task-scoped artifact URIs under `artifacts/` and bridged image-attachment URIs under `attachments/`, or returns inline `content` with the persisted MIME type when no `uri` exists.
 - `getArtifact(id)` returns metadata by ID, `getArtifacts(taskId)` returns active-task artifacts newest-first, and `listArtifacts(...)` is the cross-agent query path with type/author/task/search filters and pagination. List reads hide artifacts whose parent task is soft-deleted while preserving task-less artifacts.
 - Task-linked artifact registration requires an active, non-archived task. Archived tasks are read-only for artifact writes; soft-deleted or missing tasks are rejected.
 - Retention follows the existing task lifecycle rather than a separate artifact policy: soft-deleted parent tasks keep artifact rows/files for forensics but normal live-reader APIs hide them; hard deletion from the active `tasks` table cascades artifact metadata through the `taskId` foreign key, and archive cleanup removes the task directory that contains task-scoped artifact binaries. Task-less artifacts live under `<rootDir>/.fusion/artifacts/` and are not tied to task archival cleanup.
@@ -296,6 +297,7 @@ API endpoints reviewed:
 | `defaultModelId` | Global | `GET/PUT /api/settings/global` | Default model id |
 | `fallbackProvider` | Global | `GET/PUT /api/settings/global` | Fallback model provider |
 | `fallbackModelId` | Global | `GET/PUT /api/settings/global` | Fallback model id |
+| `fallbackThinkingLevel` | Global | `GET/PUT /api/settings/global` | Fallback model reasoning effort; unset inherits |
 | `defaultThinkingLevel` | Global | `GET/PUT /api/settings/global` | Default reasoning effort |
 | `ntfyEnabled` | Global | `GET/PUT /api/settings/global` | Notifications enabled |
 | `ntfyTopic` | Global | `GET/PUT /api/settings/global` | Ntfy topic |
@@ -347,12 +349,14 @@ API endpoints reviewed:
 | `executionModelId` | Project | `GET/PUT /api/settings` | AI model ID for task execution |
 | `planningProvider` | Project | `GET/PUT /api/settings` | Planning model provider |
 | `planningModelId` | Project | `GET/PUT /api/settings` | Planning model id |
-| `planningFallbackProvider` | Project | `GET/PUT /api/settings` | Planning fallback provider |
-| `planningFallbackModelId` | Project | `GET/PUT /api/settings` | Planning fallback model id |
+| `planningFallbackProvider` | Workflow | `fn_workflow_settings` / workflow settings API | Planning fallback provider |
+| `planningFallbackModelId` | Workflow | `fn_workflow_settings` / workflow settings API | Planning fallback model id |
+| `planningFallbackThinkingLevel` | Workflow | `fn_workflow_settings` / workflow settings API | Planning fallback reasoning effort; unset inherits |
 | `validatorProvider` | Project | `GET/PUT /api/settings` | Validator model provider |
 | `validatorModelId` | Project | `GET/PUT /api/settings` | Validator model id |
-| `validatorFallbackProvider` | Project | `GET/PUT /api/settings` | Validator fallback provider |
-| `validatorFallbackModelId` | Project | `GET/PUT /api/settings` | Validator fallback model id |
+| `validatorFallbackProvider` | Workflow | `fn_workflow_settings` / workflow settings API | Validator fallback provider |
+| `validatorFallbackModelId` | Workflow | `fn_workflow_settings` / workflow settings API | Validator fallback model id |
+| `validatorFallbackThinkingLevel` | Workflow | `fn_workflow_settings` / workflow settings API | Validator fallback reasoning effort; unset inherits |
 | `modelPresets` | Project | `GET/PUT /api/settings` | Reusable model presets |
 | `autoSelectModelPreset` | Project | `GET/PUT /api/settings` | Auto-preset by task size |
 | `defaultPresetBySize` | Project | `GET/PUT /api/settings` | Size→preset mapping |
@@ -381,6 +385,7 @@ API endpoints reviewed:
 | `titleSummarizerModelId` | Project | `GET/PUT /api/settings` | Title model id |
 | `titleSummarizerFallbackProvider` | Project | `GET/PUT /api/settings` | Title fallback provider |
 | `titleSummarizerFallbackModelId` | Project | `GET/PUT /api/settings` | Title fallback model id |
+| `titleSummarizerFallbackThinkingLevel` | Project | `GET/PUT /api/settings` | Title fallback reasoning effort; unset inherits |
 | `scripts` | Project | `GET/PUT /api/settings` | Named script map |
 | `setupScript` | Project | `GET/PUT /api/settings` | Named setup script reference |
 | `insightExtractionEnabled` | Project | `GET/PUT /api/settings` | Insight extraction toggle |
@@ -667,3 +672,57 @@ Hydrated worktree DB: 4 tasks, 12 task_documents, 3 artifacts
 A concrete recovered failure mode now covered by tests: when a worktree directory exists but its local `.fusion/` scratch state is missing, opening `DatabaseSync(<worktree>/.fusion/fusion.db)` can fail with `unable to open database file`. Hydration now performs destination bootstrap (`mkdir -p .fusion` + schema init) and retries the destination open once before degrading.
 
 Failure policy remains strict non-blocking for genuinely unrecoverable cases: hydration warnings are logged, but worktree creation/execution continues. Examples that still intentionally degrade include source DB missing, destination write-permission failures, and irreconcilable schema/open errors after bootstrap retry. Canonical task data remains the root project TaskStore DB; if an agent needs non-hydrated rows immediately, `fn_task_show` remains the canonical fallback path.
+
+## Silent board-mutation write loss (FN-7730)
+
+**Symptom:** board mutations issued through `fn_task_update` (and other pi-extension write
+tools invoked from an executor agent session) appeared to succeed, but the change was never
+visible on the project-root `.fusion/fusion.db` that the engine and dashboard read from — with
+no error surfaced on any write path.
+
+**Root cause — a DB-path resolution mismatch, not a WAL/durability defect.** Investigation
+(see task FN-7730's `research` document for the full trace) disproved the WAL `-shm`-unavailable
+and uncheckpointed-WAL/`.recover` hypotheses on a normally-writable POSIX filesystem: both
+failure conditions were reproduced directly and confirmed to throw a loud SQLite error rather
+than silently drop data with the `node:sqlite` bindings and `sqlite3` CLI version this repo
+requires. The real defect was in **project-root resolution** for pi-extension tool calls
+(`packages/cli/src/extension.ts`'s `resolveProjectRoot(cwd)` → `getProjectRootFromWorktree`
+in `packages/core/src/pi-extensions.ts`):
+
+1. `getProjectRootFromWorktree` matches the standard `.worktrees/<id>` and
+ `.fusion/worktrees/<id>` path shapes via hardcoded regex. A project with a non-default
+ `settings.worktreesDir` (an arbitrary relative/absolute location — common in containerized
+ deployments) doesn't match either pattern.
+2. The only remaining resolution path, `getProjectRootFromGitLinkedWorktree`, shelled out to
+ `git rev-parse --git-common-dir`/`--git-dir` via `spawnSync`. A failing `git` invocation —
+ missing binary in a minimal container image, Docker's "detected dubious ownership"
+ `safe.directory` refusal on a bind-mounted repo owned by a different UID, or any other
+ non-zero exit — returned `null` with **no thrown error** (by design, so a non-worktree `cwd`
+ doesn't explode), but with no non-git fallback.
+3. `resolveProjectRoot`'s caller then fell back to a naive upward walk for the nearest ancestor
+ with a `.fusion` directory. Because the task's own worktree already has a locally-hydrated
+ `.fusion/fusion.db` (see "Per-Worktree DB Hydration" above), the walk matched **immediately**
+ at the worktree itself, never reaching the true project root.
+4. Every subsequent write tool call for that agent session then silently landed in the
+ throwaway, one-way-hydrated worktree-local `fusion.db` — never synced back to the project
+ root — with zero error surfaced.
+
+**Fix:** `getProjectRootFromGitLinkedWorktree` now resolves the linked-worktree relationship
+directly from git's own on-disk metadata first — the worktree's `.git` file (`gitdir: <path>`)
+plus its `commondir` sidecar, the same contract `git worktree add` writes — via plain
+filesystem reads. This has **no subprocess dependency and is unaffected by the `git` binary's
+availability or Docker UID/`safe.directory` permission checks**. The `git rev-parse` CLI path is
+kept as a secondary fallback for any layout the filesystem parser can't resolve, preserving
+prior behavior for those edge cases.
+
+**Operator guidance:** if you suspect a write went to the wrong file, confirm which path a tool
+session resolves by checking `.fusion/fusion.db` for a `mtime` change immediately after the
+write in both the project root and (if applicable) the task's worktree directory. A
+non-standard `settings.worktreesDir` combined with a broken `git` CLI in the execution
+environment (missing binary, or `git config --global --add safe.directory '*'` not set for a
+bind-mounted repo owned by a different UID) was the confirmed trigger; setting
+`safe.directory` correctly or installing `git` resolves the underlying condition even without
+this fix, and this fix additionally removes the dependency on that condition being addressed.
+There is no data-recovery step needed once the resolver is fixed — no rows were corrupted, they
+were written to (and remain recoverable from) the worktree-local `.fusion/fusion.db` if it still
+exists on disk.

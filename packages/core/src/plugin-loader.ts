@@ -705,11 +705,20 @@ export class PluginLoader extends EventEmitter<{
   // ── Load All ──────────────────────────────────────────────────────
 
   /**
-   * Load all enabled plugins in dependency order.
+   * Load all plugins that are enabled for this PluginStore's project scope in dependency order.
    */
   async loadAllPlugins(): Promise<{ loaded: number; errors: number }> {
-    const enabled = await this.options.pluginStore.listPlugins({ enabled: true });
-    const sorted = this.resolveLoadOrder(enabled);
+    const plugins = await this.options.pluginStore.listPlugins();
+    for (const installation of plugins) {
+      if (!installation.enabled) {
+        /*
+         * FNXC:PluginSkills 2026-07-10-00:00:
+         * Disabled-at-load plugins must be visible in normal daemon logs. Issue #1981 was expensive to diagnose because loadAllPlugins silently omitted disabled plugins, hiding that the loader was using the wrong project enablement scope.
+         */
+        this.log.warn(`Skipped disabled plugin during loadAllPlugins: ${installation.id}`);
+      }
+    }
+    const sorted = this.resolveLoadOrder(plugins.filter((plugin) => plugin.enabled));
 
     let loaded = 0;
     let errors = 0;
@@ -719,13 +728,15 @@ export class PluginLoader extends EventEmitter<{
         await this.loadPlugin(installation.id);
         loaded++;
       } catch (err) {
-        if ((err as { code?: string }).code !== "PLUGIN_DISABLED") {
-          errors++;
-          this.log.error(
-            `Failed to load plugin ${installation.id}:`,
-            err,
-          );
+        if ((err as { code?: string }).code === "PLUGIN_DISABLED") {
+          this.log.warn(`Skipped disabled plugin during loadAllPlugins: ${installation.id}`);
+          continue;
         }
+        errors++;
+        this.log.error(
+          `Failed to load plugin ${installation.id}:`,
+          err,
+        );
       }
     }
 

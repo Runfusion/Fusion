@@ -56,4 +56,31 @@ describe("clearTerminalWorkflowStepFailures", () => {
     expect(clearTerminalWorkflowStepFailures(undefined)).toEqual([]);
     expect(clearTerminalWorkflowStepFailures([])).toEqual([]);
   });
+
+  /*
+  FNXC:WorkflowStepResults 2026-07-09-00:50:
+  FN-7727: explicit retry clean-slate decision — dropping a failed/advisory_failure
+  entry that carries `priorAttempts` history must not throw, and the whole entry
+  (including its history) is dropped, since retry is a deliberate clean slate
+  distinct from the self-healing recovery re-run path (which goes through
+  upsertWorkflowStepResult instead and preserves history).
+  */
+  it("does not throw on and fully drops a failed entry carrying priorAttempts history", () => {
+    const withHistory = result({
+      workflowStepId: "code-review",
+      status: "failed",
+      priorAttempts: [
+        result({ workflowStepId: "code-review", status: "failed", startedAt: "T1" }),
+        result({ workflowStepId: "code-review", status: "advisory_failure", startedAt: "T2" }),
+      ],
+    });
+    const input = [
+      result({ workflowStepId: "plan-review", status: "passed" }),
+      withHistory,
+    ];
+    expect(() => clearTerminalWorkflowStepFailures(input)).not.toThrow();
+    expect(clearTerminalWorkflowStepFailures(input)).toEqual([
+      result({ workflowStepId: "plan-review", status: "passed" }),
+    ]);
+  });
 });

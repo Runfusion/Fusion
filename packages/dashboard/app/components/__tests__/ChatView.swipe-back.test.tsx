@@ -65,6 +65,23 @@ function HistoryHarness({ children }: { children: ReactNode }) {
 
 const selectSessionSpy = vi.fn();
 
+function mockRoomsIdle() {
+  mockUseChatRooms.mockReturnValue({
+    rooms: [],
+    roomsLoading: false,
+    roomsError: null,
+    activeRoom: null,
+    activeRoomMembers: [],
+    messages: [],
+    messagesLoading: false,
+    selectRoom: vi.fn(),
+    createRoom: vi.fn(),
+    deleteRoom: vi.fn(),
+    sendRoomMessage: vi.fn(),
+    refreshRooms: vi.fn(),
+  });
+}
+
 function StatefulChatView() {
   const [activeSessionId, setActiveSessionId] = useState("");
   const handleSelectSession = (id: string) => {
@@ -99,20 +116,39 @@ function StatefulChatView() {
     agentsMap: new Map(),
   }));
 
-  mockUseChatRooms.mockReturnValue({
-    rooms: [],
-    roomsLoading: false,
-    roomsError: null,
-    activeRoom: null,
-    activeRoomMembers: [],
-    messages: [],
+  mockRoomsIdle();
+
+  return <ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />;
+}
+
+function RestoredActiveSessionChatView() {
+  mockUseChat.mockReturnValue({
+    sessions: [session],
+    activeSession: session,
+    sessionsLoading: false,
+    messages: [{ id: "msg-001", sessionId: session.id, role: "assistant", content: "Restored", createdAt: "2026-04-08T00:00:00.000Z" }],
     messagesLoading: false,
-    selectRoom: vi.fn(),
-    createRoom: vi.fn(),
-    deleteRoom: vi.fn(),
-    sendRoomMessage: vi.fn(),
-    refreshRooms: vi.fn(),
+    isStreaming: false,
+    streamingText: "",
+    streamingThinking: "",
+    streamingToolCalls: [],
+    selectSession: selectSessionSpy,
+    createSession: vi.fn(),
+    archiveSession: vi.fn(),
+    deleteSession: vi.fn(),
+    sendMessage: vi.fn(),
+    stopStreaming: vi.fn(),
+    pendingMessages: [],
+    clearPendingMessage: vi.fn(),
+    loadMoreMessages: vi.fn(),
+    hasMoreMessages: false,
+    searchQuery: "",
+    setSearchQuery: vi.fn(),
+    filteredSessions: [session],
+    refreshSessions: vi.fn(),
+    agentsMap: new Map(),
   });
+  mockRoomsIdle();
 
   return <ChatView projectId="proj-123" addToast={vi.fn()} experimentalFeatures={{ chatRooms: true }} />;
 }
@@ -152,6 +188,20 @@ describe("ChatView mobile swipe-back", () => {
       expect(screen.getByText("Start a new conversation")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+  });
+
+  it("does not push a phantom mobile nav entry for a restored active session while the list is visible", async () => {
+    mockViewport("mobile");
+
+    render(
+      <HistoryHarness>
+        <RestoredActiveSessionChatView />
+      </HistoryHarness>,
+    );
+
+    expect(screen.getByTestId("chat-session-session-001")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-back-btn")).not.toBeInTheDocument();
+    expect(window.history.pushState).not.toHaveBeenCalled();
   });
 
   it("does not push a nav entry on desktop selection", async () => {

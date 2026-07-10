@@ -4,6 +4,7 @@ import type { ToastType } from "../../../hooks/useToast";
 import { useTranslation } from "react-i18next";
 import { ClaudeCliProviderCard } from "../../ClaudeCliProviderCard";
 import { CursorCliProviderCard } from "../../CursorCliProviderCard";
+import { GrokCliProviderCard } from "../../GrokCliProviderCard";
 import { LlamaCppProviderCard } from "../../LlamaCppProviderCard";
 import { ProviderIcon } from "../../ProviderIcon";
 import { PluginSlot } from "../../PluginSlot";
@@ -13,6 +14,7 @@ import { OAuthManualCodeForm } from "../../OAuthManualCodeForm";
 import { CustomProvidersSection } from "../../CustomProvidersSection";
 import { copyTextToClipboard } from "../../../utils/copyToClipboard";
 import { appendTokenQuery } from "../../../auth";
+import { refreshModelsCache } from "../../../hooks/useModelsCache";
 export interface AuthenticationSectionData {
     projectId?: string;
     addToast: (message: string, type?: ToastType) => void;
@@ -81,7 +83,7 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
     const visibleAuthProviders = hasSeparatedAnthropicProvider
         ? authProviders.filter((p) => p.id !== "anthropic")
         : authProviders;
-    const isSupportedCliProvider = (provider: AuthProvider) => provider.id === "claude-cli" || provider.id === "cursor-cli" || provider.id === "llama-cpp";
+    const isSupportedCliProvider = (provider: AuthProvider) => provider.id === "claude-cli" || provider.id === "cursor-cli" || provider.id === "grok-cli" || provider.id === "llama-cpp";
     /*
     FNXC:ProviderAuth 2026-07-02-12:20:
     Authentication ordering must sort supported CLI and non-CLI provider cards in one list so Cursor CLI or llama.cpp cannot split Claude CLI from Anthropic subscription/API-key entries.
@@ -91,20 +93,32 @@ export function AuthenticationSection({ auth }: AuthenticationSectionProps) {
         .sort(compareAuthProviderDisplayOrder);
     const authenticatedProviders = sortedProviders.filter((p) => p.authenticated);
     const unauthenticatedProviders = sortedProviders.filter((p) => !p.authenticated);
+    /*
+    FNXC:ModelCatalog 2026-07-08-00:00:
+    FN-7710: A CLI provider toggle (Cursor, Grok, Claude CLI, llama.cpp) must refresh the
+    shared model catalog so newly-enabled/disabled `*-cli` models appear in — or disappear
+    from — every live picker (Quick Entry, Task Detail, New Agent, Workflow editor, etc.)
+    without the user needing to navigate to Settings. `onToggled` previously only called
+    `loadAuthStatus()`, which refreshes this panel's own provider list but never touches the
+    shared `useModelsCache()` cache other pickers read from. All four CLI cards share this one
+    `onToggled` handler so the fix applies uniformly — no per-card duplication — and both the
+    enable and disable transitions call it (the cards invoke `onToggled` on every toggle result).
+    */
+    const handleCliProviderToggled = () => {
+        void loadAuthStatus();
+        void refreshModelsCache();
+    };
     const renderCliProviderCard = (provider: AuthProvider) => {
         if (provider.id === "claude-cli") {
-            return (<ClaudeCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={() => {
-                    void loadAuthStatus();
-                }}/>);
+            return (<ClaudeCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
         }
         if (provider.id === "cursor-cli") {
-            return (<CursorCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={() => {
-                    void loadAuthStatus();
-                }}/>);
+            return (<CursorCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
         }
-        return (<LlamaCppProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={() => {
-                void loadAuthStatus();
-            }}/>);
+        if (provider.id === "grok-cli") {
+            return (<GrokCliProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
+        }
+        return (<LlamaCppProviderCard key={provider.id} compact authenticated={provider.authenticated} onToggled={handleCliProviderToggled}/>);
     };
     const showAuthenticatedGroup = authenticatedProviders.length > 0;
     const showAvailableGroup = unauthenticatedProviders.length > 0;

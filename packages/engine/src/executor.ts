@@ -6,12 +6,14 @@ import { setImmediate as setImmediateCb } from "node:timers";
 // Internal git plumbing intentionally bypasses sandbox backends.
 const execAsync = promisify(exec);
 
+const WORKFLOW_THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
+
 import { delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult } from "@fusion/core";
+import type { TaskStore, Task, TaskDetail, TaskTokenUsage, StepStatus, Settings, WorkflowStep, MissionStore, Slice, AgentState, AgentCapability, RunMutationContext, AgentHeartbeatConfig, Agent, AgentMemoryInclusionMode, ProjectSettings, MergeResult, WorkflowIrNode, WorkflowIrNodeKind, WorkflowStepResult as CoreWorkflowStepResult, ThinkingLevel } from "@fusion/core";
 import { getUnmetSchedulingDependencies } from "./scheduler.js";
-import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, isSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID } from "@fusion/core";
+import { RetryStormError, TaskDeletedError, serializeRetryStormError, isExperimentalFeatureEnabled, resolveWorkflowIrForTask, resolveColumnAgentBinding, resolveEffectiveAgent, instanceNodeId, getWorkflowExtensionRegistry, getBuiltinWorkflow, parseNoOpCompletionMarker, allowsAutoMergeProcessing, resolveEffectiveAutoMerge, isLiveSharedBranchGroupMemberIntegration, resolveMaxAutoMergeRetries, resolveOptionalStepRevisionBudget, resolveOptionalReviewRevisionBudget, COMPLETION_SUMMARY_NODE_ID, upsertWorkflowStepResult, AWAITING_APPROVAL_PAUSE_REASON, THINKING_LEVELS, AgentStore } from "@fusion/core";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import type { TaskStep, WorkflowIr, WorkflowFieldDefinition, WorkflowColumnAgent, EffectiveAgentInput, WorkflowWorkEngineDispatchResult } from "@fusion/core";
@@ -36,6 +38,7 @@ import { observeWorkflowParity, WORKFLOW_INTERPRETER_DUAL_OBSERVE_FLAG } from ".
 import {
   FOREACH_ACTIVE_CONTEXT_KEY,
   SEAM_GOVERNING_NODE_CONTEXT_KEY,
+  SEAM_THINKING_LEVEL_CONTEXT_KEY,
   SPLIT_ACTIVE_CONTEXT_KEY,
   type ForeachActiveContext,
   type WorkflowLegacySeams,
@@ -65,6 +68,7 @@ import {
   loadWorkspaceConfig,
   type WorkspaceConfig,
   type RunCommandResult,
+  FUSION_RUNTIME_SELF_AWARENESS,
 } from "@fusion/core";
 import { findWorktreeUser, getConflictedFiles } from "./merger.js";
 import {
@@ -83,6 +87,10 @@ import {
   createResolvedAgentSession,
   extractRuntimeHint,
   resolveExecutorSessionModel,
+  resolveExecutorThinkingLevel,
+  resolveExecutorFallbackThinkingLevel,
+  resolveValidatorThinkingLevel,
+  resolveValidatorFallbackThinkingLevel,
 } from "./agent-session-helpers.js";
 import { buildSessionSkillContext } from "./session-skill-context.js";
 import type { SkillSelectionContext } from "./skill-resolver.js";
@@ -209,6 +217,7 @@ import {
   createTaskDocumentReadTool as sharedCreateTaskDocumentReadTool,
   createTaskDocumentWriteTool as sharedCreateTaskDocumentWriteTool,
   createTaskPromptWriteTool as sharedCreateTaskPromptWriteTool,
+  createTaskFileScopeAddTool as sharedCreateTaskFileScopeAddTool,
   createTaskLogTool as sharedCreateTaskLogTool,
   createWorkflowListTool as sharedCreateWorkflowListTool,
   createWorkflowGetTool as sharedCreateWorkflowGetTool,
@@ -1319,7 +1328,9 @@ Agents must not run the full/workspace-wide test suite by default; targeted/pack
 FNXC:ExecutorPrompt 2026-07-05-00:35:
 FN-7608: a `require-approval` gate previously only parked the single tool call (soft rejection + task/agent paused in the store) while the turn-ending rules below forbade ending a turn without another tool call, so the model was effectively instructed to hunt for ungated workarounds (re-issuing the same bash, probing read-only equivalents, fn_web_fetch/fn_task_attach bypasses) instead of stopping. The engine now actually suspends the in-flight session when a gate resolves to wait-for-approval (see executor.ts buildActionGateContext.pauseForApproval), so the prompt must carve out waiting on a pending approval as a legitimate turn end and explicitly forbid probing for alternatives. This clause must stay byte-identical with EXECUTOR_PROMPT_TEXT in packages/core/src/agent-prompts.ts.
 */
-const EXECUTOR_SYSTEM_PROMPT = `You are a task execution agent for "fn", an AI-orchestrated task board.
+const EXECUTOR_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}
+
+You are a task execution agent for "fn", an AI-orchestrated task board.
 
 You are working in a git worktree isolated from the main branch. Your job is to implement the task described in the PROMPT.md specification you're given.
 
@@ -1479,6 +1490,7 @@ Executors must not move the workflow of the task they are executing unless the u
 - Read "Context to Read First" files before starting
 - Follow the "Do NOT" section strictly — these are hard constraints, not suggestions
 - If tests, lint, build, or typecheck fail and the fix requires touching code outside the declared File Scope, fix those failures directly and keep the repo green
+- When you must edit files beyond the declared File Scope to complete this task, call \`fn_task_file_scope_add\` to add them to the File Scope as you go — keep the declared scope in sync with what you actually change so your edits are not stranded by the scope-aware squash merge
 - Use \`fn_task_create\` for genuinely separate follow-up work, not for mandatory fixes required to make this task land cleanly
 - Update documentation listed in "Must Update" and check "Check If Affected"
 - NEVER delete, remove, or gut modules, interfaces, settings, exports, or test files outside your File Scope
@@ -1558,7 +1570,7 @@ The tool prevents your session from being killed by the inactivity watchdog duri
 - Marking a step done before required review/tooling gates are satisfied`;
 
 /** Resolve the executor system prompt from settings, falling back to the hardcoded constant. */
-function getExecutorSystemPrompt(settings: Settings): string {
+export function getExecutorSystemPrompt(settings: Settings): string {
   const customPrompt = resolveAgentPrompt("executor", settings.agentPrompts);
   const basePrompt = customPrompt || EXECUTOR_SYSTEM_PROMPT;
   const sections = [
@@ -1712,6 +1724,8 @@ export class TaskExecutor {
   private activeWorkflowStepSessionSeenSteeringIds = new Map<string, Set<string>>();
   /** Active configured-command abort controllers keyed by task. */
   private activeConfiguredCommandControllers = new Map<string, Set<AbortController>>();
+  /** Lazily-created root-project reader used only when an execution lookup is handed an agents-less worktree store. */
+  private authoritativeAssignedAgentStore: AgentStore | null = null;
   /** Active workflow-graph runner abort controllers keyed by task. */
   private activeWorkflowGraphAbortControllers = new Map<string, AbortController>();
   /**
@@ -2274,7 +2288,16 @@ export class TaskExecutor {
       },
       pauseForApproval: async ({ approvalRequestId, decision }) => {
         if (taskId) {
-          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId });
+          /*
+          FNXC:ApprovalHold 2026-07-09-00:10:
+          FN-7736: stamp the canonical AWAITING_APPROVAL_PAUSE_REASON on the
+          task (not just the agent) so recovery/oversight code can durably
+          recognize this hold via isTaskBlockedOnApproval -- previously only
+          `paused: true` was set with no reason, which self-healing's
+          autoReboundPausedScopeDecay could rebound before the operator ever
+          decided.
+          */
+          await this.store.pauseTask(taskId, true, this.getRunContextFor(taskId), { pausedByAgentId: actorId, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
           await this.store.logEntry(
             taskId,
             `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
@@ -2788,6 +2811,41 @@ export class TaskExecutor {
           await this.execute(taskForExecution);
         })().catch((err) =>
           executorLog.error(`Failed to start ${task.id}:`, err),
+        );
+      } else if (to === "archived") {
+        /*
+        FNXC:WorkflowLifecycle 2026-07-09-00:05:
+        Archived is terminal, so it must release every active-session registry entry the
+        task holds. Plan Review / other workflow-step and step-session sessions run while
+        the task is in triage/planning/todo (not in-progress), so the old
+        `from === "in-progress"`-only disposal branch below never fired for them — the
+        registry entry (activeSessions / activeStepExecutors / activeWorkflowStepSessions,
+        keyed on the shared project browse root) leaked past archive and blocked a
+        successor task from acquiring the same session path with
+        ActiveSessionPathHeldByForeignTaskError (FN-7717 / NEXT-508 -> NEXT-433). We
+        deliberately do NOT do this for to === "done" / "in-review": those columns
+        legitimately hold ai-merge / workspace-repo-land merge leases that must survive
+        the transition (FN-6736 / Phase C/D merge-lease guarantees).
+
+        This branch is checked BEFORE `from === "in-progress"` (and handles it too — a
+        task can be archived directly from in-progress via fn_task_archive, a single
+        `task:moved` event with no intermediate todo hop). Ordering the plain
+        `from === "in-progress"`-only branch first would let that direct
+        in-progress → archived transition fall into the narrower branch and skip the
+        leaked-entry sweep below, re-opening the exact class of leak this fix closes for
+        that one origin column. `awaitAbortInFlightTaskWork` here is the same call the
+        in-progress branch makes (superset of its cleanup), so no case regresses.
+        */
+        this.trackTaskDisposal(
+          task.id,
+          this.awaitAbortInFlightTaskWork(task.id, "task archived").then(() => {
+            // Belt-and-suspenders sweep: clear any registry entry that survived the
+            // abort above because its in-memory session map was already empty
+            // (a leaked entry with no live session to abort).
+            for (const path of activeSessionRegistry.pathsForTask(task.id)) {
+              activeSessionRegistry.unregisterPath(path);
+            }
+          }),
         );
       } else if (from === "in-progress") {
         this.trackTaskDisposal(
@@ -4439,12 +4497,33 @@ export class TaskExecutor {
     return activeRun !== null;
   }
 
+  private async getAuthoritativeAssignedAgent(
+    assignedAgentId: string | null | undefined,
+  ): Promise<Agent | null> {
+    const normalizedId = assignedAgentId?.trim();
+    if (!normalizedId) return null;
+
+    const configuredAgent = await this.options.agentStore?.getAgent(normalizedId).catch(() => null) ?? null;
+    if (configuredAgent) return configuredAgent;
+
+    /*
+    FNXC:ModelResolution 2026-07-10-00:00:
+    Task execution sessions must honor the assigned permanent agent's runtimeConfig like chat sessions do. If the live executor was handed an agents-less worktree AgentStore, fall back to the authoritative project `.fusion` AgentStore instead of letting `resolveExecutorSessionModel` see an empty runtimeConfig and silently drift to the pi built-in model.
+    */
+    try {
+      this.authoritativeAssignedAgentStore ??= new AgentStore({ rootDir: join(this.rootDir, ".fusion"), taskStore: this.store });
+      await this.authoritativeAssignedAgentStore.init();
+      return await this.authoritativeAssignedAgentStore.getAgent(normalizedId).catch(() => null);
+    } catch (err: unknown) {
+      executorLog.warn(`Failed to read assigned agent ${normalizedId} from authoritative project AgentStore: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
   private async getAssignedAgentRuntimeConfig(
     assignedAgentId: string | null | undefined,
   ): Promise<Record<string, unknown> | undefined> {
-    const normalizedId = assignedAgentId?.trim();
-    if (!normalizedId || !this.options.agentStore) return undefined;
-    const agent = await this.options.agentStore.getAgent(normalizedId).catch(() => null);
+    const agent = await this.getAuthoritativeAssignedAgent(assignedAgentId);
     return (agent?.runtimeConfig ?? undefined) as Record<string, unknown> | undefined;
   }
 
@@ -4761,6 +4840,12 @@ export class TaskExecutor {
    *  session build, and cleared by the seam afterward. Keyed by task id. */
   private graphSeamGoverningNodeId = new Map<string, string>();
 
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Execute and step-execute seam nodes can pin reasoning effort for the implementation session; keep it per graph run so session creation applies node/step > task > settings precedence.
+   */
+  private graphSeamThinkingLevel = new Map<string, ThinkingLevel>();
+
   /** Tasks currently being orchestrated by the graph runner. Process-wide for
    *  the same reason as executingTaskLock (FN-4811): duplicate execute()
    *  invocations can arrive from different TaskExecutor instances in one
@@ -5002,12 +5087,15 @@ export class TaskExecutor {
           if (typeof this.store.updateTask !== "function") return;
           try {
             const live = await this.store.getTask(taskId);
-            const existing = Array.isArray(live?.workflowStepResults)
-              ? [...live.workflowStepResults]
-              : [];
-            const idx = existing.findIndex((r) => r.workflowStepId === result.workflowStepId);
-            if (idx >= 0) existing[idx] = result;
-            else existing.push(result);
+            /*
+            FNXC:WorkflowStepResults 2026-07-09-00:25:
+            FN-7727: route through the shared, pure upsert helper instead of a
+            bare `existing[idx] = result` replace-in-place — a self-healing
+            recovery re-run of this same node (e.g. code-review sent back for
+            fix) must preserve the prior `status:"failed"` entry's history in
+            `priorAttempts` rather than silently overwriting it.
+            */
+            const existing = upsertWorkflowStepResult(live?.workflowStepResults, result);
             await this.store.updateTask(taskId, { workflowStepResults: existing }, this.getRunContextFor(taskId));
           } catch {
             // Result recording is additive visibility — never affect the run.
@@ -5087,6 +5175,7 @@ export class TaskExecutor {
       this.graphColumnAgentResolver.delete(task.id);
       this.graphUnattendedRuns.delete(task.id);
       this.graphSeamGoverningNodeId.delete(task.id);
+      this.graphSeamThinkingLevel.delete(task.id);
       this.graphExecuteSelfRequeued.delete(task.id);
       // Per-instance keys: clear every instance slot owned by this task.
       const ctxPrefix = `${task.id}:`;
@@ -5775,6 +5864,7 @@ export class TaskExecutor {
     stepIndex: number,
     instanceId?: string,
     governingNodeId?: string,
+    thinkingLevel?: ThinkingLevel,
   ): Promise<{ success: boolean; error?: string }> {
     const active = this.foreachActiveForTask(task.id, instanceId);
     /*
@@ -5806,6 +5896,9 @@ export class TaskExecutor {
       if (typeof governingNodeId === "string") {
         this.graphSeamGoverningNodeId.set(task.id, governingNodeId);
       }
+      if (thinkingLevel) {
+        this.graphSeamThinkingLevel.set(task.id, thinkingLevel);
+      }
       phase = this.runImplementationPhase(task);
       this.graphStepRunOnce.set(task.id, phase);
       void phase
@@ -5814,6 +5907,9 @@ export class TaskExecutor {
           // Clear only our own stamp — a rework re-run may have installed a new one.
           if (typeof governingNodeId === "string" && this.graphSeamGoverningNodeId.get(task.id) === governingNodeId) {
             this.graphSeamGoverningNodeId.delete(task.id);
+          }
+          if (thinkingLevel && this.graphSeamThinkingLevel.get(task.id) === thinkingLevel) {
+            this.graphSeamThinkingLevel.delete(task.id);
           }
         });
     }
@@ -6383,11 +6479,16 @@ export class TaskExecutor {
         if (typeof governingNodeId === "string") {
           this.graphSeamGoverningNodeId.set(seamTask.id, governingNodeId);
         }
+        const seamThinkingLevel = context?.[SEAM_THINKING_LEVEL_CONTEXT_KEY];
+        if (typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)) {
+          this.graphSeamThinkingLevel.set(seamTask.id, seamThinkingLevel as ThinkingLevel);
+        }
         let result: { taskDone: boolean; modifiedFiles: string[] };
         try {
           result = await this.runImplementationPhase(seamTask);
         } finally {
           this.graphSeamGoverningNodeId.delete(seamTask.id);
+          this.graphSeamThinkingLevel.delete(seamTask.id);
         }
         if (result.taskDone) {
           return { outcome: "success", value: "implemented" };
@@ -6510,6 +6611,7 @@ export class TaskExecutor {
         // instance's; per-invocation set/delete here would race under parallel
         // foreach (overwrite mid-build, or clear while the shared pass is live).
         const stepGoverningNodeId = context[SEAM_GOVERNING_NODE_CONTEXT_KEY];
+        const seamThinkingLevel = context[SEAM_THINKING_LEVEL_CONTEXT_KEY];
         const result: Awaited<ReturnType<typeof runTaskStep>> = await runTaskStep(
           {
             store: this.store,
@@ -6525,6 +6627,9 @@ export class TaskExecutor {
                 stepIndex,
                 active.instanceId,
                 typeof stepGoverningNodeId === "string" ? stepGoverningNodeId : undefined,
+                typeof seamThinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(seamThinkingLevel)
+                  ? (seamThinkingLevel as ThinkingLevel)
+                  : undefined,
               ),
           },
           { id: seamTask.id, steps: live.steps },
@@ -6607,7 +6712,22 @@ export class TaskExecutor {
               defaultModelId: settings.defaultModelId,
               fallbackProvider: settings.fallbackProvider,
               fallbackModelId: settings.fallbackModelId,
-              defaultThinkingLevel: detail.thinkingLevel ?? settings.defaultThinkingLevel,
+              /*
+               * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+               * Step-review model sessions honor per-node `config.thinkingLevel` before task, validator workflow lane, global lane, and default thinking settings.
+               */
+              defaultThinkingLevel: resolveValidatorThinkingLevel(
+                typeof config.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(config.thinkingLevel)
+                  ? (config.thinkingLevel as ThinkingLevel)
+                  : detail.thinkingLevel,
+                settings,
+              ),
+              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(
+                typeof config.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(config.thinkingLevel)
+                  ? (config.thinkingLevel as ThinkingLevel)
+                  : detail.thinkingLevel,
+                settings,
+              ),
               taskValidatorProvider: detail.validatorModelProvider,
               taskValidatorModelId: detail.validatorModelId,
               projectValidatorProvider: settings.validatorProvider,
@@ -7526,6 +7646,13 @@ export class TaskExecutor {
     const stepSkillName = executorKind === "skill" && typeof cfg.skillName === "string" && cfg.skillName.trim()
       ? cfg.skillName.trim()
       : undefined;
+    /*
+     * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+     * Graph model nodes can pin reasoning effort independently from modelProvider/modelId; carry only validated THINKING_LEVELS into the synthesized WorkflowStep.
+     */
+    const stepThinkingLevel = typeof cfg.thinkingLevel === "string" && WORKFLOW_THINKING_LEVEL_SET.has(cfg.thinkingLevel)
+      ? cfg.thinkingLevel as ThinkingLevel
+      : undefined;
     const step: WorkflowStep = {
       id: `graph:${node.id}`,
       name: typeof cfg.name === "string" && cfg.name.trim() ? cfg.name : node.id,
@@ -7542,6 +7669,7 @@ export class TaskExecutor {
       ...(stepSkillName ? { skillName: stepSkillName } : {}),
       ...(cfg.requiresBrowser === true ? { requiresBrowser: true } : {}),
       ...(modelProvider && modelId ? { modelProvider, modelId } : {}),
+      ...(stepThinkingLevel ? { thinkingLevel: stepThinkingLevel } : {}),
     };
     if (cfg.summaryTarget === "task") {
       (step as WorkflowStep & { summaryTarget?: "task" }).summaryTarget = "task";
@@ -7964,6 +8092,13 @@ export class TaskExecutor {
     };
   }
 
+  private async isLiveSharedBranchGroupMember(live: Pick<TaskDetail, "branchContext">): Promise<boolean> {
+    const groupId = live.branchContext?.groupId?.trim();
+    // FNXC:PostgresCutover 2026-07-10: getBranchGroup is async on the PG branch.
+    const branchGroup = groupId ? await this.store.getBranchGroup(groupId) : null;
+    return isLiveSharedBranchGroupMemberIntegration(live, branchGroup);
+  }
+
   private async routeRetryableRemediationGraphFailureToPreMergeFix(
     live: TaskDetail,
     failedNode: string | undefined,
@@ -7979,7 +8114,8 @@ export class TaskExecutor {
     if (!live.worktree) return false;
     const settings = await this.store.getSettings().catch(() => undefined);
     if (!settings || settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !isSharedBranchGroupMemberIntegration(live)) return false;
+    /* FNXC:AutoMergeHold 2026-07-09-17:04: FN-7750 requires retryable pre-merge remediation to treat stale shared-group members as standalone manual-hold rows when global auto-merge is off; only live/open groups retain the shared-member exemption. */
+    if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
     const target = this.latestFailedPreMergeWorkflowStep(live);
     if (!target) return false;
     const budget = await this.resolveFailedPreMergeWorkflowStepBudget(live, target);
@@ -8033,8 +8169,9 @@ export class TaskExecutor {
     } catch {
       return false;
     }
-    const sharedBranchMember = isSharedBranchGroupMemberIntegration(live);
+    const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
     if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
+    if (!sharedBranchMember && resolveEffectiveAutoMerge(live, settings) === false) return false;
     if ((live.mergeRetries ?? 0) >= resolveMaxAutoMergeRetries(settings)) return false;
     return true;
   }
@@ -8071,6 +8208,38 @@ export class TaskExecutor {
       && live.error.includes(PAUSE_ABORT_PARK_ERROR_MARKER)
       && live.error.includes("engine abort during pause/resume")
       && live.error.includes(`at node '${nodeId}'`);
+  }
+
+  private async isBenignManualMergeHoldPauseAbort(
+    live: TaskDetail,
+    result: WorkflowGraphTaskRunResult,
+    abortProvenance: "global-pause" | "merge-seam" | "hard-cancel" | "completion-finalize" | undefined,
+    pausedAborted: boolean,
+  ): Promise<boolean> {
+    /*
+    FNXC:WorkflowLifecycle 2026-07-09-14:54:
+    FN-7749 / Runfusion#1979: with auto-merge off, a manual merge hold is the healthy `in-review` resting state for Merge & Close. A benign hard-cancel pause/resume abort at any merge-region node must not park the task failed; FN-5147 forbids moving, failing, or re-enqueueing the row, so this classifier only permits preserving `in-review` and clearing a stale pause-abort status/error.
+    */
+    if (!pausedAborted) return false;
+    if (abortProvenance !== "hard-cancel") return false;
+    if (live.paused || live.userPaused === true) return false;
+    if (live.column !== "in-review") return false;
+    if (live.mergeDetails?.mergeConfirmed === true) return false;
+    if (this.isTerminalMergeGraphFailureValue(this.graphFailureValue(result))) return false;
+    const failedNode = result.visitedNodeIds[result.visitedNodeIds.length - 1];
+    if (!this.isMergeGraphFailure(failedNode)) return false;
+    const cleanRow = live.status == null && live.error == null;
+    const staleParkedFailure = this.isStalePauseAbortParkFailure(live, failedNode);
+    if (!cleanRow && !staleParkedFailure) return false;
+    let settings: Settings | undefined;
+    try {
+      settings = await this.store.getSettings();
+    } catch {
+      return false;
+    }
+    /* FNXC:AutoMergeHold 2026-07-09-17:07: FN-7749's benign manual-hold classifier must exclude only live shared-group integrations. FN-7750 stale shared-group members are standalone manual-hold rows and should not be stranded as pause-abort failures. */
+    if (await this.isLiveSharedBranchGroupMember(live)) return false;
+    return !allowsAutoMergeProcessing(live, settings) || resolveEffectiveAutoMerge(live, settings) === false;
   }
 
   private async handleStaleInReviewPlanPauseAbortReplay(
@@ -8110,7 +8279,7 @@ export class TaskExecutor {
       return false;
     }
     if (settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !isSharedBranchGroupMemberIntegration(live)) return false;
+    if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
 
     this.clearPausedAborted(live.id);
     this.activeWorktrees.delete(live.id);
@@ -8183,7 +8352,7 @@ export class TaskExecutor {
       return false;
     }
     if (settings.globalPause === true || settings.enginePaused === true) return false;
-    if (!allowsAutoMergeProcessing(live, settings) && !isSharedBranchGroupMemberIntegration(live)) return false;
+    if (!allowsAutoMergeProcessing(live, settings) && !(await this.isLiveSharedBranchGroupMember(live))) return false;
 
     const nextRetries = priorRetries + 1;
     this.clearPausedAborted(live.id);
@@ -8289,7 +8458,7 @@ export class TaskExecutor {
     if (live.column === "in-review") {
       if (live.autoMerge === false) return false;
       if (!settings) return false;
-      const sharedBranchMember = isSharedBranchGroupMemberIntegration(live);
+      const sharedBranchMember = await this.isLiveSharedBranchGroupMember(live);
       if (!sharedBranchMember && !allowsAutoMergeProcessing(live, settings)) return false;
       if (live.mergeDetails?.mergeConfirmed === true) return false;
     }
@@ -8504,6 +8673,23 @@ export class TaskExecutor {
         if (await this.routeGraphMergeFailureToRetry(live, result, abortProvenance)) {
           return;
         }
+      }
+      if (genuinePauseAbort && await this.isBenignManualMergeHoldPauseAbort(live, result, abortProvenance, pausedAborted)) {
+        /*
+        FNXC:WorkflowLifecycle 2026-07-09-14:56:
+        FN-7749 / Runfusion#1979: auto-merge-off manual merge hold is terminal-until-human-merged, not an executor failure. Preserve the `in-review` row for Merge & Close, do not invoke merge retry, and clear only stale pause-abort status/error so FN-5147's no-backward-move/no-reenqueue contract stays intact.
+        */
+        this.clearPausedAborted(task.id);
+        this.activeWorktrees.delete(task.id);
+        const manualHoldBenign = "Workflow graph run ended at manual merge hold with auto-merge off — benign, in-review manual-hold state preserved for Merge & Close";
+        executorLog.log(`${task.id}: ${manualHoldBenign}`);
+        await this.store.logEntry(task.id, manualHoldBenign, undefined, this.getRunContextFor(task.id));
+        if (live.status != null || live.error != null) {
+          await this.store.logEntry(task.id, "Auto-recovered: cleared stale auto-merge-off manual merge hold pause-abort failure — failure notification suppressed", undefined, this.getRunContextFor(task.id));
+          await this.store.updateTask(task.id, { status: null, error: null }, this.getRunContextFor(task.id));
+        }
+        await this.persistTokenUsage(task.id);
+        return;
       }
       if (genuinePauseAbort && this.isBenignInReviewPauseAbort(live, result, abortProvenance, pausedAborted, this.userCanceledTaskIds.has(task.id))) {
         this.clearPausedAborted(task.id);
@@ -9676,9 +9862,7 @@ export class TaskExecutor {
         // ── Step-Session Path ──────────────────────────────────────────
         executorLog.log(`${task.id}: using step-session mode (maxParallel=${settings.maxParallelSteps ?? 2}${forceStepSession ? ", graph-pinned" : ""})`);
 
-        const stepSessionAgent = detail.assignedAgentId && this.options.agentStore
-          ? await this.options.agentStore.getAgent(detail.assignedAgentId).catch(() => null)
-          : null;
+        const stepSessionAgent = await this.getAuthoritativeAssignedAgent(detail.assignedAgentId);
 
         // Column-agent SESSION IDENTITY (U4, R2/R3/R4/R8): when the governing
         // step-execute node's declared column binds an agent that supersedes the
@@ -9724,6 +9908,7 @@ export class TaskExecutor {
           permanentAgentGating: this.buildPermanentAgentGatingContext(task.id, stepIdentityAgent, settings.defaultAgentPermissionPolicy),
           // FNXC:McpConfig 2026-06-25-23:03: Per-step workflow sessions are an executor lane, so they inherit the task's resolved MCP set from the effective step identity agent and never re-read or log plaintext secret values.
           mcpServers: await this.resolveMcpServers(stepIdentityAgent?.id),
+          workflowStepThinkingLevel: this.graphSeamThinkingLevel.get(task.id),
           // Pass skill selection context from the main executor session
           skillSelection: skillContext.skillSelectionContext,
           // Pass agentStore and messageStore for delegation and messaging tools
@@ -10248,9 +10433,7 @@ export class TaskExecutor {
       const reflectionTools = this.options.reflectionService && settings.reflectionEnabled && assignedAgentId
         ? [createReflectOnPerformanceTool(this.options.reflectionService, assignedAgentId)]
         : [];
-      const assignedAgent = assignedAgentId && this.options.agentStore
-        ? await this.options.agentStore.getAgent(assignedAgentId).catch(() => null)
-        : null;
+      const assignedAgent = await this.getAuthoritativeAssignedAgent(assignedAgentId);
 
       // Column-agent SESSION IDENTITY (U4, R2/R3/R4/R8): when the governing execute
       // seam node's declared column binds an agent that supersedes the task's
@@ -10306,6 +10489,8 @@ export class TaskExecutor {
         this.createSpawnAgentTool(task.id, worktreePath, settings, taskEnv),
         this.createTaskDocumentWriteTool(task.id),
         this.createTaskDocumentReadTool(task.id),
+        // FNXC:FileScope 2026-07-08-22:40: let the coding agent extend its own declared ## File Scope at runtime (fn_task_file_scope_add) so edits beyond the initial scope are not stranded by the scope-aware squash merge.
+        this.createTaskFileScopeAddTool(task.id),
         // FNXC:ArtifactRegistry 2026-06-21-07:04: Artifact list/view are read-only discovery tools and must remain available even when the task has no assigned agent identity; only registration requires an authorId for persisted attribution and best-effort inbox notification.
         this.createArtifactListTool(),
         this.createArtifactViewTool(),
@@ -10431,7 +10616,9 @@ export class TaskExecutor {
         );
         const executorFallbackProvider = settings.fallbackProvider;
         const executorFallbackModelId = settings.fallbackModelId;
-        const executorThinkingLevel = detail.thinkingLevel ?? settings.defaultThinkingLevel;
+        const executorSessionThinkingSource = this.graphSeamThinkingLevel.get(task.id) ?? detail.thinkingLevel;
+        const executorThinkingLevel = resolveExecutorThinkingLevel(executorSessionThinkingSource, settings);
+        const executorFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(executorSessionThinkingSource, settings);
 
         // U1 telemetry: now that the session model/provider/node are resolved,
         // give the agent logger the context it needs to emit usage_events tool
@@ -10483,7 +10670,7 @@ export class TaskExecutor {
           ?? (await this.resolveInstructionsForRole("executor", settings));
 
         // Build structured layers for cross-session prompt caching.
-        const executorPluginContributions = buildPluginPromptSection(
+        const executorPluginContributions = await buildPluginPromptSection(
           "executor-system",
           this.options.pluginRunner,
         );
@@ -10530,6 +10717,7 @@ export class TaskExecutor {
             defaultModelId: executorModelId,
             fallbackProvider: executorFallbackProvider,
             fallbackModelId: executorFallbackModelId,
+            fallbackThinkingLevel: executorFallbackThinkingLevel,
             defaultThinkingLevel: executorThinkingLevel,
             runAuditor: audit,
             settings,
@@ -10635,6 +10823,7 @@ export class TaskExecutor {
             ].join("\n"));
           } else {
             const customFieldDefs = await this.resolveTaskCustomFieldDefs(task.id);
+            const pluginTaskContributions = await buildPluginPromptSection("executor-task", this.options.pluginRunner);
             const agentPrompt = buildExecutionPrompt(
               detail,
               this.rootDir,
@@ -10643,7 +10832,10 @@ export class TaskExecutor {
               this.options.pluginRunner,
               customFieldDefs,
               this.workspaceConfig,
-              { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+              {
+                workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
+                pluginTaskContributions,
+              },
             );
             await promptWithFallback(session, agentPrompt);
           }
@@ -10953,6 +11145,7 @@ export class TaskExecutor {
                   defaultModelId: executorModelId,
                   fallbackProvider: executorFallbackProvider,
                   fallbackModelId: executorFallbackModelId,
+                  fallbackThinkingLevel: executorFallbackThinkingLevel,
                   defaultThinkingLevel: executorThinkingLevel,
                   runAuditor: audit,
                   settings,
@@ -10995,6 +11188,7 @@ export class TaskExecutor {
                 stuckDetector?.trackTask(task.id, retrySession);
 
                 const retryCustomFieldDefs = await this.resolveTaskCustomFieldDefs(task.id);
+                const retryPluginTaskContributions = await buildPluginPromptSection("executor-task", this.options.pluginRunner);
                 let retryPrompt: string;
                 if (pseudoPause.kind !== "none") {
                   const shortMatch = (pseudoPause.matched ?? "").slice(0, 120);
@@ -11022,7 +11216,10 @@ export class TaskExecutor {
                       this.options.pluginRunner,
                       retryCustomFieldDefs,
                       this.workspaceConfig,
-                      { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+                      {
+                        workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
+                        pluginTaskContributions: retryPluginTaskContributions,
+                      },
                     ),
                   ].join("\n");
                 } else {
@@ -11041,7 +11238,10 @@ export class TaskExecutor {
                       this.options.pluginRunner,
                       retryCustomFieldDefs,
                       this.workspaceConfig,
-                      { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+                      {
+                        workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
+                        pluginTaskContributions: retryPluginTaskContributions,
+                      },
                     ),
                   ].join("\n");
                 }
@@ -12312,6 +12512,10 @@ export class TaskExecutor {
     return sharedCreateTaskPromptWriteTool(this.store, taskId, this.getRunContextFor(taskId));
   }
 
+  private createTaskFileScopeAddTool(taskId: string): ToolDefinition {
+    return sharedCreateTaskFileScopeAddTool(this.store, taskId, this.getRunContextFor(taskId));
+  }
+
   private createArtifactRegisterTool(authorId: string): ToolDefinition {
     return sharedCreateArtifactRegisterTool(this.store, authorId, this.options.messageStore);
   }
@@ -13446,7 +13650,8 @@ export class TaskExecutor {
               defaultModelId: settings.defaultModelId,
               fallbackProvider: settings.fallbackProvider,
               fallbackModelId: settings.fallbackModelId,
-              defaultThinkingLevel: latestDetailForReview.thinkingLevel ?? settings.defaultThinkingLevel,
+              fallbackThinkingLevel: resolveValidatorFallbackThinkingLevel(latestDetailForReview.thinkingLevel, settings),
+              defaultThinkingLevel: resolveValidatorThinkingLevel(latestDetailForReview.thinkingLevel, settings),
               // Task-level validator override (from task)
               taskValidatorProvider: latestDetailForReview.validatorModelProvider,
               taskValidatorModelId: latestDetailForReview.validatorModelId,
@@ -13874,7 +14079,7 @@ Do not refactor, rename broadly, or make opportunistic improvements.
         onToolEnd: logger.onToolEnd,
         defaultProvider: executorProvider,
         defaultModelId: executorModelId,
-        defaultThinkingLevel: settings.defaultThinkingLevel,
+        defaultThinkingLevel: resolveExecutorThinkingLevel(task.thinkingLevel, settings),
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
         settings,
         taskEnv: extraEnv,
@@ -14807,7 +15012,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
     const useOverride = !!(workflowStep.modelProvider && workflowStep.modelId);
 
     type ModelTuple = { provider?: string; modelId?: string };
-    const fallbackCandidates: Array<ModelTuple & { label: string }> = [
+    type WorkflowStepFallbackLabel = "validatorFallback" | "globalFallback";
+    const fallbackCandidates: Array<ModelTuple & { label: WorkflowStepFallbackLabel }> = [
       { provider: settings.validatorFallbackProvider, modelId: settings.validatorFallbackModelId, label: "validatorFallback" },
       { provider: settings.fallbackProvider, modelId: settings.fallbackModelId, label: "globalFallback" },
     ];
@@ -14835,9 +15041,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         pluginRunner: this.options.pluginRunner,
       });
 
-      const workflowAgent = task.assignedAgentId && this.options.agentStore
-        ? await this.options.agentStore.getAgent(task.assignedAgentId).catch(() => null)
-        : null;
+      const workflowAgent = await this.getAuthoritativeAssignedAgent(task.assignedAgentId);
       const workflowRuntimeHint = extractRuntimeHint(workflowAgent?.runtimeConfig);
       // Signal to skills running in this step (e.g. compound-engineering ce-plan /
       // ce-work) that they are inside a Fusion autonomous workflow step, NOT an
@@ -14953,6 +15157,20 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         );
       }
 
+      /*
+       * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+       * WorkflowStep sessions resolve reasoning effort as node/step `thinkingLevel` first, then task override, then settings defaults/lane fallbacks.
+       *
+       * FNXC:Settings-ThinkingLevel 2026-07-10-14:20:
+       * The step's own `fallback` attempt already swaps to a distinct model (validator fallback OR global fallback pair) — it must honor THAT model's fallback thinking level, not silently reuse the primary lane's thinking level. Route by which candidate `fallback.label` actually matched instead of only special-casing `validatorFallback`.
+       */
+      const workflowStepThinkingSource = workflowStep.thinkingLevel ?? task.thinkingLevel;
+      const workflowStepThinkingLevel = attemptLabel === "fallback"
+        ? (fallback?.label === "validatorFallback"
+          ? resolveValidatorFallbackThinkingLevel(workflowStepThinkingSource, settings)
+          : resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings))
+        : resolveExecutorThinkingLevel(workflowStepThinkingSource, settings);
+      const workflowStepFallbackThinkingLevel = resolveExecutorFallbackThinkingLevel(workflowStepThinkingSource, settings);
       const { session } = await createResolvedAgentSession({
         sessionPurpose: "executor",
         runtimeHint: workflowRuntimeHint,
@@ -14964,7 +15182,8 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
         defaultModelId: modelId,
         fallbackProvider: settings.fallbackProvider,
         fallbackModelId: settings.fallbackModelId,
-        defaultThinkingLevel: settings.defaultThinkingLevel,
+        fallbackThinkingLevel: workflowStepFallbackThinkingLevel,
+        defaultThinkingLevel: workflowStepThinkingLevel,
         runAuditor: createRunAuditor(this.store, this.getRunContextFor(task.id)),
         settings,
         taskEnv: stepEnv,
@@ -14982,7 +15201,7 @@ You have access to the file system to review changes.${inlineFixBlock}${verdictB
 
       const workflowModelDetails = formatModelMarkerDetails(
         describeModel(session),
-        settings.defaultThinkingLevel,
+        workflowStepThinkingLevel,
         [
           useOverride && attemptLabel === "primary" ? "workflow step override" : "",
           attemptLabel === "fallback" ? "fallback after timeout" : "",
@@ -17840,6 +18059,7 @@ Child agent: ${agent.id} (${name})`;
             defaultModelId: childExecutorModelId,
             fallbackProvider: settings.fallbackProvider,
             fallbackModelId: settings.fallbackModelId,
+            fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, settings),
             runAuditor: createRunAuditor(this.store, this.getRunContextFor(taskId)),
             settings,
             taskEnv,
@@ -17954,7 +18174,7 @@ export function buildExecutionPrompt(
   pluginRunner?: PluginRunner,
   customFieldDefs?: WorkflowFieldDefinition[],
   workspaceConfig?: WorkspaceConfig | null,
-  options?: { workflowReviewGatesOwnedByGraph?: boolean },
+  options?: { workflowReviewGatesOwnedByGraph?: boolean; pluginTaskContributions?: string },
 ): string {
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath, workspaceConfig);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
@@ -18088,11 +18308,10 @@ git log --oneline
     customFieldsSection = lines.join("\n") + "\n";
   }
 
-  const taskPromptContributions = pluginRunner?.getPromptContributionsForSurface("executor-task") ?? [];
-  if (taskPromptContributions.length > 0) {
-    executorLog.log(`${task.id}: applied ${taskPromptContributions.length} plugin prompt contributions for executor-task surface`);
+  const pluginTaskContributions = options?.pluginTaskContributions ?? "";
+  if (pluginTaskContributions) {
+    executorLog.log(`${task.id}: applied plugin prompt contributions for executor-task surface`);
   }
-  const pluginTaskContributions = buildPluginPromptSection("executor-task", pluginRunner);
 
   const executionPrompt = `Execute this task.
 
@@ -18188,6 +18407,18 @@ function hasNonTerminalWorkflowSteps(task: Pick<TaskDetail, "steps">): boolean {
 /*
 FNXC:ReviewLeniency 2026-07-02-01:00:
 Retrying a task must clear PRIOR FAILURE states so the retry starts clean — including on optional gate nodes like code-review / browser-verification. Results are upserted by node id, so a re-running node overwrites its own stale entry, but a send-back-for-fix leaves the failed entry in place until (and unless) that node re-runs; meanwhile self-healing's failed-pre-merge scan and the dashboard both see a stale failure, and a node that is skipped/relaxed on the retry never clears it. Drop every terminal failure result (`failed`/`advisory_failure`) on retry while keeping `passed`/`skipped`/`pending` evidence (so a previously-passed Plan Review is not re-run). Returns the same array reference when nothing changed so callers can skip a no-op write.
+
+FNXC:WorkflowStepResults 2026-07-09-00:30:
+FN-7727 explicit decision: an explicit user/agent RETRY remains a clean-slate —
+it MAY drop the current `failed`/`advisory_failure` entry entirely (along with
+any `priorAttempts` history it carried), since retry is deliberately
+discarding prior failure state, not preserving it. This is DIFFERENT from the
+self-healing recovery re-run path (`recoverFailedPreMergeWorkflowStep` /
+`recoverReviewTasksWithFailedPreMergeSteps`), which does NOT call this
+function — that path re-runs the SAME node in place and its result goes
+through `upsertWorkflowStepResult`, which is where prior-attempt history is
+preserved. This filter must not throw on entries carrying `priorAttempts`
+(it only reads `status`, so `priorAttempts` is inert here regardless).
 */
 export function clearTerminalWorkflowStepFailures(
   results: CoreWorkflowStepResult[] | undefined,

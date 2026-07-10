@@ -24,6 +24,10 @@ const EMPTY_MODELS_STATE: ModelsCacheState = {
 };
 
 let inflight: Promise<ModelsResponse> | null = null;
+// Guards concurrent refreshModelsCache() callers so they share one forced
+// fetch instead of each spawning its own request (see FNXC:ModelCatalog
+// comment on refreshModelsCache below).
+let refreshInflight: Promise<void> | null = null;
 const listeners = new Set<(state: ModelsCacheState) => void>();
 
 function toModelsCacheState(response: ModelsResponse | null | undefined): ModelsCacheState {
@@ -53,11 +57,73 @@ function notifyListeners(state: ModelsCacheState): void {
 
 async function fetchModelsShared(): Promise<ModelsResponse> {
   if (!inflight) {
-    inflight = fetchModels().finally(() => {
-      inflight = null;
-    });
+    const promise = fetchModels();
+    inflight = promise;
+    // Only clear `inflight` if it still points at *this* promise — a forced
+    // refresh (see refreshModelsCache) may have already replaced it with a
+    // newer in-flight fetch, and this stale promise resolving later must not
+    // wipe out that newer reference out from under it. `.catch(() => {})`
+    // swallows the rejection on THIS bookkeeping branch only — the original
+    // `promise` returned below is untouched and still rejects for callers
+    // that await it, so error handling (try/catch in load()/refreshModelsCache)
+    // is unaffected; this just avoids a duplicate unhandled-rejection listener.
+    promise.then(
+      () => {
+        if (inflight === promise) inflight = null;
+      },
+      () => {
+        if (inflight === promise) inflight = null;
+      },
+    );
   }
   return inflight;
+}
+
+/**
+ * FNXC:ModelCatalog 2026-07-08-00:00:
+ * FN-7710: Enabling/disabling a CLI provider (Grok, Cursor, Claude CLI,
+ * llama.cpp) changes which rows `/api/models` returns, but every already-
+ * mounted `useModelsCache()` consumer (board Quick Entry, Task Detail, New
+ * Agent, Workflow editor, etc.) only re-fetches on its own mount — it has no
+ * way to know the shared catalog is now stale. Previously the CLI provider
+ * cards' `onToggled` handler only refreshed the Settings Authentication
+ * panel (`loadAuthStatus()`), so newly-enabled `grok-cli`/`cursor-cli`
+ * models stayed invisible until some unrelated Settings surface happened to
+ * call `fetchModels()` fresh. `refreshModelsCache()` is the shared,
+ * single-flight, never-throw entry point any non-hook caller (a settings
+ * card, a toggle handler) can invoke to force a fresh fetch, write through
+ * `SWR_CACHE_KEYS.MODELS`, and notify every mounted `useModelsCache`
+ * subscriber via the module-level `listeners` set — no remount required.
+ * Concurrent `refreshModelsCache()` callers share one forced fetch via
+ * `refreshInflight`. A failed refresh must never blank an existing good
+ * list: on error this simply leaves the current cache/listeners state
+ * untouched, so a transient network hiccup degrades to "keep showing the
+ * last good list", not an empty picker.
+ */
+export async function refreshModelsCache(): Promise<void> {
+  if (refreshInflight) {
+    return refreshInflight;
+  }
+
+  refreshInflight = (async () => {
+    try {
+      // Force a fresh fetch: drop any pre-toggle in-flight promise so a
+      // response requested before the provider toggle took effect is never
+      // mistaken for the post-toggle catalog.
+      inflight = null;
+      const response = await fetchModelsShared();
+      const nextState = toModelsCacheState(response);
+      writeCache(SWR_CACHE_KEYS.MODELS, response, { maxBytes: 500_000 });
+      notifyListeners(nextState);
+    } catch {
+      // Never throw, never blank an existing good list — leave cache/listeners
+      // state untouched on failure (see FNXC:ModelCatalog comment above).
+    }
+  })().finally(() => {
+    refreshInflight = null;
+  });
+
+  return refreshInflight;
 }
 
 export function useModelsCache(): UseModelsCacheResult {

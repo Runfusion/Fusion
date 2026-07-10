@@ -61,7 +61,10 @@ describe("TaskExecutor.buildActionGateContext pauseForApproval", () => {
 
     await gateContext.pauseForApproval({ approvalRequestId: "apr-1", decision });
 
-    expect(store.pauseTask).toHaveBeenCalledWith("FN-1", true, undefined, expect.objectContaining({ pausedByAgentId: expect.any(String) }));
+    // FN-7736: pauseForApproval must durably stamp the canonical
+    // AWAITING_APPROVAL_PAUSE_REASON so recovery/oversight code can recognize
+    // this hold via isTaskBlockedOnApproval (not just paused:true).
+    expect(store.pauseTask).toHaveBeenCalledWith("FN-1", true, undefined, expect.objectContaining({ pausedByAgentId: expect.any(String), pausedReason: "awaiting-approval" }));
     expect(store.logEntry).toHaveBeenCalled();
     // Session suspension must be triggered synchronously (called, not merely
     // scheduled for some later tick) as part of this same pauseForApproval

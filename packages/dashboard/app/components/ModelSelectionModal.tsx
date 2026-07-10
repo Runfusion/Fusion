@@ -1,7 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import type { ModelPreset } from "@fusion/core";
+import type { ModelPreset, ThinkingLevel } from "@fusion/core";
 import type { ModelInfo } from "../api";
 import { applyPresetToSelection } from "../utils/modelPresets";
 import { CustomModelDropdown } from "./CustomModelDropdown";
@@ -20,6 +20,18 @@ interface ModelSelectionModalProps {
   onExecutorChange: (value: string) => void;
   onValidatorChange: (value: string) => void;
   onPlanningChange?: (value: string) => void;
+  /** Current thinking-level override, or "" for the effective default. Optional so pre-existing callers keep compiling unchanged. */
+  thinkingLevel?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-09-00:00:
+   * The quick-create "Select Models" dialog must expose the same thinking (reasoning-effort) levels — including `xhigh` —
+   * as the full task pickers (TaskForm, ModelSelectorTab), so a task created from the board carries the same override
+   * surface as one created from the New Task modal. The selector is rendered only when this handler is provided,
+   * mirroring the existing optional `onPlanningChange` pattern.
+   */
+  onThinkingLevelChange?: (value: string) => void;
+  /** Effective default thinking level shown in the Default option, e.g. project/global `defaultThinkingLevel` (falls back to "off"). */
+  defaultThinkingLevel?: ThinkingLevel;
   modelsLoading: boolean;
   modelsError: string | null;
   onRetry: () => void;
@@ -55,6 +67,9 @@ export function ModelSelectionModal({
   onExecutorChange,
   onValidatorChange,
   onPlanningChange,
+  thinkingLevel = "",
+  onThinkingLevelChange,
+  defaultThinkingLevel,
   modelsLoading,
   modelsError,
   onRetry,
@@ -281,6 +296,9 @@ export function ModelSelectionModal({
                         onToggleFavorite={onToggleFavorite}
                         favoriteModels={favoriteModels}
                         onToggleModelFavorite={onToggleModelFavorite}
+                        thinkingLevel={thinkingLevel}
+                        onThinkingLevelChange={onThinkingLevelChange}
+                        defaultThinkingLevel={defaultThinkingLevel ?? "off"}
                       />
                     </div>
                   </div>
@@ -310,6 +328,7 @@ export function ModelSelectionModal({
                       />
                     </div>
                   </div>
+
                 </div>
               </div>
 

@@ -245,6 +245,9 @@ vi.mock("../CustomModelDropdown", () => ({
     onChange,
     label,
     disabled,
+    thinkingLevel,
+    onThinkingLevelChange,
+    defaultThinkingLevel,
   }: {
     value: string;
     onChange: (value: string) => void;
@@ -257,9 +260,28 @@ vi.mock("../CustomModelDropdown", () => ({
     onToggleFavorite?: (provider: string) => void;
     favoriteModels?: string[];
     onToggleModelFavorite?: (modelId: string) => void;
+    thinkingLevel?: string;
+    onThinkingLevelChange?: (value: string) => void;
+    defaultThinkingLevel?: string;
   }) => (
     <div data-testid={`custom-model-dropdown-${label}`}>
       <span data-testid={`dropdown-value-${label}`}>{value || "none"}</span>
+      {onThinkingLevelChange ? (
+        <select
+          data-testid="custom-model-dropdown-thinking"
+          value={thinkingLevel || ""}
+          onChange={(e) => onThinkingLevelChange(e.target.value)}
+          disabled={disabled}
+        >
+          <option value="">Default ({defaultThinkingLevel ?? "off"})</option>
+          <option value="off">Off</option>
+          <option value="minimal">Minimal</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="xhigh">Very High</option>
+        </select>
+      ) : null}
       <button
         data-testid={`dropdown-select-${label}`}
         onClick={() => onChange("anthropic/claude-sonnet-4-5")}
@@ -1780,7 +1802,7 @@ describe("QuickEntryBox", () => {
       expect(menuRule).not.toContain("inset-inline-start: 0");
       expect(menuRule).toContain("width: min(calc(var(--space-xl) * 16), calc(100vw - var(--space-lg)))");
       expect(menuRule).toContain("min-width: min(calc(var(--space-xl) * 14), calc(100vw - var(--space-lg)))");
-      expect(optionCopyRule).toContain("gap: var(--space-2xs)");
+      expect(optionCopyRule).toContain("gap: var(--space-xs)");
       expect(optionNameRule).toContain("overflow-wrap: anywhere");
       expect(optionNameRule).toContain("white-space: normal");
       expect(optionNameRule).not.toContain("text-overflow: ellipsis");
@@ -2587,6 +2609,33 @@ describe("QuickEntryBox", () => {
       expect(screen.getByTestId("model-menu-validator")).toBeTruthy();
     });
 
+    it("does not render a separate Thinking option in the model menu", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task with models" } });
+      openModelMenu();
+
+      expect(screen.queryByTestId("model-menu-thinking")).toBeNull();
+    });
+
+    it("clicking Executor opens a submenu with the inline thinking-level selector", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task with models" } });
+      openModelMenu();
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
+
+      const select = screen.getByTestId("custom-model-dropdown-thinking") as HTMLSelectElement;
+      expect(select).toBeTruthy();
+      const options = Array.from(select.options).map((o) => o.value);
+      expect(options).toEqual(["", "off", "minimal", "low", "medium", "high", "xhigh"]);
+      expect(screen.getByTestId("model-submenu-back")).toBeTruthy();
+    });
+
     it("clicking Executor opens submenu with CustomModelDropdown", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
@@ -2967,6 +3016,48 @@ describe("QuickEntryBox", () => {
       expect(screen.queryByTestId("plan-button")).not.toBeInTheDocument();
       expect(screen.queryByTitle("Open planning mode with current description")).not.toBeInTheDocument();
       expect(addToast).not.toHaveBeenCalled();
+    });
+
+    it("forwards a non-default thinkingLevel selection in the submit payload", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task with thinking level override" } });
+      openModelMenu();
+      fireEvent.click(screen.getByTestId("model-menu-executor"));
+      fireEvent.change(screen.getByTestId("custom-model-dropdown-thinking"), { target: { value: "xhigh" } });
+      fireEvent.click(screen.getByTestId("model-submenu-back"));
+
+      fireEvent.keyDown(textarea, { key: "Escape" });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            description: "Task with thinking level override",
+            thinkingLevel: "xhigh",
+          }),
+        );
+      });
+    });
+
+    it("omits thinkingLevel from submit payload when left at default", async () => {
+      const { props } = renderQuickEntryBox({});
+      expandQuickEntry();
+      const textarea = screen.getByTestId("quick-entry-input");
+
+      fireEvent.change(textarea, { target: { value: "Task without thinking override" } });
+      fireEvent.keyDown(textarea, { key: "Enter" });
+
+      await waitFor(() => {
+        expect(props.onCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            description: "Task without thinking override",
+            thinkingLevel: undefined,
+          }),
+        );
+      });
     });
 
     it("includes all three selected model pairs in submit payload", async () => {

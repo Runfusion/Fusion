@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "Árbol de trabajo de fusión readquirido",
       "nearDuplicateFlagged": "Casi duplicado marcado",
       "projectIsolationTransition": "Transición de aislamiento de proyecto",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "Configuración actualizada",
       "taskCreated": "Tarea creada",
       "taskDeleted": "Tarea eliminada",
@@ -169,6 +168,10 @@
       "taskAgentMutation": {
         "description": "Cambios de estado de tareas, delegación o acciones del ciclo de vida del agente.",
         "label": "Mutación de tarea/agente"
+      },
+      "fileScope": {
+        "description": "",
+        "label": ""
       }
     },
     "categoryExamples": "Ejemplos de {{label}}",
@@ -3954,7 +3957,8 @@
       "medium": "Medio",
       "minimal": "Mínimo",
       "off": "Desactivado",
-      "xhigh": "Muy alto"
+      "xhigh": "Muy alto",
+      "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
       "selectExecutor": "Seleccione modelo de ejecución…",
@@ -3990,6 +3994,8 @@
     "preset": "Predefinido",
     "reviewerModel": "Modelo revisor",
     "reviewerPlaceholder": "Seleccionar modelo revisor…",
+    "thinkingDefault": "",
+    "thinkingModel": "",
     "title": "Seleccionar modelos",
     "useDefault": "Usar predeterminado",
     "usingDefault": "Usando predeterminado"
@@ -6526,6 +6532,8 @@
       "addIgnoredPath": "",
       "archiveAgentLog": "",
       "archiveCompletedTasksAfterDays": "",
+      "autoArchiveDuplicateTasks": "",
+      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -7384,6 +7392,11 @@
       "skipped": "Reconexión de rama omitida para {{id}}: {{reason}}",
       "skippedResult": "Reconexión omitida: {{reason}}"
     },
+    "bypassReview": {
+      "btn": "Omitir revisión fallida",
+      "promptMessage": "Motivo para omitir el paso de revisión previo a la fusión fallido (obligatorio, se registra en auditoría):",
+      "success": "Revisión fallida omitida para {{id}}"
+    },
     "cacheBreakdown": "(lectura {{read}} / escritura {{write}} / entrada {{input}})",
     "cacheHitRatio": "Tasa de aciertos de caché:",
     "cacheRead": "Lectura de caché",
@@ -7599,8 +7612,7 @@
       "rejected": "Plan rechazado — {{id}} devuelto a Planificación para replanificar",
       "rejectMessage": "¿Rechazar este plan? La especificación será descartada y regenerada.",
       "rejectTitle": "Rechazar plan",
-      "replanning": "Replanificando {{id}}…",
-      "releaseAuthorizationHold": ""
+      "replanning": "Replanificando {{id}}…"
     },
     "pr": {
       "awaitingChecks": "Esperando verificaciones del PR",
@@ -8240,7 +8252,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

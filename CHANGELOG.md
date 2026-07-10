@@ -2,15 +2,156 @@
 
 User-facing release notes aggregated across all packages. This file is auto-synced from each `packages/*/CHANGELOG.md` by `scripts/release.mjs` — do not edit by hand.
 
-## 0.56.1
+## 0.57.0
+
+### New
+
+- Archived tasks now load newest-first in pages of 100 with a Show more button.
+- Planning Mode's "go deeper" prompt now suggests plan-specific topics instead of generic buckets.
+- Edit a chat message and resume the conversation from that point.
+- Built-in runtime plugins (Hermes, Paperclip, OpenClaw, Droid) can now be disabled and stay disabled across restarts.
+- Chat search now matches message content, with a "Search in title only" toggle.
+- Hermes-configured models now appear in Fusion's model picker when the Hermes runtime is available.
+- Edit and resend a message in task-detail Planner Chat.
+- Duplicate tasks are no longer auto-archived on creation by default — they are flagged for review instead.
 
 ### Fixed
 
-- Fix Anthropic subscription showing "logged in" while all model calls fail.
-- Fix "Invalid transition" error when moving cards out of a custom workflow column like Coding (Ideas) → Ideas.
-- Fix overlapping Record and Clear buttons in the Keyboard Shortcuts settings rows on desktop and mobile.
-- Fix persistent mobile terminal inter-character spacing (5th recurrence root cause).
-- Fix manual PR actions hidden when a task auto-merge override was on but global auto-merge was off.
+- Approval cards now show the gated command/arguments and dedupe repeated pending requests.
+- Fix Planning Mode Back button showing a generation screen instead of the previous question.
+- Auto-approve plan toggle now appears only on the planning column, not Todo.
+- Fix Quick Add action-row buttons (Save, Attach, Fast, workflow trigger) rendering at mismatched heights.
+- Quick Add action-row controls now resolve one identical box height, not just a min-height floor.
+- Warn when changing a workflow's model surfaces tasks still pinned to the old model, including default-workflow tasks.
+- Retry transient OAuth token-rotation errors so in-flight agent calls survive rotation without failing the task.
+- Executors now block on pending approvals instead of probing for ungated workarounds.
+- Fix workspace-mode tasks failing auto-merge under the pull-request merge strategy.
+- New tasks now land in the selected workflow's intake column instead of always jumping to Planning/triage.
+- Yes/No chat question buttons now show a clear selected state after clicking.
+- Planning Mode "needs input" now shows a yellow nav badge instead of a top banner.
+- Task-detail Oversight button now matches Priority/Execution-mode height on desktop.
+- Fix mobile dashboard terminal sometimes rendering completely blank on open.
+- Fix the mobile terminal shortcut bar so it truly scrolls horizontally to reach every key.
+- Fix desktop app showing a truncated provider/model list vs. the web build.
+- Fix desktop app plugin install and Browse registry (plugin subsystem now wired into the embedded server).
+- Fix onboarding GitHub sign-in button erroring instead of starting GitHub auth.
+- Authentication settings always lists all supported providers, regardless of connected runtime plugins.
+- Add a close button to the Settings screen on mobile.
+- Hermes Runtime is now additive — connecting it no longer hides your custom providers, models, or auth options.
+- Align Priority and Execution-mode control heights with the Oversight dropdown in task detail.
+- Fix the task-detail Planner Chat stop button rendering narrower than its send button.
+- Fix cards stranded after workspace/out-of-band merges land; node-override end no longer silently no-ops.
+- Code Review/Plan Review/CE gate failures now record a diagnostic instead of "(no feedback captured)".
+- Fix agents on long heartbeat intervals silently going stale for hours.
+- Fix provider API keys being wiped when the desktop and CLI apps share credentials on one machine.
+- Route node settings-sync and mesh credential writes through the coordinated auth store to prevent concurrent clobbers.
+- Fix tasks in planning/intake columns starting execution before they were specified.
+- Switching projects now lands on the Board instead of Settings when the last-visited view was Settings.
+- Removed the chat "Search in title only" toggle; chat search always matches message content and title.
+- Automation live output no longer shows "Run failed" for runs that actually succeed.
+- Planner chat stop button now shows just the stop icon, not a text label.
+- Restore the chat "Working…" indicator immediately when returning to a session with an active generation.
+- Retain GitHub issue import state when leaving and returning to Import Tasks.
+- Built-in workflow boards and Automations editors now label the intake column "Planning", not "Triage".
+- fn_task_archive and fn_task_delete now accept removeLineageReferences to clear a lineage-parent block.
+- The Command Center SDLC funnel now labels the intake stage "Planning", matching the renamed board column.
+- Auto-recover durable agents stuck in transient error state even when their manager is active.
+- Agents now know they run inside Fusion and won't plan actions across a platform shutdown.
+- Task cards no longer show the steps breakdown while in the Planning column.
+- Align the quick-add workflow dropdown button height with Save/Fast/Subtask buttons.
+- On tablet widths, move terminal shortcuts/zoom controls into the bottom footer so they no longer overlap header icons.
+- Keep the mobile top header on a single line after a foldable phone is unfolded and refolded.
+- Custom providers can now enable Anthropic-style prompt caching to stop re-billing the full context each turn.
+- Fix Anthropic-compatible custom providers registering under an unregistered API key.
+- Fix merger awaiting-confirmation copy that implied a hard block when auto-merge proceeds automatically.
+- Fix the terminal rendering blank on mobile even though the shell prompt already loaded.
+- Fix workspace partial-land recovery losing the already-landed sub-repo sha.
+- Fix workspace sub-repo worktree creation failing on absent shared branch.
+- Prevent redundant polling and a re-render loop in agent-card runtime-fallback badges.
+- Clear stale generated mission fix features after their source feature passes validation.
+- Stop the false "OAuth token expired" push notification on startup.
+- Preserve Hermes chat session state and project runtime routing more reliably.
+- Stop the usage telemetry log from growing without bound and bloating the Fusion database.
+
+### Security
+
+- fn_task_attach now refuses to read files outside the task worktree boundary.
+
+### Performance
+
+- Fix dashboard terminal showing a blank screen for seconds before the first prompt appears on open.
+- Add a one-time server log hint pointing to shell-profile-hygiene docs when a login shell is slow to prompt.
+
+## 0.56.1
+
+### @fusion/dashboard
+
+#### Patch Changes
+
+- @fusion/core@0.56.1
+- @fusion/engine@0.56.1
+- @fusion/i18n@0.39.21
+- @fusion-plugin-examples/cli-printing-press@0.1.38
+- @fusion-plugin-examples/compound-engineering@0.1.21
+- @fusion-plugin-examples/dependency-graph@0.1.52
+- @fusion-plugin-examples/roadmap@0.1.40
+- @fusion-plugin-examples/cursor-runtime@0.1.40
+- @fusion-plugin-examples/droid-runtime@0.1.47
+- @fusion-plugin-examples/hermes-runtime@0.2.71
+- @fusion-plugin-examples/openclaw-runtime@0.2.71
+- @fusion-plugin-examples/paperclip-runtime@0.2.71
+
+### @fusion/desktop
+
+#### Patch Changes
+
+- @fusion/core@0.56.1
+- @fusion/dashboard@0.56.1
+- @fusion/engine@0.56.1
+
+### @fusion/engine
+
+#### Patch Changes
+
+- @fusion/core@0.56.1
+- @fusion/pi-claude-cli@0.56.1
+
+### @fusion/plugin-sdk
+
+#### Patch Changes
+
+- @fusion/core@0.56.1
+
+### @runfusion/fusion
+
+#### Patch Changes
+
+- ed823c7: summary: Fix Anthropic subscription showing "logged in" while all model calls fail.
+  category: fix
+  dev: Two-part fix. (1) OAuth token refresh in `packages/engine/src/auth-storage.ts` sent a `scope` param (defaulting to `user:profile`), which per RFC 6749 §6 re-issued the access token narrowed to that scope and stripped `user:inference` — so refreshed tokens 403'd on every model call. Refresh now omits `scope` (preserving the originally-granted scopes, matching pi-ai's own refresh), and `ANTHROPIC_DEFAULT_SCOPES` mirrors the full Claude Code scope set. (2) `/auth/status` now reports an unexpired Anthropic OAuth token that lacks an inference scope as not-connected (authenticated:false, expired:true so the re-login banner fires) with a scope-specific loginError, instead of falsely claiming a live session. Existing narrowed tokens need one re-login to obtain a fresh broad grant.
+- dc44730: summary: Fix "Invalid transition" error when moving cards out of a custom workflow column like Coding (Ideas) → Ideas.
+  category: fix
+  dev: moveTaskInternal's compat-flag legacy path validated moves against the legacy VALID_TRANSITIONS table, which is keyed only by the built-in column ids; a task in a non-legacy workflow column (e.g. "ideas") had no key and every move was rejected. The legacy branch now resolves a non-legacy source column's targets from the task's own workflow adjacency (resolveAllowedColumns) while preserving the legacy bare-Error contract for legacy columns.
+- b9d60b3: summary: Fix overlapping Record and Clear buttons in the Keyboard Shortcuts settings rows on desktop and mobile.
+  category: fix
+  dev: The shortcut-capture Record/Clear buttons no longer use the icon-only `btn-icon` class (which set `line-height:0` and a mobile 36px square, clipping/overlapping the text labels); they use a text-button class and the `.shortcut-capture` row locks buttons with `flex-shrink:0` so the input and controls never overlap, stacking cleanly on mobile.
+- e347062: summary: Fix persistent mobile terminal inter-character spacing (5th recurrence root cause).
+  category: fix
+  dev: xterm's CharSizeService picks a Canvas-based (OffscreenCanvas) or DOM-based character-measurement strategy at terminal.open() time; DomRenderer's letter-spacing bake always measures via a separate DOM-based WidthCache, so a Canvas-vs-DOM measurement mismatch survived FN-7561/FN-7567's remeasure-ordering fixes. `withDomBasedTerminalCharacterMeasurement` in terminalPreferences.ts forces CharSizeService onto the same DOM strategy for both TerminalModal and SessionTerminal.
+- f4f1656: summary: Fix manual PR actions hidden when a task auto-merge override was on but global auto-merge was off.
+  category: fix
+  dev: TaskDetailModal isManualPrFlow now keys off live global autoMergeEnabled, not the per-task effective override (regression from FN-7255).
+
+### runfusion.ai
+
+#### Patch Changes
+
+- Updated dependencies [ed823c7]
+- Updated dependencies [dc44730]
+- Updated dependencies [b9d60b3]
+- Updated dependencies [e347062]
+- Updated dependencies [f4f1656]
+  - @runfusion/fusion@0.56.1
 
 ## 0.56.0
 
@@ -12789,6 +12930,14 @@ for reference.
 - Updated dependencies [a2ed6d0]
   - @runfusion/fusion@0.1.0
 
+## 0.39.22
+
+### @fusion/i18n
+
+#### Patch Changes
+
+- @fusion/core@0.57.0
+
 ## 0.39.21
 
 ### @fusion/i18n
@@ -12958,6 +13107,14 @@ for reference.
 #### Patch Changes
 
 - @fusion/core@0.40.0
+
+## 0.11.48
+
+### @fusion/droid-cli
+
+#### Patch Changes
+
+- @fusion-plugin-examples/droid-runtime@0.1.48
 
 ## 0.11.47
 

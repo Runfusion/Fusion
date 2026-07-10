@@ -356,6 +356,40 @@ function scriptDef(): WorkflowDefinition {
   };
 }
 
+function thinkingModelDef(): WorkflowDefinition {
+  return {
+    id: "WF-THINKING",
+    kind: "workflow",
+    name: "Thinking workflow",
+    description: "",
+    ir: {
+      version: "v2",
+      name: "Thinking workflow",
+      columns: [
+        { id: "triage", name: "Triage", traits: [{ trait: "intake" }] },
+        { id: "done", name: "Done", traits: [{ trait: "complete" }] },
+      ],
+      nodes: [
+        { id: "start", kind: "start", column: "triage" },
+        { id: "model", kind: "prompt", column: "triage", config: { name: "Model node", executor: "model", prompt: "run" } },
+        { id: "review", kind: "step-review", column: "triage", config: { type: "code", thinkingLevel: "low" } },
+        { id: "script", kind: "script", column: "triage", config: { scriptName: "lint" } },
+        { id: "end", kind: "end", column: "done" },
+      ],
+      edges: [
+        { from: "start", to: "model" },
+        { from: "model", to: "review" },
+        { from: "review", to: "script", condition: "outcome:approve" },
+        { from: "review", to: "model", condition: "outcome:revise", kind: "rework" },
+        { from: "script", to: "end" },
+      ],
+    },
+    layout: { start: { x: 0, y: 20 }, model: { x: 120, y: 60 }, review: { x: 240, y: 120 }, script: { x: 360, y: 180 }, end: { x: 480, y: 240 } },
+    createdAt: "2026-06-03T00:00:00.000Z",
+    updatedAt: "2026-06-03T00:00:00.000Z",
+  };
+}
+
 function plainConnectDef(): WorkflowDefinition {
   return {
     id: "WF-PLAIN-CONNECT",
@@ -1184,6 +1218,45 @@ describe("WorkflowNodeEditor", () => {
     fireEvent.click(await screen.findByTestId("wf-node-end"));
 
     await waitFor(() => expect(screen.queryByTestId("wf-node-inspector")).not.toBeInTheDocument());
+  });
+
+  it("wires thinking controls only on workflow model pickers and persists clear semantics", async () => {
+    const source = thinkingModelDef();
+    vi.mocked(fetchWorkflows).mockResolvedValue([source]);
+    vi.mocked(fetchModels).mockResolvedValue({ models: [{ provider: "anthropic", id: "claude-sonnet", name: "Claude Sonnet" }] });
+    vi.mocked(fetchSettings).mockResolvedValue({ defaultThinkingLevel: "medium" } as Settings);
+    vi.mocked(updateWorkflow).mockImplementation(async (_id, updates) => ({ ...source, ...(updates as object) }));
+
+    render(<WorkflowNodeEditor isOpen onClose={() => {}} addToast={() => {}} />);
+
+    await screen.findByText("Save");
+    fireEvent.click(screen.getByTestId("wf-layout-toggle"));
+
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-model")).getAllByRole("button")[0]);
+    let inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).getByTestId("custom-model-dropdown-thinking-badge")).toHaveTextContent("Default (medium)");
+    fireEvent.click(within(inspector).getByRole("button", { name: "Model" }));
+    await screen.findByTestId("custom-model-dropdown-thinking");
+    fireEvent.change(screen.getAllByTestId("custom-model-dropdown-thinking").at(-1)!, { target: { value: "high" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalled());
+    let saved = vi.mocked(updateWorkflow).mock.calls.at(-1)?.[1] as { ir?: WorkflowDefinition["ir"] };
+    expect(saved.ir?.nodes.find((node) => node.id === "model")?.config?.thinkingLevel).toBe("high");
+
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-review")).getAllByRole("button")[0]);
+    inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).getByTestId("custom-model-dropdown-thinking-badge")).toHaveTextContent("Low");
+    fireEvent.click(within(inspector).getByRole("button", { name: "Review model (optional)" }));
+    await screen.findByTestId("custom-model-dropdown-thinking");
+    fireEvent.change(screen.getAllByTestId("custom-model-dropdown-thinking").at(-1)!, { target: { value: "" } });
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => expect(updateWorkflow).toHaveBeenCalledTimes(2));
+    saved = vi.mocked(updateWorkflow).mock.calls.at(-1)?.[1] as { ir?: WorkflowDefinition["ir"] };
+    expect(saved.ir?.nodes.find((node) => node.id === "review")?.config).not.toHaveProperty("thinkingLevel");
+
+    fireEvent.click(within(await screen.findByTestId("mobile-wf-node-script")).getAllByRole("button")[0]);
+    inspector = await screen.findByTestId("wf-node-inspector");
+    expect(within(inspector).queryByTestId("custom-model-dropdown-thinking-badge")).not.toBeInTheDocument();
   });
 
   it("opens selected edge details as a dismissible full-screen mobile stage", async () => {

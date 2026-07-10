@@ -24,6 +24,15 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const DEFAULT_PACKAGES = ["core", "engine", "dashboard"];
+/*
+FNXC:DevWorkflow 2026-07-10-15:40:
+FN-7779 stale-plugin-dist: plugins load their built dist/ at runtime, so a
+never-rebuilt plugin dist runs phantom-old code the same way a stale package
+dist does (the Grok wrong-CLI-flags "messages aren't sending" failure). The
+freshness guard now also scans plugin package dirs one level under these roots
+so the operator is warned even if the prebuild is skipped (`--prebuild none`).
+*/
+const DEFAULT_PLUGIN_ROOTS = ["plugins", "plugins/examples"];
 // Slack absorbs build/checkout mtime jitter so we only flag a real source-ahead.
 const DEFAULT_SLACK_MS = 2_000;
 const SRC_EXTENSIONS = [".ts", ".tsx"];
@@ -70,23 +79,64 @@ function newestMtimeMs(dir, extensions, fs) {
  * @param {object} [options.fs] fs seam ({ existsSync, readdirSync, statSync })
  * @returns {{ stale: boolean, packages: Array<{ name: string, srcNewestMs: number, distNewestMs: number, stale: boolean }> }}
  */
+/**
+ * Discover plugin package dirs one level under each plugin root. A plugin is a
+ * candidate only when it has both a `src/` and a `dist/` (same src+dist gate as
+ * packages). Never throws — an unreadable root yields no candidates.
+ *
+ * @returns {Array<{ label: string, srcDir: string, distDir: string }>}
+ */
+function discoverPluginCandidates(rootDir, pluginRoots, fs) {
+  const candidates = [];
+  for (const root of pluginRoots) {
+    const rootDirPath = join(rootDir, root);
+    if (!fs.existsSync(rootDirPath)) continue;
+    let entries;
+    try {
+      entries = fs.readdirSync(rootDirPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const srcDir = join(rootDirPath, entry.name, "src");
+      const distDir = join(rootDirPath, entry.name, "dist");
+      if (!fs.existsSync(srcDir) || !fs.existsSync(distDir)) continue;
+      candidates.push({ label: entry.name, srcDir, distDir });
+    }
+  }
+  return candidates;
+}
+
 export function computeDistStaleness(options = {}) {
   const rootDir = options.rootDir ?? process.cwd();
   const packages = options.packages ?? DEFAULT_PACKAGES;
+  const pluginRoots = options.pluginRoots ?? DEFAULT_PLUGIN_ROOTS;
   const slackMs = options.slackMs ?? DEFAULT_SLACK_MS;
   const fs = options.fs ?? { existsSync, readdirSync, statSync };
 
+  // Packages under packages/<name>, plus plugin packages under the plugin
+  // roots. `label` drives the warning text; packages keep the `@fusion/<name>`
+  // form via a null label, plugins surface their dir name.
+  const candidates = [
+    ...packages.map((name) => ({
+      label: null,
+      name,
+      srcDir: join(rootDir, "packages", name, "src"),
+      distDir: join(rootDir, "packages", name, "dist"),
+    })),
+    ...discoverPluginCandidates(rootDir, pluginRoots, fs).map((c) => ({ label: c.label, name: c.label, srcDir: c.srcDir, distDir: c.distDir })),
+  ];
+
   const results = [];
-  for (const name of packages) {
-    const srcDir = join(rootDir, "packages", name, "src");
-    const distDir = join(rootDir, "packages", name, "dist");
+  for (const { label, name, srcDir, distDir } of candidates) {
     // Both must exist: no src = packaged install; no dist = pure source run.
     if (!fs.existsSync(srcDir) || !fs.existsSync(distDir)) continue;
     const srcNewestMs = newestMtimeMs(srcDir, SRC_EXTENSIONS, fs);
     const distNewestMs = newestMtimeMs(distDir, DIST_EXTENSIONS, fs);
     if (srcNewestMs === 0 || distNewestMs === 0) continue;
     const stale = srcNewestMs - distNewestMs > slackMs;
-    results.push({ name, srcNewestMs, distNewestMs, stale });
+    results.push({ name, label, srcNewestMs, distNewestMs, stale });
   }
   return { stale: results.some((r) => r.stale), packages: results };
 }
@@ -97,10 +147,11 @@ export function computeDistStaleness(options = {}) {
  */
 export function formatDistStalenessWarning(result) {
   if (!result || !result.stale) return null;
-  const staleNames = result.packages.filter((p) => p.stale).map((p) => p.name);
+  // Plugins carry a `label` (their dir name); packages use the `@fusion/<name>` form.
+  const staleNames = result.packages.filter((p) => p.stale).map((p) => p.label ?? `@fusion/${p.name}`);
   return [
     "",
-    `[fusion] ⚠ STALE BUILD: ${staleNames.map((n) => `@fusion/${n}`).join(", ")} dist/ is OLDER than src/.`,
+    `[fusion] ⚠ STALE BUILD: ${staleNames.join(", ")} dist/ is OLDER than src/.`,
     "[fusion]   The running process may execute outdated compiled code, so recently landed",
     "[fusion]   fixes will NOT take effect until you rebuild AND restart:",
     "[fusion]     pnpm build   # then restart the dashboard/engine process",

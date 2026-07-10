@@ -224,6 +224,43 @@ describe("FN-7551 — overseer decision points populate the intervention timelin
     expect(confirmationEntries.some((e) => e.outcome === "succeeded")).toBe(true);
   });
 
+  // FN-7692: the recorded `overseer:intervention` reason for a merger/
+  // pull-request confirmation must accurately reflect whether auto-merge will
+  // proceed unattended (advisory copy) or genuinely requires a human approval
+  // (blocking copy) — reproducing the FN-7689 scenario where the timeline
+  // claimed a hard block that the merge sailed past unattended. A pending
+  // confirmation must still be recorded either way (no dispatch change).
+  it("records accurate advisory copy (not a false hard-block claim) when ctx.settings.autoMerge is truthy for an in-review merger task", async () => {
+    const task = await seedTask("in-review");
+    const { monitor, controllerFromMonitor: controller } = wireRealEngineOverseer(store);
+    await monitor.observeTask(task, "autonomous"); // merger stage (plain in-review, no PR/reviewState)
+
+    const decision = await controller.tick(task, { settings: { autoMerge: true } });
+    expect(decision?.requiresConfirmation).toBe(true);
+    expect(decision?.action).toBe("await_confirmation");
+
+    const timeline = getPlannerInterventionTimeline(store, task.id);
+    const requestEntry = timeline.find((e) => e.action === "request-confirmation");
+    expect(requestEntry).toBeTruthy();
+    expect(requestEntry?.outcome).toBe("awaiting-confirmation");
+    expect(requestEntry?.reason).not.toMatch(/requires explicit confirmation before .* may run/);
+    expect(requestEntry?.reason).toMatch(/automatically/i);
+
+    // A pending confirmation is still recorded — no dispatch, no behavior change.
+    expect(controller.getPendingConfirmations(task.id)).toHaveLength(1);
+  });
+
+  // Note: a genuinely-blocking `autoMergeWillProceed: false` state is
+  // exercised directly against the pure `decidePlannerRecovery` in
+  // `planner-recovery.test.ts` (@fusion/core). It is NOT independently
+  // reachable through this engine's real `tick()` wiring: `allowsAutoMerge
+  // Processing(task, settings) === false` is exactly the condition
+  // `evaluateOverseerHumanControl` uses to withhold ALL oversight action
+  // (including confirmation recording) BEFORE `decidePlannerRecovery` is ever
+  // called — so a real merger/pull-request confirmation entry can only ever
+  // be recorded when auto-merge WILL proceed. This is documented here rather
+  // than asserted redundantly to avoid a test that can never legitimately fail.
+
   it("denying a confirmation resolution emits a 'skipped' outcome entry", async () => {
     const task = await seedTask("in-review");
     const { monitor, controllerFromMonitor: controller } = wireRealEngineOverseer(store);

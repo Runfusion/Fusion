@@ -99,6 +99,19 @@ export const taskPromptWriteParams = Type.Object({
   content: Type.String({ description: "Complete replacement content for this task's PROMPT.md." }),
 });
 
+export const taskFileScopeAddParams = Type.Object({
+  files: Type.Array(
+    Type.String({
+      description:
+        "A repo-relative file path or glob to add to the task's File Scope, e.g. `packages/engine/src/foo.ts` or `packages/dashboard/app/**`. No leading slash, no `..`, no URLs or git refs.",
+    }),
+    { minItems: 1, description: "One or more files/globs to add to this task's ## File Scope." },
+  ),
+  reason: Type.Optional(
+    Type.String({ description: "Short reason these files must be edited (recorded in the agent log)." }),
+  ),
+});
+
 export const chatTaskDocumentWriteParams = Type.Object({
   task_id: Type.String({ description: "Task ID to write the document to (e.g. 'FN-001')." }),
   key: Type.String({
@@ -1359,6 +1372,79 @@ export function createTaskPromptWriteTool(store: TaskStore, taskId: string, runC
           }],
           details: {},
         };
+      }
+    },
+  };
+}
+
+/*
+FNXC:FileScope 2026-07-08-22:40:
+Requirement: when an executing agent must edit files beyond the task's declared `## File Scope`, it should extend the declared scope itself rather than silently editing out-of-scope (which strands those edits — the merger's squash is scoped to `## File Scope`, and cross-task overlap blocking + the merge file-scope invariant both read it). This tool appends validated entries to the `## File Scope` section of PROMPT.md and persists via `store.updateTask({ prompt })`, so the same validation (`validateFileScopeInPromptContent`) and task.json/PROMPT.md sync path as `fn_task_prompt_write` applies, and `parseFileScopeFromPrompt` picks the additions up immediately.
+Entries are validated with `isValidFileScopeEntry` and de-duplicated against existing scope. Marker-free plain `- \`path\`` lines are used (not the merger's `scopeAutoWiden` HTML-comment marker) so these read as first-class declared scope. Caveat: unlike the merge-time auto-widen, this does NOT re-run the peer-claim refusal (files owned by another active task's scope) — the merge-time invariant remains the backstop for genuine cross-task conflicts.
+*/
+export function createTaskFileScopeAddTool(store: TaskStore, taskId: string, runContext?: RunMutationContext): ToolDefinition {
+  return {
+    name: "fn_task_file_scope_add",
+    label: "Add to File Scope",
+    description:
+      "Add one or more files/globs to this task's declared ## File Scope when you need to edit beyond the initial scope. " +
+      "Use this instead of silently editing out-of-scope files so your changes are not stranded at merge. " +
+      "Paths are repo-relative (no leading slash, no `..`).",
+    parameters: taskFileScopeAddParams,
+    execute: async (_id: string, params: Static<typeof taskFileScopeAddParams>) => {
+      const errorContent = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+      try {
+        const requested = params.files.map((f) => f.trim()).filter((f) => f.length > 0);
+        const rejected = requested.filter((f) => !fusionCore.isValidFileScopeEntry(f));
+        const valid = requested.filter((f) => fusionCore.isValidFileScopeEntry(f));
+
+        const task = await store.getTask(taskId);
+        const prompt = task.prompt ?? "";
+        const headingMatch = prompt.match(/^##\s+File Scope\s*$/m);
+        if (!headingMatch) {
+          return errorContent(
+            `ERROR: ${taskId}'s PROMPT.md has no "## File Scope" section to extend. Use fn_task_prompt_write if the spec needs a scope section.`,
+          );
+        }
+
+        const sectionStart = headingMatch.index! + headingMatch[0].length;
+        const rest = prompt.slice(sectionStart);
+        const nextHeadingIdx = rest.search(/^##\s/m);
+        const sectionEnd = nextHeadingIdx === -1 ? prompt.length : sectionStart + nextHeadingIdx;
+        const section = prompt.slice(sectionStart, sectionEnd);
+
+        const existing = new Set((section.match(/`([^`]+)`/g) ?? []).map((t) => t.slice(1, -1)));
+        const alreadyPresent = valid.filter((f) => existing.has(f));
+        const toAdd = valid.filter((f) => !existing.has(f));
+
+        if (toAdd.length === 0) {
+          const parts = ["No files added to File Scope."];
+          if (alreadyPresent.length > 0) parts.push(`Already present: ${alreadyPresent.join(", ")}.`);
+          if (rejected.length > 0) parts.push(`Rejected (invalid path/glob): ${rejected.join(", ")}.`);
+          return errorContent(parts.join(" "));
+        }
+
+        const insertion = toAdd.map((f) => `- \`${f}\``).join("\n");
+        const sectionTrimmed = section.replace(/\s+$/, "");
+        const newSection = sectionTrimmed.length === 0 ? `\n\n${insertion}\n` : `${sectionTrimmed}\n${insertion}\n`;
+        const newPrompt = prompt.slice(0, sectionStart) + newSection + prompt.slice(sectionEnd);
+
+        await store.updateTask(taskId, { prompt: newPrompt }, runContext);
+        await store
+          .appendAgentLog(
+            taskId,
+            `Added to File Scope: ${toAdd.join(", ")}${params.reason ? ` — ${params.reason}` : ""}`,
+            "text",
+          )
+          .catch(() => {});
+
+        const parts = [`Added to File Scope: ${toAdd.join(", ")}.`];
+        if (alreadyPresent.length > 0) parts.push(`Already present: ${alreadyPresent.join(", ")}.`);
+        if (rejected.length > 0) parts.push(`Rejected (invalid path/glob): ${rejected.join(", ")}.`);
+        return { content: [{ type: "text" as const, text: parts.join(" ") }], details: { added: toAdd } };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } catch (err: any) {
+        return errorContent(`ERROR: Failed to update File Scope for ${taskId}: ${err.message}`);
       }
     },
   };

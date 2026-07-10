@@ -89,6 +89,7 @@ describe("workflow-native built-in workflow settings", () => {
     expect(BUILTIN_OVERSIGHT_SETTINGS.map((setting) => setting.id)).toEqual([
       "plannerOversightLevel",
       "plannerOversightNotificationLevel",
+      "plannerOverseerExecutorStuckAfterMs",
     ]);
     const oversight = BUILTIN_OVERSIGHT_SETTINGS[0];
     expect(oversight).toMatchObject({
@@ -143,6 +144,27 @@ describe("workflow-native built-in workflow settings", () => {
     expect(
       movedKeyIds.has("plannerOversightNotificationLevel"),
       "plannerOversightNotificationLevel should not be in MOVED_SETTINGS_KEYS",
+    ).toBe(false);
+
+    // FN-7743: executor-stall recovery threshold, declared alongside the other
+    // workflow-native oversight settings.
+    const executorStuckAfterMs = BUILTIN_OVERSIGHT_SETTINGS[2];
+    expect(executorStuckAfterMs).toMatchObject({
+      id: "plannerOverseerExecutorStuckAfterMs",
+      type: "number",
+      default: 2 * 60 * 60 * 1000,
+    });
+    expect(
+      fullIds.has("plannerOverseerExecutorStuckAfterMs"),
+      "plannerOverseerExecutorStuckAfterMs should be in the full built-in catalog",
+    ).toBe(true);
+    expect(
+      movedIds.has("plannerOverseerExecutorStuckAfterMs"),
+      "plannerOverseerExecutorStuckAfterMs should not be in the moved-key catalog",
+    ).toBe(false);
+    expect(
+      movedKeyIds.has("plannerOverseerExecutorStuckAfterMs"),
+      "plannerOverseerExecutorStuckAfterMs should not be in MOVED_SETTINGS_KEYS",
     ).toBe(false);
   });
 

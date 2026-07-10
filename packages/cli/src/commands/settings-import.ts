@@ -1,7 +1,29 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { TaskStore, createTaskStoreForBackend, importSettings, readExportFile, validateImportData } from "@fusion/core";
-import { resolveProject } from "../project-context.js";
+import { resolveProjectPathOnly, asLocalProjectContext, closeProjectStore } from "../project-context.js";
+import { retryOnLock } from "../lock-retry.js";
+
+/**
+ * FNXC:CliBoardMutation 2026-07-09-00:00:
+ * FN-7740 audit finding: `runSettingsImport` resolved a name→path via a
+ * cached `resolveProject(projectName)` call it never used `.store` from
+ * (path-only leak), THEN built a second, UNCACHED `new TaskStore(...)` that
+ * IS the store actually used — and closed neither. Every exit path here is
+ * `process.exit(0/1)`, so this specific file did not previously hang the
+ * event loop (per project memory: `process.exit()` terminates regardless of
+ * open handles), but the leaked handles are still a correctness/discipline
+ * gap and, per MEMORY, a pending `finally` never runs after `process.exit()`
+ * — so teardown must happen explicitly BEFORE every exit call, not via
+ * `finally`. Fixed by: `resolveProjectPathOnly` for the name→path
+ * resolution (closes+evicts the cached store internally); wrapping the
+ * uncached store in `asLocalProjectContext` + an `exitWithStore`-style
+ * closure (mirrors `branch-group.ts`/`agent.ts`) that closes it BEFORE
+ * every `process.exit()` call; and wrapping the `importSettings` board
+ * mutation in `retryOnLock` so a momentary `database is locked` from an
+ * active engine/agent writer is retried instead of failing the import
+ * outright.
+ */
 
 /**
  * Run settings import command.
@@ -23,12 +45,12 @@ export async function runSettingsImport(
   } = {}
 ): Promise<void> {
   const scope = options.scope ?? "both";
-  const project = options.projectName ? await resolveProject(options.projectName) : undefined;
+  const projectPath = options.projectName ? await resolveProjectPathOnly(options.projectName) : undefined;
 
   // FNXC:PostgresCutover 2026-07-04: boot the PostgreSQL backend via the startup
   // factory instead of a legacy SQLite TaskStore whose runtime was removed
   // (VAL-REMOVAL-005). Falls back to legacy only on FUSION_NO_EMBEDDED_PG=1.
-  const rootDir = project?.projectPath ?? process.cwd();
+  const rootDir = projectPath ?? process.cwd();
   const boot = await createTaskStoreForBackend({ rootDir });
   let store: TaskStore;
   if (boot) {
@@ -37,14 +59,21 @@ export async function runSettingsImport(
     store = new TaskStore(rootDir);
     await store.init();
   }
+  const storeContext = asLocalProjectContext(store);
   const merge = options.merge ?? true;
   const skipConfirm = options.yes ?? false;
+
+  const exitWithStore = async (code: number): Promise<never> => {
+    await closeProjectStore(storeContext);
+    return process.exit(code);
+  };
 
   try {
     const resolvedPath = resolve(filePath);
     if (!existsSync(resolvedPath)) {
       console.error(`Error: File not found: ${filePath}`);
-      process.exit(1);
+      await exitWithStore(1);
+      return;
     }
 
     let importData;
@@ -52,7 +81,8 @@ export async function runSettingsImport(
       importData = await readExportFile(resolvedPath);
     } catch (err) {
       console.error(`Error: Failed to read import file: ${(err as Error).message}`);
-      process.exit(1);
+      await exitWithStore(1);
+      return;
     }
 
     const validationErrors = validateImportData(importData);
@@ -61,7 +91,8 @@ export async function runSettingsImport(
       for (const error of validationErrors) {
         console.error(`  - ${error}`);
       }
-      process.exit(1);
+      await exitWithStore(1);
+      return;
     }
 
     const summary: string[] = [];
@@ -86,7 +117,8 @@ export async function runSettingsImport(
 
     if (summary.length === 0) {
       console.error("Error: No settings to import in the specified scope");
-      process.exit(1);
+      await exitWithStore(1);
+      return;
     }
 
     console.log();
@@ -103,14 +135,19 @@ export async function runSettingsImport(
     if (!skipConfirm) {
       console.log("  Use --yes to confirm this import operation");
       console.log();
-      process.exit(1);
+      await exitWithStore(1);
+      return;
     }
 
-    const result = await importSettings(store, importData, { scope, merge });
+    const result = await retryOnLock(
+      () => importSettings(store, importData, { scope, merge }),
+      { id: projectPath ?? process.cwd(), action: "import settings" },
+    );
 
     if (!result.success) {
       console.error(`Error: Import failed: ${result.error}`);
-      process.exit(1);
+      await exitWithStore(1);
+      return;
     }
 
     console.log(`  ✓ Settings imported successfully`);
@@ -125,9 +162,9 @@ export async function runSettingsImport(
     }
     console.log();
 
-    process.exit(0);
+    await exitWithStore(0);
   } catch (err) {
     console.error(`Error: ${(err as Error).message}`);
-    process.exit(1);
+    await exitWithStore(1);
   }
 }

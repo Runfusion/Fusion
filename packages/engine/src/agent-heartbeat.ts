@@ -19,7 +19,7 @@
 
 import type { AgentStore, AgentHeartbeatRun, HeartbeatInvocationSource, AgentHeartbeatConfig, AgentBudgetStatus, Message, MessageStore, TaskStore, TaskDetail, AgentRole, Agent, InboxTask, RunMutationContext, Settings, AgentConfigRevision, ReflectionStore, ChatStore, ChatRoom, ChatRoomMessage, AgentMemoryInclusionMode } from "@fusion/core";
 import { AutoClaimSnapshotManager, resolveFreshAutoClaimCandidates, type AutoClaimCandidate } from "./auto-claim-snapshot.js";
-import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode } from "@fusion/core";
+import { ApprovalRequestStore, buildExecutionMemoryInstructions, isEphemeralAgent, hasAgentIdentity, resolveEffectiveAgentPermissionPolicy, canAgentTakeImplementationTask, canAgentTakeImplementationTaskForExplicitRouting, resolvePersistAgentThinkingLog, resolveAgentMemoryInclusionMode, FUSION_RUNTIME_SELF_AWARENESS, AWAITING_APPROVAL_PAUSE_REASON } from "@fusion/core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
@@ -34,11 +34,28 @@ import { resolveHeartbeatPromptTemplate, resolveHeartbeatScopeDisciplineMode, se
 import { buildPromptLayers, collapsePromptLayers } from "./prompt-layers.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
 import { createLogger, heartbeatLog, formatError } from "./logger.js";
+
+/**
+ * FNXC:WorktreeAcquisition 2026-07-09-00:00:
+ * Bounds how many consecutive heartbeat cycles may retry a task's worktree
+ * acquisition before the task is terminally failed instead of being requeued
+ * to "todo" forever. Mirrors `Executor.MAX_WORKTREE_RETRIES` (3): unlike the
+ * executor's in-call retry loop (which caps attempts within a single
+ * `tryCreateWorktree` invocation, bounded by exponential backoff of at most a
+ * few seconds), a durable agent's heartbeat re-runs `acquireTaskWorktree` from
+ * scratch on every heartbeat interval with no shared counter — a persistently
+ * failing acquisition (e.g. branch genuinely owned by a live foreign task with
+ * sibling-rename disabled) could requeue indefinitely across hours of
+ * heartbeat cycles (observed: ~16.2h across 4 distinct worktree directories,
+ * FN-7721). `Task.recoveryRetryCount` is reused here (no schema migration)
+ * as the cross-heartbeat counter.
+ */
+const MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES = 3;
 import { acquireTaskWorktree } from "./worktree-acquisition.js";
 import { createRunAuditor, generateSyntheticRunId, type DatabaseMutationType, type EngineRunContext } from "./run-audit.js";
 import { promptWithFallback } from "./pi.js";
 import { buildAgentGatedActionSummary } from "./permanent-agent-gating.js";
-import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels } from "./agent-session-helpers.js";
+import { createResolvedAgentSession, extractRuntimeHint, resolveHeartbeatSessionModels, resolveExecutorFallbackThinkingLevel } from "./agent-session-helpers.js";
 import { resolveMcpServersForStore } from "./mcp-resolution.js";
 import type { AgentActionGateContext } from "./agent-action-gate.js";
 import { buildSessionSkillContextSync } from "./session-skill-context.js";
@@ -125,6 +142,17 @@ export interface HeartbeatMonitorOptions {
   /** Optional self-improvement service for periodic self-improve injection */
   selfImproveService?: SelfImproveServiceLike;
   secretsStore?: Pick<import("@fusion/core").SecretsStore, "listEnvExportable">;
+  /**
+   * FNXC:WorktreeAcquisition 2026-07-09-00:00:
+   * Callback invoked when a task's worktree acquisition has failed
+   * `MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES` consecutive times across heartbeat
+   * cycles and the task has been terminally marked `status: "failed"`. Lets the
+   * owning runtime (in-process-runtime.ts) route the failure into
+   * `CentralCore.recordTaskCompletion` the same way `Executor`'s `onError` does,
+   * so `performanceSummary.totalTasksFailed` is not silently starved of a real
+   * failure (FN-7721).
+   */
+  onTaskAcquisitionExhausted?: (taskId: string, detail: string) => void;
 }
 
 /** Options for waking up an agent */
@@ -376,7 +404,9 @@ FNXC:AgentPauseGuidance 2026-06-28-00:05:
 Coordination agents must not pause tasks to handle failures or blockers because a pause suppresses scheduler and self-healing recovery.
 Only use task pause when the user explicitly requests manual control; otherwise log blockers, route follow-up work, or let the task surface as failed.
 */
-export const HEARTBEAT_SYSTEM_PROMPT = `You are a heartbeat agent running in a short execution window.
+export const HEARTBEAT_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}
+
+You are a heartbeat agent running in a short execution window.
 
 ## Your Role
 
@@ -482,7 +512,9 @@ When sending messages:
  * System prompt for no-task heartbeat agent sessions.
  * Instructs the agent to perform ambient work only with tools that do not require task context.
  */
-export const HEARTBEAT_NO_TASK_SYSTEM_PROMPT = `You are a heartbeat agent running in a short execution window with no task assignment.
+export const HEARTBEAT_NO_TASK_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}
+
+You are a heartbeat agent running in a short execution window with no task assignment.
 
 ## Your Role
 
@@ -884,6 +916,7 @@ export class HeartbeatMonitor {
   private onTerminated?: (agentId: string, reason: string) => void;
   private onRunStarted?: (agentId: string, run: AgentHeartbeatRun) => void;
   private onRunCompleted?: (agentId: string, run: AgentHeartbeatRun) => void;
+  private onTaskAcquisitionExhausted?: (taskId: string, detail: string) => void;
   private taskStore?: TaskStore;
   private rootDir?: string;
   private messageStore?: MessageStore;
@@ -917,6 +950,7 @@ export class HeartbeatMonitor {
     this.onTerminated = options.onTerminated;
     this.onRunStarted = options.onRunStarted;
     this.onRunCompleted = options.onRunCompleted;
+    this.onTaskAcquisitionExhausted = options.onTaskAcquisitionExhausted;
     this.taskStore = options.taskStore;
     this.rootDir = options.rootDir;
     this.messageStore = options.messageStore;
@@ -1216,7 +1250,11 @@ export class HeartbeatMonitor {
       */
       pauseForApproval: async ({ approvalRequestId, decision }) => {
         if (taskId && this.taskStore) {
-          await this.taskStore.pauseTask(taskId, true, undefined, { pausedByAgentId: agent.id });
+          // FNXC:ApprovalHold 2026-07-09-00:10: FN-7736 -- mirror executor.ts's
+          // stamping of the canonical AWAITING_APPROVAL_PAUSE_REASON so
+          // recovery/oversight code recognizes this hold on the task, not just
+          // the agent's `pauseReason`.
+          await this.taskStore.pauseTask(taskId, true, undefined, { pausedByAgentId: agent.id, pausedReason: AWAITING_APPROVAL_PAUSE_REASON });
           await this.taskStore.logEntry(
             taskId,
             `Approval required for ${decision.toolName}. Request ${approvalRequestId} created; task and agent paused awaiting decision.`,
@@ -2569,7 +2607,7 @@ export class HeartbeatMonitor {
         }
 
         // Build structured layers for cross-session prompt caching.
-        const heartbeatPluginContributions = buildPluginPromptSection(
+        const heartbeatPluginContributions = await buildPluginPromptSection(
           "heartbeat",
           this.pluginRunner,
         );
@@ -2723,12 +2761,50 @@ export class HeartbeatMonitor {
           } catch (worktreeErr) {
             const detail = worktreeErr instanceof Error ? worktreeErr.message : String(worktreeErr);
             heartbeatLog.warn(`Heartbeat worktree acquisition failed for ${agentId}: ${detail}`);
+
+            /*
+             * FNXC:WorktreeAcquisition 2026-07-09-00:00:
+             * Bound consecutive cross-heartbeat acquisition failures for this task
+             * (see MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES doc comment). On cap
+             * exhaustion, terminally fail the task (matching the executor's
+             * `status: "failed"` convention) instead of requeuing to "todo" again,
+             * and surface the exhaustion via onTaskAcquisitionExhausted so the
+             * owning runtime can record the failure in CentralCore stats (FN-7721).
+             */
+            const priorAttempts = taskDetail.recoveryRetryCount ?? 0;
+            const attemptsSoFar = priorAttempts + 1;
+            const retryCapExhausted = attemptsSoFar >= MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES;
+
             if (taskDetail.column !== "done" && taskDetail.column !== "archived") {
-              await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true });
+              if (retryCapExhausted) {
+                const exhaustionMessage = `Worktree acquisition failed after ${MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES} heartbeat attempts for branch "${taskDetail.branch ?? `fusion/${taskDetail.id.toLowerCase()}`}": ${detail}`;
+                await taskStore.updateTask(taskDetail.id, {
+                  status: "failed",
+                  error: exhaustionMessage,
+                  recoveryRetryCount: null,
+                });
+                await taskStore.logEntry(taskDetail.id, `Worktree acquisition retry cap reached (${MAX_HEARTBEAT_WORKTREE_ACQUISITION_RETRIES} attempts); task marked failed`, exhaustionMessage);
+                /*
+                 * FNXC:WorktreeAcquisition 2026-07-09-00:00:
+                 * `moveTask(..., "todo", ...)` reopen-to-todo semantics clear
+                 * task.status/task.error back to undefined unless `preserveStatus`
+                 * is passed (see store.ts isReopenToTodoOrTriage clause and
+                 * move-task-preserve-status.test.ts) — without this flag the
+                 * `status: "failed"` just written above would be silently wiped,
+                 * leaving the task looking like a normal todo task that gets
+                 * reassigned and retried from scratch, defeating the terminal-
+                 * failure intent of this fix (FN-7721).
+                 */
+                await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true, preserveStatus: true });
+                this.onTaskAcquisitionExhausted?.(taskDetail.id, exhaustionMessage);
+              } else {
+                await taskStore.updateTask(taskDetail.id, { recoveryRetryCount: attemptsSoFar });
+                await taskStore.moveTask(taskDetail.id, "todo", { preserveProgress: true });
+              }
             }
             await this.completeRun(agentId, run.id, {
               status: "completed",
-              resultJson: { reason: "worktree_acquisition_failed", detail },
+              resultJson: { reason: "worktree_acquisition_failed", detail, attempt: attemptsSoFar, retryCapExhausted },
               stderrExcerpt: detail,
               skipStateTransition: true,
             });
@@ -2760,6 +2836,7 @@ export class HeartbeatMonitor {
           defaultModelId: heartbeatSessionModels.defaultModelId,
           fallbackProvider: heartbeatSessionModels.fallbackProvider,
           fallbackModelId: heartbeatSessionModels.fallbackModelId,
+          fallbackThinkingLevel: resolveExecutorFallbackThinkingLevel(undefined, heartbeatModelSettings),
           runAuditor: audit,
           settings: heartbeatModelSettings,
           mcpServers: heartbeatMcp.servers,
@@ -4491,8 +4568,28 @@ export class HeartbeatTriggerScheduler {
     }
 
     if (this.timers.has(agent.id)) {
-      // Already ticking — non-config updates should not reset the interval.
-      return;
+      /*
+       * FNXC:AgentHeartbeat 2026-07-09-00:00:
+       * FN-7718 — a bare "already ticking" return here used to no-op even when
+       * the present timer entry was a stale/orphaned leftover (e.g. one that
+       * survived a stop the audit had not yet reconciled, or a start transition
+       * racing an in-flight registration). Reuse the same repair-stale gate the
+       * audit uses (default multiplier, since this sync path has no access to
+       * per-project settings) so a start transition force-clears+re-arms a
+       * present-but-stale entry instead of inheriting it, while a healthy fresh
+       * entry is still left alone — unrelated agent:updated events must never
+       * reset a healthy cadence.
+       */
+      const staleThresholdMs = this.getRepairStaleThresholdMs(agent, HeartbeatTriggerScheduler.DEFAULT_REPAIR_STALE_MULTIPLIER);
+      const elapsedMs = getHeartbeatAgeMs(agent);
+      const staleAtSync = Number.isFinite(elapsedMs) && elapsedMs > staleThresholdMs;
+      if (!staleAtSync) {
+        // Already ticking and fresh — non-config updates should not reset the interval.
+        return;
+      }
+      heartbeatLog.warn(
+        `Timer sync force re-armed stale present entry for ${agent.id} (${reason}): no heartbeat for ${Math.round(elapsedMs / 1000)}s (threshold ${Math.round(staleThresholdMs / 1000)}s)`,
+      );
     }
 
     this.registerAgent(agent.id, this.getAgentTimerConfig(agent), {
@@ -4675,7 +4772,30 @@ export class HeartbeatTriggerScheduler {
       let rearmedCount = 0;
       let zombieRearmedCount = 0;
       for (const agent of agents) {
-        if (!this.isTimerEligibleAgent(agent)) continue;
+        /*
+         * FNXC:AgentHeartbeat 2026-07-09-00:00:
+         * FN-7718 — CLI-driven `fn agent stop`/`start` mutate the agent row from
+         * a SEPARATE process, so the in-process `agent:updated` listener
+         * (syncTimerForAgent -> unregisterAgent) never fires for those
+         * transitions. This 60s audit is therefore the ONLY cross-process
+         * reconciliation path. Previously this loop bare-`continue`d past every
+         * non-eligible agent (stopped/paused, runtimeConfig.enabled===false, or
+         * ephemeral/!isHeartbeatManaged), which meant a timer entry armed while
+         * the agent was still running/eligible was never cleared — an orphaned
+         * "zombie" registration that lingered until the FN-7645 stale-repair
+         * path eventually fired minutes after a subsequent start (the recurring
+         * `zombie-timer-rearmed` symptom). Fix: when an agent is no longer
+         * timer-eligible but still has a present timer entry, unregister it here
+         * so a later start begins from a completely clean scheduling state
+         * instead of inheriting a stale/orphaned timer.
+         */
+        if (!this.isTimerEligibleAgent(agent)) {
+          if (this.timers.has(agent.id)) {
+            this.unregisterAgent(agent.id);
+            heartbeatLog.log(`Timer audit cleared orphaned timer for non-eligible agent ${agent.id} (audit:${reason})`);
+          }
+          continue;
+        }
 
         const hasTimerEntry = this.timers.has(agent.id);
         const staleThresholdMs = this.getRepairStaleThresholdMs(agent, staleMultiplier);

@@ -1269,16 +1269,9 @@ function TaskCardComponent({
   const stalePausedReviewCopy = task.stalePausedReview ? getStalePausedReviewCopy(task.stalePausedReview) : undefined;
   const hasTaskAgeStaleness = shouldShowTaskAgeStalenessBadge(task);
   const taskAgeStalenessCopy = getTaskAgeStalenessCopy(task.ageStaleness);
+  // A legacy row carrying awaitingApprovalReason === "release-authorization" renders
+  // as an ordinary manual plan-approval hold (FN-7732) — no distinct badge/class.
   const isAwaitingApproval = task.column === "triage" && task.status === "awaiting-approval";
-  /*
-   * FNXC:PlanApproval 2026-07-04-21:35:
-   * FN-7559: release-authorization holds and manual plan-approval holds both use
-   * status "awaiting-approval" (auto-approve-all intentionally bypasses only the
-   * manual gate — see FNXC:PlanApproval in types.ts). Distinguish them for the
-   * operator via the awaitingApprovalReason discriminator instead of showing the
-   * generic manual-approval badge/label for both.
-   */
-  const isReleaseAuthorizationHold = isAwaitingApproval && task.awaitingApprovalReason === "release-authorization";
   const isAwaitingInput = task.status === "awaiting-user-input";
   const isArchived = task.column === "archived";
   const isAgentActive = !globalPaused && !queued && !isFailed && !isPaused && !isStuck && !isAwaitingApproval && !isAwaitingInput && (task.column === "in-progress" || ACTIVE_STATUSES.has(visualStatus as string));
@@ -1377,12 +1370,11 @@ function TaskCardComponent({
     [unifiedProgress.items],
   );
   /*
-  FNXC:TaskCardWorkflowProgress 2026-07-04-09:08:
-  Prompt Reviewer / Plan Review can run before a task leaves Triage. Show the existing card progress affordance when Triage has an actually active unified progress item, but keep enabled-only workflow steps hidden so idle review gates do not create false active indicators or empty progress shells.
+  FNXC:TaskCardWorkflowProgress 2026-07-08-hh:mm:
+  FN-7676 — cards in the Planning/`triage` column must not surface the steps breakdown (progress bar, active badge, step-count toggle, expandable list); enumerated implementation steps are premature planning artifacts, not execution progress. The affordance now appears only after the task leaves Planning (`in-progress` / `executing`), matching `ListView.shouldShowTaskProgress`. A running Plan Review while still in `triage` intentionally no longer surfaces the card progress indicator — the header `planning` status badge remains the only in-flight signal.
   */
   const showProgressSection =
-    unifiedProgress.total > 0 &&
-    (task.status === "executing" || task.column === "in-progress" || (task.column === "triage" && activeProgressCount > 0));
+    unifiedProgress.total > 0 && (task.status === "executing" || task.column === "in-progress");
 
   useEffect(() => {
     if (task.column !== "in-progress" && task.column !== "in-review") {
@@ -2712,7 +2704,6 @@ function TaskCardComponent({
    */
   const hasCardMetaBadges = showPriorityBadge
     || task.executionMode === "fast"
-    || isAgentCreated
     // FNXC:PlannerOversight 2026-07-04-00:00: the oversight badge is opt-in
     // metadata (absent for the common "off" default) — include it in the wrapper
     // guard so `.card-meta-badges` only renders when it has a real child.
@@ -2803,9 +2794,9 @@ function TaskCardComponent({
         )}
         {!isPaused && visualStatus && visualStatus !== "queued" && (
           <span
-            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isReleaseAuthorizationHold ? " awaiting-release-authorization" : ""}${isAwaitingInput ? " awaiting-input" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
+            className={`card-status-badge card-status-badge--${task.column}${isAwaitingApproval ? " awaiting-approval" : ""}${isAwaitingInput ? " awaiting-input" : ""}${ACTIVE_STATUSES.has(visualStatus) ? " pulsing" : ""}${isFailed ? " failed" : ""}${isStuck ? " stuck" : ""}`}
           >
-            {isStuck ? t("tasks.stuck", "Stuck") : isReleaseAuthorizationHold ? t("tasks.awaitingReleaseAuthorization", "Awaiting Release Authorization") : isAwaitingApproval ? t("tasks.awaitingApproval", "Awaiting Approval") : isAwaitingInput ? t("tasks.needsInput", "Needs input") : visualStatus === "merging-fix" ? t("tasks.statusMergingFix", "Merging fixes…") : getTaskStatusLabel(visualStatus, t)}
+            {isStuck ? t("tasks.stuck", "Stuck") : isAwaitingApproval ? t("tasks.awaitingApproval", "Awaiting Approval") : isAwaitingInput ? t("tasks.needsInput", "Needs input") : visualStatus === "merging-fix" ? t("tasks.statusMergingFix", "Merging fixes…") : getTaskStatusLabel(visualStatus, t)}
           </span>
         )}
         {/*
@@ -2989,17 +2980,6 @@ function TaskCardComponent({
               >
                 <Zap aria-hidden="true" />
                 <span className="visually-hidden">{t("tasks.fastMode", "Fast mode")}</span>
-              </span>
-            )}
-            {isAgentCreated && (
-              <span
-                className="card-agent-created-badge"
-                title={agentCreatedTitle}
-                aria-label={agentCreatedTitle}
-              >
-                <Bot size={11} aria-hidden="true" />
-                <span className="visually-hidden">{agentCreatedTitle}</span>
-                <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
               </span>
             )}
             {showOversightBadge && (
@@ -3550,6 +3530,23 @@ function TaskCardComponent({
             </button>
           )}
           {showInReviewMoveControl && !metaRowVisible && renderInReviewMoveControl()}
+        </div>
+      )}
+      {isAgentCreated && (
+        <div className="card-agent-badge-row" data-testid="card-agent-badge-row">
+          {/**
+           * FNXC:TaskCardLayout 2026-07-10-00:00:
+           * FN-7780 moves the created-by-agent chip below the task content and before the workflow identity row so the header keeps only ID/status/actions metadata and no longer wraps on narrow/mobile cards. The badge content, tooltip, and accessible name remain unchanged.
+           */}
+          <span
+            className="card-agent-created-badge"
+            title={agentCreatedTitle}
+            aria-label={agentCreatedTitle}
+          >
+            <Bot size={11} aria-hidden="true" />
+            <span className="visually-hidden">{agentCreatedTitle}</span>
+            <span aria-hidden="true">{agentCreatedVisibleLabel}</span>
+          </span>
         </div>
       )}
       {hasWorkflowBadge && (

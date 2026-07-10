@@ -492,7 +492,7 @@ The New Task create workflow selector is a real dropdown so workflow identity ic
 .task-workflow-option-copy {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2xs);
+  gap: var(--space-xs);
   min-width: 0;
   flex: 1 1 auto;
 }

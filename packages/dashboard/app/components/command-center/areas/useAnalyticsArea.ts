@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../../api/legacy";
+import { api, withProjectId } from "../../../api/legacy";
 import type { DateRange } from "../DateRangePicker";
 import { isInvalidRange, rangeQuery } from "./areaShared";
 
@@ -14,6 +14,8 @@ export interface AnalyticsAreaState<T> {
 export interface AnalyticsAreaOptions {
   /** Opt-in bounded polling interval in milliseconds; omitted means no polling. */
   pollMs?: number;
+  /** Currently-selected project id; when supplied, scopes the request via `projectId` query param. */
+  projectId?: string;
 }
 
 function withRangeQuery(endpoint: string, query: string): string {
@@ -54,6 +56,7 @@ export function useAnalyticsArea<T>(
 
   const query = rangeQuery(range);
   const invalid = isInvalidRange(range);
+  const { projectId } = options;
 
   const load = useCallback(async () => {
     if (invalid) {
@@ -67,7 +70,7 @@ export function useAnalyticsArea<T>(
     }
     setError(null);
     try {
-      const result = await api<T>(withRangeQuery(endpoint, query));
+      const result = await api<T>(withProjectId(withRangeQuery(endpoint, query), projectId));
       dataRef.current = result;
       setData(result);
     } catch (loadError: unknown) {
@@ -75,7 +78,7 @@ export function useAnalyticsArea<T>(
     } finally {
       setIsLoading(false);
     }
-  }, [endpoint, query, invalid]);
+  }, [endpoint, query, invalid, projectId]);
 
   useEffect(() => {
     void load();

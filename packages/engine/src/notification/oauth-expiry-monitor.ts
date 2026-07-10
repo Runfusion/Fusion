@@ -6,6 +6,9 @@ import type { NotificationService } from "./notification-service.js";
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MIN_NOTIFY_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
+const ANTHROPIC_OAUTH_PROVIDER_ID = "anthropic";
+const ANTHROPIC_SUBSCRIPTION_PROVIDER_ID = "anthropic-subscription";
+
 interface OAuthProviderInfo {
   id: string;
   name: string;
@@ -20,6 +23,28 @@ export interface AuthStorageLike {
   reload?(): void;
   getOAuthProviders?(): OAuthProviderInfo[];
   get?(providerId: string): OAuthCredential | undefined;
+}
+
+/*
+FNXC:ClaudeOAuth 2026-07-08-20:55:
+`getOAuthProviders()` is NOT aliased by the engine auth-storage proxy, so it only yields the base id `anthropic`. But the Anthropic subscription token the runtime actually uses/refreshes lives under `anthropic-subscription`, while `get("anthropic")` can still return a STALE legacy row (e.g. a months-old credential in ~/.pi/agent/auth.json). Evaluating `get("anthropic")` alone made the expiry monitor and validity logger fire a false "Anthropic OAuth expired" alert even though the subscription token had refreshed successfully. Resolve the FRESHEST of the two aliased ids so a live subscription token suppresses the false alert — mirroring the refresh scheduler's alias handling (getRefreshCandidateIds in oauth-refresh-scheduler.ts).
+*/
+export function resolveEffectiveOAuthCredential(
+  authStorage: AuthStorageLike,
+  providerId: string,
+): OAuthCredential | undefined {
+  const direct = authStorage.get?.(providerId);
+  if (providerId !== ANTHROPIC_OAUTH_PROVIDER_ID) {
+    return direct;
+  }
+  const subscription = authStorage.get?.(ANTHROPIC_SUBSCRIPTION_PROVIDER_ID);
+  const candidates = [direct, subscription].filter(
+    (c): c is OAuthCredential => c?.type === "oauth" && typeof c.expires === "number",
+  );
+  if (candidates.length === 0) {
+    return direct;
+  }
+  return candidates.reduce((latest, c) => (c.expires! > latest.expires! ? c : latest));
 }
 
 export interface OAuthExpiryMonitorOptions {
@@ -84,7 +109,7 @@ export class OAuthExpiryMonitor {
     const activeExpiryKeys = new Set<string>();
 
     for (const provider of providers) {
-      const credential = this.opts.authStorage.get?.(provider.id);
+      const credential = resolveEffectiveOAuthCredential(this.opts.authStorage, provider.id);
       if (credential?.type !== "oauth" || typeof credential.expires !== "number") {
         this.alertState.clear([provider.id]);
         continue;

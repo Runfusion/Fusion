@@ -2634,3 +2634,48 @@ describe("fn_task_update bare-call guard (P1 api-contract)", () => {
     expect(text).not.toContain("fn_task_update requires at least one of");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Runtime self-awareness preamble (FN-7675)
+// ---------------------------------------------------------------------------
+
+describe("executor base prompt runtime self-awareness", () => {
+  it("prepends the shared FUSION_RUNTIME_SELF_AWARENESS preamble to the executor base prompt", async () => {
+    const { FUSION_RUNTIME_SELF_AWARENESS } = await import("@fusion/core");
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const settings = { agentPrompts: undefined } as any;
+    const prompt = getExecutorSystemPrompt(settings);
+    expect(prompt.startsWith(FUSION_RUNTIME_SELF_AWARENESS)).toBe(true);
+  });
+
+  it("carries the shutdown-boundary clauses", async () => {
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const settings = { agentPrompts: undefined } as any;
+    const lower = getExecutorSystemPrompt(settings).toLowerCase();
+    expect(lower).toContain("cannot** perform any action after fusion is shut down".toLowerCase());
+    expect(lower).toContain("standalone artifact the user runs themselves");
+  });
+
+  it("stays byte-identical with the core EXECUTOR_PROMPT_TEXT mirror at the shared preamble", async () => {
+    const { FUSION_RUNTIME_SELF_AWARENESS } = await import("@fusion/core");
+    const { readFileSync } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const executorSource = readFileSync(new URL("../executor.ts", import.meta.url), "utf8");
+    expect(executorSource).toContain("const EXECUTOR_SYSTEM_PROMPT = `${FUSION_RUNTIME_SELF_AWARENESS}");
+    expect(FUSION_RUNTIME_SELF_AWARENESS.length).toBeGreaterThan(0);
+  });
+
+  it("lands the preamble in the stable (cacheable) layer via buildPromptLayers", async () => {
+    const { FUSION_RUNTIME_SELF_AWARENESS } = await import("@fusion/core");
+    const { getExecutorSystemPrompt } = await import("../executor.js");
+    const { buildPromptLayers } = await import("../prompt-layers.js");
+    const settings = { agentPrompts: undefined } as any;
+    const basePrompt = getExecutorSystemPrompt(settings);
+    const layers = buildPromptLayers({
+      basePrompt,
+      agentInstructions: "per-session instructions that must not affect the stable prefix",
+    });
+    expect(layers.stable).toBe(basePrompt);
+    expect(layers.stable.startsWith(FUSION_RUNTIME_SELF_AWARENESS)).toBe(true);
+    expect(layers.dynamic).not.toContain(FUSION_RUNTIME_SELF_AWARENESS);
+  });
+});

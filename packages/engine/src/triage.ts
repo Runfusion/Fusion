@@ -36,6 +36,7 @@ import {
   applyFrontendUxCriteria,
   extractEffectiveWriteScopeFromPrompt,
   MAX_TASK_LIST_TEXT_CHARS,
+  upsertWorkflowStepResult,
   type NearDuplicateCandidate,
 } from "@fusion/core";
 
@@ -86,7 +87,9 @@ import { ModelFallbackExhaustedError, describeModel, formatModelMarkerDetails, p
 import {
   createResolvedAgentSession,
   extractRuntimeHint,
+  resolveImplicitPlanningFallbackModel,
   resolvePlanningSessionModel,
+  resolvePlanningThinkingLevel,
 } from "./agent-session-helpers.js";
 import { mergeEffectiveSettings } from "./effective-settings.js";
 import { detectDanglingTaskDocReferences, formatDanglingDiagnostic } from "./spec-validation/task-document-references.js";
@@ -137,7 +140,6 @@ import {
   isResearchToolSurfaceEnabled,
 } from "./tool-availability.js";
 import { runGhostBugPreflight } from "./triage-preflight.js";
-import { evaluateReleaseAuthorizationGate } from "./triage-release-authorization.js";
 import { archiveAsGhostBug } from "./self-healing.js";
 import { createRunAuditor, generateSyntheticRunId } from "./run-audit.js";
 import { resolveAndEmitGoalContext } from "./goal-injection-diagnostics.js";
@@ -1041,7 +1043,7 @@ export class TriageProcessor {
           ? `## Identity\n\nYou are ${assignedAgent.name}${assignedAgent.title?.trim() ? `, ${assignedAgent.title.trim()}` : ""} (agent ID: ${assignedAgent.id}, role: ${assignedAgent.role}).`
           : "";
         // Build structured layers for cross-session prompt caching.
-        const triagePluginContributions = buildPluginPromptSection(
+        const triagePluginContributions = await buildPluginPromptSection(
           "triage",
           this.options.pluginRunner,
         );
@@ -1117,6 +1119,28 @@ export class TriageProcessor {
           defaultModelId: planningModel.modelId,
         };
 
+        /*
+         * FNXC:TriageModelFallback 2026-07-09-00:00:
+         * When neither `planningFallback*` nor global `fallback*` is configured,
+         * derive an implicit fallback from the project/global default (execution)
+         * model so a retryable primary-planner failure (e.g. provider 404/429)
+         * recovers via one distinct swap instead of failing triage permanently
+         * (FN-7719: nvidia/moonshotai/kimi-k2.6 404 wrapped in a 429 stalled a
+         * whole board's triage with "no fallback configured"). Self-swap (implicit
+         * fallback === primary) and test mode are excluded so the single-swap,
+         * no-loop invariant and the mock lane stay unchanged.
+         */
+        const hasExplicitPlanningFallback = Boolean(settings.planningFallbackProvider && settings.planningFallbackModelId);
+        const hasExplicitGlobalFallback = Boolean(settings.fallbackProvider && settings.fallbackModelId);
+        const implicitPlanningFallback = (!hasExplicitPlanningFallback && !hasExplicitGlobalFallback)
+          ? resolveImplicitPlanningFallbackModel(
+            settings,
+            planningModel.provider,
+            planningModel.modelId,
+            assignedAgent?.runtimeConfig,
+          )
+          : { provider: undefined, modelId: undefined };
+
         const { session } = await createResolvedAgentSession({
           sessionPurpose: "triage",
           runtimeHint: triageRuntimeHint,
@@ -1131,13 +1155,17 @@ export class TriageProcessor {
           onToolStart: agentLogger.onToolStart,
           onToolEnd: agentLogger.onToolEnd,
           ...planningSessionModelOptions,
-          fallbackProvider: settings.planningFallbackProvider && settings.planningFallbackModelId
+          fallbackProvider: hasExplicitPlanningFallback
             ? settings.planningFallbackProvider
-            : settings.fallbackProvider,
-          fallbackModelId: settings.planningFallbackProvider && settings.planningFallbackModelId
+            : (hasExplicitGlobalFallback ? settings.fallbackProvider : implicitPlanningFallback.provider),
+          fallbackModelId: hasExplicitPlanningFallback
             ? settings.planningFallbackModelId
-            : settings.fallbackModelId,
-          defaultThinkingLevel: settings.defaultThinkingLevel,
+            : (hasExplicitGlobalFallback ? settings.fallbackModelId : implicitPlanningFallback.modelId),
+          /*
+           * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+           * Planning sessions carry task thinking first, then the workflow-declared planning lane, global planning lane, and default thinking settings into pi.ts' existing thinking fallback path.
+           */
+          defaultThinkingLevel: resolvePlanningThinkingLevel(settings, task.thinkingLevel),
           runAuditor,
           settings,
           // FNXC:McpConfig 2026-06-25-23:17: Primary triage planning is an AI lane, so it receives the store-resolved MCP set while the pi runtime-support guard decides whether to forward it without logging secret material.
@@ -1155,7 +1183,7 @@ export class TriageProcessor {
           }),
         });
 
-        const modelDesc = formatModelMarkerDetails(describeModel(session), settings.defaultThinkingLevel);
+        const modelDesc = formatModelMarkerDetails(describeModel(session), resolvePlanningThinkingLevel(settings, task.thinkingLevel));
         planLog.log(`${task.id}: using model ${modelDesc}`);
         await this.store.logEntry(task.id, `Triage using model: ${modelDesc}`);
         await this.store.appendAgentLog(
@@ -1956,12 +1984,13 @@ export class TriageProcessor {
       planLog.warn(`${task.id}: failed to load existing Plan Review workflow results; preserving in-memory result baseline: ${message}`);
       return task;
     });
-    const existing = Array.isArray(live?.workflowStepResults)
-      ? [...live.workflowStepResults]
-      : [];
-    const idx = existing.findIndex((entry) => entry.workflowStepId === PLAN_REVIEW_GROUP_ID);
-    if (idx >= 0) existing[idx] = result;
-    else existing.push(result);
+    /*
+    FNXC:WorkflowStepResults 2026-07-09-00:35:
+    FN-7727: route through the shared upsert helper (same as the executor
+    graph adapter) so a re-run of Plan Review after a failed attempt preserves
+    that prior attempt's history in `priorAttempts` instead of overwriting it.
+    */
+    const existing = upsertWorkflowStepResult(live?.workflowStepResults, result);
     await this.store.updateTask(task.id, { workflowStepResults: existing });
   }
 
@@ -2488,63 +2517,10 @@ export class TriageProcessor {
       planLog.warn(`${task.id}: failed to re-read task before planning transition (${message}); proceeding with original task snapshot`);
       latestTransitionTask = task;
     }
-    try {
-      /**
-       * FNXC:ReleaseAuthorizationGate 2026-06-15-02:47:
-       * FN-6469 showed that agent-authored release specs can otherwise flow from triage directly to execution and publish npm packages. FN-6481 parks release-class tasks before every final triage dispatch branch unless a user-authored source supplied the explicit authorization marker.
-       */
-      const releaseGateDecision = evaluateReleaseAuthorizationGate({
-        sourceType: latestTransitionTask?.sourceType ?? task.sourceType,
-        title: latestTransitionTask?.title ?? task.title ?? "",
-        description: latestTransitionTask?.description ?? task.description ?? "",
-        promptText: written,
-      });
-      if (releaseGateDecision.action === "block") {
-        /*
-         * FNXC:ReleaseAuthorizationGate 2026-07-04-21:35:
-         * FN-7559: stamp awaitingApprovalReason so the dashboard can tell this
-         * release-authorization hold apart from the (independently gated, never
-         * bypassed by auto-approve-all) manual plan-approval hold, which shares
-         * the same status: "awaiting-approval". See FNXC:PlanApproval in types.ts.
-         */
-        const approvalUpdates: Record<string, unknown> = { status: "awaiting-approval", awaitingApprovalReason: "release-authorization" };
-        if (shouldApplyPromptDeclaredTitle && promptDeclaredTitle) {
-          approvalUpdates.title = promptDeclaredTitle;
-        }
-        const signals = releaseGateDecision.signals.length > 0
-          ? releaseGateDecision.signals.join(", ")
-          : "release intent";
-        const details = `${releaseGateDecision.reason} Matched signals: ${signals}.`;
-        await this.store.updateTask(task.id, approvalUpdates);
-        await this.store.logEntry(
-          task.id,
-          "Release authorization required — leaving task in triage awaiting release authorization",
-          details,
-        );
-        try {
-          await this.store.recordActivity({
-            type: "task:release-authorization-required",
-            taskId: task.id,
-            taskTitle: promptDeclaredTitle ?? latestTransitionTask?.title ?? task.title ?? "",
-            details,
-            metadata: {
-              reason: releaseGateDecision.reason,
-              signals: releaseGateDecision.signals,
-              sourceType: latestTransitionTask?.sourceType ?? task.sourceType ?? "unknown",
-            },
-          });
-        } catch (activityError: unknown) {
-          const message = activityError instanceof Error ? activityError.message : String(activityError);
-          planLog.warn(`${task.id}: failed to record release-authorization-required activity (${message})`);
-        }
-        planLog.log(`${task.id} release authorization required — leaving in triage awaiting release authorization (${signals})`);
-        return;
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      planLog.warn(`${task.id}: release-authorization gate failed open: ${message}`);
-    }
-
+    /*
+    FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+    Removed the triage release-authorization gate (FN-6481/FN-6469). It over-fired: AI-authored specs routinely mention release tooling (`scripts/release.mjs`, `pnpm release`) in disclaimers and file-scope notes, and every non-user source made the in-band authorization marker inert, so ordinary revert/UI/refactor tasks were stranded in awaiting-approval with no exit (see FN-7560, FN-7525, FN-7554, FN-7556). Releases are now kept out of Fusion by agent instruction (AGENTS.md → "Releasing") instead of an engine gate: agents must never run `pnpm release`/publish from inside a Fusion task.
+    */
     if (latestTransitionTask?.paused === true || latestTransitionTask?.userPaused === true) {
       const restoreStatus = options.isReplan ? "needs-replan" : null;
       await this.store.updateTask(task.id, { status: restoreStatus });

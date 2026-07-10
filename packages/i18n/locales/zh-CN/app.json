@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "合并工作树已重新获取",
       "nearDuplicateFlagged": "近似重复已标记",
       "projectIsolationTransition": "项目隔离转换",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "设置已更新",
       "taskCreated": "任务已创建",
       "taskDeleted": "任务已删除",
@@ -169,6 +168,10 @@
       "taskAgentMutation": {
         "description": "任务状态变更、委派或代理生命周期操作。",
         "label": "任务/代理变更"
+      },
+      "fileScope": {
+        "description": "",
+        "label": ""
       }
     },
     "categoryExamples": "{{label}} 示例",
@@ -3954,7 +3957,8 @@
       "medium": "中等",
       "minimal": "最小",
       "off": "关闭",
-      "xhigh": "极高"
+      "xhigh": "极高",
+      "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
       "selectExecutor": "选择执行器模型…",
@@ -3990,6 +3994,8 @@
     "preset": "预设",
     "reviewerModel": "审查模型",
     "reviewerPlaceholder": "选择审查模型…",
+    "thinkingDefault": "",
+    "thinkingModel": "",
     "title": "选择模型",
     "useDefault": "使用默认",
     "usingDefault": "使用默认"
@@ -6526,6 +6532,8 @@
       "addIgnoredPath": "",
       "archiveAgentLog": "",
       "archiveCompletedTasksAfterDays": "",
+      "autoArchiveDuplicateTasks": "",
+      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -7384,6 +7392,11 @@
       "skipped": "{{id}} 的分支重新绑定已跳过：{{reason}}",
       "skippedResult": "重新绑定已跳过：{{reason}}"
     },
+    "bypassReview": {
+      "btn": "跳过失败的评审",
+      "promptMessage": "跳过失败的合并前评审步骤的原因（必填，将被审计记录）：",
+      "success": "已为 {{id}} 跳过失败的评审通道"
+    },
     "cacheBreakdown": "（读取 {{read}} / 写入 {{write}} / 输入 {{input}}）",
     "cacheHitRatio": "缓存命中率：",
     "cacheRead": "缓存读取",
@@ -7599,8 +7612,7 @@
       "rejected": "计划已拒绝 — {{id}} 已返回规划阶段重新规划",
       "rejectMessage": "拒绝此计划？规范将被丢弃并重新生成。",
       "rejectTitle": "拒绝计划",
-      "replanning": "正在为 {{id}} 重新规划…",
-      "releaseAuthorizationHold": ""
+      "replanning": "正在为 {{id}} 重新规划…"
     },
     "pr": {
       "awaitingChecks": "等待 PR 检查",
@@ -8240,7 +8252,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

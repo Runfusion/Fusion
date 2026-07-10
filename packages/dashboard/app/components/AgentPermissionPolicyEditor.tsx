@@ -46,6 +46,10 @@ function getCategoryLabels(t: TFunction<"app">): Record<string, { label: string;
     command_execution: { label: t("agentPolicy.category.commandExecution.label", "Command execution"), description: t("agentPolicy.category.commandExecution.description", "Runs shell commands and scripts.") },
     network_api: { label: t("agentPolicy.category.networkApi.label", "Network/API"), description: t("agentPolicy.category.networkApi.description", "Outbound network or API access.") },
     task_agent_mutation: { label: t("agentPolicy.category.taskAgentMutation.label", "Task/agent mutation"), description: t("agentPolicy.category.taskAgentMutation.description", "Task state changes, delegation, or agent lifecycle actions.") },
+    // FNXC:ToolPermissions 2026-07-09-00:00: FN-7728 — review_gate_bypass is a dedicated, more-restricted category for the merge-gate override tool, distinct from ordinary task_agent_mutation.
+    review_gate_bypass: { label: t("agentPolicy.category.reviewGateBypass.label", "Review gate bypass"), description: t("agentPolicy.category.reviewGateBypass.description", "Bypassing a failed pre-merge review step to force a card past the review lane.") },
+    // FNXC:ToolPermissions 2026-07-09-08:30: FN-7737 — file_scope governs the File Scope additional-approval action, distinct from ordinary file_write_delete/task_agent_mutation. Uniform grant-all default (allow), unlike review_gate_bypass.
+    file_scope: { label: t("agentPolicy.category.fileScope.label", "File Scope expansion"), description: t("agentPolicy.category.fileScope.description", "Extending a task's declared File Scope beyond its initial spec at runtime.") },
   };
 }
 
@@ -65,6 +69,10 @@ function buildAllowRules(): AgentPermissionPolicyRules {
     command_execution: "allow",
     network_api: "allow",
     task_agent_mutation: "allow",
+    // FNXC:ToolPermissions 2026-07-09-00:00: FN-7728 — review_gate_bypass mirrors the core unrestricted preset's targeted override (require-approval, not allow) so the editor's derived preset detection stays in sync with agent-permission-policy.ts.
+    review_gate_bypass: "require-approval",
+    // FNXC:ToolPermissions 2026-07-09-08:30: FN-7737 — file_scope stays uniform allow (no override), mirroring the core unrestricted preset.
+    file_scope: "allow",
   };
 }
 
@@ -75,6 +83,10 @@ const PRESET_RULES: Record<"unrestricted" | "approval-required" | "locked-down",
     command_execution: "allow",
     network_api: "allow",
     task_agent_mutation: "allow",
+    // FNXC:ToolPermissions 2026-07-09-00:00: FN-7728 — review_gate_bypass stays require-approval even under the unrestricted preset (see agent-permission-policy.ts withReviewGateBypassOverride).
+    review_gate_bypass: "require-approval",
+    // FNXC:ToolPermissions 2026-07-09-08:30: FN-7737 — file_scope stays uniform allow under unrestricted (see agent-permission-policy.ts buildRules, no override function applied).
+    file_scope: "allow",
   },
   "approval-required": {
     git_write: "require-approval",
@@ -82,6 +94,8 @@ const PRESET_RULES: Record<"unrestricted" | "approval-required" | "locked-down",
     command_execution: "require-approval",
     network_api: "require-approval",
     task_agent_mutation: "require-approval",
+    review_gate_bypass: "require-approval",
+    file_scope: "require-approval",
   },
   "locked-down": {
     git_write: "block",
@@ -89,6 +103,8 @@ const PRESET_RULES: Record<"unrestricted" | "approval-required" | "locked-down",
     command_execution: "block",
     network_api: "block",
     task_agent_mutation: "block",
+    review_gate_bypass: "block",
+    file_scope: "block",
   },
 };
 

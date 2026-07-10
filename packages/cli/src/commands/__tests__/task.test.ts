@@ -153,6 +153,17 @@ vi.mock("../../project-context.js", () => ({
     await store.init?.();
     return store;
   }),
+  // FNXC:CliBoardMutation 2026-07-09-00:00: FN-7731's runTaskShow/runTaskMove
+  // close the resolved store via closeProjectStore on every exit path; the
+  // real implementation is best-effort/tolerant of a store without a usable
+  // close(), so the mock mirrors that here rather than throwing.
+  closeProjectStore: vi.fn().mockImplementation(async (context: { store?: { close?: () => unknown } }) => {
+    try {
+      await context?.store?.close?.();
+    } catch {
+      // best-effort, matches real closeProjectStore
+    }
+  }),
 }));
 
 import { createInterface } from "node:readline/promises";
@@ -977,7 +988,14 @@ describe("project-aware task command behavior", () => {
       expect.any(Function),
     );
     expect(sigintHandlers).toHaveLength(1);
-    expect(() => sigintHandlers[0]()).toThrow("process.exit");
+    // FNXC:CliBoardMutation 2026-07-09-00:00 (FN-7734): the SIGINT handler
+    // now closes the resolved board store BEFORE exiting (previously it
+    // called `process.exit(0)` synchronously with no teardown), so invoking
+    // it no longer throws synchronously — it fires the close and exits once
+    // that settles. Await a tick and assert `process.exit(0)` was reached.
+    sigintHandlers[0]();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(exitSpy).toHaveBeenCalledWith(0);
     promise.catch(() => {});
 
     expect(resolveProject).toHaveBeenCalledWith("demo-project");

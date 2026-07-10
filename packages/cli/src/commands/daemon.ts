@@ -9,10 +9,12 @@
  */
 
 import type { AddressInfo } from "node:net";
-import { join } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import {
   CentralCore,
+  TaskStore,
   PluginLoader,
+  PluginStore,
   getTaskMergeBlocker,
   INSIGHT_EXTRACTION_SCHEDULE_NAME,
   processAndAuditInsightExtraction,
@@ -20,8 +22,10 @@ import {
   GlobalSettingsStore,
   resolveGlobalDir,
   getEnabledPiExtensionPaths,
+  mergeBuiltInGrokProviderModels,
   mergeBuiltInZaiProviderModels,
   reconcileClaudeCliPaths,
+  registerBuiltInGrokProvider,
   registerBuiltInZaiProvider,
 } from "@fusion/core";
 import type { AutomationRunResult, ScheduledTask } from "@fusion/core";
@@ -74,7 +78,7 @@ import { resolveSelfExtension } from "./self-extension.js";
 import { wrapAuthStorageWithApiKeyProviders } from "./provider-auth.js";
 import { getModelRegistryModelsPath, getPackageManagerAgentDir } from "./auth-paths.js";
 import { resolveProject } from "../project-context.js";
-import { ensureBundledDependencyGraphPluginInstalled } from "../plugins/bundled-plugin-install.js";
+import { ensureBundledDependencyGraphPluginInstalled, ensureBundledGrokRuntimePluginInstalled } from "../plugins/bundled-plugin-install.js";
 import { handleOpencodeGoApiKeySaved, syncStartupModels } from "./startup-model-sync.js";
 import { registerCustomProviders, reregisterCustomProviders } from "./custom-provider-registry.js";
 import { ensureCwdProjectRegistered } from "./ensure-project-registered.js";
@@ -519,6 +523,21 @@ export async function runDaemon(opts: DaemonOptions = {}) {
     console.warn(`[plugins] Failed to auto-install bundled Dependency Graph plugin: ${err instanceof Error ? err.message : err}`);
   }
 
+  /*
+   * FNXC:GrokCliRouting 2026-07-09-23:05:
+   * FN-7761: packaged daemon sessions must load the bundled Grok CLI runtime before executors/reviewers create sessions, so grok-cli/no-key routing uses the logged-in `grok` CLI instead of pi's key-requiring direct endpoint.
+   */
+  try {
+    const installStatus = await ensureBundledGrokRuntimePluginInstalled(pluginStore, pluginLoader);
+    if (installStatus === "installed") {
+      console.log("[plugins] Installed bundled Grok CLI runtime plugin");
+    } else if (installStatus === "missing-bundle") {
+      console.warn("[plugins] Bundled Grok CLI runtime plugin was not found in this build");
+    }
+  } catch (err) {
+    console.warn(`[plugins] Failed to auto-install bundled Grok CLI runtime plugin: ${err instanceof Error ? err.message : err}`);
+  }
+
   // Auto-load all enabled plugins so runtime UI (NewAgentDialog, AgentDetailView)
   // can discover installed runtimes like Hermes and OpenClaw.
   try {
@@ -559,6 +578,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   const authStorage = createFusionAuthStorage();
   const modelRegistry = ModelRegistry.create(authStorage, getModelRegistryModelsPath());
   registerBuiltInZaiProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
+  registerBuiltInGrokProvider(modelRegistry, (message) => console.log(`[extensions] ${message}`));
   const dashboardAuthStorage = wrapAuthStorageWithApiKeyProviders(authStorage, modelRegistry);
 
   // PackageManager may be used for skills adapter even if extension loading fails
@@ -674,6 +694,7 @@ export async function runDaemon(opts: DaemonOptions = {}) {
 
     extensionsResult.runtime.pendingProviderRegistrations = [];
     mergeBuiltInZaiProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
+    mergeBuiltInGrokProviderModels(modelRegistry, (message) => console.log(`[extensions] ${message}`));
     modelRegistry.refresh();
 
     try {
@@ -717,14 +738,72 @@ export async function runDaemon(opts: DaemonOptions = {}) {
   });
 
   // ── Skills adapter for skills discovery and execution toggling ─────────────
+  const pluginSkillCache = new Map<
+    string,
+    { enabledKey: string; skills: ReturnType<PluginLoader["getPluginSkills"]> }
+  >();
+  const getProjectScopedPluginSkills = async (rootDir: string): Promise<ReturnType<PluginLoader["getPluginSkills"]>> => {
+    const normalizedRootDir = pathResolve(rootDir);
+    const stateStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+    await stateStore.init();
+    try {
+      const enabledPlugins = await stateStore.listPlugins({ enabled: true });
+      const enabledKey = enabledPlugins
+        .map((plugin) => `${plugin.id}:${plugin.updatedAt}`)
+        .sort()
+        .join("\0");
+      const cached = pluginSkillCache.get(normalizedRootDir);
+      if (cached?.enabledKey === enabledKey) return cached.skills;
+      if (enabledPlugins.length === 0) {
+        const skills: ReturnType<PluginLoader["getPluginSkills"]> = [];
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      }
+
+      /*
+       * FNXC:PluginSkills 2026-07-10-00:00:
+       * Same-root skill discovery must reuse the daemon's active PluginLoader; request-scoped loaders are only for other project roots and are stopped after metadata collection to avoid leaking plugin side effects or SQLite handles.
+       */
+      if (normalizedRootDir === pathResolve(store.getRootDir())) {
+        const enabledIds = new Set(enabledPlugins.map((plugin) => plugin.id));
+        const skills = pluginLoader.getPluginSkills().filter((entry) => enabledIds.has(entry.pluginId));
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      }
+
+      const scopedPluginStore = new PluginStore(normalizedRootDir, { centralGlobalDir: resolveGlobalDir() });
+      const scopedTaskStore = new TaskStore(normalizedRootDir);
+      const scopedPluginLoader = new PluginLoader({ pluginStore: scopedPluginStore, taskStore: scopedTaskStore });
+      try {
+        await scopedPluginStore.init();
+        await scopedTaskStore.init();
+        const { errors } = await scopedPluginLoader.loadAllPlugins();
+        if (errors > 0) {
+          console.warn(`[plugins] Project-scoped plugin skill loading for ${normalizedRootDir} had ${errors} error(s)`);
+        }
+        const skills = scopedPluginLoader.getPluginSkills();
+        pluginSkillCache.set(normalizedRootDir, { enabledKey, skills });
+        return skills;
+      } finally {
+        await scopedPluginLoader.stopAllPlugins();
+        scopedPluginStore.close();
+        scopedTaskStore.close();
+      }
+    } finally {
+      stateStore.close();
+    }
+  };
+
   const skillsAdapter = packageManager
     ? createSkillsAdapter({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dashboard's resolve() uses a looser onMissing signature than pi's DefaultPackageManager
         packageManager: packageManager as any,
         getSettingsPath: (rootDir: string) => getProjectSettingsPath(rootDir),
-        // Surface plugin-contributed skills (e.g. compound-engineering ce-*) in
-        // the editor catalog; the package manager only scans disk.
-        getPluginSkills: () => pluginLoader.getPluginSkills(),
+        /*
+         * FNXC:PluginSkills 2026-07-10-00:00:
+         * `fn daemon` serves managed projects independently from its startup root. Resolve plugin skills with a PluginStore scoped to the requesting rootDir so disabled daemon-root plugins do not suppress project-enabled plugin:<id> skills.
+         */
+        getPluginSkills: getProjectScopedPluginSkills,
       })
     : undefined;
 

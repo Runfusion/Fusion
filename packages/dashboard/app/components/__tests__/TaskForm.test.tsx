@@ -154,9 +154,10 @@ describe("TaskForm", () => {
 
     fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
 
-    await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: /Thinking/i })).toBeTruthy();
-    });
+    fireEvent.click(await screen.findByRole("button", { name: "Executor Model" }));
+
+    const thinkingSelect = await screen.findByTestId("custom-model-dropdown-thinking");
+    expect(thinkingSelect).toBeTruthy();
     expect(screen.getByRole("option", { name: /Very High/i })).toHaveAttribute("value", "xhigh");
   });
 
@@ -329,6 +330,57 @@ describe("TaskForm", () => {
     const trigger = await screen.findByTestId("task-form-inline-optional-steps");
     await waitFor(() => expect(trigger).toHaveTextContent("Steps: none"));
     expect(onEnabledWorkflowStepsChange).toHaveBeenLastCalledWith([], expect.objectContaining({ optionalStepsAvailable: true }));
+  });
+
+  it("renders edit-mode workflow steps without clobbering existing task selection", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([
+      { templateId: "code-review", name: "Code Review", phase: "pre-merge", defaultOn: true },
+      { templateId: "browser-verification", name: "Browser Verification", phase: "pre-merge", defaultOn: false },
+    ] as any);
+    const onEnabledWorkflowStepsChange = vi.fn();
+
+    renderTaskForm({
+      mode: "edit",
+      onWorkflowIdChange: undefined,
+      selectedWorkflowId: undefined,
+      optionalStepsWorkflowId: "wf-edit",
+      enabledWorkflowSteps: ["browser-verification"],
+      onEnabledWorkflowStepsChange,
+    });
+
+    await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-edit", undefined));
+    const trigger = await screen.findByTestId("task-form-edit-optional-steps");
+    expect(trigger).toHaveTextContent("Steps: 1 selected");
+    expect(onEnabledWorkflowStepsChange).not.toHaveBeenCalled();
+
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByTestId("wf-optional-steps-dropdown-option-code-review"));
+    expect(onEnabledWorkflowStepsChange).toHaveBeenCalledWith(
+      ["browser-verification", "code-review"],
+      expect.objectContaining({ optionalStepsAvailable: true }),
+    );
+    expect(screen.queryByTestId("task-form-inline-optional-steps")).toBeNull();
+  });
+
+  it("renders no edit-mode workflow steps shell when the workflow has no optional steps", async () => {
+    const { fetchWorkflowOptionalSteps } = await import("../../api");
+    vi.mocked(fetchWorkflowOptionalSteps).mockResolvedValue([] as any);
+
+    renderTaskForm({
+      mode: "edit",
+      onWorkflowIdChange: undefined,
+      selectedWorkflowId: undefined,
+      optionalStepsWorkflowId: "wf-empty",
+      enabledWorkflowSteps: [],
+      onEnabledWorkflowStepsChange: vi.fn(),
+    });
+
+    fireEvent.click(screen.getByTestId("task-form-more-options-toggle"));
+    await waitFor(() => expect(fetchWorkflowOptionalSteps).toHaveBeenCalledWith("wf-empty", undefined));
+    await waitFor(() => expect(screen.queryByTestId("task-edit-optional-steps-loading")).toBeNull());
+    expect(screen.queryByTestId("task-form-edit-workflow-steps-group")).toBeNull();
+    expect(screen.queryByTestId("task-form-edit-optional-steps")).toBeNull();
   });
 
   it("calls onExecutionModeChange when execution mode selection changes", () => {

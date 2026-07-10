@@ -168,8 +168,11 @@ async function resolvePluginRuntime(
     // Create plugin context for runtime factory
     const pluginContext = await pluginRunner.createRuntimeContext(pluginId);
     if (!pluginContext) {
+      // The registration exists (found above) but the plugin failed to produce a
+      // usable context, so this is an initialization failure, not a "never
+      // registered" miss -- must be distinguishable as "init_error".
       runtimeLog.warn(`Plugin "${pluginId}" runtime factory context unavailable`);
-      return { ok: false, reason: "not_found" };
+      return { ok: false, reason: "init_error" };
     }
 
     // Instantiate the runtime via factory

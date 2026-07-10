@@ -357,6 +357,24 @@ function isTerminalMobileViewport(): boolean {
   return window.innerWidth <= 768 || (hasTouchScreen && (getTerminalViewportWidth(true) <= 768 || getTerminalViewportHeight(true) <= 480));
 }
 
+/*
+FNXC:TerminalFooter 2026-07-08-15:00:
+FN-7684: on a tablet-width viewport (769-1024px, the project's canonical tablet
+tier — `--tablet-breakpoint: 1024px`) the terminal is NOT mobile but its header
+still overflows if it renders the full desktop `.terminal-actions` cluster (the
+zoom/font-size controls, Shortcuts/Preferences toggles, connection status, and
+help text collide with the pin/pop-out/close icons — see attachment 1863.png).
+This flag is checked ONLY when `isTerminalMobileViewport()` is false, so mobile
+always wins the mobile fullscreen shell; it gates relocating the shared action-
+control fragment into the `.terminal-status-bar` footer on tablet too (FN-7560
+established the footer for mobile).
+*/
+function isTerminalTabletViewport(): boolean {
+  if (typeof window === "undefined") return false;
+  if (isTerminalMobileViewport()) return false;
+  return window.innerWidth >= 769 && window.innerWidth <= 1024;
+}
+
 function isMacPlatform(): boolean {
   if (typeof navigator === "undefined") {
     return false;
@@ -548,6 +566,8 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   const [floatingSize, setFloatingSize] = useState<TerminalFloatSize>(() => readTerminalFloatSize(projectId));
   const [floatingPosition, setFloatingPosition] = useState<TerminalFloatPosition>(() => readTerminalFloatPosition(readTerminalFloatSize(projectId), projectId));
   const [isMobileTerminal, setIsMobileTerminal] = useState(() => isTerminalMobileViewport());
+  // FNXC:TerminalFooter 2026-07-08-15:00: FN-7684 tablet tier (769-1024px, non-mobile) — keeps the desktop display modes (docked/floating/pinned-below), only the action-control render location changes.
+  const [isTabletTerminal, setIsTabletTerminal] = useState(() => isTerminalTabletViewport());
   const isDockedMode = !isMobileTerminal && displayMode === "docked";
   const isFloatingMode = !isMobileTerminal && displayMode === "floating";
   const isBelowMode = !isMobileTerminal && displayMode === "below";
@@ -618,7 +638,11 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
     FNXC:Terminal 2026-06-21-22:58:
     Viewport changes must force the terminal back onto the mobile fullscreen path at <=768px or touch-primary short landscape, then restore the stored desktop/tablet docked/floating mode when the viewport expands.
     */
-    const updateViewportMode = () => setIsMobileTerminal(isTerminalMobileViewport());
+    const updateViewportMode = () => {
+      setIsMobileTerminal(isTerminalMobileViewport());
+      // FNXC:TerminalFooter 2026-07-08-15:00: FN-7684 — keep isTabletTerminal in sync from the SAME resize/visualViewport listeners as isMobileTerminal rather than adding a second competing listener.
+      setIsTabletTerminal(isTerminalTabletViewport());
+    };
     updateViewportMode();
     window.addEventListener("resize", updateViewportMode);
     window.visualViewport?.addEventListener("resize", updateViewportMode);
@@ -2297,14 +2321,16 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
   } as CSSProperties;
 
   /*
-  FNXC:TerminalFooter 2026-07-04-20:00:
+  FNXC:TerminalFooter 2026-07-08-15:00:
   Single source of truth for the terminal action-control cluster (reconnect/restart,
   font-size, Clear, Shortcuts toggle, Preferences toggle, connection status, exit code,
   help text, and the desktop-only pin/pop-out toggles). Rendered in exactly ONE place
-  per breakpoint: inside the header `.terminal-actions` on desktop/floating/pinned-below
-  (FN-7502), or inside a dedicated bottom `.terminal-status-bar` footer on mobile (FN-7560)
-  so the narrow mobile header does not crowd the tab dropdown and close button. Do not
-  duplicate these handlers elsewhere — always render this fragment.
+  per breakpoint: inside the header `.terminal-actions` ONLY on true desktop (>1024px,
+  !isMobileTerminal && !isTabletTerminal), or inside a dedicated bottom
+  `.terminal-status-bar` footer on BOTH mobile (<=768px, FN-7560) and tablet
+  (769-1024px, FN-7684) so the narrower header does not crowd the tab strip/dropdown,
+  workspace picker, and close button. Same fragment, one location per breakpoint —
+  never duplicate these handlers elsewhere.
   */
   const terminalActionControls = (
     <>
@@ -2621,15 +2647,19 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           )}
           
           {/*
-          FNXC:TerminalFooter 2026-07-04-20:00:
-          On desktop/floating/pinned-below the header keeps its FN-7502 shape:
-          status title + `.terminal-actions` (rendering the shared
-          `terminalActionControls` fragment) + close. On mobile (isMobileTerminal)
-          the header renders ONLY the close button here — no `.terminal-actions`
+          FNXC:TerminalFooter 2026-07-08-15:00:
+          The header renders `.terminal-actions` (the shared `terminalActionControls`
+          fragment) ONLY on true desktop (!isMobileTerminal && !isTabletTerminal,
+          >1024px) — the FN-7502 shape. On mobile (isMobileTerminal) the header
+          renders ONLY the corner-pinned close button — no `.terminal-actions`
           shell — because the mobile tab dropdown already occupies the header and
-          the action controls move into the `.terminal-status-bar` footer below
-          (FN-7560) so they don't crowd the dropdown/close. Both sites render the
-          SAME fragment, never a duplicated copy, so handlers cannot drift.
+          the action controls move into the `.terminal-status-bar` footer (FN-7560).
+          On tablet (isTabletTerminal, 769-1024px, FN-7684) the header keeps the
+          desktop tab strip + title + workspace picker but ALSO drops
+          `.terminal-actions` — it still overflows at that width — in favor of a
+          plain close button, with the same action controls relocating into the
+          footer alongside mobile. Both footer/header render sites use the SAME
+          fragment, never a duplicated copy, so handlers cannot drift.
 
           FNXC:TerminalHeader 2026-07-04-20:45:
           FN-7565: on mobile, being a direct child of `.terminal-header` (not
@@ -2641,7 +2671,9 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
           expect for an app-sheet close control. The `terminal-close--corner`
           class (CSS: highest `order` + `margin-inline-start: auto`) fixes this
           so the X renders last in flex order and hugs the right edge regardless
-          of how wide the tab dropdown / workspace picker grow.
+          of how wide the tab dropdown / workspace picker grow. Tablet keeps the
+          desktop `.terminal-tabs` (not the mobile dropdown) ahead of title/close
+          in normal DOM order, so its plain close button needs no order override.
           */}
           {isMobileTerminal ? (
             <button
@@ -2660,9 +2692,7 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 {getStatusIndicator()}
               </div>
 
-              {/* Actions — labels hidden on mobile via .terminal-action-label */}
-              <div className="terminal-actions" data-testid="terminal-actions">
-                {terminalActionControls}
+              {isTabletTerminal ? (
                 <button
                   className="terminal-close"
                   onClick={onClose}
@@ -2671,7 +2701,20 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
                 >
                   <X size={20} />
                 </button>
-              </div>
+              ) : (
+                /* Actions — labels hidden on mobile via .terminal-action-label */
+                <div className="terminal-actions" data-testid="terminal-actions">
+                  {terminalActionControls}
+                  <button
+                    className="terminal-close"
+                    onClick={onClose}
+                    data-testid="terminal-close-btn"
+                    title={t("terminal.closeTerminal", "Close terminal")}
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -2944,16 +2987,20 @@ export function TerminalModal({ isOpen, onClose, initialCommand, initialCommandG
         )}
 
         {/*
-        FNXC:TerminalFooter 2026-07-04-20:00:
-        Mobile-only footer bar (FN-7560) restoring the pre-FN-7502 footer
-        ergonomics: the same `terminalActionControls` fragment used by the
-        desktop header renders here instead so font-size/Clear/Shortcuts/
-        Preferences/connection-status/exit-code stay reachable without
-        crowding the mobile header's tab dropdown and close button. Scrolls
-        horizontally (min-width: 0 + overflow-x: auto) if controls exceed the
-        viewport width, matching the .terminal-shortcut-panel (FN-7550) pattern.
+        FNXC:TerminalFooter 2026-07-08-15:00:
+        Mobile + tablet footer bar (FN-7560 mobile, FN-7684 tablet) restoring
+        the pre-FN-7502 footer ergonomics on both narrower tiers: the same
+        `terminalActionControls` fragment used by the true-desktop header
+        renders here instead so font-size/Clear/Shortcuts/Preferences/
+        connection-status/exit-code stay reachable without crowding the
+        header's tab strip/dropdown, workspace picker, and close button.
+        Scrolls horizontally (min-width: 0 + overflow-x: auto) if controls
+        exceed the viewport width, matching the .terminal-shortcut-panel
+        (FN-7550) pattern. Tablet keeps the desktop display modes (docked/
+        floating/pinned-below), so this footer also carries the !isMobileTerminal-
+        gated pin/pop-out toggles the fragment already renders for tablet.
         */}
-        {isMobileTerminal && (
+        {(isMobileTerminal || isTabletTerminal) && (
           <div className="terminal-status-bar" data-testid="terminal-footer-actions">
             {terminalActionControls}
           </div>

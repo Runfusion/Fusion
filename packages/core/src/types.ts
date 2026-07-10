@@ -711,6 +711,11 @@ export interface WorkflowStep {
    *  Must be set together with `modelProvider`. When both model fields are undefined,
    *  the executor uses global settings defaults. Only used when mode is "prompt". */
   modelId?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Workflow IR nodes may pin reasoning effort independently from the model pair so authors can inherit the model while overriding thinking level. Runtime precedence is node/step `thinkingLevel` > task `thinkingLevel` > settings `defaultThinkingLevel`.
+   */
+  thinkingLevel?: ThinkingLevel;
   /** (workflow-editor-consolidation U1/U2, KTD-1/KTD-3) when this legacy step has
    *  been migrated into a fragment WorkflowDefinition, the fragment's id is stamped
    *  here so the lazy step migration is idempotent (already-stamped rows are
@@ -804,6 +809,21 @@ export interface CustomProvider {
    * Omitted/false forces legacy `system` role emission to avoid provider 400s.
    */
   supportsDeveloperRole?: boolean;
+  /**
+   * FNXC:ProviderAuth 2026-07-08-00:00:
+   * FN-7689: opt-in for custom `openai-compatible`/`openai-responses` gateways that proxy an
+   * Anthropic-format backend (e.g. `usai/claude_4_6_sonnet`). When true, registered
+   * `openai-completions` models get pi-ai's `compat.cacheControlFormat = "anthropic"`, which makes
+   * pi-ai emit Anthropic-style `cache_control` breakpoints on the system prompt, last
+   * conversation message, and last tool. Without this, pi-ai's `detectCompat` only auto-enables
+   * caching for OpenRouter `anthropic/*` models, so a generic custom gateway re-bills the entire
+   * context prefix uncached every turn (measured cachedTokens=0/cacheWriteTokens=0 across 243
+   * runs, ~327.5:1 input:output ratio). Default off — never force cache_control on gateways that
+   * did not opt in, since non-Anthropic-compatible backends (Together, Fireworks, etc.) can 400 on
+   * unexpected `cache_control` fields. Inert for `anthropic-compatible` (already auto-caches) and
+   * `google-generative-ai` (no cache_control concept).
+   */
+  anthropicPromptCaching?: boolean;
   models?: { id: string; name: string }[];
 }
 
@@ -837,6 +857,8 @@ export interface WorkflowStepInput {
   modelProvider?: string;
   /** AI model ID override. Must be set together with modelProvider. Only used when mode is "prompt". */
   modelId?: string;
+  /** Optional per-node reasoning-effort override; inherits from task/settings when omitted. */
+  thinkingLevel?: ThinkingLevel;
   /** (workflow-editor-consolidation U2, KTD-3) fragment id stamped when this step
    *  was migrated into a fragment WorkflowDefinition. Set by the migration only. */
   migratedFragmentId?: string;
@@ -870,6 +892,47 @@ export interface WorkflowStepResult {
   startedAt?: string;
   /** ISO-8601 timestamp when the step completed */
   completedAt?: string;
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * A privileged operator can bypass a `status:"failed"` pre-merge review step
+   * (leading real-world cause: the Runfusion/Fusion#1946 `(no feedback captured)`
+   * no-verdict dispatch defect) so a card stranded solely by that failure can
+   * advance to merge (FN-7720). The bypass REWRITES this result's `status` to a
+   * terminal, non-blocking value (`"skipped"`) and stamps the fields below as an
+   * explicit audit trail — it never fabricates a reviewer `verdict`. Only the
+   * `getTaskMergeBlocker` "task has failed pre-merge workflow steps" reason is
+   * cleared; every other merge-blocker condition (paused, incomplete steps,
+   * blocking task status, still-`pending` pre-merge steps) is untouched.
+   */
+  /** Operator identity that performed the bypass, if this result was bypassed. */
+  bypassedBy?: string;
+  /** ISO-8601 timestamp when the bypass was applied. */
+  bypassedAt?: string;
+  /** Mandatory operator-supplied justification for the bypass. */
+  bypassReason?: string;
+  /** The `status` this result carried immediately before the bypass rewrote it (always `"failed"` for the supported bypass path). */
+  bypassedFromStatus?: WorkflowStepResult["status"];
+  /** The `verdict` (if any) this result carried immediately before the bypass, preserved for audit only — never promoted to `verdict`. */
+  bypassedFromVerdict?: WorkflowStepResult["verdict"];
+  /*
+   * FNXC:WorkflowStepResults 2026-07-09-00:10:
+   * FN-7727: self-healing recovery re-runs a failed pre-merge review node
+   * (`code-review`, `code-review-remediation`, `plan-review`,
+   * `browser-verification`) in place, and the recorder upsert previously
+   * REPLACED the prior `status:"failed"` entry — erasing its captured
+   * `output`/`notes`/`verdict`/timestamps forever (the diagnostic trail
+   * FN-7642 worked to capture, and the history FN-7720's bypass affordance
+   * needs to show). `priorAttempts` preserves a BOUNDED, single-level history
+   * of prior terminal-failure (`failed`/`advisory_failure`) attempts on the
+   * surviving entry — snapshots never carry their own nested `priorAttempts`,
+   * so history cannot grow unbounded. This field is READ-ONLY history: it
+   * never participates in merge-blocking (`getTaskMergeBlocker`), self-healing
+   * recovery selection (`latestFailedPreMergeStep`), or progress/timing
+   * computation — only the current (this) entry's fields do. Written by the
+   * shared `upsertWorkflowStepResult` helper (`workflow-step-results.ts`).
+   */
+  /** Bounded, single-level history of prior terminal-failure attempts this entry replaced. Read-only; never affects merge-blocking or recovery selection. */
+  priorAttempts?: WorkflowStepResult[];
 }
 
 /**
@@ -961,6 +1024,8 @@ export interface WorkflowStepTemplate {
   modelProvider?: string;
   /** AI model ID override for prompt-mode templates. */
   modelId?: string;
+  /** Optional per-node reasoning-effort override for prompt-mode templates. */
+  thinkingLevel?: ThinkingLevel;
   /** Grouping category (e.g., "Quality", "Security") */
   category: string;
   /** Optional icon identifier for UI (e.g., "file-text", "shield") */
@@ -1185,8 +1250,12 @@ export type ActivityEventType =
   | "task:auto-archived-deterministic-duplicate"
   | "task:auto-archived-near-duplicate"
   | "task:near-duplicate-flagged"
-  /** FNXC:ReleaseAuthorizationGate 2026-06-15-02:44: Release-class tasks parked by triage need a distinct activity so operators can see that explicit user approval is required before dispatch. */
-  | "task:release-authorization-required"
+  /*
+   * FNXC:ReleaseAuthorizationGate 2026-07-09-01:00:
+   * The triage release-authorization planning gate and its `task:release-authorization-required`
+   * activity type were removed (FN-7732, following the engine gate removal in b5b0458). Releases
+   * are kept out of Fusion by agent instruction (AGENTS.md -> "Releasing"), not by an activity/gate.
+   */
   | "task:auto-archived-ghost-bug"
   | "task:auto-archived-duplicate"
   | "task:merge-worktree-reacquired"
@@ -2470,19 +2539,15 @@ export interface Task {
    *  `nextRecoveryAt` is still in the future. Cleared alongside `recoveryRetryCount`. */
   nextRecoveryAt?: string;
   /*
-   * FNXC:PlanApproval 2026-07-04-21:35:
-   * FN-7559: release authorization (packages/engine/src/triage-release-authorization.ts)
-   * and the ordinary manual plan-approval gate (packages/core/src/plan-approval.ts,
-   * resolvePlanApprovalRequired) both park a task with status "awaiting-approval" and
-   * previously rendered an identical badge/Approve-Plan affordance in the dashboard.
-   * Project auto-approve-all (planApprovalMode: "auto-approve-all") bypasses ONLY the
-   * manual gate — release authorization is an independent safety gate it never skips —
-   * so an operator with auto-approve on could not tell a still-parked release hold from
-   * a (never-fired) manual hold and reasonably concluded auto-approve was broken.
-   * Set to "release-authorization" only by the release-authorization gate; the manual
-   * gate always writes it back to undefined/null so a stale reason from an earlier pass
-   * never survives past the manual gate's own awaiting-approval. Undefined means either
-   * no hold or an ordinary manual-approval hold.
+   * FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+   * DEPRECATED — the triage release-authorization gate that set this field was removed
+   * (it over-fired on AI-authored specs that merely mention release tooling and stranded
+   * ordinary tasks in "awaiting-approval" with no in-band exit). No code writes
+   * "release-authorization" anymore; releases are kept out of Fusion by agent instruction
+   * (AGENTS.md → "Releasing"), not an engine gate. The field is retained only so existing
+   * task rows persisted with the legacy value still deserialize; the dashboard now treats
+   * any such hold as an ordinary manual plan-approval hold (Approve/Reject Plan render
+   * normally). Undefined means either no hold or a manual-approval hold.
    */
   awaitingApprovalReason?: "release-authorization";
   /*
@@ -3171,6 +3236,12 @@ export interface GlobalSettings {
    *  model fails due to transient provider-side issues such as rate limits or
    *  overloaded capacity. Must be set together with `fallbackProvider`. */
   fallbackModelId?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-11:13:
+   * Fallback model lanes carry optional thinking companions so a swapped-in fallback can run at its own reasoning effort. Undefined means inherit; FN-7793 stores the schema foundation only, without runtime application or UI wiring.
+   * Optional thinking effort for the global fallback model pair. Inherits the default thinking level when unset.
+   */
+  fallbackThinkingLevel?: ThinkingLevel;
   /** Default thinking effort level for AI agent sessions.
    *  Controls how much reasoning effort the model uses — higher levels
    *  produce better results but cost more. When undefined, the engine
@@ -3373,6 +3444,15 @@ export interface GlobalSettings {
    * Operators need a global machine-local Cursor CLI executable override when PATH discovery resolves the wrong `cursor-agent`, `cursor`, `.cmd`, or `.bat` shim. Blank/undefined means Fusion must keep auto-detecting through PATH candidates.
    */
   cursorCliBinaryPath?: string;
+  /** When true, enable Grok CLI model-provider support (provider ID: `grok-cli`)
+   *  through an operator-local Grok CLI installation. Grok is API-key auth (not
+   *  OAuth/session) — see `grokCliBinaryPath` below and the plugin's probe. */
+  useGrokCli?: boolean;
+  /**
+   * FNXC:GrokCli 2026-07-08-00:00:
+   * Operators need a global machine-local Grok CLI executable override when PATH discovery resolves the wrong `grok`/`.cmd`/`.bat` shim. Blank/undefined means Fusion must keep auto-detecting through PATH candidates.
+   */
+  grokCliBinaryPath?: string;
   /** Global baseline AI model provider for task execution (executor agent).
    *  This is the global lane that project-level `executionProvider` can override.
    *  Must be set together with `executionGlobalModelId`. Falls back to
@@ -3405,6 +3485,14 @@ export interface GlobalSettings {
   /** Global baseline AI model ID for title summarization.
    *  Must be set together with `titleSummarizerGlobalProvider`. */
   titleSummarizerGlobalModelId?: string;
+  /** Optional global execution-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  executionGlobalThinkingLevel?: ThinkingLevel;
+  /** Optional global planning-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  planningGlobalThinkingLevel?: ThinkingLevel;
+  /** Optional global reviewer-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  validatorGlobalThinkingLevel?: ThinkingLevel;
+  /** Optional global summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  titleSummarizerGlobalThinkingLevel?: ThinkingLevel;
   /** The daemon authentication token (format: fn_<32 hex chars>).
    *  Used for authenticating CLI clients to the daemon server. */
   daemonToken?: string;
@@ -3999,6 +4087,8 @@ export interface ProjectSettings {
   /** Fallback model ID for planning/triage. When unset, falls back to the
    *  global fallback model. Must be set together with `planningFallbackProvider`. */
   planningFallbackModelId?: string;
+  /** Workflow-declared planning fallback thinking override. Companion to the planning fallback provider/model pair; inherits when unset. */
+  planningFallbackThinkingLevel?: ThinkingLevel;
   /** Project-level override for the base default AI model provider.
    *  When set, this overrides the global `defaultProvider`/`defaultModelId` baseline
    *  for all lanes that don't have their own explicit project override.
@@ -4007,6 +4097,12 @@ export interface ProjectSettings {
   /** Project-level override for the base default AI model ID.
    *  Must be set together with `defaultProviderOverride`. */
   defaultModelIdOverride?: string;
+  /**
+   * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+   * Settings model lanes carry optional thinking overrides that inherit `defaultThinkingLevel` when unset. Runtime precedence is task `thinkingLevel` > lane thinking override > global `defaultThinkingLevel`.
+   * Optional project default-lane thinking override used when a task does not set its own thinking level.
+   */
+  defaultThinkingLevelOverride?: ThinkingLevel;
   /** Project-level AI model provider for task execution (executor agent).
    *  This is the execution lane that overrides the global `executionGlobalProvider`.
    *  Must be set together with `executionModelId`. Falls back to
@@ -4017,6 +4113,10 @@ export interface ProjectSettings {
   /** Project-level AI model ID for task execution.
    *  Must be set together with `executionProvider`. */
   executionModelId?: string;
+  /** Workflow-declared execution-lane thinking override. Inherits through task/default thinking when unset. */
+  executionThinkingLevel?: ThinkingLevel;
+  /** Workflow-declared planning-lane thinking override. Inherits through task/default thinking when unset. */
+  planningThinkingLevel?: ThinkingLevel;
   /** AI model provider for validator/reviewer agent.
    *  Must be set together with `validatorModelId`. When both are undefined,
    *  falls back to `defaultProvider`/`defaultModelId`. */
@@ -4032,6 +4132,10 @@ export interface ProjectSettings {
   /** Fallback model ID for validator/reviewer. When unset, falls back to the
    *  global fallback model. Must be set together with `validatorFallbackProvider`. */
   validatorFallbackModelId?: string;
+  /** Workflow-declared validator fallback thinking override. Companion to the validator fallback provider/model pair; inherits when unset. */
+  validatorFallbackThinkingLevel?: ThinkingLevel;
+  /** Workflow-declared validator-lane thinking override. Inherits through task/default thinking when unset. */
+  validatorThinkingLevel?: ThinkingLevel;
   /** Reusable model configuration presets for task creation. */
   modelPresets?: ModelPreset[];
   /** When true, task creation UIs automatically recommend/apply a preset based on task size. */
@@ -4536,6 +4640,8 @@ export interface ProjectSettings {
    *  Must be set together with `titleSummarizerProvider`. Falls back to planningModelId,
    *  then defaultModelId if not specified. */
   titleSummarizerModelId?: string;
+  /** Optional project summarization-lane thinking override. Inherits `defaultThinkingLevel` when unset. */
+  titleSummarizerThinkingLevel?: ThinkingLevel;
   /** Fallback model provider for title summarization. When unset, falls back to
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackModelId`. */
@@ -4544,6 +4650,8 @@ export interface ProjectSettings {
    *  planning fallback, then global fallback. Must be set together with
    *  `titleSummarizerFallbackProvider`. */
   titleSummarizerFallbackModelId?: string;
+  /** Optional project summarization fallback thinking override. Companion to the title summarizer fallback provider/model pair; inherits when unset. */
+  titleSummarizerFallbackThinkingLevel?: ThinkingLevel;
   /**
    * FNXC:PrMetadataGeneration 2026-06-27-00:00:
    * Project operators can add title-specific guidance to the Create PR metadata prompt without replacing the strict JSON schema contract. Blank or whitespace-only values are treated as unset so the default prompt remains byte-for-byte unchanged.
@@ -6632,12 +6740,21 @@ export type AgentPermission = (typeof AGENT_PERMISSIONS)[number];
  * `none` is a classifier-only result for positively-recognized read-only actions.
  * It is never stored as a policy rule key.
  */
+/**
+ * FNXC:ToolPermissions 2026-07-09-00:00:
+ * FN-7728 adds `review_gate_bypass` as a first-class sensitive action category distinct from `task_agent_mutation`. It governs merge-gate override tools (e.g. `fn_task_bypass_review`, delivered by FN-7720) so operators can independently allow/require-approval/block "who may bypass a failed review gate" without touching ordinary task-mutation policy. It defaults to a stricter disposition than the uniform preset default (see agent-permission-policy.ts) and is resolved identically by both evaluateAgentActionGate and the permanent-agent gate via the shared gating-classifications.ts source.
+ *
+ * FNXC:ToolPermissions 2026-07-09-08:30:
+ * FN-7737 adds `file_scope` as a first-class sensitive action category governing the File Scope additional-approval action (`fn_task_file_scope_add`, an executor-visible tool that extends a task's declared `## File Scope` beyond its initial spec at runtime). Unlike `review_gate_bypass`, `file_scope` intentionally keeps the UNIFORM grant-all disposition — the `unrestricted` preset resolves it to `allow` via `buildRules("allow")` with no override patch, since File Scope self-extension is an ordinary executor-scope action, not a merge-gate override. It is resolved identically by both evaluateAgentActionGate and the permanent-agent gate via the shared `FILE_SCOPE_FN_TOOLS` set in gating-classifications.ts.
+ */
 export const PERMANENT_AGENT_ACTION_CATEGORIES = [
   "git_write",
   "file_write_delete",
   "command_execution",
   "network_api",
   "task_agent_mutation",
+  "review_gate_bypass",
+  "file_scope",
   "none",
 ] as const;
 
@@ -6654,6 +6771,8 @@ export const AGENT_PERMISSION_POLICY_ACTION_CATEGORIES: readonly PermanentAgentS
   "command_execution",
   "network_api",
   "task_agent_mutation",
+  "review_gate_bypass",
+  "file_scope",
 ] as const;
 
 export const AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES: Record<
@@ -6665,7 +6784,8 @@ export const AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES: Record<
   command_execution: ["bash (non-git)", "fn_run_verification", "fn_acquire_repo_worktree", "read", "find", "grep", "ls"],
   network_api: ["fn_research_run (web/research)", "fn_research_cancel", "fn_web_fetch", "worktrunk_install"],
   /* FNXC:ToolGovernance 2026-06-27-16:51: Dashboard policy examples must mirror action-gate mutation exports. Identity reflection is exempt heartbeat coordination, so it is intentionally not advertised as task_agent_mutation.
-   * FNXC:WorkflowAuthoringTools 2026-06-29-23:40: Published workflow authoring tools are now agent-visible, so policy examples include the mutating workflow create/update/delete/settings/select surface operators can approve or block. */
+   * FNXC:WorkflowAuthoringTools 2026-06-29-23:40: Published workflow authoring tools are now agent-visible, so policy examples include the mutating workflow create/update/delete/settings/select surface operators can approve or block.
+   * FNXC:ToolGovernance 2026-07-09-09:36: FN-7733 — the GitLab browse tools (fn_task_browse_gitlab_project_issues, fn_task_browse_gitlab_group_issues, fn_task_browse_gitlab_merge_requests) are read-only discovery tools that never create task rows and are already classified under READONLY_FN_TOOLS in gating-classifications.ts; they were never members of ACTION_GATE_TASK_AGENT_MANAGEMENT_TOOLS. Listing them here as task_agent_mutation examples broke the invariant that this list must be a subset of the action-gate mutation classification, so they are intentionally excluded. The mutating fn_task_import_gitlab_* variants (which do create task rows) remain listed below. */
   task_agent_mutation: [
     "fn_task_create",
     "fn_delegate_task",
@@ -6674,9 +6794,6 @@ export const AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES: Record<
     "fn_task_import_gitlab_project_issues",
     "fn_task_import_gitlab_group_issues",
     "fn_task_import_gitlab_merge_requests",
-    "fn_task_browse_gitlab_project_issues",
-    "fn_task_browse_gitlab_group_issues",
-    "fn_task_browse_gitlab_merge_requests",
     "fn_spawn_agent",
     "fn_update_agent_config",
     "fn_task_update",
@@ -6688,6 +6805,10 @@ export const AGENT_PERMISSION_POLICY_CATEGORY_TOOL_EXAMPLES: Record<
     "fn_task_promote",
     "fn_task_refine",
   ],
+  /* FNXC:ToolPermissions 2026-07-09-00:00: FN-7728 — review_gate_bypass governs merge-gate override tools as a distinct, more-restricted permission from ordinary task mutation. fn_task_bypass_review (FN-7720) is CLI/pi-extension operator-tool-only; it is never exposed to executor/reviewer/triage agent tool lists. */
+  review_gate_bypass: ["fn_task_bypass_review"],
+  /* FNXC:ToolPermissions 2026-07-09-08:30: FN-7737 — file_scope governs the File Scope additional-approval action (fn_task_file_scope_add), which lets an executing agent extend its task's declared ## File Scope beyond the initial spec at runtime. Unlike review_gate_bypass, it keeps the uniform grant-all default (handled by "allow" under the unrestricted preset), so it is not patched by a *Override-style function. */
+  file_scope: ["fn_task_file_scope_add"],
 };
 
 export const AGENT_PERMISSION_POLICY_EXEMPT_TOOL_EXAMPLES: readonly string[] = [

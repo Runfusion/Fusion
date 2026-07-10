@@ -2,8 +2,25 @@ import "./TaskContextMenu.css";
 import type { KeyboardEvent, PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { Fragment, useCallback, useEffect, useRef } from "react";
 import type { TFunction } from "i18next";
-import type { ColumnId, Task, TaskDetail } from "@fusion/core";
+import type { ColumnId, Task, TaskDetail, WorkflowStepResult } from "@fusion/core";
 import { COLUMNS, VALID_TRANSITIONS, isColumn } from "@fusion/core";
+
+/*
+FNXC:ReviewLaneBypass 2026-07-09-00:00:
+Dashboard app code only imports TYPES from @fusion/core (Vite aliases
+"@fusion/core" straight to packages/core/src/types.ts to avoid bundling the
+full core runtime into the client) — see vite.config.ts. So the bypass
+affordance's failed-pre-merge-step selection predicate is duplicated here in
+miniature rather than imported from packages/core/src/task-merge.ts's
+getLatestFailedPreMergeReviewStep. Keep this in lockstep with that function
+and self-healing.ts's latestFailedPreMergeStep (FN-7720): most-recent
+phase!=="post-merge" result with status==="failed".
+*/
+function hasFailedPreMergeReviewStep(task: Pick<Task, "workflowStepResults">): boolean {
+  return (task.workflowStepResults ?? []).some(
+    (result: WorkflowStepResult) => (result.phase || "pre-merge") === "pre-merge" && result.status === "failed",
+  );
+}
 
 export type TaskMenuActionTone = "default" | "danger" | "note";
 
@@ -63,6 +80,7 @@ export interface BuildTaskActionMenuModelOptions {
   hasRetryHandler?: boolean;
   hasResetHandler?: boolean;
   hasAssignedAgent?: boolean;
+  hasBypassReviewHandler?: boolean;
   mergeStrategy?: string;
   autoMergeEnabled?: boolean;
   prAutomationLabel?: string;
@@ -78,6 +96,14 @@ export interface BuildTaskActionMenuModelOptions {
   onStartPrReview?: () => void;
   onCheckPrStatus?: () => void;
   onEnableGithubTracking?: () => void;
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Operator-only bypass of the latest failed pre-merge review step (FN-7720).
+  Only TaskDetailModal wires `onBypassReview`, so the action is invisible in
+  the Board/List card context menus — kept to the single canonical
+  task-detail actions surface intentionally.
+  */
+  onBypassReview?: () => void;
 }
 
 export function getTaskPrAutomationLabel(t: TFunction<"app">, status?: string): string | undefined {
@@ -206,6 +232,7 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
     hasRetryHandler = Boolean(options.onRetry),
     hasResetHandler = Boolean(options.onReset),
     hasAssignedAgent = Boolean(task.assignedAgentId),
+    hasBypassReviewHandler = Boolean(options.onBypassReview),
   } = options;
   const isTaskPaused = Boolean(task.paused || task.userPaused);
   const actions: TaskMenuActionDescriptor[] = [];
@@ -223,6 +250,24 @@ export function buildTaskActionMenuModel(options: BuildTaskActionMenuModelOption
 
   if (canRetryTask && hasRetryHandler) {
     actions.push({ id: "retry", label: t("taskDetail.retry.btn", "Retry"), onSelect: options.onRetry });
+  }
+
+  /*
+  FNXC:ReviewLaneBypass 2026-07-09-00:00:
+  Policy-gated escape hatch (FN-7720) for a card stranded in `in-review`
+  solely by a failed pre-merge review step (leading real-world cause:
+  Runfusion/Fusion#1946's no-verdict dispatch defect). Shown only when the
+  task is `in-review` and carries a failed pre-merge `WorkflowStepResult`, so
+  it never renders as an empty/dead affordance for tasks blocked by other
+  reasons or already recovered.
+  */
+  if (hasBypassReviewHandler && task.column === "in-review" && hasFailedPreMergeReviewStep(task)) {
+    actions.push({
+      id: "bypass-review",
+      label: t("taskDetail.bypassReview.btn", "Bypass failed review"),
+      tone: "note",
+      onSelect: options.onBypassReview,
+    });
   }
 
   /*

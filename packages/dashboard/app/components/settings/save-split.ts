@@ -36,11 +36,16 @@ import type { GlobalSettings, Settings } from "@fusion/core";
  * needs the same changed-only/null-as-delete handling as the project default
  * lane overrides. Execution/planning/validator lanes still live on workflow
  * settings and are filtered out before the project branch is reached.
+ *
+ * FNXC:Settings-ThinkingLevel 2026-07-10-12:10:
+ * The project-scoped title-summarizer fallback thinking companion must travel
+ * with its provider/model pair so clearing the inline selector serializes as
+ * null-as-delete instead of being dropped as an unchanged inherited value.
  */
 export const MODEL_LANE_KEYS = [
   "defaultProviderOverride", "defaultModelIdOverride",
   "titleSummarizerProvider", "titleSummarizerModelId",
-  "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId",
+  "titleSummarizerFallbackProvider", "titleSummarizerFallbackModelId", "titleSummarizerFallbackThinkingLevel",
 ] as const;
 
 const MODEL_LANE_KEY_SET = new Set<string>(MODEL_LANE_KEYS);
@@ -125,6 +130,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "defaultModelId",
     "fallbackProvider",
     "fallbackModelId",
+    "fallbackThinkingLevel",
     "defaultThinkingLevel",
     "modelRouterEnabled",
     "modelRouterCheapProvider",
@@ -148,6 +154,7 @@ export const GLOBAL_SECTION_KEYS: Record<string, ReadonlySet<string>> = {
     "defaultModelId",
     "fallbackProvider",
     "fallbackModelId",
+    "fallbackThinkingLevel",
     "defaultThinkingLevel",
     "modelRouterEnabled",
     "modelRouterCheapProvider",

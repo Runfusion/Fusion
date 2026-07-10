@@ -23,6 +23,7 @@ type LegacyProvider = {
   baseUrl: string;
   api: "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
   apiKey?: string;
+  anthropicPromptCaching?: boolean;
   models?: Array<{ id: string; name?: string }>;
 };
 
@@ -45,6 +46,7 @@ function normalizeProviders(result: Awaited<ReturnType<typeof fetchCustomProvide
         : "openai-compatible",
       baseUrl: provider.baseUrl,
       ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
+      ...(provider.anthropicPromptCaching ? { anthropicPromptCaching: true } : {}),
       models: (provider.models ?? []).map((model) => ({
         id: model.id,
         name: model.name ?? model.id,
@@ -79,6 +81,11 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState("");
+  // FNXC:ProviderAuth 2026-07-08-00:00:
+  // FN-7689: opt-in for Anthropic-style prompt caching on openai-compatible/openai-responses
+  // custom gateways that proxy an Anthropic backend. Shown only for those two apiTypes —
+  // anthropic-compatible already auto-caches and google-generative-ai has no cache_control concept.
+  const [anthropicPromptCaching, setAnthropicPromptCaching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
@@ -122,6 +129,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setBaseUrl("");
     setApiKey("");
     setModels("");
+    setAnthropicPromptCaching(false);
     setFormError(null);
     setDetectError(null);
     setDetecting(false);
@@ -135,6 +143,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     setBaseUrl("");
     setApiKey("");
     setModels("");
+    setAnthropicPromptCaching(false);
     setFormError(null);
     setDetectError(null);
     setDetecting(false);
@@ -152,6 +161,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     // unchanged blank field leaves the stored key untouched on save.
     setApiKey("");
     setModels((provider.models ?? []).map((model) => model.id).join(", "));
+    setAnthropicPromptCaching(provider.anthropicPromptCaching === true);
     setFormError(null);
     setDetectError(null);
     setDetecting(false);
@@ -240,6 +250,10 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
       baseUrl: baseUrl.trim(),
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       ...(parsedModels.length > 0 ? { models: parsedModels } : {}),
+      // FNXC:ProviderAuth 2026-07-08-00:00: only send the caching opt-in for apiTypes where it
+      // applies (openai-compatible/openai-responses); anthropic-compatible/google-generative-ai
+      // never surface the checkbox so this is always false for them.
+      ...(anthropicPromptCaching ? { anthropicPromptCaching: true } : {}),
     };
 
     setSaving(true);
@@ -259,7 +273,7 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
     } finally {
       setSaving(false);
     }
-  }, [apiKey, apiType, baseUrl, editingProvider, loadProviders, models, name, resetForm, validateForm, t]);
+  }, [anthropicPromptCaching, apiKey, apiType, baseUrl, editingProvider, loadProviders, models, name, resetForm, validateForm, t]);
 
   const handleDelete = useCallback(
     async (provider: CustomProvider) => {
@@ -415,6 +429,27 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
                       </select>
                     </div>
 
+                    {apiType === "openai-compatible" || apiType === "openai-responses" ? (
+                      <div className="form-group custom-provider-form-row custom-provider-form-checkbox-row">
+                        <label htmlFor="custom-provider-anthropic-caching">
+                          <input
+                            id="custom-provider-anthropic-caching"
+                            type="checkbox"
+                            checked={anthropicPromptCaching}
+                            onChange={(event) => setAnthropicPromptCaching(event.target.checked)}
+                            disabled={saving}
+                          />{" "}
+                          {t("providers.anthropicPromptCaching", "Enable Anthropic-style prompt caching")}
+                        </label>
+                        <p className="custom-provider-form-hint">
+                          {t(
+                            "providers.anthropicPromptCachingHint",
+                            "Enable if this gateway proxies an Anthropic model (e.g. Claude via a custom router). Reduces re-billing the full context every turn.",
+                          )}
+                        </p>
+                      </div>
+                    ) : null}
+
                     <div className="form-group custom-provider-form-row">
                       <label htmlFor="custom-provider-base-url">{t("providers.baseUrlLabel", "Base URL")}</label>
                       <input
@@ -534,6 +569,27 @@ export function CustomProvidersSection({ embedded = false, onProviderChange }: C
               <option value="google-generative-ai">{t("providers.apiTypeGoogle", "Google Generative AI")}</option>
             </select>
           </div>
+
+          {apiType === "openai-compatible" || apiType === "openai-responses" ? (
+            <div className="form-group custom-provider-form-row custom-provider-form-checkbox-row">
+              <label htmlFor="custom-provider-anthropic-caching-new">
+                <input
+                  id="custom-provider-anthropic-caching-new"
+                  type="checkbox"
+                  checked={anthropicPromptCaching}
+                  onChange={(event) => setAnthropicPromptCaching(event.target.checked)}
+                  disabled={saving}
+                />{" "}
+                {t("providers.anthropicPromptCaching", "Enable Anthropic-style prompt caching")}
+              </label>
+              <p className="custom-provider-form-hint">
+                {t(
+                  "providers.anthropicPromptCachingHint",
+                  "Enable if this gateway proxies an Anthropic model (e.g. Claude via a custom router). Reduces re-billing the full context every turn.",
+                )}
+              </p>
+            </div>
+          ) : null}
 
           <div className="form-group custom-provider-form-row">
             <label htmlFor="custom-provider-base-url">{t("providers.baseUrlLabel", "Base URL")}</label>

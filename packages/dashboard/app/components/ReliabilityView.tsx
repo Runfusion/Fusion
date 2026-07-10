@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Loader2 } from "lucide-react";
+import { api, withProjectId } from "../api/legacy";
 import { LineChart, PieChart } from "./command-center/charts/recharts";
 import type { LineChartSeries, PieChartDatum } from "./command-center/charts/recharts";
 import "./ReliabilityView.css";
@@ -42,7 +43,7 @@ function formatDateTime(value: string | null | undefined): string {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
-export function ReliabilityView() {
+export function ReliabilityView({ projectId }: { projectId?: string } = {}) {
   const { t } = useTranslation("app");
   const [data, setData] = useState<ReliabilityResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,28 +56,21 @@ export function ReliabilityView() {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/health/reliability");
-      if (!response.ok) {
-        throw new Error(`Failed to load reliability metrics (${response.status})`);
-      }
-      const payload = (await response.json()) as ReliabilityResponse;
+      const payload = await api<ReliabilityResponse>(withProjectId("/health/reliability", projectId));
       setData(payload);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : t("reliability.failedToLoad", "Failed to load reliability metrics"));
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [t, projectId]);
 
   const resetStats = useCallback(async () => {
     setResetError(null);
-    const response = await fetch("/api/health/reliability/reset", { method: "POST" });
-    if (!response.ok) {
-      throw new Error(`Failed to reset reliability metrics (${response.status})`);
-    }
+    await api<void>(withProjectId("/health/reliability/reset", projectId), { method: "POST" });
     await load();
     setShowResetConfirm(false);
-  }, [load]);
+  }, [load, projectId]);
 
   useEffect(() => {
     void load();

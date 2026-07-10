@@ -20,6 +20,9 @@ export interface GlobalModelsSectionProps extends SectionBaseProps {
     modelsLoading: boolean;
     /** Global model lanes (i.e. MODEL_LANES without the `default` lane). */
     globalModelLanes: ModelLane[];
+    getLaneThinkingValue: (lane: ModelLane) => string;
+    updateLaneThinkingValue: (lane: ModelLane, level: string) => void;
+    resetLaneThinkingValue: (lane: ModelLane) => void;
     favoriteProviders: string[];
     favoriteModels: string[];
     onToggleFavorite: (provider: string) => void;
@@ -27,7 +30,7 @@ export interface GlobalModelsSectionProps extends SectionBaseProps {
     addToast: (message: string, type?: ToastType) => void;
     projectId?: string;
 }
-export function GlobalModelsSection({ scopeBanner, form, setForm, availableModels, modelsLoading, globalModelLanes, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, addToast, projectId, }: GlobalModelsSectionProps) {
+export function GlobalModelsSection({ scopeBanner, form, setForm, availableModels, modelsLoading, globalModelLanes, getLaneThinkingValue, updateLaneThinkingValue, resetLaneThinkingValue, favoriteProviders, favoriteModels, onToggleFavorite, onToggleModelFavorite, addToast, projectId, }: GlobalModelsSectionProps) {
     const { t } = useTranslation("app");
     const selectedValue = form.defaultProvider && form.defaultModelId
         ? `${form.defaultProvider}/${form.defaultModelId}`
@@ -60,9 +63,10 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
 
           <div className="form-group">
             <label htmlFor="fallbackModel">{t("settings.globalModels.fallbackModel", "Fallback Model")}</label>
+            {/* FNXC:Settings-ThinkingLevel 2026-07-10-12:00: Global fallback model selection owns its own thinking-level companion (`fallbackThinkingLevel`). Clearing the fallback picker must clear the companion value so null-as-delete reset parity matches the per-lane model pickers. */}
             <CustomModelDropdown id="fallbackModel" label="Fallback Model" models={availableModels} value={form.fallbackProvider && form.fallbackModelId ? `${form.fallbackProvider}/${form.fallbackModelId}` : ""} onChange={(val) => {
                 if (!val) {
-                    setForm((f) => ({ ...f, fallbackProvider: undefined, fallbackModelId: undefined }));
+                    setForm((f) => ({ ...f, fallbackProvider: undefined, fallbackModelId: undefined, fallbackThinkingLevel: undefined }));
                 }
                 else {
                     const slashIdx = val.indexOf("/");
@@ -72,7 +76,10 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                         fallbackModelId: val.slice(slashIdx + 1),
                     }));
                 }
-            }} placeholder={t("settings.globalModels.noFallback", "No fallback")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
+            }} placeholder={t("settings.globalModels.noFallback", "No fallback")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={(() => {
+                const selectedModel = availableModels.find((m) => m.provider === form.fallbackProvider && m.id === form.fallbackModelId);
+                return selectedModel ? Boolean(selectedModel.reasoning) : true;
+            })()} thinkingLevel={form.fallbackThinkingLevel || ""} onThinkingLevelChange={(level) => setForm((f) => ({ ...f, fallbackThinkingLevel: (level as ThinkingLevel) || undefined }))} defaultThinkingLevel={form.defaultThinkingLevel}/>
             <small>{t("settings.globalModels.usedAutomaticallyIfThePrimaryDefaultModelHits", "Used automatically if the primary default model hits a retryable provider error like rate limiting or overload. No default \u2014 unset.")}</small>
           </div>
         </>)}
@@ -103,6 +110,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                 const provider = form[lane.globalProviderKey as keyof Settings] as string | undefined;
                 const model = form[lane.globalModelKey as keyof Settings] as string | undefined;
                 const value = provider && model ? `${provider}/${model}` : "";
+                const thinkingValue = getLaneThinkingValue(lane);
                 return (<div className="form-group" key={`global-${lane.laneId}`}>
                 <label htmlFor={`global-${lane.laneId}-model`}>{lane.label}</label>
                 <CustomModelDropdown id={`global-${lane.laneId}-model`} label={lane.label} models={availableModels} value={value} onChange={(selected) => {
@@ -112,6 +120,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                                 [lane.globalProviderKey]: undefined,
                                 [lane.globalModelKey]: undefined,
                             }));
+                            resetLaneThinkingValue(lane);
                             return;
                         }
                         const slashIdx = selected.indexOf("/");
@@ -120,7 +129,7 @@ export function GlobalModelsSection({ scopeBanner, form, setForm, availableModel
                             [lane.globalProviderKey]: selected.slice(0, slashIdx),
                             [lane.globalModelKey]: selected.slice(slashIdx + 1),
                         }));
-                    }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite}/>
+                    }} placeholder={t("settings.globalModels.useDefault", "Use default")} favoriteProviders={favoriteProviders} onToggleFavorite={onToggleFavorite} favoriteModels={favoriteModels} onToggleModelFavorite={onToggleModelFavorite} showThinkingLevel={Boolean(lane.globalThinkingKey)} thinkingLevel={thinkingValue} onThinkingLevelChange={(level) => updateLaneThinkingValue(lane, level)} defaultThinkingLevel={form.defaultThinkingLevel}/>
                 <small>{lane.helperText}</small>
               </div>);
             })}

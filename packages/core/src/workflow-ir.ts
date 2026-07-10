@@ -17,6 +17,7 @@ import type {
 } from "./workflow-ir-types.js";
 import { getWorkflowExtensionRegistry } from "./workflow-extension-registry.js";
 import type { WorkflowExtensionConfigField } from "./workflow-extension-types.js";
+import { THINKING_LEVELS } from "./types.js";
 
 export class WorkflowIrError extends Error {
   constructor(message: string) {
@@ -69,6 +70,8 @@ const FIELD_RENDER_WIDGETS: ReadonlySet<string> = new Set([
   "textarea",
   "toggle",
 ]);
+
+const THINKING_LEVEL_SET: ReadonlySet<string> = new Set(THINKING_LEVELS);
 
 /** Workflow-settings (U1) value-type whitelist (mirrors WORKFLOW_FIELD_TYPES). */
 export const WORKFLOW_SETTING_TYPES: ReadonlySet<WorkflowSettingType> = new Set([
@@ -845,6 +848,23 @@ function validateStepReviewRouting(
   }
 }
 
+function validateThinkingLevelConfig(nodes: WorkflowIrNode[]): void {
+  for (const node of nodes) {
+    const value = node.config?.thinkingLevel;
+    /*
+     * FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+     * Per-node thinking overrides are workflow model-binding config, so IR validation rejects unknown reasoning levels before editor-authored or imported graphs reach execution.
+     */
+    if (value !== undefined && (typeof value !== "string" || !THINKING_LEVEL_SET.has(value))) {
+      throw new WorkflowIrError(
+        `Workflow node '${node.id}' thinkingLevel must be one of ${THINKING_LEVELS.join(", ")} when present`,
+      );
+    }
+    const templateNodes = (node.config as { template?: { nodes?: unknown } } | undefined)?.template?.nodes;
+    if (Array.isArray(templateNodes)) validateThinkingLevelConfig(templateNodes as WorkflowIrNode[]);
+  }
+}
+
 /** Compute the set of node ids that lie strictly inside some split..join branch
  *  region. Walks each split's branches forward to the join. Lightweight; used
  *  for the step-review advisory-only rule. */
@@ -1469,6 +1489,7 @@ function validateV2(ir: WorkflowIrV2): void {
   // configs first, then structural rules.
   const topLevelIds = new Set(ir.nodes.map((n) => n.id));
   validateStepExecutePlacement(ir.nodes);
+  validateThinkingLevelConfig(ir.nodes);
   for (const node of ir.nodes) {
     if (node.kind === "foreach") validateForeach(node, topLevelIds, columnIds);
     if (node.kind === "loop") validateLoop(node, topLevelIds, columnIds);

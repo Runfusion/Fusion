@@ -26,6 +26,7 @@ import {
   emitOverseerRetry,
   emitOverseerSteering,
   getTaskHardMergeBlocker,
+  isLiveSharedBranchGroupMemberIntegration,
   isSharedBranchGroupMemberIntegration,
   isWorkspaceTask,
   normalizeMergerMode,
@@ -41,7 +42,7 @@ import { InProcessRuntime } from "./runtimes/in-process-runtime.js";
 import type { WorktreePool } from "./worktree-pool.js";
 import type { ProjectRuntimeConfig } from "./project-runtime.js";
 import { PrMonitor } from "./pr-monitor.js";
-import { PlannerOverseerMonitor } from "./planner-overseer.js";
+import { PlannerOverseerMonitor, resolveExecutorStuckAfterMs } from "./planner-overseer.js";
 import { PlannerRecoveryController, type PlannerRecoveryHandlers } from "./planner-recovery-controller.js";
 import { evaluateOverseerHumanControl } from "./overseer-human-control-policy.js";
 import type { PrNodeGithubOps } from "./pr-nodes.js";
@@ -398,6 +399,14 @@ export class ProjectEngine {
   private oauthExpiryMonitor?: OAuthExpiryMonitor;
   private oauthRefreshScheduler?: OAuthRefreshScheduler;
   private oauthValidityLogger?: OAuthValidityLogger;
+  /*
+  FNXC:ProviderAuth 2026-07-09-00:00:
+  FN-7747: hold the OAuth subsystem's raw createFusionAuthStorage() instance so createServer
+  can derive a persistence fallback (see getAuthStorage() below) instead of silently regressing
+  the "desktop provider API keys don't persist" bug (#1948) if a host wires this engine but
+  forgets to pass its own authStorage.
+  */
+  private authStorage?: ReturnType<typeof createFusionAuthStorage>;
   private gridlockDetector?: GridlockDetector;
   private cronRunner?: CronRunner;
   private automationStore?: AutomationStoreType;
@@ -739,25 +748,38 @@ export class ProjectEngine {
       });
       await this.notificationService.start();
       const authStorage = createFusionAuthStorage();
+      this.authStorage = authStorage;
       const oauthAlertState = new OAuthAlertStateStore({
         statePath: getFusionOAuthAlertStatePath(),
       });
+      /*
+      FNXC:ClaudeOAuth 2026-07-05-00:00:
+      FN-7574: proactively refresh OAuth access tokens ahead of expiry (widened window,
+      see OAUTH_REFRESH_BUFFER_MS in auth-storage.ts) so a healthy subscription session
+      never lapses waiting for something else to request a runtime API key. Reuses the
+      same authStorage instance as OAuthExpiryMonitor below so detection/notification and
+      proactive refresh observe a consistent, single credential source.
+
+      FNXC:ClaudeOAuth 2026-07-08-12:10:
+      Start the proactive refresher BEFORE OAuthExpiryMonitor. Both are awaited on startup
+      and share this authStorage; the monitor's OAuthExpiryMonitor.start() runs its first
+      check() synchronously, and that check is refresh-blind (it only reads the stored
+      `expires` timestamp, with no refresh token or getApiKey in its interface). If the
+      monitor ran first, a stale-but-refreshable access token (the normal state after the
+      app has been closed a while) fired a false "OAuth token expired" ntfy push even
+      though the connection was fine — the refresher would silently renew the token moments
+      later. Refreshing first means the scheduler's awaited initial tick() renews the token
+      and the monitor (which reload()s authStorage at the top of check()) sees the fresh
+      `expires`, so the alarm only fires when refresh genuinely fails.
+      */
+      this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage });
+      await this.oauthRefreshScheduler.start();
       this.oauthExpiryMonitor = new OAuthExpiryMonitor({
         authStorage,
         notificationService: this.notificationService,
         alertState: oauthAlertState,
       });
       await this.oauthExpiryMonitor.start();
-      /*
-      FNXC:ClaudeOAuth 2026-07-05-00:00:
-      FN-7574: proactively refresh OAuth access tokens ahead of expiry (widened window,
-      see OAUTH_REFRESH_BUFFER_MS in auth-storage.ts) so a healthy subscription session
-      never lapses waiting for something else to request a runtime API key. Reuses the
-      same authStorage instance as OAuthExpiryMonitor above so detection/notification and
-      proactive refresh observe a consistent, single credential source.
-      */
-      this.oauthRefreshScheduler = new OAuthRefreshScheduler({ authStorage });
-      await this.oauthRefreshScheduler.start();
       this.oauthValidityLogger = new OAuthValidityLogger({
         authStorage,
         alertState: oauthAlertState,
@@ -1434,8 +1456,17 @@ export class ProjectEngine {
       // so a human sees it; it never performs the side effect itself. The
       // dashboard confirmation UI/badge that lets a human act on this is
       // owned by FN-7515+/FN-7517.
+      // FNXC:PlannerOversight 2026-07-08-00:00:
+      // FN-7692 fix: this prefix previously read "confirmation required"
+      // unconditionally, which contradicted `request.reason` once FN-7692
+      // made that reason accurately advisory under an active auto-merge
+      // policy. "checkpoint" is neutral and consistent whether the trailing
+      // `reason` describes an advisory (auto-merge will proceed) or a
+      // genuine block (human approval required) — messaging-only, no change
+      // to the `addSteeringComment` channel/timing or `emitOverseerConfirmation`
+      // below.
       requestConfirmation: async (task, request) => {
-        const text = `[planner-oversight] confirmation required (${request.sideEffectClass}): ${request.reason}`;
+        const text = `[planner-oversight] merge checkpoint (${request.sideEffectClass}): ${request.reason}`;
         await store.addSteeringComment(task.id, text, "agent");
         this.emitOverseerInterventionSafe(() =>
           emitOverseerConfirmation({
@@ -1538,6 +1569,22 @@ export class ProjectEngine {
   /** Get the AutomationStore (if initialized). */
   getAutomationStore(): AutomationStoreType | undefined {
     return this.automationStore;
+  }
+
+  /**
+   * Get the engine's raw createFusionAuthStorage() instance (if the OAuth subsystem has
+   * started; undefined when skipNotifier suppressed it).
+   *
+   * FNXC:ProviderAuth 2026-07-09-00:00:
+   * FN-7747 / #1948: createServer() derives a fallback `authStorage` from this getter when a
+   * host wires an engine but forgets to pass its own `authStorage`, so credential persistence
+   * degrades gracefully instead of throwing "Authentication is not configured". This is the
+   * RAW storage (no API-key/custom-provider wrapping) — hosts needing the full wrapped
+   * provider catalog (e.g. desktop's seedDashboardProviders() output) must still pass their
+   * own wrapped authStorage explicitly, exactly as packages/desktop already does.
+   */
+  getAuthStorage(): ReturnType<typeof createFusionAuthStorage> | undefined {
+    return this.authStorage;
   }
 
   /**
@@ -1802,8 +1849,8 @@ export class ProjectEngine {
   async requestInterpreterMerge(taskId: string, options: { signal?: AbortSignal } = {}): Promise<MergeResult> {
     let task: Task | null = null;
     let settings: Settings | undefined;
+    const store = this.runtime.getTaskStore();
     try {
-      const store = this.runtime.getTaskStore();
       settings = await store.getSettings();
       task = await store.getTask(taskId);
     } catch {
@@ -1812,7 +1859,7 @@ export class ProjectEngine {
     const eligible = !!task && !!settings
       && task.column === "in-review"
       && !settings.globalPause && !settings.enginePaused
-      && this.allowInReviewMergeProcessing(task, settings)
+      && (await this.allowInReviewMergeProcessing(task, settings, store))
       && !(task.paused && !task.mergeDetails?.mergeConfirmed);
     if (!eligible) {
       // A null task means the lookup failed or the task was deleted; never hand
@@ -2275,8 +2322,14 @@ export class ProjectEngine {
    * pushed wins. listTasks returns createdAt ASC — without this sort an
    * older low-priority task would start before a later urgent one.
    */
-  private allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge">, settings: Pick<Settings, "autoMerge">): boolean {
-    return allowsAutoMergeProcessing(task, settings) || isSharedBranchGroupMemberIntegration(task);
+  private async allowInReviewMergeProcessing(task: Pick<Task, "branchContext" | "autoMerge">, settings: Pick<Settings, "autoMerge">, store: Partial<Pick<TaskStore, "getBranchGroup">> = this.runtime.getTaskStore()): Promise<boolean> {
+    const groupId = task.branchContext?.groupId?.trim();
+    const branchGroup = groupId ? await store.getBranchGroup?.(groupId) : null;
+    /*
+    FNXC:AutoMergeHold 2026-07-09-16:53:
+    FN-7750 / Runfusion#1980: shared-branch member integration may bypass the global `autoMerge:false` hold only while its group row is still open. Stale, finalized, abandoned, or missing groups must flow through the standalone manual-hold gate so no task provenance can solo auto-merge to main.
+    */
+    return allowsAutoMergeProcessing(task, settings) || isLiveSharedBranchGroupMemberIntegration(task, branchGroup);
   }
 
   private async emitLegacyAutoMergeStampAdvisory(store: TaskStore): Promise<void> {
@@ -2316,10 +2369,15 @@ export class ProjectEngine {
     }
   }
 
-  private enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge" | "maxAutoMergeRetries">): number {
+  private async enqueueEligibleInReviewTasks(tasks: readonly Task[], settings: Pick<Settings, "autoMerge" | "maxAutoMergeRetries">): Promise<number> {
     const maxAutoMergeRetries = resolveMaxAutoMergeRetries(settings);
+    // FNXC:PostgresCutover 2026-07-10: allowInReviewMergeProcessing awaits the
+    // async getBranchGroup read on the PG branch, so eligibility resolves per
+    // task before the sync priority sort.
+    const candidates = tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries)) as Task[];
+    const allowFlags = await Promise.all(candidates.map((t) => this.allowInReviewMergeProcessing(t, settings, this.runtime.getTaskStore())));
     const eligible = sortTasksByPriorityThenAgeAndId(
-      tasks.filter((t) => !t.paused && this.canMergeTask(t as any, maxAutoMergeRetries) && this.allowInReviewMergeProcessing(t, settings)) as Task[],
+      candidates.filter((_, i) => allowFlags[i]),
     );
     for (const t of eligible) {
       this.internalEnqueueMerge(t.id);
@@ -2385,7 +2443,14 @@ export class ProjectEngine {
           if (level === "off") {
             continue;
           }
-          await overseer.observeTask(task, level);
+          // FN-7743: resolve the executor-stall threshold from the task's
+          // effective workflow settings (same `workflowEffective` fetch used
+          // for `plannerOversightLevel` above — no extra store round-trip) and
+          // pass it into `observeTask` so a genuinely idle non-paused
+          // in-progress task reports `signal: "stuck"` instead of always
+          // `progressing` (the FN-7732 symptom).
+          const executorStuckAfterMs = resolveExecutorStuckAfterMs(workflowEffective.plannerOverseerExecutorStuckAfterMs);
+          await overseer.observeTask(task, level, { executorStuckAfterMs });
 
           // FN-7512: one guarded, autonomous-only bounded recovery tick at the
           // same passive seam FN-7511 uses for observation. Inert for every
@@ -2526,7 +2591,7 @@ export class ProjectEngine {
             if (!task || task.column !== "in-review") {
               continue;
             }
-            if (!this.allowInReviewMergeProcessing(task, settings)) {
+            if (!(await this.allowInReviewMergeProcessing(task, settings, store))) {
               runtimeLog.log(`Auto-merge skipping ${taskId} — autoMerge disabled`);
               continue;
             }
@@ -2568,8 +2633,15 @@ export class ProjectEngine {
               // silently promote the poisoned row to `done` — exactly the
               // false-positive completion class that lost FN-5612/5613/5614/5616/
               // 5623/5625 work on 2026-05-27/28.
-              const branchGroupForFastPath = isSharedBranchGroupMemberIntegration(task)
+              const branchGroupForFastPathCandidate = isSharedBranchGroupMemberIntegration(task)
                 ? (store as any).getBranchGroup?.(task.branchContext?.groupId)
+                : null;
+              /*
+              FNXC:AutoMergeHold 2026-07-09-16:58:
+              FN-7750: merge-confirmed fast-path rerouting to a branch-group integration branch is safe only for a live/open group. A missing or terminal group must leave the row on its stored standalone target instead of reviving a stale group route that could bypass the manual merge hold.
+              */
+              const branchGroupForFastPath = isLiveSharedBranchGroupMemberIntegration(task, branchGroupForFastPathCandidate)
+                ? branchGroupForFastPathCandidate
                 : null;
               const routedFastPathTarget = branchGroupForFastPath?.branchName?.trim();
               const integrationBranchForGate =
@@ -4031,7 +4103,7 @@ export class ProjectEngine {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: ${settings.globalPause ? "globalPause" : "enginePaused"} active`);
             return;
           }
-          if (!this.allowInReviewMergeProcessing(latestTask, settings)) {
+          if (!(await this.allowInReviewMergeProcessing(latestTask, settings, store))) {
             runtimeLog.log(`Auto-merge handoff (${task.id}) skipped: autoMerge disabled`);
             return;
           }
@@ -4148,7 +4220,7 @@ export class ProjectEngine {
 
       try {
         const settings = await store.getSettings();
-        if (settings.globalPause || settings.enginePaused || !this.allowInReviewMergeProcessing(task, settings)) {
+        if (settings.globalPause || settings.enginePaused || !(await this.allowInReviewMergeProcessing(task, settings, store))) {
           return;
         }
         if (this.options.getTaskMergeBlocker?.(task)) {
@@ -4221,7 +4293,7 @@ export class ProjectEngine {
 
       const settings = await store.getSettings();
 
-      const enqueued = this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
+      const enqueued = await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
       if (enqueued > 0) {
         runtimeLog.log(`Auto-merge startup sweep: enqueueing ${enqueued} task(s)`);
       }
@@ -4280,7 +4352,7 @@ export class ProjectEngine {
         const settings = await store.getSettings();
         if (!settings.globalPause && !settings.enginePaused) {
           const tasks = await store.listTasks({ column: "in-review" });
-          this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
+          await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
         }
       } catch (err: unknown) {
         runtimeLog.warn(
@@ -4341,7 +4413,7 @@ export class ProjectEngine {
 
     try {
       const tasks = await store.listTasks({ column: "in-review" });
-      this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
+      await this.enqueueEligibleInReviewTasks(tasks as Task[], settings);
     } catch (err: unknown) {
       runtimeLog.warn(
         `${source}: failed to scan in-review tasks for auto-merge: ${err instanceof Error ? err.message : String(err)}`,

@@ -59,7 +59,7 @@ import { selectUserCommentsForAgentContext } from "./agent-user-comments.js";
 import { resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
 import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
-import { createResolvedAgentSession, resolveMergerSessionModel } from "./agent-session-helpers.js";
+import { createResolvedAgentSession, resolveMergerSessionModel, resolveMergerThinkingLevel, resolveValidatorThinkingLevel } from "./agent-session-helpers.js";
 import { promptWithFallback } from "./pi.js";
 import { AgentLogger } from "./agent-logger.js";
 import { withRateLimitRetry } from "./rate-limit-retry.js";
@@ -268,7 +268,7 @@ function makeMutatingAgent(store: TaskStore, settings: Settings, taskId: string,
       defaultModelId: model.modelId,
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
-      defaultThinkingLevel: settings.defaultThinkingLevel,
+      defaultThinkingLevel: resolveMergerThinkingLevel(settings),
       runAuditor: audit,
       settings,
       // FNXC:McpConfig 2026-06-25-22:48: merger-ai is the production merge path, so the mutating agent resolves enabled MCP servers at session creation and relies on the shared runtime guard for unsupported providers.
@@ -296,6 +296,12 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
     // that lane resolves to nothing.
     const validator = resolveValidatorSettingsModel(settings);
     const model = validator.provider && validator.modelId ? validator : resolveMergerSessionModel(settings);
+    // FNXC:Settings-ThinkingLevel 2026-07-10-00:00: The review agent's model falls back
+    // between the validator lane and the merger default lane, so its thinking level
+    // must follow the same lane it actually resolved a model from.
+    const reviewThinkingLevel = validator.provider && validator.modelId
+      ? resolveValidatorThinkingLevel(undefined, settings)
+      : resolveMergerThinkingLevel(settings);
     let captured = "";
     const logger = new AgentLogger({
       store,
@@ -327,7 +333,7 @@ function makeReviewAgent(store: TaskStore, settings: Settings, taskId: string, o
       defaultModelId: model.modelId,
       fallbackProvider: settings.fallbackProvider,
       fallbackModelId: settings.fallbackModelId,
-      defaultThinkingLevel: settings.defaultThinkingLevel,
+      defaultThinkingLevel: reviewThinkingLevel,
       runAuditor: audit,
       settings,
       // FNXC:McpConfig 2026-06-25-22:48: The production merge reviewer receives the same materialized MCP set as the mutating merge agent, preserving all-lane forwarding without logging server contents.

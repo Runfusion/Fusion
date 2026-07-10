@@ -3,10 +3,20 @@ import {
   extractRuntimeHint,
   extractRuntimeModel,
   resolveExecutorSessionModel,
+  resolveExecutorThinkingLevel,
+  resolveExecutorFallbackThinkingLevel,
   resolveHeartbeatSessionModels,
+  resolveImplicitPlanningFallbackModel,
   resolveMergerSessionModel,
+  resolveMergerFallbackThinkingLevel,
   resolvePlanningSessionModel,
+  resolvePlanningThinkingLevel,
+  resolvePlanningFallbackThinkingLevel,
+  resolveTitleSummarizerThinkingLevel,
+  resolveTitleSummarizerFallbackThinkingLevel,
   resolveValidatorSessionModel,
+  resolveValidatorThinkingLevel,
+  resolveValidatorFallbackThinkingLevel,
 } from "../agent-session-helpers.js";
 
 const { resolveRuntimeMock } = vi.hoisted(() => ({
@@ -19,6 +29,74 @@ vi.mock("../runtime-resolution.js", async () => {
     ...actual,
     resolveRuntime: resolveRuntimeMock,
   };
+});
+
+
+describe("resolve model-lane thinking levels", () => {
+  it("applies node/task > workflow execution lane > global lane > project default lane > global default precedence", () => {
+    const settings = {
+      defaultThinkingLevel: "low",
+      defaultThinkingLevelOverride: "medium",
+      executionGlobalThinkingLevel: "high",
+      executionThinkingLevel: "minimal",
+    } as const;
+
+    expect(resolveExecutorThinkingLevel("xhigh", settings)).toBe("xhigh");
+    expect(resolveExecutorThinkingLevel(undefined, settings)).toBe("minimal");
+    expect(resolveExecutorThinkingLevel(undefined, { executionGlobalThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
+    expect(resolveExecutorThinkingLevel(undefined, { defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
+    expect(resolveExecutorThinkingLevel(undefined, { defaultThinkingLevel: "low" })).toBe("low");
+  });
+
+  it("resolves planning, reviewer, and summarization lane overrides before the global default", () => {
+    expect(resolvePlanningThinkingLevel({ planningThinkingLevel: "low", planningGlobalThinkingLevel: "minimal", defaultThinkingLevel: "high" })).toBe("low");
+    expect(resolvePlanningThinkingLevel({ planningThinkingLevel: "low", defaultThinkingLevel: "high" }, "xhigh")).toBe("xhigh");
+    expect(resolveValidatorThinkingLevel(undefined, { validatorThinkingLevel: "minimal", validatorGlobalThinkingLevel: "medium", defaultThinkingLevel: "low" })).toBe("minimal");
+    expect(resolveValidatorThinkingLevel("xhigh", { validatorThinkingLevel: "minimal", validatorGlobalThinkingLevel: "medium", defaultThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolveTitleSummarizerThinkingLevel({
+      titleSummarizerThinkingLevel: "high",
+      titleSummarizerGlobalThinkingLevel: "medium",
+      defaultThinkingLevel: "low",
+    })).toBe("high");
+    expect(resolveTitleSummarizerThinkingLevel({
+      titleSummarizerGlobalThinkingLevel: "medium",
+      defaultThinkingLevelOverride: "minimal",
+      defaultThinkingLevel: "low",
+    })).toBe("medium");
+  });
+
+  it("resolves fallback thinking through fallback key then executor lane then defaults", () => {
+    expect(resolveExecutorFallbackThinkingLevel("task", { fallbackThinkingLevel: "high", executionThinkingLevel: "low" })).toBe("high");
+    expect(resolveExecutorFallbackThinkingLevel(undefined, { executionThinkingLevel: "minimal", defaultThinkingLevel: "low" })).toBe("minimal");
+    expect(resolveExecutorFallbackThinkingLevel(undefined, { defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
+    expect(resolveExecutorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "low" })).toBe("low");
+  });
+
+  it("resolves workflow fallback thinking before global fallback then lane defaults", () => {
+    expect(resolvePlanningFallbackThinkingLevel({ planningFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolvePlanningFallbackThinkingLevel({ fallbackThinkingLevel: "high", planningThinkingLevel: "low" })).toBe("high");
+    expect(resolvePlanningFallbackThinkingLevel({ planningThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
+    expect(resolvePlanningFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolvePlanningFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
+
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { validatorFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", validatorThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { fallbackThinkingLevel: "high", validatorThinkingLevel: "low" })).toBe("high");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { validatorThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolveValidatorFallbackThinkingLevel(undefined, { defaultThinkingLevel: "minimal" })).toBe("minimal");
+  });
+
+  it("resolves title summarizer and merger fallback thinking through fallback and default chains", () => {
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ titleSummarizerFallbackThinkingLevel: "xhigh", fallbackThinkingLevel: "high", titleSummarizerThinkingLevel: "low" })).toBe("xhigh");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ fallbackThinkingLevel: "high", titleSummarizerThinkingLevel: "low" })).toBe("high");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ titleSummarizerThinkingLevel: "low", defaultThinkingLevel: "minimal" })).toBe("low");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "minimal" })).toBe("medium");
+    expect(resolveTitleSummarizerFallbackThinkingLevel({ defaultThinkingLevel: "minimal" })).toBe("minimal");
+
+    expect(resolveMergerFallbackThinkingLevel({ fallbackThinkingLevel: "high", defaultThinkingLevel: "low" })).toBe("high");
+    expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevelOverride: "medium", defaultThinkingLevel: "low" })).toBe("medium");
+    expect(resolveMergerFallbackThinkingLevel({ defaultThinkingLevel: "low" })).toBe("low");
+  });
 });
 
 describe("extractRuntimeHint", () => {
@@ -626,6 +704,80 @@ describe("resolveMergerSessionModel", () => {
     ).toEqual({
       provider: "openai",
       modelId: "gpt-4.1",
+    });
+  });
+});
+
+describe("resolveImplicitPlanningFallbackModel (FN-7719)", () => {
+  it("derives a distinct implicit fallback from the project/global default model", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel(
+        {
+          defaultProvider: "openai",
+          defaultModelId: "gpt-4o",
+        },
+        "9router",
+        "nvidia/moonshotai/kimi-k2.6",
+      ),
+    ).toEqual({
+      provider: "openai",
+      modelId: "gpt-4o",
+    });
+  });
+
+  it("returns undefined/undefined when the implicit fallback would equal the primary (self-swap guard)", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel(
+        {
+          defaultProvider: "openai",
+          defaultModelId: "gpt-4o",
+        },
+        "openai",
+        "gpt-4o",
+      ),
+    ).toEqual({
+      provider: undefined,
+      modelId: undefined,
+    });
+  });
+
+  it("returns undefined/undefined when no project/global default model is configured", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel({}, "9router", "nvidia/moonshotai/kimi-k2.6"),
+    ).toEqual({
+      provider: undefined,
+      modelId: undefined,
+    });
+  });
+
+  it("does not inject an implicit fallback in test mode", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel(
+        {
+          testMode: true,
+          defaultProvider: "openai",
+          defaultModelId: "gpt-4o",
+        },
+        "9router",
+        "nvidia/moonshotai/kimi-k2.6",
+      ),
+    ).toEqual({
+      provider: undefined,
+      modelId: undefined,
+    });
+  });
+
+  it("prefers the assigned agent runtime model when no default model pair is configured", () => {
+    expect(
+      resolveImplicitPlanningFallbackModel(
+        {},
+        "9router",
+        "nvidia/moonshotai/kimi-k2.6",
+        { model: "anthropic/claude-3-5-sonnet-20241022" },
+      ),
+    ).toEqual({
+      provider: "anthropic",
+      modelId: "claude-3-5-sonnet-20241022",
     });
   });
 });

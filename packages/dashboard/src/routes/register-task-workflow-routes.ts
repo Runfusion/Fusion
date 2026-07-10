@@ -109,8 +109,15 @@ function resolveArtifactMediaPath(scopedStore: TaskStore, artifact: { taskId?: s
 
   const anchorDir = artifact.taskId ? scopedStore.getTaskDir(artifact.taskId) : scopedStore.getFusionDir();
   const expectedArtifactsDir = resolve(anchorDir, "artifacts");
+  const expectedAttachmentsDir = artifact.taskId ? resolve(anchorDir, "attachments") : null;
   const mediaPath = resolve(anchorDir, artifact.uri);
-  if (mediaPath !== expectedArtifactsDir && !mediaPath.startsWith(`${expectedArtifactsDir}${sep}`)) {
+  const underArtifacts = mediaPath === expectedArtifactsDir || mediaPath.startsWith(`${expectedArtifactsDir}${sep}`);
+  const underAttachments = expectedAttachmentsDir !== null && (mediaPath === expectedAttachmentsDir || mediaPath.startsWith(`${expectedAttachmentsDir}${sep}`));
+  /*
+   * FNXC:ArtifactRegistry 2026-07-10-00:00:
+   * Attachment-sourced image artifacts intentionally store `attachments/<file>` URIs so /media streams the original task attachment bytes without a second artifact copy. Keep the resolver anchored to task-owned artifact/attachment directories only; task-less artifacts still resolve exclusively under `.fusion/artifacts/`.
+   */
+  if (!underArtifacts && !underAttachments) {
     throw badRequest("Invalid artifact media path");
   }
   return mediaPath;
@@ -2430,6 +2437,43 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+   * FNXC:ReviewLaneBypass 2026-07-09-00:00:
+   * Operator/privileged escape hatch for a card stranded in `in-review` solely
+   * by a failed pre-merge review lane (Runfusion/Fusion#1946 no-verdict
+   * dispatch defect). Mirrors the `/tasks/:id/retry` route shape but delegates
+   * all eligibility/mutation logic to `store.bypassFailedPreMergeReviewStep`
+   * (FN-7720). This route is intentionally NOT part of the executor/reviewer
+   * agent tool surface — dashboard/operator only.
+   */
+  router.post("/tasks/:id/bypass-review", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const { reason, actor } = (req.body ?? {}) as { reason?: unknown; actor?: unknown };
+      if (typeof reason !== "string" || reason.trim().length === 0) {
+        throw badRequest("reason is required to bypass a failed pre-merge review step");
+      }
+      const resolvedActor = typeof actor === "string" && actor.trim().length > 0 ? actor.trim() : "dashboard-operator";
+      const updated = await scopedStore.bypassFailedPreMergeReviewStep(req.params.id, {
+        reason: reason.trim(),
+        actor: resolvedActor,
+      });
+      res.json(updated);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("not found")) {
+        throw notFound(message);
+      }
+      if (message.includes("Cannot bypass review lane") || message.includes("requires a non-empty reason")) {
+        throw conflict(message);
+      }
+      rethrowAsApiError(err);
+    }
+  });
+
   // Nuclear reset — erase all progress and allocate a fresh worktree+branch on next run
   router.post("/tasks/:id/reset", async (req, res) => {
     try {
@@ -3252,19 +3296,11 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to approve plan");
       }
-      // FNXC:ReleaseAuthorizationGate 2026-07-04-22:30:
-      // FN-6481 requires a release-class task to carry an explicit
-      // "**Release Authorized By User:** yes" marker before it can dispatch.
-      // FN-7559 parks such tasks with awaitingApprovalReason === "release-authorization"
-      // (distinct from an ordinary manual plan-approval hold) and hides the
-      // Approve/Reject Plan buttons in the dashboard UI, but a direct API call bypasses
-      // that UI protection. Enforce the gate here too so no client can dispatch a
-      // release-class task without the authorization marker.
-      if (task.awaitingApprovalReason === "release-authorization") {
-        throw badRequest(
-          "This task is held for release authorization. Add the **Release Authorized By User:** yes marker to its PROMPT.md and resubmit the spec instead of approving the plan.",
-        );
-      }
+      // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+      // The triage release-authorization gate was removed (it over-fired and stranded
+      // ordinary tasks). The approve-plan guard that refused any task carrying the legacy
+      // awaitingApprovalReason === "release-authorization" is gone too, so tasks parked by
+      // the old gate can now be approved normally instead of staying stuck with no exit.
 
       // Log the approval
       await scopedStore.logEntry(task.id, "Plan approved by user");
@@ -3320,16 +3356,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       if (task.status !== "awaiting-approval") {
         throw badRequest("Task must have status 'awaiting-approval' to reject plan");
       }
-      // FNXC:ReleaseAuthorizationGate 2026-07-04-22:30:
-      // Mirror of the approve-plan guard above: a release-authorization hold
-      // (FN-7559's awaitingApprovalReason discriminator) must not be rejectable
-      // through the API either, since rejecting would wipe/regenerate the spec
-      // without the operator ever acknowledging the FN-6481 authorization gate.
-      if (task.awaitingApprovalReason === "release-authorization") {
-        throw badRequest(
-          "This task is held for release authorization. Add the **Release Authorized By User:** yes marker to its PROMPT.md and resubmit the spec instead of rejecting the plan.",
-        );
-      }
+      // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00:
+      // Release-authorization gate removed — see the approve-plan handler above. A task
+      // carrying the legacy release-authorization hold can now be rejected normally.
 
       // Log the rejection
       await scopedStore.logEntry(task.id, "Plan rejected by user", "Specification will be regenerated");

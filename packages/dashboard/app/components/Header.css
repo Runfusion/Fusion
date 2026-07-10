@@ -5,11 +5,15 @@ Superseded by the 19:00 shell requirement below. View-level headers such as Miss
 
 FNXC:DashboardHeader 2026-06-22-19:00:
 The global Fusion shell header should not draw a divider between itself and the sidebar/main content row. View-level headers also avoid post-header divider lines; this top shell bar blends into the surface above the navigation/content split.
+
+FNXC:DashboardHeader 2026-07-08-00:00:
+FN-7687: on a foldable phone, unfolding then refolding the device (a live viewport resize, not a reload) could leave the top header wrapped onto a second line. The row must stay structurally single-line at every width: `.header` is pinned to `flex-wrap: nowrap` explicitly (do not rely on the flex initial value — a future rule could override it), and its two direct flex children get an explicit shrink contract instead of relying on default flex item sizing (whose default `min-width: auto` lets content force overflow/wrap rather than shrink). `.header-left` is `flex: 1 1 auto; min-width: 0;` so the brand/project-switch/workflow-slot/node-selector cluster shrinks and its long text truncates; `.header-actions` is `flex: 0 0 auto; min-width: 0;` so the compact action icon cluster never gets squeezed below its intrinsic size by the shrinking left side. See useViewportMode.ts for the companion fix ensuring the viewport MODE itself resolves back to `mobile` on refold (this CSS contract only prevents the header row from wrapping once mobile mode is active).
 */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: nowrap;
   padding: var(--header-padding);
   border-bottom: none;
   background: var(--surface);
@@ -83,6 +87,11 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  /* FNXC:DashboardHeader 2026-07-08-00:00: promoted from the mobile-only media
+     query to the base rule so the shrink/truncate contract also applies
+     during a fold/unfold resize before the width media query re-settles. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .header-brand {
   display: flex;
@@ -100,6 +109,11 @@ non-notched devices, so this is a no-op there. Pair with viewport-fit=cover (ind
   align-items: center;
   gap: var(--space-sm);
   position: relative;
+  /* FNXC:DashboardHeader 2026-07-08-00:00: keep the compact action cluster at
+     its intrinsic size (never grow, never shrink below content) so it cannot
+     be squeezed off-row while the shrinking `.header-left` truncates instead. */
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .header-workflow-slot {

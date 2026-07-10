@@ -184,6 +184,65 @@ describe("runUpdate", () => {
     expect(errorSpy).toHaveBeenCalledWith("Error installing update: network down");
   });
 
+
+  it("uses identical comparison semantics for CLI update notifications", async () => {
+    /*
+     * FNXC:UpdateNotifications 2026-07-09-00:00:
+     * The CLI command is the install-capable update surface. It must agree with the dashboard detector so fresh npm releases notify in --check/--json mode, while equal, older, and version-string edge cases stay quiet.
+     */
+    const cases = [
+      { latest: "1.2.3", current: "1.2.3", expectedExitCode: 0, expectedAvailable: false },
+      { latest: "1.2.4", current: "1.2.3", expectedExitCode: 1, expectedAvailable: true },
+      { latest: "1.2.2", current: "1.2.3", expectedExitCode: 0, expectedAvailable: false },
+      { latest: "1.2.4-beta.1", current: "1.2.3", expectedExitCode: 1, expectedAvailable: true },
+      { latest: "1.2.3+build.7", current: "1.2.3", expectedExitCode: 0, expectedAvailable: false },
+      { latest: "1.2", current: "1.2.0", expectedExitCode: 0, expectedAvailable: false },
+      { latest: "1.2.0.9", current: "1.2.0", expectedExitCode: 0, expectedAvailable: false },
+    ];
+
+    for (const testCase of cases) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: testCase.latest } }) }));
+      readFileSyncMock.mockReturnValueOnce(JSON.stringify({ name: "@runfusion/fusion", version: testCase.current }));
+      logSpy.mockClear();
+      process.exitCode = 0;
+
+      await runUpdate({ check: true, json: true });
+
+      const output = logSpy.mock.calls[0]?.[0] as string;
+      expect(JSON.parse(output), `${testCase.latest} vs ${testCase.current}`).toMatchObject({
+        currentVersion: testCase.current,
+        latestVersion: testCase.latest,
+        updateAvailable: testCase.expectedAvailable,
+        updated: false,
+      });
+      expect(process.exitCode).toBe(testCase.expectedExitCode);
+    }
+  });
+
+  it("does not announce equal or older cached fallback metadata", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+
+    for (const latestVersion of ["1.2.3", "1.2.2"]) {
+      getCachedUpdateStatusMock.mockReturnValueOnce({
+        updateAvailable: true,
+        currentVersion: "1.2.3",
+        latestVersion,
+      });
+      logSpy.mockClear();
+      process.exitCode = 0;
+
+      await runUpdate({ check: true, json: true });
+
+      const output = logSpy.mock.calls.at(-1)?.[0] as string;
+      expect(JSON.parse(output)).toMatchObject({
+        currentVersion: "1.2.3",
+        latestVersion,
+        updateAvailable: false,
+      });
+      expect(process.exitCode).toBe(0);
+    }
+  });
+
   it("handles semver comparisons for major, minor, and patch", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: vi.fn().mockResolvedValue({ "dist-tags": { latest: "2.0.0" } }) }));
     execAsyncMock.mockResolvedValue({ stdout: "ok", stderr: "" });

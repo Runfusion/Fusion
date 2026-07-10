@@ -2042,25 +2042,26 @@ describe("POST /tasks/:id/approve-plan", () => {
     expect(res.body.error).toBe("Database error");
   });
 
-  // FN-7564: a release-authorization hold (FN-7559's awaitingApprovalReason
-  // discriminator) must reject a direct approve-plan API call with 400 — the
-  // FN-6481 authorization-marker requirement must not be bypassable outside the UI.
-  it("returns 400 and does not move the task for a release-authorization hold", async () => {
+  // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: the release-authorization gate
+  // and its approve-plan guard were removed. A task still carrying the legacy
+  // awaitingApprovalReason === "release-authorization" (parked by the old gate) must
+  // now approve normally instead of being stranded with a 400 and no exit.
+  it("approves a task carrying the legacy release-authorization hold", async () => {
     const releaseHoldTask = {
       ...FAKE_TASK_DETAIL,
       column: "triage" as const,
       status: "awaiting-approval" as const,
       awaitingApprovalReason: "release-authorization" as const,
     };
+    const movedTask = { ...FAKE_TASK_DETAIL, column: "todo" as const };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(releaseHoldTask);
+    (store.moveTask as ReturnType<typeof vi.fn>).mockResolvedValue(movedTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue({ ...movedTask, status: undefined });
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/approve-plan");
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("release authorization");
-    expect(res.body.error).toContain("Release Authorized By User");
-    expect(store.moveTask).not.toHaveBeenCalled();
-    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(store.moveTask).toHaveBeenCalledWith("FN-001", "todo");
   });
 
   // Passthrough: an ordinary manual-approval hold (no awaitingApprovalReason)
@@ -2202,24 +2203,24 @@ describe("POST /tasks/:id/reject-plan", () => {
     expect(res.body.error).toBe("Database error");
   });
 
-  // FN-7564: a release-authorization hold must reject a direct reject-plan API
-  // call with 400 too — rejecting must not silently wipe/regenerate the spec
-  // without the operator ever acknowledging the FN-6481 authorization gate.
-  it("returns 400 and does not clear status or remove PROMPT.md for a release-authorization hold", async () => {
+  // FNXC:ReleaseAuthorizationGate 2026-07-09-00:00: with the gate removed, a task
+  // still carrying the legacy release-authorization hold must reject normally rather
+  // than returning 400 — the old reject-plan guard was removed alongside the gate.
+  it("rejects a task carrying the legacy release-authorization hold", async () => {
     const releaseHoldTask = {
       ...FAKE_TASK_DETAIL,
       column: "triage" as const,
       status: "awaiting-approval" as const,
       awaitingApprovalReason: "release-authorization" as const,
     };
+    const updatedTask = { ...FAKE_TASK_DETAIL, column: "triage" as const, status: undefined };
     (store.getTask as ReturnType<typeof vi.fn>).mockResolvedValue(releaseHoldTask);
+    (store.updateTask as ReturnType<typeof vi.fn>).mockResolvedValue(updatedTask);
 
     const res = await REQUEST(buildApp(), "POST", "/api/tasks/KB-001/reject-plan");
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("release authorization");
-    expect(res.body.error).toContain("Release Authorized By User");
-    expect(store.updateTask).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(store.updateTask).toHaveBeenCalledWith("FN-001", { status: undefined, approvedPlanFingerprint: null });
   });
 
   // Passthrough: an ordinary manual-approval hold (no awaitingApprovalReason)

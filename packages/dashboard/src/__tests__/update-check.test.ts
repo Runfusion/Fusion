@@ -100,29 +100,35 @@ describe("update-check", () => {
     expect(result.updateAvailable).toBe(true);
   });
 
-  it("handles semver comparisons for equal, newer, and older registry versions", async () => {
+  it("handles registry version comparisons for the update-notification invariant", async () => {
+    /*
+     * FNXC:UpdateNotifications 2026-07-09-00:00:
+     * The dashboard core is the shared npm-release detector for routes and banners. A strictly newer latest tag must announce an update, while equal, older, prerelease/build-equivalent, and short/long segment variants must not create false positives.
+     */
+    const cases = [
+      { latest: "1.2.3", current: "1.2.3", expected: false },
+      { latest: "1.2.4", current: "1.2.3", expected: true },
+      { latest: "1.2.2", current: "1.2.3", expected: false },
+      { latest: "1.2.4-beta.1", current: "1.2.3", expected: true },
+      { latest: "1.2.3+build.7", current: "1.2.3", expected: false },
+      { latest: "1.2", current: "1.2.0", expected: false },
+      { latest: "1.2.0.9", current: "1.2.0", expected: false },
+      { latest: "1.10.0", current: "1.9.9", expected: true },
+    ];
+
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
-    fetchSpy.mockResolvedValueOnce({
-      json: async () => ({ "dist-tags": { latest: "1.2.3" } }),
-    });
-    const equalResult = await performUpdateCheck(fusionDir, "1.2.3");
-    expect(equalResult.updateAvailable).toBe(false);
+    for (const testCase of cases) {
+      await clearUpdateCheckCache(fusionDir);
+      fetchSpy.mockResolvedValueOnce({
+        json: async () => ({ "dist-tags": { latest: testCase.latest } }),
+      });
 
-    await clearUpdateCheckCache(fusionDir);
-    fetchSpy.mockResolvedValueOnce({
-      json: async () => ({ "dist-tags": { latest: "1.2.4" } }),
-    });
-    const newerResult = await performUpdateCheck(fusionDir, "1.2.3");
-    expect(newerResult.updateAvailable).toBe(true);
+      const result = await performUpdateCheck(fusionDir, testCase.current);
 
-    await clearUpdateCheckCache(fusionDir);
-    fetchSpy.mockResolvedValueOnce({
-      json: async () => ({ "dist-tags": { latest: "1.2.2" } }),
-    });
-    const olderResult = await performUpdateCheck(fusionDir, "1.2.3");
-    expect(olderResult.updateAvailable).toBe(false);
+      expect(result.updateAvailable, `${testCase.latest} vs ${testCase.current}`).toBe(testCase.expected);
+    }
   });
 
   it("fails closed without fetching when current version is unresolved", async () => {

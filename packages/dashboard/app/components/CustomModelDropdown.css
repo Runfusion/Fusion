@@ -38,6 +38,7 @@
 
 .model-combobox-trigger-text {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -130,10 +131,111 @@
   border-bottom: 1px solid var(--border);
 }
 
+.model-combobox-thinking {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.model-combobox-thinking-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.model-combobox-thinking-select {
+  flex: 1;
+  min-width: 0;
+}
+
+/*
+FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+The inline Thinking Level <select> had no CSS and rendered as the OS-default white control on the dark model dropdown across all model-picker surfaces, including the quick-add QuickEntryBox executor submenu and InlineCreateCard ModelSelectionModal. Mirror the canonical dark select tokens so reasoning-effort selection matches the surrounding combobox everywhere.
+
+FNXC:Settings-ThinkingLevel 2026-07-10-00:00:
+The Thinking Level <select> renders inside the createPortal dropdown (.model-combobox-dropdown), not under the trigger wrapper (.model-combobox). Scope the select rules to the portal container so Android/mobile and desktop model pickers receive the dark-theme tokens wherever CustomModelDropdown is used.
+*/
+.model-combobox-dropdown .thinking-level-select {
+  width: 100%;
+  padding: var(--space-xs) calc(var(--space-lg) + var(--space-md)) var(--space-xs) var(--space-sm);
+  background: var(--surface);
+  border: var(--btn-border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-primary);
+  line-height: 1.4;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.model-combobox-dropdown .thinking-level-select:hover:not(:focus):not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.model-combobox-dropdown .thinking-level-select:focus {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.model-combobox-dropdown .thinking-level-select:disabled {
+  opacity: var(--opacity-disabled, 0.6);
+  cursor: not-allowed;
+}
+
+.model-combobox-dropdown .thinking-level-select option {
+  background: var(--surface);
+  color: var(--text);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.model-combobox-dropdown .thinking-level-select optgroup {
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.model-combobox-thinking::after {
+  content: "";
+  position: absolute;
+  right: calc(var(--space-md) + var(--space-sm));
+  width: var(--space-xs);
+  height: var(--space-xs);
+  border: solid var(--text-muted);
+  border-width: 0 var(--btn-border-width) var(--btn-border-width) 0;
+  pointer-events: none;
+  transform: rotate(45deg) translateY(calc(var(--space-xs) * -1));
+}
+
+.model-combobox-thinking-badge {
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+FNXC:ModelDropdown 2026-07-09-00:00:
+FN-7760 requires the portaled model list to remain the touch-scroll owner on mobile. The global mobile lockdown keeps body/root overflow hidden and defaults touch gestures to vertical panning, so this fixed-position scroller needs its own iOS momentum scrolling, contained overscroll, and explicit vertical pan contract.
+*/
 .model-combobox-list {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   padding: 4px 0;
 }
 
@@ -311,3 +413,4 @@
     width: min(360px, calc(100vw - 32px));
   }
 }
+

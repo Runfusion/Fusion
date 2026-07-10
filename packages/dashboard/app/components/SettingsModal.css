@@ -243,6 +243,27 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
     edge, after the Star/Discord actions, without displacing them. Desktop/tablet embedded and the standalone modal
     presentation are untouched by this rule (scoped to .settings-modal--embedded .modal-header--embedded).
   */
+  /*
+  FNXC:Settings 2026-07-09-00:00:
+  FN-7752 makes the mobile Settings header and footer shorter at ≤768px only. Keep the FN-4375 one-line header invariant while trimming vertical padding in both standalone modal and embedded SettingsView presentations.
+
+  FNXC:Settings 2026-07-10-00:00:
+  FN-7773 further tightens only the mobile footer rail so Version, Help, Import/Export, Reset, and Save read as one contained row without affecting desktop/tablet sizing.
+  */
+  .settings-modal .modal-header {
+    padding-block: var(--space-sm);
+    padding-inline: var(--space-md);
+  }
+
+  .settings-modal .modal-actions {
+    padding-block: var(--space-xs);
+    padding-inline: var(--space-md);
+  }
+
+  .settings-modal--embedded .modal-header--embedded {
+    min-height: 0;
+  }
+
   .settings-modal--embedded .modal-header--embedded .settings-embedded-mobile-close {
     --settings-embedded-mobile-close-touch-target: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
 
@@ -287,22 +308,72 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
 }
 
 @media (max-width: 768px) {
-  .settings-modal-footer-version {
-    flex: 1 1 100%;
-    margin-right: 0;
+  /*
+  FNXC:Settings 2026-07-09-00:00:
+  FN-7752 requires the mobile Settings footer to remain a single horizontal row in both standalone and embedded presentations. Keep Version/Help, Export/Import/Reset, and Cancel/Save on one nowrap rail that can scroll horizontally instead of stacking into multiple rows.
+
+  FNXC:Settings 2026-07-10-00:00:
+  FN-7773 fixes the observed mobile overlap by centering every footer sub-region on the rail and making the Version text a non-wrapping inline box. Keep these selectors under the mobile media query so desktop/tablet footer flow remains unchanged.
+  */
+  .settings-modal .modal-actions {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--space-xs);
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
-  .settings-update-check {
-    flex-wrap: wrap;
-    row-gap: var(--space-xs);
-  }
-
-  .settings-update-result {
-    flex: 1 1 100%;
-  }
-
-  .settings-footer-help-btn {
+  .settings-modal .modal-actions-left {
+    align-items: center;
     flex-shrink: 0;
+    gap: var(--space-xs);
+  }
+
+  .settings-modal .modal-actions-right {
+    align-items: center;
+    flex-shrink: 0;
+    gap: var(--space-xs);
+  }
+
+  .settings-modal .settings-modal-footer-version {
+    align-items: center;
+    align-self: center;
+    flex: 0 0 auto;
+    margin-right: 0;
+    min-width: max-content;
+  }
+
+  .settings-modal .settings-update-check {
+    align-items: center;
+    flex-wrap: nowrap;
+    row-gap: 0;
+  }
+
+  .settings-modal .settings-update-result {
+    align-self: center;
+    flex: 0 1 auto;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .settings-modal .settings-footer-help-btn {
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .settings-modal .settings-version-check-btn {
+    align-items: center;
+    flex-shrink: 0;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .settings-modal .settings-modal-version {
+    align-items: center;
+    display: inline-flex;
+    flex-shrink: 0;
+    line-height: 1;
+    white-space: nowrap;
   }
 }
 
@@ -556,6 +627,18 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
   gap: var(--space-xs);
   padding: var(--space-sm);
   border-bottom: var(--btn-border-width) solid var(--border);
+}
+
+/* FNXC:Settings 2026-07-09-12:00: the row wraps label + input + results; on desktop it always renders (see .settings-search-toggle below, hidden here). On mobile the inline section-picker toggle controls whether this wrapper mounts below the picker, avoiding an empty padded shell above the picker while collapsed. */
+.settings-search-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+/* Desktop/tablet: search row is always visible, so the toggle icon never renders here. */
+.settings-search-toggle {
+  display: none;
 }
 
 .settings-search-label {
@@ -1482,7 +1565,7 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 
 @media (max-width: 768px) {
   .settings-note {
-    padding: 0 var(--space-lg);
+    padding: 0 var(--space-sm);
   }
 
   .settings-overlap-ignore-row {
@@ -1507,11 +1590,11 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
 
   .remote-status-bar {
     flex-wrap: wrap;
-    margin: 0 var(--space-lg) var(--space-md);
+    margin: 0 var(--space-sm) var(--space-sm);
   }
 
   .remote-share-block {
-    margin: 0 var(--space-lg) var(--space-md);
+    margin: 0 var(--space-sm) var(--space-sm);
   }
 
   .remote-status-url {
@@ -1529,11 +1612,11 @@ Design tokens only (spacing/radius/color vars), no hardcoded px besides 0.
   }
 
   .remote-cli-detection {
-    margin: 0 var(--space-lg) var(--space-md);
+    margin: 0 var(--space-sm) var(--space-sm);
   }
 
   .remote-external-tunnel-panel {
-    margin: 0 var(--space-lg) var(--space-md);
+    margin: 0 var(--space-sm) var(--space-sm);
   }
 }
 
@@ -2176,7 +2259,22 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-search {
-    padding: var(--space-md) var(--space-lg) var(--space-sm);
+    padding: var(--space-sm) var(--space-md) var(--space-sm);
+  }
+
+  /* FNXC:Settings 2026-07-09-12:00: mobile-only collapse-by-default toggle sits in the section picker control row so search and section navigation share one horizontal affordance row. The row starts collapsed and expands to the full search row below the picker on tap. */
+  .settings-search-toggle {
+    --settings-search-toggle-touch-target: calc(var(--space-lg) + var(--space-lg) + var(--space-xs));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--settings-search-toggle-touch-target);
+    height: var(--settings-search-toggle-touch-target);
+    flex-shrink: 0;
+  }
+
+  .settings-search-row {
+    margin-top: var(--space-xs);
   }
 
   .settings-search-input-wrap {
@@ -2187,22 +2285,38 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     font-size: 16px;
   }
 
+  /*
+  FNXC:Settings 2026-07-09-00:00:
+  FN-7752 trims mobile-only Settings section chrome: after removing the visible picker label, use smaller horizontal padding for the picker and internal section text so narrow viewports devote more width to controls without changing desktop/tablet rules.
+
+  FNXC:Settings 2026-07-10-00:00:
+  FN-7785 makes the Settings content pages uniformly tighter at mobile widths. The `.settings-content` scroll container is the primary lever so standalone and embedded Settings share the same reduced gutter, while section wrappers step down to token spacing without changing desktop/tablet rules.
+  */
   .settings-mobile-section-picker {
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
-    padding: var(--space-sm) var(--space-lg) var(--space-md);
+    padding: var(--space-sm) var(--space-md) var(--space-md);
     border-bottom: none;
     background: var(--surface);
   }
 
-  .settings-mobile-section-picker label {
-    color: var(--text-muted);
-    font-weight: 600;
-    text-transform: uppercase;
+  .settings-mobile-section-picker-control-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    min-width: 0;
   }
 
   .settings-mobile-section-picker select {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .settings-mobile-section-picker .settings-search-empty-hint {
+    flex: 1 1 auto;
+    min-width: 0;
     width: 100%;
   }
 
@@ -2244,7 +2358,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .notification-provider-card {
-    margin: 0 var(--space-lg) var(--space-md);
+    margin: 0 var(--space-sm) var(--space-sm);
   }
 
   .notification-provider-header {
@@ -2264,6 +2378,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
+    padding: var(--space-sm) var(--space-sm) var(--space-md);
   }
 
   .settings-content .form-group small {
@@ -2278,14 +2393,14 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-section-heading {
-    padding: var(--space-lg) var(--space-lg) var(--space-md);
-    margin: 0 0 var(--space-md);
+    padding: var(--space-md) var(--space-sm) var(--space-sm);
+    margin: 0 0 var(--space-sm);
   }
 
   .settings-plugins-subsection-toggle {
     display: flex;
     width: 100%;
-    padding: 0 var(--space-lg);
+    padding: 0 var(--space-sm);
   }
 
   .settings-plugins-subsection-btn {
@@ -2294,16 +2409,17 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-plugins-subsection-panel {
-    padding-left: var(--space-lg);
-    padding-right: var(--space-lg);
+    padding-left: var(--space-sm);
+    padding-right: var(--space-sm);
   }
 
   .form-group {
-    padding: 0 calc(var(--space-md) + var(--space-xs) / 2);
+    padding: 0 var(--space-sm);
   }
 
   .settings-scope-banner {
-    padding: var(--space-sm) var(--space-lg);
+    margin: 0 var(--space-sm) var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
   }
 
   .memory-editor-frame {
@@ -2312,7 +2428,8 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 
   .memory-file-summary {
     grid-template-columns: 1fr;
-    margin: 0 var(--space-lg) var(--space-md);
+    margin: 0 var(--space-sm) var(--space-sm);
+    padding: var(--space-sm);
   }
 
   .memory-status-message {
@@ -2329,13 +2446,22 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-description {
-    padding: 0 var(--space-lg);
+    padding: 0 var(--space-sm);
+  }
+
+  .settings-empty-state {
+    padding: var(--space-sm);
+  }
+
+  .theme-selector {
+    padding: 0 var(--space-sm) var(--space-sm);
   }
 
   .settings-model-lane-actions {
     align-items: stretch;
     flex-direction: column;
-    padding-inline: calc(var(--space-md) + var(--space-xs) / 2);
+    margin-block: var(--space-xs) var(--space-md);
+    padding: var(--space-sm) var(--space-sm) var(--space-md);
   }
 
   .settings-content .btn,
@@ -2345,31 +2471,31 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 
   .auth-provider-row {
     flex-wrap: wrap;
-    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2);
+    padding: var(--space-sm);
     gap: var(--space-sm);
   }
 
   .auth-section-hint {
-    margin: 0 calc(var(--space-md) + var(--space-xs) / 2) var(--space-md);
-    padding: calc(var(--space-sm) + var(--space-xs) / 2) calc(var(--space-md) + var(--space-xs) / 2);
+    margin: 0 var(--space-sm) var(--space-sm);
+    padding: var(--space-sm);
   }
 
   .auth-provider-group {
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-sm);
   }
 
   .auth-group-label {
-    padding: 0 calc(var(--space-md) + var(--space-xs) / 2);
+    padding: 0 var(--space-sm);
   }
 
   .auth-provider-card {
-    margin: 0 calc(var(--space-md) + var(--space-xs) / 2) var(--space-sm);
+    margin: 0 var(--space-sm) var(--space-sm);
   }
 
   .auth-provider-header {
     flex-wrap: wrap;
-    padding: calc(var(--space-sm) + var(--space-xs) / 2) calc(var(--space-md) + var(--space-xs) / 2);
-    gap: 10px;
+    padding: var(--space-sm);
+    gap: var(--space-sm);
   }
 
   .auth-provider-header > div:not(.auth-provider-info):not(.auth-apikey-section) {
@@ -2419,7 +2545,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .auth-hint {
-    padding: var(--space-md) calc(var(--space-md) + var(--space-xs) / 2) 0;
+    padding: var(--space-sm) var(--space-sm) 0;
   }
 
   /* Settings modal: model preset controls stack cleanly on narrow screens */
@@ -2430,7 +2556,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   .settings-preset-item {
     flex-direction: column;
     align-items: stretch;
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm);
   }
 
   .settings-preset-item-actions {
@@ -2438,7 +2564,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-preset-editor {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm);
   }
 
   .settings-preset-editor-actions {
@@ -2451,7 +2577,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-node-routing-note {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-sm);
     font-size: 12px;
   }
 }

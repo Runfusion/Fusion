@@ -521,6 +521,41 @@ describe("splitSettingsSave", () => {
     expect(globalPatch).toEqual({ ntfyTopic: null });
   });
 
+  it("routes fallback thinking keys through their owning settings scopes with null-as-delete", () => {
+    const globalResult = splitSettingsSave({
+      payload: { fallbackThinkingLevel: "high" },
+      initialValues: { fallbackThinkingLevel: undefined } as never,
+      initialScopedValues: { global: {}, project: {} } as never,
+      activeSection: "global-models",
+    });
+    expect(globalResult.globalPatch).toEqual({ fallbackThinkingLevel: "high" });
+    expect(globalResult.projectPatch).toEqual({});
+
+    const globalClearResult = splitSettingsSave({
+      payload: { fallbackThinkingLevel: undefined },
+      initialValues: { fallbackThinkingLevel: "high" } as never,
+      initialScopedValues: { global: { fallbackThinkingLevel: "high" }, project: {} } as never,
+      activeSection: "project-models",
+    });
+    expect(globalClearResult.globalPatch).toEqual({ fallbackThinkingLevel: null });
+
+    const projectResult = splitSettingsSave({
+      payload: { titleSummarizerFallbackThinkingLevel: "low" },
+      initialValues: {} as never,
+      initialScopedValues: { global: {}, project: {} } as never,
+      activeSection: "project-models",
+    });
+    expect(projectResult.projectPatch).toEqual({ titleSummarizerFallbackThinkingLevel: "low" });
+
+    const projectClearResult = splitSettingsSave({
+      payload: { titleSummarizerFallbackThinkingLevel: undefined },
+      initialValues: {} as never,
+      initialScopedValues: { global: {}, project: { titleSummarizerFallbackThinkingLevel: "medium" } } as never,
+      activeSection: "project-models",
+    });
+    expect(projectClearResult.projectPatch).toEqual({ titleSummarizerFallbackThinkingLevel: null });
+  });
+
   it("drops plain-undefined global keys that were never set", () => {
     const payload: Record<string, unknown> = {
       ntfyTopic: undefined, // never had a value → passed through as undefined

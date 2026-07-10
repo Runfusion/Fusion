@@ -26,6 +26,8 @@ const toggleEnginePauseMock = mocks.toggleEnginePause;
 const appSettingsMock = mocks.appSettings;
 vi.mock("../../../../api/legacy", () => ({
   api: (path: string, opts?: RequestInit) => mocks.api(path, opts),
+  withProjectId: (path: string, projectId?: string) =>
+    projectId ? `${path}${path.includes("?") ? "&" : "?"}projectId=${encodeURIComponent(projectId)}` : path,
   apiBackfillGithubSourceIssueClosedAt: (options?: { offset?: number; limit?: number }, projectId?: string) =>
     mocks.backfillGithubSourceIssueClosedAt(options, projectId),
   backfillCommitAssociationDiffStats: (options?: { dryRun?: boolean }, projectId?: string) =>
@@ -77,6 +79,20 @@ afterEach(() => {
 });
 
 describe("GithubArea", () => {
+  it("appends projectId to its github request when supplied, and omits it when not", async () => {
+    apiMock.mockResolvedValue(githubFixture());
+    const { unmount } = render(<GithubArea range={range7d} projectId="proj-gh" />);
+    await screen.findByTestId("cc-area-github");
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe("/command-center/github?from=2026-06-08&projectId=proj-gh");
+    unmount();
+
+    apiMock.mockClear();
+    apiMock.mockResolvedValue(githubFixture());
+    render(<GithubArea range={range7d} />);
+    await screen.findByTestId("cc-area-github");
+    expect(apiMock.mock.calls.at(-1)?.[0]).toBe("/command-center/github?from=2026-06-08");
+  });
+
   it("renders filed/fixed/net stats, daily trend, and by-repo bars", async () => {
     apiMock.mockResolvedValue(githubFixture());
     render(<GithubArea range={range7d} />);
@@ -357,6 +373,20 @@ function mockSignalsResponses(signals: unknown, connectors: unknown): void {
 }
 
 describe("SignalsArea", () => {
+  it("appends projectId to both its signals requests when supplied", async () => {
+    apiMock.mockResolvedValue({
+      open: 0,
+      totalSignals: 0,
+      resolved: 0,
+      bySource: [],
+      byType: [],
+      mttr: { value: null, unavailable: true },
+    });
+    render(<SignalsArea range={range7d} projectId="proj-sig" />);
+    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(2));
+    expect(apiMock.mock.calls.every(([path]) => typeof path === "string" && path.includes("projectId=proj-sig"))).toBe(true);
+  });
+
   it("renders the empty state (not an error) when the signals endpoint is missing", async () => {
     apiMock.mockRejectedValue(new Error("API returned HTML instead of JSON (404)"));
     render(<SignalsArea range={range7d} />);

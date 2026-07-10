@@ -252,7 +252,20 @@ export interface ServerOptions {
   maxConcurrent?: number;
   /** Optional GitHub token for PR operations — falls back to GITHUB_TOKEN env var */
   githubToken?: string;
-  /** Optional AuthStorage instance for auth routes — if not provided, one is created internally */
+  /**
+   * Optional AuthStorage instance for auth routes. If not provided explicitly and an `engine`
+   * is provided, one is derived from `engine.getAuthStorage()` (see the engine-derivation
+   * block below); explicit `authStorage` always overrides the engine-derived value.
+   *
+   * FNXC:ProviderAuth 2026-07-09-00:00:
+   * FN-7747 / #1948: the engine-derived instance is the RAW createFusionAuthStorage() (no
+   * API-key/custom-provider wrapping), so it restores credential *persistence* but not the
+   * full provider catalog — hosts needing the full catalog (e.g. the desktop app's
+   * seedDashboardProviders() output) must still pass their own wrapped `authStorage` here,
+   * exactly as packages/desktop already does. This fallback exists so that a host which
+   * wires an `engine` but forgets `authStorage` does not silently regress into
+   * register-auth-routes.ts's "Authentication is not configured" throw.
+   */
   authStorage?: AuthStorageLike;
   /** Optional ModelRegistry instance for the models API — if not provided, the endpoint returns an empty list */
   modelRegistry?: ModelRegistryLike;
@@ -768,6 +781,26 @@ export function wireCliRelaunchListener(options: {
   });
 }
 
+/*
+FNXC:GrokCliRouting 2026-07-10-00:00:
+Select the PluginRunner the default (no-project) ChatManager uses for runtime
+resolution. Grok CLI routing (deriveGrokRuntimeHintForNoVisibleKey → resolveRuntime)
+calls `getRuntimeById` and `createRuntimeContext`, which exist only on a real
+PluginRunner — a bare PluginLoader (what `options.pluginRunner` is in the CLI
+`dashboard` command) lacks them, so a `grok-cli/*` chat with no Fusion-visible
+GROK_API_KEY threw "getRuntimeById is not a function" and surfaced the misleading
+"requires the bundled Grok CLI runtime" error. Prefer the engine's PluginRunner
+(the same runner the project-scoped chat path already uses via
+engine.getPluginRunner()); fall back to `options.pluginRunner` only in UI-only
+mode where no engine exists.
+*/
+export function resolveChatManagerPluginRunner(
+  options?: Pick<ServerOptions, "engine" | "pluginRunner">,
+): ServerOptions["pluginRunner"] {
+  const engineRunner = options?.engine?.getPluginRunner?.();
+  return (engineRunner as ServerOptions["pluginRunner"] | undefined) ?? options?.pluginRunner;
+}
+
 export function createServer(store: TaskStore, options?: ServerOptions): ReturnType<typeof express> {
   // Register the universal post-create hook so every task-creation path
   // (HTTP routes, CLI, pi extension, mission triage, etc.) triggers
@@ -789,6 +822,19 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     }
     if (!options!.automationStore) {
       options = { ...options, automationStore: engine.getAutomationStore() };
+    }
+    /*
+    FNXC:ProviderAuth 2026-07-09-00:00:
+    FN-7747 / #1948: derive a fallback authStorage from the engine (mirroring the other
+    subsystem derivations here) so a host that wires an `engine` but forgets to pass its own
+    `authStorage` still gets a working, persisting credential store instead of
+    register-auth-routes.ts's "Authentication is not configured" throw. Explicit
+    options.authStorage always overrides. Optional chaining tolerates engine test doubles
+    without getAuthStorage().
+    */
+    if (!options!.authStorage) {
+      const as = engine.getAuthStorage?.();
+      if (as) options = { ...options, authStorage: as };
     }
     if (!options!.missionAutopilot) {
       const ma = engine.getRuntime().getMissionAutopilot();
@@ -1414,12 +1460,24 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
     ...(chatAgentLayer ? { asyncLayer: chatAgentLayer } : {}),
   });
 
-  // Create ChatManager for AI chat message handling
+  // Create ChatManager for AI chat message handling.
+  /*
+  FNXC:GrokCliRouting 2026-07-10-00:00:
+  The default (no-project) ChatManager must receive a real PluginRunner — not the
+  bare PluginLoader passed as `options.pluginRunner`. Grok CLI routing
+  (deriveGrokRuntimeHintForNoVisibleKey → resolveRuntime) calls `getRuntimeById`
+  and `createRuntimeContext`, which exist only on PluginRunner; a PluginLoader
+  lacks them, so a `grok-cli/*` chat with no visible GROK_API_KEY threw
+  "getRuntimeById is not a function" → the misleading "requires the bundled Grok
+  CLI runtime" error. Prefer the engine's PluginRunner (the same runner the
+  project-scoped chat path already uses via engine.getPluginRunner()), falling
+  back to the loader only in UI-only mode where no engine exists.
+  */
   const chatManager = options?.chatManager ?? new ChatManager(
     chatStore!,
     store.getRootDir(),
     chatAgentStore,
-    options?.pluginRunner,
+    resolveChatManagerPluginRunner(options),
     () => store.getSettings(),
     options?.engine?.getMessageStore(),
     store,

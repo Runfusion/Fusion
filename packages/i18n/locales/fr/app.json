@@ -57,7 +57,6 @@
       "mergeWorktreeReacquired": "Arbre de travail de fusion réacquis",
       "nearDuplicateFlagged": "Quasi-doublon signalé",
       "projectIsolationTransition": "Transition d'isolation de projet",
-      "releaseAuthorizationRequired": "",
       "settingsUpdated": "Paramètres mis à jour",
       "taskCreated": "Tâche créée",
       "taskDeleted": "Tâche supprimée",
@@ -169,6 +168,10 @@
       "taskAgentMutation": {
         "description": "Changements d'état des tâches, délégations ou actions du cycle de vie des agents.",
         "label": "Mutation tâche/agent"
+      },
+      "fileScope": {
+        "description": "",
+        "label": ""
       }
     },
     "categoryExamples": "Exemples {{label}}",
@@ -3954,7 +3957,8 @@
       "medium": "Moyen",
       "minimal": "Minimal",
       "off": "Désactivé",
-      "xhigh": "Très élevé"
+      "xhigh": "Très élevé",
+      "defaultWithLevel": "Default ({{level}})"
     },
     "placeholders": {
       "selectExecutor": "Sélectionnez un modèle d'exécuteur…",
@@ -3990,6 +3994,8 @@
     "preset": "Préréglage",
     "reviewerModel": "Modèle réviseur",
     "reviewerPlaceholder": "Sélectionner le modèle réviseur…",
+    "thinkingDefault": "",
+    "thinkingModel": "",
     "title": "Sélectionner les modèles",
     "useDefault": "Utiliser par défaut",
     "usingDefault": "Par défaut"
@@ -6526,6 +6532,8 @@
       "addIgnoredPath": "",
       "archiveAgentLog": "",
       "archiveCompletedTasksAfterDays": "",
+      "autoArchiveDuplicateTasks": "",
+      "autoArchiveDuplicateTasksHelp": "",
       "backlogNoTaskAutoClaimIsExecutorOnly": "",
       "browse": "",
       "closeParenPeriod": "",
@@ -7384,6 +7392,11 @@
       "skipped": "Rattachement de branche ignoré pour {{id}} : {{reason}}",
       "skippedResult": "Rattachement ignoré : {{reason}}"
     },
+    "bypassReview": {
+      "btn": "Contourner la revue échouée",
+      "promptMessage": "Motif du contournement de l'étape de revue pré-fusion échouée (obligatoire, journalisé) :",
+      "success": "Revue échouée contournée pour {{id}}"
+    },
     "cacheBreakdown": "(lus {{read}} / écrits {{write}} / entrée {{input}})",
     "cacheHitRatio": "Taux de hits du cache :",
     "cacheRead": "Lecture du cache",
@@ -7599,8 +7612,7 @@
       "rejected": "Plan rejeté — {{id}} renvoyé en planification pour replanning",
       "rejectMessage": "Rejeter ce plan ? La spécification sera supprimée et régénérée.",
       "rejectTitle": "Rejeter le plan",
-      "replanning": "Replanning de {{id}}…",
-      "releaseAuthorizationHold": ""
+      "replanning": "Replanning de {{id}}…"
     },
     "pr": {
       "awaitingChecks": "En attente des vérifications du PR",
@@ -8240,7 +8252,6 @@
     "addressPrFeedbackStarted": "",
     "addressPrFeedbackTitle": "",
     "addressingPrFeedback": "",
-    "awaitingReleaseAuthorization": "",
     "revert": "",
     "revertAiCreated": "",
     "revertAlreadyOpen": "",

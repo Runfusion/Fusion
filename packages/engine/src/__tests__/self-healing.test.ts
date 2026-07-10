@@ -6044,6 +6044,56 @@ describe("SelfHealingManager", () => {
 
       managerWithRecovery.stop();
     });
+
+    /*
+    FNXC:WorkflowStepResults 2026-07-09-01:00:
+    FN-7727: `priorAttempts` is read-only history and must never re-trigger
+    recovery. A step whose CURRENT entry is no longer failed (e.g. it was
+    later passed/skipped) but carries a `priorAttempts` snapshot from an
+    earlier failed attempt must be treated as satisfied — selection reads
+    only the current entry's `status`.
+    */
+    it("ignores a historical failed snapshot in priorAttempts when the current entry is no longer failed", async () => {
+      const recoverFn = vi.fn().mockResolvedValue(true);
+      const managerWithRecovery = new SelfHealingManager(store, {
+        rootDir: "/tmp/test-project",
+        recoverFailedPreMergeStep: recoverFn,
+      });
+      (store.getSettings as ReturnType<typeof vi.fn>).mockResolvedValue({
+        maxPostReviewFixes: 2,
+      });
+      (store.listTasks as ReturnType<typeof vi.fn>).mockResolvedValue([{
+        ...baseTask,
+        workflowStepResults: [
+          {
+            workflowStepId: "WS-004",
+            workflowStepName: "Browser Verification",
+            phase: "pre-merge" as const,
+            status: "passed" as const,
+            startedAt: "2026-04-18T00:00:00.000Z",
+            completedAt: "2026-04-18T00:05:00.000Z",
+            priorAttempts: [
+              {
+                workflowStepId: "WS-004",
+                workflowStepName: "Browser Verification",
+                phase: "pre-merge" as const,
+                status: "failed" as const,
+                output: "SSE reconnect leaks /api/events connections when view toggles.",
+                startedAt: "2026-04-17T21:08:24.135Z",
+                completedAt: "2026-04-17T21:35:32.036Z",
+              },
+            ],
+          },
+        ],
+      }]);
+
+      const result = await managerWithRecovery.recoverReviewTasksWithFailedPreMergeSteps();
+
+      expect(result).toBe(0);
+      expect(recoverFn).not.toHaveBeenCalled();
+
+      managerWithRecovery.stop();
+    });
   });
 
   describe("surfaceInReviewStalls", () => {

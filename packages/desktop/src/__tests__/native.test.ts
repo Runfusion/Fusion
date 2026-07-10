@@ -380,6 +380,33 @@ describe("native integrations", () => {
       );
     });
 
+
+    it("treats updater events as the desktop notification invariant", async () => {
+      /*
+       * FNXC:UpdateNotifications 2026-07-09-00:00:
+       * Desktop release detection is delegated to electron-updater. Only update-available may announce a new release; update-not-available must reach the renderer without reusing the update-available notification channel.
+       */
+      const { setupAutoUpdater } = await importNativeModule();
+
+      setupAutoUpdater(mocks.browserWindow as never);
+      await vi.dynamicImportSettled();
+
+      mocks.updaterHandlers.get("update-available")?.({ version: "9.9.9" });
+      mocks.updaterHandlers.get("update-not-available")?.({ version: "1.2.3" });
+
+      expect(mocks.browserWindow.webContents.send).toHaveBeenCalledWith(
+        "update-available",
+        expect.objectContaining({ version: "9.9.9" }),
+      );
+      expect(mocks.browserWindow.webContents.send).toHaveBeenCalledWith(
+        "update-not-available",
+        expect.objectContaining({ version: "1.2.3" }),
+      );
+      expect(mocks.notificationInstances.map((item) => item.options.title)).toEqual(
+        expect.arrayContaining(["Fusion Update Available", "Fusion is up to date"]),
+      );
+    });
+
     it("error handler sends renderer IPC and does not crash", async () => {
       const { setupAutoUpdater } = await importNativeModule();
 

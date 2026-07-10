@@ -10,7 +10,7 @@
  */
 import { useState } from "react";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, screen, fireEvent, cleanup, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, act, within } from "@testing-library/react";
 import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
 
 import { AppearanceSection } from "../components/settings/sections/AppearanceSection";
@@ -19,6 +19,7 @@ import { NotificationsSection } from "../components/settings/sections/Notificati
 import { ExperimentalSection } from "../components/settings/sections/ExperimentalSection";
 import { MovedSettingsStub } from "../components/settings/sections/MovedSettingsStub";
 import { ProjectModelsSection } from "../components/settings/sections/ProjectModelsSection";
+import { GlobalModelsSection } from "../components/settings/sections/GlobalModelsSection";
 import { PromptsSection } from "../components/settings/sections/PromptsSection";
 import { SecretsSection } from "../components/settings/sections/SecretsSection";
 import { WorktreesSection } from "../components/settings/sections/WorktreesSection";
@@ -46,16 +47,29 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 vi.mock("../components/CustomModelDropdown", () => ({
-  CustomModelDropdown: ({ id, label, value, onChange, menuWidth = "trigger" }: { id?: string; label: string; value?: string; onChange?: (value: string) => void; menuWidth?: "trigger" | "readable" }) => (
-    <button
-      type="button"
-      data-testid={`mock-model-dropdown-${id ?? label}`}
-      data-menu-width={menuWidth}
-      data-value={value ?? ""}
-      onClick={() => onChange?.("anthropic/claude-sonnet-4-5")}
-    >
-      {label}
-    </button>
+  CustomModelDropdown: ({ id, label, value, onChange, menuWidth = "trigger", showThinkingLevel = false, thinkingLevel = "", onThinkingLevelChange, defaultThinkingLevel }: { id?: string; label: string; value?: string; onChange?: (value: string) => void; menuWidth?: "trigger" | "readable"; showThinkingLevel?: boolean; thinkingLevel?: string; onThinkingLevelChange?: (value: string) => void; defaultThinkingLevel?: string }) => (
+    <div>
+      <button
+        type="button"
+        data-testid={`mock-model-dropdown-${id ?? label}`}
+        data-menu-width={menuWidth}
+        data-value={value ?? ""}
+        data-thinking-visible={showThinkingLevel ? "true" : "false"}
+        data-thinking-value={thinkingLevel}
+        data-default-thinking={defaultThinkingLevel ?? ""}
+        onClick={() => onChange?.("anthropic/claude-sonnet-4-5")}
+      >
+        {label}
+      </button>
+      <button type="button" data-testid={`mock-model-clear-${id ?? label}`} onClick={() => onChange?.("")}>
+        clear
+      </button>
+      {showThinkingLevel ? (
+        <button type="button" data-testid={`mock-thinking-${id ?? label}`} onClick={() => onThinkingLevelChange?.(thinkingLevel ? "" : "high")}>
+          thinking:{thinkingLevel || "inherit"}
+        </button>
+      ) : null}
+    </div>
   ),
 }));
 
@@ -285,6 +299,81 @@ describe("WorktreesSection", () => {
   });
 });
 
+describe("GlobalModelsSection", () => {
+  it("wires global model lane thinking overrides", () => {
+    const updateLaneThinkingValue = vi.fn();
+    render(
+      <GlobalModelsSection
+        scopeBanner={null}
+        form={{ defaultThinkingLevel: "low" } as SettingsFormState}
+        setForm={vi.fn()}
+        availableModels={[{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }]}
+        modelsLoading={false}
+        globalModelLanes={[{ laneId: "execution", label: "Execution", helperText: "Execution", fallbackOrder: "default", globalProviderKey: "executionGlobalProvider", globalModelKey: "executionGlobalModelId", globalThinkingKey: "executionGlobalThinkingLevel" } as never]}
+        getLaneThinkingValue={() => "medium"}
+        updateLaneThinkingValue={updateLaneThinkingValue}
+        resetLaneThinkingValue={vi.fn()}
+        favoriteProviders={[]}
+        favoriteModels={[]}
+        onToggleFavorite={vi.fn()}
+        onToggleModelFavorite={vi.fn()}
+        addToast={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("mock-model-dropdown-global-execution-model")).toHaveAttribute("data-thinking-visible", "true");
+    expect(screen.getByTestId("mock-model-dropdown-global-execution-model")).toHaveAttribute("data-thinking-value", "medium");
+    expect(screen.getByTestId("mock-model-dropdown-global-execution-model")).toHaveAttribute("data-default-thinking", "low");
+    fireEvent.click(screen.getByTestId("mock-thinking-global-execution-model"));
+    expect(updateLaneThinkingValue).toHaveBeenCalledWith(expect.objectContaining({ laneId: "execution" }), "");
+  });
+
+  it("wires global fallback thinking value and clears it with the fallback model", () => {
+    function GlobalFallbackHost() {
+      const [form, setForm] = useState<SettingsFormState>({
+        defaultThinkingLevel: "medium",
+        fallbackProvider: "anthropic",
+        fallbackModelId: "claude-sonnet-4-5",
+        fallbackThinkingLevel: "high",
+      } as SettingsFormState);
+      return (
+        <GlobalModelsSection
+          scopeBanner={null}
+          form={form}
+          setForm={setForm}
+          availableModels={[{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true }]}
+          modelsLoading={false}
+          globalModelLanes={[]}
+          getLaneThinkingValue={() => ""}
+          updateLaneThinkingValue={vi.fn()}
+          resetLaneThinkingValue={vi.fn()}
+          favoriteProviders={[]}
+          favoriteModels={[]}
+          onToggleFavorite={vi.fn()}
+          onToggleModelFavorite={vi.fn()}
+          addToast={vi.fn()}
+        />
+      );
+    }
+
+    render(<GlobalFallbackHost />);
+
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-thinking-visible", "true");
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-thinking-value", "high");
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-default-thinking", "medium");
+
+    fireEvent.click(screen.getByTestId("mock-thinking-fallbackModel"));
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-thinking-value", "");
+
+    fireEvent.click(screen.getByTestId("mock-thinking-fallbackModel"));
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-thinking-value", "high");
+
+    fireEvent.click(screen.getByTestId("mock-model-clear-fallbackModel"));
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-value", "");
+    expect(screen.getByTestId("mock-model-dropdown-fallbackModel")).toHaveAttribute("data-thinking-value", "");
+  });
+});
+
 describe("ProjectModelsSection", () => {
   const models = {
     modelLanes: [],
@@ -292,6 +381,9 @@ describe("ProjectModelsSection", () => {
     getLaneValue: () => "",
     updateLaneValue: vi.fn(),
     resetLaneValue: vi.fn(),
+    getLaneThinkingValue: () => "",
+    updateLaneThinkingValue: vi.fn(),
+    resetLaneThinkingValue: vi.fn(),
     availableModels: [],
     modelsLoading: false,
     favoriteProviders: [],
@@ -331,14 +423,157 @@ describe("ProjectModelsSection", () => {
     expect(screen.getByTestId("mock-model-dropdown-preset-validator-model")).toHaveAttribute("data-menu-width", "readable");
   });
 
+  it("wires project model lane thinking overrides and reset", () => {
+    const updateLaneThinkingValue = vi.fn();
+    const resetLaneThinkingValue = vi.fn();
+    const resetLaneValue = vi.fn();
+    render(
+      <ProjectModelsSection
+        scopeBanner={null}
+        form={{ defaultThinkingLevel: "medium" } as SettingsFormState}
+        setForm={vi.fn()}
+        models={{
+          ...models,
+          modelLanes: [
+            { laneId: "default", label: "Default", helperText: "Default", fallbackOrder: "global", projectThinkingKey: "defaultThinkingLevelOverride" },
+          ] as never,
+          getLaneThinkingValue: () => "high",
+          updateLaneThinkingValue,
+          resetLaneThinkingValue,
+          resetLaneValue,
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+        }}
+        addToast={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("mock-model-dropdown-defaultModel")).toHaveAttribute("data-thinking-visible", "true");
+    expect(screen.getByTestId("mock-model-dropdown-defaultModel")).toHaveAttribute("data-thinking-value", "high");
+    expect(screen.getByTestId("mock-model-dropdown-defaultModel")).toHaveAttribute("data-default-thinking", "medium");
+
+    fireEvent.click(screen.getByTestId("mock-thinking-defaultModel"));
+    expect(updateLaneThinkingValue).toHaveBeenCalledWith(expect.objectContaining({ laneId: "default" }), "");
+
+    fireEvent.click(screen.getByText(/Reset/));
+    expect(resetLaneValue).toHaveBeenCalledWith(expect.objectContaining({ laneId: "default" }));
+    expect(resetLaneThinkingValue).toHaveBeenCalledWith(expect.objectContaining({ laneId: "default" }));
+  });
+
+  it("wires project title-summarizer fallback thinking and clears it with reset", () => {
+    function ProjectTitleFallbackHost() {
+      const [form, setForm] = useState<SettingsFormState>({
+        defaultThinkingLevel: "medium",
+        titleSummarizerFallbackProvider: "anthropic",
+        titleSummarizerFallbackModelId: "claude-sonnet-4-5",
+        titleSummarizerFallbackThinkingLevel: "high",
+      } as SettingsFormState);
+      return (
+        <ProjectModelsSection
+          scopeBanner={null}
+          form={form}
+          setForm={setForm}
+          models={{
+            ...models,
+            availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+          }}
+          addToast={vi.fn()}
+        />
+      );
+    }
+
+    render(<ProjectTitleFallbackHost />);
+
+    const dropdown = screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel");
+    expect(dropdown).toHaveAttribute("data-thinking-visible", "true");
+    expect(dropdown).toHaveAttribute("data-thinking-value", "high");
+    expect(dropdown).toHaveAttribute("data-default-thinking", "medium");
+
+    fireEvent.click(screen.getByTestId("mock-thinking-titleSummarizerFallbackModel"));
+    expect(screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).toHaveAttribute("data-thinking-value", "");
+
+    fireEvent.click(screen.getByTestId("mock-thinking-titleSummarizerFallbackModel"));
+    expect(screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).toHaveAttribute("data-thinking-value", "high");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).toHaveAttribute("data-value", "");
+    expect(screen.getByTestId("mock-model-dropdown-titleSummarizerFallbackModel")).toHaveAttribute("data-thinking-value", "");
+  });
+
+  it("wires workflow fallback lane thinking render, persist, and reset", async () => {
+    let saver: (() => Promise<void>) | null = null;
+    vi.mocked(fetchWorkflow).mockResolvedValue({
+      id: "builtin:coding",
+      name: "Coding",
+      ir: {
+        settings: [
+          { id: "planningFallbackProvider", name: "Planning fallback provider", type: "string" },
+          { id: "planningFallbackModelId", name: "Planning fallback model", type: "string" },
+          { id: "planningFallbackThinkingLevel", name: "Planning fallback thinking", type: "enum" },
+          { id: "validatorFallbackProvider", name: "Reviewer fallback provider", type: "string" },
+          { id: "validatorFallbackModelId", name: "Reviewer fallback model", type: "string" },
+          { id: "validatorFallbackThinkingLevel", name: "Reviewer fallback thinking", type: "enum" },
+        ],
+      },
+    } as never);
+    vi.mocked(fetchWorkflowSettingValues).mockResolvedValueOnce({
+      stored: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
+      effective: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
+      orphaned: [],
+    });
+    vi.mocked(updateWorkflowSettingValues).mockResolvedValueOnce({
+      stored: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
+      effective: { validatorFallbackProvider: "anthropic", validatorFallbackModelId: "claude-sonnet-4-5", validatorFallbackThinkingLevel: "high" },
+      orphaned: [],
+    });
+
+    render(
+      <ProjectModelsSection
+        scopeBanner={null}
+        form={{ defaultWorkflowId: "builtin:coding", defaultThinkingLevel: "medium" } as SettingsFormState}
+        setForm={vi.fn()}
+        models={{
+          ...models,
+          availableModels: [{ provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }],
+        }}
+        projectId="project-1"
+        addToast={vi.fn()}
+        registerWorkflowLaneSaver={(next) => {
+          saver = next;
+        }}
+      />,
+    );
+
+    const planning = await screen.findByTestId("mock-model-dropdown-workflow-planning-fallback-model");
+    expect(planning).toHaveAttribute("data-thinking-visible", "true");
+    expect(planning).toHaveAttribute("data-default-thinking", "medium");
+    expect(screen.getByTestId("mock-model-dropdown-workflow-validator-fallback-model")).toHaveAttribute("data-thinking-value", "high");
+
+    fireEvent.click(screen.getByTestId("mock-thinking-workflow-planning-fallback-model"));
+    await act(async () => {
+      await saver!();
+    });
+    expect(updateWorkflowSettingValues).toHaveBeenLastCalledWith("builtin:coding", { planningFallbackThinkingLevel: "high" }, "project-1");
+
+    fireEvent.click(within(screen.getByTestId("workflow-model-lane-validator-fallback")).getByRole("button", { name: "Reset" }));
+    await act(async () => {
+      await saver!();
+    });
+    expect(updateWorkflowSettingValues).toHaveBeenLastCalledWith("builtin:coding", {
+      validatorFallbackProvider: null,
+      validatorFallbackModelId: null,
+      validatorFallbackThinkingLevel: null,
+    }, "project-1");
+  });
+
   it("opts default workflow model lane dropdowns into readable menu width", async () => {
-    vi.mocked(fetchWorkflow).mockResolvedValueOnce({
+    vi.mocked(fetchWorkflow).mockResolvedValue({
       id: "builtin:coding",
       name: "Coding",
       ir: {
         settings: [
           { id: "planningProvider", name: "Planning Provider", type: "string" },
           { id: "planningModelId", name: "Planning Model", type: "string" },
+          { id: "planningThinkingLevel", name: "Planning thinking", type: "enum" },
         ],
       },
     } as never);
@@ -364,15 +599,17 @@ describe("ProjectModelsSection", () => {
   it("preserves workflow lane edits made while the registered saver is in flight", async () => {
     let saver: (() => Promise<void>) | null = null;
     let resolveSave!: (value: WorkflowSettingValuesPayload) => void;
-    vi.mocked(fetchWorkflow).mockResolvedValueOnce({
+    vi.mocked(fetchWorkflow).mockResolvedValue({
       id: "builtin:coding",
       name: "Coding",
       ir: {
         settings: [
           { id: "planningProvider", name: "Planning Provider", type: "string" },
           { id: "planningModelId", name: "Planning Model", type: "string" },
+          { id: "planningThinkingLevel", name: "Planning thinking", type: "enum" },
           { id: "executionProvider", name: "Execution Provider", type: "string" },
           { id: "executionModelId", name: "Execution Model", type: "string" },
+          { id: "executionThinkingLevel", name: "Execution thinking", type: "enum" },
         ],
       },
     } as never);

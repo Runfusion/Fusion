@@ -41,7 +41,7 @@
  */
 
 import type { PlannerConfirmationRequest, PlannerRecoveryDecision, PlannerRecoveryObservation, Settings, Task } from "@fusion/core";
-import { decidePlannerRecovery, PLANNER_RECOVERY_MAX_ATTEMPTS } from "@fusion/core";
+import { allowsAutoMergeProcessing, decidePlannerRecovery, PLANNER_RECOVERY_MAX_ATTEMPTS } from "@fusion/core";
 import { createLogger, type Logger } from "./logger.js";
 import type { OverseerStageObservation } from "./planner-overseer.js";
 import {
@@ -282,9 +282,21 @@ export class PlannerRecoveryController {
 
       const attemptCount = this.attempts.get(key) ?? 0;
 
+      // FNXC:PlannerOversight 2026-07-08-00:00:
+      // FN-7692: reuse the existing `allowsAutoMergeProcessing` predicate
+      // (same fallback semantics as the `evaluateOverseerHumanControl` guard
+      // above — `ctx.settings ?? { autoMerge: true }`) to tell
+      // `decidePlannerRecovery` whether the pending merger/pull-request
+      // confirmation is actually advisory (auto-merge will proceed unattended)
+      // or a genuine block. Messaging-only: this does not add a settings
+      // lookup beyond what `ctx.settings` already provides, and does not
+      // change the confirmation-required gating below.
+      const autoMergeWillProceed = allowsAutoMergeProcessing(task, ctx.settings ?? { autoMerge: true });
+
       const decision = decidePlannerRecovery({
         snapshot: snapshot as unknown as PlannerRecoveryObservation,
         attemptState: { attemptCount, attemptLimit: PLANNER_RECOVERY_MAX_ATTEMPTS },
+        autoMergeWillProceed,
       });
 
       if (decision.action === "none") {

@@ -33,15 +33,13 @@ export function useArtifacts(options?: {
 }): UseArtifactsResult {
   const { projectId, type, authorId, taskId, searchQuery } = options ?? {};
   const filterKey = JSON.stringify({ type: type ?? null, authorId: authorId ?? null, taskId: taskId ?? null });
-  const cacheKey = projectId ? `${SWR_CACHE_KEYS.ARTIFACTS_PREFIX}${projectId}:${filterKey}` : null;
+  const projectScopeKey = projectId ?? "__default__";
+  const cacheKey = `${SWR_CACHE_KEYS.ARTIFACTS_PREFIX}${projectScopeKey}:${filterKey}`;
   const [artifacts, setArtifacts] = useState<ArtifactWithTask[]>(() => {
-    if (!cacheKey) {
-      return [];
-    }
     const cached = readCache<ArtifactWithTask[]>(cacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     return Array.isArray(cached) ? cached : [];
   });
-  const [loading, setLoading] = useState(() => Boolean(projectId) && artifacts.length === 0);
+  const [loading, setLoading] = useState(() => artifacts.length === 0);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const initialLoadCompleteRef = useRef(artifacts.length > 0);
@@ -50,13 +48,6 @@ export function useArtifacts(options?: {
   const sseRefreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!projectId) {
-      setArtifacts([]);
-      setLoading(false);
-      initialLoadCompleteRef.current = false;
-      return;
-    }
-
     if (abortRef.current) {
       abortRef.current.abort();
     }
@@ -105,13 +96,6 @@ export function useArtifacts(options?: {
   }, [refresh]);
 
   useEffect(() => {
-    if (!cacheKey) {
-      initialLoadCompleteRef.current = false;
-      setArtifacts([]);
-      setLoading(false);
-      return;
-    }
-
     const cached = readCache<ArtifactWithTask[]>(cacheKey, { maxAgeMs: SWR_DEFAULT_MAX_AGE_MS });
     if (Array.isArray(cached)) {
       setArtifacts(cached);
@@ -141,13 +125,12 @@ export function useArtifacts(options?: {
   }, [refresh]);
 
   useEffect(() => {
-    if (!cacheKey || !projectId) {
-      return;
-    }
-
     /*
      * FNXC:ArtifactRegistry 2026-06-27-00:00:
      * Already-open task and project artifact lists must live-refresh from TaskStore's authoritative artifact:registered SSE event and also accept the best-effort agent/chat message notifications as an additional signal. Task-scoped hooks filter by artifact/task metadata while project-scoped hooks rely on the projectId refetch and optional payload projectId guard, preserving SWR cached rendering, search filters, and scoped fetch behavior without showing a loading flash.
+     *
+     * FNXC:ArtifactRegistry 2026-07-10-00:00:
+     * Single-project dashboards do not always have a currentProject id when the Documents view mounts. The Artifacts tab must still fetch the server's default project scope and subscribe to unscoped SSE; otherwise the hook returns [] forever and the tab count stays 0 even though GET /api/artifacts and agent-created image media are valid.
      */
     const handleArtifactRegistration = (event: MessageEvent, source: "artifact" | "message") => {
       try {
@@ -163,7 +146,7 @@ export function useArtifacts(options?: {
         const artifactId = source === "artifact" ? payload.id : payload.metadata?.artifactId;
         const artifactTaskId = source === "artifact" ? payload.taskId : payload.metadata?.taskId;
         if (!artifactId) return;
-        if (payload.projectId && payload.projectId !== projectId) return;
+        if (projectId && payload.projectId && payload.projectId !== projectId) return;
         if (taskId && artifactTaskId !== taskId) return;
 
         if (sseRefreshDebounceRef.current) {
@@ -182,7 +165,9 @@ export function useArtifacts(options?: {
     const handleArtifactMessage = (event: MessageEvent) => handleArtifactRegistration(event, "message");
 
     const params = new URLSearchParams();
-    params.set("projectId", projectId);
+    if (projectId) {
+      params.set("projectId", projectId);
+    }
     const query = params.size > 0 ? `?${params.toString()}` : "";
     const unsubscribe = subscribeSse(`/api/events${query}`, {
       events: {
@@ -199,7 +184,7 @@ export function useArtifacts(options?: {
         sseRefreshDebounceRef.current = null;
       }
     };
-  }, [cacheKey, projectId, taskId]);
+  }, [projectId, taskId]);
 
   useEffect(() => {
     void refresh();
