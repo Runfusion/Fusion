@@ -1043,7 +1043,7 @@ export class TriageProcessor {
           ? `## Identity\n\nYou are ${assignedAgent.name}${assignedAgent.title?.trim() ? `, ${assignedAgent.title.trim()}` : ""} (agent ID: ${assignedAgent.id}, role: ${assignedAgent.role}).`
           : "";
         // Build structured layers for cross-session prompt caching.
-        const triagePluginContributions = buildPluginPromptSection(
+        const triagePluginContributions = await buildPluginPromptSection(
           "triage",
           this.options.pluginRunner,
         );

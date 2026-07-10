@@ -277,7 +277,7 @@ export async function reviewStep(
     ? buildReviewerMemoryInstructions(options.rootDir, effectiveSettings)
     : "";
 
-  const reviewerPluginContributions = buildPluginPromptSection(
+  const reviewerPluginContributions = await buildPluginPromptSection(
     "reviewer",
     options.pluginRunner,
   );

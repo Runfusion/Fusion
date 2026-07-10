@@ -112,6 +112,10 @@ export type {
   AutoMergeFactProviderResult,
   AutoMergeFactProviderHandler,
   PluginPromptSurface,
+  /**
+   * FNXC:PluginPrompt 2026-07-10-00:00:
+   * Re-export the core-authored PluginPromptContribution type so SDK consumers see the enforced `condition` grammar in generated declarations.
+   */
   PluginPromptContribution,
   PluginPromptContributions,
   ExecutorRuntimeTaskContext,

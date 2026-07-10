@@ -2585,7 +2585,7 @@ export class HeartbeatMonitor {
         }
 
         // Build structured layers for cross-session prompt caching.
-        const heartbeatPluginContributions = buildPluginPromptSection(
+        const heartbeatPluginContributions = await buildPluginPromptSection(
           "heartbeat",
           this.pluginRunner,
         );

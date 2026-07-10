@@ -1012,7 +1012,15 @@ export interface PluginPromptContribution {
   content: string;
   /** Position relative to existing prompt content. Defaults to "append". */
   position?: "append" | "prepend";
-  /** Human-readable applicability description, reserved for future filtering. */
+  /**
+   * Optional host-enforced gate for this contribution.
+   *
+   * FNXC:PluginPrompt 2026-07-10-00:00:
+   * Plugin authors can gate prompt guidance on per-project effective plugin settings, so `condition` is no longer decorative.
+   * The host supports exactly one injection-safe comparison: `settings["key"] === "value"` or `settings["key"] !== "value"` (single or double quotes, whitespace-tolerant).
+   * Settings are resolved from the plugin settings schema `defaultValue`s overlaid by stored per-project values; absent or empty conditions include the contribution, while malformed conditions fail closed and exclude it.
+   * Example: `settings["api-style"] === "minimal-apis"`.
+   */
   condition?: string;
 }
 

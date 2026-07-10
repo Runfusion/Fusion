@@ -1785,7 +1785,14 @@ Each contribution uses the `PluginPromptContribution` shape:
 - `surface`: one of the five supported surfaces
 - `content`: prompt text to inject
 - `position?`: `"append"` (default) or `"prepend"`
-- `condition?`: optional human-readable condition note
+- `condition?`: optional host-enforced gate evaluated against this plugin's per-project effective settings
+
+`condition` supports a deliberately small, injection-safe grammar:
+
+- `settings["key"] === "value"`
+- `settings["key"] !== "value"`
+
+Single or double quotes are accepted for both the setting key and string literal, and whitespace around `settings`, brackets, and operators is ignored. Fusion resolves effective settings by applying each `settingsSchema` `defaultValue` first, then overlaying stored per-project plugin settings. A missing or whitespace-only condition is treated as absent and includes the contribution; malformed or unsupported conditions fail closed and exclude the contribution. Comparisons are string-strict: non-string or missing setting values are not equal to a string literal, so `===` is false and `!==` is true.
 
 ```typescript
 import type { PluginPromptContributions } from "@fusion/plugin-sdk";
@@ -1796,8 +1803,8 @@ const promptContributions: PluginPromptContributions = {
     {
       surface: "executor-system",
       position: "append",
-      content: "Always summarize browser-derived evidence with source URLs.",
-      condition: "When browser tooling is available",
+      content: "Prefer .NET minimal APIs for route examples.",
+      condition: 'settings["api-style"] === "minimal-apis"',
     },
   ],
 };

@@ -631,21 +631,21 @@ describe("buildSystemPromptWithInstructions", () => {
 });
 
 describe("buildPluginPromptSection", () => {
-  it("returns empty string when pluginRunner is undefined", () => {
-    expect(buildPluginPromptSection("triage", undefined)).toBe("");
+  it("returns empty string when pluginRunner is undefined", async () => {
+    await expect(buildPluginPromptSection("triage", undefined)).resolves.toBe("");
   });
 
-  it("returns empty string when no contributions match", () => {
+  it("returns empty string when no contributions match", async () => {
     const pluginRunner = {
-      getPromptContributionsForSurface: vi.fn().mockReturnValue([]),
+      getPromptContributionsForSurface: vi.fn().mockResolvedValue([]),
     };
 
-    expect(buildPluginPromptSection("triage", pluginRunner as any)).toBe("");
+    await expect(buildPluginPromptSection("triage", pluginRunner as any)).resolves.toBe("");
   });
 
-  it("formats grouped plugin sections and prepend-before-append ordering", () => {
+  it("formats grouped plugin sections and prepend-before-append ordering", async () => {
     const pluginRunner = {
-      getPromptContributionsForSurface: vi.fn().mockReturnValue([
+      getPromptContributionsForSurface: vi.fn().mockResolvedValue([
         { pluginId: "plugin-b", contribution: { surface: "triage", content: "append B1" }, config: {} },
         { pluginId: "plugin-a", contribution: { surface: "triage", content: "prepend A1", position: "prepend" }, config: {} },
         { pluginId: "plugin-a", contribution: { surface: "triage", content: "prepend A2", position: "prepend" }, config: {} },
@@ -653,12 +653,29 @@ describe("buildPluginPromptSection", () => {
       ]),
     };
 
-    const result = buildPluginPromptSection("triage", pluginRunner as any);
+    const result = await buildPluginPromptSection("triage", pluginRunner as any);
 
     expect(result).toContain("## Plugin: plugin-a\n\nprepend A1\n\nprepend A2");
     expect(result).toContain("## Plugin: plugin-b\n\nappend B1");
     expect(result).toContain("## Plugin: plugin-c\n\nappend C1");
     expect(result.indexOf("## Plugin: plugin-a")).toBeLessThan(result.indexOf("## Plugin: plugin-b"));
+  });
+
+  it("keeps passing and no-condition contributions from the condition-aware runner", async () => {
+    const pluginRunner = {
+      getPromptContributionsForSurface: vi.fn().mockResolvedValue([
+        { pluginId: "plugin-a", contribution: { surface: "triage", content: "passing", condition: 'settings["mode"] === "on"' }, config: {} },
+        { pluginId: "plugin-a", contribution: { surface: "triage", content: "always" }, config: {} },
+        { pluginId: "plugin-b", contribution: { surface: "triage", content: "append", position: "append" }, config: {} },
+      ]),
+    };
+
+    const result = await buildPluginPromptSection("triage", pluginRunner as any);
+
+    expect(pluginRunner.getPromptContributionsForSurface).toHaveBeenCalledWith("triage");
+    expect(result).toContain("passing\n\nalways");
+    expect(result).toContain("## Plugin: plugin-b\n\nappend");
+    expect(result).not.toContain("gated out");
   });
 });
 

@@ -441,15 +441,15 @@ export function buildSystemPromptWithInstructions(
   return `${basePrompt}\n\n## Custom Instructions\n\n${instructions}`;
 }
 
-export function buildPluginPromptSection(
+export async function buildPluginPromptSection(
   surface: PluginPromptSurface,
   pluginRunner: PluginRunner | undefined,
-): string {
+): Promise<string> {
   if (!pluginRunner) {
     return "";
   }
 
-  const contributions = pluginRunner.getPromptContributionsForSurface(surface);
+  const contributions = await pluginRunner.getPromptContributionsForSurface(surface);
   if (contributions.length === 0) {
     return "";
   }

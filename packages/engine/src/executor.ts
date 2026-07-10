@@ -10639,7 +10639,7 @@ export class TaskExecutor {
           ?? (await this.resolveInstructionsForRole("executor", settings));
 
         // Build structured layers for cross-session prompt caching.
-        const executorPluginContributions = buildPluginPromptSection(
+        const executorPluginContributions = await buildPluginPromptSection(
           "executor-system",
           this.options.pluginRunner,
         );
@@ -10791,6 +10791,7 @@ export class TaskExecutor {
             ].join("\n"));
           } else {
             const customFieldDefs = await this.resolveTaskCustomFieldDefs(task.id);
+            const pluginTaskContributions = await buildPluginPromptSection("executor-task", this.options.pluginRunner);
             const agentPrompt = buildExecutionPrompt(
               detail,
               this.rootDir,
@@ -10799,7 +10800,10 @@ export class TaskExecutor {
               this.options.pluginRunner,
               customFieldDefs,
               this.workspaceConfig,
-              { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+              {
+                workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
+                pluginTaskContributions,
+              },
             );
             await promptWithFallback(session, agentPrompt);
           }
@@ -11151,6 +11155,7 @@ export class TaskExecutor {
                 stuckDetector?.trackTask(task.id, retrySession);
 
                 const retryCustomFieldDefs = await this.resolveTaskCustomFieldDefs(task.id);
+                const retryPluginTaskContributions = await buildPluginPromptSection("executor-task", this.options.pluginRunner);
                 let retryPrompt: string;
                 if (pseudoPause.kind !== "none") {
                   const shortMatch = (pseudoPause.matched ?? "").slice(0, 120);
@@ -11178,7 +11183,10 @@ export class TaskExecutor {
                       this.options.pluginRunner,
                       retryCustomFieldDefs,
                       this.workspaceConfig,
-                      { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+                      {
+                        workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
+                        pluginTaskContributions: retryPluginTaskContributions,
+                      },
                     ),
                   ].join("\n");
                 } else {
@@ -11197,7 +11205,10 @@ export class TaskExecutor {
                       this.options.pluginRunner,
                       retryCustomFieldDefs,
                       this.workspaceConfig,
-                      { workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id) },
+                      {
+                        workflowReviewGatesOwnedByGraph: this.graphCompletionInterceptors.has(task.id),
+                        pluginTaskContributions: retryPluginTaskContributions,
+                      },
                     ),
                   ].join("\n");
                 }
@@ -18119,7 +18130,7 @@ export function buildExecutionPrompt(
   pluginRunner?: PluginRunner,
   customFieldDefs?: WorkflowFieldDefinition[],
   workspaceConfig?: WorkspaceConfig | null,
-  options?: { workflowReviewGatesOwnedByGraph?: boolean },
+  options?: { workflowReviewGatesOwnedByGraph?: boolean; pluginTaskContributions?: string },
 ): string {
   const prompt = scopePromptToWorktree(task.prompt, rootDir, worktreePath, workspaceConfig);
   const reviewLevel = parseReviewLevelFromPrompt(prompt);
@@ -18253,11 +18264,10 @@ git log --oneline
     customFieldsSection = lines.join("\n") + "\n";
   }
 
-  const taskPromptContributions = pluginRunner?.getPromptContributionsForSurface("executor-task") ?? [];
-  if (taskPromptContributions.length > 0) {
-    executorLog.log(`${task.id}: applied ${taskPromptContributions.length} plugin prompt contributions for executor-task surface`);
+  const pluginTaskContributions = options?.pluginTaskContributions ?? "";
+  if (pluginTaskContributions) {
+    executorLog.log(`${task.id}: applied plugin prompt contributions for executor-task surface`);
   }
-  const pluginTaskContributions = buildPluginPromptSection("executor-task", pluginRunner);
 
   const executionPrompt = `Execute this task.
 

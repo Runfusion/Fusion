@@ -35,6 +35,12 @@ export type { OpenAiCodexProviderRegistration } from "./openai-models.js";
 export { detectImageMimeFromBytes } from "./image-mime.js";
 export type { DetectedImageMime } from "./image-mime.js";
 export { redactSecrets } from "./redact-secrets.js";
+export {
+  evaluatePromptCondition,
+  evaluatePromptConditionDetailed,
+  resolveEffectivePluginSettings,
+} from "./plugin-prompt-condition.js";
+export type { PromptConditionEvaluationResult } from "./plugin-prompt-condition.js";
 export { computePlanApprovalFingerprint, resolvePlanApprovalRequired } from "./plan-approval.js";
 export type { PlanApprovalMode } from "./plan-approval.js";
 export { isActiveNearDuplicateColumn, isNearDuplicateCanonicalInactive } from "./near-duplicate-canonical.js";
