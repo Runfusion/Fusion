@@ -1456,6 +1456,63 @@ executing. These map 1:1 to the unified progress status so the dot color encodes
   outline-offset: 1px;
 }
 
+/*
+FNXC:TaskCardMenu 2026-07-10-12:00:
+Visible ⋯ (card actions) button — the context menu was right-click/long-press only and users never
+found it. Mirrors .card-edit-btn's hover-revealed styling on desktop; stays visible while its menu is
+open (aria-expanded) and on keyboard focus so it never vanishes mid-interaction. Always visible on
+mobile (no hover there) — see the mobile block below, which uses the project mobile MQ including the
+short-landscape variant (FN-5751 lesson: never a desktop-only or portrait-only fix).
+*/
+.card-menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.card:hover .card-menu-btn,
+.card-menu-btn[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.card-menu-btn:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.card-menu-btn:focus-visible {
+  opacity: 1;
+  outline: 1px solid var(--todo);
+  outline-offset: 1px;
+}
+
+/* FNXC:TaskCardMenu 2026-07-10-12:00: mobile has no hover — the ⋯ affordance must be always visible
+   with a comfortable touch target. Includes short-landscape phones per the project mobile MQ. */
+@media (max-width: 768px), (max-height: 480px) {
+  .card-menu-btn {
+    opacity: 1;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+  }
+
+  .card-menu-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
 /* Delete button - visible on hover for triage column */
 .card-delete-btn {
   display: flex;

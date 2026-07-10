@@ -170,14 +170,19 @@ The global `.description-with-refine textarea { padding-right: 70px }` (styles.c
 }
 
 /* Quick Entry Box expanded controls */
+/*
+FNXC:BoardComposer 2026-07-10-12:00:
+First-run review flagged TWO stacked divider lines under the composer textarea: the textarea's own
+border-bottom (which doubles as the focus indicator) plus this panel's border-top. Keep the textarea
+border as the SINGLE divider and drop the panel border-top/padding-top so the chip area reads as one
+section under one line.
+*/
 .quick-entry-controls {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-sm);
   margin-top: var(--space-sm);
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
@@ -188,6 +193,36 @@ The global `.description-with-refine textarea { padding-right: 70px }` (styles.c
   gap: var(--space-sm);
   flex-wrap: wrap;
   flex: 1 1 auto;
+}
+
+/*
+FNXC:BoardComposer 2026-07-10-12:00:
+The action row is organized as two logical clusters instead of one undifferentiated wrap of chips:
+- `.quick-entry-options-group` — task options (workflow, priority, optional steps, subtask, deps,
+  models, node, agent, GitHub tracking), wrapping left-to-right with one consistent chip gap.
+- `.quick-entry-primary-group` — attach + Fast + Save; margin-left auto keeps it right-aligned so the
+  distinct Save action always ends the row (and wraps as one unit on narrow columns, never splitting
+  Save from its neighbors).
+Chip HEIGHT consistency is already enforced by the FN-7680/FN-7683 fixed-box rule on
+`.quick-entry-actions .btn` above (descendant selector — still applies inside these wrappers); these
+rules only own grouping/spacing/alignment.
+*/
+.quick-entry-options-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.quick-entry-primary-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: var(--space-sm);
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 /*

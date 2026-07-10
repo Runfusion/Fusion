@@ -43,6 +43,8 @@ vi.mock("lucide-react", () => ({
   // FN-7592: the overseer badge now renders an icon child instead of a text label,
   // so tests must see a real SVG (like Zap) rather than a no-op render.
   Eye: () => <svg data-testid="icon-eye" />,
+  // FNXC:TaskCardMenu 2026-07-10-12:00: visible ⋯ card-actions button icon.
+  MoreHorizontal: () => <svg data-testid="icon-more-horizontal" />,
 }));
 
 vi.mock("../ProviderIcon", () => ({
@@ -442,6 +444,64 @@ describe("TaskCard", () => {
       expect(onPauseTask).toHaveBeenCalledTimes(1);
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(document.querySelector(".task-card-context-menu-popover")).toBeNull();
+      expect(onOpenDetail).not.toHaveBeenCalled();
+    } finally {
+      cleanupGeometry();
+    }
+  });
+
+  /*
+  FNXC:TaskCardMenu 2026-07-10-12:00:
+  The card actions menu must ALSO be reachable from the visible ⋯ button (first-run users never
+  discovered right-click). The button must open the exact same TaskContextMenu (same items — no
+  duplicated menu logic), anchored as a viewport portal, and toggle closed on a second press.
+  */
+  it("opens the same card context menu from the visible ⋯ button and toggles it closed", async () => {
+    const cleanupGeometry = mockBoardContextMenuGeometry();
+    const onOpenDetail = vi.fn();
+    const onPauseTask = vi.fn(async () => makeTask({ paused: true }));
+    try {
+      render(
+        <TaskCard
+          task={makeTask({ column: "in-progress", status: "executing" as any })}
+          onOpenDetail={onOpenDetail}
+          addToast={noop}
+          onPauseTask={onPauseTask}
+        />,
+      );
+
+      // Capture the canonical right-click menu item set first.
+      fireEvent.contextMenu(document.querySelector(".card")!, { clientX: 24, clientY: 28 });
+      await waitFor(() => expectBoardContextMenuPortaled());
+      const rightClickItems = screen.getAllByRole("menuitem").map((item) => item.textContent);
+      expect(rightClickItems.length).toBeGreaterThan(0);
+      fireEvent.keyDown(document, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+      // The ⋯ button opens the SAME menu (identical items) as right-click, portaled to the viewport.
+      const menuButton = screen.getByTestId("card-menu-btn-FN-001");
+      expect(menuButton).toHaveAttribute("aria-haspopup", "menu");
+      expect(menuButton).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(menuButton);
+      await waitFor(() => expectBoardContextMenuPortaled());
+      expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(rightClickItems);
+      expect(menuButton).toHaveAttribute("aria-expanded", "true");
+      expect(onOpenDetail).not.toHaveBeenCalled();
+
+      // A second press toggles the menu closed — the document pointerdown closer must not race it
+      // shut and immediately reopen it.
+      fireEvent.pointerDown(menuButton);
+      fireEvent.click(menuButton);
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+      expect(document.querySelector(".task-card-context-menu-popover")).toBeNull();
+      expect(menuButton).toHaveAttribute("aria-expanded", "false");
+
+      // Selecting an action from the button-opened menu invokes the shared handler and closes.
+      fireEvent.click(menuButton);
+      await waitFor(() => expectBoardContextMenuPortaled());
+      fireEvent.click(screen.getByRole("menuitem", { name: "Pause" }));
+      await waitFor(() => expect(onPauseTask).toHaveBeenCalledWith("FN-001"));
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
       expect(onOpenDetail).not.toHaveBeenCalled();
     } finally {
       cleanupGeometry();

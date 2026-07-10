@@ -405,17 +405,23 @@ function mockMobileViewport() {
   });
 }
 
+/*
+FNXC:BoardComposer 2026-07-10-12:00:
+DOM order mirrors the reorganized composer action row: the options group (priority, subtask, deps,
+models, node, agent, GitHub) comes first, followed by the right-aligned primary group
+(attach, Fast, Save) with Save as the LAST control.
+*/
 const QUICK_ENTRY_ACTION_BUTTONS = [
-  ["Save", "quick-entry-save"],
-  ["Attach", "quick-entry-attach"],
-  ["Fast", "quick-entry-fast-toggle"],
-  ["GitHub", "quick-entry-github-toggle"],
   ["Priority", "quick-entry-priority-button"],
   ["Subtask", "subtask-button"],
   ["Deps", "quick-entry-deps"],
   ["Models", "quick-entry-models"],
   ["Node", "quick-entry-node-button"],
   ["Agent", "quick-entry-agent-button"],
+  ["GitHub", "quick-entry-github-toggle"],
+  ["Attach", "quick-entry-attach"],
+  ["Fast", "quick-entry-fast-toggle"],
+  ["Save", "quick-entry-save"],
 ] as const;
 
 describe("QuickEntryBox", () => {
@@ -797,7 +803,9 @@ describe("QuickEntryBox", () => {
     ] as const;
 
     const allActionButtons = QUICK_ENTRY_ACTION_BUTTONS;
-    const actionButtonsWithSaveLast = [...allActionButtons.slice(1), allActionButtons[0]];
+    // FNXC:BoardComposer 2026-07-10-12:00: Save is already the last action in the reorganized row,
+    // so iterating in DOM order clicks Save (which submits and resets the form) last.
+    const actionButtonsWithSaveLast = allActionButtons;
 
     function getActionButtonTestIdsInDomOrder() {
       const actionsContainer = screen.getByTestId("quick-entry-actions");
@@ -843,13 +851,24 @@ describe("QuickEntryBox", () => {
       });
     });
 
-    it("places Attach immediately after Save in DOM order", () => {
+    /*
+    FNXC:BoardComposer 2026-07-10-12:00:
+    The primary group ends the action row as [Attach, Fast, Save]: Save is the LAST control (right-
+    aligned primary action) and Attach/Fast sit immediately beside it inside the same cluster.
+    */
+    it("ends the action row with the primary group: Attach and Fast immediately before Save, Save last", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
       const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
-      expect(actionButtonTestIds.slice(0, 2)).toEqual(["quick-entry-save", "quick-entry-attach"]);
-      expect(actionButtonTestIds.indexOf("quick-entry-attach")).toBe(actionButtonTestIds.indexOf("quick-entry-save") + 1);
+      expect(actionButtonTestIds.slice(-3)).toEqual(["quick-entry-attach", "quick-entry-fast-toggle", "quick-entry-save"]);
+
+      const primaryGroup = screen.getByTestId("quick-entry-primary-group");
+      for (const testId of ["quick-entry-attach", "quick-entry-fast-toggle", "quick-entry-save"]) {
+        expect(primaryGroup.contains(screen.getByTestId(testId))).toBe(true);
+      }
+      const optionsGroup = screen.getByTestId("quick-entry-options-group");
+      expect(optionsGroup.contains(screen.getByTestId("quick-entry-save"))).toBe(false);
     });
 
     it("action buttons appear in correct DOM order after reorder", () => {
