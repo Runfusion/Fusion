@@ -2250,6 +2250,8 @@
     "projectFiles": "project files",
     "projectFilesTab": "Project Files",
     "projectMarkdownFilesLabel": "Project markdown files",
+    "readOnly": "Read-only",
+    "readOnlyHint": "This preview is read-only. Select text to comment and send it to a new task.",
     "resultCount_one": "{{count}} result{{plural}}",
     "resultCount_other": "{{count}} result{{plural}}",
     "retry": "Retry",

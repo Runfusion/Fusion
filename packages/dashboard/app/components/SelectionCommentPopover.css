@@ -12,6 +12,24 @@
   white-space: nowrap;
 }
 
+/*
+FNXC:ArtifactsView 2026-07-10-16:05:
+The "Add comment" trigger is positioned entirely by its transform translate. The global
+`.btn:active { transform: scale(0.97) }` press feedback REPLACED that translate while the
+mouse button was held, teleporting the trigger about half its width right and one spacing
+unit down between mousedown and mouseup, so the browser never dispatched `click` on the
+button and the comment composer silently never opened (user-reported no-op while viewing a
+markdown file in the Artifacts view; reproduced with real mouse events — jsdom clicks
+cannot catch this).
+Every :active override here must restate the positioning translate alongside the press
+feedback so the trigger stays under the cursor for the whole press. This one shared rule
+covers all popover surfaces: DocumentsView project-file preview (plain and markdown) and
+FileEditor (editor and preview), desktop and mobile.
+*/
+.selection-comment-trigger:active {
+  transform: translate(-50%, calc(-1 * var(--space-xl))) scale(0.97);
+}
+
 .selection-comment-panel {
   width: min(var(--selection-comment-panel-width, calc(var(--space-2xl) * 12)), calc(100vw - (var(--space-lg) * 2)));
   transform: translate(-50%, var(--space-xs));
@@ -60,6 +78,16 @@
 
   .selection-comment-trigger {
     transform: translate(-50%, calc(-1 * var(--space-2xl)));
+  }
+
+  /*
+  FNXC:ArtifactsView 2026-07-10-16:05:
+  Mobile uses a taller lift, so its :active rule must restate the mobile translate too —
+  otherwise the desktop :active rule (space-xl) would snap the pressed trigger to the
+  desktop offset and reintroduce the missed-click no-op on touch/landscape-phone widths.
+  */
+  .selection-comment-trigger:active {
+    transform: translate(-50%, calc(-1 * var(--space-2xl))) scale(0.97);
   }
 
   .selection-comment-actions {

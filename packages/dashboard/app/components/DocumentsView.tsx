@@ -744,6 +744,16 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                     <div className="documents-content-viewer">
                       <div className="documents-content-header">
                         <p className="documents-file-path-header">{selectedFile.path}</p>
+                        {/*
+                        FNXC:ArtifactsView 2026-07-10-16:10:
+                        First-run review feedback: the Artifacts preview pane did not communicate whether documents are editable. This pane is view-only (there is no editor here — editing happens elsewhere, e.g. the workspace FileEditor), so a persistent Read-only badge states that explicitly on both desktop and mobile. Select-to-comment still works and is the intended interaction.
+                        */}
+                        <span
+                          className="documents-readonly-badge badge"
+                          title={t("documents.readOnlyHint", "This preview is read-only. Select text to comment and send it to a new task.")}
+                        >
+                          {t("documents.readOnly", "Read-only")}
+                        </span>
                         <button
                           className="btn btn-sm document-mode-toggle"
                           onClick={() => setRenderProjectMarkdown((prev) => !prev)}

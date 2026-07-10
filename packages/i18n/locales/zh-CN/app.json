@@ -2281,7 +2281,9 @@
     "closeLightbox": "Close artifact preview",
     "expandArtifact": "Expand {{title}}",
     "expandArtifactHint": "Click to expand",
-    "lightboxLabel": "Artifact media preview"
+    "lightboxLabel": "Artifact media preview",
+    "readOnly": "",
+    "readOnlyHint": ""
   },
   "droidCli": {
     "active": "活跃",
