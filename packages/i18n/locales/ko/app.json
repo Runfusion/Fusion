@@ -3422,6 +3422,7 @@
     "dreamProcessingFailed": "드림 처리 실행에 실패했습니다",
     "dreamsEnabledHint": "일일 메모를 DREAMS.md로 변환하고 재사용 가능한 교훈을 MEMORY.md로 승격합니다.",
     "dreamsEnabledLabel": "일일 메모리에서 드림 처리",
+    "dreamsEnabledTooltip": "일일 노트는 DREAMS.md로 정제되고 재사용 가능한 교훈은 MEMORY.md로 승격됩니다.",
     "dreamsScheduleHint": "드림 처리의 크론 표현식입니다.",
     "dreamsScheduleLabel": "드림 일정",
     "editorDefaultDescription": "선택한 메모리 파일을 편집합니다.",

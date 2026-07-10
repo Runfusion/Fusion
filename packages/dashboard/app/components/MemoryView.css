@@ -59,6 +59,12 @@ After the header migrated to the shared .view-header (which is flex-shrink:0), t
   padding: 0 var(--space-lg) var(--space-lg);
 }
 
+/*
+FNXC:MemoryView 2026-07-10-14:30:
+First-run review on a wide desktop viewport: the Working Memory content hugged the left half of the view and the entire right half was empty background.
+Cap each tab pane to a readable content-column width and center it with auto inline margins, matching the app convention for wide layouts (e.g. .project-overview__body caps and centers its scroll body).
+The pane stays the scroll owner; width:100% keeps narrow/mobile viewports (max-width: 768px / max-height: 480px breakpoint) unchanged because the cap only bites above it.
+*/
 .memory-working-tab,
 .memory-insights-tab,
 .memory-engines-tab {
@@ -67,6 +73,9 @@ After the header migrated to the shared .view-header (which is flex-shrink:0), t
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
 }
 
 /*
@@ -433,6 +442,23 @@ The memory editor box is CAPPED to about a page (max-height: 60vh) so a long mem
   border-radius: var(--radius-md);
   background: var(--surface);
   padding: var(--space-sm) 0;
+}
+
+/*
+FNXC:MemoryView 2026-07-10-14:30:
+Shared layout for the automation checkbox rows ("Process dreams from daily memory", "Auto-summarize memory").
+Both rows must render identically: checkbox and label on one line, and the hint text indented to start where the label text starts (checkbox width 16px + the .checkbox-label gap), instead of hanging at the form-group edge with row-dependent spacing.
+Scoped under .memory-working-tab so these rules out-specify same-name form rules from SettingsModal.css (imported after this file).
+*/
+.memory-working-tab .memory-toggle-row .checkbox-label {
+  align-items: center;
+}
+
+.memory-working-tab .memory-toggle-row > small {
+  display: block;
+  margin-top: var(--space-xs);
+  margin-left: calc(16px + var(--space-sm));
+  color: var(--text-muted);
 }
 
 .memory-flex-spacer {

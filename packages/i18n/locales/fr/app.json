@@ -3422,6 +3422,7 @@
     "dreamProcessingFailed": "Échec du traitement des rêves",
     "dreamsEnabledHint": "Transforme les notes quotidiennes en DREAMS.md et promeut les leçons réutilisables dans MEMORY.md.",
     "dreamsEnabledLabel": "Traiter les rêves depuis la mémoire quotidienne",
+    "dreamsEnabledTooltip": "Les notes quotidiennes sont distillées dans DREAMS.md et les leçons réutilisables sont promues dans MEMORY.md.",
     "dreamsScheduleHint": "Expression cron pour le traitement des rêves.",
     "dreamsScheduleLabel": "Planification des rêves",
     "editorDefaultDescription": "Modifie le fichier mémoire sélectionné.",

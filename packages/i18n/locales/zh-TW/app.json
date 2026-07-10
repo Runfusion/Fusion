@@ -3422,6 +3422,7 @@
     "dreamProcessingFailed": "執行夢境處理失敗",
     "dreamsEnabledHint": "將每日筆記轉換為 DREAMS.md，並將可重用的經驗提升至 MEMORY.md。",
     "dreamsEnabledLabel": "從每日記憶中處理夢境",
+    "dreamsEnabledTooltip": "每日筆記會被提煉到 DREAMS.md，可重複使用的經驗會被提升到 MEMORY.md。",
     "dreamsScheduleHint": "夢境處理的 Cron 表達式。",
     "dreamsScheduleLabel": "夢境排程",
     "editorDefaultDescription": "編輯所選記憶檔案。",
