@@ -6,9 +6,24 @@ import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskStore, type ArtifactWithTask } from "@fusion/core";
+import { TaskStore, type ArtifactType, type ArtifactWithTask } from "@fusion/core";
 import { createApiRoutes } from "../../routes.js";
 import { request as REQUEST } from "../../test-request.js";
+
+
+const ARTIFACT_TYPES: ArtifactType[] = ["document", "image", "video", "audio", "other"];
+const PNG_IMAGE_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
+const BINARY_MEDIA_BY_TYPE: Record<ArtifactType, { mimeType: string; bytes: Buffer }> = {
+  document: { mimeType: "application/pdf", bytes: Buffer.from("%PDF-1.4\n% FN-7764 document bytes\n") },
+  image: { mimeType: "image/png", bytes: PNG_IMAGE_BYTES },
+  video: { mimeType: "video/mp4", bytes: Buffer.from("\x00\x00\x00\x18ftypmp42FN7764-video") },
+  audio: { mimeType: "audio/mpeg", bytes: Buffer.from("ID3\x03\x00\x00\x00\x00\x00\x0fFN7764-audio") },
+  other: { mimeType: "application/octet-stream", bytes: Buffer.from("FN-7764 other binary payload") },
+};
+
+function contentMimeFor(type: ArtifactType): string {
+  return type === "document" ? "text/markdown" : "text/plain";
+}
 
 /*
  * FNXC:ArtifactRegistry 2026-06-27-00:00:
@@ -42,7 +57,7 @@ describe("artifacts route integration", () => {
       title: "Render screenshot",
       description: "Capture dashboard artifact rendering evidence",
     });
-    const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
+    const imageBytes = PNG_IMAGE_BYTES;
     const artifact = await store.registerArtifact({
       type: "image",
       title: "Dashboard screenshot",
@@ -116,7 +131,7 @@ describe("artifacts route integration", () => {
   });
 
   it("a global image artifact still streams from the managed global artifacts directory", async () => {
-    const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64");
+    const imageBytes = PNG_IMAGE_BYTES;
     const artifact = await store.registerArtifact({
       type: "image",
       title: "Global screenshot",
@@ -229,6 +244,135 @@ describe("artifacts route integration", () => {
     expect(ids).toEqual([artifactA.id, artifactA2.id].sort());
     expect(ids).not.toContain(artifactB.id);
     expect(ids).not.toContain(registryArtifact.id);
+  });
+
+  /*
+   * FNXC:ArtifactRegistry 2026-07-09-17:35:
+   * FN-7764 pins the route/media side of the same operator-facing invariant as the agent tools: every artifact type and payload class must be discoverable through GET /api/artifacts with task context, and binary or inline media must be viewable without broken image-only assumptions.
+   */
+  it("lists and serves every artifact type across inline, uri, binary, task, and registry-level states", async () => {
+    const task = await store.createTask({
+      title: "FN-7764 route artifact matrix",
+      description: "Capture route-level artifact evidence",
+    });
+    const otherTask = await store.createTask({ title: "Other artifact task", description: "Must not leak through taskId filter" });
+    const created: ArtifactWithTask[] = [];
+
+    for (const type of ARTIFACT_TYPES) {
+      created.push(await store.registerArtifact({
+        type,
+        title: `route ${type} inline content`,
+        description: `inline ${type} route evidence`,
+        mimeType: contentMimeFor(type),
+        content: `Inline ${type} route evidence for FN-7764`,
+        authorId: "agent-route-content",
+        authorType: "agent",
+        taskId: task.id,
+      }) as ArtifactWithTask);
+
+      created.push(await store.registerArtifact({
+        type,
+        title: `route ${type} uri reference`,
+        description: `uri ${type} route evidence`,
+        mimeType: BINARY_MEDIA_BY_TYPE[type].mimeType,
+        uri: `artifacts/route-${type}-external.bin`,
+        authorId: "agent-route-uri",
+        authorType: "agent",
+        taskId: task.id,
+      }) as ArtifactWithTask);
+
+      created.push(await store.registerArtifact({
+        type,
+        title: `route ${type} binary media`,
+        description: `binary ${type} route evidence`,
+        mimeType: BINARY_MEDIA_BY_TYPE[type].mimeType,
+        data: BINARY_MEDIA_BY_TYPE[type].bytes,
+        authorId: "agent-route-binary",
+        authorType: "agent",
+        taskId: task.id,
+      }) as ArtifactWithTask);
+    }
+
+    const registryOnly = await store.registerArtifact({
+      type: "other",
+      title: "route registry-level other binary",
+      description: "task-less registry evidence",
+      mimeType: "application/octet-stream",
+      data: Buffer.from("registry-level-other-bytes"),
+      authorId: "agent-route-registry",
+      authorType: "agent",
+    });
+    const otherTaskArtifact = await store.registerArtifact({
+      type: "document",
+      title: "other task hidden artifact",
+      content: "This belongs to another task",
+      authorId: "agent-route-content",
+      authorType: "agent",
+      taskId: otherTask.id,
+    });
+
+    const allRes = await REQUEST(app, "GET", "/api/artifacts?limit=100");
+    expect(allRes.status).toBe(200);
+    const allArtifacts = allRes.body as ArtifactWithTask[];
+    for (const artifact of created) {
+      const listed = allArtifacts.find((candidate) => candidate.id === artifact.id);
+      expect(listed).toMatchObject({
+        id: artifact.id,
+        type: artifact.type,
+        title: artifact.title,
+        taskId: task.id,
+        taskTitle: "route artifact matrix",
+      });
+      expect(listed?.taskColumn).toBeTruthy();
+      expect(listed?.content).toBeUndefined();
+    }
+    const registryListed = allArtifacts.find((candidate) => candidate.id === registryOnly.id);
+    expect(registryListed?.id).toBe(registryOnly.id);
+    expect(registryListed?.taskId).toBeUndefined();
+    expect(registryListed?.taskTitle).toBeUndefined();
+    expect(registryListed?.taskColumn).toBeUndefined();
+
+    const taskScopedRes = await REQUEST(app, "GET", `/api/artifacts?taskId=${encodeURIComponent(task.id)}&limit=100`);
+    expect(taskScopedRes.status).toBe(200);
+    const taskScopedIds = (taskScopedRes.body as ArtifactWithTask[]).map((artifact) => artifact.id);
+    expect(taskScopedIds).toEqual(expect.arrayContaining(created.map((artifact) => artifact.id)));
+    expect(taskScopedIds).not.toContain(registryOnly.id);
+    expect(taskScopedIds).not.toContain(otherTaskArtifact.id);
+
+    const audioFilter = await REQUEST(app, "GET", `/api/artifacts?taskId=${encodeURIComponent(task.id)}&type=audio&authorId=agent-route-binary&q=binary&limit=2&offset=0`);
+    expect(audioFilter.status).toBe(200);
+    expect(audioFilter.body).toHaveLength(1);
+    expect((audioFilter.body as ArtifactWithTask[])[0]).toMatchObject({ type: "audio", authorId: "agent-route-binary", title: "route audio binary media" });
+
+    const paged = await REQUEST(app, "GET", `/api/artifacts?taskId=${encodeURIComponent(task.id)}&limit=1&offset=1`);
+    expect(paged.status).toBe(200);
+    expect(paged.body).toHaveLength(1);
+
+    for (const type of ARTIFACT_TYPES) {
+      const inline = created.find((artifact) => artifact.type === type && artifact.title.endsWith("inline content"));
+      expect(inline).toBeDefined();
+      const inlineMedia = await requestRawBuffer(app, `/api/artifacts/${inline!.id}/media`);
+      expect(inlineMedia.status).toBe(200);
+      expect(inlineMedia.headers["content-type"]).toContain(contentMimeFor(type));
+      expect(inlineMedia.body.toString()).toBe(`Inline ${type} route evidence for FN-7764`);
+
+      const binary = created.find((artifact) => artifact.type === type && artifact.title.endsWith("binary media"));
+      expect(binary).toBeDefined();
+      const binaryMedia = await requestRawBuffer(app, `/api/artifacts/${binary!.id}/media`);
+      expect(binaryMedia.status).toBe(200);
+      expect(binaryMedia.headers["content-type"]).toBe(BINARY_MEDIA_BY_TYPE[type].mimeType);
+      expect(binaryMedia.body).toEqual(BINARY_MEDIA_BY_TYPE[type].bytes);
+
+      const uri = created.find((artifact) => artifact.type === type && artifact.title.endsWith("uri reference"));
+      expect(uri).toBeDefined();
+      const missingUriMedia = await REQUEST(app, "GET", `/api/artifacts/${uri!.id}/media`);
+      expect(missingUriMedia.status).toBe(404);
+    }
+
+    const registryMedia = await requestRawBuffer(app, `/api/artifacts/${registryOnly.id}/media`);
+    expect(registryMedia.status).toBe(200);
+    expect(registryMedia.headers["content-type"]).toBe("application/octet-stream");
+    expect(registryMedia.body).toEqual(Buffer.from("registry-level-other-bytes"));
   });
 
   /*

@@ -1,5 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Artifact, ArtifactWithTask, MessageStore, TaskStore } from "@fusion/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Artifact, ArtifactType, ArtifactWithTask, MessageStore, TaskStore } from "@fusion/core";
 import { DASHBOARD_USER_ID } from "@fusion/core";
 import {
   createArtifactListTool,
@@ -77,6 +80,39 @@ async function runTool(
 function getText(result: any): string {
   const first = result?.content?.[0];
   return first?.type === "text" ? first.text : "";
+}
+
+
+
+type RealTaskStoreModule = typeof import("@fusion/core");
+
+async function createRealTaskStore() {
+  const { TaskStore: RealTaskStore } = await vi.importActual<RealTaskStoreModule>("@fusion/core");
+  const rootDir = mkdtempSync(join(tmpdir(), "agent-artifact-tools-root-"));
+  const globalDir = mkdtempSync(join(tmpdir(), "agent-artifact-tools-global-"));
+  const store = new RealTaskStore(rootDir, globalDir, { inMemoryDb: true });
+  await store.init();
+  return { store, rootDir, globalDir };
+}
+
+function getArtifactId(result: any): string {
+  const artifactId = result?.details?.artifactId;
+  expect(typeof artifactId).toBe("string");
+  return artifactId;
+}
+
+const ARTIFACT_TYPES: ArtifactType[] = ["document", "image", "video", "audio", "other"];
+
+function mimeFor(type: ArtifactType, variant: "content" | "uri" | "dataBase64"): string {
+  if (variant === "dataBase64") return "image/png";
+  if (variant === "content") return type === "document" ? "text/markdown" : "text/plain";
+  switch (type) {
+    case "document": return "application/pdf";
+    case "image": return "image/png";
+    case "video": return "video/mp4";
+    case "audio": return "audio/mpeg";
+    case "other": return "application/octet-stream";
+  }
 }
 
 function findChatTool(name: "fn_artifact_register" | "fn_artifact_list" | "fn_artifact_view", store: TaskStore, messageStore?: MessageStore) {
@@ -585,5 +621,107 @@ describe("artifact tool factory integration", () => {
     expect(registerArtifact).toHaveBeenCalledTimes(1);
     expect(listArtifacts).toHaveBeenCalledTimes(1);
     expect(getArtifact).toHaveBeenCalledTimes(1);
+  });
+});
+
+
+describe("artifact tools real-store create/list/view invariant", () => {
+  let realStore: TaskStore | null = null;
+  let rootDir: string | null = null;
+  let globalDir: string | null = null;
+
+  afterEach(() => {
+    realStore?.close();
+    if (rootDir) rmSync(rootDir, { recursive: true, force: true });
+    if (globalDir) rmSync(globalDir, { recursive: true, force: true });
+    realStore = null;
+    rootDir = null;
+    globalDir = null;
+  });
+
+  /*
+   * FNXC:ArtifactRegistry 2026-07-09-17:35:
+   * FN-7764 exists because operators need concrete confidence that artifact creation and viewing work for every supported type and payload variant, not only the previously verified image path. This real-store matrix pins the agent and dashboard-chat tool contract from registration through list/view output so future changes cannot silently break non-image artifact discovery.
+   */
+  it("creates every artifact type and supported variant through agent and chat tools, then lists and views them", async () => {
+    const created = await createRealTaskStore();
+    realStore = created.store as unknown as TaskStore;
+    rootDir = created.rootDir;
+    globalDir = created.globalDir;
+    const task = await realStore.createTask({ title: "FN-7764 artifact matrix", description: "Exercise artifact tool invariant" });
+    const agentRegister = createArtifactRegisterTool(realStore, AUTHOR_ID);
+    const agentList = createArtifactListTool(realStore);
+    const agentView = createArtifactViewTool(realStore);
+    const chatRegister = findChatTool("fn_artifact_register", realStore);
+    const expected: Array<{ id: string; type: ArtifactType; title: string; variant: "content" | "uri" | "dataBase64"; authorId: string }> = [];
+
+    for (const surface of ["agent", "chat"] as const) {
+      for (const type of ARTIFACT_TYPES) {
+        const contentTitle = `${surface} ${type} inline content`;
+        const contentParams = {
+          type,
+          title: contentTitle,
+          description: `${type} inline artifact created by ${surface}`,
+          mimeType: mimeFor(type, "content"),
+          content: `# ${contentTitle}\nInline ${type} evidence for FN-7764.`,
+          ...(surface === "agent" ? { taskId: task.id } : { task_id: task.id }),
+        };
+        const contentResult = await runTool(surface === "agent" ? agentRegister : chatRegister, `${surface}-${type}-content`, contentParams);
+        expect(getText(contentResult)).toContain("Registered artifact");
+        expected.push({ id: getArtifactId(contentResult), type, title: contentTitle, variant: "content", authorId: surface === "agent" ? AUTHOR_ID : "dashboard-chat" });
+
+        const uriTitle = `${surface} ${type} uri reference`;
+        const uriParams = {
+          type,
+          title: uriTitle,
+          description: `${type} uri artifact created by ${surface}`,
+          mimeType: mimeFor(type, "uri"),
+          uri: `artifacts/${surface}-${type}-reference.bin`,
+          ...(surface === "agent" ? { taskId: task.id } : { task_id: task.id }),
+        };
+        const uriResult = await runTool(surface === "agent" ? agentRegister : chatRegister, `${surface}-${type}-uri`, uriParams);
+        expect(getText(uriResult)).toContain("Registered artifact");
+        expected.push({ id: getArtifactId(uriResult), type, title: uriTitle, variant: "uri", authorId: surface === "agent" ? AUTHOR_ID : "dashboard-chat" });
+      }
+
+      const imageTitle = `${surface} image dataBase64 bytes`;
+      const dataResult = await runTool(surface === "agent" ? agentRegister : chatRegister, `${surface}-image-dataBase64`, {
+        type: "image",
+        title: imageTitle,
+        description: `PNG bytes created by ${surface}`,
+        mimeType: "image/png",
+        dataBase64: PNG_IMAGE_BYTES.toString("base64"),
+        ...(surface === "agent" ? { taskId: task.id } : { task_id: task.id }),
+      });
+      expect(getText(dataResult)).toContain("Registered artifact");
+      expected.push({ id: getArtifactId(dataResult), type: "image", title: imageTitle, variant: "dataBase64", authorId: surface === "agent" ? AUTHOR_ID : "dashboard-chat" });
+    }
+
+    const listResult = await runTool(agentList, "matrix-list-all", { taskId: task.id, limit: 50 });
+    const listText = getText(listResult);
+    for (const item of expected) {
+      expect(listText).toContain(`${item.id} [${item.type}] ${item.title}`);
+      const viewResult = await runTool(agentView, `view-${item.id}`, { id: item.id });
+      const viewText = getText(viewResult);
+      expect(viewText).toContain(`Artifact: ${item.title}`);
+      expect(viewText).toContain(`Type: ${item.type}`);
+      expect(viewText).toContain(`Author: ${item.authorId} (agent)`);
+      expect(viewText).toContain(`Task: ${task.id}`);
+      if (item.variant === "content") {
+        expect(viewText).toContain(`Inline ${item.type} evidence for FN-7764.`);
+      } else {
+        expect(viewText).toContain("URI: artifacts/");
+        expect(viewText).not.toContain("Inline ");
+      }
+    }
+
+    const imageFilter = await runTool(agentList, "matrix-list-image", { taskId: task.id, type: "image", limit: 20 });
+    const imageText = getText(imageFilter);
+    expect(imageText).toContain("[image]");
+    expect(imageText).not.toContain("[audio]");
+
+    const chatFilter = await runTool(agentList, "matrix-list-chat", { taskId: task.id, authorId: "dashboard-chat", search: "dataBase64", limit: 10 });
+    expect(getText(chatFilter)).toContain("dashboard-chat");
+    expect(getText(chatFilter)).toContain("image dataBase64 bytes");
   });
 });
