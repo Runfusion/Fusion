@@ -587,7 +587,17 @@ visually hidden (kept in the DOM for form semantics and keyboard selection), the
 selected state via border/ring, and focus-visible on the hidden radio draws the focus ring on the card.
 Descriptions render in sentence case — the global ".form-group label" uppercase transform is
 explicitly neutralized here because each option card is itself a <label> inside a .form-group.
+
+FNXC:SetupWizard 2026-07-10-16:40:
+The neutralization must out-specify the global ".form-group label" rule (0,1,1); a bare
+".setup-wizard-isolation-option" (0,1,0) silently lost the cascade and the cards still rendered
+ALL-CAPS. Keep the dedicated higher-specificity rule below in sync if the card class changes.
 */
+.setup-wizard-manual .form-group label.setup-wizard-isolation-option {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .setup-wizard-isolation-option {
   position: relative;
   display: flex;
