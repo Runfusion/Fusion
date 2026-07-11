@@ -201,7 +201,8 @@ function TaskGroup({ taskId, taskTitle, documents, taskColumn, onOpenTask, rende
 
 export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifactTaskDetail, onSendSelectionToTask }: DocumentsViewProps) {
   const { t } = useTranslation("app");
-  const [activeTab, setActiveTab] = useState<DocumentsTab>("project");
+  // FNXC:ArtifactsView 2026-07-11-11:30: Artifacts is the first tab and the landing tab — the view is the artifact gallery first, with project files and task documents as secondary tabs.
+  const [activeTab, setActiveTab] = useState<DocumentsTab>("artifacts");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<MarkdownFileEntry | null>(null);
   const [showHiddenProjectFiles, setShowHiddenProjectFiles] = useState(false);
@@ -210,7 +211,6 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   const [fileError, setFileError] = useState<string | null>(null);
   const [isMobile, setIsMobile] = useState(false);
   const requestIdRef = useRef(0);
-  const initialTabSetRef = useRef(false);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
   const plainPreviewRef = useRef<HTMLPreElement>(null);
   // Markdown render toggle for project file preview
@@ -267,8 +267,7 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   }, []);
 
   useEffect(() => {
-    initialTabSetRef.current = false;
-    setActiveTab("project");
+    setActiveTab("artifacts");
     setSelectedFile(null);
     setShowHiddenProjectFiles(false);
     setFileContent(null);
@@ -277,22 +276,6 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
     setRenderProjectMarkdown(false);
     setTaskDocMarkdownStates(new Map());
   }, [projectId]);
-
-  useEffect(() => {
-    if (initialTabSetRef.current || documentsLoading || projectFilesLoading || artifactsLoading) {
-      return;
-    }
-
-    if (projectFiles.length > 0) {
-      setActiveTab("project");
-    } else if (documents.length > 0) {
-      setActiveTab("tasks");
-    } else if (artifacts.length > 0) {
-      setActiveTab("artifacts");
-    }
-
-    initialTabSetRef.current = true;
-  }, [artifacts.length, artifactsLoading, documents.length, documentsLoading, projectFiles.length, projectFilesLoading]);
 
   const groupedDocuments = useMemo(() => {
     const groups = new Map<string, TaskDocumentWithTask[]>();
@@ -481,6 +464,20 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
 
         <div className="documents-controls-row">
           <div className="documents-tab-bar" role="tablist" aria-label={t("documents.sectionsLabel", "Documents sections")}>
+            {/*
+              FNXC:ArtifactRegistry 2026-07-11-11:30:
+              Artifacts leads the tab bar (and is the landing tab) — the view is the artifact gallery first; project files and task documents are secondary tabs.
+            */}
+            <button
+              className={`btn documents-tab${activeTab === "artifacts" ? " active" : ""}`}
+              role="tab"
+              aria-selected={activeTab === "artifacts"}
+              aria-label={t("documents.showArtifacts", "Show artifacts")}
+              onClick={() => handleTabChange("artifacts")}
+            >
+              {t("documents.artifactsTab", "Artifacts")}
+              <span className="documents-tab-count">{artifacts.length}</span>
+            </button>
             <button
               className={`btn documents-tab${activeTab === "project" ? " active" : ""}`}
               role="tab"
@@ -500,20 +497,6 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
             >
               {t("documents.taskDocumentsTab", "Task Documents")}
               <span className="documents-tab-count">{groupedDocuments.length}</span>
-            </button>
-            {/*
-              FNXC:ArtifactRegistry 2026-06-21-04:46:
-              The Documents navigation has one canonical Artifacts tab so media produced by any agent is discoverable without adding another dashboard destination.
-            */}
-            <button
-              className={`btn documents-tab${activeTab === "artifacts" ? " active" : ""}`}
-              role="tab"
-              aria-selected={activeTab === "artifacts"}
-              aria-label={t("documents.showArtifacts", "Show artifacts")}
-              onClick={() => handleTabChange("artifacts")}
-            >
-              {t("documents.artifactsTab", "Artifacts")}
-              <span className="documents-tab-count">{artifacts.length}</span>
             </button>
           </div>
 

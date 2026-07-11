@@ -300,10 +300,19 @@ describe("DocumentsView", () => {
     window.innerWidth = originalInnerWidth;
   });
 
-  it("renders project files tab with markdown file list", () => {
+  /*
+  FNXC:ArtifactsView 2026-07-11-11:30:
+  The view lands on the Artifacts tab (Artifacts-first ordering); Project Files is an explicit click away.
+  */
+  it("lands on the artifacts tab and shows project files after switching tabs", () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
     expect(screen.getByRole("heading", { name: "Artifacts" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /show artifacts/i })).toHaveAttribute("aria-selected", "true");
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs[0]).toHaveAccessibleName(/show artifacts/i);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
     expect(screen.getByRole("tab", { name: /show project markdown files/i })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("button", { name: "Open README.md" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open docs/guide.md" })).toBeInTheDocument();
@@ -322,6 +331,8 @@ describe("DocumentsView", () => {
     }));
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     expect(screen.queryByRole("button", { name: "Open .hidden/notes.md" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /show hidden project files/i })).toHaveAttribute("aria-pressed", "false");
@@ -344,9 +355,8 @@ describe("DocumentsView", () => {
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
 
     expect(screen.getByText("KB-001")).toBeInTheDocument();
     expect(screen.getByText("KB-002")).toBeInTheDocument();
@@ -379,9 +389,8 @@ describe("DocumentsView", () => {
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
 
     const doneGroup = screen.getByRole("button", { name: /expand documents for task KB-DONE/i }).closest(".documents-group");
     const todoGroup = screen.getByRole("button", { name: /expand documents for task KB-TODO/i }).closest(".documents-group");
@@ -423,9 +432,8 @@ describe("DocumentsView", () => {
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
 
     const doneGroup = screen.getByRole("button", { name: /expand documents for task KB-DONE/i }).closest(".documents-group") as HTMLElement;
     const status = within(doneGroup).getByLabelText("Task status: Done");
@@ -497,7 +505,7 @@ describe("DocumentsView", () => {
     expect(onOpenDetail).not.toHaveBeenCalled();
   });
 
-  it("opens and dismisses the image and video artifact lightbox by click keyboard close backdrop and escape", () => {
+  it("opens image and video viewers in a draggable resizable floating window dismissed by close button and escape", () => {
     mockUseArtifacts.mockReturnValue({
       artifacts: mockArtifacts,
       loading: false,
@@ -505,14 +513,20 @@ describe("DocumentsView", () => {
       refresh: vi.fn().mockResolvedValue(undefined),
     });
 
-    const { container } = render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
-
+    /*
+    FNXC:ArtifactsGallery 2026-07-11-11:30:
+    Viewers host in the shared FloatingWindow: draggable (drag/resize handle testids) and resizable,
+    closed by the close button or Escape. The floating overlay is intentionally click-through
+    (non-blocking windows), so backdrop-click dismissal and body scroll locking are gone by design.
+    The FloatingWindow portals to document.body, so media queries use document, not the container.
+    */
     fireEvent.click(screen.getByRole("button", { name: "Expand Image artifact" }));
     let dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(within(dialog).getByRole("img", { name: "Image artifact" })).toHaveAttribute("src", "/api/artifacts/artifact-image/media");
-    expect(document.body.style.overflow).toBe("hidden");
+    expect(screen.getByTestId("floating-window-artifact-media-artifact-image")).toBeInTheDocument();
+    expect(screen.getByTestId("floating-window-resize-se")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Close artifact preview" }));
     expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
@@ -520,16 +534,15 @@ describe("DocumentsView", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Expand Image artifact" }), { key: "Enter" });
     dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(within(dialog).getByRole("img", { name: "Image artifact" })).toBeInTheDocument();
-    fireEvent.click(dialog);
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
 
     fireEvent.keyDown(screen.getByRole("button", { name: "Expand Video artifact" }), { key: " " });
     dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(within(dialog).getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
-    expect(container.querySelector(".artifacts-gallery-viewer-media-frame video")).toHaveAttribute("controls");
+    expect(document.querySelector(".artifacts-gallery-viewer-media-frame video")).toHaveAttribute("controls");
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
-    expect(document.body.style.overflow).toBe("");
   });
 
   it("renders artifacts empty loading error retry and mobile gallery states", async () => {
@@ -641,15 +654,16 @@ describe("DocumentsView", () => {
     });
     mockFetchArtifact.mockResolvedValue(htmlArtifact);
 
-    const { container } = render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
     fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
 
     const htmlCard = screen.getByRole("article", { name: "Artifact Login mockup" });
     fireEvent.click(within(htmlCard).getByRole("button", { name: "Open Login mockup" }));
     const dialog = await screen.findByRole("dialog", { name: "Document artifact viewer" });
 
+    // The FloatingWindow portals to document.body, so query the document rather than the render container.
     await waitFor(() => {
-      const iframe = container.querySelector(".artifacts-gallery-viewer-html");
+      const iframe = document.querySelector(".artifacts-gallery-viewer-html");
       expect(iframe).toBeInTheDocument();
       expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
       expect(iframe).toHaveAttribute("srcdoc", "<h1>Login mock</h1>");
@@ -657,12 +671,14 @@ describe("DocumentsView", () => {
 
     // The toggle shows the CURRENT mode (matching the Markdown/Plain convention): "Preview" while previewing.
     fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
-    expect(container.querySelector(".artifacts-gallery-viewer-html")).not.toBeInTheDocument();
+    expect(document.querySelector(".artifacts-gallery-viewer-html")).not.toBeInTheDocument();
     expect(within(dialog).getByText("<h1>Login mock</h1>")).toBeInTheDocument();
   });
 
   it("clicking project file shows content", async () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
 
@@ -681,6 +697,8 @@ describe("DocumentsView", () => {
   */
   it("shows a Read-only badge in the project file preview header in plain and markdown modes", async () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
     await screen.findByText(/Hello docs/);
@@ -695,6 +713,8 @@ describe("DocumentsView", () => {
     mockSelectionRect();
     const onSendSelectionToTask = vi.fn();
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
     const plainPreview = await screen.findByText(/Hello docs/);
@@ -713,6 +733,8 @@ describe("DocumentsView", () => {
     mockSelectionRect();
     const onSendSelectionToTask = vi.fn();
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
     await screen.findByText(/Hello docs/);
@@ -756,9 +778,8 @@ describe("DocumentsView", () => {
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.change(screen.getByRole("textbox", { name: /search task documents/i }), {
       target: { value: "alpha" },
@@ -789,6 +810,8 @@ describe("DocumentsView", () => {
     });
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     expect(screen.getByText(/failed to load project files/i)).toBeInTheDocument();
 
@@ -816,6 +839,8 @@ describe("DocumentsView", () => {
     });
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     expect(screen.getByText("Loading project markdown files…")).toBeInTheDocument();
 
@@ -828,6 +853,8 @@ describe("DocumentsView", () => {
     window.innerWidth = 600;
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
 
@@ -849,9 +876,8 @@ describe("DocumentsView", () => {
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
 
     fireEvent.click(screen.getByRole("button", { name: /open task KB-001/i }));
 
@@ -865,6 +891,8 @@ describe("DocumentsView", () => {
     mockFetchWorkspaceFileContent.mockRejectedValue(new Error("cannot read file"));
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
 
@@ -880,6 +908,8 @@ describe("DocumentsView", () => {
     });
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
 
@@ -900,6 +930,8 @@ describe("DocumentsView", () => {
     });
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
 
@@ -930,6 +962,8 @@ describe("DocumentsView", () => {
     });
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
 
     // Toggle project file to markdown mode
     fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
@@ -976,9 +1010,8 @@ describe("DocumentsView", () => {
 
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 
-    await waitFor(() => {
-      expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
-    });
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    expect(screen.getByRole("tab", { name: /show task documents/i })).toHaveAttribute("aria-selected", "true");
 
     // Expand task group
     fireEvent.click(screen.getByRole("button", { name: /expand documents for task KB-001/i }));

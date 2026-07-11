@@ -865,14 +865,26 @@ The artifacts tab is a thumbnail-first responsive media gallery for agent-create
     padding: 0 var(--space-md) var(--space-md);
   }
 
+  /*
+  FNXC:ArtifactsView 2026-07-11-11:30:
+  On mobile the two-line-wrapping "Project Files"/"Task Documents" tabs grew past 44px while the
+  one-line Artifacts tab stayed at 44px, so the buttons rendered at mismatched sizes. Stretch the
+  row, forbid label wrapping, and pin every tab to the standard 44px mobile control height; the row
+  scrolls horizontally when the labels do not fit.
+  */
   .documents-tab-bar {
     width: 100%;
+    align-items: stretch;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .documents-tab {
-    flex: 1;
+    flex: 1 0 auto;
     justify-content: center;
+    height: 44px;
     min-height: 44px;
+    white-space: nowrap;
   }
 
   .documents-hidden-toggle {
