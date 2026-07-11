@@ -1813,8 +1813,8 @@ async function fetchZaiUsage(authStorage?: AuthStorageLike): Promise<ProviderUsa
 // ── Cursor fetcher ──────────────────────────────────────────────────────────
 
 const CURSOR_ADMIN_SPEND_ENDPOINT = "https://api.cursor.com/teams/spend";
-const CURSOR_ADMIN_API_KEY_ENV_VARS = ["CURSOR_ADMIN_API_KEY", "CURSOR_API_KEY"];
-const CURSOR_API_KEY_PROVIDER_IDS = ["cursor", "cursor-cli", "cursor-agent"];
+const CURSOR_API_KEY_ENV_VAR = "CURSOR_API_KEY";
+const CURSOR_API_KEY_PROVIDER_ID = "cursor";
 const CURSOR_MONTHLY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type CursorAccountInfo = {
@@ -1822,39 +1822,17 @@ type CursorAccountInfo = {
   plan?: string;
 };
 
-async function readCursorApiKey(authStorage?: AuthStorageLike): Promise<string | null> {
-  for (const envName of CURSOR_ADMIN_API_KEY_ENV_VARS) {
-    const envKey = process.env[envName];
-    if (typeof envKey === "string" && envKey.trim().length > 0) {
-      return envKey.trim();
-    }
+/*
+FNXC:UsageProviders 2026-07-11-00:00:
+Cursor Admin API usage metering needs a real operator-reachable credential path, but Cursor CLI runtime auth remains OAuth/session-based through `cursor-agent status` and is not an Admin API key. Use Fusion's documented `CURSOR_API_KEY` environment variable first, mirroring the `GROK_API_KEY` precedent, then the single `cursor` authStorage fallback for tests/imported credentials. Cursor documents Basic Auth with an API key for the Admin API and `POST /teams/spend`, but does not document a local Admin API key file, so no file fallback is invented here.
+*/
+export async function readCursorApiKey(authStorage?: AuthStorageLike): Promise<string | null> {
+  const envKey = process.env[CURSOR_API_KEY_ENV_VAR];
+  if (typeof envKey === "string" && envKey.trim().length > 0) {
+    return envKey.trim();
   }
 
-  try {
-    authStorage?.reload();
-  } catch {
-    // Reload may fail if no storage - ignore.
-  }
-
-  for (const providerId of CURSOR_API_KEY_PROVIDER_IDS) {
-    try {
-      const apiKey = await authStorage?.getApiKey?.(providerId);
-      if (apiKey) return apiKey;
-    } catch {
-      // Try the next provider id.
-    }
-
-    try {
-      const entry = authStorage?.get?.(providerId);
-      if (entry && (entry.type === "api_key" || entry.type === "key") && entry.key) {
-        return entry.key;
-      }
-    } catch {
-      // Try the next provider id.
-    }
-  }
-
-  return null;
+  return readConfiguredApiKey(CURSOR_API_KEY_PROVIDER_ID, authStorage);
 }
 
 async function readCursorAccountInfo(): Promise<CursorAccountInfo> {
@@ -1951,7 +1929,7 @@ function selectCursorSpendRow(rows: Record<string, unknown>[], email?: string): 
   return rows.length === 1 ? rows[0] : null;
 }
 
-async function fetchCursorUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
+export async function fetchCursorUsage(authStorage?: AuthStorageLike): Promise<ProviderUsage> {
   const usage: ProviderUsage = {
     name: "Cursor",
     icon: "🟣",
@@ -1961,7 +1939,7 @@ async function fetchCursorUsage(authStorage?: AuthStorageLike): Promise<Provider
 
   const apiKey = await readCursorApiKey(authStorage);
   if (!apiKey) {
-    usage.error = "No Cursor Admin API key — set CURSOR_ADMIN_API_KEY (or CURSOR_API_KEY) in the Fusion dashboard environment";
+    usage.error = "No Cursor Admin API key — set CURSOR_API_KEY in the Fusion dashboard environment";
     return usage;
   }
 
@@ -1971,8 +1949,8 @@ async function fetchCursorUsage(authStorage?: AuthStorageLike): Promise<Provider
 
   try {
     /*
-    FNXC:UsageProviders 2026-07-10-00:00:
-    Cursor exposes meterable team spend through the documented Admin API `POST https://api.cursor.com/teams/spend`, authenticated with Basic auth using the API key as the username (`-u YOUR_API_KEY:`). Fusion resolves that key from `CURSOR_ADMIN_API_KEY` (preferred) or the documented `CURSOR_API_KEY` compatibility alias; Cursor CLI OAuth/session auth is not an Admin API credential and cannot reach this endpoint by itself. The response documents `teamMemberSpend[].overallSpendCents`, `spendCents`, `hardLimitOverrideDollars`, `monthlyLimitDollars`, `email`, and `subscriptionCycleStart`; no personal CLI usage endpoint or direct reset timestamp is documented, so personal/session-only Cursor logins stay `no-auth` and the reset is derived from the monthly cycle start.
+    FNXC:UsageProviders 2026-07-11-00:00:
+    Cursor exposes meterable team spend through the documented Admin API `POST https://api.cursor.com/teams/spend`, authenticated with Basic auth using the API key as the username (`-u YOUR_API_KEY:`). Fusion resolves that key from the documented `CURSOR_API_KEY` environment variable; Cursor CLI OAuth/session auth is not an Admin API credential and cannot reach this endpoint by itself. The response documents `teamMemberSpend[].overallSpendCents`, `spendCents`, `hardLimitOverrideDollars`, `monthlyLimitDollars`, `email`, and `subscriptionCycleStart`; no personal CLI usage endpoint or direct reset timestamp is documented, so personal/session-only Cursor logins stay `no-auth` and the reset is derived from the monthly cycle start.
     */
     const body: Record<string, unknown> = { page: 1, pageSize: 500 };
     if (account.email) body.searchTerm = account.email;

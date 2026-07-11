@@ -35,6 +35,8 @@ import {
   withTimeout,
   CLAUDE_FETCH_TIMEOUT_MS,
   _clearRefreshedToken,
+  readCursorApiKey,
+  fetchCursorUsage,
 } from "../usage.js";
 
 // Mock the https module
@@ -92,7 +94,6 @@ describe("usage", () => {
     vi.stubEnv("HOME", "/home/testuser");
     vi.stubEnv("CODEX_HOME", "");
     vi.stubEnv("GROK_API_KEY", "");
-    vi.stubEnv("CURSOR_ADMIN_API_KEY", "");
     vi.stubEnv("CURSOR_API_KEY", "");
   });
 
@@ -3255,6 +3256,45 @@ describe("usage", () => {
     });
   });
 
+  describe("readCursorApiKey", () => {
+    const cursorAuthStorage = (apiKey: string) => ({
+      reload: vi.fn(),
+      hasAuth: vi.fn((provider: string) => provider === "cursor"),
+      getApiKey: vi.fn((provider: string) => provider === "cursor" ? apiKey : null),
+      get: vi.fn(),
+    });
+
+    it("resolves a trimmed CURSOR_API_KEY without injected authStorage", async () => {
+      vi.stubEnv("CURSOR_API_KEY", "  cursor-env-key  ");
+
+      await expect(readCursorApiKey()).resolves.toBe("cursor-env-key");
+    });
+
+    it("returns null when CURSOR_API_KEY is unset or blank and no authStorage key exists", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      vi.stubEnv("CURSOR_API_KEY", "   ");
+
+      await expect(readCursorApiKey()).resolves.toBeNull();
+    });
+
+    it("resolves the documented cursor authStorage api-key entry", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+      const authStorage = cursorAuthStorage("cursor-storage-key");
+
+      await expect(readCursorApiKey(authStorage)).resolves.toBe("cursor-storage-key");
+      expect(authStorage.reload).toHaveBeenCalled();
+      expect(authStorage.getApiKey).toHaveBeenCalledWith("cursor");
+    });
+
+    it("prefers CURSOR_API_KEY over authStorage", async () => {
+      vi.stubEnv("CURSOR_API_KEY", "cursor-env-key");
+      const authStorage = cursorAuthStorage("cursor-storage-key");
+
+      await expect(readCursorApiKey(authStorage)).resolves.toBe("cursor-env-key");
+      expect(authStorage.getApiKey).not.toHaveBeenCalled();
+    });
+  });
+
   describe("fetchCursorUsage (via fetchAllProviderUsage)", () => {
     const cursorAuthStorage = (apiKey: string) => ({
       reload: vi.fn(),
@@ -3312,7 +3352,7 @@ describe("usage", () => {
         ],
       });
 
-      vi.stubEnv("CURSOR_ADMIN_API_KEY", "cursor-admin-env-key");
+      vi.stubEnv("CURSOR_API_KEY", "cursor-admin-env-key");
 
       const providers = await fetchAllProviderUsage();
       const cursor = providers.find((p) => p.name === "Cursor")!;
@@ -3364,6 +3404,15 @@ describe("usage", () => {
       const cursor = providers.find((p) => p.name === "Cursor");
 
       expect(cursor).toBeUndefined();
+    });
+
+    it("names CURSOR_API_KEY in the credential-absent message", async () => {
+      mockReadFile.mockImplementation(async () => Promise.reject(new Error("File not found")));
+
+      const cursor = await fetchCursorUsage();
+
+      expect(cursor.status).toBe("no-auth");
+      expect(cursor.error).toBe("No Cursor Admin API key — set CURSOR_API_KEY in the Fusion dashboard environment");
     });
 
     it("omits Cursor when the spend response has no meterable row", async () => {
