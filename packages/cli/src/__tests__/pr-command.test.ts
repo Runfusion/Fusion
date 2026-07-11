@@ -7,8 +7,27 @@ import { resolve } from "node:path";
 // engine's releaseHeldTaskByEvent primitive — the EXACT path the dashboard U7
 // routes use (register-integrated-routers.ts). Both are mocked so each
 // subcommand can be asserted to route to the right store/engine path.
+// FNXC:CliBoardMutation 2026-07-09-00:00: pr.ts imports closeProjectStore +
+// asLocalProjectContext from project-context (every run* subcommand closes its
+// resolved store in a finally; the CWD-fallback branch wraps an uncached store
+// via asLocalProjectContext). Stub both so the whole-module mock stays accurate
+// and does not break when pr.ts newly imports another project-context export.
 vi.mock("../project-context.js", () => ({
   resolveProject: vi.fn(),
+  closeProjectStore: vi.fn(async (context: { store: { close?: () => unknown } }) => {
+    try {
+      await context.store.close?.();
+    } catch {
+      // best-effort, mirrors production closeProjectStore
+    }
+  }),
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
 }));
 
 const releaseHeldTaskByEvent = vi.fn();

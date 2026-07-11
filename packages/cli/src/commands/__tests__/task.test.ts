@@ -154,6 +154,17 @@ vi.mock("../../project-context.js", () => ({
       // best-effort, matches real closeProjectStore
     }
   }),
+  // FNXC:CliBoardMutation 2026-07-09-00:00: FN-7738's runTaskPrCreate routes
+  // through pr.ts's getPrContext, whose CWD-fallback branch wraps an uncached
+  // store via asLocalProjectContext. Stub it so the whole-module mock covers
+  // every project-context export task.ts/pr.ts import.
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
 }));
 
 import { createInterface } from "node:readline/promises";
