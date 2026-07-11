@@ -1064,6 +1064,36 @@ describe("MissionAutopilot", () => {
       expect(ap.isWatching("M-FOUR")).toBe(false);
     });
 
+    it("normalizes complete missions that still have autopilot watching", async () => {
+      const mission = createMockMission({
+        id: "M-COMPLETE",
+        status: "complete",
+        autoAdvance: true,
+        autopilotEnabled: true,
+        autopilotState: "watching",
+      });
+      const store = createMockMissionStore([mission]);
+      const ap = new MissionAutopilot(taskStore as any, store as any, { scheduler });
+
+      await ap.recoverMissions(store as any);
+
+      expect(store.updateMission).toHaveBeenCalledWith(
+        "M-COMPLETE",
+        expect.objectContaining({
+          autoAdvance: false,
+          autopilotEnabled: false,
+          autopilotState: "inactive",
+        }),
+      );
+      expect(store.logMissionEvent).toHaveBeenCalledWith(
+        "M-COMPLETE",
+        "autopilot_disabled",
+        expect.stringContaining("Autopilot disabled for already-complete mission"),
+        expect.objectContaining({ source: "recoverMissions" }),
+      );
+      expect(ap.isWatching("M-COMPLETE")).toBe(false);
+    });
+
     it("recovers missions stuck in activating state", async () => {
       const mission = createMockMission({ autopilotState: "activating" });
       const store = createMockMissionStore([mission]);

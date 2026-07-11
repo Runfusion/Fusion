@@ -528,9 +528,7 @@ export class MissionAutopilot {
         { milestoneCount: milestones.length },
       );
       this.updateActivity(missionId);
-      this.setAutopilotState(missionId, "inactive");
-      this.watchedMissions.delete(missionId);
-      this.perMissionTaskRetries.delete(missionId);
+      this.normalizeCompleteMissionAutopilotState(missionId, "checkMissionCompletion");
       return true;
     }
 
@@ -580,8 +578,13 @@ export class MissionAutopilot {
       const missions = this.missionStore.listMissions();
 
       for (const mission of missions) {
+        if (mission.status === "complete") {
+          this.normalizeCompleteMissionAutopilotState(mission.id, "poll");
+          continue;
+        }
+
         // Auto-watch missions with autopilot enabled that aren't being watched
-        if (mission.autopilotEnabled && !this.isWatching(mission.id) && mission.status !== "complete" && mission.status !== "archived") {
+        if (mission.autopilotEnabled && !this.isWatching(mission.id) && mission.status !== "archived") {
           autopilotLog.log(`Poll: auto-watching mission ${mission.id}`);
           this.watchMission(mission.id);
         }
@@ -776,7 +779,12 @@ export class MissionAutopilot {
       let inconsistencyFixes = 0;
 
       for (const mission of missions) {
-        if (!mission.autopilotEnabled || mission.status === "complete" || mission.status === "archived") {
+        if (mission.status === "complete") {
+          this.normalizeCompleteMissionAutopilotState(mission.id, "recoverMissions");
+          continue;
+        }
+
+        if (!mission.autopilotEnabled || mission.status === "archived") {
           continue;
         }
 
@@ -818,6 +826,37 @@ export class MissionAutopilot {
     } catch (err) {
       autopilotLog.error("Mission recovery failed:", err);
     }
+  }
+
+  private normalizeCompleteMissionAutopilotState(missionId: string, source: string): void {
+    const mission = this.missionStore.getMission(missionId);
+    if (!mission) {
+      return;
+    }
+
+    this.watchedMissions.delete(missionId);
+    this.perMissionTaskRetries.delete(missionId);
+
+    if (!mission.autopilotEnabled && !mission.autoAdvance && mission.autopilotState === "inactive") {
+      return;
+    }
+
+    this.missionStore.updateMission(missionId, {
+      autoAdvance: false,
+      autopilotEnabled: false,
+      autopilotState: "inactive",
+    });
+    this.logMissionEventSafe(
+      missionId,
+      "autopilot_disabled",
+      `Autopilot disabled for already-complete mission ${mission.title}`,
+      {
+        source,
+        previousAutoAdvance: mission.autoAdvance,
+        previousAutopilotEnabled: mission.autopilotEnabled,
+        previousAutopilotState: mission.autopilotState ?? "inactive",
+      },
+    );
   }
 
   private async reconcileMissionConsistency(

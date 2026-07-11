@@ -3073,8 +3073,18 @@ export class Scheduler {
 
         for (const slice of activeSlices) {
           const missionAutoTriageEnabled = mission.autopilotEnabled === true || mission.autoAdvance === true;
+          const supersededFixes = missionStore.reconcileSupersededGeneratedFixFeatures(slice.id);
+          if (supersededFixes.supersededCount > 0) {
+            totalFixed += supersededFixes.supersededCount;
+            schedulerLog.warn(
+              `Superseded ${supersededFixes.supersededCount} stale generated fix feature(s) during mission reconciliation for slice ${slice.id}`,
+            );
+          }
+          const features = supersededFixes.supersededCount > 0
+            ? missionStore.listFeatures(slice.id)
+            : slice.features;
 
-          for (const feature of slice.features) {
+          for (const feature of features) {
             let featureForReconciliation = feature;
             let task: Task | undefined;
             if (feature.taskId) {
