@@ -198,11 +198,12 @@ section under one line.
 /*
 FNXC:BoardComposer 2026-07-10-12:00:
 The action row is organized as two logical clusters instead of one undifferentiated wrap of chips:
-- `.quick-entry-options-group` — task options (workflow, priority, optional steps, subtask, deps,
-  models, node, agent, GitHub tracking), wrapping left-to-right with one consistent chip gap.
-- `.quick-entry-primary-group` — attach + Fast + Save; margin-left auto keeps it right-aligned so the
-  distinct Save action always ends the row (and wraps as one unit on narrow columns, never splitting
-  Save from its neighbors).
+- `.quick-entry-options-group` — task options (workflow, optional steps, subtask, deps,
+  models, node, agent), wrapping left-to-right with one consistent chip gap.
+- `.quick-entry-primary-group` — attach + GitHub tracking + Priority + Fast + Save; margin-left auto
+  keeps it right-aligned so the distinct Save action always ends the row (and wraps as one unit on
+  narrow columns, never splitting Save from its neighbors). Priority and Fast are icon-only here; the
+  priority glyph follows the shared up/high, down/low, flag/normal, alert/urgent mapping.
 Chip HEIGHT consistency is already enforced by the FN-7680/FN-7683 fixed-box rule on
 `.quick-entry-actions .btn` above (descendant selector — still applies inside these wrappers); these
 rules only own grouping/spacing/alignment.
@@ -313,6 +314,14 @@ surfaces use are untouched.
   background: var(--card-hover);
   border-color: var(--border);
   color: var(--text);
+}
+
+.quick-entry-primary-group .btn.btn-primary:not(.btn-task-create),
+.quick-entry-primary-group .btn.btn-primary:not(.btn-task-create):hover,
+.quick-entry-primary-group .btn.btn-primary:not(.btn-task-create):focus-visible {
+  background: var(--cta-bg);
+  border-color: var(--cta-border);
+  color: var(--cta-text);
 }
 
 /*

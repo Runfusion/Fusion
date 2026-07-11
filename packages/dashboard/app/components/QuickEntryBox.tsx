@@ -8,7 +8,7 @@ import type { Task, Settings, TaskPriority, ResolvedWorkflowOptionalStep, Thinki
 import type { ModelInfo, Agent, CreateTaskInput, DuplicateMatch, BoardWorkflowDefinition, NodeInfo } from "../api";
 import { checkDuplicateTasks, fetchModels, fetchSettings, updateGlobalSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../api";
 import { DuplicateWarningModal } from "./DuplicateWarningModal";
-import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Flag } from "lucide-react";
+import { Link, Paperclip, Brain, Lightbulb, ListTree, Sparkles, Save, ChevronDown, ChevronUp, ChevronRight, Bot, Server, Zap } from "lucide-react";
 import { CustomModelDropdown } from "./CustomModelDropdown";
 import { LoadingSpinner } from "./LoadingSpinner";
 import { getScopedItem, removeScopedItem, setScopedItem } from "../utils/projectStorage";
@@ -17,6 +17,7 @@ import { NodeHealthDot } from "./NodeHealthDot";
 import { ProviderIcon } from "./ProviderIcon";
 import { WorkflowOptionalStepsDropdown } from "./WorkflowOptionalStepsDropdown";
 import { WorkflowIcon } from "./WorkflowIcon";
+import { getPriorityIcon, getPriorityLabel } from "../utils/priorityIndicator";
 
 const STORAGE_KEY = "kb-quick-entry-text";
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -1636,6 +1637,10 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
   const githubToggleLabel = effectiveGithubTracking
     ? t("tasks.githubTrackingOn", "GitHub tracking ON for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") })
     : t("tasks.githubTrackingOff", "GitHub tracking OFF for next task (project default: {{default}})", { default: projectGithubTrackingDefault ? t("tasks.githubTrackingDefaultOn", "on") : t("tasks.githubTrackingDefaultOff", "off") });
+  const PriorityIcon = getPriorityIcon(priority);
+  const priorityLabel = getPriorityLabel(priority);
+  const priorityButtonLabel = t("tasks.quickEntryPriorityLabel", "Priority: {{priority}}", { priority: priorityLabel });
+  const fastToggleLabel = t("tasks.toggleFastMode", "Toggle fast execution mode");
 
   // Show expanded controls based on disclosure state (user preference), not textarea focus
   const showExpandedControls = isDisclosureExpanded;
@@ -1731,10 +1736,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
             FNXC:BoardComposer 2026-07-10-12:00:
             First-run review flagged the quick-add composer as disorganized: chips wrapped into four
             arbitrary-looking rows with Save buried mid-row. Reorganize into two logical clusters inside
-            the single wrapping action row: an options group (workflow, priority, optional steps, subtask,
-            deps, models, node, agent, GitHub tracking) and a right-aligned primary group (attach, Fast,
-            Save) so the primary Save action always reads last/right. All triggers, popovers, and test ids
-            are unchanged — this is a layout/organization pass only.
+            the single wrapping action row: an options group (workflow, optional steps, subtask, deps,
+            models, node, agent) and a right-aligned primary group (attach, GitHub tracking, Priority,
+            Fast, Save) so status controls sit beside attach and Save still reads last/right.
+
+            FNXC:QuickAddActionRow 2026-07-10-21:45:
+            Priority and Fast are icon-only in the bottom primary group: priority uses the shared
+            up/high, down/low, flag/normal, alert/urgent glyph helper, and Fast uses Zap while retaining
+            title/aria-label/test-id semantics.
             */}
             <div className="quick-entry-options-group" data-testid="quick-entry-options-group">
             {showWorkflowSelector && (
@@ -1837,73 +1846,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               </div>
             )}
 
-            <div className="priority-trigger-wrap" ref={priorityPickerRef}>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                className="btn btn-sm dep-trigger"
-                data-testid="quick-entry-priority-button"
-                onClick={() => {
-                  setShowDeps(false);
-                  setShowAgentPicker(false);
-                  setAgentPickerPosition(null);
-                  setShowNodePicker(false);
-                  setNodePickerPosition(null);
-                  setIsModelMenuOpen(false);
-                  setModelMenuPosition(null);
-                  setActiveModelSubmenu(null);
-                  setShowPriorityPicker((prev) => {
-                    const next = !prev;
-                    if (next) {
-                      updatePriorityPickerPosition();
-                    } else {
-                      setPriorityPickerPosition(null);
-                    }
-                    return next;
-                  });
-                }}
-              >
-                <Flag size={12} style={{ verticalAlign: "middle" }} />
-                {` ${priority[0].toUpperCase()}${priority.slice(1)}`}
-              </button>
-            </div>
-
-            {showPriorityPicker && portalRoot && priorityPickerPosition && createPortal(
-              <div
-                ref={priorityPickerPortalRef}
-                className="dep-dropdown priority-picker-dropdown priority-picker-dropdown--portal"
-                onMouseDown={(e) => e.preventDefault()}
-                style={{
-                  position: "fixed",
-                  top: `${priorityPickerPosition.top}px`,
-                  left: `${priorityPickerPosition.left}px`,
-                  width: `${priorityPickerPosition.width}px`,
-                  maxHeight: priorityPickerPosition.maxHeight ? `${priorityPickerPosition.maxHeight}px` : undefined,
-                  overflowY: priorityPickerPosition.maxHeight ? "auto" : undefined,
-                }}
-              >
-                <div className="dep-dropdown-search-header">{t("tasks.selectPriority", "Select priority")}</div>
-                {TASK_PRIORITIES.map((taskPriority) => {
-                  const label = `${taskPriority[0].toUpperCase()}${taskPriority.slice(1)}`;
-                  return (
-                    <div
-                      key={taskPriority}
-                      className={`dep-dropdown-item${priority === taskPriority ? " selected" : ""}`}
-                      data-testid={`quick-entry-priority-option-${taskPriority}`}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setPriority(taskPriority);
-                        setShowPriorityPicker(false);
-                        setPriorityPickerPosition(null);
-                      }}
-                    >
-                      <span className="dep-dropdown-title">{label}</span>
-                    </div>
-                  );
-                })}
-              </div>,
-              portalRoot,
-            )}
 
             <WorkflowOptionalStepsDropdown
               steps={optionalSteps}
@@ -2212,28 +2154,14 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               </div>,
               portalRoot,
             )}
-
-            <button
-              type="button"
-              className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
-              onClick={() => {
-                setGithubTrackingOverride((prev) => !(prev ?? projectGithubTrackingDefault));
-              }}
-              onMouseDown={(e) => e.preventDefault()}
-              aria-pressed={effectiveGithubTracking}
-              data-testid="quick-entry-github-toggle"
-              title={githubToggleLabel}
-              aria-label={githubToggleLabel}
-            >
-              <ProviderIcon provider="github" size="sm" />
-            </button>
             </div>
 
             {/*
             FNXC:BoardComposer 2026-07-10-12:00:
-            Primary action cluster: attach + Fast sit directly beside Save, and Save is the LAST control in
-            DOM order so it is right-aligned (margin-left auto on the cluster) and reads as the composer's
-            primary action. Save keeps its distinct `btn-task-create` styling.
+            Primary action cluster: attach + GitHub tracking + Priority + Fast sit directly beside Save,
+            and Save is the LAST control in DOM order so it is right-aligned (margin-left auto on the
+            cluster) and reads as the composer's primary action. Save keeps its distinct `btn-task-create`
+            styling.
             FNXC:QuickAddAttachments 2026-06-30-00:00 (relocated 2026-07-10): the attachment affordance
             stays adjacent to Save (now immediately to its LEFT) preserving the icon-only label, hidden
             file input trigger, and pending-count badge.
@@ -2256,14 +2184,99 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
 
               <button
                 type="button"
+                className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
+                onClick={() => {
+                  setGithubTrackingOverride((prev) => !(prev ?? projectGithubTrackingDefault));
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-pressed={effectiveGithubTracking}
+                data-testid="quick-entry-github-toggle"
+                title={githubToggleLabel}
+                aria-label={githubToggleLabel}
+              >
+                <ProviderIcon provider="github" size="sm" />
+              </button>
+
+              <div className="priority-trigger-wrap" ref={priorityPickerRef}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="btn btn-sm dep-trigger"
+                  data-testid="quick-entry-priority-button"
+                  title={priorityButtonLabel}
+                  aria-label={priorityButtonLabel}
+                  onClick={() => {
+                    setShowDeps(false);
+                    setShowAgentPicker(false);
+                    setAgentPickerPosition(null);
+                    setShowNodePicker(false);
+                    setNodePickerPosition(null);
+                    setIsModelMenuOpen(false);
+                    setModelMenuPosition(null);
+                    setActiveModelSubmenu(null);
+                    setShowPriorityPicker((prev) => {
+                      const next = !prev;
+                      if (next) {
+                        updatePriorityPickerPosition();
+                      } else {
+                        setPriorityPickerPosition(null);
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  <PriorityIcon size={12} aria-hidden="true" />
+                </button>
+              </div>
+
+              {showPriorityPicker && portalRoot && priorityPickerPosition && createPortal(
+                <div
+                  ref={priorityPickerPortalRef}
+                  className="dep-dropdown priority-picker-dropdown priority-picker-dropdown--portal"
+                  onMouseDown={(e) => e.preventDefault()}
+                  style={{
+                    position: "fixed",
+                    top: `${priorityPickerPosition.top}px`,
+                    left: `${priorityPickerPosition.left}px`,
+                    width: `${priorityPickerPosition.width}px`,
+                    maxHeight: priorityPickerPosition.maxHeight ? `${priorityPickerPosition.maxHeight}px` : undefined,
+                    overflowY: priorityPickerPosition.maxHeight ? "auto" : undefined,
+                  }}
+                >
+                  <div className="dep-dropdown-search-header">{t("tasks.selectPriority", "Select priority")}</div>
+                  {TASK_PRIORITIES.map((taskPriority) => {
+                    const label = getPriorityLabel(taskPriority);
+                    return (
+                      <div
+                        key={taskPriority}
+                        className={`dep-dropdown-item${priority === taskPriority ? " selected" : ""}`}
+                        data-testid={`quick-entry-priority-option-${taskPriority}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setPriority(taskPriority);
+                          setShowPriorityPicker(false);
+                          setPriorityPickerPosition(null);
+                        }}
+                      >
+                        <span className="dep-dropdown-title">{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>,
+                portalRoot,
+              )}
+
+              <button
+                type="button"
                 className={`btn btn-sm ${isFastMode ? "btn-primary" : ""}`}
                 onClick={toggleFastMode}
                 onMouseDown={(e) => e.preventDefault()}
                 aria-pressed={isFastMode}
                 data-testid="quick-entry-fast-toggle"
-                title={t("tasks.toggleFastMode", "Toggle fast execution mode")}
+                title={fastToggleLabel}
+                aria-label={fastToggleLabel}
               >
-                {t("tasks.fast", "Fast")}
+                <Zap size={12} aria-hidden="true" />
               </button>
 
               <button

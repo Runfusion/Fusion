@@ -82,7 +82,11 @@ vi.mock("lucide-react", () => ({
   ChevronRight: () => null,
   Bot: () => null,
   Server: () => null,
+  ArrowDown: () => null,
+  ArrowUp: () => null,
   Flag: () => null,
+  TriangleAlert: () => null,
+  Zap: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
 }));
@@ -366,18 +370,22 @@ describe("quick-entry-actions fixed-height parity, not just a min-height floor (
     expect(depTriggerMatches!.length).toBe(1);
   });
 
-  it("renders Save, Attach, Fast, and the workflow trigger as siblings in one .quick-entry-actions row (no shell/layout regression; jsdom cannot measure real pixel heights)", () => {
+  it("renders Save, Attach, GitHub, Priority, Fast, and the workflow trigger as siblings in one .quick-entry-actions row (no shell/layout regression; jsdom cannot measure real pixel heights)", () => {
     mockDesktopViewport();
     renderQuickEntryBox();
 
     const saveButton = screen.getByTestId("quick-entry-save");
     const attachButton = screen.getByTestId("quick-entry-attach");
+    const githubToggle = screen.getByTestId("quick-entry-github-toggle");
+    const priorityButton = screen.getByTestId("quick-entry-priority-button");
     const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
     const workflowTrigger = screen.getByTestId("quick-entry-workflow-trigger");
 
     const actionsRow = saveButton.closest(".quick-entry-actions");
     expect(actionsRow).not.toBeNull();
     expect(actionsRow?.contains(attachButton)).toBe(true);
+    expect(actionsRow?.contains(githubToggle)).toBe(true);
+    expect(actionsRow?.contains(priorityButton)).toBe(true);
     expect(actionsRow?.contains(fastToggle)).toBe(true);
     expect(actionsRow?.contains(workflowTrigger)).toBe(true);
   });

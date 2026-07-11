@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act, createEvent } from "@testing-library/react";
 import { QuickEntryBox } from "../QuickEntryBox";
-import type { Task } from "@fusion/core";
+import { TASK_PRIORITIES, type Task, type TaskPriority } from "@fusion/core";
 import { checkDuplicateTasks, fetchSettings, fetchAgents, uploadAttachment, fetchWorkflowOptionalSteps } from "../../api";
 import { useNodes } from "../../hooks/useNodes";
 import { scopedKey } from "../../utils/projectStorage";
@@ -211,25 +211,29 @@ vi.mock("../../hooks/useNodes", () => ({
 
 // Mock lucide-react
 vi.mock("lucide-react", () => {
-  const MockIcon = (props: any) => <svg aria-hidden="true" {...props} />;
+  const MockIcon = (iconClass: string) => ({ className, ...props }: any) => <svg aria-hidden="true" className={[iconClass, className].filter(Boolean).join(" ")} {...props} />;
   return {
-    Link: MockIcon,
-    Paperclip: MockIcon,
-    Brain: MockIcon,
-    Lightbulb: MockIcon,
-    ListTree: MockIcon,
-    Sparkles: MockIcon,
-    Save: MockIcon,
-    X: MockIcon,
-    ChevronDown: MockIcon,
-    ChevronUp: MockIcon,
-    ChevronRight: MockIcon,
-    Bot: MockIcon,
-    Server: MockIcon,
-    Flag: MockIcon,
-    Github: MockIcon,
-    Maximize2: MockIcon,
-    Minimize2: MockIcon,
+    Link: MockIcon("lucide-link"),
+    Paperclip: MockIcon("lucide-paperclip"),
+    Brain: MockIcon("lucide-brain"),
+    Lightbulb: MockIcon("lucide-lightbulb"),
+    ListTree: MockIcon("lucide-list-tree"),
+    Sparkles: MockIcon("lucide-sparkles"),
+    Save: MockIcon("lucide-save"),
+    X: MockIcon("lucide-x"),
+    ChevronDown: MockIcon("lucide-chevron-down"),
+    ChevronUp: MockIcon("lucide-chevron-up"),
+    ChevronRight: MockIcon("lucide-chevron-right"),
+    Bot: MockIcon("lucide-bot"),
+    Server: MockIcon("lucide-server"),
+    ArrowDown: MockIcon("lucide-arrow-down"),
+    ArrowUp: MockIcon("lucide-arrow-up"),
+    Flag: MockIcon("lucide-flag"),
+    TriangleAlert: MockIcon("lucide-triangle-alert"),
+    Zap: MockIcon("lucide-zap"),
+    Github: MockIcon("lucide-github"),
+    Maximize2: MockIcon("lucide-maximize-2"),
+    Minimize2: MockIcon("lucide-minimize-2"),
   };
 });
 
@@ -407,22 +411,38 @@ function mockMobileViewport() {
 
 /*
 FNXC:BoardComposer 2026-07-10-12:00:
-DOM order mirrors the reorganized composer action row: the options group (priority, subtask, deps,
-models, node, agent, GitHub) comes first, followed by the right-aligned primary group
-(attach, Fast, Save) with Save as the LAST control.
+DOM order mirrors the reorganized composer action row: the options group (subtask, deps,
+models, node, agent) comes first, followed by the right-aligned primary group (attach, GitHub,
+Priority, Fast, Save) with Save as the LAST control.
 */
 const QUICK_ENTRY_ACTION_BUTTONS = [
-  ["Priority", "quick-entry-priority-button"],
   ["Subtask", "subtask-button"],
   ["Deps", "quick-entry-deps"],
   ["Models", "quick-entry-models"],
   ["Node", "quick-entry-node-button"],
   ["Agent", "quick-entry-agent-button"],
-  ["GitHub", "quick-entry-github-toggle"],
   ["Attach", "quick-entry-attach"],
+  ["GitHub", "quick-entry-github-toggle"],
+  ["Priority", "quick-entry-priority-button"],
   ["Fast", "quick-entry-fast-toggle"],
   ["Save", "quick-entry-save"],
 ] as const;
+
+const QUICK_ENTRY_PRIORITY_ICON_CLASS: Record<TaskPriority, string> = {
+  low: "lucide-arrow-down",
+  normal: "lucide-flag",
+  high: "lucide-arrow-up",
+  urgent: "lucide-triangle-alert",
+};
+
+function expectQuickEntryPriorityButton(priority: TaskPriority) {
+  const label = `${priority[0].toUpperCase()}${priority.slice(1)}`;
+  const priorityButton = screen.getByTestId("quick-entry-priority-button");
+  expect(priorityButton).toHaveAttribute("title", `Priority: ${label}`);
+  expect(priorityButton).toHaveAttribute("aria-label", `Priority: ${label}`);
+  expect(priorityButton).not.toHaveTextContent(label);
+  expect(priorityButton.querySelector("svg")?.classList.contains(QUICK_ENTRY_PRIORITY_ICON_CLASS[priority])).toBe(true);
+}
 
 describe("QuickEntryBox", () => {
   beforeEach(() => {
@@ -853,22 +873,31 @@ describe("QuickEntryBox", () => {
 
     /*
     FNXC:BoardComposer 2026-07-10-12:00:
-    The primary group ends the action row as [Attach, Fast, Save]: Save is the LAST control (right-
-    aligned primary action) and Attach/Fast sit immediately beside it inside the same cluster.
+    The primary group ends the action row as [Attach, GitHub, Priority, Fast, Save]: Save is the LAST
+    control (right-aligned primary action) and Attach/GitHub/Priority/Fast sit immediately beside it
+    inside the same cluster.
     */
-    it("ends the action row with the primary group: Attach and Fast immediately before Save, Save last", () => {
+    it("ends the action row with the primary group: status controls beside Attach and Save last", () => {
       renderQuickEntryBox({});
       expandQuickEntry();
 
       const actionButtonTestIds = getActionButtonTestIdsInDomOrder();
-      expect(actionButtonTestIds.slice(-3)).toEqual(["quick-entry-attach", "quick-entry-fast-toggle", "quick-entry-save"]);
+      expect(actionButtonTestIds.slice(-5)).toEqual([
+        "quick-entry-attach",
+        "quick-entry-github-toggle",
+        "quick-entry-priority-button",
+        "quick-entry-fast-toggle",
+        "quick-entry-save",
+      ]);
 
       const primaryGroup = screen.getByTestId("quick-entry-primary-group");
-      for (const testId of ["quick-entry-attach", "quick-entry-fast-toggle", "quick-entry-save"]) {
+      for (const testId of ["quick-entry-attach", "quick-entry-github-toggle", "quick-entry-priority-button", "quick-entry-fast-toggle", "quick-entry-save"]) {
         expect(primaryGroup.contains(screen.getByTestId(testId))).toBe(true);
       }
       const optionsGroup = screen.getByTestId("quick-entry-options-group");
-      expect(optionsGroup.contains(screen.getByTestId("quick-entry-save"))).toBe(false);
+      for (const testId of ["quick-entry-github-toggle", "quick-entry-priority-button", "quick-entry-save"]) {
+        expect(optionsGroup.contains(screen.getByTestId(testId))).toBe(false);
+      }
     });
 
     it("action buttons appear in correct DOM order after reorder", () => {
@@ -1066,7 +1095,7 @@ describe("QuickEntryBox", () => {
       const highOption = await screen.findByTestId("quick-entry-priority-option-high");
       await touchPriorityOption(highOption);
 
-      expect(priorityButton.textContent).toContain("High");
+      expectQuickEntryPriorityButton("high");
       await waitFor(() => {
         expect(screen.queryByTestId("quick-entry-priority-option-normal")).toBeNull();
       });
@@ -1259,7 +1288,7 @@ describe("QuickEntryBox", () => {
         vi.runOnlyPendingTimers();
       });
 
-      expect(priorityButton.textContent).toContain("High");
+      expectQuickEntryPriorityButton("high");
       expect(document.activeElement).not.toBe(textarea);
     });
 
@@ -2107,6 +2136,9 @@ describe("QuickEntryBox", () => {
       const fastToggle = screen.getByTestId("quick-entry-fast-toggle");
       expect(fastToggle).toBeTruthy();
       expect(fastToggle.getAttribute("aria-pressed")).toBe("false");
+      expect(fastToggle).toHaveAttribute("aria-label", "Toggle fast execution mode");
+      expect(fastToggle).not.toHaveTextContent("Fast");
+      expect(fastToggle.querySelector("svg")?.classList.contains("lucide-zap")).toBe(true);
     });
 
     it("shows Priority selector in expanded controls", () => {
@@ -2115,7 +2147,18 @@ describe("QuickEntryBox", () => {
 
       const priorityButton = screen.getByTestId("quick-entry-priority-button");
       expect(priorityButton).toBeTruthy();
-      expect(priorityButton.textContent).toContain("Normal");
+      expectQuickEntryPriorityButton("normal");
+    });
+
+    it("renders the icon-only priority glyph and accessible label for every level", () => {
+      renderQuickEntryBox({});
+      expandQuickEntry();
+
+      for (const taskPriority of TASK_PRIORITIES) {
+        openPriorityMenu();
+        fireEvent.click(screen.getByTestId(`quick-entry-priority-option-${taskPriority}`));
+        expectQuickEntryPriorityButton(taskPriority);
+      }
     });
 
     it("submits selected priority through onCreate payload", async () => {
@@ -2563,7 +2606,7 @@ describe("QuickEntryBox", () => {
       });
 
       expandQuickEntry();
-      expect(screen.getByTestId("quick-entry-priority-button").textContent).toContain("Normal");
+      expectQuickEntryPriorityButton("normal");
     });
 
     it("resets priority to normal after Subtask flow", async () => {
@@ -2582,7 +2625,7 @@ describe("QuickEntryBox", () => {
       });
 
       expandQuickEntry();
-      expect(screen.getByTestId("quick-entry-priority-button").textContent).toContain("Normal");
+      expectQuickEntryPriorityButton("normal");
     });
 
     it("opens dependency dropdown when clicking deps button", () => {

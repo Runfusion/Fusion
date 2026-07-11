@@ -89,7 +89,11 @@ vi.mock("lucide-react", () => ({
   ChevronRight: () => null,
   Bot: () => null,
   Server: () => null,
+  ArrowDown: () => null,
+  ArrowUp: () => null,
   Flag: () => null,
+  TriangleAlert: () => null,
+  Zap: () => null,
   Maximize2: () => null,
   Minimize2: () => null,
 }));
@@ -182,7 +186,7 @@ describe("quick-entry action row height parity (FN-7680)", () => {
     // unrelated @media block or the desktop base rule further up the file.
     const sectionStart = cssContent.indexOf("Quick Entry Mobile Touch + Overflow Fixes");
     expect(sectionStart).toBeGreaterThan(-1);
-    const section = cssContent.slice(sectionStart, sectionStart + 800);
+    const section = cssContent.slice(sectionStart, sectionStart + 1600);
 
     expect(section).toContain("max-width: 768px");
     const mobileBlockMatch = section.match(
@@ -221,7 +225,7 @@ describe("quick-entry action row height parity (FN-7680)", () => {
     expect(depTriggerMatch![1].trim()).toBe("3px 8px");
   });
 
-  it("renders Save, workflow trigger, Attach, Fast, Priority, and Deps as sibling .btn elements in the same .quick-entry-actions row", () => {
+  it("renders Save, workflow trigger, Attach, GitHub, Priority, Fast, and Deps as sibling .btn elements in the same .quick-entry-actions row", () => {
     mockDesktopViewport();
     renderQuickEntryBox();
 
@@ -231,11 +235,12 @@ describe("quick-entry action row height parity (FN-7680)", () => {
     const save = screen.getByTestId("quick-entry-save");
     const trigger = screen.getByTestId("quick-entry-workflow-trigger");
     const attach = screen.getByTestId("quick-entry-attach");
-    const fast = screen.getByTestId("quick-entry-fast-toggle");
+    const github = screen.getByTestId("quick-entry-github-toggle");
     const priority = screen.getByTestId("quick-entry-priority-button");
+    const fast = screen.getByTestId("quick-entry-fast-toggle");
     const deps = screen.getByTestId("quick-entry-deps");
 
-    for (const el of [save, trigger, attach, fast, priority, deps]) {
+    for (const el of [save, trigger, attach, github, priority, fast, deps]) {
       expect(el.classList.contains("btn")).toBe(true);
       expect(actionsRow.contains(el)).toBe(true);
     }
