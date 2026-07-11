@@ -50,9 +50,12 @@ export function formatDurationMs(ms: number | null): string {
  *
  * FNXC:CommandCenterCost 2026-07-10-23:20:
  * Cost aggregation deliberately preserves the priced subtotal when some usage has unknown pricing. Overview, Tokens, Team, and Workflows must display that subtotal with a trailing `+`; show `—` only when no usage can be priced, and keep an exact priced zero distinct from unavailable data.
+ *
+ * FNXC:CommandCenterCost 2026-07-10-23:35:
+ * A zero subtotal is exact only when every contribution is priced. Mixed pricing with a zero known subtotal must remain `—`, because `$0.00+` suggests a meaningful lower bound while all positive cost may belong to unpriced usage.
  */
 export function formatCost(usd: number | null, unavailable: boolean): string {
-  if (usd === null || !Number.isFinite(usd)) {
+  if (usd === null || !Number.isFinite(usd) || (unavailable && usd === 0)) {
     return "—";
   }
   const formatted = `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
