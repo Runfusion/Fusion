@@ -10689,3 +10689,85 @@ describe("FN-5335 triple-proof no-action unit coverage", () => {
   });
 
 });
+
+describe("stranded AI merge clean-room recovery", () => {
+  it("lands an approved detached clean-room commit before re-emitting merge handoff", async () => {
+    vi.useRealTimers();
+    const task = {
+      id: "FN-5858",
+      lineageId: "lineage-5858",
+      column: "in-review",
+      branch: "fusion/fn-5858",
+      paused: false,
+      status: null,
+      steps: [{ status: "done" }],
+      log: [
+        { action: "Task marked done by agent", timestamp: new Date(Date.now() - 20 * 60_000).toISOString() },
+        { action: "AI merge review (pass 2): approved", timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
+      ],
+    } as unknown as Task;
+    const movedTask = { ...task, column: "done" } as unknown as Task;
+    const testStore = createMockStore({
+      getSettings: vi.fn().mockResolvedValue({ autoMerge: true, globalPause: false, enginePaused: false } as unknown as Settings),
+      listTasks: vi.fn().mockResolvedValue([task]),
+      getTask: vi.fn().mockResolvedValue(task),
+      moveTask: vi.fn().mockResolvedValue(movedTask),
+      updateTask: vi.fn().mockImplementation(async (_id: string, patch: Partial<Task>) => Object.assign(task as object, patch)),
+    });
+    const testManager = new SelfHealingManager(testStore, { rootDir: "/tmp/test-project", requeueForAutoMerge: vi.fn().mockResolvedValue(true) });
+
+    const originalReaddir = mockedReaddirSync.getMockImplementation();
+    const originalExec = mockedExecSync.getMockImplementation();
+    mockedReaddirSync.mockImplementation((path: any) => {
+      if (String(path).includes(".ai-merge") || String(path).includes("fusion-ai-merge")) {
+        return ["fusion-ai-merge-fn-5858-abcd"] as any;
+      }
+      return [] as any;
+    });
+    mockedExecSync.mockImplementation((command: string) => {
+      if (command.includes("git rev-parse --verify HEAD")) return Buffer.from("dddddddddddddddddddddddddddddddddddddddd\n");
+      if (command.includes("git show -s --format")) {
+        return Buffer.from("FN-5858: render headings\x1fFusion-Task-Id: FN-5858\nFusion-Task-Lineage: lineage-5858\n");
+      }
+      if (command.includes("git rev-parse --verify refs/heads/'main'")) return Buffer.from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+      if (command.includes("git merge-base --is-ancestor 'dddddddddddddddddddddddddddddddddddddddd' refs/heads/'main'")) {
+        throw new Error("not already landed");
+      }
+      if (command.includes("git merge-base --is-ancestor 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'dddddddddddddddddddddddddddddddddddddddd'")) {
+        return Buffer.from("");
+      }
+      if (command.includes("git diff-tree")) return Buffer.from("Packages/Editor/file.ts\n");
+      if (command.includes("git rev-parse --abbrev-ref HEAD")) return Buffer.from("main\n");
+      if (command.includes("git rev-parse HEAD")) return Buffer.from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+      if (command.includes("git status --porcelain")) return Buffer.from("");
+      if (command.includes("git merge --ff-only 'dddddddddddddddddddddddddddddddddddddddd'")) return Buffer.from("");
+      return Buffer.from("");
+    });
+
+    try {
+      await testManager.recoverCompletionHandoffLimbo();
+    } finally {
+      testManager.stop();
+      if (originalReaddir) mockedReaddirSync.mockImplementation(originalReaddir);
+      else mockedReaddirSync.mockReset();
+      if (originalExec) mockedExecSync.mockImplementation(originalExec);
+      else mockedExecSync.mockReset();
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    }
+
+    expect(testStore.enqueueMergeQueue).not.toHaveBeenCalled();
+    expect(testStore.moveTask).toHaveBeenCalledWith("FN-5858", "done", expect.anything());
+    expect(testStore.updateTask).toHaveBeenCalledWith("FN-5858", expect.objectContaining({
+      mergeRetries: 0,
+      mergeDetails: expect.objectContaining({
+        commitSha: "dddddddddddddddddddddddddddddddddddddddd",
+        mergeConfirmed: true,
+        landedFiles: ["Packages/Editor/file.ts"],
+      }),
+    }));
+    expect(testStore.logEntry).toHaveBeenCalledWith(
+      "FN-5858",
+      expect.stringContaining("Auto-recovered stranded AI merge clean-room commit dddddddd"),
+    );
+  });
+});

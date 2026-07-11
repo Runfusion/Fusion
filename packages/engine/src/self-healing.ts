@@ -59,6 +59,7 @@ self-healing — a real import cycle. Importing from the predicate module breaks
 */
 import { isRepoLanded } from "./workspace-land-predicate.js";
 import { findAlreadyMergedTaskCommit, getCommitTaskOwnership } from "./already-merged-detector.js";
+import { advanceIntegrationBranchRef } from "./merger-ref-update-advance.js";
 import { isAiMergeContainerDir, resolveAiMergeRootPath, resolveLegacyAiMergeRootPath, resolveWorktreesDir } from "./worktree-paths.js";
 import { canonicalFusionBranchName, resolveTaskWorkingBranch } from "./worktree-names.js";
 import { resolveIntegrationBranch } from "./integration-branch.js";
@@ -8979,6 +8980,161 @@ export class SelfHealingManager {
     }
   }
 
+  private hasApprovedAiMergeReview(task: Task): boolean {
+    return (task.log ?? []).some((entry) =>
+      typeof entry.action === "string"
+      && /AI merge review \(pass \d+\): approved/.test(entry.action)
+    );
+  }
+
+  private async listAiMergeWorktreeCandidates(taskId: string, settings: Settings): Promise<string[]> {
+    const roots = Array.from(new Set([
+      resolveRepoLocalAiMergeRoot(this.options.rootDir, settings),
+      resolveLegacyAiMergeRootPath(this.options.rootDir),
+      tmpdir(),
+    ]));
+    const prefix = `fusion-ai-merge-${taskId.toLowerCase()}-`;
+    const paths: string[] = [];
+    for (const root of roots) {
+      let entries: string[];
+      try {
+        entries = readdirSync(root).filter((entry) => entry.startsWith(prefix));
+      } catch {
+        continue;
+      }
+      for (const entry of entries) paths.push(join(root, entry));
+    }
+    return paths;
+  }
+
+  private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
+    if (task.column !== "in-review") return false;
+    if (task.mergeDetails?.mergeConfirmed === true) return false;
+    if (!this.hasApprovedAiMergeReview(task)) return false;
+    if (!(task.steps ?? []).every((step) => step.status === "done" || step.status === "skipped")) return false;
+
+    const integrationBranch = await resolveIntegrationBranch(this.options.rootDir, settings).catch(() => "");
+    if (!integrationBranch) return false;
+    const candidates = await this.listAiMergeWorktreeCandidates(task.id, settings);
+    if (candidates.length === 0) return false;
+
+    const auditor = createRunAuditor(this.store, {
+      runId: generateSyntheticRunId("self-heal-stranded-ai-merge", task.id),
+      agentId: "self-healing",
+      taskId: task.id,
+      taskLineageId: task.lineageId,
+      phase: "recover-stranded-ai-merge-commit",
+    });
+
+    for (const candidate of candidates) {
+      let canonicalCandidate = candidate;
+      try { canonicalCandidate = realpathSync(candidate); } catch { /* keep original */ }
+      if (activeSessionRegistry.isPathActive(candidate) || activeSessionRegistry.isPathActive(canonicalCandidate)) continue;
+
+      try {
+        const { stdout: headStdout } = await execAsync("git rev-parse --verify HEAD", { cwd: canonicalCandidate, timeout: 30_000 });
+        const strandedSha = headStdout.trim();
+        if (!strandedSha) continue;
+
+        const { stdout: showStdout } = await execAsync(`git show -s --format=%s%x1f%b ${shellQuote(strandedSha)}`, {
+          cwd: canonicalCandidate,
+          timeout: 30_000,
+          maxBuffer: 1024 * 1024,
+        });
+        const [subject = "", body = ""] = showStdout.split("\x1f");
+        const ownership = getCommitTaskOwnership(task.id, task.lineageId, subject, body);
+        if (!ownership.owned) continue;
+
+        const { stdout: tipStdout } = await execAsync(`git rev-parse --verify refs/heads/${shellQuote(integrationBranch)}`, {
+          cwd: this.options.rootDir,
+          timeout: 30_000,
+        });
+        const tipSha = tipStdout.trim();
+        if (!tipSha) continue;
+
+        const alreadyAncestor = await execAsync(`git merge-base --is-ancestor ${shellQuote(strandedSha)} refs/heads/${shellQuote(integrationBranch)}`, {
+          cwd: this.options.rootDir,
+          timeout: 30_000,
+        }).then(() => true, () => false);
+        const tipIsAncestor = await execAsync(`git merge-base --is-ancestor ${shellQuote(tipSha)} ${shellQuote(strandedSha)}`, {
+          cwd: this.options.rootDir,
+          timeout: 30_000,
+        }).then(() => true, () => false);
+        if (!alreadyAncestor && !tipIsAncestor) continue;
+
+        const landedFiles = await execAsync(`git diff-tree --no-commit-id --name-only -r ${shellQuote(strandedSha)}`, {
+          cwd: canonicalCandidate,
+          timeout: 30_000,
+          maxBuffer: 1024 * 1024,
+        }).then(({ stdout }) => stdout.split("\n").map((line) => line.trim()).filter(Boolean), () => []);
+
+        if (!alreadyAncestor) {
+          const currentBranch = await execAsync("git rev-parse --abbrev-ref HEAD", { cwd: this.options.rootDir, timeout: 30_000 })
+            .then(({ stdout }) => stdout.trim(), () => "");
+          if (currentBranch === integrationBranch) {
+            const head = await execAsync("git rev-parse HEAD", { cwd: this.options.rootDir, timeout: 30_000 })
+              .then(({ stdout }) => stdout.trim(), () => "");
+            const dirty = await execAsync("git status --porcelain", { cwd: this.options.rootDir, timeout: 30_000 })
+              .then(({ stdout }) => stdout.trim().length > 0, () => true);
+            if (head !== tipSha || dirty) continue;
+            await execAsync(`git merge --ff-only ${shellQuote(strandedSha)}`, { cwd: this.options.rootDir, timeout: 120_000 });
+          } else {
+            const advanced = await advanceIntegrationBranchRef({
+              rootDir: canonicalCandidate,
+              projectRootDir: this.options.rootDir,
+              integrationBranch,
+              newSha: strandedSha,
+              expectedCurrentSha: tipSha,
+              taskId: task.id,
+              audit: auditor,
+            });
+            if (!advanced.advanced) continue;
+          }
+        }
+
+        const result: MergeResult = {
+          task,
+          branch: task.branch ?? resolveTaskWorkingBranch(task),
+          merged: true,
+          noOp: false,
+          ok: true,
+          commitSha: strandedSha,
+          landedFiles,
+          mergeConfirmed: true,
+          worktreeRemoved: false,
+          branchDeleted: false,
+        };
+        const finalized = await finalizeProvenAutoMergeTask({
+          store: this.store,
+          taskId: task.id,
+          result,
+          audit: auditor,
+          auditAgentId: "self-healing",
+          auditPhase: "recover-stranded-ai-merge-commit",
+          source: "self-healing",
+          log: async (message) => {
+            await this.store.logEntry(task.id, message).catch(() => undefined);
+          },
+        });
+        if (finalized.outcome === "done" || finalized.outcome === "already-done") {
+          await this.store.logEntry(
+            task.id,
+            `Auto-recovered stranded AI merge clean-room commit ${strandedSha.slice(0, 8)} — advanced ${integrationBranch} and finalized task`,
+          );
+          await auditor.git({
+            type: "merge:ai-landed",
+            target: integrationBranch,
+            metadata: { taskId: task.id, landedSha: strandedSha, source: "self-healing-stranded-clean-room", path: canonicalCandidate },
+          });
+          return true;
+        }
+      } catch (err: unknown) {
+        log.warn(`recoverApprovedStrandedAiMergeCommit: ${task.id} candidate ${candidate} skipped: ${getErrorMessage(err)}`);
+      }
+    }
+    return false;
+  }
+
   /**
    * Skips tasks not eligible for auto-merge processing (global `autoMerge`
    * off without an explicit per-task `autoMerge: true` override) — PR-based
@@ -9018,6 +9174,9 @@ export class SelfHealingManager {
       if (ageMs < COMPLETION_HANDOFF_LIMBO_GRACE_MS) continue;
 
       const currentCount = task.completionHandoffLimboRecoveryCount ?? 0;
+      if (await this.recoverApprovedStrandedAiMergeCommit(task, settings)) {
+        continue;
+      }
       if (currentCount >= MAX_COMPLETION_HANDOFF_LIMBO_RECOVERIES) {
         await this.store.updateTask(task.id, {
           status: "failed",
