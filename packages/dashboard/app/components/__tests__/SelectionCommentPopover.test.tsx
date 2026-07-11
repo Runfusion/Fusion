@@ -104,6 +104,35 @@ describe("SelectionCommentPopover", () => {
     expect(activeBlocks.length, "both desktop and mobile need an :active override that restates the translate").toBeGreaterThanOrEqual(2);
   });
 
+  /*
+  FNXC:ArtifactsView 2026-07-10-18:20:
+  Regression guard for the composer-panel drift: the panel carries the shared `.card` class, and
+  `.card { position: relative }` loads after this stylesheet, so a bare `.selection-comment-panel`
+  rule lost `position: fixed` to bundle order and the panel rendered clipped at the viewport's
+  bottom-right, far from the selection. The fixed positioning must live on a selector that
+  out-specifies `.card` regardless of order, and the panel's `left` must be a width-aware clamp so
+  a selection near a viewport edge cannot push half the panel off-screen.
+  */
+  it("keeps the composer panel fixed-positioned over .card and clamps it inside the viewport", () => {
+    const css = readFileSync(join(__dirname, "..", "SelectionCommentPopover.css"), "utf8");
+    const uncommented = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    const blocks = [...uncommented.matchAll(rulePattern)].map((m) => ({ selector: m[1].trim(), block: m[2] }));
+
+    const fixedOverCard = blocks.find(({ selector, block }) =>
+      selector.split(",").some((part) => {
+        const s = part.trim();
+        return s.includes(".selection-comment-panel") && s.includes(".card");
+      }) && /position\s*:\s*fixed/.test(block));
+    expect(fixedOverCard, "a .selection-comment-panel selector compounded with .card must restate position: fixed").toBeTruthy();
+
+    const panelBlocks = blocks.filter(({ selector }) => selector.split(",").some((p) => p.trim() === ".selection-comment-panel"));
+    const clampBlock = panelBlocks.find(({ block }) => /left\s*:\s*clamp\(/.test(block));
+    expect(clampBlock, "panel must declare a width-aware left clamp").toBeTruthy();
+    expect(clampBlock!.block, "left clamp must account for half the panel width").toContain("--scp-width) / 2");
+  });
+
   it("uses a longer markdown fence when the snippet contains backticks", () => {
     expect(composeSelectionCommentDescription({
       filePath: "README.md",
