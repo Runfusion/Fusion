@@ -215,7 +215,7 @@ export class CeSessionStore {
     return row ? rowToSession(row) : undefined;
   }
 
-  list(filter: { status?: CeSessionStatus; stage?: string } = {}): CeSession[] {
+  list(filter: { status?: CeSessionStatus; stage?: string; projectId?: string } = {}): CeSession[] {
     const clauses: string[] = [];
     const params: unknown[] = [];
     if (filter.status) {
@@ -225,6 +225,10 @@ export class CeSessionStore {
     if (filter.stage) {
       clauses.push("stage = ?");
       params.push(filter.stage);
+    }
+    if (filter.projectId) {
+      clauses.push("projectId = ?");
+      params.push(filter.projectId);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = this.db

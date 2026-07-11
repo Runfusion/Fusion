@@ -130,6 +130,29 @@ describe("CompoundEngineeringView", () => {
     // Populated groups render artifacts; empty ones render an empty hint.
     expect(screen.getAllByTestId("ce-artifact")).toHaveLength(2);
     expect(screen.getAllByTestId("ce-group-empty").length).toBeGreaterThan(0);
+    expect(document.querySelector('.ce-groups [data-stage="strategy"]')).toHaveAttribute("data-layout", "singleton");
+  });
+
+  it("presents brainstorm and plan artifacts as repeatable collections", async () => {
+    listArtifacts.mockResolvedValue(
+      makeResult({
+        plan: [
+          { kind: "artifact", id: "plan:docs/plans/requirements.md", stage: "plan", path: "docs/plans/requirements.md", name: "requirements.md", size: 5, updatedAt: 3, artifactContract: "ce-unified-plan/v1", artifactReadiness: "requirements-only", productContractSource: "ce-brainstorm" },
+          { kind: "artifact", id: "plan:docs/plans/ready.md", stage: "plan", path: "docs/plans/ready.md", name: "ready.md", size: 5, updatedAt: 2, artifactContract: "ce-unified-plan/v1", artifactReadiness: "implementation-ready", productContractSource: "ce-brainstorm" },
+          { kind: "artifact", id: "plan:docs/plans/legacy.md", stage: "plan", path: "docs/plans/legacy.md", name: "legacy.md", size: 5, updatedAt: 1 },
+        ],
+      }),
+    );
+
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    await screen.findByTestId("ce-summary");
+    const brainstorms = document.querySelector('.ce-groups [data-stage="brainstorm"]')!;
+    const plans = document.querySelector('.ce-groups [data-stage="plan"]')!;
+    expect(brainstorms).toHaveTextContent("Brainstorms");
+    expect(brainstorms.querySelectorAll('[data-testid="ce-artifact"]')).toHaveLength(1);
+    expect(plans).toHaveTextContent("Plans");
+    expect(plans.querySelectorAll('[data-testid="ce-artifact"]')).toHaveLength(2);
   });
 
   it("opens an artifact in the built-in file viewer via context.openFile", async () => {

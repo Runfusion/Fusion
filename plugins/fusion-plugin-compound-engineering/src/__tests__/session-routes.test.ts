@@ -133,6 +133,20 @@ describe("session routes (polling transport)", () => {
     expect(sessions.map((s) => s.stage).sort()).toEqual(["brainstorm", "plan"]);
   });
 
+  it("GET /sessions scopes every session consumer to the requested project", async () => {
+    const { getCeSessionStore } = await import("../session/session-store.js");
+    const store = getCeSessionStore(h.ctx);
+    const projectA = store.create({ stage: "brainstorm", projectId: "project-a" });
+    store.create({ stage: "plan", projectId: "project-b" });
+    store.create({ stage: "debug" });
+
+    const res = await call("GET", "/sessions", { params: {}, query: { projectId: "project-a" } }, h.ctx);
+
+    expect(res.status).toBe(200);
+    const sessions = (res.body as { sessions: Array<{ id: string; projectId: string | null }> }).sessions;
+    expect(sessions).toEqual([expect.objectContaining({ id: projectA.id, projectId: "project-a" })]);
+  });
+
   it("GET /sessions keeps error, interrupted, awaiting_input, active, and completed rows independently manageable", async () => {
     const { getCeSessionStore } = await import("../session/session-store.js");
     const store = getCeSessionStore(h.ctx);

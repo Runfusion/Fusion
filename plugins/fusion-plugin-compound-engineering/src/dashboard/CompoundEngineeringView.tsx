@@ -177,23 +177,23 @@ function nextPipelineStageId(stageId: string): string | undefined {
 
 type RailStatus = "Not started" | "Active" | "Needs input" | "Complete";
 
-function artifactForStage(stageId: string, groups: CeArtifactGroup[]): CeArtifactEntry | undefined {
-  const groupId = stageId === "brainstorm" ? "plan" : stageId;
-  const entries = groups.find((group) => group.stage === groupId)?.entries ?? [];
+function artifactsForStage(stageId: string, groups: CeArtifactGroup[]): CeArtifactEntry[] {
+  const entries = groups.find((group) => group.stage === stageId)?.entries ?? [];
   if (stageId === "brainstorm") {
-    return entries.find((entry) => (
+    const unifiedEntries = groups.find((group) => group.stage === "plan")?.entries ?? [];
+    return [...entries, ...unifiedEntries.filter((entry) => (
       entry.kind === "artifact"
       && entry.artifactContract === "ce-unified-plan/v1"
-      && (entry.artifactReadiness === "requirements-only" || entry.artifactReadiness === "implementation-ready")
-    ));
+      && (entry.artifactReadiness === "requirements-only" || !entry.productContractSource || entry.productContractSource === "ce-brainstorm")
+    ))];
   }
   if (stageId === "plan") {
-    return entries.find((entry) => (
+    return entries.filter((entry) => (
       entry.kind === "artifact"
       && (entry.artifactReadiness === "implementation-ready" || !entry.artifactReadiness)
     ));
   }
-  return entries.find((entry) => entry.kind === "artifact");
+  return entries.filter((entry) => entry.kind === "artifact");
 }
 
 function railStatus(stageId: string, sessions: CeSession[], artifact?: CeArtifactEntry): RailStatus {
@@ -206,7 +206,10 @@ function railStatus(stageId: string, sessions: CeSession[], artifact?: CeArtifac
 
 /**
  * FNXC:CompoundEngineeringUI 2026-07-10-12:00:
- * Operators need the five-stage compounding pipeline as the overview's primary navigation. Each stage shows actionable state and its latest durable artifact, while Debug remains a separate investigation action because it is not pipeline progression.
+ * Operators need the five-stage compounding loop as the overview's primary navigation. Stages report repeatable run and artifact collections instead of implying one permanent completion; Strategy remains the upstream singleton anchor, while Debug remains a separate investigation action because it is not pipeline progression.
+ *
+ * FNXC:CompoundEngineeringUI 2026-07-10-23:40:
+ * Compound Engineering follows the upstream repeatable loop: brainstorm requirements, plan implementation, work, review, compound, then repeat with better context. Brainstorm and Plan therefore expose collection counts and latest activity over multiple unified-plan files rather than a single artifact slot.
  */
 function PipelineOverview({
   groups,
@@ -240,8 +243,10 @@ function PipelineOverview({
       </header>
       <ol className="ce-stage-rail">
         {stages.map((stage) => {
-          const artifact = artifactForStage(stage.stageId, groups);
-          const latestSession = sessions.find((session) => session.stage === stage.stageId);
+          const artifacts = artifactsForStage(stage.stageId, groups);
+          const artifact = artifacts[0];
+          const stageSessions = sessions.filter((session) => session.stage === stage.stageId);
+          const latestSession = stageSessions[0];
           const status = railStatus(stage.stageId, sessions, artifact);
           const Icon = resolveIcon(stage.icon);
           return (
@@ -257,7 +262,9 @@ function PipelineOverview({
                 <span className="ce-stage-icon"><Icon size={17} aria-hidden="true" /></span>
                 <span className="ce-stage-copy">
                   <strong>{stage.label}</strong>
-                  <span className="ce-stage-status">{status}</span>
+                  <span className="ce-stage-status">
+                    {status} · {stageSessions.length} {stageSessions.length === 1 ? "run" : "runs"} · {artifacts.length} {artifacts.length === 1 ? "artifact" : "artifacts"}
+                  </span>
                 </span>
               </button>
               {artifact?.kind === "artifact" ? (
@@ -370,8 +377,9 @@ function StageGroup({
   openFile?: PluginDashboardViewContext["openFile"];
 }) {
   const empty = group.entries.length === 0;
+  const singleton = group.stage === "strategy";
   return (
-    <section className="ce-group card" data-testid="ce-group" data-stage={group.stage} data-empty={empty ? "true" : "false"}>
+    <section className="ce-group card" data-testid="ce-group" data-stage={group.stage} data-layout={singleton ? "singleton" : "collection"} data-empty={empty ? "true" : "false"}>
       <header className="ce-group-header">
         <h3>{group.label}</h3>
         <span className="ce-group-count">{group.entries.length}</span>
@@ -395,6 +403,33 @@ function StageGroup({
       )}
     </section>
   );
+}
+
+function artifactDisplayGroups(groups: CeArtifactGroup[]): CeArtifactGroup[] {
+  const conventionalBrainstorms = groups.find((group) => group.stage === "brainstorm");
+  return groups.flatMap((group) => {
+    if (group.stage === "brainstorm") return [];
+    if (group.stage !== "plan") return [group];
+    const brainstorms = group.entries.filter((entry) => (
+      entry.kind === "artifact"
+      && entry.artifactContract === "ce-unified-plan/v1"
+      && entry.artifactReadiness === "requirements-only"
+    ));
+    const plans = group.entries.filter((entry) => (
+      entry.kind === "error"
+      || (entry.artifactReadiness !== "requirements-only")
+    ));
+    return [
+      {
+        ...(conventionalBrainstorms ?? group),
+        stage: "brainstorm",
+        label: "Brainstorms",
+        present: Boolean(conventionalBrainstorms?.present || brainstorms.length > 0),
+        entries: [...(conventionalBrainstorms?.entries ?? []), ...brainstorms],
+      },
+      { ...group, label: "Plans", entries: plans },
+    ];
+  });
 }
 
 export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
@@ -647,7 +682,7 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
 
         {result && hasAnything ? (
           <div className="ce-groups" data-partial={isPartial ? "true" : "false"}>
-            {result.groups.map((group) => (
+            {artifactDisplayGroups(result.groups).map((group) => (
               <StageGroup
                 key={group.stage}
                 group={group}

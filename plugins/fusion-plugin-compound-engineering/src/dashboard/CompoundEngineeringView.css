@@ -83,6 +83,20 @@ The shared ViewHeader sits directly above plugin content, so the body needs top 
   gap: var(--space-sm);
 }
 
+/* Strategy is one durable upstream anchor; keep it as a compact row while repeatable workflow outputs retain collection cards. */
+.ce-group[data-layout="singleton"] {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.3fr) minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-lg);
+  padding-block: var(--space-sm);
+}
+
+.ce-group[data-layout="singleton"] .ce-artifact-list {
+  min-width: 0;
+}
+
 .ce-group[data-empty="true"] {
   color: var(--text-muted);
 }
@@ -177,6 +191,11 @@ The shared ViewHeader sits directly above plugin content, so the body needs top 
 .ce-view[data-mobile="true"] .ce-view-body {
   width: 100%;
   padding: var(--space-sm);
+}
+
+.ce-view[data-mobile="true"] .ce-group[data-layout="singleton"] {
+  grid-template-columns: 1fr;
+  row-gap: var(--space-xs);
 }
 
 .ce-view[data-mobile="true"] .ce-groups {

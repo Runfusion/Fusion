@@ -55,14 +55,17 @@ interface ConventionalLocation {
  */
 /*
 FNXC:CompoundEngineeringArtifacts 2026-07-10-12:00:
-The artifact hub must follow registered stage output locations so Work and Debug remain discoverable as the pipeline evolves. Brainstorm and Plan share one durable docs/plans collection; exposing the removed docs/brainstorms location or two groups for the same path misrepresents the unified-plan contract.
+The artifact hub must follow registered stage output locations so Work and Debug remain discoverable as the pipeline evolves.
+
+FNXC:CompoundEngineeringArtifacts 2026-07-10-23:40:
+The upstream Compound Engineering workflow writes repeatable requirements documents to docs/brainstorms and implementation plans to docs/plans. Discovery must retain the dedicated requirements history while also supporting requirements-only unified plans produced by newer in-place handoffs.
 */
 function stageLocations(): ConventionalLocation[] {
   return listStages().filter((definition) => definition.stageId !== "brainstorm").map((definition) => {
     const path = definition.artifactLocation.replace(/\/$/, "");
     return {
       stage: definition.stageId,
-      label: definition.stageId === "plan" ? "Brainstorm / Plan" : definition.label,
+      label: definition.label,
       path,
       kind: definition.artifactLocation.endsWith("/") ? "directory" : "file",
     };
@@ -72,6 +75,7 @@ function stageLocations(): ConventionalLocation[] {
 function conventionalLocations(): ConventionalLocation[] {
   return [
     ...stageLocations(),
+    { stage: "brainstorm", label: "Brainstorms", path: "docs/brainstorms", kind: "directory" },
     { stage: "solution", label: "Solutions", path: "docs/solutions", kind: "directory" },
     { stage: "concepts", label: "Concepts", path: "CONCEPTS.md", kind: "file" },
   ];

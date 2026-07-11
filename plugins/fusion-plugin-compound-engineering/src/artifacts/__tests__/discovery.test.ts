@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as realFs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { registerStage } from "../../session/stage-registry.js";
+import { registerStage, unregisterStage } from "../../session/stage-registry.js";
 
 // Mock node:fs so we can observe/inject behaviour around readFileSync and
 // accessSync without relying on vi.spyOn (ESM namespace exports are not
@@ -40,6 +40,7 @@ describe("discoverArtifacts", () => {
 
   afterEach(() => {
     if (root) rmSync(root, { recursive: true, force: true });
+    unregisterStage("publish-check");
     readFileHook = undefined;
     accessHook = undefined;
     vi.restoreAllMocks();
@@ -52,6 +53,8 @@ describe("discoverArtifacts", () => {
     mkdirSync(join(root, "docs/ideation"), { recursive: true });
     writeFileSync(join(root, "docs/ideation/a.md"), "ideation a");
     writeFileSync(join(root, "docs/ideation/b.md"), "ideation b");
+    mkdirSync(join(root, "docs/brainstorms"), { recursive: true });
+    writeFileSync(join(root, "docs/brainstorms/requirements.md"), "requirements");
     mkdirSync(join(root, "docs/plans"), { recursive: true });
     writeFileSync(join(root, "docs/plans/plan1.md"), "plan 1");
     mkdirSync(join(root, "docs/work"), { recursive: true });
@@ -64,20 +67,21 @@ describe("discoverArtifacts", () => {
     const result = discoverArtifacts(root);
     const byStage = Object.fromEntries(result.groups.map((g) => [g.stage, g]));
 
-    expect(result.totalArtifacts).toBe(8);
+    expect(result.totalArtifacts).toBe(9);
     expect(result.totalErrors).toBe(0);
     expect(byStage.strategy.entries).toHaveLength(1);
     expect(byStage.concepts.entries).toHaveLength(1);
     expect(byStage.ideate.entries).toHaveLength(2);
     expect(byStage.plan.entries).toHaveLength(1);
     expect(byStage.plan.entries[0]).toMatchObject({ path: "docs/plans/plan1.md" });
-    expect(byStage.plan.label).toBe("Brainstorm / Plan");
+    expect(byStage.brainstorm.entries).toHaveLength(1);
+    expect(byStage.plan.label).toBe("Plan");
     expect(byStage.work.entries[0]).toMatchObject({ path: "docs/work/work.md" });
     expect(byStage.debug.entries[0]).toMatchObject({ path: "docs/debug/debug.md" });
     expect(byStage.solution.entries).toHaveLength(1);
     // Every group present is flagged present.
     expect(byStage.ideate.present).toBe(true);
-    expect(byStage.brainstorm).toBeUndefined();
+    expect(byStage.brainstorm.entries[0]).toMatchObject({ path: "docs/brainstorms/requirements.md" });
     // All entries are artifacts in the happy path.
     expect(result.groups.flatMap((g) => g.entries).every((e) => e.kind === "artifact")).toBe(true);
   });
@@ -112,7 +116,7 @@ describe("discoverArtifacts", () => {
     expect(populated.map((g) => g.stage).sort()).toEqual(["plan", "strategy"]);
     expect(empty.length).toBeGreaterThan(0);
     // Empty groups are still present in the result so the hub can render them.
-    expect(result.groups).toHaveLength(7);
+    expect(result.groups).toHaveLength(8);
   });
 
   it("returns an all-empty result when nothing is present (first-run)", () => {
