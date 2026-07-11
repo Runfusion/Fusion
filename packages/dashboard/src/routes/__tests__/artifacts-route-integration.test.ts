@@ -71,32 +71,6 @@ describe("artifacts route integration", () => {
     return { task, artifact, imageBytes };
   }
 
-  async function requestRawBufferWithHeaders(app: express.Express, path: string, headers: Record<string, string>) {
-    const server = http.createServer(app);
-    return await new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        if (!address || typeof address === "string") {
-          reject(new Error("Expected an ephemeral TCP address for raw media request"));
-          return;
-        }
-
-        const req = http.get({ host: "127.0.0.1", port: address.port, path, headers }, (res) => {
-          const chunks: Buffer[] = [];
-          res.on("data", (chunk: Buffer) => chunks.push(chunk));
-          res.on("end", () => {
-            server.close();
-            resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) });
-          });
-        });
-        req.on("error", (error) => {
-          server.close();
-          reject(error);
-        });
-      });
-    });
-  }
-
   async function requestRawBuffer(app: express.Express, path: string) {
     /*
      * FNXC:ArtifactRegistry 2026-06-29-17:11:
@@ -602,6 +576,11 @@ describe("artifacts route integration", () => {
    * Video playback contract: the media route must serve HTTP byte ranges (206 + Content-Range +
    * Accept-Ranges) because <video> seeking issues Range requests and Safari refuses to play from
    * servers that ignore them. Unsatisfiable ranges answer 416.
+   *
+   * FNXC:ArtifactRegistry 2026-07-10-12:30:
+   * Range assertions ride the in-memory test-request harness (TestResponse.bodyBuffer for exact
+   * byte comparison) per the no-real-network testing rule; no real TCP server is started.
+   * Every 206 variant asserts the full contract: status + Content-Range + Content-Length + bytes.
    */
   it("serves byte-range requests for video artifact media", async () => {
     const task = await store.createTask({ title: "Demo recording", description: "range test" });
@@ -615,27 +594,33 @@ describe("artifacts route integration", () => {
       authorType: "agent",
       taskId: task.id,
     });
+    const mediaPath = `/api/artifacts/${artifact.id}/media`;
 
-    const full = await requestRawBuffer(app, `/api/artifacts/${artifact.id}/media`);
+    const full = await REQUEST(app, "GET", mediaPath);
     expect(full.status).toBe(200);
     expect(full.headers["accept-ranges"]).toBe("bytes");
-    expect(full.headers["content-length"]).toBe(String(videoBytes.length));
-    expect(full.body).toEqual(videoBytes);
+    expect(String(full.headers["content-length"])).toBe(String(videoBytes.length));
+    expect(full.bodyBuffer).toEqual(videoBytes);
 
-    const ranged = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: "bytes=4-11" });
+    const ranged = await REQUEST(app, "GET", mediaPath, undefined, { Range: "bytes=4-11" });
     expect(ranged.status).toBe(206);
     expect(ranged.headers["content-range"]).toBe(`bytes 4-11/${videoBytes.length}`);
-    expect(ranged.body).toEqual(videoBytes.subarray(4, 12));
+    expect(String(ranged.headers["content-length"])).toBe("8");
+    expect(ranged.bodyBuffer).toEqual(videoBytes.subarray(4, 12));
 
-    const suffix = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: "bytes=-5" });
+    const suffix = await REQUEST(app, "GET", mediaPath, undefined, { Range: "bytes=-5" });
     expect(suffix.status).toBe(206);
-    expect(suffix.body).toEqual(videoBytes.subarray(videoBytes.length - 5));
+    expect(suffix.headers["content-range"]).toBe(`bytes ${videoBytes.length - 5}-${videoBytes.length - 1}/${videoBytes.length}`);
+    expect(String(suffix.headers["content-length"])).toBe("5");
+    expect(suffix.bodyBuffer).toEqual(videoBytes.subarray(videoBytes.length - 5));
 
-    const openEnded = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: `bytes=10-` });
+    const openEnded = await REQUEST(app, "GET", mediaPath, undefined, { Range: `bytes=10-` });
     expect(openEnded.status).toBe(206);
-    expect(openEnded.body).toEqual(videoBytes.subarray(10));
+    expect(openEnded.headers["content-range"]).toBe(`bytes 10-${videoBytes.length - 1}/${videoBytes.length}`);
+    expect(String(openEnded.headers["content-length"])).toBe(String(videoBytes.length - 10));
+    expect(openEnded.bodyBuffer).toEqual(videoBytes.subarray(10));
 
-    const unsatisfiable = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: `bytes=${videoBytes.length + 5}-` });
+    const unsatisfiable = await REQUEST(app, "GET", mediaPath, undefined, { Range: `bytes=${videoBytes.length + 5}-` });
     expect(unsatisfiable.status).toBe(416);
     expect(unsatisfiable.headers["content-range"]).toBe(`bytes */${videoBytes.length}`);
   });
@@ -655,9 +640,9 @@ describe("artifacts route integration", () => {
       authorType: "system",
     });
 
-    const media = await requestRawBuffer(app, `/api/artifacts/${bridged!.id}/media`);
+    const media = await REQUEST(app, "GET", `/api/artifacts/${bridged!.id}/media`);
     expect(media.status).toBe(200);
     expect(media.headers["content-type"]).toBe("video/mp4");
-    expect(media.body).toEqual(videoBytes);
+    expect(media.bodyBuffer).toEqual(videoBytes);
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Artifact, ArtifactType, ArtifactWithTask, MessageStore, TaskStore } from "@fusion/core";
@@ -438,6 +438,123 @@ describe("artifact register tool path payloads", () => {
 
     expect(registerArtifact).not.toHaveBeenCalled();
     expect(getText(result)).toContain("path cannot be combined with uri, content, or dataBase64");
+  });
+
+  it("rejects combining content with uri", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir });
+
+    const result = await runTool(tool, "call-content-uri-conflict", {
+      type: "document",
+      title: "Conflicting payloads",
+      content: "# inline",
+      uri: "https://example.com/doc.md",
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("provide exactly one artifact payload source: content, uri, dataBase64, or path");
+  });
+
+  /*
+  FNXC:ArtifactRegistry 2026-07-11-10:05:
+  Containment coverage: `path` must never read files outside the session workspace directory or
+  the OS temp directory (realpath-canonicalized, so `../` and symlink escapes are caught), and
+  no-baseDir lanes must reject relative paths instead of resolving against process.cwd().
+  macOS note: tmpdir() is /var/folders/... which realpaths to /private/var/...; these tests rely
+  on the implementation comparing canonical roots.
+  */
+  it("rejects a relative path that escapes the baseDir via ../ segments", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const outsideDir = mkdtempSync(join(tmpdir(), "agent-artifact-outside-"));
+    try {
+      writeFileSync(join(outsideDir, "escape.png"), PNG_IMAGE_BYTES);
+      const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+
+      const result = await runTool(tool, "call-path-escape", {
+        type: "image",
+        title: "Escaped screenshot",
+        path: join("..", outsideDir.split("/").pop()!, "escape.png"),
+      });
+
+      expect(registerArtifact).not.toHaveBeenCalled();
+      expect(getText(result)).toContain("escapes the session workspace directory");
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a symlink inside the baseDir that targets a file outside the allowed roots", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    const outsideTarget = join(process.cwd(), "package.json");
+    symlinkSync(outsideTarget, join(baseDir, "sneaky.json"));
+
+    const result = await runTool(tool, "call-symlink-escape", {
+      type: "document",
+      title: "Sneaky symlink",
+      path: "sneaky.json",
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("escapes the session workspace directory");
+  });
+
+  it("rejects an absolute path outside both baseDir and the OS temp directory, naming the allowed roots", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    // package.json of the engine package: exists, but lives outside tmpdir and outside baseDir.
+    const outsideAbsolute = join(process.cwd(), "package.json");
+
+    const result = await runTool(tool, "call-absolute-outside", {
+      type: "document",
+      title: "Server file grab",
+      path: outsideAbsolute,
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("outside the allowed roots");
+    expect(getText(result)).toContain("OS temp directory");
+  });
+
+  it("rejects a relative path when no baseDir is configured instead of resolving against process.cwd()", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+
+    const result = await runTool(tool, "call-relative-no-basedir", {
+      type: "image",
+      title: "CWD-relative screenshot",
+      path: "package.json",
+    });
+
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(result)).toContain("relative path requires a workspace directory");
+  });
+
+  it("accepts an absolute path under the OS temp directory when no baseDir is configured", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-tmp", type: "image", mimeType: "image/png", content: undefined }));
+    const captureDir = mkdtempSync(join(tmpdir(), "agent-artifact-capture-"));
+    try {
+      const capturePath = join(captureDir, "capture.png");
+      writeFileSync(capturePath, PNG_IMAGE_BYTES);
+      const tool = createArtifactRegisterTool(store, AUTHOR_ID);
+
+      const result = await runTool(tool, "call-absolute-tmpdir", {
+        type: "image",
+        title: "Temp-dir capture",
+        path: capturePath,
+        taskId: TASK_ID,
+      });
+
+      expect(getText(result)).toContain("Registered artifact");
+      expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
+        type: "image",
+        mimeType: "image/png",
+        data: PNG_IMAGE_BYTES,
+      }));
+    } finally {
+      rmSync(captureDir, { recursive: true, force: true });
+    }
   });
 
   it("registers video media from path with extension-inferred mimeType and container signature validation", async () => {

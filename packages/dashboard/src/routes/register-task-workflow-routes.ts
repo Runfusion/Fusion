@@ -1,4 +1,5 @@
-import { createReadStream, statSync } from "node:fs";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type {
   TaskStore,
@@ -3825,7 +3826,8 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
       */
       let fileSize: number;
       try {
-        fileSize = statSync(mediaPath).size;
+        // FNXC:ArtifactRegistry 2026-07-10-00:00: use async stat so media/range requests never block the event loop.
+        fileSize = (await stat(mediaPath)).size;
       } catch {
         throw notFound("Artifact media not found");
       }

@@ -675,6 +675,47 @@ describe("DocumentsView", () => {
     expect(within(dialog).getByText("<h1>Login mock</h1>")).toBeInTheDocument();
   });
 
+  /*
+  FNXC:ArtifactsGallery 2026-07-10-12:30:
+  PDF artifacts (application/pdf documents) must open a dedicated embedded PDF viewer that
+  points its iframe at the artifact media route, not the inline doc viewer.
+  */
+  it("renders PDF doc artifacts in the embedded PDF viewer iframe", async () => {
+    const pdfArtifact: ArtifactWithTask = {
+      id: "artifact-pdf",
+      type: "document",
+      title: "Spec export",
+      mimeType: "application/pdf",
+      uri: "artifacts/spec.pdf",
+      authorId: "doc-agent",
+      authorType: "agent",
+      createdAt: "2026-04-19T09:45:00.000Z",
+      updatedAt: "2026-04-19T09:45:00.000Z",
+    };
+    mockUseArtifacts.mockReturnValue({
+      artifacts: [...mockArtifacts, pdfArtifact],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
+
+    const pdfCard = screen.getByRole("article", { name: "Artifact Spec export" });
+    fireEvent.click(within(pdfCard).getByRole("button", { name: "Open Spec export" }));
+    await screen.findByRole("dialog", { name: "PDF artifact viewer" });
+
+    // The FloatingWindow portals to document.body, so query the document rather than the render container.
+    const iframe = document.querySelector(".artifacts-gallery-viewer-pdf");
+    expect(iframe).toBeInTheDocument();
+    expect(iframe).toHaveAttribute("src", "/api/artifacts/artifact-pdf/media");
+    expect(iframe).toHaveAttribute("title", "Spec export");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "PDF artifact viewer" })).not.toBeInTheDocument();
+  });
+
   it("clicking project file shows content", async () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
     // Landing tab is now Artifacts; these tests exercise the Project Files tab explicitly.

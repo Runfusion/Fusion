@@ -544,7 +544,7 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_list_agents and fn_delegate_task
 - fn_get_agent_config and fn_update_agent_config (for direct reports only)
 - fn_agent_create and fn_agent_delete (for direct reports only)
-- fn_artifact_register, fn_artifact_list, and fn_artifact_view (register visual/media outputs so they appear in the dashboard Artifacts gallery: screenshots/wireframes/mockups/diagrams as type="image" via \`path\`; screen recordings as type="video" via \`path\`; HTML mockups as type="document" with mimeType="text/html" — rendered as live previews; PDFs as type="document" with mimeType="application/pdf" via \`path\`)
+- fn_artifact_register, fn_artifact_list, and fn_artifact_view (register visual/media outputs so they appear in the dashboard Artifacts gallery: screenshots/wireframes/mockups/diagrams as type="image" via \`path\`; screen recordings as type="video" via \`path\`; HTML mockups as type="document" with mimeType="text/html" — rendered as live previews; PDFs as type="document" with mimeType="application/pdf" via \`path\`. No-task runs have no session workspace directory, so save files under the OS temp directory and pass an absolute \`path\` — relative paths are rejected in this mode)
 - fn_read_evaluations and fn_update_identity (available in no-task runs)
 - fn_reflect_on_performance when reflection is enabled for this run
 - fn_workflow_list, fn_workflow_get, fn_workflow_create, fn_workflow_update, fn_workflow_delete, fn_workflow_settings, and fn_trait_list for workflow discovery/authoring
@@ -2787,6 +2787,21 @@ export class HeartbeatMonitor {
               skipStateTransition: true,
             });
             return (await this.store.getRunDetail(agentId, run.id))!;
+          }
+        }
+
+        /*
+        FNXC:ArtifactRegistry 2026-07-11-09:55:
+        Task-scoped heartbeat tools are built before the worktree is acquired, so the initial
+        fn_artifact_register binding has no baseDir and would reject relative artifact paths.
+        Once the acquired worktree cwd is known, rebind the tool with `baseDir: sessionCwd` so
+        relative `path` payloads resolve inside the heartbeat worktree (never process.cwd())
+        and absolute paths are contained to that worktree or the OS temp directory.
+        */
+        if (!isNoTaskRun) {
+          const registerToolIndex = heartbeatTools.findIndex((tool) => tool.name === "fn_artifact_register");
+          if (registerToolIndex >= 0) {
+            heartbeatTools[registerToolIndex] = createArtifactRegisterTool(taskStore, agentId, this.messageStore, { baseDir: sessionCwd, defaultTaskId: taskId! });
           }
         }
 

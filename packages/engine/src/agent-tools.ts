@@ -7,10 +7,11 @@
  * The parameter schemas are canonical here — executor.ts imports and reuses them.
  */
 
-import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon } from "@fusion/core";
@@ -1629,6 +1630,16 @@ async function registerArtifactForAgent(
   options?: ArtifactRegisterToolOptions,
 ) {
   try {
+    /*
+    FNXC:ArtifactRegistry 2026-07-11-09:40:
+    docs/agents.md promises "exactly one payload source" for fn_artifact_register. The path and
+    dataBase64 readers already reject their own mixed combos with specific messages; this guard
+    closes the remaining content+uri gap so both fields are never persisted on one artifact row.
+    Zero payload sources stays allowed (metadata-only registrations are unchanged).
+    */
+    if (params.content !== undefined && params.uri !== undefined) {
+      throw new Error("content cannot be combined with uri; provide exactly one artifact payload source: content, uri, dataBase64, or path.");
+    }
     const filePayload = await readArtifactFileFromPath(params, options?.baseDir);
     const data = filePayload ? filePayload.data : decodeArtifactDataBase64(params);
     const input: ArtifactCreateInput = {
@@ -1716,11 +1727,57 @@ async function readArtifactFileFromPath(
     throw new Error("path cannot be combined with uri, content, or dataBase64; provide exactly one artifact payload source.");
   }
 
-  const resolvedPath = isAbsolute(rawPath) ? rawPath : resolve(baseDir ?? process.cwd(), rawPath);
+  /*
+  FNXC:ArtifactRegistry 2026-07-11-09:45:
+  `path` reads server-side files, so it must be contained: an injected tool call must not be able to
+  copy arbitrary readable server files (e.g. secrets, /etc files) into managed artifact storage.
+  Containment rule (checked BEFORE stat/readFile, on realpath-canonicalized paths so symlinks and
+  `../` segments cannot escape; macOS tmpdir /var/folders/... canonicalizes to /private/var/...):
+  - Relative paths REQUIRE a configured session `baseDir` (executor/heartbeat worktree) and must
+    canonicalize to inside it; without a baseDir they are rejected instead of silently resolving
+    against process.cwd() (the server process directory).
+  - Absolute paths are allowed only inside the canonical `baseDir` or the canonical OS temp
+    directory. The tmpdir allowance is deliberate: browser/screenshot/recording tooling writes
+    captures under os.tmpdir(), and agents must be able to register those from every lane.
+  - Lanes without a baseDir (dashboard chat, no-baseDir heartbeats) are therefore bounded to
+    tmpdir-only absolute paths.
+  */
+  const isRelative = !isAbsolute(rawPath);
+  if (isRelative && !baseDir) {
+    throw new Error("relative path requires a workspace directory for this session; pass an absolute path under the OS temp directory instead.");
+  }
+  const resolvedPath = isRelative ? resolve(baseDir!, rawPath) : rawPath;
+
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(resolvedPath);
+  } catch {
+    throw new Error(`path ${resolvedPath} does not exist or is not readable.`);
+  }
+
+  let canonicalBaseDir: string | undefined;
+  if (baseDir) {
+    try {
+      canonicalBaseDir = await realpath(baseDir);
+    } catch {
+      canonicalBaseDir = undefined;
+    }
+  }
+  const canonicalTmpDir = await realpath(tmpdir());
+  const isInside = (child: string, root: string): boolean => child === root || child.startsWith(root.endsWith(sep) ? root : root + sep);
+
+  if (isRelative) {
+    if (!canonicalBaseDir || !isInside(canonicalPath, canonicalBaseDir)) {
+      throw new Error(`path ${rawPath} escapes the session workspace directory ${baseDir}; relative artifact paths must stay inside it.`);
+    }
+  } else if (!(canonicalBaseDir && isInside(canonicalPath, canonicalBaseDir)) && !isInside(canonicalPath, canonicalTmpDir)) {
+    const allowedRoots = [canonicalBaseDir, canonicalTmpDir].filter(Boolean).join(", ");
+    throw new Error(`path ${resolvedPath} is outside the allowed roots (${allowedRoots}); artifact files must live under the session workspace directory or the OS temp directory.`);
+  }
 
   let fileStat;
   try {
-    fileStat = await stat(resolvedPath);
+    fileStat = await stat(canonicalPath);
   } catch {
     throw new Error(`path ${resolvedPath} does not exist or is not readable.`);
   }
@@ -1743,7 +1800,7 @@ async function readArtifactFileFromPath(
     throw new Error(`Could not infer a MIME type from ${resolvedPath}; pass mimeType explicitly.`);
   }
 
-  const data = await readFile(resolvedPath);
+  const data = await readFile(canonicalPath);
 
   if (params.type === "image") {
     if (!mimeType.startsWith("image/")) {
