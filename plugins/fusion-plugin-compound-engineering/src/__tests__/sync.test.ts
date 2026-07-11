@@ -183,6 +183,23 @@ describe("U8 reconciler (convergence + outbound)", () => {
     expect(state.currentStage).toBe("work");
   });
 
+  it("completing work terminates the automatic pipeline without creating a debug task", async () => {
+    const { cePipelineId, task } = await landPipeline("work");
+    const before = await taskStore.listTasks();
+
+    await moveTo(task.id, "done");
+    const result = await reconcileCePipelines(ctx);
+
+    expect(result.advanced).toBe(1);
+    expect(result.tasksCreated).toBe(0);
+    expect(getCePipelineStore(ctx).getState(cePipelineId)).toMatchObject({
+      currentStage: "work",
+      status: "completed",
+    });
+    expect(await taskStore.listTasks()).toHaveLength(before.length);
+    expect(getCePipelineStore(ctx).listByPipeline(cePipelineId).some((link) => link.ceStageId === "debug")).toBe(false);
+  });
+
   it("outbound: advancing the pipeline propagates a NEW next-stage board task", async () => {
     const { cePipelineId, task } = await landPipeline("plan");
     const before = (await taskStore.listTasks()).length;

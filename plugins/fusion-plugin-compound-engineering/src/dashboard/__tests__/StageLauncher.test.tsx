@@ -47,24 +47,24 @@ function mkSession(over: Partial<CeSession>): CeSession {
 }
 
 describe("Stage launcher (R4)", () => {
-  it("lists exactly the registered stages", async () => {
+  it("keeps pipeline stages in the launcher and Debug as a separate investigation action", async () => {
     render(<CompoundEngineeringView enabledOverride projectId="p1" />);
     // Empty-state start affordance opens the launcher.
     await waitFor(() => screen.getByTestId("ce-empty-state"));
     fireEvent.click(screen.getByTestId("ce-start-action"));
 
     const tiles = await screen.findAllByTestId("ce-launcher-stage");
-    const expected = listStages();
+    const expected = listStages().filter((stage) => stage.stageId !== "debug");
     expect(tiles).toHaveLength(expected.length);
     const renderedStages = tiles.map((t) => t.getAttribute("data-stage")).sort();
     expect(renderedStages).toEqual(expected.map((s) => s.stageId).sort());
     // And the labels match the registry.
     for (const stage of expected) {
-      expect(screen.getByText(stage.label)).toBeInTheDocument();
+      expect(screen.getAllByText(stage.label).length).toBeGreaterThan(0);
     }
     const debugTiles = tiles.filter((t) => t.getAttribute("data-stage") === "debug");
-    expect(debugTiles).toHaveLength(1);
-    expect(debugTiles[0]).toHaveTextContent("Debug");
+    expect(debugTiles).toHaveLength(0);
+    expect(screen.getByTestId("ce-investigate")).toHaveTextContent("Investigate");
     expect((LucideIcons as unknown as Record<string, unknown>)[getStage("debug")!.icon]).toBeTruthy();
   });
 

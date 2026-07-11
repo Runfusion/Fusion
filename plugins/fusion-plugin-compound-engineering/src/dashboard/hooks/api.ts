@@ -50,12 +50,12 @@ export function getArtifactPreviewUrl(id: string, projectId?: string): string {
 /** Start a stage session. Returns the freshly-created session (after one turn). */
 export async function startSession(
   stage: string,
-  opts: { message?: string; projectId?: string } = {},
+  opts: { message?: string; projectId?: string; sourceSessionId?: string } = {},
 ): Promise<CeSession> {
   const data = await request<{ session: CeSession }>(`/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ stage, message: opts.message ?? "", projectId: opts.projectId }),
+    body: JSON.stringify({ stage, message: opts.message ?? "", projectId: opts.projectId, sourceSessionId: opts.sourceSessionId }),
   });
   return data.session;
 }

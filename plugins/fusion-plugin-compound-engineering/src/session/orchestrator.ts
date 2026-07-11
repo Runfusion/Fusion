@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   CreateInteractiveAiSessionFactory,
   CreateInteractiveAiSessionOptions,
@@ -22,6 +22,8 @@ import { getStage, type CeStageDefinition } from "./stage-registry.js";
  * the board (U7). Its skill is `ce-work` (see the stage registry).
  */
 export const WORK_STAGE_ID = "work";
+const BRAINSTORM_STAGE_ID = "brainstorm";
+const PLAN_STAGE_ID = "plan";
 
 /**
  * CE provenance identity constants. Defined in `../sync/ce-task.ts` (so the
@@ -223,6 +225,8 @@ export interface StartStageOptions {
   /** Opening user message (the stage prompt / topic). */
   openingMessage: string;
   projectId?: string | null;
+  /** Completed predecessor session whose artifact should be handed to the next stage. */
+  sourceSessionId?: string;
   /**
    * Return as soon as the session row exists, with the turn running in the
    * background (the route posture — lets clients watch live working output
@@ -305,7 +309,7 @@ export class CeOrchestrator {
     warnIfStageSkillMissing(this.ctx.logger, stage, additionalSkillPaths);
     return {
       cwd: this.projectRoot,
-      systemPrompt: buildStageSystemPrompt(stage),
+      systemPrompt: this.buildSystemPrompt(stage, sessionId),
       tools: "coding",
       requestedSkillNames: [stage.skillId],
       additionalSkillPaths,
@@ -318,6 +322,13 @@ export class CeOrchestrator {
       ...(defaultProvider ? { defaultProvider } : {}),
       ...(defaultModelId ? { defaultModelId } : {}),
     };
+  }
+
+  private buildSystemPrompt(stage: CeStageDefinition, sessionId: string): string {
+    const base = buildStageSystemPrompt(stage);
+    const artifactPath = this.store.get(sessionId)?.artifactPath;
+    if (stage.stageId !== PLAN_STAGE_ID || !artifactPath) return base;
+    return `${base}\n\nThe requirements-only unified plan is at ${artifactPath}. Read it and enrich that exact artifact in place to artifact_readiness: implementation-ready; do not create a sibling plan.`;
   }
 
   /**
@@ -452,9 +463,29 @@ export class CeOrchestrator {
       );
     }
 
+    /*
+     * FNXC:CompoundEngineeringPlanning 2026-07-10-22:52:
+     * Brainstorm creates the requirements-only unified plan. A same-project Plan session must carry the selected completed predecessor's safe docs/plans artifact path, accept it only while it remains requirements-only, and atomically replace it with valid implementation-ready output; absent a compatible handoff, legacy new-file behavior remains available.
+     */
+    const handoffArtifactPath = stageId === PLAN_STAGE_ID
+      ? this.findBrainstormHandoffArtifact(opts.projectId ?? null, opts.sourceSessionId)
+      : null;
+    if (handoffArtifactPath) {
+      const competingPlan = this.store.list({ stage: PLAN_STAGE_ID }).find((candidate) => (
+        candidate.projectId === (opts.projectId ?? null)
+        && candidate.artifactPath === handoffArtifactPath
+        && candidate.status !== "completed"
+        && candidate.status !== "error"
+        && candidate.status !== "interrupted"
+      ));
+      if (competingPlan) {
+        throw new Error(`Plan session ${competingPlan.id} is already enriching ${handoffArtifactPath}`);
+      }
+    }
     const session = this.store.create({
       stage: stageId,
       projectId: opts.projectId ?? null,
+      artifactPath: handoffArtifactPath,
       turnIntervalMs: this.turnTimeoutMs,
     });
     this.store.appendHistory(session.id, { role: "user", text: opts.openingMessage, at: new Date().toISOString() });
@@ -466,6 +497,46 @@ export class CeOrchestrator {
       return { session: this.requireSession(session.id) };
     }
     return turn;
+  }
+
+  /** Resolve the newest durable same-project Brainstorm handoff accepted for in-place Plan enrichment. */
+  private findBrainstormHandoffArtifact(projectId: string | null, sourceSessionId?: string): string | null {
+    const candidates = sourceSessionId
+      ? [this.store.get(sourceSessionId)].filter((session): session is CeSession => Boolean(session))
+      : this.store.list({ stage: BRAINSTORM_STAGE_ID });
+    const candidate = candidates.find((session) => (
+      session.stage === BRAINSTORM_STAGE_ID
+      && session.status === "completed"
+      && session.projectId === projectId
+      && session.artifactPath
+      && this.isSafePlanArtifactPath(session.artifactPath)
+      && this.isRequirementsOnlyPlanArtifact(session.artifactPath)
+    ));
+    return candidate?.artifactPath ?? null;
+  }
+
+  private isRequirementsOnlyPlanArtifact(artifactPath: string): boolean {
+    try {
+      const prefix = readFileSync(artifactPath, "utf8").slice(0, 8 * 1024);
+      return /(?:^|\n)artifact_contract:\s*ce-unified-plan\/v1\s*(?:\n|$)/.test(prefix)
+        && /(?:^|\n)artifact_readiness:\s*requirements-only\s*(?:\n|$)/.test(prefix);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Handoffs may be absolute (current sessions) or root-relative (legacy rows), but must resolve inside docs/plans. */
+  private isSafePlanArtifactPath(artifactPath: string): boolean {
+    const planRoot = resolve(this.projectRoot, getStage(PLAN_STAGE_ID)?.artifactLocation ?? "docs/plans/");
+    const candidate = isAbsolute(artifactPath) ? resolve(artifactPath) : resolve(this.projectRoot, artifactPath);
+    const rel = relative(planRoot, candidate);
+    if (rel.startsWith("..") || isAbsolute(rel) || rel === "") return false;
+    try {
+      const realRel = relative(realpathSync(planRoot), realpathSync(candidate));
+      return realRel !== "" && !realRel.startsWith("..") && !isAbsolute(realRel);
+    } catch {
+      return false;
+    }
   }
 
   /** Create the live handle and run the opening turn. Never rejects. */
@@ -773,7 +844,17 @@ export class CeOrchestrator {
     }
     watchdog.cancel();
 
-    const session = this.applyEvent(sessionId, event);
+    let session: CeSession;
+    try {
+      session = this.applyEvent(sessionId, event);
+    } catch (error) {
+      session = this.failSession(sessionId, error);
+      this.disposeLive(sessionId);
+      return {
+        session,
+        event: { type: "error", data: { message: session.error ?? "artifact persistence failed", cause: error } },
+      };
+    }
     if (event.type === "complete" || event.type === "error") {
       this.disposeLive(sessionId);
     }
@@ -930,12 +1011,30 @@ export class CeOrchestrator {
     const location = stage?.artifactLocation ?? `docs/ce/${session.stage}/`;
     const content = this.extractArtifactContent(data);
 
-    const target = location.endsWith("/")
-      ? join(location, `${session.stage}-${session.id}.md`)
-      : location;
+    const target = session.stage === PLAN_STAGE_ID
+      && session.artifactPath
+      && this.isSafePlanArtifactPath(session.artifactPath)
+      ? session.artifactPath
+      : location.endsWith("/")
+        ? join(location, `${session.stage}-${session.id}.md`)
+        : location;
     const abs = isAbsolute(target) ? target : join(this.projectRoot, target);
     mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content, "utf-8");
+    if (session.stage === PLAN_STAGE_ID && session.artifactPath === target) {
+      if (!/(?:^|\n)artifact_contract:\s*ce-unified-plan\/v1\s*(?:\n|$)/.test(content)
+        || !/(?:^|\n)artifact_readiness:\s*implementation-ready\s*(?:\n|$)/.test(content)) {
+        throw new Error("Plan completion must produce an implementation-ready ce-unified-plan/v1 artifact");
+      }
+      const temporary = `${abs}.tmp-${session.id}`;
+      try {
+        writeFileSync(temporary, content, "utf-8");
+        renameSync(temporary, abs);
+      } finally {
+        if (existsSync(temporary)) unlinkSync(temporary);
+      }
+    } else {
+      writeFileSync(abs, content, "utf-8");
+    }
     return abs;
   }
 

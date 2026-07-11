@@ -59,6 +59,7 @@ export function createSessionRoutes(): PluginRouteDefinition[] {
           const result = await orch.start(stageId, {
             openingMessage,
             projectId: asString(body?.projectId) ?? null,
+            sourceSessionId: asString(body?.sourceSessionId),
             detach: true,
           });
           return { status: 201, body: { session: result.session } };

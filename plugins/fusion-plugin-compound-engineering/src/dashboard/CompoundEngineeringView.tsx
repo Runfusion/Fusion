@@ -1,5 +1,5 @@
 import "./CompoundEngineeringView.css";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as LucideIcons from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { PluginDashboardViewContext } from "@fusion/dashboard/app/plugins/types";
@@ -9,7 +9,7 @@ import { useViewportMode } from "./hooks/useViewportMode.js";
 import { useCeSession, type CeSessionSubscribe } from "./hooks/useCeSession.js";
 import { useCeSessions, type CeSessionsSubscribe } from "./hooks/useCeSessions.js";
 import { CeFlow } from "./CeFlow.js";
-import { getStage, listStages, type CeStageDefinition } from "../session/stage-registry.js";
+import { getStage, listPipelineStages, listStages, type CeStageDefinition } from "../session/stage-registry.js";
 import type { CeArtifactEntry, CeArtifactGroup } from "../artifacts/discovery.js";
 import type { CeSession, CeSessionStatus } from "../session/session-store.js";
 
@@ -94,13 +94,14 @@ function SessionsPanel({
   onCancel: (session: CeSession) => void;
   onDiscard: (session: CeSession) => void;
 }) {
+  const [discardCandidate, setDiscardCandidate] = useState<string>();
   if (sessions.length === 0) return null;
   return (
-    <section className="ce-sessions card" data-testid="ce-sessions">
-      <header className="ce-group-header">
-        <h3>Sessions</h3>
+    <details className="ce-sessions" data-testid="ce-sessions">
+      <summary className="ce-sessions-summary">
+        <span>Session history</span>
         <span className="ce-group-count">{sessions.length}</span>
-      </header>
+      </summary>
       <ul className="ce-sessions-list">
         {sessions.map((s) => {
           const stageLabel = getStage(s.stage)?.label ?? s.stage;
@@ -127,15 +128,26 @@ function SessionsPanel({
                 <span className="ce-session-updated">{new Date(s.updatedAt).toLocaleString()}</span>
               </button>
               {TERMINAL.has(s.status) ? (
-                <button
-                  type="button"
-                  className="btn ce-session-discard"
-                  data-testid="ce-session-discard"
-                  disabled={disabled}
-                  onClick={() => onDiscard(s)}
-                >
-                  Discard
-                </button>
+                discardCandidate === s.id ? (
+                  <span className="ce-discard-confirm" data-testid="ce-discard-confirm">
+                    <button type="button" className="btn ce-session-discard" disabled={disabled} onClick={() => onDiscard(s)}>
+                      Delete permanently
+                    </button>
+                    <button type="button" className="btn" disabled={disabled} onClick={() => setDiscardCandidate(undefined)}>
+                      Keep
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn ce-session-discard"
+                    data-testid="ce-session-discard"
+                    disabled={disabled}
+                    onClick={() => setDiscardCandidate(s.id)}
+                  >
+                    Discard
+                  </button>
+                )
               ) : (
                 <button
                   type="button"
@@ -146,13 +158,118 @@ function SessionsPanel({
                   aria-label="Cancel session"
                   title="Cancel session"
                 >
-                  <LucideIcons.Trash2 size={16} aria-hidden="true" />
+                  <LucideIcons.CircleStop size={16} aria-hidden="true" />
                 </button>
               )}
             </li>
           );
         })}
       </ul>
+    </details>
+  );
+}
+
+function nextPipelineStageId(stageId: string): string | undefined {
+  const stages = listPipelineStages();
+  const index = stages.findIndex((stage) => stage.stageId === stageId);
+  return index >= 0 ? stages[index + 1]?.stageId : undefined;
+}
+
+type RailStatus = "Not started" | "Active" | "Needs input" | "Complete";
+
+function artifactForStage(stageId: string, groups: CeArtifactGroup[]): CeArtifactEntry | undefined {
+  const groupId = stageId === "brainstorm" ? "plan" : stageId;
+  const entries = groups.find((group) => group.stage === groupId)?.entries ?? [];
+  if (stageId === "brainstorm") {
+    return entries.find((entry) => (
+      entry.kind === "artifact"
+      && entry.artifactContract === "ce-unified-plan/v1"
+      && (entry.artifactReadiness === "requirements-only" || entry.artifactReadiness === "implementation-ready")
+    ));
+  }
+  if (stageId === "plan") {
+    return entries.find((entry) => (
+      entry.kind === "artifact"
+      && (entry.artifactReadiness === "implementation-ready" || !entry.artifactReadiness)
+    ));
+  }
+  return entries.find((entry) => entry.kind === "artifact");
+}
+
+function railStatus(stageId: string, sessions: CeSession[], artifact?: CeArtifactEntry): RailStatus {
+  const latest = sessions.find((session) => session.stage === stageId);
+  if (latest?.status === "awaiting_input") return "Needs input";
+  if (latest?.status === "active" || latest?.status === "launching") return "Active";
+  if (latest?.status === "completed" || artifact?.kind === "artifact") return "Complete";
+  return "Not started";
+}
+
+/**
+ * FNXC:CompoundEngineeringUI 2026-07-10-12:00:
+ * Operators need the five-stage compounding pipeline as the overview's primary navigation. Each stage shows actionable state and its latest durable artifact, while Debug remains a separate investigation action because it is not pipeline progression.
+ */
+function PipelineOverview({
+  groups,
+  sessions,
+  disabled,
+  openFile,
+  onLaunch,
+  onOpenSession,
+}: {
+  groups: CeArtifactGroup[];
+  sessions: CeSession[];
+  disabled: boolean;
+  openFile?: PluginDashboardViewContext["openFile"];
+  onLaunch: (stage: CeStageDefinition) => void;
+  onOpenSession: (session: CeSession) => void;
+}) {
+  const stages = listPipelineStages();
+  const debug = getStage("debug");
+  return (
+    <section className="ce-pipeline" data-testid="ce-pipeline">
+      <header className="ce-pipeline-header">
+        <div>
+          <h2>Pipeline</h2>
+          <p>Move from direction to delivered work.</p>
+        </div>
+        {debug ? (
+          <button type="button" className="btn ce-investigate" data-testid="ce-investigate" disabled={disabled} onClick={() => onLaunch(debug)}>
+            <LucideIcons.Bug size={16} aria-hidden="true" /> Investigate
+          </button>
+        ) : null}
+      </header>
+      <ol className="ce-stage-rail">
+        {stages.map((stage) => {
+          const artifact = artifactForStage(stage.stageId, groups);
+          const latestSession = sessions.find((session) => session.stage === stage.stageId);
+          const status = railStatus(stage.stageId, sessions, artifact);
+          const Icon = resolveIcon(stage.icon);
+          return (
+            <li key={stage.stageId} className="ce-stage-step" data-status={status.toLowerCase().replace(" ", "-")}>
+              <button
+                type="button"
+                className="ce-stage-main"
+                data-testid="ce-pipeline-stage"
+                data-stage={stage.stageId}
+                disabled={disabled}
+                onClick={() => latestSession && !TERMINAL.has(latestSession.status) ? onOpenSession(latestSession) : onLaunch(stage)}
+              >
+                <span className="ce-stage-icon"><Icon size={17} aria-hidden="true" /></span>
+                <span className="ce-stage-copy">
+                  <strong>{stage.label}</strong>
+                  <span className="ce-stage-status">{status}</span>
+                </span>
+              </button>
+              {artifact?.kind === "artifact" ? (
+                <button type="button" className="ce-stage-artifact" onClick={() => openFile?.(artifact.path, { workspace: "project" })}>
+                  <LucideIcons.FileText size={13} aria-hidden="true" />
+                  <span>{artifact.name}</span>
+                </button>
+              ) : <span className="ce-stage-artifact is-empty">No artifact yet</span>}
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }
@@ -213,10 +330,20 @@ function ArtifactRow({
       </li>
     );
   }
+  const readinessLabel = entry.artifactReadiness === "requirements-only"
+    ? "Requirements"
+    : entry.artifactReadiness === "implementation-ready"
+      ? "Implementation ready"
+      : entry.artifactReadiness;
   return (
     <li className={`ce-artifact${selected ? " is-selected" : ""}`} data-testid="ce-artifact">
       <button type="button" className="ce-artifact-btn" onClick={() => onSelect(entry.id)}>
         <span className="ce-artifact-name">{entry.name}</span>
+        {entry.artifactReadiness ? (
+          <span className={`ce-readiness ce-readiness-${entry.artifactReadiness}`}>
+            {readinessLabel}
+          </span>
+        ) : null}
         <span className="ce-artifact-path">{entry.path}</span>
       </button>
       <button
@@ -295,6 +422,8 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
       });
   }, [subscribePluginEvents]);
   const ceSession = useCeSession(subscribe ? { subscribe } : {});
+  const activeSession = ceSession.session;
+  const openSession = ceSession.open;
   // Session list refresh: ANY CE push event means some session changed.
   const subscribeList = useMemo<CeSessionsSubscribe | undefined>(() => {
     if (!subscribePluginEvents) return undefined;
@@ -308,6 +437,14 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   const [launcherOpen, setLauncherOpen] = useState(false);
   const [sessionActionBusy, setSessionActionBusy] = useState(false);
 
+  const setSessionUrl = useCallback((value?: string) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (value) url.searchParams.set("ceSession", value);
+    else url.searchParams.delete("ceSession");
+    window.history.replaceState(window.history.state, "", url);
+  }, []);
+
   const totalArtifacts = result?.totalArtifacts ?? 0;
   const totalErrors = result?.totalErrors ?? 0;
   const hasAnything = totalArtifacts > 0 || totalErrors > 0;
@@ -319,20 +456,24 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   const onStart = () => setLauncherOpen(true);
 
   const onLaunch = useCallback(
-    (stage: CeStageDefinition) => {
+    (stage: CeStageDefinition, sourceSessionId?: string) => {
       setLauncherOpen(false);
       void ceSession
-        .start(stage.stageId, { message: `Start the ${stage.label} stage.`, projectId })
-        .then(() => ceSessions.refresh());
+        .start(stage.stageId, { message: `Start the ${stage.label} stage.`, projectId, sourceSessionId })
+        .then((session) => {
+          if (session) setSessionUrl(session.id);
+          return ceSessions.refresh();
+        });
     },
-    [ceSession, ceSessions, projectId],
+    [ceSession, ceSessions, projectId, setSessionUrl],
   );
 
   const onOpenSession = useCallback(
     (s: CeSession) => {
-      void ceSession.open(s.id, { projectId });
+      setSessionUrl(s.id);
+      void openSession(s.id, { projectId });
     },
-    [ceSession, projectId],
+    [openSession, projectId, setSessionUrl],
   );
 
   const onCancelSession = useCallback(
@@ -341,11 +482,14 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
       void ceSessions
         .cancel(s.id)
         .then(() => {
-          if (ceSession.session?.id === s.id) ceSession.reset();
+          if (ceSession.session?.id === s.id) {
+            ceSession.reset();
+            setSessionUrl();
+          }
         })
         .finally(() => setSessionActionBusy(false));
     },
-    [ceSession, ceSessions],
+    [ceSession, ceSessions, setSessionUrl],
   );
 
   const onDiscardSession = useCallback(
@@ -360,8 +504,22 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
   // it keeps running server-side and stays reachable from the sessions panel.
   const onCloseFlow = useCallback(() => {
     ceSession.reset();
+    setSessionUrl();
     void ceSessions.refresh();
-  }, [ceSession, ceSessions]);
+  }, [ceSession, ceSessions, setSessionUrl]);
+
+  const resumableSession = useMemo(() => {
+    return ceSessions.sessions.find(
+      (session) => session.status === "active" || session.status === "awaiting_input" || session.status === "launching",
+    );
+  }, [ceSessions.sessions]);
+
+  useEffect(() => {
+    if (activeSession || ceSessions.loading || ceSessions.sessions.length === 0 || typeof window === "undefined") return;
+    const sessionId = new URL(window.location.href).searchParams.get("ceSession");
+    const session = ceSessions.sessions.find((candidate) => candidate.id === sessionId);
+    if (session) void openSession(session.id, { projectId });
+  }, [activeSession, ceSessions.loading, ceSessions.sessions, openSession, projectId]);
 
   // Once a session is active here, the flow renderer owns the surface until
   // closed — but the sessions panel stays visible so other sessions remain
@@ -393,6 +551,12 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
             onResume={ceSession.resume}
             onCancel={() => onCancelSession(ceSession.session!)}
             onClose={onCloseFlow}
+            onOpenArtifact={openFile ? (path) => openFile(path, { workspace: "project" }) : undefined}
+            nextStageId={nextPipelineStageId(ceSession.session.stage)}
+            onStartNextStage={(stageId) => {
+              const stage = getStage(stageId);
+              if (stage) onLaunch(stage, ceSession.session!.id);
+            }}
           />
         </div>
       </div>
@@ -421,8 +585,28 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
       />
 
       <div className="ce-view-body">
+        <PipelineOverview
+          groups={result?.groups ?? []}
+          sessions={ceSessions.sessions}
+          disabled={ceSession.busy || sessionActionBusy}
+          openFile={openFile}
+          onLaunch={onLaunch}
+          onOpenSession={onOpenSession}
+        />
+
+        {resumableSession ? (
+          <button type="button" className="ce-resume-banner" data-testid="ce-resume-latest" onClick={() => onOpenSession(resumableSession)}>
+            <span className="ce-resume-icon"><LucideIcons.Play size={16} aria-hidden="true" /></span>
+            <span>
+              <strong>{resumableSession.status === "awaiting_input" ? "Input needed" : "Resume active session"}</strong>
+              <small>{getStage(resumableSession.stage)?.label ?? resumableSession.stage} · Updated {new Date(resumableSession.updatedAt).toLocaleString()}</small>
+            </span>
+            <LucideIcons.ChevronRight size={17} aria-hidden="true" />
+          </button>
+        ) : null}
+
         {launcherOpen ? (
-          <StageLauncher stages={stages} disabled={ceSession.busy} onLaunch={onLaunch} />
+          <StageLauncher stages={listPipelineStages()} disabled={ceSession.busy} onLaunch={onLaunch} />
         ) : null}
 
         <SessionsPanel

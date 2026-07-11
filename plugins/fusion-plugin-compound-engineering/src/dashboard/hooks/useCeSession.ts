@@ -61,7 +61,7 @@ export interface UseCeSessionResult {
   /** True while a request (start/answer/resume) is in flight. */
   busy: boolean;
   error?: string;
-  start(stage: string, opts?: { message?: string; projectId?: string }): Promise<void>;
+  start(stage: string, opts?: { message?: string; projectId?: string; sourceSessionId?: string }): Promise<CeSession | undefined>;
   /** Adopt an EXISTING session (e.g. from the session list) as the active one. */
   open(sessionId: string, opts?: { projectId?: string }): Promise<void>;
   answer(questionId: string, response: unknown): Promise<void>;
@@ -116,8 +116,10 @@ export function useCeSession(options: UseCeSessionOptions = {}): UseCeSessionRes
       try {
         const next = await op();
         apply(next);
+        return next;
       } catch (err) {
         if (mounted.current) setError(err instanceof Error ? err.message : String(err));
+        return undefined;
       } finally {
         if (mounted.current) setBusy(false);
       }
@@ -126,7 +128,7 @@ export function useCeSession(options: UseCeSessionOptions = {}): UseCeSessionRes
   );
 
   const start = useCallback(
-    (stage: string, opts: { message?: string; projectId?: string } = {}) => {
+    (stage: string, opts: { message?: string; projectId?: string; sourceSessionId?: string } = {}) => {
       projectIdRef.current = opts.projectId;
       return run(() => transport.start(stage, opts));
     },
@@ -137,27 +139,27 @@ export function useCeSession(options: UseCeSessionOptions = {}): UseCeSessionRes
   // as this hook's active session. Like start(), it pins the projectId used for
   // every subsequent call — the session row lives in that project's store.
   const open = useCallback(
-    (sessionId: string, opts: { projectId?: string } = {}) => {
+    async (sessionId: string, opts: { projectId?: string } = {}) => {
       projectIdRef.current = opts.projectId;
       sessionIdRef.current = sessionId;
-      return run(() => transport.get(sessionId, opts.projectId));
+      await run(() => transport.get(sessionId, opts.projectId));
     },
     [run, transport],
   );
 
   const answer = useCallback(
-    (questionId: string, response: unknown) => {
+    async (questionId: string, response: unknown) => {
       const id = sessionIdRef.current;
-      if (!id) return Promise.resolve();
-      return run(() => transport.answer(id, questionId, response, projectIdRef.current));
+      if (!id) return;
+      await run(() => transport.answer(id, questionId, response, projectIdRef.current));
     },
     [run, transport],
   );
 
-  const resume = useCallback(() => {
+  const resume = useCallback(async () => {
     const id = sessionIdRef.current;
-    if (!id) return Promise.resolve();
-    return run(() => transport.resume(id, projectIdRef.current));
+    if (!id) return;
+    await run(() => transport.resume(id, projectIdRef.current));
   }, [run, transport]);
 
   const reset = useCallback(() => {
