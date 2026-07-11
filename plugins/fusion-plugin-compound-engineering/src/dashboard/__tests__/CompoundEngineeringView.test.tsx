@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { DiscoveryResult } from "../../artifacts/discovery.js";
 
 // Mock the network layer so the view renders from seeded discovery results.
@@ -54,10 +54,11 @@ function mkCeSession(over: Partial<CeSession>): CeSession {
 const ALL_STAGES: Array<{ stage: DiscoveryResult["groups"][number]["stage"]; label: string }> = [
   { stage: "strategy", label: "Strategy" },
   { stage: "ideate", label: "Ideate" },
-  { stage: "plan", label: "Brainstorm / Plan" },
+  { stage: "brainstorm", label: "Brainstorms" },
+  { stage: "plan", label: "Plan" },
   { stage: "work", label: "Work" },
   { stage: "debug", label: "Debug" },
-  { stage: "solution", label: "Solutions" },
+  { stage: "compound", label: "Learnings" },
   { stage: "concepts", label: "Concepts" },
 ];
 
@@ -155,6 +156,52 @@ describe("CompoundEngineeringView", () => {
     expect(plans.querySelectorAll('[data-testid="ce-artifact"]')).toHaveLength(2);
   });
 
+  it("keeps long artifact histories collapsed after the four newest entries", async () => {
+    listArtifacts.mockResolvedValue(
+      makeResult({
+        plan: Array.from({ length: 6 }, (_, index) => ({
+          kind: "artifact" as const,
+          id: `plan:docs/plans/${index}.md`,
+          stage: "plan",
+          path: `docs/plans/${index}.md`,
+          name: `${index}.md`,
+          size: 5,
+          updatedAt: 6 - index,
+        })),
+      }),
+    );
+
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    const plans = await screen.findByRole("heading", { name: "Plans" });
+    const group = plans.closest<HTMLElement>("[data-testid='ce-group']")!;
+    expect(group.querySelectorAll("[data-testid='ce-artifact']")).toHaveLength(6);
+    const disclosure = within(group).getByText("Show all 6").closest("details")!;
+    expect(disclosure).not.toHaveAttribute("open");
+    fireEvent.click(within(group).getByText("Show all 6"));
+    expect(disclosure).toHaveAttribute("open");
+  });
+
+  it("normalizes legacy solution groups into Compound learnings", async () => {
+    const result = makeResult({});
+    result.groups = result.groups.filter((group) => group.stage !== "compound");
+    result.groups.push({
+      stage: "solution",
+      label: "Solutions",
+      present: true,
+      entries: [{ kind: "artifact", id: "solution:docs/solutions/learned.md", stage: "solution", path: "docs/solutions/learned.md", name: "learned.md", size: 5, updatedAt: 1 }],
+    });
+    result.totalArtifacts = 1;
+    listArtifacts.mockResolvedValue(result);
+
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    expect(await screen.findByRole("heading", { name: "Learnings" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Solutions" })).not.toBeInTheDocument();
+    const compound = screen.getAllByTestId("ce-pipeline-stage").find((node) => node.getAttribute("data-stage") === "compound");
+    expect(compound).toHaveTextContent("1 artifact");
+  });
+
   it("opens an artifact in the built-in file viewer via context.openFile", async () => {
     const openFile = vi.fn();
     listArtifacts.mockResolvedValue(
@@ -243,7 +290,10 @@ describe("CompoundEngineeringView", () => {
     expect(rows[1].querySelector("[data-testid='ce-session-cancel']")).toBeInTheDocument();
     expect(rows[2].querySelector("[data-testid='ce-session-cancel']")).not.toBeInTheDocument();
     expect(screen.getByTestId("ce-resume-latest")).toHaveTextContent(/input needed/i);
-    expect(screen.getAllByTestId("ce-pipeline-stage")).toHaveLength(5);
+    expect(screen.getAllByTestId("ce-pipeline-stage")).toHaveLength(6);
+    expect(screen.getByText("Foundation")).toBeInTheDocument();
+    expect(screen.getByText("Delivery loop")).toBeInTheDocument();
+    expect(screen.getByText("Build, simplify, and review")).toBeInTheDocument();
   });
 
   it("renders no cancel affordance for an empty sessions list", async () => {
@@ -289,6 +339,19 @@ describe("CompoundEngineeringView", () => {
     await screen.findByTestId("ce-empty-state");
     expect(screen.getByTestId("ce-sessions")).toBeInTheDocument();
     expect(deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("hands optional foundation sessions directly into Brainstorm", async () => {
+    const strategy = mkCeSession({ id: "strategy-done", stage: "strategy", status: "completed" });
+    listArtifacts.mockResolvedValue(makeResult({}));
+    listSessions.mockResolvedValue([strategy]);
+    getSession.mockResolvedValue(strategy);
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    fireEvent.click((await screen.findAllByTestId("ce-session-open"))[0]);
+
+    expect(await screen.findByRole("button", { name: "Start Brainstorm" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start Ideate" })).not.toBeInTheDocument();
   });
 
   it("cancels an in-flight session via the list", async () => {
@@ -356,7 +419,7 @@ describe("CompoundEngineeringView", () => {
     await waitFor(() => expect(screen.queryByTestId("ce-sessions")).not.toBeInTheDocument());
   });
 
-  it("shows unified plan readiness and derives rail completion from artifacts", async () => {
+  it("shows unified plan readiness and distinguishes artifact history from completed runs", async () => {
     listArtifacts.mockResolvedValue(makeResult({
       plan: [{
         kind: "artifact",
@@ -374,9 +437,9 @@ describe("CompoundEngineeringView", () => {
 
     expect(await screen.findByText("Implementation ready")).toBeInTheDocument();
     const plan = screen.getAllByTestId("ce-pipeline-stage").find((node) => node.getAttribute("data-stage") === "plan")!;
-    expect(plan).toHaveTextContent("Complete");
+    expect(plan).toHaveTextContent("History");
     const brainstorm = screen.getAllByTestId("ce-pipeline-stage").find((node) => node.getAttribute("data-stage") === "brainstorm")!;
-    expect(brainstorm).toHaveTextContent("Complete");
+    expect(brainstorm).toHaveTextContent("History");
   });
 
   it("keeps Plan incomplete when only a requirements artifact exists", async () => {
@@ -396,7 +459,7 @@ describe("CompoundEngineeringView", () => {
     render(<CompoundEngineeringView projectId="p1" enabledOverride />);
 
     const stages = await screen.findAllByTestId("ce-pipeline-stage");
-    expect(stages.find((node) => node.getAttribute("data-stage") === "brainstorm")).toHaveTextContent("Complete");
+    expect(stages.find((node) => node.getAttribute("data-stage") === "brainstorm")).toHaveTextContent("History");
     expect(stages.find((node) => node.getAttribute("data-stage") === "plan")).toHaveTextContent("Not started");
   });
 

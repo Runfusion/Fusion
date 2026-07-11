@@ -55,6 +55,7 @@ const STAGE_DEFINITIONS: CeStageDefinition[] = [
   {
     stageId: "strategy",
     order: 100,
+    participatesInPipeline: false,
     skillId: "ce-strategy",
     artifactLocation: "STRATEGY.md",
     icon: "Compass",
@@ -64,6 +65,7 @@ const STAGE_DEFINITIONS: CeStageDefinition[] = [
   {
     stageId: "ideate",
     order: 200,
+    participatesInPipeline: false,
     skillId: "ce-ideate",
     artifactLocation: "docs/ideation/",
     icon: "Lightbulb",
@@ -107,11 +109,24 @@ const STAGE_DEFINITIONS: CeStageDefinition[] = [
   },
   {
     /*
+     * FNXC:CompoundEngineeringPipeline 2026-07-11-00:02:
+     * The upstream ce-work skill already owns implementation, phase-boundary simplification, and code review. Compound is the next distinct durable stage, saving reusable learnings after delivery instead of ending the user journey at Work.
+     */
+    stageId: "compound",
+    order: 600,
+    skillId: "ce-compound",
+    artifactLocation: "docs/solutions/",
+    icon: "BookOpenCheck",
+    label: "Compound",
+    artifactGlob: "docs/solutions/**/*.md",
+  },
+  {
+    /*
      * FNXC:CompoundEngineeringPipeline 2026-07-10-22:52:
-     * Debug is manually launchable but does not participate in automatic Strategy -> Ideate -> Brainstorm -> Plan -> Work progression. Work remains the terminal automatic stage.
+     * Debug is manually launchable but does not participate in automatic Strategy -> Ideate -> Brainstorm -> Plan -> Work -> Compound progression. Compound is the terminal automatic stage.
      */
     stageId: "debug",
-    order: 600,
+    order: 700,
     participatesInPipeline: false,
     skillId: "ce-debug",
     artifactLocation: "docs/debug/",

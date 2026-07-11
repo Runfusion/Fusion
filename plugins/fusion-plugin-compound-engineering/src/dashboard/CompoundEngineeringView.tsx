@@ -170,15 +170,18 @@ function SessionsPanel({
 }
 
 function nextPipelineStageId(stageId: string): string | undefined {
+  if (stageId === "strategy" || stageId === "ideate") return "brainstorm";
   const stages = listPipelineStages();
   const index = stages.findIndex((stage) => stage.stageId === stageId);
   return index >= 0 ? stages[index + 1]?.stageId : undefined;
 }
 
-type RailStatus = "Not started" | "Active" | "Needs input" | "Complete";
+type RailStatus = "Not started" | "Active" | "Needs input" | "Last run complete" | "History" | "Current";
 
 function artifactsForStage(stageId: string, groups: CeArtifactGroup[]): CeArtifactEntry[] {
-  const entries = groups.find((group) => group.stage === stageId)?.entries ?? [];
+  const entries = groups.find((group) => group.stage === stageId)?.entries
+    ?? (stageId === "compound" ? groups.find((group) => group.stage === "solution")?.entries : undefined)
+    ?? [];
   if (stageId === "brainstorm") {
     const unifiedEntries = groups.find((group) => group.stage === "plan")?.entries ?? [];
     return [...entries, ...unifiedEntries.filter((entry) => (
@@ -200,16 +203,87 @@ function railStatus(stageId: string, sessions: CeSession[], artifact?: CeArtifac
   const latest = sessions.find((session) => session.stage === stageId);
   if (latest?.status === "awaiting_input") return "Needs input";
   if (latest?.status === "active" || latest?.status === "launching") return "Active";
-  if (latest?.status === "completed" || artifact?.kind === "artifact") return "Complete";
+  if (latest?.status === "completed") return "Last run complete";
+  if (artifact?.kind === "artifact") return stageId === "strategy" ? "Current" : "History";
   return "Not started";
+}
+
+const STAGE_PURPOSE: Record<string, string> = {
+  strategy: "Set the product direction",
+  ideate: "Explore high-leverage ideas",
+  brainstorm: "Define what to build",
+  plan: "Decide how to build it",
+  work: "Build, simplify, and review",
+  compound: "Save reusable learnings",
+};
+
+function StageRail({
+  stages,
+  groups,
+  sessions,
+  disabled,
+  openFile,
+  onLaunch,
+  onOpenSession,
+}: {
+  stages: CeStageDefinition[];
+  groups: CeArtifactGroup[];
+  sessions: CeSession[];
+  disabled: boolean;
+  openFile?: PluginDashboardViewContext["openFile"];
+  onLaunch: (stage: CeStageDefinition) => void;
+  onOpenSession: (session: CeSession) => void;
+}) {
+  return (
+    <ol className="ce-stage-rail" data-count={stages.length}>
+      {stages.map((stage) => {
+        const artifacts = artifactsForStage(stage.stageId, groups);
+        const artifact = artifacts[0];
+        const stageSessions = sessions.filter((session) => session.stage === stage.stageId);
+        const latestSession = stageSessions[0];
+        const status = railStatus(stage.stageId, sessions, artifact);
+        const Icon = resolveIcon(stage.icon);
+        return (
+          <li key={stage.stageId} className="ce-stage-step" data-status={status.toLowerCase().replaceAll(" ", "-")}>
+            <button
+              type="button"
+              className="ce-stage-main"
+              data-testid="ce-pipeline-stage"
+              data-stage={stage.stageId}
+              disabled={disabled}
+              onClick={() => latestSession && !TERMINAL.has(latestSession.status) ? onOpenSession(latestSession) : onLaunch(stage)}
+            >
+              <span className="ce-stage-icon"><Icon size={17} aria-hidden="true" /></span>
+              <span className="ce-stage-copy">
+                <strong>{stage.label}</strong>
+                {STAGE_PURPOSE[stage.stageId] ? <span className="ce-stage-purpose">{STAGE_PURPOSE[stage.stageId]}</span> : null}
+                <span className="ce-stage-status">
+                  {status} · {stageSessions.length} {stageSessions.length === 1 ? "run" : "runs"} · {artifacts.length} {artifacts.length === 1 ? "artifact" : "artifacts"}
+                </span>
+              </span>
+            </button>
+            {artifact?.kind === "artifact" ? (
+              <button type="button" className="ce-stage-artifact" onClick={() => openFile?.(artifact.path, { workspace: "project" })}>
+                <LucideIcons.FileText size={13} aria-hidden="true" />
+                <span>{artifact.name}</span>
+              </button>
+            ) : <span className="ce-stage-artifact is-empty">No artifact yet</span>}
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 /**
  * FNXC:CompoundEngineeringUI 2026-07-10-12:00:
- * Operators need the five-stage compounding loop as the overview's primary navigation. Stages report repeatable run and artifact collections instead of implying one permanent completion; Strategy remains the upstream singleton anchor, while Debug remains a separate investigation action because it is not pipeline progression.
+ * Operators need the optional foundation plus four-stage delivery loop as the overview's primary navigation. Stages report repeatable run and artifact collections instead of implying one permanent completion; Strategy remains the upstream singleton anchor, while Debug remains a separate investigation action because it is not pipeline progression.
  *
  * FNXC:CompoundEngineeringUI 2026-07-10-23:40:
- * Compound Engineering follows the upstream repeatable loop: brainstorm requirements, plan implementation, work, review, compound, then repeat with better context. Brainstorm and Plan therefore expose collection counts and latest activity over multiple unified-plan files rather than a single artifact slot.
+ * Compound Engineering follows the upstream repeatable loop: brainstorm requirements, plan implementation, work through built-in simplification and review, compound the learning, then repeat with better context. Brainstorm and Plan therefore expose collection counts and latest activity over multiple unified-plan files rather than a single artifact slot.
+ *
+ * FNXC:CompoundEngineeringUI 2026-07-11-00:02:
+ * Strategy and Ideate are optional foundation work, not mandatory delivery gates. Visually separate them from the Brainstorm -> Plan -> Work -> Compound loop, and state that Work owns simplification and review so users do not repeat quality stages manually.
  */
 function PipelineOverview({
   groups,
@@ -226,14 +300,16 @@ function PipelineOverview({
   onLaunch: (stage: CeStageDefinition) => void;
   onOpenSession: (session: CeSession) => void;
 }) {
-  const stages = listPipelineStages();
+  const stages = listStages().filter((stage) => stage.stageId !== "debug");
+  const foundationStages = stages.filter((stage) => stage.stageId === "strategy" || stage.stageId === "ideate");
+  const deliveryStages = stages.filter((stage) => stage.stageId !== "strategy" && stage.stageId !== "ideate");
   const debug = getStage("debug");
   return (
     <section className="ce-pipeline" data-testid="ce-pipeline">
       <header className="ce-pipeline-header">
         <div>
-          <h2>Pipeline</h2>
-          <p>Move from direction to delivered work.</p>
+          <h2>Compound Engineering</h2>
+          <p>Plan deeply, ship carefully, and save what you learn.</p>
         </div>
         {debug ? (
           <button type="button" className="btn ce-investigate" data-testid="ce-investigate" disabled={disabled} onClick={() => onLaunch(debug)}>
@@ -241,42 +317,14 @@ function PipelineOverview({
           </button>
         ) : null}
       </header>
-      <ol className="ce-stage-rail">
-        {stages.map((stage) => {
-          const artifacts = artifactsForStage(stage.stageId, groups);
-          const artifact = artifacts[0];
-          const stageSessions = sessions.filter((session) => session.stage === stage.stageId);
-          const latestSession = stageSessions[0];
-          const status = railStatus(stage.stageId, sessions, artifact);
-          const Icon = resolveIcon(stage.icon);
-          return (
-            <li key={stage.stageId} className="ce-stage-step" data-status={status.toLowerCase().replace(" ", "-")}>
-              <button
-                type="button"
-                className="ce-stage-main"
-                data-testid="ce-pipeline-stage"
-                data-stage={stage.stageId}
-                disabled={disabled}
-                onClick={() => latestSession && !TERMINAL.has(latestSession.status) ? onOpenSession(latestSession) : onLaunch(stage)}
-              >
-                <span className="ce-stage-icon"><Icon size={17} aria-hidden="true" /></span>
-                <span className="ce-stage-copy">
-                  <strong>{stage.label}</strong>
-                  <span className="ce-stage-status">
-                    {status} · {stageSessions.length} {stageSessions.length === 1 ? "run" : "runs"} · {artifacts.length} {artifacts.length === 1 ? "artifact" : "artifacts"}
-                  </span>
-                </span>
-              </button>
-              {artifact?.kind === "artifact" ? (
-                <button type="button" className="ce-stage-artifact" onClick={() => openFile?.(artifact.path, { workspace: "project" })}>
-                  <LucideIcons.FileText size={13} aria-hidden="true" />
-                  <span>{artifact.name}</span>
-                </button>
-              ) : <span className="ce-stage-artifact is-empty">No artifact yet</span>}
-            </li>
-          );
-        })}
-      </ol>
+      <div className="ce-pipeline-block">
+        <div className="ce-pipeline-block-heading"><h3>Foundation</h3><span>Optional grounding</span></div>
+        <StageRail stages={foundationStages} groups={groups} sessions={sessions} disabled={disabled} openFile={openFile} onLaunch={onLaunch} onOpenSession={onOpenSession} />
+      </div>
+      <div className="ce-pipeline-block">
+        <div className="ce-pipeline-block-heading"><h3>Delivery loop</h3><span>Repeat for each meaningful change</span></div>
+        <StageRail stages={deliveryStages} groups={groups} sessions={sessions} disabled={disabled} openFile={openFile} onLaunch={onLaunch} onOpenSession={onOpenSession} />
+      </div>
     </section>
   );
 }
@@ -302,11 +350,11 @@ function EmptyState({ onStart }: { onStart: () => void }) {
       <h3>Start your compounding pipeline</h3>
       <p>
         No compound-engineering artifacts found yet. Compound Engineering tracks the documents your
-        pipeline produces — strategy, ideation, brainstorms, plans, solutions, and concepts — as you
+        workflow produces — strategy, ideation, brainstorms, plans, work logs, learnings, and concepts — as you
         move through each stage.
       </p>
       <p className="ce-empty-hint">
-        Begin with a stage and its artifact will appear here, grouped and traceable.
+        Start with Brainstorm when the problem is still fuzzy, Plan when requirements are settled, or Debug for broken behavior.
       </p>
       <button type="button" className="btn btn-primary" data-testid="ce-start-action" onClick={onStart}>
         Start a stage
@@ -376,8 +424,14 @@ function StageGroup({
   selectedId?: string;
   openFile?: PluginDashboardViewContext["openFile"];
 }) {
+  /*
+   * FNXC:CompoundEngineeringUI 2026-07-11-00:06:
+   * Brainstorm and Plan are repeatable collections that can contain dozens of artifacts. Keep the four newest visible for scanning and disclose the full history on demand so power does not overwhelm the default view.
+   */
   const empty = group.entries.length === 0;
   const singleton = group.stage === "strategy";
+  const visibleEntries = group.entries.slice(0, 4);
+  const remainingEntries = group.entries.slice(4);
   return (
     <section className="ce-group card" data-testid="ce-group" data-stage={group.stage} data-layout={singleton ? "singleton" : "collection"} data-empty={empty ? "true" : "false"}>
       <header className="ce-group-header">
@@ -390,7 +444,7 @@ function StageGroup({
         </p>
       ) : (
         <ul className="ce-artifact-list">
-          {group.entries.map((entry) => (
+          {visibleEntries.map((entry) => (
             <ArtifactRow
               key={entry.id}
               entry={entry}
@@ -401,14 +455,34 @@ function StageGroup({
           ))}
         </ul>
       )}
+      {remainingEntries.length > 0 ? (
+        <details className="ce-group-more">
+          <summary>Show all {group.entries.length}</summary>
+          <ul className="ce-artifact-list">
+            {remainingEntries.map((entry) => (
+              <ArtifactRow
+                key={entry.id}
+                entry={entry}
+                onSelect={onSelect}
+                selected={selectedId === entry.id}
+                openFile={openFile}
+              />
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </section>
   );
 }
 
 function artifactDisplayGroups(groups: CeArtifactGroup[]): CeArtifactGroup[] {
   const conventionalBrainstorms = groups.find((group) => group.stage === "brainstorm");
+  const hasCompoundGroup = groups.some((group) => group.stage === "compound");
   return groups.flatMap((group) => {
     if (group.stage === "brainstorm") return [];
+    if (group.stage === "solution") {
+      return hasCompoundGroup ? [] : [{ ...group, stage: "compound", label: "Learnings" }];
+    }
     if (group.stage !== "plan") return [group];
     const brainstorms = group.entries.filter((entry) => (
       entry.kind === "artifact"
@@ -641,7 +715,7 @@ export function CompoundEngineeringView(props: CompoundEngineeringViewProps) {
         ) : null}
 
         {launcherOpen ? (
-          <StageLauncher stages={listPipelineStages()} disabled={ceSession.busy} onLaunch={onLaunch} />
+          <StageLauncher stages={listStages().filter((stage) => stage.stageId !== "debug")} disabled={ceSession.busy} onLaunch={onLaunch} />
         ) : null}
 
         <SessionsPanel

@@ -8,20 +8,21 @@ describe("compound engineering stage registry", () => {
     const stageIds = listStages().map((stage) => stage.stageId);
     const pipelineStageIds = listPipelineStages().map((stage) => stage.stageId);
 
-    expect(stageIds.slice(0, 5)).toEqual(["strategy", "ideate", "brainstorm", "plan", "work"]);
+    expect(stageIds.slice(0, 6)).toEqual(["strategy", "ideate", "brainstorm", "plan", "work", "compound"]);
     expect(stageIds.at(-1)).toBe("debug");
     expect(stageIds.filter((stageId) => stageId === "debug")).toHaveLength(1);
     expect(stageIds.indexOf("plan")).toBeLessThan(stageIds.indexOf("work"));
-    expect(stageIds.indexOf("work")).toBeLessThan(stageIds.indexOf("debug"));
-    expect(pipelineStageIds).toEqual(["strategy", "ideate", "brainstorm", "plan", "work"]);
+    expect(stageIds.indexOf("compound")).toBeLessThan(stageIds.indexOf("debug"));
+    expect(pipelineStageIds).toEqual(["brainstorm", "plan", "work", "compound"]);
   });
 
-  it("advances through every automatic transition and treats work as terminal", () => {
-    expect(nextStageAfter("strategy")).toBe("ideate");
-    expect(nextStageAfter("ideate")).toBe("brainstorm");
+  it("advances through delivery into compounding and treats compound as terminal", () => {
+    expect(nextStageAfter("strategy")).toBeUndefined();
+    expect(nextStageAfter("ideate")).toBeUndefined();
     expect(nextStageAfter("brainstorm")).toBe("plan");
     expect(nextStageAfter("plan")).toBe("work");
-    expect(nextStageAfter("work")).toBeUndefined();
+    expect(nextStageAfter("work")).toBe("compound");
+    expect(nextStageAfter("compound")).toBeUndefined();
     expect(nextStageAfter("debug")).toBeUndefined();
   });
 
@@ -47,7 +48,7 @@ describe("compound engineering stage registry", () => {
 
     expect(stage).toMatchObject({
       stageId: "debug",
-      order: 600,
+      order: 700,
       skillId: "ce-debug",
       artifactLocation: "docs/debug/",
       artifactGlob: "docs/debug/**/*.md",

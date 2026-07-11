@@ -65,7 +65,7 @@ function stageLocations(): ConventionalLocation[] {
     const path = definition.artifactLocation.replace(/\/$/, "");
     return {
       stage: definition.stageId,
-      label: definition.label,
+      label: definition.stageId === "compound" ? "Learnings" : definition.label,
       path,
       kind: definition.artifactLocation.endsWith("/") ? "directory" : "file",
     };
@@ -76,7 +76,6 @@ function conventionalLocations(): ConventionalLocation[] {
   return [
     ...stageLocations(),
     { stage: "brainstorm", label: "Brainstorms", path: "docs/brainstorms", kind: "directory" },
-    { stage: "solution", label: "Solutions", path: "docs/solutions", kind: "directory" },
     { stage: "concepts", label: "Concepts", path: "CONCEPTS.md", kind: "file" },
   ];
 }

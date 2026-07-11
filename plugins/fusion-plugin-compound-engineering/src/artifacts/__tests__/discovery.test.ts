@@ -78,7 +78,7 @@ describe("discoverArtifacts", () => {
     expect(byStage.plan.label).toBe("Plan");
     expect(byStage.work.entries[0]).toMatchObject({ path: "docs/work/work.md" });
     expect(byStage.debug.entries[0]).toMatchObject({ path: "docs/debug/debug.md" });
-    expect(byStage.solution.entries).toHaveLength(1);
+    expect(byStage.compound.entries).toHaveLength(1);
     // Every group present is flagged present.
     expect(byStage.ideate.present).toBe(true);
     expect(byStage.brainstorm.entries[0]).toMatchObject({ path: "docs/brainstorms/requirements.md" });

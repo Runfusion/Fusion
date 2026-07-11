@@ -183,8 +183,25 @@ describe("U8 reconciler (convergence + outbound)", () => {
     expect(state.currentStage).toBe("work");
   });
 
-  it("completing work terminates the automatic pipeline without creating a debug task", async () => {
+  it("completing work advances to Compound without creating a debug task", async () => {
     const { cePipelineId, task } = await landPipeline("work");
+    const before = await taskStore.listTasks();
+
+    await moveTo(task.id, "done");
+    const result = await reconcileCePipelines(ctx);
+
+    expect(result.advanced).toBe(1);
+    expect(result.tasksCreated).toBe(1);
+    expect(getCePipelineStore(ctx).getState(cePipelineId)).toMatchObject({
+      currentStage: "compound",
+      status: "awaiting_board",
+    });
+    expect(await taskStore.listTasks()).toHaveLength(before.length + 1);
+    expect(getCePipelineStore(ctx).listByPipeline(cePipelineId).some((link) => link.ceStageId === "debug")).toBe(false);
+  });
+
+  it("completing Compound closes the delivery loop without creating another task", async () => {
+    const { cePipelineId, task } = await landPipeline("compound");
     const before = await taskStore.listTasks();
 
     await moveTo(task.id, "done");
@@ -193,11 +210,10 @@ describe("U8 reconciler (convergence + outbound)", () => {
     expect(result.advanced).toBe(1);
     expect(result.tasksCreated).toBe(0);
     expect(getCePipelineStore(ctx).getState(cePipelineId)).toMatchObject({
-      currentStage: "work",
+      currentStage: "compound",
       status: "completed",
     });
     expect(await taskStore.listTasks()).toHaveLength(before.length);
-    expect(getCePipelineStore(ctx).listByPipeline(cePipelineId).some((link) => link.ceStageId === "debug")).toBe(false);
   });
 
   it("outbound: advancing the pipeline propagates a NEW next-stage board task", async () => {
