@@ -834,6 +834,15 @@ export class MissionAutopilot {
       return;
     }
 
+    if (mission.status !== "complete") {
+      /*
+      FNXC:Missions 2026-07-11-12:35:
+      Autopilot cleanup is only safe for missions that are already complete.
+      Active missions may still need watched-state and retry memory even if a future caller reaches this helper by mistake.
+      */
+      return;
+    }
+
     this.watchedMissions.delete(missionId);
     this.perMissionTaskRetries.delete(missionId);
 

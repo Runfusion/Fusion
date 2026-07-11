@@ -3170,8 +3170,8 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
   }
 
   /**
-   * Mark generated Fix Features obsolete once an ancestor feature has already
-   * passed validation.
+   * Mark generated Fix Features obsolete once an ancestor feature, or the fix's
+   * own validation evidence, has already passed.
    *
    * Validator failures can create a chain of generated features. If the original
    * feature is later validated successfully, older descendants are no longer
@@ -3181,6 +3181,10 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
    * FNXC:Missions 2026-07-05-22:09:
    * Superseded generated Fix Features must become terminal and lose live board-task ownership.
    * Otherwise mission recovery can keep resuming stale remediation tasks after the source feature is already validated.
+   *
+   * FNXC:Missions 2026-07-11-12:35:
+   * A generated fix can also supersede itself once its own validator/loop evidence has passed.
+   * Reconciliation treats that as terminal evidence so a completed fix does not stay active only because its ancestor previously failed.
    */
   reconcileSupersededGeneratedFixFeatures(sliceId: string): { supersededCount: number; featureIds: string[] } {
     const features = this.listFeatures(sliceId);

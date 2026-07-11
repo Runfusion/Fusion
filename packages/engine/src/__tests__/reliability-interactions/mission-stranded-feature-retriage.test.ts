@@ -287,6 +287,104 @@ describe("FN-5754 reliability: mission stranded feature retriage", () => {
     expect(missionStore.updateFeature).not.toHaveBeenCalled();
   });
 
+  it("keeps ordinary done linked features in startup task-drift reconciliation", async () => {
+    const tasks = [{ id: "FN-DONE", title: "Completed feature", missionId: "M-001", sliceId: "SL-001", column: "done", status: "queued" }];
+    const features = [feature({ id: "F-DONE", title: "Completed feature", status: "done", taskId: "FN-DONE" })];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+    const store = createTaskStore(tasks);
+
+    const scheduler = new Scheduler(store, { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(store.getTask).toHaveBeenCalledWith("FN-DONE");
+  });
+
+  it("keeps done generated fixes with live task ownership in startup task-drift reconciliation", async () => {
+    const tasks = [{ id: "FN-GENERATED-DONE", title: "Fix: completed generated remediation", missionId: "M-001", sliceId: "SL-001", column: "done", status: "queued" }];
+    const features = [feature({
+      id: "F-GENERATED-DONE",
+      title: "Fix: completed generated remediation",
+      status: "done",
+      generatedFromFeatureId: "F-SOURCE",
+      taskId: "FN-GENERATED-DONE",
+    })];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+    const store = createTaskStore(tasks);
+
+    const scheduler = new Scheduler(store, { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(store.getTask).toHaveBeenCalledWith("FN-GENERATED-DONE");
+  });
+
+  it("does not block superseded done generated fixes during refreshed startup reconciliation", async () => {
+    const supersededFix = feature({
+      id: "F-SUPERSEDED-FIX",
+      title: "Fix: already validated remediation",
+      status: "done",
+      loopState: "passed",
+      lastValidatorStatus: "passed",
+      generatedFromFeatureId: "F-SOURCE",
+      taskId: undefined,
+    });
+    const remainingFeature = feature({ id: "F-REMAINING", title: "Remaining feature", status: "defined", taskId: undefined });
+    let features = [supersededFix, remainingFeature];
+    const tasks: any[] = [{
+      id: "FN-STALE-FIX",
+      title: "Fix: already validated remediation",
+      missionId: "M-001",
+      sliceId: "SL-001",
+      column: "todo",
+      status: "queued",
+    }];
+    const missionStore = {
+      listMissions: vi.fn(() => [{ id: "M-001", status: "active", autopilotEnabled: true }]),
+      getMissionWithHierarchy: vi.fn(() => ({
+        id: "M-001",
+        status: "active",
+        milestones: [{ id: "MS-001", slices: [{ id: "SL-001", status: "active", features }] }],
+      })),
+      reconcileSupersededGeneratedFixFeatures: vi.fn(() => ({ supersededCount: 1, featureIds: ["F-SUPERSEDED-FIX"] })),
+      listFeatures: vi.fn(() => features),
+      getSlice: vi.fn(() => ({ id: "SL-001", milestoneId: "MS-001", status: "active", features })),
+      triageFeature: vi.fn(async (featureId: string) => {
+        const taskId = `FN-${featureId}`;
+        tasks.push({ id: taskId, title: "Remaining feature", missionId: "M-001", sliceId: "SL-001", column: "todo", status: "queued" });
+        features = features.map((candidate) => candidate.id === featureId ? { ...candidate, taskId, status: "triaged" } : candidate);
+        return features.find((candidate) => candidate.id === featureId);
+      }),
+      linkFeatureToTask: vi.fn(),
+      updateFeature: vi.fn(),
+      updateFeatureStatus: vi.fn(),
+      listAssertionsForFeature: vi.fn(() => []),
+    };
+
+    const scheduler = new Scheduler(createTaskStore(tasks), { missionStore: missionStore as any });
+    await scheduler.reconcileAllMissionFeatures();
+
+    expect(missionStore.updateFeature).not.toHaveBeenCalledWith("F-SUPERSEDED-FIX", expect.objectContaining({ status: "blocked" }));
+    expect(missionStore.linkFeatureToTask).not.toHaveBeenCalledWith("F-SUPERSEDED-FIX", "FN-STALE-FIX");
+    expect(missionStore.triageFeature).toHaveBeenCalledWith("F-REMAINING");
+  });
+
   it("leaves non-autopilot and blocked features untouched", async () => {
     const autopilotOffFeature = feature({ id: "F-001", status: "defined", taskId: undefined });
     const blockedFeature = feature({ id: "F-002", status: "blocked", taskId: undefined, title: "Blocked feature" });
