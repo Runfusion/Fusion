@@ -87,15 +87,21 @@ function parseInsightsContent(content: string | null): ParsedInsightCategory[] {
       continuation text). Bullet lines start a new item; non-empty non-bullet lines
       append to the previous item instead of being dropped, so multiline insights
       render in full rather than silently truncating after the first line.
+
+      FNXC:MemoryView 2026-07-11-01:40:
+      PR #2003 review round 2: only a TOP-LEVEL bullet (column 0 on the raw line)
+      starts a new insight. Indented sub-bullets ("  - detail A") belong to the
+      insight above them, so the new-item test runs against the untrimmed line and
+      continuations keep their leading indentation (trimEnd only) for rendering.
       */
       const items = body
         .split("\n")
-        .map((line) => line.trim())
-        .reduce<string[]>((acc, line) => {
-          if (/^[-*]\s+/.test(line)) {
+        .reduce<string[]>((acc, rawLine) => {
+          const line = rawLine.trim();
+          if (/^[-*]\s+/.test(rawLine)) {
             acc.push(line.replace(/^[-*]\s+/, ""));
           } else if (line.length > 0 && acc.length > 0) {
-            acc[acc.length - 1] = `${acc[acc.length - 1]}\n${line}`;
+            acc[acc.length - 1] = `${acc[acc.length - 1]}\n${rawLine.trimEnd()}`;
           }
           return acc;
         }, []);

@@ -202,6 +202,25 @@ describe("MemoryView", () => {
     expect(document.querySelector(".memory-stat-value")?.textContent).toBe("2");
   });
 
+  it("keeps indented sub-bullets inside their parent insight instead of splitting them", async () => {
+    mockUseMemoryData.mockReturnValue(
+      createMemoryData({
+        insightsExists: true,
+        insightsContent: "## Patterns\n- Parent insight\n  - detail A\n  - detail B\n- Sibling insight",
+      }),
+    );
+
+    render(<MemoryView addToast={vi.fn()} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Insights" }));
+
+    // Sub-bullets render within the parent card, and only top-level bullets are counted.
+    expect(screen.getByText(/Parent insight/)).toBeInTheDocument();
+    expect(screen.getByText(/detail A/)).toBeInTheDocument();
+    expect(screen.getByText(/detail B/)).toBeInTheDocument();
+    expect(screen.getByText("Sibling insight")).toBeInTheDocument();
+    expect(document.querySelector(".memory-stat-value")?.textContent).toBe("2");
+  });
+
   it("shows read-only warning after backend resolves as non-writable", () => {
     mockUseMemoryData.mockReturnValue(
       createMemoryData({
