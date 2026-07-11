@@ -86,6 +86,8 @@ describe("Command Center cost formatting", () => {
     expect(formatCost(12.5, false)).toBe("$12.50");
     expect(formatCost(0, false)).toBe("$0.00");
     expect(formatCost(0, true)).toBe("—");
+    expect(formatCost(0.004, true)).toBe("—");
+    expect(formatCost(0.01, true)).toBe("$0.01+");
     expect(formatCost(null, true)).toBe("—");
   });
 });
