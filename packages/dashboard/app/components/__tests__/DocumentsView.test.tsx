@@ -617,6 +617,50 @@ describe("DocumentsView", () => {
     expect(addToast).toHaveBeenCalledWith("Artifact saved", "success");
   });
 
+  /*
+  FNXC:ArtifactsGallery 2026-07-11-10:20:
+  HTML doc artifacts must open as LIVE sandboxed previews by default (agents deliver interactive mockups as text/html documents), with a Source toggle for the raw markup.
+  */
+  it("renders HTML doc artifacts as a sandboxed live preview with a source toggle", async () => {
+    const htmlArtifact: ArtifactWithTask = {
+      id: "artifact-html",
+      type: "document",
+      title: "Login mockup",
+      mimeType: "text/html",
+      content: "<h1>Login mock</h1>",
+      authorId: "design-agent",
+      authorType: "agent",
+      createdAt: "2026-04-19T09:30:00.000Z",
+      updatedAt: "2026-04-19T09:30:00.000Z",
+    };
+    mockUseArtifacts.mockReturnValue({
+      artifacts: [...mockArtifacts, htmlArtifact],
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    mockFetchArtifact.mockResolvedValue(htmlArtifact);
+
+    const { container } = render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
+
+    const htmlCard = screen.getByRole("article", { name: "Artifact Login mockup" });
+    fireEvent.click(within(htmlCard).getByRole("button", { name: "Open Login mockup" }));
+    const dialog = await screen.findByRole("dialog", { name: "Document artifact viewer" });
+
+    await waitFor(() => {
+      const iframe = container.querySelector(".artifacts-gallery-viewer-html");
+      expect(iframe).toBeInTheDocument();
+      expect(iframe).toHaveAttribute("sandbox", "allow-scripts");
+      expect(iframe).toHaveAttribute("srcdoc", "<h1>Login mock</h1>");
+    });
+
+    // The toggle shows the CURRENT mode (matching the Markdown/Plain convention): "Preview" while previewing.
+    fireEvent.click(within(dialog).getByRole("button", { name: "Preview" }));
+    expect(container.querySelector(".artifacts-gallery-viewer-html")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("<h1>Login mock</h1>")).toBeInTheDocument();
+  });
+
   it("clicking project file shows content", async () => {
     render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
 

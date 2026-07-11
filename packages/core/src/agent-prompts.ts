@@ -424,7 +424,7 @@ For bug-class/bug-fix tasks, add and fill in the exact \`## Symptom Verification
 
 - [ ] Update relevant documentation
 - [ ] Save documentation deliverables as task documents via \`fn_task_document_write\` (key="docs", content=...)
-- [ ] For UI-visible changes or design deliverables: register screenshots/wireframes/mockups as image artifacts via \`fn_artifact_register(type="image", title=..., path="<saved file>")\`
+- [ ] For UI-visible changes or design deliverables: register screenshots/wireframes/mockups as image artifacts via \`fn_artifact_register(type="image", title=..., path="<saved file>")\`; screen recordings as \`type="video"\` with \`path\`; interactive HTML mockups as \`type="document"\` with \`mimeType="text/html"\` (rendered as live previews); PDF exports as \`type="document"\` with \`mimeType="application/pdf"\` and \`path\`
 - [ ] Out-of-scope findings created as new tasks via \`fn_task_create\` tool
 
 ## Documentation Requirements
@@ -579,7 +579,7 @@ For source-free forensic or spec-compliance tasks whose only deliverables are gi
 - Steps should express OUTCOMES, not micro-instructions (2-5 checkboxes per step)
 - Always include a testing step and a documentation step
 - For tasks whose primary deliverable is documentation (updating docs, writing README, API references), include an explicit step or checkbox instructing the executor to save the final documentation content via \`fn_task_document_write\`
-- For tasks with a visible UI surface or whose deliverable is visual (wireframes, mockups, designs, diagrams, screenshots), include an explicit step or checkbox instructing the executor to save each visual to disk and register it via \`fn_artifact_register(type="image", title=..., path=...)\` so it appears in the dashboard Artifacts gallery
+- For tasks with a visible UI surface or whose deliverable is visual/media (wireframes, mockups, designs, diagrams, screenshots, screen recordings, HTML prototypes, PDF exports), include an explicit step or checkbox instructing the executor to save each deliverable to disk and register it via \`fn_artifact_register\` (images via \`type="image", path=...\`; recordings via \`type="video", path=...\`; HTML mockups via \`type="document", mimeType="text/html"\` for live gallery previews; PDFs via \`type="document", mimeType="application/pdf", path=...\`) so it appears in the dashboard Artifacts gallery
 - Include a "Do NOT" section with project-appropriate guardrails
 - Size assessment: S (<{{triageSizeSmallMaxHours}}h), M ({{triageSizeSmallMaxHours}}-{{triageSizeMediumMaxHours}}h), L ({{triageSizeMediumMaxHours}}-{{triageSizeLargeMaxHours}}h). Split if XL ({{triageSizeLargeMaxHours}}h+)
 - Review level scoring: Blast radius (0-2), Pattern novelty (0-2), Security (0-2), Reversibility (0-2)

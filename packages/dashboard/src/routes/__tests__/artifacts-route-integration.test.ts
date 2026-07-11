@@ -71,6 +71,32 @@ describe("artifacts route integration", () => {
     return { task, artifact, imageBytes };
   }
 
+  async function requestRawBufferWithHeaders(app: express.Express, path: string, headers: Record<string, string>) {
+    const server = http.createServer(app);
+    return await new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (!address || typeof address === "string") {
+          reject(new Error("Expected an ephemeral TCP address for raw media request"));
+          return;
+        }
+
+        const req = http.get({ host: "127.0.0.1", port: address.port, path, headers }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          res.on("end", () => {
+            server.close();
+            resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) });
+          });
+        });
+        req.on("error", (error) => {
+          server.close();
+          reject(error);
+        });
+      });
+    });
+  }
+
   async function requestRawBuffer(app: express.Express, path: string) {
     /*
      * FNXC:ArtifactRegistry 2026-06-29-17:11:
@@ -569,5 +595,69 @@ describe("artifacts route integration", () => {
 
     const missingGet = await REQUEST(app, "GET", "/api/artifacts/does-not-exist");
     expect(missingGet.status).toBe(404);
+  });
+
+  /*
+   * FNXC:ArtifactRegistry 2026-07-11-10:20:
+   * Video playback contract: the media route must serve HTTP byte ranges (206 + Content-Range +
+   * Accept-Ranges) because <video> seeking issues Range requests and Safari refuses to play from
+   * servers that ignore them. Unsatisfiable ranges answer 416.
+   */
+  it("serves byte-range requests for video artifact media", async () => {
+    const task = await store.createTask({ title: "Demo recording", description: "range test" });
+    const videoBytes = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42-0123456789abcdef")]);
+    const artifact = await store.registerArtifact({
+      type: "video",
+      title: "Feature demo",
+      mimeType: "video/mp4",
+      data: videoBytes,
+      authorId: "agent-video",
+      authorType: "agent",
+      taskId: task.id,
+    });
+
+    const full = await requestRawBuffer(app, `/api/artifacts/${artifact.id}/media`);
+    expect(full.status).toBe(200);
+    expect(full.headers["accept-ranges"]).toBe("bytes");
+    expect(full.headers["content-length"]).toBe(String(videoBytes.length));
+    expect(full.body).toEqual(videoBytes);
+
+    const ranged = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: "bytes=4-11" });
+    expect(ranged.status).toBe(206);
+    expect(ranged.headers["content-range"]).toBe(`bytes 4-11/${videoBytes.length}`);
+    expect(ranged.body).toEqual(videoBytes.subarray(4, 12));
+
+    const suffix = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: "bytes=-5" });
+    expect(suffix.status).toBe(206);
+    expect(suffix.body).toEqual(videoBytes.subarray(videoBytes.length - 5));
+
+    const openEnded = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: `bytes=10-` });
+    expect(openEnded.status).toBe(206);
+    expect(openEnded.body).toEqual(videoBytes.subarray(10));
+
+    const unsatisfiable = await requestRawBufferWithHeaders(app, `/api/artifacts/${artifact.id}/media`, { Range: `bytes=${videoBytes.length + 5}-` });
+    expect(unsatisfiable.status).toBe(416);
+    expect(unsatisfiable.headers["content-range"]).toBe(`bytes */${videoBytes.length}`);
+  });
+
+  it("bridges a video attachment into the artifact registry and streams it", async () => {
+    const task = await store.createTask({ title: "Video attachment", description: "bridge test" });
+    const videoBytes = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42-attachment-video")]);
+    await store.addAttachment(task.id, "walkthrough.mp4", videoBytes, "video/mp4");
+
+    const listRes = await REQUEST(app, "GET", `/api/artifacts?taskId=${task.id}`);
+    expect(listRes.status).toBe(200);
+    const bridged = (listRes.body as ArtifactWithTask[]).find((a) => a.type === "video");
+    expect(bridged).toMatchObject({
+      type: "video",
+      title: "walkthrough.mp4",
+      mimeType: "video/mp4",
+      authorType: "system",
+    });
+
+    const media = await requestRawBuffer(app, `/api/artifacts/${bridged!.id}/media`);
+    expect(media.status).toBe(200);
+    expect(media.headers["content-type"]).toBe("video/mp4");
+    expect(media.body).toEqual(videoBytes);
   });
 });

@@ -1522,8 +1522,9 @@ export function createArtifactRegisterTool(
     label: "Register Artifact",
     description:
       "Register an artifact (document, image, video, audio, or other) so it appears in the dashboard Artifacts gallery and other agents and tasks can discover it. " +
-      "For visual deliverables you saved to disk (screenshots, wireframes, mockups, diagrams, recordings), pass `path` — the file is copied into managed artifact storage. " +
-      "Alternatively provide inline `content` for text documents or `dataBase64` image bytes; optionally associate the artifact with a taskId.",
+      "For media you saved to disk (screenshots, wireframes, mockups, screen recordings, PDFs), pass `path` — the file is copied into managed artifact storage. " +
+      "HTML mockups (type=document, mimeType=text/html, content or path) render as live sandboxed previews; PDFs (mimeType=application/pdf, path) open in an embedded viewer; videos play with seeking. " +
+      "Alternatively provide inline `content` for text/markdown/HTML documents or `dataBase64` image bytes; optionally associate the artifact with a taskId.",
     parameters: artifactRegisterParams,
     execute: async (_id: string, params: Static<typeof artifactRegisterParams>) => registerArtifactForAgent(store, authorId, params, messageStore, options),
   };
@@ -1570,7 +1571,7 @@ export function createChatArtifactTools(store: TaskStore, messageStore?: Message
       name: "fn_artifact_register",
       label: "Register Artifact",
       description:
-        "Register an artifact for a specific task so it appears in the dashboard Artifacts gallery and other agents can discover it. Requires task_id; accepts a local file `path` (screenshots, wireframes, mockups) or dataBase64 image bytes, and notifies the dashboard inbox best-effort.",
+        "Register an artifact for a specific task so it appears in the dashboard Artifacts gallery and other agents can discover it. Requires task_id; accepts a local file `path` (screenshots, wireframes, mockups, recordings, PDFs), inline `content` (text/markdown/HTML — HTML renders as a live preview), or dataBase64 image bytes, and notifies the dashboard inbox best-effort.",
       parameters: chatArtifactRegisterParams,
       execute: async (_id: string, params: Static<typeof chatArtifactRegisterParams>) => registerArtifactForAgent(
         store,
@@ -1753,7 +1754,39 @@ async function readArtifactFileFromPath(
     }
   }
 
+  /*
+  FNXC:ArtifactRegistry 2026-07-11-10:20:
+  Video and PDF payloads get the same keep-the-gallery-playable treatment as images: a light
+  container-signature check (mp4/mov ftyp box, WebM EBML header, %PDF- prefix) rejects renamed
+  junk before it reaches the registry, where the dashboard viewer could not play or render it.
+  */
+  if (params.type === "video") {
+    if (!mimeType.startsWith("video/")) {
+      throw new Error(`video artifacts require a video/* mimeType, got ${mimeType}.`);
+    }
+    if (!hasVideoSignature(data, mimeType)) {
+      throw new Error(`path ${resolvedPath} does not contain valid video bytes matching mimeType ${mimeType}.`);
+    }
+  }
+
+  if (mimeType === "application/pdf" && !data.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+    throw new Error(`path ${resolvedPath} does not contain valid PDF bytes (missing %PDF- header).`);
+  }
+
   return { data, mimeType };
+}
+
+function hasVideoSignature(data: Buffer, mimeType: string): boolean {
+  if (mimeType === "video/webm") {
+    // EBML header shared by WebM/Matroska containers.
+    return data.subarray(0, 4).equals(Buffer.from("1a45dfa3", "hex"));
+  }
+  if (mimeType === "video/mp4" || mimeType === "video/quicktime") {
+    // ISO BMFF: box size (4 bytes) then "ftyp".
+    return data.length >= 8 && data.subarray(4, 8).toString("ascii") === "ftyp";
+  }
+  // Unknown video containers pass; the mimeType prefix check already ran.
+  return true;
 }
 
 function isValidImagePayload(data: Buffer, mimeType: string): boolean {

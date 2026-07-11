@@ -440,10 +440,12 @@ describe("artifact register tool path payloads", () => {
     expect(getText(result)).toContain("path cannot be combined with uri, content, or dataBase64");
   });
 
-  it("registers non-image media (video) from path with extension-inferred mimeType and no signature gate", async () => {
+  it("registers video media from path with extension-inferred mimeType and container signature validation", async () => {
     const { store, registerArtifact } = createMockStore();
     registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-video", type: "video", mimeType: "video/mp4", content: undefined, uri: "artifacts/demo.mp4" }));
-    writeFileSync(join(baseDir, "demo.mp4"), Buffer.from("fake-video-bytes"));
+    // Minimal ISO BMFF header: 4-byte box size then "ftyp".
+    const mp4Bytes = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42-demo-recording")]);
+    writeFileSync(join(baseDir, "demo.mp4"), mp4Bytes);
 
     const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
     const result = await runTool(tool, "call-path-video", {
@@ -456,7 +458,55 @@ describe("artifact register tool path payloads", () => {
       type: "video",
       mimeType: "video/mp4",
       taskId: TASK_ID,
-      data: Buffer.from("fake-video-bytes"),
+      data: mp4Bytes,
+    }));
+    expect(getText(result)).not.toContain("ERROR:");
+  });
+
+  /*
+  FNXC:ArtifactRegistry 2026-07-11-10:20:
+  Video and PDF path payloads are signature-gated like images so the gallery never receives an unplayable "video" or unrenderable "PDF"; WebM validates via its EBML header, mp4/mov via the ftyp box, PDFs via the %PDF- prefix.
+  */
+  it("rejects renamed junk for video and pdf payloads but accepts valid containers", async () => {
+    const { store, registerArtifact } = createMockStore();
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir });
+    writeFileSync(join(baseDir, "fake.mp4"), "not a real video");
+    writeFileSync(join(baseDir, "fake.pdf"), "not a real pdf");
+    writeFileSync(join(baseDir, "real.webm"), Buffer.concat([Buffer.from("1a45dfa3", "hex"), Buffer.from("webm-body")]));
+    writeFileSync(join(baseDir, "real.pdf"), "%PDF-1.4\nminimal pdf body");
+
+    const fakeVideo = await runTool(tool, "call-fake-video", { type: "video", title: "Fake video", path: "fake.mp4" });
+    const fakePdf = await runTool(tool, "call-fake-pdf", { type: "document", title: "Fake PDF", path: "fake.pdf" });
+    expect(registerArtifact).not.toHaveBeenCalled();
+    expect(getText(fakeVideo)).toContain("does not contain valid video bytes");
+    expect(getText(fakePdf)).toContain("does not contain valid PDF bytes");
+
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-webm", type: "video", mimeType: "video/webm", content: undefined, uri: "artifacts/real.webm" }));
+    const realWebm = await runTool(tool, "call-real-webm", { type: "video", title: "Real WebM", path: "real.webm" });
+    expect(getText(realWebm)).not.toContain("ERROR:");
+
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-pdf", type: "document", mimeType: "application/pdf", content: undefined, uri: "artifacts/real.pdf" }));
+    const realPdf = await runTool(tool, "call-real-pdf", { type: "document", title: "Real PDF", path: "real.pdf" });
+    expect(getText(realPdf)).not.toContain("ERROR:");
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "application/pdf" }));
+  });
+
+  it("registers an HTML mockup from path with text/html mimeType inferred", async () => {
+    const { store, registerArtifact } = createMockStore();
+    registerArtifact.mockResolvedValue(createMockArtifact({ id: "art-html", type: "document", mimeType: "text/html", content: undefined, uri: "artifacts/mock.html" }));
+    writeFileSync(join(baseDir, "mock.html"), "<!doctype html><html><body><h1>Login mock</h1></body></html>");
+
+    const tool = createArtifactRegisterTool(store, AUTHOR_ID, undefined, { baseDir, defaultTaskId: TASK_ID });
+    const result = await runTool(tool, "call-path-html", {
+      type: "document",
+      title: "Login page mockup",
+      path: "mock.html",
+    });
+
+    expect(registerArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      type: "document",
+      mimeType: "text/html",
+      taskId: TASK_ID,
     }));
     expect(getText(result)).not.toContain("ERROR:");
   });

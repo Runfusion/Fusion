@@ -1,4 +1,4 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import type {
   TaskStore,
@@ -3816,7 +3816,51 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
         throw notFound("Artifact media not found");
       }
 
-      const stream = createReadStream(mediaPath);
+      /*
+      FNXC:ArtifactRegistry 2026-07-11-10:20:
+      Video (and audio) playback requires HTTP byte-range serving: <video> seeking issues Range
+      requests, and Safari refuses to play media at all from a server that ignores them. Serve
+      single-range requests with 206 + Content-Range, advertise Accept-Ranges on full responses,
+      and answer unsatisfiable ranges with 416 so players fail cleanly instead of hanging.
+      */
+      let fileSize: number;
+      try {
+        fileSize = statSync(mediaPath).size;
+      } catch {
+        throw notFound("Artifact media not found");
+      }
+
+      const mimeType = artifact.mimeType ?? "application/octet-stream";
+      const rangeHeader = req.headers.range;
+      res.setHeader("Accept-Ranges", "bytes");
+
+      let start = 0;
+      let end = fileSize - 1;
+      let status = 200;
+      if (typeof rangeHeader === "string") {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+        if (match && (match[1] !== "" || match[2] !== "")) {
+          if (match[1] === "") {
+            // suffix range: last N bytes
+            const suffixLength = Number(match[2]);
+            start = Math.max(0, fileSize - suffixLength);
+          } else {
+            start = Number(match[1]);
+            if (match[2] !== "") {
+              end = Math.min(Number(match[2]), fileSize - 1);
+            }
+          }
+          if (start >= fileSize || start > end) {
+            res.status(416).setHeader("Content-Range", `bytes */${fileSize}`);
+            res.end();
+            return;
+          }
+          status = 206;
+          res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
+        }
+      }
+
+      const stream = createReadStream(mediaPath, status === 206 ? { start, end } : undefined);
       stream.on("error", () => {
         if (!res.headersSent) {
           res.status(404).json({ error: "Artifact media not found" });
@@ -3824,7 +3868,9 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
           res.end();
         }
       });
-      res.setHeader("Content-Type", artifact.mimeType ?? "application/octet-stream");
+      res.status(status);
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Length", end - start + 1);
       stream.pipe(res);
     } catch (err: unknown) {
       if (err instanceof ApiError) {

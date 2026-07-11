@@ -610,6 +610,14 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
 
   const editable = detail !== null && !detail.uri;
   const content = detail?.content ?? "";
+  /*
+  FNXC:ArtifactsGallery 2026-07-11-10:20:
+  HTML doc artifacts (agent-authored mockups/prototypes) must render as LIVE web previews by
+  default — not as markdown — in a sandboxed iframe (scripts allowed, same-origin denied so the
+  mockup cannot reach the dashboard API). The Preview/Source toggle replaces Markdown/Plain for
+  HTML, and Edit still opens the shared FileEditor.
+  */
+  const isHtml = (detail?.mimeType ?? artifact.mimeType)?.toLowerCase().split(";", 1)[0] === "text/html";
 
   const startEditing = () => {
     setDraft(content);
@@ -653,9 +661,13 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
               className="btn btn-sm"
               onClick={() => setRenderMarkdown((prev) => !prev)}
               aria-pressed={renderMarkdown}
-              title={renderMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
+              title={isHtml
+                ? (renderMarkdown ? t("documents.switchToSource", "Switch to source view") : t("documents.switchToPreview", "Switch to live preview"))
+                : (renderMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown"))}
             >
-              {renderMarkdown ? t("documents.markdown", "Markdown") : t("documents.plain", "Plain")}
+              {isHtml
+                ? (renderMarkdown ? t("documents.htmlPreview", "Preview") : t("documents.htmlSource", "Source"))
+                : (renderMarkdown ? t("documents.markdown", "Markdown") : t("documents.plain", "Plain"))}
             </button>
             {editable && (
               <button className="btn btn-sm" onClick={startEditing} aria-label={t("documents.editArtifact", "Edit document")}>
@@ -680,6 +692,13 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
               forceToolbarActionsVisible
             />
           </div>
+        ) : isHtml && renderMarkdown ? (
+          <iframe
+            className="artifacts-gallery-viewer-html"
+            sandbox="allow-scripts"
+            title={title}
+            {...(detail.uri ? { src: artifactMediaUrl(artifact.id, projectId) } : { srcDoc: content })}
+          />
         ) : detail.uri ? (
           <p className="artifacts-gallery-viewer-loading">
             {t("documents.binaryDocArtifact", "This document is stored as a file.")}{" "}

@@ -423,6 +423,15 @@ grids drop to two columns, cards/rows go single-column, and viewers become full-
   background: var(--surface);
 }
 
+/* HTML mockup live preview; white canvas because agent mockups usually assume a page background. */
+.artifacts-gallery-viewer-html {
+  width: 100%;
+  height: 60dvh;
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: #fff;
+}
+
 .artifacts-gallery-viewer-doc {
   min-height: 0;
   flex: 1;
