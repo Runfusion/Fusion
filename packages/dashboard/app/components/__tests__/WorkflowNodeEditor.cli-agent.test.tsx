@@ -74,6 +74,10 @@ function promptDef(): WorkflowDefinition {
 
 describe("WorkflowNodeEditor — cli-agent executor (U15)", () => {
   beforeEach(() => {
+    // FNXC:WorkflowSimpleView 2026-07-10-12:00: this suite drives the advanced
+    // canvas (wf-node-prompt cards); pin the persisted view mode since the
+    // editor now defaults to the simplified view.
+    localStorage.setItem("fusion:wf-editor-view-mode", "advanced");
     vi.mocked(fetchWorkflows).mockResolvedValue([promptDef()]);
     vi.mocked(fetchTraits).mockResolvedValue(TRAIT_CATALOG);
     vi.mocked(fetchStepParsers).mockResolvedValue([]);
@@ -102,6 +106,7 @@ describe("WorkflowNodeEditor — cli-agent executor (U15)", () => {
   });
 
   afterEach(() => {
+    localStorage.removeItem("fusion:wf-editor-view-mode");
     cleanup();
     vi.clearAllMocks();
     vi.unstubAllGlobals();

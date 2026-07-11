@@ -91,6 +91,9 @@ import {
   FOREACH_CHILD_Y,
 } from "./workflow-flow-mapping";
 import { autoLayout, applyAutoLayout } from "./workflow-auto-layout";
+import { insertNodeOnEdge, findAppendEdgeId } from "./workflow-simple-layout";
+import { WorkflowSimpleCanvas } from "./WorkflowSimpleCanvas";
+import { WorkflowAddStepModal, type AddStepPaletteEntry } from "./WorkflowAddStepModal";
 import { fetchTraits, fetchStepParsers, type TraitCatalogEntry } from "../api";
 import { WorkflowColumnPanel } from "./WorkflowColumnPanel";
 import { WorkflowFieldsPanel } from "./WorkflowFieldsPanel";
@@ -107,6 +110,27 @@ import {
 } from "./workflow-mobile-graph";
 
 type ExecutorKind = "model" | "agent" | "skill" | "cli" | "cli-agent";
+
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+The desktop workflow editor now has THREE view modes over the same node/edge
+state, replacing the old boolean simple-editor toggle:
+ - "simple"   — the simplified graphical node editor (default): vertical
+   auto-laid-out canvas, "+" insert-on-edge, add-step dialog, no palette
+   toolbar or column bands. Cleaner for the common tasks (adding and
+   configuring nodes).
+ - "advanced" — the full canvas: palette toolbar, templates, drag/connect,
+   column swimlanes, minimap, auto-layout, import/export. Nothing removed.
+ - "list"     — the pre-existing row-list simple editor, kept as an even
+   simpler fallback; it reuses the mobile shell exactly as before.
+The choice persists per-browser in localStorage. Mobile keeps its tab shell
+(forced by viewport) and gets its own graph-style toggle: the simplified
+canvas by default with the row list as fallback.
+*/
+type WorkflowEditorViewMode = "simple" | "advanced" | "list";
+const viewModeStorageKey = "fusion:wf-editor-view-mode";
+type MobileGraphStyle = "canvas" | "list";
+const mobileGraphStyleStorageKey = "fusion:wf-mobile-graph-style";
 // FNXC:WorkflowOptionalGroup 2026-06-21-18:00: dropped the "optional-steps" mobile
 // panel — the declaration authoring surface is retired (optional-group nodes now).
 type MobileWorkflowPanel = "graph" | "add" | "settings" | "fields" | "columns" | "actions";
@@ -802,11 +826,49 @@ function InnerEditor({
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [miniMapCollapsed, setMiniMapCollapsed] = useState(false);
-  const [compactLayoutEnabled, setCompactLayoutEnabled] = useState(false);
+  // FNXC:WorkflowSimpleView 2026-07-10-12:00: three-mode desktop view state
+  // (see the WorkflowEditorViewMode note above). Persisted so operators land
+  // back in the mode they work in; "simple" is the default for everyone else.
+  const [viewMode, setViewMode] = useState<WorkflowEditorViewMode>(() => {
+    try {
+      const stored = localStorage.getItem(viewModeStorageKey);
+      if (stored === "simple" || stored === "advanced" || stored === "list") return stored;
+    } catch {
+      // localStorage unavailable: non-fatal.
+    }
+    return "simple";
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(viewModeStorageKey, viewMode);
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [viewMode]);
+  // Mobile graph tab presentation: simplified canvas (default) or row list.
+  const [mobileGraphStyle, setMobileGraphStyle] = useState<MobileGraphStyle>(() => {
+    try {
+      const stored = localStorage.getItem(mobileGraphStyleStorageKey);
+      if (stored === "canvas" || stored === "list") return stored;
+    } catch {
+      // localStorage unavailable: non-fatal.
+    }
+    return "canvas";
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(mobileGraphStyleStorageKey, mobileGraphStyle);
+    } catch {
+      // localStorage unavailable (private mode / SSR): non-fatal.
+    }
+  }, [mobileGraphStyle]);
   const [mobilePanel, setMobilePanel] = useState<MobileWorkflowPanel>(() =>
     initialPanel === "settings" ? "settings" : "graph",
   );
-  const simpleLayoutEnabled = isMobileMode || compactLayoutEnabled;
+  // "list" keeps the pre-existing compact (mobile-shell) presentation.
+  const simpleLayoutEnabled = isMobileMode || viewMode === "list";
+  // Desktop simplified graphical view (not the list fallback, not mobile).
+  const simpleViewEnabled = !simpleLayoutEnabled && viewMode === "simple";
   const { t } = useTranslation("app");
   const { confirm } = useConfirm();
   // Create-workflow dialog (KTD-7) open state + focus-return ref to the
@@ -1606,6 +1668,85 @@ function InnerEditor({
     [isBuiltin, nodes, edges, activeWorkflow, setNodes, setEdges],
   );
 
+  /*
+  FNXC:WorkflowSimpleView 2026-07-10-12:00:
+  Add-step dialog target for the simplified view. `edgeId` set = insert ON that
+  edge (source→new→target rewiring via insertNodeOnEdge); null = free append
+  (the "+ Add step" pill), which prefers the unambiguous edge into `end` and
+  falls back to the classic free-floating addNode. `insideContainer` hides
+  container kinds from the dialog because containers cannot nest.
+  */
+  const [addStepTarget, setAddStepTarget] = useState<{
+    edgeId: string | null;
+    insideContainer: boolean;
+  } | null>(null);
+
+  const openInsertOnEdge = useCallback(
+    (edgeId: string) => {
+      if (isBuiltin) return;
+      const edge = edges.find((e) => e.id === edgeId);
+      const source = edge ? nodes.find((n) => n.id === edge.source) : undefined;
+      const target = edge ? nodes.find((n) => n.id === edge.target) : undefined;
+      const insideContainer = !!source?.parentId && source.parentId === target?.parentId;
+      setAddStepTarget({ edgeId, insideContainer });
+    },
+    [isBuiltin, edges, nodes],
+  );
+
+  const openAddStep = useCallback(() => {
+    if (isBuiltin) return;
+    setAddStepTarget({ edgeId: findAppendEdgeId(nodes, edges), insideContainer: false });
+  }, [isBuiltin, nodes, edges]);
+
+  const containerChildLabelFor = useCallback(
+    (kind: WorkflowEditorNodeKind) =>
+      kind === "foreach"
+        ? t("workflowNodes.stepExecuteLabel", "Step execute")
+        : kind === "optional-group"
+          ? t("workflowNodes.optionalGroupStepLabel", "Optional step")
+          : t("workflowNodes.loopStepLabel", "Loop step"),
+    [t],
+  );
+
+  /** Insert on the targeted edge when one is set (falling back to addNode when
+   *  the edge disappeared, e.g. deleted while the dialog was open). */
+  const insertFromAddStep = useCallback(
+    (kind: WorkflowEditorNodeKind, label: string, presetConfig?: Record<string, unknown>) => {
+      if (addStepTarget?.edgeId) {
+        const result = insertNodeOnEdge(nodes, edges, addStepTarget.edgeId, {
+          kind,
+          label,
+          presetConfig,
+          containerChildLabel: containerChildLabelFor(kind),
+        });
+        if (result) {
+          setNodes(result.nodes);
+          setEdges(result.edges);
+          setSelectedNodeId(result.newNodeId);
+          setSelectedEdgeId(null);
+          setAddStepTarget(null);
+          return;
+        }
+      }
+      addNode(kind, label, presetConfig);
+      setAddStepTarget(null);
+    },
+    [addStepTarget, nodes, edges, setNodes, setEdges, addNode, containerChildLabelFor],
+  );
+
+  const handleAddStepPalettePick = useCallback(
+    (entry: AddStepPaletteEntry) => insertFromAddStep(entry.kind, entry.label, entry.presetConfig),
+    [insertFromAddStep],
+  );
+
+  const handleAddStepTemplatePick = useCallback(
+    (tpl: WorkflowStepTemplate) => {
+      const { kind, label, config } = stepTemplateToNode(tpl);
+      insertFromAddStep(kind, label, config);
+    },
+    [insertFromAddStep],
+  );
+
   // Auto-layout: one-click left-to-right tidy (U5, R8). Recomputes positions
   // only; bands and foreach template children are left in place. Marks the
   // editor dirty automatically via the layout serialization in isDirty.
@@ -2321,6 +2462,8 @@ function InnerEditor({
     }),
     [models, agents, skills],
   );
+  // Column id → display name for the simplified view's per-node column chips.
+  const columnNameMap = useMemo(() => new Map(columns.map((c) => [c.id, c.name])), [columns]);
   const mobileConnectionTargetsBySource = useMemo(() => {
     const targetNodes = nodesForRender
       .filter((node) => !isColumnBandNode(node.id) && node.data.kind !== "start")
@@ -2604,7 +2747,7 @@ function InnerEditor({
         <div
           className={`wf-editor-body${workflowListStageOpen ? " wf-editor-body--list-stage" : " wf-editor-body--editor-stage"}${
             simpleLayoutEnabled ? " wf-editor-body--simple-layout" : ""
-          }${mobileNodeDetailStage ? " wf-editor-body--mobile-node-detail" : ""}${
+          }${simpleViewEnabled ? " wf-editor-body--simple-view" : ""}${mobileNodeDetailStage ? " wf-editor-body--mobile-node-detail" : ""}${
             mobileEdgeDetailStage ? " wf-editor-body--mobile-edge-detail" : ""
           }${sidebarCollapsed ? " wf-editor-body--sidebar-collapsed" : ""}`}
         >
@@ -2700,7 +2843,10 @@ function InnerEditor({
                 workflow is active (read-only gating preserved via isBuiltin). The
                 disclosure button serves as the section header; the panels' own
                 internal <h3> is suppressed via CSS to avoid a double header. */}
-            {activeWorkflow && !simpleLayoutEnabled && (
+            {/* FNXC:WorkflowSimpleView 2026-07-10-12:00: columns/fields/settings
+                authoring panels are advanced-view chrome; the simplified view
+                hides them (still one click away via the Advanced toggle). */}
+            {activeWorkflow && !simpleLayoutEnabled && !simpleViewEnabled && (
               <div className="wf-sidebar-panels">
                 <section className="wf-sidebar-section" data-testid="wf-sidebar-columns-section">
                   <button
@@ -2899,20 +3045,35 @@ function InnerEditor({
                     </button>
                   )}
                   {!isMobileMode && (
-                    <button
-                      type="button"
-                      className="wf-layout-toggle"
-                      data-testid="wf-layout-toggle"
-                      aria-pressed={compactLayoutEnabled}
-                      onClick={() => setCompactLayoutEnabled((enabled) => !enabled)}
+                    /* FNXC:WorkflowSimpleView 2026-07-10-12:00: segmented three-mode
+                       switch (Simple / Advanced / List) replacing the old boolean
+                       simple-editor toggle; List is the old simple editor. */
+                    <div
+                      className="wf-view-mode-toggle"
+                      role="group"
+                      data-testid="wf-view-mode-toggle"
+                      aria-label={t("workflows.viewModeLabel", "Editor view")}
                     >
-                      {compactLayoutEnabled ? <LayoutGrid size={14} /> : <ListChecks size={14} />}
-                      <span>
-                        {compactLayoutEnabled
-                          ? t("workflows.showCanvasEditor", "Show canvas editor")
-                          : t("workflows.showSimpleEditor", "Show simple editor")}
-                      </span>
-                    </button>
+                      {(
+                        [
+                          ["simple", Workflow, t("workflows.viewModeSimple", "Simple")],
+                          ["advanced", LayoutGrid, t("workflows.viewModeAdvanced", "Advanced")],
+                          ["list", ListChecks, t("workflows.viewModeList", "List")],
+                        ] as Array<[WorkflowEditorViewMode, typeof Workflow, string]>
+                      ).map(([mode, Icon, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={`wf-view-mode-option${viewMode === mode ? " wf-view-mode-option--active" : ""}`}
+                          data-testid={`wf-view-mode-${mode}`}
+                          aria-pressed={viewMode === mode}
+                          onClick={() => setViewMode(mode)}
+                        >
+                          <Icon size={13} aria-hidden />
+                          <span>{label}</span>
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
                 {lifecycleWarnings.length > 0 && (
@@ -2958,23 +3119,89 @@ function InnerEditor({
 
                     <div className="wf-mobile-panel" data-testid={`wf-mobile-panel-${mobilePanel}`}>
                       {mobilePanel === "graph" && (
-                        <MobileWorkflowGraphView
-                          rows={mobileGraphRows}
-                          selectedNodeId={selectedNodeId}
-                          selectedEdgeId={selectedEdgeId}
-                          onSelectNode={(id) => {
-                            setSelectedNodeId(id);
-                            setSelectedEdgeId(null);
-                            setInspectorCollapsed(false);
-                          }}
-                          onSelectEdge={(id) => {
-                            setSelectedEdgeId(id);
-                            setSelectedNodeId(null);
-                          }}
-                          onCreateConnection={isBuiltin ? undefined : onCreateSimpleConnection}
-                          canReorder={!isBuiltin}
-                          onMoveNode={onMoveSimpleNode}
-                        />
+                        <>
+                          {/* FNXC:WorkflowSimpleView 2026-07-10-12:00: mobile
+                              graph tab offers the simplified touch canvas
+                              (default) with the row list kept as the even
+                              simpler fallback. Desktop "list" mode reuses
+                              this shell and keeps the row list only. */}
+                          {isMobileMode && (
+                            <div
+                              className="wf-mobile-graph-style-toggle"
+                              role="group"
+                              data-testid="wf-mobile-graph-style-toggle"
+                              aria-label={t("workflowNodes.mobileGraphStyleLabel", "Graph presentation")}
+                            >
+                              {(
+                                [
+                                  ["canvas", t("workflowNodes.mobileGraphStyleCanvas", "Graph")],
+                                  ["list", t("workflowNodes.mobileGraphStyleList", "List")],
+                                ] as Array<[MobileGraphStyle, string]>
+                              ).map(([style, label]) => (
+                                <button
+                                  key={style}
+                                  type="button"
+                                  className={`wf-view-mode-option${mobileGraphStyle === style ? " wf-view-mode-option--active" : ""}`}
+                                  data-testid={`wf-mobile-graph-style-${style}`}
+                                  aria-pressed={mobileGraphStyle === style}
+                                  onClick={() => setMobileGraphStyle(style)}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {isMobileMode && mobileGraphStyle === "canvas" ? (
+                            <div className="wf-mobile-simple-canvas" data-testid="wf-mobile-simple-canvas">
+                              <WorkflowEditorCatalogContext.Provider value={catalogs}>
+                                <WorkflowSimpleCanvas
+                                  nodes={nodesForRender}
+                                  edges={edges}
+                                  columnNames={columnNameMap}
+                                  editable={!isBuiltin}
+                                  selectedNodeId={selectedNodeId}
+                                  selectedEdgeId={selectedEdgeId}
+                                  onSelectNode={(id) => {
+                                    setSelectedNodeId(id);
+                                    setSelectedEdgeId(null);
+                                    setInspectorCollapsed(false);
+                                  }}
+                                  onSelectEdge={(id) => {
+                                    setSelectedEdgeId(id);
+                                    setSelectedNodeId(null);
+                                  }}
+                                  onClearSelection={() => {
+                                    setSelectedNodeId(null);
+                                    setSelectedEdgeId(null);
+                                  }}
+                                  onInsertOnEdge={openInsertOnEdge}
+                                  onAddStep={openAddStep}
+                                  onBeforeDelete={onBeforeDelete}
+                                  onNodesDelete={onNodesDelete}
+                                  onEdgesDelete={onEdgesDelete}
+                                />
+                              </WorkflowEditorCatalogContext.Provider>
+                            </div>
+                          ) : (
+                            <MobileWorkflowGraphView
+                              rows={mobileGraphRows}
+                              selectedNodeId={selectedNodeId}
+                              selectedEdgeId={selectedEdgeId}
+                              onSelectNode={(id) => {
+                                setSelectedNodeId(id);
+                                setSelectedEdgeId(null);
+                                setInspectorCollapsed(false);
+                              }}
+                              onSelectEdge={(id) => {
+                                setSelectedEdgeId(id);
+                                setSelectedNodeId(null);
+                              }}
+                              onCreateConnection={isBuiltin ? undefined : onCreateSimpleConnection}
+                              canReorder={!isBuiltin}
+                              onMoveNode={onMoveSimpleNode}
+                            />
+                          )}
+                        </>
                       )}
 
                       {mobilePanel === "add" && (
@@ -3256,6 +3483,96 @@ function InnerEditor({
                       <Plus size={13} /> {t("workflows.duplicateToCustomize", "Duplicate to customize")}
                     </button>
                   </div>
+                ) : simpleViewEnabled ? (
+                  /* FNXC:WorkflowSimpleView 2026-07-10-12:00: simplified-view
+                     toolbar — the flat 16-button palette moves into the
+                     searchable add-step dialog; the toolbar keeps only the
+                     common actions (Add step, Design with AI, Delete, Save).
+                     Import/Export/Auto-layout stay in the Advanced view. */
+                  <div className="wf-editor-toolbar wf-editor-toolbar--simple" data-testid="wf-simple-toolbar">
+                    <button
+                      type="button"
+                      className="wf-editor-action wf-simple-toolbar-add"
+                      data-testid="wf-simple-toolbar-add-step"
+                      onClick={openAddStep}
+                    >
+                      <Plus size={13} /> {t("workflowNodes.simpleAddStep", "Add step")}
+                    </button>
+                    <div className="wf-editor-actions">
+                      <div className="wf-ai-edit-wrap">
+                        <button
+                          className="wf-editor-action"
+                          data-testid="wf-simple-ai-edit"
+                          aria-expanded={aiPanelOpen}
+                          onClick={() => {
+                            setAiPanelOpen((o) => !o);
+                            setAiEditError(null);
+                          }}
+                        >
+                          <Sparkles size={13} /> {t("workflows.aiEdit", "Design with AI")}
+                        </button>
+                        {aiPanelOpen && (
+                          <div
+                            className="wf-ai-panel"
+                            data-testid="wf-simple-ai-panel"
+                            role="dialog"
+                            aria-busy={aiEditBusy}
+                            aria-label={t("workflows.aiEdit", "Design with AI")}
+                          >
+                            <textarea
+                              className="wf-ai-prompt"
+                              data-testid="wf-simple-ai-edit-prompt"
+                              rows={3}
+                              value={aiEditPrompt}
+                              disabled={aiEditBusy}
+                              placeholder={t(
+                                "workflows.aiPromptPlaceholder",
+                                "e.g. Run lint and tests before merge, then post a changelog comment after merge",
+                              )}
+                              onChange={(e) => {
+                                setAiEditPrompt(e.target.value);
+                                if (aiEditError) setAiEditError(null);
+                              }}
+                            />
+                            {aiEditError && (
+                              <p className="wf-create-error" role="alert" data-testid="wf-simple-ai-edit-error">
+                                {aiEditError}
+                              </p>
+                            )}
+                            <div className="wf-ai-actions">
+                              <button
+                                type="button"
+                                className="btn btn-primary wf-ai-submit"
+                                data-testid="wf-simple-ai-edit-submit"
+                                disabled={aiEditBusy}
+                                onClick={() => void handleAiEditSubmit()}
+                              >
+                                {aiEditBusy ? <Loader2 size={13} className="wf-spin" /> : <Sparkles size={13} />}{" "}
+                                {t("workflows.aiSubmit", "Design with AI")}
+                              </button>
+                              {aiEditBusy && (
+                                <button
+                                  type="button"
+                                  className="btn wf-ai-cancel"
+                                  data-testid="wf-simple-ai-edit-cancel"
+                                  onClick={handleAiEditCancel}
+                                >
+                                  {t("common.cancel", "Cancel")}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <button className="wf-editor-delete" onClick={handleDeleteWorkflow}>
+                        <Trash2 size={13} /> {t("common.delete", "Delete")}
+                      </button>
+                      <button className="wf-editor-save" onClick={handleSave} disabled={saving}>
+                        {saving ? <Loader2 size={13} className="wf-spin" /> : <Save size={13} />}{" "}
+                        {t("common.save", "Save")}
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div className="wf-editor-toolbar">
                     <div className="wf-editor-palette">
@@ -3375,7 +3692,7 @@ function InnerEditor({
                   </div>
                 )}
 
-                {hasAnyTemplate && (
+                {hasAnyTemplate && !simpleViewEnabled && (
                   <section
                     className="wf-templates"
                     data-testid="wf-palette-templates"
@@ -3557,6 +3874,43 @@ function InnerEditor({
                   </div>
                 )}
 
+                {simpleViewEnabled ? (
+                  /* FNXC:WorkflowSimpleView 2026-07-10-12:00: the simplified
+                     graphical canvas replaces the advanced React Flow canvas;
+                     both edit the same nodes/edges state, so selection,
+                     deletion, the inspector, validation badges and Save all
+                     behave identically. */
+                  <div className="wf-editor-canvas wf-editor-canvas--simple" ref={canvasRef} tabIndex={-1}>
+                    <WorkflowEditorCatalogContext.Provider value={catalogs}>
+                      <WorkflowSimpleCanvas
+                        nodes={nodesForRender}
+                        edges={edges}
+                        columnNames={columnNameMap}
+                        editable={!isBuiltin}
+                        selectedNodeId={selectedNodeId}
+                        selectedEdgeId={selectedEdgeId}
+                        onSelectNode={(id) => {
+                          setSelectedNodeId(id);
+                          setSelectedEdgeId(null);
+                          setInspectorCollapsed(false);
+                        }}
+                        onSelectEdge={(id) => {
+                          setSelectedEdgeId(id);
+                          setSelectedNodeId(null);
+                        }}
+                        onClearSelection={() => {
+                          setSelectedNodeId(null);
+                          setSelectedEdgeId(null);
+                        }}
+                        onInsertOnEdge={openInsertOnEdge}
+                        onAddStep={openAddStep}
+                        onBeforeDelete={onBeforeDelete}
+                        onNodesDelete={onNodesDelete}
+                        onEdgesDelete={onEdgesDelete}
+                      />
+                    </WorkflowEditorCatalogContext.Provider>
+                  </div>
+                ) : (
                 <div className="wf-editor-canvas" ref={canvasRef} tabIndex={-1}>
                   {isMobileMode &&
                     inspectorCollapsed &&
@@ -3641,6 +3995,7 @@ function InnerEditor({
                   </ReactFlow>
                   </WorkflowEditorCatalogContext.Provider>
                 </div>
+                )}
               </>
             ) : (
               <div className="wf-editor-empty wf-editor-canvas-empty wf-editor-onboard">
@@ -3668,7 +4023,10 @@ function InnerEditor({
           {/* FNXC:WorkflowSimpleEditor 2026-06-29-23:21: Simple editor row and pencil affordances must open the same node details in desktop compact and mobile presentations. Do not suppress this inspector only because the canvas is hidden; mobile collapse still closes the detail stage and end nodes remain non-inspectable. */}
           {selectedNodeHasInspector &&
             !(isMobileMode && inspectorCollapsed) && (
-            <aside className="wf-editor-inspector" data-testid="wf-node-inspector">
+            <aside
+              className={`wf-editor-inspector${simpleViewEnabled ? " wf-editor-inspector--simple" : ""}`}
+              data-testid="wf-node-inspector"
+            >
               <div className="wf-inspector-heading">
                 {/* FNXC:WorkflowEditor 2026-06-21-10:00: Heading shows the node-kind title (from the help registry) so the pane names what is selected, falling back to the generic "Node" label. */}
                 <h3>{selectedNodeHelp?.title ?? t("workflowNodes.nodeInspector", "Node")}</h3>
@@ -5003,7 +5361,10 @@ function InnerEditor({
           )}
 
           {selectedEdge && (
-            <aside className="wf-editor-inspector" data-testid="wf-edge-inspector">
+            <aside
+              className={`wf-editor-inspector${simpleViewEnabled ? " wf-editor-inspector--simple" : ""}`}
+              data-testid="wf-edge-inspector"
+            >
               <div className="wf-inspector-heading">
                 <h3>{t("workflowNodes.edgeInspector", "Edge")}</h3>
                 {isMobileMode && (
@@ -5105,6 +5466,25 @@ function InnerEditor({
             onClose={closeCreateDialog}
           />
         )}
+        <WorkflowAddStepModal
+          open={addStepTarget !== null}
+          onClose={() => setAddStepTarget(null)}
+          palette={PALETTE}
+          disallowContainers={addStepTarget?.insideContainer === true}
+          fragments={templateGroups.fragmentEntries}
+          stepTemplates={templateGroups.stepEntries}
+          pluginTemplates={templateGroups.pluginEntries}
+          templateConflict={templateConflict}
+          onPickPalette={handleAddStepPalettePick}
+          onPickFragment={(fragment) => {
+            if (handleInsertFragment(fragment)) setAddStepTarget(null);
+          }}
+          onPickStepTemplate={handleAddStepTemplatePick}
+          onPickStepTemplateAsOptionalGroup={(tpl) => {
+            handleInsertStepTemplateAsOptionalGroup(tpl);
+            setAddStepTarget(null);
+          }}
+        />
       </div>
   );
   return (

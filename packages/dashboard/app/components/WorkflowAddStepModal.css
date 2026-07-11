@@ -1,0 +1,228 @@
+/*
+FNXC:WorkflowSimpleView 2026-07-10-12:00:
+Add-step dialog for the simplified workflow view. Centered card on desktop,
+full-width bottom sheet on mobile (mirrors the app's mobile modal pattern) so
+the same dialog serves both breakpoints.
+*/
+
+.wf-add-step-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.wf-add-step-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(72vh, 640px);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.wf-add-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+
+.wf-add-step-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.wf-add-step-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+.wf-add-step-search:focus-within {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-add-step-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.wf-add-step-conflict {
+  margin: 0 16px 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, var(--border));
+  background: var(--status-error-bg);
+  color: var(--color-error);
+  font-size: 0.75rem;
+}
+
+.wf-add-step-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.wf-add-step-section h4 {
+  margin: 0 0 8px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.wf-add-step-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.wf-add-step-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.wf-add-step-option:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.wf-add-step-option:focus-visible {
+  outline: none;
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring);
+}
+
+.wf-add-step-option-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+  color: #fff;
+  background: var(--surface-emphasis);
+}
+
+.wf-add-step-option--agent .wf-add-step-option-chip {
+  background: color-mix(in srgb, var(--ws-quality) 85%, var(--bg));
+}
+
+.wf-add-step-option--automation .wf-add-step-option-chip {
+  background: color-mix(in srgb, var(--ws-teal) 85%, var(--bg));
+}
+
+.wf-add-step-option--flow .wf-add-step-option-chip {
+  background: color-mix(in srgb, var(--color-merged) 85%, var(--bg));
+}
+
+.wf-add-step-option--template .wf-add-step-option-chip {
+  background: color-mix(in srgb, var(--triage) 80%, var(--bg));
+}
+
+.wf-add-step-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wf-add-step-option-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.wf-add-step-option-desc {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wf-add-step-template-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wf-add-step-optional {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 40px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.wf-add-step-optional:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.wf-add-step-empty {
+  margin: 6px 2px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px), (max-height: 480px) {
+  .wf-add-step-overlay {
+    align-items: flex-end;
+  }
+
+  .wf-add-step-dialog {
+    width: 100vw;
+    max-height: 82dvh;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border-bottom: none;
+  }
+
+  .wf-add-step-grid {
+    grid-template-columns: 1fr;
+  }
+}

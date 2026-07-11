@@ -65,8 +65,13 @@ function layoutNodeWidth(node: LayoutNode): number {
  * Cycle-safe: a per-node depth cap plus a visited guard bounds the relaxation so
  * non-rework cycles (should not occur, but be defensive) cannot loop forever.
  * Nodes unreachable from start land in a trailing layer (max + 1).
+ *
+ * FNXC:WorkflowSimpleView 2026-07-10-12:00:
+ * Exported so the simplified graph view's vertical display layout
+ * (workflow-simple-layout.ts) shares the exact same layering semantics as the
+ * canvas auto-layout instead of re-deriving a drifting copy.
  */
-function layerNodes(nodeIds: string[], edges: FlowEdge[]): Map<string, number> {
+export function layerNodes(nodeIds: string[], edges: FlowEdge[]): Map<string, number> {
   const idSet = new Set(nodeIds);
   // Adjacency over non-rework edges whose endpoints are both layoutable.
   const adj = new Map<string, string[]>();
