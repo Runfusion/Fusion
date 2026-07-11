@@ -971,6 +971,13 @@ vi.mock("../agent-session-helpers.js", async () => {
       }
       return { provider: undefined, modelId: undefined };
     }),
+    // FNXC:EngineTestDrift 2026-07-11-22:25:
+    // step-session-executor.ts now imports resolveExecutorThinkingLevel from
+    // agent-session-helpers (Settings-ThinkingLevel precedence, 2026-07-10).
+    // The hand-written mock must surface it or vitest throws "No export
+    // defined", failing every step-execution test. Neutral undefined return —
+    // no test asserts on thinking level here.
+    resolveExecutorThinkingLevel: vi.fn(() => undefined),
   };
 });
 
