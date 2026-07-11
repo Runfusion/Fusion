@@ -49,6 +49,19 @@ vi.mock("../../api", () => ({
   fetchSettings: vi.fn(() => Promise.resolve({ heartbeatMultiplier: 1 })),
   updateSettings: vi.fn(() => Promise.resolve({})),
 }));
+/*
+FNXC:RuntimeFallbackUI 2026-07-11-00:00:
+RuntimeFallbackBadge (commit 0bed997af / FUX-022) calls the shared useToast() hook directly. AgentsView embeds
+RuntimeFallbackBadge per agent card, and this file renders <AgentsView> outside a ToastProvider. Without the mock
+the badge throw unmounts the tree (buttons/labels vanish), so mock the hook like TaskCard.test.tsx does.
+*/
+vi.mock("../../hooks/useToast", () => ({
+  useToast: () => ({
+    addToast: vi.fn(),
+    removeToast: vi.fn(),
+    toasts: [],
+  }),
+}));
 
 import {
   fetchAgents,
