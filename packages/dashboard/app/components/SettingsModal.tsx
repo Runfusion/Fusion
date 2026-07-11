@@ -3856,7 +3856,15 @@ export function SettingsModal({
                   aria-label={t("settings.footer.checkUpdates", "Check for updates")}
                   title={t("settings.footer.checkUpdates", "Check for updates")}
                 >
-                  <span className="settings-modal-version">{t("settings.footer.version", "Version {{version}}", { version: appVersion })}</span>
+                  {/*
+                  FNXC:Settings 2026-07-10-21:33:
+                  Mobile Settings footer needs the compact v{{version}} label to preserve horizontal space; desktop and tablet keep the full Version {{version}} word.
+                  */}
+                  <span className="settings-modal-version">
+                    {viewportMode === "mobile"
+                      ? t("settings.footer.versionShort", "v{{version}}", { version: appVersion })
+                      : t("settings.footer.version", "Version {{version}}", { version: appVersion })}
+                  </span>
                   <RefreshCw size={12} className={updateCheckLoading ? "spinning" : undefined} />
                 </button>
               )}

@@ -5806,6 +5806,7 @@
     "footer": {
       "help": "Help",
       "version": "Version {{version}}",
+      "versionShort": "v{{version}}",
       "checkUpdates": "Check for updates",
       "helpDiscussions": "Help and discussions"
     },
