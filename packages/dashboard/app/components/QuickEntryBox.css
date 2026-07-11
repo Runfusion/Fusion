@@ -284,6 +284,38 @@ the mobile touch-target block below (FN-5751: never a breakpoint-only fix).
 }
 
 /*
+FNXC:BoardComposer 2026-07-10-20:30:
+Operator design follow-up on the reorganized action row: even with grouping, a row of nine
+outlined chips reads noisy. Restyle the row as a QUIET TOOLBAR — every option control (and the
+secondary attach/Fast pair) renders as a borderless ghost button in muted text that gains a
+subtle fill + border only on hover/focus/open, so the only persistently emphasized control is
+the Save primary. Selection state still shows (aria-expanded/open menus keep the filled look).
+Scoped to the quick-entry action row only; the shared .btn/.dep-trigger rules that other
+surfaces use are untouched.
+*/
+.quick-entry-options-group .btn,
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger,
+.quick-entry-primary-group .btn:not(.btn-task-create) {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.quick-entry-options-group .btn:hover,
+.quick-entry-options-group .btn:focus-visible,
+.quick-entry-options-group .btn[aria-expanded="true"],
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger:hover,
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger:focus-visible,
+.quick-entry-options-group .wf-optional-steps-dropdown-trigger[aria-expanded="true"],
+.quick-entry-primary-group .btn:not(.btn-task-create):hover,
+.quick-entry-primary-group .btn:not(.btn-task-create):focus-visible {
+  background: var(--card-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/*
 FNXC:QuickAddWorkflow 2026-06-30-00:00:
 Quick-add workflow targeting sits in the action row as a compact existing-button dropdown. Use tokenized sizing/colors so the selector wraps with Save/Plan controls on narrow Board and List surfaces without introducing a separate visual hierarchy.
 
