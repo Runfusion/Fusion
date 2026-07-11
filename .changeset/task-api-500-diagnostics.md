@@ -2,6 +2,6 @@
 "@runfusion/fusion": patch
 ---
 
-summary: Server now logs the underlying stack behind an API 500 so opaque task-endpoint failures are diagnosable.
+summary: Task API operations no longer fail with 500 when a task's PROMPT.md can't be read; server also logs 500 causes.
 category: fix
-dev: `rethrowAsApiError` (packages/dashboard/src/api-error.ts) now preserves the original error as Error `cause` instead of discarding it, and `sendErrorResponse`/the `/api` error boundary (packages/dashboard/src/server.ts) log the stack + cause chain for 5xx (not just the message). The client-facing body stays generic in production. Unblocks root-causing the reported "task write API returns 500 for every task" (GET/DELETE/PATCH/retry/archive/reset on /api/tasks/:id) whose cause was previously never recorded server-side.
+dev: getTask (the shared load for GET/DELETE/PATCH/retry/reset/archive) and the mutation helpers updateTaskUnlocked, updateStep, readPromptForArchive, and resetPromptCheckboxes (packages/core/src/store.ts) read PROMPT.md unguarded, so an unreadable file (root-owned from a prior `sudo` run → EACCES, PROMPT.md being a directory → EISDIR, transient FS error) 500'd every per-task op while the PROMPT.md-free board list/create kept working. These reads are now best-effort (degrade + log). Diagnosability: rethrowAsApiError preserves the original error as Error `cause` and the /api boundary logs stack + cause for 5xx (packages/dashboard/src/api-error.ts, server.ts); client body stays generic in production.

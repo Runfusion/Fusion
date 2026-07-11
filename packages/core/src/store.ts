@@ -2436,7 +2436,15 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
     if (!existsSync(promptPath)) {
       return undefined;
     }
-    return readFile(promptPath, "utf-8");
+    // FNXC:TaskDetailPromptResilience 2026-07-10-15:00: best-effort — an
+    // unreadable PROMPT.md must not fail archiving (a reported failing per-task
+    // op); the archive entry simply omits the prompt text.
+    try {
+      return await readFile(promptPath, "utf-8");
+    } catch (err) {
+      storeLog.warn(`[task-detail] failed to read PROMPT.md for archive of ${taskId}: ${getErrorMessage(err)}`);
+      return undefined;
+    }
   }
 
   private async buildArchivedAgentLogFields(
@@ -5533,15 +5541,34 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       // Derived at read time only; retrySummary is never persisted to SQLite.
       task.retrySummary = computeRetrySummary(task);
 
-      // Sync steps from PROMPT.md if task.steps is empty
+      /*
+      FNXC:TaskDetailPromptResilience 2026-07-10-15:00:
+      PROMPT.md is enrichment for the task detail (the `prompt` text and, when steps
+      are unpersisted, step-syncing) — NOT essential row data. getTask is the shared
+      load for the entire per-task API (GET/DELETE/PATCH/retry/reset/archive), so an
+      unguarded read/parse throw here turned every per-task operation into a 500 while
+      the PROMPT.md-free board list kept working — the reported "task write API returns
+      500 for every task". A read can fail for reasons unrelated to the row: a
+      root-owned PROMPT.md left by a prior `sudo` run (EACCES), PROMPT.md being a
+      directory (EISDIR), a symlink loop, or a transient FS error. Degrade to empty
+      prompt / unsynced steps and log, rather than bricking task management.
+      */
       if (task.steps.length === 0) {
-        task.steps = await this.parseStepsFromPrompt(id);
+        try {
+          task.steps = await this.parseStepsFromPrompt(id);
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${id}: ${getErrorMessage(err)}`);
+        }
       }
 
       let prompt = "";
-      const promptPath = join(this.taskDir(id), "PROMPT.md");
-      if (existsSync(promptPath)) {
-        prompt = await readFile(promptPath, "utf-8");
+      try {
+        const promptPath = join(this.taskDir(id), "PROMPT.md");
+        if (existsSync(promptPath)) {
+          prompt = await readFile(promptPath, "utf-8");
+        }
+      } catch (err) {
+        storeLog.warn(`[task-detail] failed to read PROMPT.md for ${id}: ${getErrorMessage(err)}`);
       }
 
       return { ...task, prompt };
@@ -8340,11 +8367,18 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       return;
     }
 
-    const content = await readFile(promptPath, "utf-8");
-    const resetContent = content.replace(/^- \[x\]/gm, "- [ ]");
+    // FNXC:TaskDetailPromptResilience 2026-07-10-15:00: cosmetic checkbox reset —
+    // an unreadable/unwritable PROMPT.md must not fail the task reset itself (a
+    // reported failing per-task op); the DB reset already proceeded.
+    try {
+      const content = await readFile(promptPath, "utf-8");
+      const resetContent = content.replace(/^- \[x\]/gm, "- [ ]");
 
-    if (resetContent !== content) {
-      await writeFile(promptPath, resetContent, "utf-8");
+      if (resetContent !== content) {
+        await writeFile(promptPath, resetContent, "utf-8");
+      }
+    } catch (err) {
+      storeLog.warn(`[task-detail] failed to reset PROMPT.md checkboxes in ${dir}: ${getErrorMessage(err)}`);
     }
   }
 
@@ -9650,34 +9684,46 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       // task.json remains the canonical source for title/description fields.
       // PROMPT.md is only ever fully rewritten via explicit `updates.prompt`.
       if (updates.prompt === undefined && (updates.title !== undefined || updates.description !== undefined)) {
+        // FNXC:TaskDetailPromptResilience 2026-07-10-15:00:
+        // Keeping the human-visible PROMPT.md heading/mission in sync with
+        // task.json is cosmetic — the DB row (persisted above) is canonical. An
+        // unreadable/unwritable PROMPT.md (root-owned from a prior `sudo` run →
+        // EACCES, PROMPT.md being a directory → EISDIR, transient FS error) must
+        // NOT fail the update itself, or every title/description edit 500s
+        // exactly like the reported task-write-API failure. Best-effort: log and
+        // skip the sync on failure.
         const promptPath = join(dir, "PROMPT.md");
-        if (existsSync(promptPath)) {
-          const existingPrompt = await readFile(promptPath, "utf-8");
+        try {
+          if (existsSync(promptPath)) {
+            const existingPrompt = await readFile(promptPath, "utf-8");
 
-          if (isBootstrapPromptStub(existingPrompt, task.id, preUpdateTitle, preUpdateDescription)) {
-            const newPrompt = buildBootstrapPrompt(task.id, task.title, task.description);
-            await writeFile(promptPath, newPrompt);
-          } else {
-            // Real spec — surgical edits only. Each section we propagate to is
-            // edited in place; everything else (Review Level, Frontend UX
-            // Criteria, custom sections from triage) is preserved verbatim.
-            let next = existingPrompt;
-            if (updates.title !== undefined) {
-              // Match the existing heading style: triage emits
-              // `# Task: {id} - {title}`; createTask uses `# {id}: {title}`.
-              const triageStyle = /^#\s+Task:\s+[A-Z]+-\d+\s+-\s+/m.test(existingPrompt);
-              const heading = triageStyle
-                ? (task.title ? `Task: ${task.id} - ${task.title}` : `Task: ${task.id}`)
-                : (task.title ? `${task.id}: ${task.title}` : task.id);
-              next = rewriteHeadingLine(next, heading);
-            }
-            if (updates.description !== undefined) {
-              next = rewriteMissionSection(next, task.description);
-            }
-            if (next !== existingPrompt) {
-              await writeFile(promptPath, next);
+            if (isBootstrapPromptStub(existingPrompt, task.id, preUpdateTitle, preUpdateDescription)) {
+              const newPrompt = buildBootstrapPrompt(task.id, task.title, task.description);
+              await writeFile(promptPath, newPrompt);
+            } else {
+              // Real spec — surgical edits only. Each section we propagate to is
+              // edited in place; everything else (Review Level, Frontend UX
+              // Criteria, custom sections from triage) is preserved verbatim.
+              let next = existingPrompt;
+              if (updates.title !== undefined) {
+                // Match the existing heading style: triage emits
+                // `# Task: {id} - {title}`; createTask uses `# {id}: {title}`.
+                const triageStyle = /^#\s+Task:\s+[A-Z]+-\d+\s+-\s+/m.test(existingPrompt);
+                const heading = triageStyle
+                  ? (task.title ? `Task: ${task.id} - ${task.title}` : `Task: ${task.id}`)
+                  : (task.title ? `${task.id}: ${task.title}` : task.id);
+                next = rewriteHeadingLine(next, heading);
+              }
+              if (updates.description !== undefined) {
+                next = rewriteMissionSection(next, task.description);
+              }
+              if (next !== existingPrompt) {
+                await writeFile(promptPath, next);
+              }
             }
           }
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to sync PROMPT.md heading for ${task.id}: ${getErrorMessage(err)}`);
         }
       }
 
@@ -9900,8 +9946,15 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
       // Auto-initialize steps from PROMPT.md if empty. Bypassed for graph-source
       // writes (U6/KTD-3): the graph owns explicit indices pinned at expansion.
+      // FNXC:TaskDetailPromptResilience 2026-07-10-15:00: step auto-init is
+      // best-effort — an unreadable PROMPT.md must not fail updateStep (on the
+      // reported reset path); proceed with the persisted (empty) steps.
       if (task.steps.length === 0 && !graphSource) {
-        task.steps = await this.parseStepsFromPrompt(id);
+        try {
+          task.steps = await this.parseStepsFromPrompt(id);
+        } catch (err) {
+          storeLog.warn(`[task-detail] failed to auto-init steps from PROMPT.md for ${id}: ${getErrorMessage(err)}`);
+        }
       }
 
       // Initialize log array if missing (for legacy tasks)
