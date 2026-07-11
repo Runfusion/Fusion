@@ -457,6 +457,16 @@ export function createMockStore() {
     }),
     getFusionDir: vi.fn().mockReturnValue("/tmp/test/.fusion"),
     clearStaleExecutionStartBranchReferences: vi.fn().mockReturnValue([]),
+    // FNXC:EngineTestDrift 2026-07-11-22:40:
+    // FN-7750 / Runfusion#1980 made isLiveSharedBranchGroupMemberIntegration
+    // require a live/open group from store.getBranchGroup(groupId) — a shared-
+    // branch member is exempt from autoMerge:false only while its group is
+    // open. The mock store must implement getBranchGroup or
+    // isLiveSharedBranchGroupMember throws (caught by handleGraphFailure) and
+    // shared-branch retry never fires. Default to an open group: executor-level
+    // test tasks carrying a branchContext group are live by construction; group
+    // staleness is unit-tested against the real store, not here.
+    getBranchGroup: vi.fn().mockReturnValue({ id: "BG-test", status: "open", branchName: "fusion/bg-test" }),
   };
   return store as any;
 }
