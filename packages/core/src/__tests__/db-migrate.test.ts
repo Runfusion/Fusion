@@ -716,6 +716,40 @@ describe("schema migration", () => {
     db.close();
   });
 
+  it("repairs v140 chat_sessions tables missing thinkingLevel", () => {
+    const db = new Database(fusionDir);
+    db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id TEXT PRIMARY KEY,
+        agentId TEXT NOT NULL,
+        title TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        projectId TEXT,
+        modelProvider TEXT,
+        modelId TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        cliSessionFile TEXT,
+        inFlightGeneration TEXT,
+        cliExecutorAdapterId TEXT
+      )
+    `);
+    db.exec("INSERT INTO __meta (key, value) VALUES ('schemaVersion', '140')");
+    db.exec("INSERT INTO __meta (key, value) VALUES ('lastModified', '1000')");
+    db.exec(`INSERT INTO chat_sessions (id, agentId, createdAt, updatedAt) VALUES ('chat-legacy', 'agent-1', '2026-07-11T03:40:00.000Z', '2026-07-11T03:40:00.000Z')`);
+
+    db.init();
+
+    const columns = db.prepare("PRAGMA table_info(chat_sessions)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("thinkingLevel");
+    const row = db.prepare("SELECT id, thinkingLevel FROM chat_sessions WHERE id = 'chat-legacy'").get() as { id: string; thinkingLevel: string | null };
+    expect(row).toEqual({ id: "chat-legacy", thinkingLevel: null });
+    expect(db.getSchemaVersion()).toBe(SCHEMA_VERSION);
+
+    db.close();
+  });
+
   it("adds deletedAt column + index when migrating from schema version 86", () => {
     const db = new Database(fusionDir);
     db.exec("CREATE TABLE IF NOT EXISTS __meta (key TEXT PRIMARY KEY, value TEXT)");
