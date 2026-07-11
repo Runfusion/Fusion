@@ -72,7 +72,7 @@ Use `fn_task_list` to see all tasks grouped by column. Use `column` param to fil
 Use `fn_task_show` with the task ID (e.g., FN-001) to see steps, progress, and log.
 
 **Planner oversight eye badge:**
-On dashboard task cards, an eye icon means `plannerOverseerState` is non-idle — not that a human viewed the task. States: `watching` = passive monitoring; `steering`/`recovering` = active overseer guidance or repair; `awaiting-confirmation` = human decision required. Before manually taking over stuck in-review/merging tasks, inspect the dashboard task detail **Activity → Interventions** view for overseer state/intervention context so you do not race Fusion's own recovery loop.
+On dashboard task cards, an eye icon means `plannerOverseerState` is non-idle — not that a human viewed the task. States: `watching` = passive monitoring; `steering`/`recovering` = active overseer guidance or repair; `awaiting-confirmation` = human decision required. For human operators, the dashboard task detail **Activity → Interventions** view provides overseer state/intervention context. CLI/pi agents should not assume `fn_task_show` exposes that transient dashboard-only state; if the dashboard path is unavailable, avoid claiming it was inspected and escalate or leave a handoff note instead of racing Fusion's recovery loop.
 
 **Plan complex work:**
 Use `fn_task_plan` for AI-guided planning that interviews you before creating the task.
