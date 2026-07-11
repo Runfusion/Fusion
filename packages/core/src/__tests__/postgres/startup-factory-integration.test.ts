@@ -18,6 +18,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createTaskStoreForBackend } from "../../postgres/startup-factory.js";
+import { mkdirSync } from "node:fs";
+import { DatabaseSync } from "../../sqlite-adapter.js";
 
 const PG_TEST_URL_BASE =
   process.env.FUSION_PG_TEST_URL_BASE ?? "postgresql://localhost:5432";
@@ -97,5 +99,66 @@ pgDescribe("startup-factory: external PostgreSQL boot (integration)", () => {
     });
     expect(second).not.toBeNull();
     await second!.shutdown();
+  });
+
+  /*
+   * FNXC:PostgresMigration 2026-07-10:
+   * First-boot auto-migration (review data-loss trap): booting the PG backend
+   * over a project that still has legacy SQLite data must migrate that data
+   * into the empty PostgreSQL database instead of silently starting empty.
+   * The SQLite file is left in place as a backup; a second boot must not
+   * re-migrate (project.tasks no longer empty).
+   */
+  it("auto-migrates legacy SQLite data into an empty PostgreSQL database on first boot", async () => {
+    rootDir = await mkdtemp(join(tmpdir(), "startup-factory-automig-"));
+    dbName = uniqueDbName();
+    adminExec(`CREATE DATABASE "${dbName}"`);
+    const testUrl = `${PG_TEST_URL_BASE}/${dbName}`;
+
+    // Seed a minimal legacy fusion.db with one live task.
+    const fusionDir = join(rootDir, ".fusion");
+    mkdirSync(fusionDir, { recursive: true });
+    const legacy = new DatabaseSync(join(fusionDir, "fusion.db"));
+    try {
+      legacy.exec(`CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        description TEXT NOT NULL,
+        "column" TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );`);
+      legacy.prepare(
+        `INSERT INTO tasks (id, title, description, "column", createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run("FN-MIG-1", "Legacy task", "migrated from sqlite", "todo", "2026-06-01T00:00:00Z", "2026-06-01T00:00:00Z");
+    } finally {
+      legacy.close();
+    }
+
+    const first = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+    });
+    expect(first).not.toBeNull();
+    try {
+      const migrated = await first!.taskStore.getTask("FN-MIG-1");
+      expect(migrated.title).toBe("Legacy task");
+      expect(migrated.column).toBe("todo");
+    } finally {
+      await first!.shutdown();
+    }
+
+    // Second boot: PG is no longer empty — must NOT attempt to re-migrate.
+    const second = await createTaskStoreForBackend({
+      rootDir,
+      env: { DATABASE_URL: testUrl },
+    });
+    expect(second).not.toBeNull();
+    try {
+      const stillThere = await second!.taskStore.getTask("FN-MIG-1");
+      expect(stillThere.title).toBe("Legacy task");
+    } finally {
+      await second!.shutdown();
+    }
   });
 });

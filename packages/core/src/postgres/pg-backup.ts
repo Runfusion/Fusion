@@ -35,7 +35,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -123,6 +123,44 @@ export interface PgBackupOptions {
  * AND pg_dump/pg_restore connect to the correct server (the embedded cluster's
  * random port, not the libpq default localhost:5432).
  */
+/*
+FNXC:PostgresBackup 2026-07-10:
+Review gap: pg_dump/pg_restore are not bundled with the embedded-postgres
+package (it ships only initdb/pg_ctl/postgres), so embedded-mode backups
+failed with a bare spawn ENOENT unless the operator happened to have libpq
+tools on PATH. Best-effort resolution order: PATH name as-is (unchanged
+default), then the common Homebrew/postgres.app/system install locations for
+the matching major version (15) and its successors. When nothing resolves we
+keep the bare name so the eventual error stays actionable ("pg_dump failed:
+... ENOENT" + the install guidance in PgBackupOptions.pgDumpPath).
+*/
+function resolveClientBinary(name: "pg_dump" | "pg_restore"): string {
+  const candidates = [
+    // Homebrew (Apple Silicon / Intel), matching-major first.
+    `/opt/homebrew/opt/postgresql@15/bin/${name}`,
+    `/usr/local/opt/postgresql@15/bin/${name}`,
+    `/opt/homebrew/opt/libpq/bin/${name}`,
+    `/usr/local/opt/libpq/bin/${name}`,
+    `/opt/homebrew/opt/postgresql@16/bin/${name}`,
+    `/opt/homebrew/opt/postgresql@17/bin/${name}`,
+    // Debian/Ubuntu postgresql-client packages.
+    `/usr/lib/postgresql/15/bin/${name}`,
+    `/usr/lib/postgresql/16/bin/${name}`,
+    `/usr/lib/postgresql/17/bin/${name}`,
+    // Postgres.app (macOS).
+    `/Applications/Postgres.app/Contents/Versions/latest/bin/${name}`,
+  ];
+  // PATH lookup first: if the plain name resolves, keep it (operator intent).
+  const pathDirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+  for (const dir of pathDirs) {
+    if (existsSync(join(dir, name))) return name;
+  }
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return name;
+}
+
 export class PgBackupManager {
   private readonly connectionString: string;
   private readonly fusionDir: string;
@@ -138,8 +176,8 @@ export class PgBackupManager {
     this.backupDir = options?.backupDir ?? ".fusion/backups";
     this.retention = options?.retention ?? 7;
     this.includeCentral = options?.includeCentral ?? true;
-    this.pgDumpPath = options?.pgDumpPath ?? "pg_dump";
-    this.pgRestorePath = options?.pgRestorePath ?? "pg_restore";
+    this.pgDumpPath = options?.pgDumpPath ?? resolveClientBinary("pg_dump");
+    this.pgRestorePath = options?.pgRestorePath ?? resolveClientBinary("pg_restore");
   }
 
   private getBackupDirPath(): string {

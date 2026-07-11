@@ -30,7 +30,7 @@ import {normalizeTaskCommitAssociation} from "../task-lineage.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {withTaskBranchContextInSourceMetadata} from "../task-store/branch-context.js";
-import {upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {upsertTaskRowInTransaction, readTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {listDueWorkflowWorkItems as listDueWorkflowWorkItemsAsync} from "../task-store/async-workflow-workitems.js";
 import {getTaskMovedCountsByDay as getTaskMovedCountsByDayAsync} from "../task-store/async-audit.js";
 import {getAllDocuments as getAllDocumentsAsync} from "../task-store/async-comments-attachments.js";
@@ -109,9 +109,50 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
     // insertTaskRowInTransaction (non-destructive plain insert).
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      const context = store.createTaskPersistSerializationContext(task);
+      /*
+      FNXC:PostgresCutover 2026-07-10:
+      Parity with the SQLite branch below: write ONLY the columns this update
+      actually changed (getChangedTaskColumns against the row read inside the
+      transaction), never a full-row upsert from the caller's snapshot. The
+      previous full-row upsert silently clobbered any column another writer
+      committed between this caller's read and its write — the lost-update
+      class behind triage's `status: "planning"` clear never taking effect
+      (a card then reads as "unplanned" forever and the scheduler refuses to
+      dispatch it). SQLite never had this bug because patchTaskRowInTransaction
+      always wrote the changed-column subset.
+      */
       await layer.transactionImmediate(async (tx) => {
-        await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+        const pgRow = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
+        if (!pgRow || pgRow.deletedAt != null) {
+          // Update-only path: never resurrect a soft-deleted row; a missing row
+          // falls through to the legacy full upsert (matches sqlite's
+          // upsertTaskWithFtsRecovery fallback for vanished rows).
+          if (!pgRow) {
+            const context = store.createTaskPersistSerializationContext(task);
+            await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+          }
+          return;
+        }
+        const existingRow = store.pgRowToTaskRow(pgRow);
+        const deletedAt = store.getSoftDeletedWriteConflict(id, task, existingRow);
+        if (deletedAt) {
+          store.throwSoftDeletedWriteBlocked(id, deletedAt, "atomicWriteTaskJson");
+        }
+        const changedColumns = store.getChangedTaskColumns(existingRow, task);
+        if (changedColumns.size === 0) {
+          return;
+        }
+        const context = store.createTaskPersistSerializationContext(task, existingRow);
+        const allValues = buildTaskInsertValues(task as unknown as Record<string, unknown>, context);
+        const setValues: Record<string, unknown> = { updatedAt: task.updatedAt };
+        for (const column of changedColumns) {
+          if (column === "id") continue;
+          setValues[column as string] = allValues[column as string];
+        }
+        await tx
+          .update(schema.project.tasks)
+          .set(setValues as never)
+          .where(eq(schema.project.tasks.id, id));
       });
       await store.writeTaskJsonFile(dir, task);
       return;

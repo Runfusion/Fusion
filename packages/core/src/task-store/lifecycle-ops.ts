@@ -17,6 +17,7 @@ import {stepsToWorkflowIr, stepToFragmentIr, layoutForIr} from "../workflow-step
 import {getTraitRegistry} from "../trait-registry.js";
 import {registerDefaultWorkflowHooks} from "../default-workflow-hooks.js";
 import {clearTransitionPending, readTransitionPending, reconcileHooksRemaining} from "../transition-pending.js";
+import {clearTransitionPendingAsync, listTransitionPendingTaskIdsAsync, readTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowSettingDefinition} from "../workflow-ir-types.js";
 import {validateSettingValuePatch} from "../workflow-settings.js";
 import "../builtin-traits.js";
@@ -1007,11 +1008,31 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
     let recovered = 0;
     let degradedHooks = 0;
 
-    const rows = store.db
-      .prepare(
-        `SELECT id FROM tasks WHERE transitionPending IS NOT NULL AND transitionPending != '' AND deletedAt IS NULL`,
-      )
-      .all() as Array<{ id: string }>;
+    /*
+     * FNXC:PostgresCutover 2026-07-10:
+     * Backend-mode port (previously threw "SQLite Database is not available in
+     * backend mode" on every startup/maintenance sweep). All marker reads and
+     * clears route through the async Drizzle helpers; the hook-reconciliation
+     * and re-run logic below is backend-agnostic.
+     */
+    const backend = store.backendMode ? store.asyncLayer!.db : null;
+    const readMarker = async (taskId: string) =>
+      backend ? readTransitionPendingAsync(backend, taskId) : readTransitionPending(store.db, taskId);
+    const clearMarker = async (taskId: string) => {
+      if (backend) {
+        await clearTransitionPendingAsync(backend, taskId);
+      } else {
+        clearTransitionPending(store.db, taskId);
+      }
+    };
+
+    const rows: Array<{ id: string }> = backend
+      ? (await listTransitionPendingTaskIdsAsync(backend)).map((id) => ({ id }))
+      : store.db
+        .prepare(
+          `SELECT id FROM tasks WHERE transitionPending IS NOT NULL AND transitionPending != '' AND deletedAt IS NULL`,
+        )
+        .all() as Array<{ id: string }>;
 
     // The set of hook ids the current process can still honor: the always-present
     // default-workflow post-commit marker plus every registered plugin trait's
@@ -1026,7 +1047,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
 
     for (const { id } of rows) {
       scanned += 1;
-      const marker = readTransitionPending(store.db, id);
+      const marker = await readMarker(id);
       // null = nothing pending (corrupt/empty marker degrades to settled); we
       // still clear the stored column so the slot is released. undefined = row
       // vanished mid-sweep — skip.
@@ -1034,13 +1055,13 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
 
       await store.withTaskLock(id, async () => {
         // Re-read inside the lock: another path may have cleared it already.
-        const live = readTransitionPending(store.db, id);
+        const live = await readMarker(id);
         if (live == null) {
           // Corrupt/empty marker — clear the stored value defensively so it stops
           // counting against capacity, then move on.
           if (live === null) {
             try {
-              clearTransitionPending(store.db, id);
+              await clearMarker(id);
             } catch {
               // best-effort
             }
@@ -1059,7 +1080,9 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
         // `default-workflow:postCommit` needs no re-run — just a clear).
         const hasSurvivingPluginHook = hooksRemaining.some((h) => h !== "default-workflow:postCommit");
         if (hasSurvivingPluginHook) {
-          const task = store.readTaskFromDb(id, { includeDeleted: false });
+          const task = backend
+            ? await store.getTask(id).catch(() => null)
+            : store.readTaskFromDb(id, { includeDeleted: false });
           if (task) {
             const ir = store.resolveTaskWorkflowIrSync(id);
             // fromColumn is unknown post-crash; the marker only records toColumn.
@@ -1089,7 +1112,7 @@ export async function recoverStaleTransitionPendingImpl(store: TaskStore): Promi
 
         // Clear the marker — releases the reserved capacity slot.
         try {
-          clearTransitionPending(store.db, id);
+          await clearMarker(id);
         } catch {
           // best-effort; a later sweep retries.
         }

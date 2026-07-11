@@ -23,6 +23,7 @@ import {resolveColumnCapacity} from "../workflow-capacity.js";
 import {type DefaultWorkflowMoveContext, applyDefaultWorkflowMoveEffects, evaluateMergeBlockerGuard} from "../default-workflow-hooks.js";
 import {makeTransitionRejection, makeTransitionPending} from "../transition-types.js";
 import {writeTransitionPending, clearTransitionPending} from "../transition-pending.js";
+import {writeTransitionPendingAsync, clearTransitionPendingAsync} from "./async-transition-pending.js";
 import type {WorkflowIr} from "../workflow-ir-types.js";
 import "../builtin-traits.js";
 import {recordRunAuditEventWithinTransaction} from "../postgres/data-layer.js";
@@ -717,6 +718,18 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         // Upsert the task row (update column + all mutated fields).
         await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
 
+        // U4 (flag-ON) parity with the SQLite branch below: write the
+        // crash-safe transitionPending marker in the SAME transaction as the
+        // column change (KTD-2). countActiveInCapacitySlotAsync already counts
+        // pending markers in PG, so this is load-bearing for capacity too.
+        if (useWorkflow) {
+          await writeTransitionPendingAsync(
+            tx,
+            id,
+            makeTransitionPending(toColumn, ["default-workflow:postCommit"], Date.parse(movedAt) || Date.now()),
+          );
+        }
+
         // Audit: task:move
         await recordRunAuditEventWithinTransaction(tx, {
           taskId: id,
@@ -983,7 +996,11 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         }
       }
       try {
-        clearTransitionPending(store.db, id);
+        if (store.backendMode) {
+          await clearTransitionPendingAsync(store.asyncLayer!.db, id);
+        } else {
+          clearTransitionPending(store.db, id);
+        }
       } catch {
         // Clearing is best-effort; the marker recovery sweep is the backstop.
       }

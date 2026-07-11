@@ -43,7 +43,10 @@
  * default (no initdb, no binary) set FUSION_NO_EMBEDDED_PG=1 explicitly.
  */
 
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { sql as drizzleSql } from "drizzle-orm";
+import { isValidSqliteDatabaseFile } from "../sqlite-validation.js";
 import { createLogger } from "../logger.js";
 import { TaskStore } from "../store.js";
 import {
@@ -347,6 +350,65 @@ export async function createTaskStoreForBackend(
         err instanceof Error ? err.message : String(err)
       }`,
     );
+  }
+
+  /*
+  FNXC:PostgresMigration 2026-07-10:
+  Step 5.5 — first-boot auto-migration from legacy SQLite. The pre-flip upgrade
+  contract ("auto-migrate + keep the SQLite file as a backup") was documented
+  below but never wired: an existing SQLite instance switched to the PG backend
+  booted an EMPTY database with its data silently stranded in .fusion/fusion.db
+  (the review-flagged data-loss trap). Guarded to run at most once per
+  database: only when a valid legacy fusion.db exists at the project root AND
+  the PG project.tasks table is still empty. Failure is LOUD (boot aborts) —
+  silently continuing on an empty database is exactly the trap this exists to
+  close. `fn db migrate` remains the manual/explicit path (dry-run, external
+  URLs, partial sources).
+  */
+  if (rootDir) {
+    try {
+      const fusionDir = join(rootDir, ".fusion");
+      const legacySqlitePath = join(fusionDir, "fusion.db");
+      if (existsSync(legacySqlitePath) && isValidSqliteDatabaseFile(legacySqlitePath)) {
+        const countRows = (await connections.migration.execute(
+          drizzleSql`SELECT count(*)::int AS count FROM project.tasks`,
+        )) as Array<{ count: number }>;
+        const pgTaskCount = Number(countRows[0]?.count ?? 0);
+        if (pgTaskCount === 0) {
+          const { migrateSqliteToPostgres, defaultMigrationSources } = await import("./sqlite-migrator.js");
+          // The central (global-dir) source is optional: when no global dir is
+          // resolvable (e.g. tests without an explicit dir), migrate only the
+          // project-local sources rather than failing the boot.
+          let globalDir = options.globalSettingsDir;
+          if (!globalDir) {
+            try {
+              const { resolveGlobalDir } = await import("../global-settings.js");
+              globalDir = resolveGlobalDir();
+            } catch {
+              globalDir = undefined;
+            }
+          }
+          const sources = defaultMigrationSources(fusionDir, globalDir ?? join(fusionDir, "__no-global-dir__"))
+            .filter((source) => existsSync(source.sqlitePath) && isValidSqliteDatabaseFile(source.sqlitePath));
+          if (sources.length > 0) {
+            log.log(`startup-factory: empty PostgreSQL database with legacy SQLite data present — auto-migrating ${sources.length} source(s) (SQLite files are kept as backups)`);
+            const report = await migrateSqliteToPostgres(connections.migration, sources, { skipBaseline: true });
+            const migratedRows = report.tables.reduce((sum, table) => sum + table.insertedRows, 0);
+            log.log(`startup-factory: SQLite → PostgreSQL auto-migration complete (${migratedRows} row(s) across ${report.tables.length} table(s))`);
+          }
+        }
+      }
+    } catch (err) {
+      await connections.close().catch(() => undefined);
+      if (embeddedLifecycle) {
+        await embeddedLifecycle.stop().catch(() => undefined);
+      }
+      throw new Error(
+        `startup-factory: SQLite → PostgreSQL first-boot auto-migration failed (refusing to boot an empty database over existing SQLite data; run 'fn db migrate' manually or set FUSION_NO_EMBEDDED_PG=1 to stay on SQLite): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
   }
 
   // Step 6: construct the AsyncDataLayer.

@@ -35,7 +35,7 @@ import {sanitizeFileScopeInPromptContent} from "../task-store/file-scope.js";
 import {type TaskRow} from "../task-store/persistence.js";
 import {__setTaskActivityLogLimitsForTesting} from "../task-store/comments.js";
 import {nextWorkflowDefinitionIdAsyncImpl} from "../task-store/remaining-ops-8.js";
-import {upsertTaskRowInTransaction} from "../task-store/async-persistence.js";
+import {upsertTaskRowInTransaction, buildTaskInsertValues} from "../task-store/async-persistence.js";
 import {readTaskRowInTransaction} from "../task-store/async-persistence.js";
 import {recordActivityLogEntry as recordActivityLogEntryAsync} from "../task-store/async-audit.js";
 import {recordRunAuditEvent as recordRunAuditEventAsync} from "../postgres/data-layer.js";
@@ -144,13 +144,39 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
     // blocked audit event) instead of upserting.
     if (store.backendMode) {
       const layer = store.asyncLayer!;
-      const context = store.createTaskPersistSerializationContext(task);
       const existingRow = await layer.transactionImmediate(async (tx) => {
         const row = await readTaskRowInTransaction(tx, id, { includeDeleted: true });
         if (row && row.deletedAt != null) {
           return { deletedAt: row.deletedAt as string };
         }
-        await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+        /*
+        FNXC:PostgresCutover 2026-07-10:
+        Changed-columns write (parity with sqlite's patchTaskRowInTransaction):
+        a full-row upsert from the caller's snapshot silently clobbered any
+        column another writer committed since the caller's read — the
+        lost-update class behind triage's `status` clear never sticking. Only
+        an absent row falls back to the full upsert (create-recovery).
+        */
+        if (row) {
+          const existing = store.pgRowToTaskRow(row);
+          const changedColumns = store.getChangedTaskColumns(existing, task);
+          if (changedColumns.size > 0) {
+            const context = store.createTaskPersistSerializationContext(task, existing);
+            const allValues = buildTaskInsertValues(task as unknown as Record<string, unknown>, context);
+            const setValues: Record<string, unknown> = { updatedAt: task.updatedAt };
+            for (const column of changedColumns) {
+              if (column === "id") continue;
+              setValues[column as string] = allValues[column as string];
+            }
+            await tx
+              .update(schema.project.tasks)
+              .set(setValues as never)
+              .where(eq(schema.project.tasks.id, id));
+          }
+        } else {
+          const context = store.createTaskPersistSerializationContext(task);
+          await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+        }
         if (auditInput) {
           await recordRunAuditEventWithinTransaction(tx, auditInput);
         }
