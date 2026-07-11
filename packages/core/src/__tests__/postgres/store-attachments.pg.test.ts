@@ -133,6 +133,33 @@ pgTest("TaskStore attachments (PostgreSQL)", () => {
     expect(existsSync(filePath)).toBe(false);
   });
 
+  /*
+   * FNXC:ArtifactRegistry 2026-07-10:
+   * FN-7791 (PG port): an image attachment must bridge into the artifact
+   * registry as a URI-only image artifact (source=attachment metadata), a
+   * non-image attachment must NOT, and deleting the attachment must remove
+   * the bridged artifact row(s).
+   */
+  it("bridges image attachments into the artifact registry and cleans up on delete", async () => {
+    const store = h.store();
+    const task = await store.createTask({ description: "artifact bridge target" });
+
+    const image = await store.addAttachment(task.id, "agent-shot.png", TINY_PNG, "image/png");
+    await store.addAttachment(task.id, "agent-notes.txt", Buffer.from("not an image"), "text/plain");
+
+    const artifacts = await store.getArtifacts(task.id);
+    const bridged = artifacts.filter((a) => a.metadata?.source === "attachment");
+    expect(bridged).toHaveLength(1);
+    expect(bridged[0].type).toBe("image");
+    expect(bridged[0].title).toBe("agent-shot.png");
+    expect(bridged[0].uri).toBe(`attachments/${image.filename}`);
+    expect(bridged[0].metadata?.attachmentFilename).toBe(image.filename);
+
+    await store.deleteAttachment(task.id, image.filename);
+    const afterDelete = await store.getArtifacts(task.id);
+    expect(afterDelete.filter((a) => a.metadata?.source === "attachment")).toHaveLength(0);
+  });
+
   it("throws ENOENT when getting non-existent attachment", async () => {
     const store = h.store();
     const task = await store.createTask({ description: "get missing" });

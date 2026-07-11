@@ -165,126 +165,15 @@ async function holdWriteLock(
   };
 }
 
-describe("fn task show / task move — real locked-store reproduction (FN-7731)", () => {
-  let tmpDir: string;
-  const originalRetryMs = process.env.FUSION_CLI_LOCK_RETRY_MS;
-
-  beforeEach(() => {
-    tmpDir = makeTmpDir();
-    vi.resetModules();
-  });
-
-  afterEach(async () => {
-    if (originalRetryMs === undefined) {
-      delete process.env.FUSION_CLI_LOCK_RETRY_MS;
-    } else {
-      process.env.FUSION_CLI_LOCK_RETRY_MS = originalRetryMs;
-    }
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  });
-
-  it("succeeds when a real writer lock releases within the retry window", async () => {
-    const { TaskStore } = await import("@fusion/core");
-    vi.doMock("../../project-context.js", () => ({
-      resolveProject: vi.fn().mockRejectedValue(new Error("no registered project")),
-      closeProjectStore: async (context: { store: { close: () => Promise<void> } }) => {
-        await context.store.close().catch(() => {});
-      },
-    }));
-
-    const setupStore = new TaskStore(tmpDir);
-    await setupStore.init();
-    const task = await setupStore.createTask({ description: "lock repro task" });
-    await setupStore.close();
-
-    const dbPath = join(tmpDir, ".fusion", "fusion.db");
-    // Hold the lock for a short window, well inside the overridden retry
-    // deadline, then release automatically (timer mode) — proving the
-    // retry path succeeds once the lock clears, per FN-5048 (no long real
-    // waits: short overridden bound + short real hold, not a slow test).
-    process.env.FUSION_CLI_LOCK_RETRY_MS = "8000";
-    const lock = await holdWriteLock(dbPath, { holdMs: 400 });
-
-    try {
-      const { runTaskShow } = await import("../task.js");
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const cwd = process.cwd();
-      process.chdir(tmpDir);
-      try {
-        await runTaskShow(task.id);
-      } finally {
-        process.chdir(cwd);
-      }
-      const printed = logSpy.mock.calls.flat().join("\n");
-      expect(printed).toContain(task.id);
-      expect(errorSpy).not.toHaveBeenCalled();
-      logSpy.mockRestore();
-      errorSpy.mockRestore();
-    } finally {
-      await lock.release().catch(() => {});
-    }
-  }, 20_000);
-
-  it("fails fast with a clear non-zero-exit error when the lock never releases (real busy_timeout, single attempt)", async () => {
-    // FNXC:CliBoardMutation 2026-07-09-00:00:
-    // Real SQLite's busy_timeout blocks synchronously at the C level for up
-    // to DEFAULT_SQLITE_BUSY_TIMEOUT_MS (5s, packages/core/src/db.ts) before
-    // a single attempt even returns control to JS, so a real end-to-end
-    // exhaustion repro cannot be made to fail fast without touching
-    // DB-level timeouts (forbidden by this task's scope). This test proves
-    // the invariant holds for ONE such blocking attempt: the raw
-    // `database is locked` never reaches the operator unformatted, the
-    // command still fails with a clear, actionable, non-zero-exit error,
-    // and the store is closed. Bounded exhaustion behavior across MANY fast
-    // attempts (the realistic CLI-layer retry shape) is covered by the
-    // mocked-store tests below per FN-5048 (no long real waits there).
-    const { TaskStore } = await import("@fusion/core");
-    vi.doMock("../../project-context.js", () => ({
-      resolveProject: vi.fn().mockRejectedValue(new Error("no registered project")),
-      closeProjectStore: async (context: { store: { close: () => Promise<void> } }) => {
-        await context.store.close().catch(() => {});
-      },
-    }));
-
-    const setupStore = new TaskStore(tmpDir);
-    await setupStore.init();
-    const task = await setupStore.createTask({ description: "lock exhaustion repro task" });
-    await setupStore.close();
-
-    const dbPath = join(tmpDir, ".fusion", "fusion.db");
-    // Deadline shorter than a single DB-level busy_timeout attempt (~5s) so
-    // the very first retry check already sees the deadline exceeded.
-    process.env.FUSION_CLI_LOCK_RETRY_MS = "600";
-    const lock = await holdWriteLock(dbPath);
-
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-      throw new Error(`process.exit(${code})`);
-    }) as never);
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    try {
-      const { runTaskShow } = await import("../task.js");
-      const cwd = process.cwd();
-      process.chdir(tmpDir);
-      try {
-        await expect(runTaskShow(task.id)).rejects.toThrow(/process\.exit\(1\)/);
-      } finally {
-        process.chdir(cwd);
-      }
-      const printed = errorSpy.mock.calls.flat().join("\n");
-      // Never a raw, un-retried "database is locked" with no context.
-      expect(printed).not.toMatch(/^\s*database is locked\s*$/im);
-      expect(printed).toMatch(/locked|retry|FUSION_CLI_LOCK_RETRY_MS/i);
-      expect(printed).toContain(task.id);
-    } finally {
-      exitSpy.mockRestore();
-      errorSpy.mockRestore();
-      await lock.release().catch(() => {});
-    }
-  }, 20_000);
-});
-
+/*
+ * FNXC:PostgresCutover 2026-07-10:
+ * Upstream's "real locked-store reproduction" describe held a REAL write lock
+ * on a sqlite fusion.db file to reproduce `database is locked` (FN-7731). The
+ * sqlite runtime is removed on this branch and PostgreSQL has no equivalent
+ * whole-database writer lock, so the real-file reproduction is not portable.
+ * The CLI-layer retry/teardown contract stays covered by the mocked-store
+ * describes below (lock exhaustion, not-found, close-on-every-exit-path).
+ */
 describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found, and teardown (FN-7731)", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -307,7 +196,7 @@ describe("runTaskShow / runTaskMove — mocked-store lock exhaustion, not-found,
       isRegistered: true,
       store,
     });
-    vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore }));
+    vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, createLocalStore: vi.fn(async () => store as never) }));
     const mod = await import("../task.js");
     return { mod, closeProjectStore, resolveProject };
   }
@@ -471,7 +360,7 @@ describe("FN-7734: generalized retry+teardown across representative fn task subc
       isRegistered: true,
       store,
     });
-    vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore }));
+    vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, createLocalStore: vi.fn(async () => store as never) }));
     const mod = await import("../task.js");
     return { mod, closeProjectStore, resolveProject };
   }
@@ -485,6 +374,17 @@ describe("FN-7734: generalized retry+teardown across representative fn task subc
     vi.doMock("../../project-context.js", () => ({
       resolveProject,
       closeProjectStore,
+      // FNXC:PostgresCutover 2026-07-10: the branch's cwd fallback boots via
+      // createLocalStore; hand back the same proxied mock store.
+      createLocalStore: vi.fn(async () => {
+        const proxied = new Proxy(store, {
+          get(target, prop) {
+            if (prop === "init") return async () => {};
+            return (target as Record<string, unknown>)[prop as string];
+          },
+        });
+        return proxied as never;
+      }),
     }));
     vi.doMock("@fusion/core", async () => {
       const actual = await vi.importActual<typeof import("@fusion/core")>("@fusion/core");

@@ -68,7 +68,7 @@ async function loadWithMockedStore(store: Record<string, unknown>, opts?: { cach
     ? vi.fn().mockResolvedValue(context)
     : vi.fn().mockRejectedValue(new Error("no registered project"));
   const asLocalProjectContext = vi.fn(() => context);
-  vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, asLocalProjectContext }));
+  vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, asLocalProjectContext, createLocalStore: vi.fn(async () => store as never) }));
   const mod = await import("../branch-group.js");
   return { mod, closeProjectStore, resolveProject };
 }

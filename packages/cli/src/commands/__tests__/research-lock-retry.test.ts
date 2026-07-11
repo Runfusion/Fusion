@@ -46,18 +46,21 @@ const mockRun = {
   results: { summary: "done", findings: [], citations: [] },
 };
 
-const researchStoreMock = {
+const researchStoreMock = Object.assign(Object.create(MockResearchStore.prototype), {
   getRun: vi.fn(() => mockRun),
   listRuns: vi.fn(() => [mockRun]),
   createExport: vi.fn(),
-};
+});
 
-const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegistryMock, writeFileMock } = vi.hoisted(() => {
-  const researchStore = {
+const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegistryMock, writeFileMock, MockResearchStore } = vi.hoisted(() => {
+  // FNXC:PostgresCutover 2026-07-10: getSyncResearchStore gates the CLI on
+  // `instanceof ResearchStore`; give the mock store that prototype.
+  class MockResearchStore {}
+  const researchStore = Object.assign(Object.create(MockResearchStore.prototype), {
     getRun: vi.fn(),
     listRuns: vi.fn(),
     createExport: vi.fn(),
-  };
+  });
   return {
     storeMock: {
       init: vi.fn(),
@@ -74,10 +77,14 @@ const { storeMock, orchestratorMock, resolveResearchSettingsMock, providerRegist
     resolveResearchSettingsMock: vi.fn(() => ({ enabled: true, limits: { maxConcurrentRuns: 2, maxSourcesPerRun: 5, requestTimeoutMs: 1000, maxDurationMs: 5000 } })),
     providerRegistryMock: makeConstructibleMock(function () { return { getAvailableProviders: () => ["tavily"], getProvider: () => ({ type: "tavily" }) }; }),
     writeFileMock: vi.fn(async () => undefined),
+    MockResearchStore,
   };
 });
 
 vi.mock("@fusion/core", () => ({
+  // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path; getSyncResearchStore needs the ResearchStore class for its instanceof gate.
+  createTaskStoreForBackend: vi.fn(async () => null),
+  ResearchStore: MockResearchStore,
   TaskStore: makeConstructibleMock(() => storeMock),
   resolveResearchSettings: resolveResearchSettingsMock,
   RESEARCH_RUN_STATUSES: ["queued", "running", "cancelling", "retry_waiting", "completed", "failed", "cancelled", "timed_out", "retry_exhausted"],

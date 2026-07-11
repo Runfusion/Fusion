@@ -32,6 +32,8 @@ vi.mock("node:fs", () => ({
 // command under test transitively imports `lock-retry.js`, and the mocked
 // `TaskStore` needs a `close()` so the close-before-exit path is exercised.
 vi.mock("@fusion/core", () => ({
+  // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
+  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: makeConstructibleMock(() => ({
     init: mockStoreInit,
     close: mockStoreClose,

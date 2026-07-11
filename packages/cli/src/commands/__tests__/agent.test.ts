@@ -23,12 +23,13 @@ function makeConstructibleMock<T extends (...args: any[]) => unknown>(impl?: T) 
 // hit "Cannot access before initialization" because Vitest's hoisting only
 // reliably hoists `mock`-prefixed consts declared ahead of the FIRST
 // `vi.mock` call in the file).
-const { mockGetAgent, mockUpdateAgentState, mockInit, mockClose, mockResolveProjectPathOnly } = vi.hoisted(() => ({
+const { mockGetAgent, mockUpdateAgentState, mockInit, mockClose, mockResolveProjectPathOnly, mockResolveAgentStoreBase } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockUpdateAgentState: vi.fn(),
   mockInit: vi.fn().mockResolvedValue(undefined),
   mockClose: vi.fn(),
   mockResolveProjectPathOnly: vi.fn().mockResolvedValue("/tmp/test-project"),
+  mockResolveAgentStoreBase: vi.fn(async () => ({ rootDir: "/tmp/test-project", asyncLayer: null })),
 }));
 
 // AgentStore mock — vi.fn() with mockImplementation works with `new` in vitest.
@@ -63,6 +64,22 @@ vi.mock("@fusion/core", () => ({
 // the call, which enabled asserting resolveProjectPathOnly is used (i.e.
 // that no TaskStore is leaked).
 vi.mock("../../project-context.js", () => ({
+  // FNXC:PostgresCutover 2026-07-10: branch agent commands resolve their AgentStore base (rootDir + asyncLayer) via this helper.
+  resolveAgentStoreBase: mockResolveAgentStoreBase,
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
+  closeProjectStore: vi.fn(async (context: { store?: { close?: () => unknown } }) => {
+    try {
+      await context?.store?.close?.();
+    } catch {
+      // best-effort
+    }
+  }),
   resolveProjectPathOnly: mockResolveProjectPathOnly,
 }));
 
@@ -172,10 +189,11 @@ describe("runAgentStop", () => {
   it("should close the store and resolve the project path without leaking a TaskStore", async () => {
     await runAgentStop("agent-test123");
 
-    // FN-7704: agent commands must resolve the project path via
-    // resolveProjectPathOnly (not resolveProject) so no TaskStore this
-    // command never touches is left open/cached.
-    expect(mockResolveProjectPathOnly).toHaveBeenCalled();
+    // FN-7704 (branch adaptation): agent commands resolve their AgentStore base
+    // via resolveAgentStoreBase (rootDir + borrowed asyncLayer) rather than
+    // upstream's resolveProjectPathOnly; the invariant is still that no ad-hoc
+    // TaskStore is constructed/leaked by this command itself.
+    expect(mockResolveAgentStoreBase).toHaveBeenCalled();
   });
 
   it("fast-fails with a clear error and non-zero exit when the store mutation never resolves", async () => {

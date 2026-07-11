@@ -28,6 +28,11 @@ vi.mock("@fusion/core", () => ({
   summarizeTitle: vi.fn(),
   // FNXC:DashboardChatTests 2026-07-08-12:00: FN-7675 added FUSION_RUNTIME_SELF_AWARENESS to chat.ts's @fusion/core imports (CHAT_SYSTEM_PROMPT embeds it). The hand-written core mock must stub it so chat.js loads; importOriginal is intentionally avoided to prevent the real fs cascade this mock exists to block.
   FUSION_RUNTIME_SELF_AWARENESS: "",
+  // FNXC:PostgresCutover 2026-07-10: engine's executor/self-healing (pulled in via chat.ts's
+  // @fusion/engine imports) read AWAITING_APPROVAL_PAUSE_REASON from @fusion/core (FN-7736);
+  // stub it for the same real-fs-cascade reason as above.
+  AWAITING_APPROVAL_PAUSE_REASON: "awaiting-approval",
+  THINKING_LEVELS: ["off", "minimal", "low", "medium", "high", "xhigh"],
   AgentStore: vi.fn(),
   ChatStore: vi.fn(),
   registerTraitHookImpl: vi.fn(),

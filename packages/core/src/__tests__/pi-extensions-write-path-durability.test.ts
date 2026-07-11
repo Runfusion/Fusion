@@ -65,34 +65,20 @@ describe("write-path durability across a non-standard-location worktree (FN-7730
     mkdirSync(join(worktreeDir, ".fusion"), { recursive: true });
 
     const { resolvePiExtensionProjectRoot } = await import("../pi-extensions.js");
-    const { TaskStore } = await import("../store.js");
 
+    /*
+     * FNXC:PostgresCutover 2026-07-10:
+     * The FN-7730 root cause and fix live entirely in resolvePiExtensionProjectRoot:
+     * a non-standard-location linked worktree with a failing git CLI must resolve
+     * to the TRUE project root, never the worktree's locally-hydrated decoy
+     * `.fusion` directory. Upstream's sqlite write→fresh-second-connection-read
+     * tail is not portable here (the sqlite TaskStore runtime is removed; under
+     * PostgreSQL two stores at one rootDir share one database by construction,
+     * which is covered by the shared PG harness suites), so this port asserts
+     * the resolution seam that actually regressed.
+     */
     const resolvedRoot = resolvePiExtensionProjectRoot(worktreeDir);
     expect(resolvedRoot).toBe(resolve(root));
     expect(resolvedRoot).not.toBe(resolve(worktreeDir));
-
-    // Write path: a TaskStore opened exactly the way the CLI extension's
-    // getStore(cwd) would, at the resolved root.
-    const writerStore = new TaskStore(resolvedRoot);
-    await writerStore.init();
-
-    const depTarget = await writerStore.createTask({ description: "FN-7730 dependency target" });
-    const task = await writerStore.createTask({ description: "FN-7730 mutated task" });
-    await writerStore.updateTaskDependencies(task.id, { operation: "add", dependency: depTarget.id });
-    await writerStore.archiveTask(task.id);
-    await writerStore.close();
-
-    // Read path: a FRESH second TaskStore instance opened directly against the
-    // true project root, modeling the engine's own store.
-    const readerStore = new TaskStore(resolve(root));
-    await readerStore.init();
-    try {
-      const reReadTask = await readerStore.getTask(task.id, { includeDeleted: true });
-      expect(reReadTask).toBeTruthy();
-      expect(reReadTask?.dependencies ?? []).toContain(depTarget.id);
-      expect(reReadTask?.column).toBe("archived");
-    } finally {
-      await readerStore.close();
-    }
   });
 });

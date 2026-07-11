@@ -29,11 +29,17 @@ const mockRun = {
   results: { summary: "done", findings: [], citations: [] },
 };
 
-const researchStoreMock = {
+/*
+FNXC:PostgresCutover 2026-07-10: the branch's getSyncResearchStore gates the
+research CLI on `instanceof ResearchStore`; give the mock store that prototype
+so the mocked class check passes.
+*/
+const { MockResearchStore } = vi.hoisted(() => ({ MockResearchStore: class MockResearchStore {} }));
+const researchStoreMock = Object.assign(Object.create(MockResearchStore.prototype), {
   getRun: vi.fn(() => mockRun),
   listRuns: vi.fn(() => [mockRun]),
   createExport: vi.fn(),
-};
+});
 
 const storeMock = {
   init: vi.fn(),
@@ -62,6 +68,10 @@ const { resolveResearchSettingsMock, providerRegistryMock, writeFileMock } = vi.
 // non-wait fire-and-forget branch in `runResearchCreate`).
 vi.mock("@fusion/core", () => ({
   TaskStore: makeConstructibleMock(() => storeMock),
+  // FNXC:PostgresCutover 2026-07-10: getStore() consults the PG startup factory
+  // first; null routes the test through the legacy `new TaskStore` mock path.
+  createTaskStoreForBackend: vi.fn(async () => null),
+  ResearchStore: MockResearchStore,
   resolveResearchSettings: resolveResearchSettingsMock,
   RESEARCH_RUN_STATUSES: ["queued", "running", "cancelling", "retry_waiting", "completed", "failed", "cancelled", "timed_out", "retry_exhausted"],
   RESEARCH_EXPORT_FORMATS: ["json", "markdown", "pdf"],
@@ -79,6 +89,20 @@ vi.mock("@fusion/engine", () => ({
 // (none of these tests pass `projectName`, so `resolveProjectPathOnly` is
 // unused at runtime here, but it must exist on the mock module).
 vi.mock("../../project-context.js", () => ({
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
+  closeProjectStore: vi.fn(async (context: { store?: { close?: () => unknown } }) => {
+    try {
+      await context?.store?.close?.();
+    } catch {
+      // best-effort
+    }
+  }),
   resolveProject: vi.fn(async () => undefined),
   resolveProjectPathOnly: vi.fn(async () => undefined),
 }));

@@ -17,19 +17,30 @@ describe("TaskExecutor assigned-agent runtimeConfig lookup", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
   async function createHarness(runtimeConfig: Record<string, unknown> | undefined) {
     const rootDir = await mkdtemp(join(tmpdir(), "fn-7787-"));
     roots.push(rootDir);
-    const authoritative = new AgentStore({ rootDir: join(rootDir, ".fusion") });
-    await authoritative.init();
-    const agent = await authoritative.createAgent({
+    /*
+     * FNXC:PostgresCutover 2026-07-10:
+     * Upstream seeded a real sqlite AgentStore; that runtime is removed on
+     * this branch (VAL-REMOVAL-005). The invariant under test is the
+     * EXECUTOR's fallback from an agents-less execution store to the
+     * authoritative project agent store, so spy the AgentStore prototype the
+     * executor constructs internally instead of persisting a real agent.
+     */
+    const agent = {
+      id: `agent-${Math.random().toString(16).slice(2)}`,
       name: `executor-${Math.random().toString(16).slice(2)}`,
       role: "executor",
+      state: "idle",
       ...(runtimeConfig ? { runtimeConfig } : {}),
-    });
+    };
+    vi.spyOn(AgentStore.prototype, "init").mockResolvedValue(undefined);
+    vi.spyOn(AgentStore.prototype, "getAgent").mockImplementation(async (id: string) => (id === agent.id ? (agent as never) : null) as never);
     const worktreeAgentStore = { getAgent: vi.fn().mockResolvedValue(null) };
     const executor = new TaskExecutor(createStore(), rootDir, { agentStore: worktreeAgentStore } as any);
     return { executor: executor as any, agent, worktreeAgentStore };

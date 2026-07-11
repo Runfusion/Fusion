@@ -1271,7 +1271,9 @@ export class TaskStore extends EventEmitter<TaskStoreEvents> {
         action: `Review lane bypassed: ${target.workflowStepName} (${target.workflowStepId}) by ${actor} — ${reason}`,
       });
 
-      this.recordRunAuditEvent({
+      // FNXC:PostgresCutover 2026-07-10: recordRunAuditEvent is async on the PG
+      // branch — await it so the audit row lands before the bypass returns.
+      await this.recordRunAuditEvent({
         taskId: task.id,
         agentId: actor,
         runId: this.makeSyntheticDeleteRunId(task.id),

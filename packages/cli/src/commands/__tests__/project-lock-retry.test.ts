@@ -37,6 +37,8 @@ const { taskStoreInstances, mockListProjects, mockGetProjectHealth, mockGetSetti
 }));
 
 vi.mock("@fusion/core", () => ({
+  // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
+  createTaskStoreForBackend: vi.fn(async () => null),
   CentralCore: makeConstructibleMock(() => ({
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
@@ -82,6 +84,8 @@ vi.mock("node:readline/promises", () => ({
 }));
 
 vi.mock("../../project-context.js", () => ({
+  // FNXC:PostgresCutover 2026-07-10: branch cwd-fallbacks boot via createLocalStore (PG startup factory); reuse the same mocked TaskStore shape.
+  createLocalStore: vi.fn(async () => { const { TaskStore } = await import("@fusion/core"); const store = new (TaskStore as any)(process.cwd()); await store.init?.(); return store; }),
   formatProjectLine: vi.fn((project: { name: string }, isDefault: boolean) => `${isDefault ? "* " : "  "}${project.name}`),
   detectProjectFromCwd: vi.fn(),
   setDefaultProject: vi.fn(),

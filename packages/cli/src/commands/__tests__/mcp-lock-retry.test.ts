@@ -12,7 +12,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@fusion/core", async (importActual) => {
   const actual = await importActual<typeof import("@fusion/core")>();
-  return { ...actual };
+  return {
+    ...actual,
+    // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
+    createTaskStoreForBackend: vi.fn(async () => null),
+  };
 });
 
 function makeGlobalStore(overrides: Record<string, unknown> = {}) {
@@ -77,14 +81,16 @@ async function loadWithMocks(opts: {
     ? vi.fn().mockResolvedValue(projectContext)
     : vi.fn().mockRejectedValue(new Error("no registered project"));
 
-  vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, asLocalProjectContext }));
-
   const uncachedSecretsStoreClose = vi.fn().mockResolvedValue(undefined);
   const uncachedSecretsInstance = opts.uncachedSecretsStore ?? {
     init: vi.fn().mockResolvedValue(undefined),
     close: uncachedSecretsStoreClose,
     getSecretsStore: vi.fn(async () => makeSecretsStore()),
   };
+
+  // FNXC:PostgresCutover 2026-07-10: the branch's mcp cwd fallback boots its
+  // ad-hoc secrets store via createLocalStore (PG startup factory).
+  vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, asLocalProjectContext, createLocalStore: vi.fn(async () => uncachedSecretsInstance as never) }));
 
   vi.doMock("@fusion/core", async (importActual) => {
     const actual = await importActual<typeof import("@fusion/core")>();

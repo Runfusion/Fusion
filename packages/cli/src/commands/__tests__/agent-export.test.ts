@@ -8,6 +8,8 @@ import { AgentStore } from "@fusion/core";
 const mockResolveProject = vi.fn();
 
 vi.mock("../../project-context.js", () => ({
+  // FNXC:PostgresCutover 2026-07-10: branch agent commands resolve their AgentStore base (rootDir + asyncLayer) via this helper.
+  resolveAgentStoreBase: vi.fn(async () => ({ rootDir: process.cwd(), asyncLayer: null })),
   resolveProject: (...args: unknown[]) => mockResolveProject(...args),
 }));
 

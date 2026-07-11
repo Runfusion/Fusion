@@ -14,6 +14,8 @@ vi.mock("@fusion/core", async (importActual) => {
   const actual = await importActual<typeof import("@fusion/core")>();
   return {
     ...actual,
+    // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
+    createTaskStoreForBackend: vi.fn(async () => null),
     createMemoryBackupManager: vi.fn(),
     runMemoryBackupCommand: vi.fn(async () => ({ success: true, output: "memory backup created" })),
   };
@@ -44,7 +46,7 @@ async function loadWithMockedStore(store: Record<string, unknown>, opts?: { cach
     ? vi.fn().mockResolvedValue(context)
     : vi.fn().mockRejectedValue(new Error("no registered project"));
   const asLocalProjectContext = vi.fn(() => context);
-  vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, asLocalProjectContext }));
+  vi.doMock("../../project-context.js", () => ({ resolveProject, closeProjectStore, asLocalProjectContext, createLocalStore: vi.fn(async () => store as never) }));
   const mod = await import("../memory-backup.js");
   const { createMemoryBackupManager } = await import("@fusion/core");
   return { mod, closeProjectStore, resolveProject, createMemoryBackupManager };

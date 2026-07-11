@@ -36,6 +36,8 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("@fusion/core", () => ({
+  // FNXC:PostgresCutover 2026-07-10: PG startup factory consulted before legacy TaskStore; null keeps the legacy mock path.
+  createTaskStoreForBackend: vi.fn(async () => null),
   TaskStore: makeConstructibleMock(() => ({
     init: mockStoreInit,
     close: mockStoreClose,
@@ -50,6 +52,8 @@ vi.mock("@fusion/core", () => ({
 }));
 
 vi.mock("../../project-context.js", () => ({
+  // FNXC:PostgresCutover 2026-07-10: branch cwd-fallbacks boot via createLocalStore (PG startup factory); reuse the same mocked TaskStore shape.
+  createLocalStore: vi.fn(async () => { const { TaskStore } = await import("@fusion/core"); const store = new (TaskStore as any)(process.cwd()); await store.init?.(); return store; }),
   resolveProjectPathOnly: vi.fn(async () => undefined),
   asLocalProjectContext: (store: unknown) => ({
     projectId: "cwd",

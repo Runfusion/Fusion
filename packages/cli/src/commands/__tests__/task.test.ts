@@ -139,6 +139,14 @@ vi.mock("@fusion/core/gh-cli", () => ({
 
 // Mock project-context
 vi.mock("../../project-context.js", () => ({
+  asLocalProjectContext: vi.fn((store: unknown) => ({
+    projectId: process.cwd(),
+    projectPath: process.cwd(),
+    projectName: "current-project",
+    isRegistered: false,
+    store,
+  })),
+  resolveProjectPathOnly: vi.fn(async () => process.cwd()),
   resolveProject: vi.fn().mockRejectedValue(new Error("No project context")),
   getStore: vi.fn().mockResolvedValue({}),
   getDefaultProject: vi.fn().mockResolvedValue(undefined),

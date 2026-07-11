@@ -458,7 +458,12 @@ describe("GET /models", () => {
     expect(res.status).toBe(200);
     const sonnetFiveRows = res.body.models.filter((model: { provider: string; id: string }) => model.provider === "anthropic" && model.id === "claude-sonnet-5");
     expect(sonnetFiveRows).toHaveLength(1);
-    expect(modelRegistry.registerProvider).not.toHaveBeenCalled();
+    // FNXC:ModelCatalog 2026-07-10: FN-7745's supplemental GPT-5.6 codex merge
+    // legitimately registers the missing openai-codex provider on this bare
+    // registry; the dedupe invariant under test is only that ANTHROPIC is not
+    // re-registered when the upstream registry already advertises Sonnet 5.
+    const anthropicRegistrations = (modelRegistry.registerProvider as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "anthropic");
+    expect(anthropicRegistrations).toHaveLength(0);
   });
 
   // Regression guard: FN-2370's auto-resolved squash inverted this filter,
