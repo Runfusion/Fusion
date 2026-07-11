@@ -275,21 +275,28 @@ Header migrated to the shared ViewHeader component (.view-header). The old .insi
   padding: var(--space-lg);
 }
 
-/* Section (single, in detail pane) */
+/*
+FNXC:Insights 2026-07-10-23:30:
+Modernization pass: the detail pane previously nested cards inside a card (an outer
+.insights-section card wrapping per-insight cards), which doubled the borders and
+padding around every insight. The outer section is now transparent chrome — a plain
+header row above the flat list of insight cards — so each insight reads as one card
+at a consistent depth with the rest of the dashboard.
+*/
 .insights-section {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .insights-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-md) var(--space-lg);
-  background: var(--surface);
-  border-bottom: var(--chrome-divider-width, 1px) solid var(--insights-divider-color);
+  padding: 0 0 var(--space-md);
+  background: transparent;
+  border-bottom: none;
 }
 
 .insights-section-title {
@@ -318,7 +325,7 @@ Header migrated to the shared ViewHeader component (.view-header). The old .insi
 }
 
 .insights-section-content {
-  padding: var(--space-md);
+  padding: 0;
 }
 
 /* Insights list */
@@ -328,21 +335,22 @@ Header migrated to the shared ViewHeader component (.view-header). The old .insi
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: var(--space-sm);
 }
 
 /* Individual insight item */
 .insight-item {
-  padding: var(--space-md);
-  background: var(--surface);
+  padding: var(--space-md) var(--space-lg);
+  background: var(--card);
   border: 1px solid var(--border);
-  border-left: var(--space-xs) solid var(--accent);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
   border-radius: var(--radius-md);
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
 .insight-item:hover {
-  border-color: var(--accent);
+  background: var(--surface);
+  border-left-color: var(--accent);
 }
 
 .insight-item-header {
@@ -367,20 +375,31 @@ Header migrated to the shared ViewHeader component (.view-header). The old .insi
   flex-shrink: 0;
 }
 
-/* Borderless icon-prominent action buttons inside insight items */
+/*
+FNXC:Insights 2026-07-10-23:30:
+Action buttons were 32px boxes with 20px icons, which visually competed with the
+insight titles. They shrink to 28px boxes with 16px icons and stay muted until the
+insight row is hovered, keeping the title as the dominant element.
+*/
 .insight-item-action-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(var(--space-lg) * 2);
-  height: calc(var(--space-lg) * 2);
+  width: 28px;
+  height: 28px;
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  opacity: 0.65;
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.insight-item:hover .insight-item-action-btn,
+.insight-item:focus-within .insight-item-action-btn {
+  opacity: 1;
 }
 
 .insight-item-action-btn:hover:not(:disabled) {

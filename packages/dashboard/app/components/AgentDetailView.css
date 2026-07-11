@@ -2211,3 +2211,29 @@ FNXC:AgentDetailView 2026-06-26-01:00:
     flex-direction: column;
   }
 }
+
+/*
+FNXC:AgentMemory 2026-07-11-00:20:
+The agent Memory tab's file editor is the shared FileEditor (CodeMirror). The frame is
+bounded like the project Memory view editor — a visible floor so it never collapses,
+and a viewport cap so long memory files scroll inside the editor instead of stretching
+the tab into endless page scroll.
+*/
+.agent-memory-file-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  max-height: 55vh;
+}
+
+.agent-memory-file-editor .cm-editor {
+  height: 100%;
+  min-height: 0;
+}
+
+.agent-memory-file-editor .cm-scroller {
+  overflow: auto;
+}

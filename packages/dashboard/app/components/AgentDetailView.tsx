@@ -30,6 +30,7 @@ import { CustomModelDropdown } from "./CustomModelDropdown";
 import { useConfirm } from "../hooks/useConfirm";
 import { useModalResizePersist } from "../hooks/useModalResizePersist";
 import { AgentAvatar } from "./AgentAvatar";
+import { FileEditor } from "./FileEditor";
 import { AgentErrorIndicator } from "./AgentErrorDetailsModal";
 import { AgentTaskBadge } from "./AgentTaskBadge";
 import { ExperimentalAgentOnboardingModal } from "./ExperimentalAgentOnboardingModal";
@@ -2577,7 +2578,6 @@ function MemoryTab({
   const [isSaving, setIsSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [showFilePreview, setShowFilePreview] = useState(false);
 
   const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
   const [memoryFilesLoading, setMemoryFilesLoading] = useState(false);
@@ -2652,7 +2652,6 @@ function MemoryTab({
     setMemory(agent.memory ?? "");
     setJustSaved(false);
     setShowPreview(false);
-    setShowFilePreview(false);
     setFileSwitchHint("");
     setSelectedFileJustSaved(false);
     void loadMemoryFiles();
@@ -2751,12 +2750,18 @@ function MemoryTab({
             </span>
             <div className="agent-content-toolbar">
               <div className="agent-content-mode-toggle">
+                {/*
+                FNXC:AgentMemory 2026-07-11-00:20:
+                The inline-memory Edit/Preview toggle needs aria-labels distinct from the shared
+                FileEditor toolbar below (which also exposes "Edit mode"/"Preview mode"); two
+                identically-named controls in one tab are ambiguous for assistive tech.
+                */}
                 {!isReadOnly && (
                   <button
                     className={`btn btn-sm ${!showPreview ? "btn-primary" : ""}`}
                     onClick={() => setShowPreview(false)}
                     disabled={!showPreview}
-                    aria-label={t("common.editMode", "Edit mode")}
+                    aria-label={t("agents.inlineMemoryEditMode", "Inline memory edit mode")}
                   >
                     <FileEdit size={14} />
                     {t("common.edit", "Edit")}
@@ -2766,7 +2771,7 @@ function MemoryTab({
                   className={`btn btn-sm ${showPreview ? "btn-primary" : ""}`}
                   onClick={() => setShowPreview(true)}
                   disabled={showPreview}
-                  aria-label={t("common.previewMode", "Preview mode")}
+                  aria-label={t("agents.inlineMemoryPreviewMode", "Inline memory preview mode")}
                 >
                   <Eye size={14} />
                   {t("common.preview", "Preview")}
@@ -2802,6 +2807,34 @@ function MemoryTab({
             )}
             {!showPreview && (
               <span className="config-hint">{t("agents.inlineMemoryFieldHint", "This is the inline memory field on the agent JSON record. Max 50,000 characters.")}</span>
+            )}
+
+            {!showPreview && (
+              <div className="config-actions">
+                <button
+                  className="btn btn-task-create"
+                  disabled={!hasInlineChanges || isSaving || isReadOnly}
+                  onClick={() => void handleSaveInlineMemory()}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      {t("common.saving", "Saving…")}
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle size={16} />
+                      {t("agents.saveMemory", "Save Memory")}
+                    </>
+                  )}
+                </button>
+                {!hasInlineChanges && justSaved && (
+                  <span className="config-saved-indicator">
+                    <CheckCircle size={14} />
+                    {t("agents.memorySaved", "Memory saved")}
+                  </span>
+                )}
+              </div>
             )}
           </div>
 
@@ -2845,62 +2878,37 @@ function MemoryTab({
               <div className="config-hint config-hint--top-spacing">
                 <strong>{({ "long-term": t("agents.memoryLayerLongTerm", "Long-term"), daily: t("agents.memoryLayerDaily", "Daily"), dreams: t("agents.memoryLayerDreams", "Dreams") } as Record<string, string>)[selectedMemoryFile.layer] ?? selectedMemoryFile.layer}</strong> · {selectedLayerDescription}
                 <br />
-                {t("agents.memoryFileMeta", "{{size}} bytes · Updated {{time}}", { size: selectedMemoryFile.size.toLocaleString(), time: relativeTime(selectedMemoryFile.updatedAt, t) })}
+                {/*
+                FNXC:AgentMemory 2026-07-11-00:20:
+                i18n fix: every locale defines agents.memoryFileMeta with a {{date}} placeholder, but this
+                call passed the value as {{time}}, so the UI rendered the literal string "updated {{date}}".
+                The interpolation variable must be named `date` to match the locale files.
+                */}
+                {t("agents.memoryFileMeta", "{{size}} bytes · updated {{date}}", { size: selectedMemoryFile.size.toLocaleString(), date: relativeTime(selectedMemoryFile.updatedAt, t) })}
               </div>
             )}
 
-            <div className="agent-content-toolbar config-textarea-top-spacing">
-              <div className="agent-content-mode-toggle">
-                {!isReadOnly && (
-                  <button
-                    className={`btn btn-sm ${!showFilePreview ? "btn-primary" : ""}`}
-                    onClick={() => setShowFilePreview(false)}
-                    disabled={!showFilePreview}
-                    aria-label={t("agents.memoryFileEditMode", "Memory file edit mode")}
-                  >
-                    <FileEdit size={14} />
-                    {t("common.edit", "Edit")}
-                  </button>
-                )}
-                <button
-                  className={`btn btn-sm ${showFilePreview ? "btn-primary" : ""}`}
-                  onClick={() => setShowFilePreview(true)}
-                  disabled={showFilePreview}
-                  aria-label={t("agents.memoryFilePreviewMode", "Memory file preview mode")}
-                >
-                  <Eye size={14} />
-                  {t("common.preview", "Preview")}
-                </button>
-              </div>
-            </div>
-
-            {showFilePreview ? (
-              selectedFileContent.trim() ? (
-                <div className="agent-content-preview markdown-body">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {selectedFileContent}
-                  </ReactMarkdown>
-                </div>
-              ) : (
-                <div className="agent-content-preview agent-content-placeholder">
-                  {t("agents.memoryFileEmptyPreview", "No memory file content yet. Switch to Edit mode to add content.")}
-                </div>
-              )
-            ) : (
-              <textarea
-                className="input config-textarea-mono"
-                rows={14}
-                placeholder={t("agents.memoryFilePlaceholder", "Select a memory file to view and edit its content...")}
-                value={selectedFileContent}
-                readOnly={isReadOnly || !selectedFilePath || selectedFileLoading}
-                onChange={(e) => {
-                  setSelectedFileContent(e.target.value);
+            {/*
+            FNXC:AgentMemory 2026-07-11-00:20:
+            The memory-file editor uses the shared FileEditor (CodeMirror with the Edit/Preview/Wrap
+            toolbar) instead of a bare <textarea> with a hand-rolled Edit/Preview toggle, so agent
+            memory files get the same markdown editing experience as the project Memory view.
+            Toolbar actions stay visible to avoid the unlabeled chevron-only collapsed bar.
+            */}
+            <div className="agent-memory-file-editor config-textarea-top-spacing">
+              <FileEditor
+                content={selectedFileContent}
+                onChange={(content) => {
+                  setSelectedFileContent(content);
                   setSelectedFileDirty(true);
                   setSelectedFileJustSaved(false);
                   setFileSwitchHint("");
                 }}
+                readOnly={isReadOnly || !selectedFilePath || selectedFileLoading}
+                filePath={selectedFilePath || "MEMORY.md"}
+                forceToolbarActionsVisible
               />
-            )}
+            </div>
 
             {selectedFileLoading && (
               <span className="config-hint config-hint--inline-loader">
@@ -2914,60 +2922,39 @@ function MemoryTab({
                 {fileSwitchHint}
               </span>
             )}
-          </div>
-        </div>
 
-        <div className="config-actions">
-          {!showPreview && (
-            <button
-              className="btn btn-task-create"
-              disabled={!hasInlineChanges || isSaving || isReadOnly}
-              onClick={() => void handleSaveInlineMemory()}
-            >
-              {isSaving ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  {t("common.saving", "Saving…")}
-                </>
-              ) : (
-                <>
-                  <CheckCircle size={16} />
-                  {t("agents.saveMemory", "Save Memory")}
-                </>
+            {/*
+            FNXC:AgentMemory 2026-07-11-00:20:
+            Each memory surface owns its save action: "Save Memory File" sits directly under the
+            file editor and "Save Inline Memory" under the inline field, instead of the two
+            ambiguously-named buttons sharing one action row at the bottom of the tab.
+            */}
+            <div className="config-actions">
+              <button
+                className="btn btn-task-create"
+                disabled={!selectedFileDirty || savingSelectedFile || !selectedFilePath || isReadOnly}
+                onClick={() => void handleSaveSelectedMemoryFile()}
+              >
+                {savingSelectedFile ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    {t("agents.savingFile", "Saving file…")}
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle size={16} />
+                    {t("agents.saveMemoryFile", "Save Memory File")}
+                  </>
+                )}
+              </button>
+              {!selectedFileDirty && selectedFileJustSaved && (
+                <span className="config-saved-indicator">
+                  <CheckCircle size={14} />
+                  {t("agents.memoryFileSaved", "Memory file saved")}
+                </span>
               )}
-            </button>
-          )}
-          {!showFilePreview && (
-            <button
-              className="btn"
-              disabled={!selectedFileDirty || savingSelectedFile || !selectedFilePath || isReadOnly}
-              onClick={() => void handleSaveSelectedMemoryFile()}
-            >
-              {savingSelectedFile ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" />
-                  {t("agents.savingFile", "Saving file…")}
-                </>
-              ) : (
-                <>
-                  <CheckCircle size={16} />
-                  {t("agents.saveMemoryFile", "Save Memory File")}
-                </>
-              )}
-            </button>
-          )}
-          {!hasInlineChanges && justSaved && (
-            <span className="config-saved-indicator">
-              <CheckCircle size={14} />
-              {t("agents.memorySaved", "Memory saved")}
-            </span>
-          )}
-          {!selectedFileDirty && selectedFileJustSaved && (
-            <span className="config-saved-indicator">
-              <CheckCircle size={14} />
-              {t("agents.memoryFileSaved", "Memory file saved")}
-            </span>
-          )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

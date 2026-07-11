@@ -151,7 +151,7 @@ describe("MemoryView", () => {
     expect(capturedFileEditorProps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          filePath: ".fusion/memory/INSIGHTS.md",
+          filePath: ".fusion/memory/memory-insights.md",
           onSendSelectionToTask,
         }),
       ]),

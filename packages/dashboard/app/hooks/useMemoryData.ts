@@ -1,12 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  fetchMemory,
-  saveMemory,
   fetchMemoryInsights,
   saveMemoryInsights,
   triggerInsightExtraction,
   fetchMemoryAudit,
-  fetchMemoryStats,
   compactMemory as compactMemoryApi,
   fetchSettings,
   updateSettings,
@@ -43,15 +40,14 @@ interface MemorySettingsState {
   memoryDreamsSchedule: string;
 }
 
+/*
+FNXC:MemoryView 2026-07-10-23:00:
+The legacy single-file working-memory surface (GET/PUT /api/memory) and the lightweight
+GET /api/memory/stats fetch were removed from this hook: MemoryView switched to the
+multi-file editor (/memory/files + /memory/file) and the Engines health card renders the
+richer audit report, so both requests ran on every mount with their results discarded.
+*/
 interface UseMemoryDataResult {
-  // Working memory
-  workingMemory: string;
-  workingMemoryLoading: boolean;
-  workingMemoryDirty: boolean;
-  setWorkingMemory: (content: string) => void;
-  saveWorkingMemory: () => Promise<void>;
-  savingWorkingMemory: boolean;
-
   // Insights
   insightsContent: string | null;
   insightsLoading: boolean;
@@ -96,16 +92,13 @@ interface UseMemoryDataResult {
   refreshAudit: () => Promise<void>;
 
   // Compact
-  compactMemory: (path?: string) => Promise<void>;
+  compactMemory: (path: string) => Promise<void>;
   compacting: boolean;
 
   // QMD integration
   installQmdAction: () => Promise<QmdInstallResult>;
   installingQmd: boolean;
   testRetrieval: (query: string) => Promise<MemoryRetrievalTestResult>;
-
-  // Stats
-  stats: { workingMemorySize: number; insightsSize: number; insightsExists: boolean } | null;
 }
 
 function extractMemorySettings(source: {
@@ -138,12 +131,6 @@ function pickDefaultMemoryPath(files: MemoryFileInfo[], currentPath: string): st
 
 export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryDataResult {
   const { projectId } = options;
-
-  // Working memory state
-  const [workingMemory, setWorkingMemoryRaw] = useState("");
-  const [workingMemoryLoading, setWorkingMemoryLoading] = useState(true);
-  const [workingMemoryDirty, setWorkingMemoryDirty] = useState(false);
-  const [savingWorkingMemory, setSavingWorkingMemory] = useState(false);
 
   // Insights state
   const [insightsContent, setInsightsContent] = useState<string | null>(null);
@@ -179,9 +166,6 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
 
   // QMD state
   const [installingQmd, setInstallingQmd] = useState(false);
-
-  // Stats state
-  const [stats, setStats] = useState<{ workingMemorySize: number; insightsSize: number; insightsExists: boolean } | null>(null);
 
   // Backend status from existing hook
   const {
@@ -228,32 +212,6 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
       setMemoryFilesLoading(false);
     }
   }, [projectId, selectedFilePath, loadMemoryFileContent]);
-
-  // Fetch working memory on mount
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadWorkingMemory() {
-      try {
-        const data = await fetchMemory(projectId);
-        if (!cancelled) {
-          setWorkingMemoryRaw(data.content);
-          setWorkingMemoryLoading(false);
-        }
-      } catch {
-        if (!cancelled) {
-          setWorkingMemoryRaw("");
-          setWorkingMemoryLoading(false);
-        }
-      }
-    }
-
-    loadWorkingMemory();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
 
   // Fetch insights on mount
   useEffect(() => {
@@ -312,6 +270,18 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
     };
   }, [projectId]);
 
+  /*
+  FNXC:MemoryView 2026-07-10-23:00:
+  The initial files+content load must run once per project, NOT on every selection change.
+  It previously depended on selectedFilePath, so each selectFile() triggered a redundant
+  refetch of the whole file list plus a second fetch of the just-loaded file. The current
+  selection is read through a ref to keep the effect keyed on projectId only.
+  */
+  const selectedFilePathRef = useRef(selectedFilePath);
+  useEffect(() => {
+    selectedFilePathRef.current = selectedFilePath;
+  }, [selectedFilePath]);
+
   // Fetch memory files and initial selected file content
   useEffect(() => {
     let cancelled = false;
@@ -333,7 +303,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
           return;
         }
 
-        const nextPath = pickDefaultMemoryPath(files, selectedFilePath);
+        const nextPath = pickDefaultMemoryPath(files, selectedFilePathRef.current);
         const { content } = await fetchMemoryFile(nextPath, projectId);
         if (cancelled) {
           return;
@@ -361,7 +331,7 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
     return () => {
       cancelled = true;
     };
-  }, [projectId, selectedFilePath]);
+  }, [projectId]);
 
   // Fetch audit on mount
   useEffect(() => {
@@ -388,49 +358,6 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
       cancelled = true;
     };
   }, [projectId]);
-
-  // Fetch lightweight stats on mount
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadStats() {
-      try {
-        const data = await fetchMemoryStats(projectId);
-        if (!cancelled) {
-          setStats(data);
-        }
-      } catch {
-        if (!cancelled) {
-          setStats(null);
-        }
-      }
-    }
-
-    loadStats();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  // Set working memory with dirty tracking
-  const setWorkingMemory = useCallback((content: string) => {
-    setWorkingMemoryRaw(content);
-    setWorkingMemoryDirty(true);
-  }, []);
-
-  // Save working memory
-  const saveWorkingMemory = useCallback(async () => {
-    if (!workingMemoryDirty) return;
-
-    setSavingWorkingMemory(true);
-    try {
-      await saveMemory(workingMemory, projectId);
-      setWorkingMemoryDirty(false);
-    } finally {
-      setSavingWorkingMemory(false);
-    }
-  }, [workingMemory, workingMemoryDirty, projectId]);
 
   // Save memory settings
   const saveMemorySettings = useCallback(async (patch: Partial<MemorySettingsState>) => {
@@ -531,40 +458,22 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
     }
   }, [projectId]);
 
-  // Compact memory
-  const compactMemoryAction = useCallback(async (path?: string) => {
+  // Compact the selected memory file in place
+  const compactMemoryAction = useCallback(async (path: string) => {
     setCompacting(true);
     try {
-      const result = path
-        ? await compactMemoryApi(path, projectId)
-        : await compactMemoryApi(projectId);
-
-      if (path) {
-        const nextPath = result.path ?? path;
-        setSelectedFilePath(nextPath);
-        setSelectedFileContentRaw(result.content);
-        setSelectedFileDirty(false);
-        await reloadMemoryFiles();
-        return;
-      }
-
-      // Legacy behavior for single-file working memory editor
-      setWorkingMemoryRaw(result.content);
-      setWorkingMemoryDirty(true);
+      const result = await compactMemoryApi(path, projectId);
+      const nextPath = result.path ?? path;
+      setSelectedFilePath(nextPath);
+      setSelectedFileContentRaw(result.content);
+      setSelectedFileDirty(false);
+      await reloadMemoryFiles();
     } finally {
       setCompacting(false);
     }
   }, [projectId, reloadMemoryFiles]);
 
   return {
-    // Working memory
-    workingMemory,
-    workingMemoryLoading,
-    workingMemoryDirty,
-    setWorkingMemory,
-    saveWorkingMemory,
-    savingWorkingMemory,
-
     // Insights
     insightsContent,
     insightsLoading,
@@ -616,8 +525,5 @@ export function useMemoryData(options: UseMemoryDataOptions = {}): UseMemoryData
     installQmdAction,
     installingQmd,
     testRetrieval: testRetrievalAction,
-
-    // Stats
-    stats,
   };
 }
