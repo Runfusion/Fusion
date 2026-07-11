@@ -158,6 +158,50 @@ describe("MemoryView", () => {
     );
   });
 
+  /*
+  FNXC:MemoryView 2026-07-11-01:00:
+  PR #2003 regression tests for insight parsing: bullets must parse into individual items
+  (the pre-fix parser stripped "- " before filtering for it, collapsing categories into one
+  blob), and a bullet's continuation lines must stay attached to that bullet instead of
+  being dropped.
+  */
+  it("parses each markdown bullet into its own insight item with the correct count", async () => {
+    mockUseMemoryData.mockReturnValue(
+      createMemoryData({
+        insightsExists: true,
+        insightsContent: "## Patterns\n<!-- extraction marker -->\n- First insight\n- Second insight\n\n## Pitfalls\n- Third insight",
+      }),
+    );
+
+    render(<MemoryView addToast={vi.fn()} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Insights" }));
+
+    expect(screen.getByText("First insight")).toBeInTheDocument();
+    expect(screen.getByText("Second insight")).toBeInTheDocument();
+    expect(screen.getByText("Third insight")).toBeInTheDocument();
+    // Total Insights stat counts individual bullets, and extraction-marker comments are excluded.
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.queryByText(/extraction marker/)).not.toBeInTheDocument();
+  });
+
+  it("keeps continuation lines attached to their bullet for multiline insights", async () => {
+    mockUseMemoryData.mockReturnValue(
+      createMemoryData({
+        insightsExists: true,
+        insightsContent: "## Patterns\n- Multiline insight head\n  continuation detail line\n- Plain insight",
+      }),
+    );
+
+    render(<MemoryView addToast={vi.fn()} />);
+    await userEvent.click(screen.getByRole("tab", { name: "Insights" }));
+
+    expect(screen.getByText(/Multiline insight head/)).toBeInTheDocument();
+    expect(screen.getByText(/continuation detail line/)).toBeInTheDocument();
+    expect(screen.getByText("Plain insight")).toBeInTheDocument();
+    // The continuation belongs to the first bullet: still exactly 2 insights in the Total stat.
+    expect(document.querySelector(".memory-stat-value")?.textContent).toBe("2");
+  });
+
   it("shows read-only warning after backend resolves as non-writable", () => {
     mockUseMemoryData.mockReturnValue(
       createMemoryData({

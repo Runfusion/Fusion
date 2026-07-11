@@ -81,12 +81,24 @@ function parseInsightsContent(content: string | null): ParsedInsightCategory[] {
         .replace(/<!--[\s\S]*?-->/g, "")
         .trim();
 
-      // Extract bullet points: filter bullet lines first, then strip the prefix
+      /*
+      FNXC:MemoryView 2026-07-11-01:00:
+      PR #2003 review: an insight can span multiple lines (one bullet followed by
+      continuation text). Bullet lines start a new item; non-empty non-bullet lines
+      append to the previous item instead of being dropped, so multiline insights
+      render in full rather than silently truncating after the first line.
+      */
       const items = body
         .split("\n")
         .map((line) => line.trim())
-        .filter((line) => /^[-*]\s+/.test(line))
-        .map((line) => line.replace(/^[-*]\s+/, ""));
+        .reduce<string[]>((acc, line) => {
+          if (/^[-*]\s+/.test(line)) {
+            acc.push(line.replace(/^[-*]\s+/, ""));
+          } else if (line.length > 0 && acc.length > 0) {
+            acc[acc.length - 1] = `${acc[acc.length - 1]}\n${line}`;
+          }
+          return acc;
+        }, []);
 
       if (items.length > 0 || body.length > 0) {
         categories.push({

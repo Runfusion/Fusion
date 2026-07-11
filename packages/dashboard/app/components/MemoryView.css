@@ -213,6 +213,8 @@ bare border-left text rows, matching the InsightsView card language.
   font-size: 13px;
   color: var(--text);
   line-height: 1.5;
+  /* Multiline insights keep their continuation-line breaks (PR #2003 review). */
+  white-space: pre-wrap;
 }
 
 /*
