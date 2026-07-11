@@ -3215,7 +3215,7 @@ export class MissionStore extends EventEmitter<MissionStoreEvents> {
 
     const supersededFeatureIds = features
       .filter((feature) => feature.generatedFromFeatureId && (featureHasPassed(feature) || hasPassedAncestor(feature)))
-      .filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed")
+      .filter((feature) => feature.status !== "done" || feature.loopState !== "passed" || feature.lastValidatorStatus !== "passed" || feature.taskId)
       .map((feature) => feature.id);
 
     if (supersededFeatureIds.length > 0) {

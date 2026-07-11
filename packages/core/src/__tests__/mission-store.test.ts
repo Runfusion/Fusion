@@ -1762,14 +1762,17 @@ describe("MissionStore", () => {
         const staleFix = store.createGeneratedFixFeature(source.id, failedRun.id, ["CA-source"]);
         createTaskInDb(db, "FN-own-passed-fix", "Own passed stale fix task", undefined, { column: "todo" });
         store.updateFeature(staleFix.id, {
-          status: "blocked",
+          status: "done",
           loopState: "passed",
           lastValidatorStatus: "passed",
           taskId: "FN-own-passed-fix",
         });
         db.prepare("UPDATE tasks SET missionId = ?, sliceId = ? WHERE id = ?").run(mission.id, slice.id, "FN-own-passed-fix");
 
-        expect(store.computeSliceStatus(slice.id)).not.toBe("complete");
+        expect(db.prepare("SELECT missionId, sliceId FROM tasks WHERE id = ?").get("FN-own-passed-fix")).toEqual({
+          missionId: mission.id,
+          sliceId: slice.id,
+        });
 
         const report = store.reconcileSupersededGeneratedFixFeatures(slice.id);
 
