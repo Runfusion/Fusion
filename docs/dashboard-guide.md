@@ -818,11 +818,13 @@ Features:
 - Browse the **Artifacts** tab for registry media registered by any agent, dashboard chat/user action, or system tool across tasks
 - Already-open global and task-detail artifact lists refresh live from the artifact registry event when an agent, dashboard chat session, user action, or system tool registers a new artifact, while preserving active search filters and task scoping
 - Use the tab-count badges to see the current counts for Project Files, Task Documents, and Artifacts; the Artifacts badge reflects the loaded `GET /api/artifacts` result set, including active search filters
-- Use the responsive media gallery to scan thumbnail-first image and video cards with consistent framing, while audio, document, and generic artifacts remain readable cards in the same grid
-- Expand image and video artifact thumbnails into a full-size lightbox; dismiss it with the close button, backdrop click, or Escape while non-previewable artifact cards keep their normal controls and links
-- Preview artifact images inline, play video and audio with native controls, read document previews from inline content/description, and open generic `other` artifacts through their media URL (`GET /api/artifacts/:id/media`)
-- Read artifact metadata on each card: type badge (`Image`, `Video`, `Audio`, `Document`, or `Other`), title, optional description/content preview, author ID, timestamp, and linked task title/ID when present
-- Use **Open task** on an artifact card to jump back to the originating task when the artifact has a `taskId`; inside task detail, the **Artifacts** tab shows that task's documents and registered media artifacts together
+- Browse the category-driven gallery: artifacts are broken down into **Images**, **Docs**, **PDFs**, **Videos**, **Audio**, and **Other** content categories (PDFs are detected by MIME type/extension regardless of registry type). "All" renders one section per present category; the chip row filters to a single category, and chips only appear for categories that exist
+- Each category has a tailored experience: Images/Videos use a visual-first tile grid with hover metadata and a full-size lightbox; Docs open a full document viewer with rendered markdown; PDFs open an embedded viewer with an open-in-new-tab action; Audio renders inline player rows; Other renders compact download rows
+- **Edit any inline-content doc in place**: the document viewer's **Edit** button switches to an editor whose **Save** persists through `PATCH /api/artifacts/:id` and live-refreshes open galleries via the `artifact:updated` registry event; binary-backed documents stay read-only with a media link
+- Dismiss any viewer with the close button, backdrop click, or Escape
+- Read artifact metadata on cards, rows, and viewer footers: title, optional description, author ID, timestamp, size, and linked task ID when present
+- Use the task link on a card/row or viewer footer to jump back to the originating task when the artifact has a `taskId`; inside task detail, the **Artifacts** tab shows that task's documents and registered media artifacts together
+- The gallery scales down at the mobile breakpoint (including landscape phones): category chips scroll horizontally, visual grids collapse to two columns, cards and rows go single-column, and viewers become full-screen sheets
 - Loading state: the Artifacts tab shows `Loading artifacts…` while the first artifact list request is pending and no artifact results are loaded
 - Empty states: with no search query it shows `No artifacts yet.` plus the hint that artifacts are created by agents, users, and system tools; with a search query it shows `No artifacts match "<query>".`
 - Error state: a failed artifact list request uses the shared `Failed to load artifacts: <error>` panel with a **Retry** action that re-runs the artifact fetch
@@ -831,7 +833,9 @@ Features:
 
 Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery. Artifact list live-refresh does not depend on that best-effort message; it listens to the registry registration event.
 
-![Artifacts view](./screenshots/documents-view.png)
+![Artifacts gallery](./screenshots/artifacts-gallery.png)
+
+![Artifact document viewer with edit mode](./screenshots/artifacts-doc-edit.png)
 
 ## Reports View
 

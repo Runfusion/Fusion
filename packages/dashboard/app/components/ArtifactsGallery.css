@@ -1,0 +1,544 @@
+/*
+FNXC:ArtifactsGallery 2026-07-10-15:40:
+Category-driven artifact gallery. Design intent: a shop window for agent-produced work that invites exploration —
+visual-first tiles for images/videos with hover metadata, warm reading cards for docs/PDFs, and quiet utility rows
+for audio/other. Sections keep the "All" view scannable; chips filter to one category. Everything collapses cleanly
+at the mobile breakpoint (max-width: 768px), including short-landscape phones: chips scroll horizontally, visual
+grids drop to two columns, cards/rows go single-column, and viewers become full-screen sheets.
+*/
+
+.artifacts-gallery {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+/* ── Category filter chips ─────────────────────────────────────────── */
+
+.artifacts-gallery-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.artifacts-gallery-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  border-radius: var(--radius-pill);
+}
+
+.artifacts-gallery-chip.active {
+  border-color: var(--todo);
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.artifacts-gallery-chip-count {
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-xs);
+  background: var(--surface);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* ── Sections ──────────────────────────────────────────────────────── */
+
+.artifacts-gallery-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.artifacts-gallery-section-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-section-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-section-count {
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-xs);
+  background: var(--surface);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* ── Visual tiles (images / videos) ───────────────────────────────── */
+
+.artifacts-gallery-grid--visual {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-md);
+}
+
+.artifacts-gallery-tile {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: thin solid var(--border);
+  background: var(--surface);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.artifacts-gallery-tile:hover,
+.artifacts-gallery-tile:focus-within {
+  transform: translateY(calc(-1 * var(--space-xs) / 2));
+  border-color: var(--todo);
+  box-shadow: var(--shadow-lg);
+}
+
+.artifacts-gallery-tile-media {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  cursor: zoom-in;
+  background: var(--bg);
+}
+
+.artifacts-gallery-tile-media:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring-strong);
+}
+
+.artifacts-gallery-tile-media img,
+.artifacts-gallery-tile-media video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.artifacts-gallery-tile-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.artifacts-gallery-tile-play svg {
+  border-radius: var(--radius-pill);
+  padding: var(--space-sm);
+  width: 2.75rem;
+  height: 2.75rem;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  opacity: 0.9;
+}
+
+.artifacts-gallery-tile-overlay {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-xs);
+  padding: var(--space-lg) var(--space-sm) var(--space-sm);
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg) 88%, transparent), transparent);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
+}
+
+.artifacts-gallery-tile-media:hover .artifacts-gallery-tile-overlay,
+.artifacts-gallery-tile-media:focus-visible .artifacts-gallery-tile-overlay {
+  opacity: 1;
+}
+
+.artifacts-gallery-tile-title {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifacts-gallery-tile-task {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* ── Doc / PDF cards ───────────────────────────────────────────────── */
+
+.artifacts-gallery-grid--cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-md);
+}
+
+.artifacts-gallery-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.artifacts-gallery-card:hover,
+.artifacts-gallery-card:focus-visible {
+  transform: translateY(calc(-1 * var(--space-xs) / 2));
+  border-color: var(--todo);
+  box-shadow: var(--shadow-lg);
+  background: var(--card-hover);
+}
+
+.artifacts-gallery-card:focus-within {
+  outline: none;
+}
+
+.artifacts-gallery-card-main {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.artifacts-gallery-card-main:focus-visible {
+  outline: none;
+}
+
+.artifacts-gallery-card-task {
+  align-self: flex-start;
+}
+
+.artifacts-gallery-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-card-icon--pdf {
+  color: var(--color-error);
+}
+
+.artifacts-gallery-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.artifacts-gallery-card-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.artifacts-gallery-card-description {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.artifacts-gallery-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+/* ── Audio / other rows ────────────────────────────────────────────── */
+
+.artifacts-gallery-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.artifacts-gallery-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.artifacts-gallery-row-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+  flex: 1;
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-row-title {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifacts-gallery-row-mime {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+}
+
+.artifacts-gallery-row-meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-audio {
+  width: min(20rem, 40vw);
+  flex-shrink: 0;
+}
+
+.artifacts-gallery-row-download {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+/* ── Task links ────────────────────────────────────────────────────── */
+
+.artifacts-gallery-task-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--todo);
+  cursor: pointer;
+  text-align: left;
+}
+
+.artifacts-gallery-task-link:hover,
+.artifacts-gallery-task-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* ── Viewers (lightbox / pdf / doc) ────────────────────────────────── */
+
+.artifacts-gallery-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.artifacts-gallery-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: min(46rem, 100%);
+  max-height: 90dvh;
+  padding: var(--space-md);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+
+.artifacts-gallery-viewer--wide {
+  width: min(64rem, 100%);
+}
+
+.artifacts-gallery-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.artifacts-gallery-viewer-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.artifacts-gallery-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  flex-shrink: 0;
+}
+
+.artifacts-gallery-viewer-media-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.artifacts-gallery-viewer-media {
+  display: block;
+  max-width: 100%;
+  max-height: 65dvh;
+  object-fit: contain;
+}
+
+.artifacts-gallery-viewer-pdf {
+  width: 100%;
+  height: 65dvh;
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.artifacts-gallery-viewer-doc {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+  border: thin solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.artifacts-gallery-viewer-plain {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}
+
+/* Edit mode hosts the shared CodeMirror FileEditor; give it a real working height inside the viewer. */
+.artifacts-gallery-viewer-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 45dvh;
+  height: 100%;
+}
+
+.artifacts-gallery-viewer-editor .file-editor-container {
+  flex: 1;
+  min-height: 40dvh;
+}
+
+.artifacts-gallery-viewer-loading,
+.artifacts-gallery-viewer-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-viewer-error {
+  color: var(--color-error);
+}
+
+.artifacts-gallery-viewer-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.artifacts-gallery-viewer-description {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.artifacts-gallery-viewer-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-xs);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+/* ── Mobile (matches the project mobile MQ incl. landscape phones) ── */
+
+@media (max-width: 768px), (max-height: 480px) {
+  .artifacts-gallery-filter {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: var(--space-xs);
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .artifacts-gallery-chip {
+    flex-shrink: 0;
+  }
+
+  .artifacts-gallery-grid--visual {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-sm);
+  }
+
+  .artifacts-gallery-grid--cards {
+    grid-template-columns: 1fr;
+  }
+
+  /* Touch has no hover: keep tile titles always visible on mobile. */
+  .artifacts-gallery-tile-overlay {
+    opacity: 1;
+  }
+
+  .artifacts-gallery-row {
+    flex-wrap: wrap;
+  }
+
+  .artifacts-gallery-audio {
+    width: 100%;
+  }
+
+  .artifacts-gallery-overlay {
+    padding: 0;
+  }
+
+  .artifacts-gallery-viewer,
+  .artifacts-gallery-viewer--wide {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .artifacts-gallery-viewer-media {
+    max-height: 70dvh;
+  }
+
+  .artifacts-gallery-viewer-pdf {
+    height: 70dvh;
+  }
+}

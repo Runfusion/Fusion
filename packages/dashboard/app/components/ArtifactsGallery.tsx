@@ -1,0 +1,701 @@
+import "./ArtifactsGallery.css";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import {
+  AudioLines,
+  Download,
+  ExternalLink,
+  FileText,
+  FileType,
+  Image as ImageIcon,
+  Package,
+  Pencil,
+  Video,
+  X,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Artifact, ArtifactWithTask } from "@fusion/core";
+import type { ToastType } from "../hooks/useToast";
+import { artifactMediaUrl, fetchArtifact, updateArtifact } from "../api";
+import { FileEditor } from "./FileEditor";
+
+/*
+FNXC:ArtifactRegistry 2026-07-10-15:40:
+The Artifacts view is the shop window for agent-produced work (screenshots, wireframes, mockups, docs, recordings), so it breaks artifacts into content categories the operator thinks in — Images, Docs, PDFs, Videos, Audio, Other — instead of raw registry types (PDFs are stored as document/other rows). Each category gets a tailored experience:
+- Images/Videos: visual-first tile grid with hover metadata and a full-size lightbox.
+- Docs: reading cards that open a full document viewer with rendered markdown and an in-place EDIT mode (any inline-content doc is editable; binary-backed docs stay read-only).
+- PDFs: dedicated tiles opening an embedded PDF viewer with an open-in-tab escape hatch.
+- Audio: inline player rows.
+- Other: compact download rows.
+"All" renders sections per present category; chips filter to one. Everything must scale down to the 768px/short-landscape mobile breakpoint: chips scroll horizontally, grids collapse, and viewers go full-screen.
+*/
+
+export type ArtifactCategory = "image" | "doc" | "pdf" | "video" | "audio" | "other";
+type ArtifactCategoryFilter = ArtifactCategory | "all";
+
+export const ARTIFACT_CATEGORY_ORDER: ArtifactCategory[] = ["image", "doc", "pdf", "video", "audio", "other"];
+
+export function getArtifactCategory(artifact: Pick<ArtifactWithTask, "type" | "mimeType" | "uri">): ArtifactCategory {
+  const mime = artifact.mimeType?.toLowerCase().split(";", 1)[0] ?? "";
+  if (mime === "application/pdf" || artifact.uri?.toLowerCase().endsWith(".pdf")) return "pdf";
+  if (artifact.type === "image") return "image";
+  if (artifact.type === "video") return "video";
+  if (artifact.type === "audio") return "audio";
+  if (artifact.type === "document") return "doc";
+  return "other";
+}
+
+const CATEGORY_ICONS: Record<ArtifactCategory, typeof ImageIcon> = {
+  image: ImageIcon,
+  doc: FileText,
+  pdf: FileType,
+  video: Video,
+  audio: AudioLines,
+  other: Package,
+};
+
+function getCategoryLabel(t: TFunction<"app">, category: ArtifactCategory): string {
+  switch (category) {
+    case "image": return t("documents.artifactCategoryImages", "Images");
+    case "doc": return t("documents.artifactCategoryDocs", "Docs");
+    case "pdf": return t("documents.artifactCategoryPdfs", "PDFs");
+    case "video": return t("documents.artifactCategoryVideos", "Videos");
+    case "audio": return t("documents.artifactCategoryAudio", "Audio");
+    case "other": return t("documents.artifactCategoryOther", "Other");
+  }
+}
+
+function formatTimestamp(iso?: string): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString();
+}
+
+function formatFileSize(bytes?: number): string {
+  if (bytes === undefined) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes >= 10 * 1024 ? 0 : 1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export interface ArtifactsGalleryProps {
+  artifacts: ArtifactWithTask[];
+  projectId?: string;
+  isMobile: boolean;
+  addToast: (message: string, type?: ToastType) => void;
+  onOpenTask: (taskId: string) => void;
+  /** Optional callback fired after a successful in-place doc edit so parents can refresh lists. */
+  onArtifactUpdated?: () => void;
+}
+
+interface ViewerState {
+  artifact: ArtifactWithTask;
+  kind: "media" | "doc" | "pdf";
+}
+
+export function ArtifactsGallery({ artifacts, projectId, isMobile, addToast, onOpenTask, onArtifactUpdated }: ArtifactsGalleryProps) {
+  const { t } = useTranslation("app");
+  const [categoryFilter, setCategoryFilter] = useState<ArtifactCategoryFilter>("all");
+  const [viewer, setViewer] = useState<ViewerState | null>(null);
+  const viewerReturnFocusRef = useRef<HTMLElement | null>(null);
+
+  const grouped = useMemo(() => {
+    const groups = new Map<ArtifactCategory, ArtifactWithTask[]>();
+    for (const artifact of artifacts) {
+      const category = getArtifactCategory(artifact);
+      const existing = groups.get(category);
+      if (existing) {
+        existing.push(artifact);
+      } else {
+        groups.set(category, [artifact]);
+      }
+    }
+    return groups;
+  }, [artifacts]);
+
+  // A stale filter (its last artifact disappeared via live refresh) falls back to "all" rather than an empty gallery.
+  useEffect(() => {
+    if (categoryFilter !== "all" && !grouped.has(categoryFilter)) {
+      setCategoryFilter("all");
+    }
+  }, [categoryFilter, grouped]);
+
+  const openViewer = useCallback((artifact: ArtifactWithTask) => {
+    const category = getArtifactCategory(artifact);
+    const kind: ViewerState["kind"] = category === "doc" ? "doc" : category === "pdf" ? "pdf" : "media";
+    viewerReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setViewer({ artifact, kind });
+  }, []);
+
+  const closeViewer = useCallback(() => {
+    setViewer(null);
+    viewerReturnFocusRef.current?.focus();
+    viewerReturnFocusRef.current = null;
+  }, []);
+
+  const visibleCategories = ARTIFACT_CATEGORY_ORDER.filter((category) =>
+    grouped.has(category) && (categoryFilter === "all" || categoryFilter === category));
+
+  return (
+    <div className="artifacts-gallery">
+      {grouped.size > 1 && (
+        <div className="artifacts-gallery-filter" role="group" aria-label={t("documents.artifactTypeFilterLabel", "Filter artifacts by category")}>
+          <button
+            className={`btn btn-sm artifacts-gallery-chip${categoryFilter === "all" ? " active" : ""}`}
+            aria-pressed={categoryFilter === "all"}
+            onClick={() => setCategoryFilter("all")}
+          >
+            {t("documents.artifactFilterAll", "All")}
+            <span className="artifacts-gallery-chip-count">{artifacts.length}</span>
+          </button>
+          {ARTIFACT_CATEGORY_ORDER.filter((category) => grouped.has(category)).map((category) => {
+            const Icon = CATEGORY_ICONS[category];
+            return (
+              <button
+                key={category}
+                className={`btn btn-sm artifacts-gallery-chip${categoryFilter === category ? " active" : ""}`}
+                aria-pressed={categoryFilter === category}
+                onClick={() => setCategoryFilter(category)}
+              >
+                <Icon size={14} aria-hidden="true" />
+                {getCategoryLabel(t, category)}
+                <span className="artifacts-gallery-chip-count">{grouped.get(category)?.length}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {visibleCategories.map((category) => {
+        const items = grouped.get(category) ?? [];
+        const Icon = CATEGORY_ICONS[category];
+        return (
+          <section key={category} className="artifacts-gallery-section" aria-label={getCategoryLabel(t, category)}>
+            {categoryFilter === "all" && grouped.size > 1 && (
+              <header className="artifacts-gallery-section-header">
+                <Icon size={16} aria-hidden="true" />
+                <h3>{getCategoryLabel(t, category)}</h3>
+                <span className="artifacts-gallery-section-count">{items.length}</span>
+              </header>
+            )}
+            <CategoryGrid
+              category={category}
+              items={items}
+              projectId={projectId}
+              isMobile={isMobile}
+              t={t}
+              onOpen={openViewer}
+              onOpenTask={onOpenTask}
+            />
+          </section>
+        );
+      })}
+
+      {viewer && viewer.kind === "media" && (
+        <MediaLightbox artifact={viewer.artifact} projectId={projectId} t={t} onClose={closeViewer} onOpenTask={onOpenTask} />
+      )}
+      {viewer && viewer.kind === "pdf" && (
+        <PdfViewer artifact={viewer.artifact} projectId={projectId} t={t} onClose={closeViewer} onOpenTask={onOpenTask} />
+      )}
+      {viewer && viewer.kind === "doc" && (
+        <DocViewer
+          artifact={viewer.artifact}
+          projectId={projectId}
+          t={t}
+          addToast={addToast}
+          onClose={closeViewer}
+          onOpenTask={onOpenTask}
+          onArtifactUpdated={onArtifactUpdated}
+        />
+      )}
+    </div>
+  );
+}
+
+interface CategoryGridProps {
+  category: ArtifactCategory;
+  items: ArtifactWithTask[];
+  projectId?: string;
+  isMobile: boolean;
+  t: TFunction<"app">;
+  onOpen: (artifact: ArtifactWithTask) => void;
+  onOpenTask: (taskId: string) => void;
+}
+
+function CategoryGrid({ category, items, projectId, isMobile, t, onOpen, onOpenTask }: CategoryGridProps) {
+  if (category === "audio") {
+    return (
+      <div className="artifacts-gallery-rows">
+        {items.map((artifact) => (
+          <AudioRow key={artifact.id} artifact={artifact} projectId={projectId} t={t} onOpenTask={onOpenTask} />
+        ))}
+      </div>
+    );
+  }
+
+  if (category === "other") {
+    return (
+      <div className="artifacts-gallery-rows">
+        {items.map((artifact) => (
+          <FileRow key={artifact.id} artifact={artifact} projectId={projectId} t={t} onOpenTask={onOpenTask} />
+        ))}
+      </div>
+    );
+  }
+
+  const gridClass = category === "image" || category === "video"
+    ? "artifacts-gallery-grid artifacts-gallery-grid--visual"
+    : "artifacts-gallery-grid artifacts-gallery-grid--cards";
+
+  return (
+    <div className={`${gridClass}${isMobile ? " artifacts-gallery-grid--mobile" : ""}`}>
+      {items.map((artifact) => (
+        category === "image" || category === "video"
+          ? <VisualTile key={artifact.id} artifact={artifact} category={category} projectId={projectId} t={t} onOpen={onOpen} />
+          : <DocCard key={artifact.id} artifact={artifact} category={category} t={t} onOpen={onOpen} onOpenTask={onOpenTask} />
+      ))}
+    </div>
+  );
+}
+
+interface TileProps {
+  artifact: ArtifactWithTask;
+  category: ArtifactCategory;
+  projectId?: string;
+  t: TFunction<"app">;
+  onOpen: (artifact: ArtifactWithTask) => void;
+}
+
+function VisualTile({ artifact, category, projectId, t, onOpen }: TileProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpen(artifact);
+    }
+  };
+
+  return (
+    <article className="artifacts-gallery-tile" aria-label={t("documents.artifactCardLabel", "Artifact {{title}}", { title })}>
+      <div
+        className="artifacts-gallery-tile-media"
+        role="button"
+        tabIndex={0}
+        aria-label={t("documents.expandArtifact", "Expand {{title}}", { title })}
+        onClick={() => onOpen(artifact)}
+        onKeyDown={handleKeyDown}
+      >
+        {category === "image" ? (
+          <img src={mediaUrl} alt={title} loading="lazy" />
+        ) : (
+          <video src={mediaUrl} muted preload="metadata" aria-label={t("documents.artifactVideoLabel", "Video artifact: {{title}}", { title })} />
+        )}
+        {category === "video" && <span className="artifacts-gallery-tile-play" aria-hidden="true"><Video size={22} /></span>}
+        <div className="artifacts-gallery-tile-overlay">
+          <span className="artifacts-gallery-tile-title">{title}</span>
+          {artifact.taskId && <span className="artifacts-gallery-tile-task">{artifact.taskId}</span>}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+interface DocCardProps {
+  artifact: ArtifactWithTask;
+  category: ArtifactCategory;
+  t: TFunction<"app">;
+  onOpen: (artifact: ArtifactWithTask) => void;
+  onOpenTask: (taskId: string) => void;
+}
+
+function DocCard({ artifact, category, t, onOpen, onOpenTask }: DocCardProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const Icon = CATEGORY_ICONS[category];
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpen(artifact);
+    }
+  };
+
+  return (
+    <article className="artifacts-gallery-card" aria-label={t("documents.artifactCardLabel", "Artifact {{title}}", { title })}>
+      <div
+        className="artifacts-gallery-card-main"
+        role="button"
+        tabIndex={0}
+        aria-label={t("documents.openArtifactViewer", "Open {{title}}", { title })}
+        onClick={() => onOpen(artifact)}
+        onKeyDown={handleKeyDown}
+      >
+        <div className={`artifacts-gallery-card-icon artifacts-gallery-card-icon--${category}`}>
+          <Icon size={22} aria-hidden="true" />
+        </div>
+        <div className="artifacts-gallery-card-body">
+          <h4 className="artifacts-gallery-card-title">{title}</h4>
+          {artifact.description && <p className="artifacts-gallery-card-description">{artifact.description}</p>}
+          <div className="artifacts-gallery-card-meta">
+            <span>{artifact.authorId}</span>
+            <span>·</span>
+            <span>{formatTimestamp(artifact.createdAt)}</span>
+            {artifact.sizeBytes !== undefined && <span>· {formatFileSize(artifact.sizeBytes)}</span>}
+          </div>
+        </div>
+      </div>
+      {artifact.taskId && (
+        <button
+          className="artifacts-gallery-task-link artifacts-gallery-card-task"
+          onClick={() => onOpenTask(artifact.taskId as string)}
+          aria-label={t("documents.openTaskAria", "Open task {{taskId}}: {{title}}", { taskId: artifact.taskId, title: artifact.taskTitle || t("documents.untitled", "Untitled") })}
+        >
+          {artifact.taskId}
+        </button>
+      )}
+    </article>
+  );
+}
+
+interface RowProps {
+  artifact: ArtifactWithTask;
+  projectId?: string;
+  t: TFunction<"app">;
+  onOpenTask: (taskId: string) => void;
+}
+
+function AudioRow({ artifact, projectId, t, onOpenTask }: RowProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  return (
+    <article className="artifacts-gallery-row" aria-label={t("documents.artifactCardLabel", "Artifact {{title}}", { title })}>
+      <div className="artifacts-gallery-row-info">
+        <AudioLines size={16} aria-hidden="true" />
+        <span className="artifacts-gallery-row-title">{title}</span>
+        {artifact.taskId && (
+          <button className="artifacts-gallery-task-link" onClick={() => onOpenTask(artifact.taskId as string)}>
+            {artifact.taskId}
+          </button>
+        )}
+        <span className="artifacts-gallery-row-meta">{formatTimestamp(artifact.createdAt)}</span>
+      </div>
+      <audio className="artifacts-gallery-audio" controls src={artifactMediaUrl(artifact.id, projectId)} aria-label={t("documents.artifactAudioLabel", "Audio artifact: {{title}}", { title })} />
+    </article>
+  );
+}
+
+function FileRow({ artifact, projectId, t, onOpenTask }: RowProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  return (
+    <article className="artifacts-gallery-row" aria-label={t("documents.artifactCardLabel", "Artifact {{title}}", { title })}>
+      <div className="artifacts-gallery-row-info">
+        <Package size={16} aria-hidden="true" />
+        <span className="artifacts-gallery-row-title">{title}</span>
+        {artifact.mimeType && <span className="artifacts-gallery-row-mime badge">{artifact.mimeType}</span>}
+        {artifact.taskId && (
+          <button className="artifacts-gallery-task-link" onClick={() => onOpenTask(artifact.taskId as string)}>
+            {artifact.taskId}
+          </button>
+        )}
+        <span className="artifacts-gallery-row-meta">
+          {formatFileSize(artifact.sizeBytes)}{artifact.sizeBytes !== undefined ? " · " : ""}{formatTimestamp(artifact.createdAt)}
+        </span>
+      </div>
+      <a
+        className="btn btn-sm artifacts-gallery-row-download"
+        href={artifactMediaUrl(artifact.id, projectId)}
+        target="_blank"
+        rel="noreferrer"
+        data-testid="artifact-other-link"
+        aria-label={t("documents.downloadArtifactAria", "Download {{title}}", { title })}
+      >
+        <Download size={14} aria-hidden="true" />
+        {t("documents.downloadArtifact", "Download")}
+      </a>
+    </article>
+  );
+}
+
+interface OverlayProps {
+  artifact: ArtifactWithTask;
+  projectId?: string;
+  t: TFunction<"app">;
+  onClose: () => void;
+  onOpenTask: (taskId: string) => void;
+}
+
+function useOverlayDismiss(onClose: () => void, closeRef: React.RefObject<HTMLButtonElement | null>) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeRef, onClose]);
+}
+
+/*
+FNXC:ArtifactsGallery 2026-07-10-15:40:
+Each viewer owns its close-button ref and passes it to both OverlayShell (Escape/scroll-lock lifecycle + autofocus so keyboard users land on a dismiss affordance) and ViewerHeader (which renders the actual button).
+*/
+function OverlayShell({ label, onClose, children, wide, closeRef }: { label: string; onClose: () => void; children: React.ReactNode; wide?: boolean; closeRef: React.RefObject<HTMLButtonElement | null> }) {
+  useOverlayDismiss(onClose, closeRef);
+
+  const handleOverlayClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  };
+
+  return (
+    <div
+      className="modal-overlay open artifacts-gallery-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      onClick={handleOverlayClick}
+    >
+      <div className={`artifacts-gallery-viewer${wide ? " artifacts-gallery-viewer--wide" : ""}`} onClick={(event) => event.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ViewerHeader({ title, onClose, t, actions, closeRef }: { title: string; onClose: () => void; t: TFunction<"app">; actions?: React.ReactNode; closeRef: React.RefObject<HTMLButtonElement | null> }) {
+  return (
+    <div className="artifacts-gallery-viewer-header">
+      <h3 className="artifacts-gallery-viewer-title">{title}</h3>
+      <div className="artifacts-gallery-viewer-actions">
+        {actions}
+        <button ref={closeRef} className="modal-close" onClick={onClose} aria-label={t("documents.closeLightbox", "Close artifact preview")}>
+          <X size={20} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ViewerMeta({ artifact, t, onOpenTask }: { artifact: ArtifactWithTask; t: TFunction<"app">; onOpenTask: (taskId: string) => void }) {
+  return (
+    <div className="artifacts-gallery-viewer-meta">
+      {artifact.description && <p className="artifacts-gallery-viewer-description">{artifact.description}</p>}
+      <div className="artifacts-gallery-viewer-meta-row">
+        <span>{artifact.authorId}</span>
+        <span>·</span>
+        <span>{formatTimestamp(artifact.createdAt)}</span>
+        {artifact.sizeBytes !== undefined && <span>· {formatFileSize(artifact.sizeBytes)}</span>}
+        {artifact.taskId && (
+          <button className="artifacts-gallery-task-link" onClick={() => onOpenTask(artifact.taskId as string)}>
+            {t("documents.openTask", "Open task")} {artifact.taskId}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <OverlayShell label={t("documents.lightboxLabel", "Artifact media preview")} onClose={onClose} wide closeRef={closeRef}>
+      <ViewerHeader
+        title={title}
+        onClose={onClose}
+        t={t}
+        closeRef={closeRef}
+        actions={(
+          <a className="btn btn-sm" href={mediaUrl} target="_blank" rel="noreferrer" aria-label={t("documents.openInNewTab", "Open in new tab")}>
+            <ExternalLink size={14} aria-hidden="true" />
+          </a>
+        )}
+      />
+      <div className="artifacts-gallery-viewer-media-frame">
+        {artifact.type === "image" ? (
+          <img className="artifacts-gallery-viewer-media" src={mediaUrl} alt={title} />
+        ) : (
+          <video
+            className="artifacts-gallery-viewer-media"
+            src={mediaUrl}
+            controls
+            autoPlay
+            aria-label={t("documents.artifactVideoLabel", "Video artifact: {{title}}", { title })}
+          />
+        )}
+      </div>
+      <ViewerMeta artifact={artifact} t={t} onOpenTask={onOpenTask} />
+    </OverlayShell>
+  );
+}
+
+function PdfViewer({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const mediaUrl = artifactMediaUrl(artifact.id, projectId);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <OverlayShell label={t("documents.pdfViewerLabel", "PDF artifact viewer")} onClose={onClose} wide closeRef={closeRef}>
+      <ViewerHeader
+        title={title}
+        onClose={onClose}
+        t={t}
+        closeRef={closeRef}
+        actions={(
+          <a className="btn btn-sm" href={mediaUrl} target="_blank" rel="noreferrer" aria-label={t("documents.openInNewTab", "Open in new tab")}>
+            <ExternalLink size={14} aria-hidden="true" />
+            {t("documents.openInNewTab", "Open in new tab")}
+          </a>
+        )}
+      />
+      <iframe className="artifacts-gallery-viewer-pdf" src={mediaUrl} title={title} />
+      <ViewerMeta artifact={artifact} t={t} onOpenTask={onOpenTask} />
+    </OverlayShell>
+  );
+}
+
+interface DocViewerProps extends OverlayProps {
+  addToast: (message: string, type?: ToastType) => void;
+  onArtifactUpdated?: () => void;
+}
+
+/*
+FNXC:ArtifactsGallery 2026-07-10-16:30:
+Any inline-content doc artifact must be editable straight from the Artifacts view (operator requirement: "jump into edit mode for any doc", "with regular file editor control and view"). The viewer fetches the full artifact (list responses strip content) and renders MARKDOWN BY DEFAULT so docs look polished on open. Edit mode embeds the same CodeMirror FileEditor used for workspace files (syntax highlighting, Edit/Preview toolbar for markdown, word wrap), and Save persists via PATCH /artifacts/:id. Binary-backed docs (rows with a uri) hide Edit because their payload lives on disk. The synthetic filePath maps the artifact MIME type to an extension so FileEditor picks the right language mode.
+*/
+function artifactEditorFileName(artifact: Artifact): string {
+  const mime = artifact.mimeType?.toLowerCase().split(";", 1)[0] ?? "";
+  const extension = mime === "text/html" ? ".html"
+    : mime === "application/json" ? ".json"
+      : mime === "text/plain" ? ".txt"
+        : ".md";
+  return `${(artifact.title || "artifact").replace(/[^\w.-]+/g, "-")}${extension}`;
+}
+
+function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onArtifactUpdated }: DocViewerProps) {
+  const title = artifact.title || t("documents.untitledArtifact", "Untitled artifact");
+  const [detail, setDetail] = useState<Artifact | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [renderMarkdown, setRenderMarkdown] = useState(true);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchArtifact(artifact.id, projectId)
+      .then((fetched) => {
+        if (!cancelled) setDetail(fetched);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artifact.id, projectId]);
+
+  const editable = detail !== null && !detail.uri;
+  const content = detail?.content ?? "";
+
+  const startEditing = () => {
+    setDraft(content);
+    setEditing(true);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const updated = await updateArtifact(artifact.id, { content: draft }, projectId);
+      setDetail(updated);
+      setEditing(false);
+      addToast(t("documents.artifactSaved", "Artifact saved"), "success");
+      onArtifactUpdated?.();
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <OverlayShell label={t("documents.docViewerLabel", "Document artifact viewer")} onClose={onClose} wide closeRef={closeRef}>
+      <ViewerHeader
+        title={title}
+        onClose={onClose}
+        t={t}
+        closeRef={closeRef}
+        actions={editing ? (
+          <>
+            <button className="btn btn-sm" onClick={() => setEditing(false)} disabled={saving}>
+              {t("documents.cancelEdit", "Cancel")}
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={() => void handleSave()} disabled={saving}>
+              {saving ? t("documents.saving", "Saving…") : t("documents.saveArtifact", "Save")}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="btn btn-sm"
+              onClick={() => setRenderMarkdown((prev) => !prev)}
+              aria-pressed={renderMarkdown}
+              title={renderMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
+            >
+              {renderMarkdown ? t("documents.markdown", "Markdown") : t("documents.plain", "Plain")}
+            </button>
+            {editable && (
+              <button className="btn btn-sm" onClick={startEditing} aria-label={t("documents.editArtifact", "Edit document")}>
+                <Pencil size={14} aria-hidden="true" />
+                {t("documents.edit", "Edit")}
+              </button>
+            )}
+          </>
+        )}
+      />
+      <div className="artifacts-gallery-viewer-doc">
+        {loadError ? (
+          <p className="artifacts-gallery-viewer-error">{loadError}</p>
+        ) : detail === null ? (
+          <p className="artifacts-gallery-viewer-loading">{t("documents.loadingArtifact", "Loading artifact…")}</p>
+        ) : editing ? (
+          <div className="artifacts-gallery-viewer-editor" aria-label={t("documents.artifactContentEditor", "Artifact content editor")}>
+            <FileEditor
+              content={draft}
+              onChange={setDraft}
+              filePath={artifactEditorFileName(detail)}
+              forceToolbarActionsVisible
+            />
+          </div>
+        ) : detail.uri ? (
+          <p className="artifacts-gallery-viewer-loading">
+            {t("documents.binaryDocArtifact", "This document is stored as a file.")}{" "}
+            <a href={artifactMediaUrl(artifact.id, projectId)} target="_blank" rel="noreferrer">
+              {t("documents.openArtifactMedia", "Open artifact media")}
+            </a>
+          </p>
+        ) : renderMarkdown ? (
+          <div className="markdown-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          </div>
+        ) : (
+          <pre className="artifacts-gallery-viewer-plain">{content}</pre>
+        )}
+      </div>
+      <ViewerMeta artifact={artifact} t={t} onOpenTask={onOpenTask} />
+    </OverlayShell>
+  );
+}

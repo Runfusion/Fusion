@@ -172,6 +172,8 @@ export function useArtifacts(options?: {
     const unsubscribe = subscribeSse(`/api/events${query}`, {
       events: {
         "artifact:registered": handleAuthoritativeArtifact,
+        // FNXC:ArtifactRegistry 2026-07-10-15:20: in-place doc edits from the Artifacts viewer emit artifact:updated; open galleries refresh through the same debounced path as registrations.
+        "artifact:updated": handleAuthoritativeArtifact,
         "message:received": handleArtifactMessage,
         "message:sent": handleArtifactMessage,
       },

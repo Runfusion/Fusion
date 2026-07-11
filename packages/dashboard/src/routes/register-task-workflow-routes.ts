@@ -3834,6 +3834,74 @@ export function registerTaskWorkflowRoutes(ctx: ApiRoutesContext, deps: TaskWork
     }
   });
 
+  /*
+  FNXC:ArtifactRegistry 2026-07-10-15:20:
+  The Artifacts view opens documents in a full viewer with edit mode, so it needs a single-artifact
+  read that INCLUDES inline content (listArtifacts intentionally strips content for lightness) and a
+  PATCH that persists title/description/content edits for any inline-content doc. Binary artifacts
+  reject content edits in the store layer.
+  */
+  router.get("/artifacts/:id", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const artifact = await scopedStore.getArtifact(req.params.id);
+      if (!artifact) {
+        throw notFound("Artifact not found");
+      }
+      res.json(artifact);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      throw new ApiError(500, err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  router.patch("/artifacts/:id", async (req, res) => {
+    try {
+      const { store: scopedStore } = await getProjectContext(req);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const updates: { title?: string; description?: string; content?: string } = {};
+
+      if (body.title !== undefined) {
+        if (typeof body.title !== "string" || body.title.trim().length === 0) {
+          throw badRequest("title must be a non-empty string");
+        }
+        updates.title = body.title;
+      }
+      if (body.description !== undefined) {
+        if (typeof body.description !== "string") {
+          throw badRequest("description must be a string");
+        }
+        updates.description = body.description;
+      }
+      if (body.content !== undefined) {
+        if (typeof body.content !== "string") {
+          throw badRequest("content must be a string");
+        }
+        updates.content = body.content;
+      }
+      if (Object.keys(updates).length === 0) {
+        throw badRequest("Provide at least one of title, description, or content");
+      }
+
+      const artifact = await scopedStore.updateArtifact(req.params.id, updates);
+      res.json(artifact);
+    } catch (err: unknown) {
+      if (err instanceof ApiError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("not found")) {
+        throw notFound("Artifact not found");
+      }
+      if (message.includes("read-only") || message.includes("not editable")) {
+        throw badRequest(message);
+      }
+      throw new ApiError(500, message);
+    }
+  });
+
   // GET /documents — List all documents across all tasks
   router.get("/documents", async (req, res) => {
     try {

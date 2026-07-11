@@ -1069,6 +1069,7 @@ export interface TaskStoreEvents {
   "task:merged": [result: MergeResult];
   "settings:updated": [data: { settings: Settings; previous: Settings }];
   "artifact:registered": [artifact: Artifact];
+  "artifact:updated": [artifact: Artifact];
   "agent:log": [entry: AgentLogEntry];
   "merger:autostashOrphans": [data: {
     rootDir: string;
@@ -13927,6 +13928,49 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
     this.db.bumpLastModified();
     this.emit("artifact:registered", artifact);
     return artifact;
+  }
+
+  /**
+   * FNXC:ArtifactRegistry 2026-07-10-15:20:
+   * The dashboard Artifacts view lets operators edit any inline-content document artifact in place
+   * (title/description/content). Binary artifacts (rows with a uri) keep content non-editable because
+   * their payload lives on disk; only metadata edits are allowed there. Archived-task artifacts stay
+   * read-only, mirroring registerArtifact. Emits `artifact:updated` and bumps lastModified so open
+   * artifact lists live-refresh.
+   */
+  async updateArtifact(id: string, updates: { title?: string; description?: string; content?: string }): Promise<Artifact> {
+    const existing = await this.getArtifact(id);
+    if (!existing) {
+      throw new Error(`Artifact ${id} not found`);
+    }
+
+    if (existing.taskId && this.isTaskArchived(existing.taskId)) {
+      throw new Error(`Task ${existing.taskId} is archived — artifacts are read-only`);
+    }
+
+    if (updates.content !== undefined && existing.uri) {
+      throw new Error(`Artifact ${id} stores a binary payload; its content is not editable`);
+    }
+
+    const now = new Date().toISOString();
+    this.db.prepare(
+      "UPDATE artifacts SET title = ?, description = ?, content = ?, updatedAt = ? WHERE id = ?",
+    ).run(
+      updates.title !== undefined ? updates.title : existing.title,
+      updates.description !== undefined ? updates.description : existing.description ?? null,
+      updates.content !== undefined ? updates.content : existing.content ?? null,
+      now,
+      id,
+    );
+
+    const updated = await this.getArtifact(id);
+    if (!updated) {
+      throw new Error(`Failed to update artifact ${id}`);
+    }
+
+    this.db.bumpLastModified();
+    this.emit("artifact:updated", updated);
+    return updated;
   }
 
   /**

@@ -10,7 +10,7 @@
 import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, relative, resolve } from "node:path";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import * as fusionCore from "@fusion/core";
 import type { AgentState, AgentCapability, AgentUpdateInput, Artifact, ArtifactCreateInput, ArtifactWithTask, TaskDocument, TaskDocumentCreateInput, TaskStore, RunMutationContext, MessageStore, Message, SourceType, Settings, ResearchRun, ResearchRunStatus, TaskCreateInput, ReflectionStore, ApprovalRequestStore, ProjectSettings, ChatStore, WorkflowSettingDefinition, GoalStatus } from "@fusion/core";
 import { listTraits, isBuiltinWorkflowId, AgentStore, validateColumnAgentBindings, ColumnAgentBindingError, stripApprovalBypassFlags, WorkflowSettingRejectionError, resolveEffectiveSettingsById, resolveWorkflowIrById, findOrphanedSettingValues, BUILTIN_WORKFLOW_SETTINGS, MAX_TASK_LIST_TEXT_CHARS, formatCurrentTaskLine, normalizeWorkflowIcon } from "@fusion/core";
@@ -140,7 +140,8 @@ export const artifactRegisterParams = Type.Object({
   mimeType: Type.Optional(Type.String({ description: "Optional MIME type, e.g. text/markdown or image/png." })),
   uri: Type.Optional(Type.String({ description: "Optional URI/path reference when content is stored elsewhere." })),
   content: Type.Optional(Type.String({ description: "Optional inline text content for document/text artifacts." })),
-  dataBase64: Type.Optional(Type.String({ description: "Optional base64-encoded binary payload for image artifacts, e.g. PNG bytes; omit content and uri when provided." })),
+  dataBase64: Type.Optional(Type.String({ description: "Optional base64-encoded binary payload for image artifacts, e.g. PNG bytes; omit content, uri, and path when provided." })),
+  path: Type.Optional(Type.String({ description: "Optional local file path to a media file you already saved (screenshot, wireframe, mockup, recording). The file is copied into managed artifact storage. Preferred over dataBase64 for files on disk. Omit content, uri, and dataBase64 when provided." })),
   taskId: Type.Optional(Type.String({ description: "Optional associated task ID (e.g. 'FN-001')." })),
 });
 
@@ -164,7 +165,8 @@ export const chatArtifactRegisterParams = Type.Object({
   mimeType: Type.Optional(Type.String({ description: "Optional MIME type, e.g. text/markdown or image/png." })),
   uri: Type.Optional(Type.String({ description: "Optional URI/path reference when content is stored elsewhere." })),
   content: Type.Optional(Type.String({ description: "Optional inline text content for document/text artifacts." })),
-  dataBase64: Type.Optional(Type.String({ description: "Optional base64-encoded binary payload for image artifacts, e.g. PNG bytes; omit content and uri when provided." })),
+  dataBase64: Type.Optional(Type.String({ description: "Optional base64-encoded binary payload for image artifacts, e.g. PNG bytes; omit content, uri, and path when provided." })),
+  path: Type.Optional(Type.String({ description: "Optional local file path to a media file you already saved (screenshot, wireframe, mockup, recording). The file is copied into managed artifact storage. Preferred over dataBase64 for files on disk. Omit content, uri, and dataBase64 when provided." })),
   task_id: Type.String({ description: "Associated task ID (e.g. 'FN-001')." }),
 });
 
@@ -1509,15 +1511,21 @@ export function createChatTaskDocumentTools(store: TaskStore): ToolDefinition[] 
  * FNXC:ArtifactRegistry 2026-06-21-06:50:
  * Agents need to register multi-type artifacts across agents and tasks while using the existing task store registry. A new artifact registration must also announce itself to the dashboard user's inbox, but that notification is best-effort and must never fail the artifact write.
  */
-export function createArtifactRegisterTool(store: TaskStore, authorId: string, messageStore?: MessageStore): ToolDefinition {
+export function createArtifactRegisterTool(
+  store: TaskStore,
+  authorId: string,
+  messageStore?: MessageStore,
+  options?: ArtifactRegisterToolOptions,
+): ToolDefinition {
   return {
     name: "fn_artifact_register",
     label: "Register Artifact",
     description:
-      "Register an artifact (document, image, video, audio, or other) so other agents and tasks can discover it. " +
-      "Provide inline content, a uri/path reference, or dataBase64 image bytes; optionally associate it with a taskId.",
+      "Register an artifact (document, image, video, audio, or other) so it appears in the dashboard Artifacts gallery and other agents and tasks can discover it. " +
+      "For visual deliverables you saved to disk (screenshots, wireframes, mockups, diagrams, recordings), pass `path` — the file is copied into managed artifact storage. " +
+      "Alternatively provide inline `content` for text documents or `dataBase64` image bytes; optionally associate the artifact with a taskId.",
     parameters: artifactRegisterParams,
-    execute: async (_id: string, params: Static<typeof artifactRegisterParams>) => registerArtifactForAgent(store, authorId, params, messageStore),
+    execute: async (_id: string, params: Static<typeof artifactRegisterParams>) => registerArtifactForAgent(store, authorId, params, messageStore, options),
   };
 }
 
@@ -1562,7 +1570,7 @@ export function createChatArtifactTools(store: TaskStore, messageStore?: Message
       name: "fn_artifact_register",
       label: "Register Artifact",
       description:
-        "Register an artifact for a specific task so other agents can discover it. Requires task_id, accepts dataBase64 image bytes, and notifies the dashboard inbox best-effort.",
+        "Register an artifact for a specific task so it appears in the dashboard Artifacts gallery and other agents can discover it. Requires task_id; accepts a local file `path` (screenshots, wireframes, mockups) or dataBase64 image bytes, and notifies the dashboard inbox best-effort.",
       parameters: chatArtifactRegisterParams,
       execute: async (_id: string, params: Static<typeof chatArtifactRegisterParams>) => registerArtifactForAgent(
         store,
@@ -1575,6 +1583,7 @@ export function createChatArtifactTools(store: TaskStore, messageStore?: Message
           uri: params.uri,
           content: params.content,
           dataBase64: params.dataBase64,
+          path: params.path,
           taskId: params.task_id,
         },
         messageStore,
@@ -1599,25 +1608,39 @@ export function createChatArtifactTools(store: TaskStore, messageStore?: Message
   ];
 }
 
+/**
+ * FNXC:ArtifactRegistry 2026-07-10-14:30:
+ * Executor-lane artifact registration must default to the executing task so agent-produced media
+ * lands in the per-task Artifacts tab (and gallery task context) even when the agent omits taskId.
+ * `baseDir` anchors relative `path` payloads at the agent's worktree so "screenshots/after.png"
+ * resolves where the agent actually saved it.
+ */
+export interface ArtifactRegisterToolOptions {
+  baseDir?: string;
+  defaultTaskId?: string;
+}
+
 async function registerArtifactForAgent(
   store: TaskStore,
   authorId: string,
   params: Static<typeof artifactRegisterParams>,
   messageStore?: MessageStore,
+  options?: ArtifactRegisterToolOptions,
 ) {
   try {
-    const data = decodeArtifactDataBase64(params);
+    const filePayload = await readArtifactFileFromPath(params, options?.baseDir);
+    const data = filePayload ? filePayload.data : decodeArtifactDataBase64(params);
     const input: ArtifactCreateInput = {
       type: params.type,
       title: params.title,
       description: params.description,
-      mimeType: params.mimeType,
+      mimeType: filePayload?.mimeType ?? params.mimeType,
       uri: params.uri,
       content: params.content,
       data,
       authorId,
       authorType: "agent",
-      taskId: params.taskId,
+      taskId: params.taskId ?? options?.defaultTaskId,
     };
 
     const artifact: Artifact = await store.registerArtifact(input);
@@ -1648,6 +1671,99 @@ async function registerArtifactForAgent(
  * FNXC:ArtifactRegistry 2026-06-29-17:05:
  * `dataBase64` is an image-only payload source. Reject empty, non-image, and signature-mismatched bytes early so agents get actionable tool errors instead of persisting artifacts the dashboard cannot preview.
  */
+/*
+FNXC:ArtifactRegistry 2026-07-10-14:30:
+Agents produce screenshots/wireframes/mockups as files on disk (browser tools, design tooling, ffmpeg), and inlining megabytes of base64 into a tool call is impractical — which is why image artifacts were effectively never created. `path` lets the agent register the file it already saved; the bytes are read here and persisted through TaskStore's managed artifact storage so the registry row keeps a servable managed URI even after the worktree is cleaned up.
+Image payloads are signature-validated (PNG/JPEG/GIF/WebP binary magic, SVG text sniff) so the dashboard gallery never receives an unpreviewable "image". Non-image media (video/audio/other/document files) only require a resolvable MIME type, inferred from the file extension when omitted.
+*/
+const ARTIFACT_FILE_MAX_BYTES = 50 * 1024 * 1024;
+
+const ARTIFACT_EXTENSION_MIME_TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".pdf": "application/pdf",
+  ".html": "text/html",
+  ".md": "text/markdown",
+  ".txt": "text/plain",
+  ".json": "application/json",
+};
+
+async function readArtifactFileFromPath(
+  params: Static<typeof artifactRegisterParams>,
+  baseDir?: string,
+): Promise<{ data: Buffer; mimeType: string } | undefined> {
+  if (params.path === undefined) {
+    return undefined;
+  }
+
+  const rawPath = params.path.trim();
+  if (rawPath.length === 0) {
+    throw new Error("path must reference a file on disk.");
+  }
+
+  if (params.uri || params.content || params.dataBase64) {
+    throw new Error("path cannot be combined with uri, content, or dataBase64; provide exactly one artifact payload source.");
+  }
+
+  const resolvedPath = isAbsolute(rawPath) ? rawPath : resolve(baseDir ?? process.cwd(), rawPath);
+
+  let fileStat;
+  try {
+    fileStat = await stat(resolvedPath);
+  } catch {
+    throw new Error(`path ${resolvedPath} does not exist or is not readable.`);
+  }
+
+  if (!fileStat.isFile()) {
+    throw new Error(`path ${resolvedPath} is not a regular file.`);
+  }
+
+  if (fileStat.size === 0) {
+    throw new Error(`path ${resolvedPath} is empty.`);
+  }
+
+  if (fileStat.size > ARTIFACT_FILE_MAX_BYTES) {
+    throw new Error(`path ${resolvedPath} is ${fileStat.size} bytes, above the ${ARTIFACT_FILE_MAX_BYTES}-byte artifact limit.`);
+  }
+
+  const inferredMime = ARTIFACT_EXTENSION_MIME_TYPES[extname(resolvedPath).toLowerCase()];
+  const mimeType = params.mimeType?.toLowerCase().split(";", 1)[0] ?? inferredMime;
+  if (!mimeType) {
+    throw new Error(`Could not infer a MIME type from ${resolvedPath}; pass mimeType explicitly.`);
+  }
+
+  const data = await readFile(resolvedPath);
+
+  if (params.type === "image") {
+    if (!mimeType.startsWith("image/")) {
+      throw new Error(`image artifacts require an image/* mimeType, got ${mimeType}.`);
+    }
+    if (!isValidImagePayload(data, mimeType)) {
+      throw new Error(`path ${resolvedPath} does not contain valid image bytes matching mimeType ${mimeType}.`);
+    }
+  }
+
+  return { data, mimeType };
+}
+
+function isValidImagePayload(data: Buffer, mimeType: string): boolean {
+  if (mimeType === "image/svg+xml") {
+    const head = data.subarray(0, 4096).toString("utf8").trimStart();
+    return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
+  }
+  return hasImageSignature(data, mimeType);
+}
+
 function decodeArtifactDataBase64(params: Static<typeof artifactRegisterParams>): Buffer | undefined {
   if (params.dataBase64 === undefined) {
     return undefined;

@@ -544,7 +544,7 @@ You have coding-capable workspace tools (read/write/edit/bash within worktree bo
 - fn_list_agents and fn_delegate_task
 - fn_get_agent_config and fn_update_agent_config (for direct reports only)
 - fn_agent_create and fn_agent_delete (for direct reports only)
-- fn_artifact_register, fn_artifact_list, and fn_artifact_view
+- fn_artifact_register, fn_artifact_list, and fn_artifact_view (register visual outputs — screenshots, wireframes, mockups, diagrams — as type="image" artifacts via the \`path\` parameter so they appear in the dashboard Artifacts gallery)
 - fn_read_evaluations and fn_update_identity (available in no-task runs)
 - fn_reflect_on_performance when reflection is enabled for this run
 - fn_workflow_list, fn_workflow_get, fn_workflow_create, fn_workflow_update, fn_workflow_delete, fn_workflow_settings, and fn_trait_list for workflow discovery/authoring
@@ -3629,7 +3629,8 @@ export class HeartbeatMonitor {
     tools.push(createTaskDocumentWriteTool(taskStore, taskId));
     tools.push(createTaskDocumentReadTool(taskStore, taskId));
     // Artifact registry tools for cross-agent deliverable discovery and notification.
-    tools.push(createArtifactRegisterTool(taskStore, agentId, messageStore));
+    // FNXC:ArtifactRegistry 2026-07-10-14:30: task-scoped heartbeat registrations default to the assigned task so agent-produced media lands in that task's Artifacts tab.
+    tools.push(createArtifactRegisterTool(taskStore, agentId, messageStore, { defaultTaskId: taskId }));
     tools.push(createArtifactListTool(taskStore));
     tools.push(createArtifactViewTool(taskStore));
     // Agent delegation tools — discover and delegate work to other agents

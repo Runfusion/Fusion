@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { ArtifactWithTask, TaskDocumentWithTask, TaskDetail } from "@fusion/core";
 import { DocumentsView } from "../DocumentsView";
-import { fetchTaskDetail, fetchWorkspaceFileContent } from "../../api";
+import { fetchArtifact, fetchTaskDetail, fetchWorkspaceFileContent, updateArtifact } from "../../api";
 import { useArtifacts } from "../../hooks/useArtifacts";
 import { useDocuments } from "../../hooks/useDocuments";
 import { useProjectMarkdownFiles } from "../../hooks/useProjectMarkdownFiles";
@@ -13,7 +13,19 @@ vi.mock("../../api", () => ({
   fetchWorkspaceFileContent: vi.fn(),
   fetchTaskDetail: vi.fn(),
   fetchArtifacts: vi.fn(),
+  fetchArtifact: vi.fn(),
+  updateArtifact: vi.fn(),
   artifactMediaUrl: vi.fn((id: string) => `/api/artifacts/${id}/media`),
+}));
+
+/*
+FNXC:ArtifactsGallery 2026-07-10-16:30:
+The artifact doc editor embeds the shared CodeMirror FileEditor, which cannot run meaningfully in jsdom; a textarea shim preserves the content/onChange contract under test.
+*/
+vi.mock("../FileEditor", () => ({
+  FileEditor: ({ content, onChange }: { content: string; onChange: (value: string) => void }) => (
+    <textarea aria-label="file editor" value={content} onChange={(event) => onChange(event.target.value)} />
+  ),
 }));
 
 vi.mock("../../hooks/useDocuments", () => ({
@@ -33,6 +45,8 @@ const mockUseArtifacts = vi.mocked(useArtifacts);
 const mockUseProjectMarkdownFiles = vi.mocked(useProjectMarkdownFiles);
 const mockFetchWorkspaceFileContent = vi.mocked(fetchWorkspaceFileContent);
 const mockFetchTaskDetail = vi.mocked(fetchTaskDetail);
+const mockFetchArtifact = vi.mocked(fetchArtifact);
+const mockUpdateArtifact = vi.mocked(updateArtifact);
 
 function mockSelectionRect() {
   const rect = new DOMRect(10, 20, 80, 12);
@@ -452,23 +466,35 @@ describe("DocumentsView", () => {
     expect(screen.getByRole("button", { name: "Expand Video artifact" })).toBeInTheDocument();
     expect(screen.getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
     expect(screen.getByLabelText("Audio artifact: Audio artifact").tagName).toBe("AUDIO");
-    expect(screen.getByTestId("artifact-document-preview")).toHaveTextContent("Inline document preview");
     expect(screen.getByTestId("artifact-other-link")).toHaveAttribute("href", "/api/artifacts/artifact-other/media");
-    expect(screen.getByText("agent-image")).toBeInTheDocument();
-    expect(screen.getByText("Image")).toBeInTheDocument();
+
+    // Category chips render for every present category with counts (All = total).
+    const filter = screen.getByRole("group", { name: /filter artifacts by category/i });
+    expect(within(filter).getByRole("button", { name: /all\s*5/i })).toBeInTheDocument();
+    for (const chip of ["Images", "Docs", "Videos", "Audio", "Other"]) {
+      expect(within(filter).getByRole("button", { name: new RegExp(`${chip}\\s*1`, "i") })).toBeInTheDocument();
+    }
 
     for (const title of ["Audio artifact", "Document artifact", "Other artifact"]) {
       const card = screen.getByRole("article", { name: `Artifact ${title}` });
       expect(within(card).queryByRole("button", { name: `Expand ${title}` })).not.toBeInTheDocument();
     }
 
-    fireEvent.click(screen.getByRole("button", { name: /open task KB-001/i }));
+    // A category chip filters the gallery down to that category.
+    fireEvent.click(within(filter).getByRole("button", { name: /docs\s*1/i }));
+    expect(screen.queryByRole("img", { name: "Image artifact" })).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Artifact Document artifact" })).toBeInTheDocument();
+    fireEvent.click(within(filter).getByRole("button", { name: /all\s*5/i }));
+
+    // Opening the image lightbox exposes its task link, which opens through the artifact task path.
+    fireEvent.click(screen.getByRole("button", { name: "Expand Image artifact" }));
+    const dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
+    fireEvent.click(within(dialog).getByRole("button", { name: /open task/i }));
     await waitFor(() => {
       expect(mockFetchTaskDetail).toHaveBeenCalledWith("KB-001", undefined);
       expect(onOpenArtifactTaskDetail).toHaveBeenCalledWith({ id: "KB-001" });
     });
     expect(onOpenDetail).not.toHaveBeenCalled();
-    expect(screen.getAllByRole("button", { name: /open task/i })).toHaveLength(1);
   });
 
   it("opens and dismisses the image and video artifact lightbox by click keyboard close backdrop and escape", () => {
@@ -500,7 +526,7 @@ describe("DocumentsView", () => {
     fireEvent.keyDown(screen.getByRole("button", { name: "Expand Video artifact" }), { key: " " });
     dialog = screen.getByRole("dialog", { name: "Artifact media preview" });
     expect(within(dialog).getByLabelText("Video artifact: Video artifact").tagName).toBe("VIDEO");
-    expect(container.querySelector(".documents-artifact-lightbox-media-frame video")).toHaveAttribute("controls");
+    expect(container.querySelector(".artifacts-gallery-viewer-media-frame video")).toHaveAttribute("controls");
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Artifact media preview" })).not.toBeInTheDocument();
     expect(document.body.style.overflow).toBe("");
@@ -552,7 +578,43 @@ describe("DocumentsView", () => {
     });
     rerender(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
     fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
-    expect(container.querySelector(".documents-artifact-gallery--mobile")).toBeInTheDocument();
+    expect(container.querySelector(".artifacts-gallery-grid--mobile")).toBeInTheDocument();
+  });
+
+  /*
+  FNXC:ArtifactsGallery 2026-07-10-15:40:
+  Any inline-content doc artifact must open a full document viewer with an edit mode that persists through PATCH /artifacts/:id. Binary-backed docs must not offer Edit.
+  */
+  it("opens the doc viewer, jumps into edit mode, and saves content edits", async () => {
+    mockUseArtifacts.mockReturnValue({
+      artifacts: mockArtifacts,
+      loading: false,
+      error: null,
+      refresh: vi.fn().mockResolvedValue(undefined),
+    });
+    const docDetail = mockArtifacts.find((artifact) => artifact.id === "artifact-document")!;
+    mockFetchArtifact.mockResolvedValue(docDetail);
+    mockUpdateArtifact.mockResolvedValue({ ...docDetail, content: "Edited body" });
+
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+    fireEvent.click(screen.getByRole("tab", { name: /show artifacts/i }));
+
+    const docCard = screen.getByRole("article", { name: "Artifact Document artifact" });
+    fireEvent.click(within(docCard).getByRole("button", { name: "Open Document artifact" }));
+    const dialog = await screen.findByRole("dialog", { name: "Document artifact viewer" });
+    await waitFor(() => {
+      expect(within(dialog).getByText("Inline document preview")).toBeInTheDocument();
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /edit document/i }));
+    const editor = within(dialog).getByRole("textbox", { name: "file editor" });
+    fireEvent.change(editor, { target: { value: "Edited body" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateArtifact).toHaveBeenCalledWith("artifact-document", { content: "Edited body" }, undefined);
+    });
+    expect(addToast).toHaveBeenCalledWith("Artifact saved", "success");
   });
 
   it("clicking project file shows content", async () => {
