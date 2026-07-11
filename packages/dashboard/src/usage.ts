@@ -1341,7 +1341,14 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
     const authType = settings?.security?.auth?.selectedType;
     if (authType === "api-key" || authType === "vertex-ai") {
-      usage.status = "error";
+      /*
+      FNXC:UsageProviders 2026-07-10-12:00:
+      Gemini appears in usage only when configured for the meterable OAuth path and its token authenticates. Unsupported auth types mean Gemini is not configured for metering, so demote to `no-auth` for the single aggregate filter instead of showing a noisy error card.
+
+      FNXC:UsageProviders 2026-07-10-12:00:
+      Gemini deliberately differs from the general FN-7798 keep-auth-expired-visible rule: stale Gemini CLI logins should not clutter the usage list, while transient failures of a configured OAuth token still stay `error` and visible.
+      */
+      usage.status = "no-auth";
       usage.error = `Unsupported auth type: ${authType} (need oauth-personal)`;
       return usage;
     }
@@ -1363,7 +1370,11 @@ async function fetchGeminiUsage(): Promise<ProviderUsage> {
     );
 
     if (res.status === 401 || res.status === 403) {
-      usage.status = "error";
+      /*
+      FNXC:UsageProviders 2026-07-10-12:00:
+      Gemini auth failures mean the meter cannot authenticate the stored OAuth token, so classify 401/403 as `no-auth` and let `fetchAllProviderUsage` omit Gemini. Keep the diagnostic message for logs; HTTP 5xx, network, timeout, and parse failures remain actionable `error` states for configured Gemini.
+      */
+      usage.status = "no-auth";
       usage.error = "Auth expired — run 'gemini' to re-login";
       return usage;
     }

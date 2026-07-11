@@ -2614,11 +2614,74 @@ describe("usage", () => {
   });
 
   describe("Gemini provider", () => {
+    const setupGeminiFiles = (options: { selectedType?: string; accessToken?: string | null } = {}) => {
+      const { selectedType, accessToken = "test-token" } = options;
+      mockReadFile.mockImplementation((filePath: string) => {
+        if (filePath.includes("gemini")) {
+          if (filePath.includes("oauth_creds")) {
+            return JSON.stringify({
+              ...(accessToken ? { access_token: accessToken } : {}),
+              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
+            });
+          }
+          if (filePath.includes("settings") && selectedType) {
+            return JSON.stringify({
+              security: {
+                auth: {
+                  selectedType,
+                },
+              },
+            });
+          }
+        }
+        return Promise.reject(new Error("File not found"));
+      });
+    };
+
+    const mockGeminiResponse = (statusCode: number, body: unknown = {}) => {
+      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn(), destroy: vi.fn() };
+      mockRequest.mockImplementation((_options: any, callback: any) => {
+        const mockRes = {
+          statusCode,
+          headers: {},
+          on: vi.fn((event: string, handler: any) => {
+            if (event === "data") handler(Buffer.from(typeof body === "string" ? body : JSON.stringify(body)));
+            if (event === "end") handler();
+          }),
+        };
+        callback(mockRes);
+        return mockReq;
+      });
+    };
+
+    const mockGeminiNetworkError = (error: Error) => {
+      const mockReq = {
+        on: vi.fn((event: string, handler: any) => {
+          if (event === "error") queueMicrotask(() => handler(error));
+        }),
+        write: vi.fn(),
+        end: vi.fn(),
+        destroy: vi.fn(),
+      };
+      mockRequest.mockReturnValue(mockReq);
+    };
+
     it("detects no auth when oauth_creds.json doesn't exist", async () => {
       mockReadFile.mockImplementation(async () => {
         return Promise.reject(new Error("File not found"));
       });
 
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("detects no auth when oauth_creds.json has no access token", async () => {
+      setupGeminiFiles({ accessToken: null });
+
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini");
 
@@ -2641,43 +2704,10 @@ describe("usage", () => {
         ],
       };
 
-      mockReadFile.mockImplementation((path: string) => {
-        if (path.includes("gemini")) {
-          if (path.includes("oauth_creds")) {
-            return JSON.stringify({
-              access_token: "test-token",
-              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
-            });
-          }
-          // settings.json doesn't exist (oauth-personal is default)
-          return Promise.reject(new Error("File not found"));
-        }
-        return Promise.reject(new Error("File not found"));
-      });
+      setupGeminiFiles();
+      mockGeminiResponse(200, mockResponse);
 
-      const mockReq = {
-        on: vi.fn(),
-        write: vi.fn(),
-        end: vi.fn(),
-      };
-
-      mockRequest.mockImplementation((options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") {
-              handler(Buffer.from(JSON.stringify(mockResponse)));
-            }
-            if (event === "end") {
-              handler();
-            }
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini")!;
 
@@ -2703,33 +2733,10 @@ describe("usage", () => {
         ],
       };
 
-      mockReadFile.mockImplementation((path: string) => {
-        if (path.includes("gemini")) {
-          if (path.includes("oauth_creds")) {
-            return JSON.stringify({
-              access_token: "test-token",
-              id_token: "header.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.signature",
-            });
-          }
-          return Promise.reject(new Error("File not found"));
-        }
-        return Promise.reject(new Error("File not found"));
-      });
+      setupGeminiFiles();
+      mockGeminiResponse(200, mockResponse);
 
-      const mockReq = { on: vi.fn(), write: vi.fn(), end: vi.fn() };
-      mockRequest.mockImplementation((_options: any, callback: any) => {
-        const mockRes = {
-          statusCode: 200,
-          headers: {},
-          on: vi.fn((event: string, handler: any) => {
-            if (event === "data") handler(Buffer.from(JSON.stringify(mockResponse)));
-            if (event === "end") handler();
-          }),
-        };
-        callback(mockRes);
-        return mockReq;
-      });
-
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini")!;
 
@@ -2738,32 +2745,70 @@ describe("usage", () => {
       expect(flashWindow.resetAt).toBe(new Date(resetTime).toISOString());
     });
 
-    it("handles unsupported auth type (api-key)", async () => {
-      mockReadFile.mockImplementation((path: string) => {
-        if (path.includes("gemini")) {
-          if (path.includes("oauth_creds")) {
-            return JSON.stringify({
-              access_token: "test-token",
-            });
-          }
-          if (path.includes("settings")) {
-            return JSON.stringify({
-              security: {
-                auth: {
-                  selectedType: "api-key",
-                },
-              },
-            });
-          }
-        }
-        return Promise.reject(new Error("File not found"));
-      });
+    it("omits unsupported auth type (api-key)", async () => {
+      setupGeminiFiles({ selectedType: "api-key" });
 
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("omits unsupported auth type (vertex-ai)", async () => {
+      setupGeminiFiles({ selectedType: "vertex-ai" });
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("omits Gemini when OAuth token returns 401", async () => {
+      setupGeminiFiles();
+      mockGeminiResponse(401, { error: "unauthorized" });
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("omits Gemini when OAuth token returns 403", async () => {
+      setupGeminiFiles();
+      mockGeminiResponse(403, { error: "forbidden" });
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini");
+
+      expect(gemini).toBeUndefined();
+    });
+
+    it("keeps configured Gemini visible for HTTP 500 failures", async () => {
+      setupGeminiFiles();
+      mockGeminiResponse(500, { error: "backend unavailable" });
+
+      clearUsageCache();
       const providers = await fetchAllProviderUsage();
       const gemini = providers.find((p) => p.name === "Gemini")!;
 
       expect(gemini.status).toBe("error");
-      expect(gemini.error).toContain("Unsupported auth type");
+      expect(gemini.error).toContain("HTTP 500");
+    });
+
+    it("keeps configured Gemini visible for network failures", async () => {
+      setupGeminiFiles();
+      mockGeminiNetworkError(new Error("network error"));
+
+      clearUsageCache();
+      const providers = await fetchAllProviderUsage();
+      const gemini = providers.find((p) => p.name === "Gemini")!;
+
+      expect(gemini.status).toBe("error");
+      expect(gemini.error).toContain("network error");
     });
   });
 
