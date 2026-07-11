@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterAll } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -277,27 +277,39 @@ describe("runAiMerge", () => {
     expect(emitted.some((e) => e.event === "task:merged")).toBe(true);
   });
 
-  it("recovers an approved pre-existing clean-room commit before pruning and re-merging", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+  it.each([
+    ["modern repo-local root", "FN-1", (dir: string) => join(dir, ".worktrees", ".ai-merge")],
+    ["legacy .fusion root", "FN-2", (dir: string) => join(dir, ".fusion", "ai-merge")],
+    ["direct tmpdir root", "FN-3", (_dir: string) => tmpdir()],
+  ])("recovers an approved pre-existing clean-room commit from the %s before pruning and re-merging", async (_label, taskId, resolveRoot) => {
+    const branch = `fusion/${taskId.toLowerCase()}`;
+    const { dir } = initRepoWithBranch({ branch });
     const mainBefore = git(dir, "rev-parse main");
-    const aiMergeRoot = join(dir, ".fusion", "ai-merge");
+    const aiMergeRoot = resolveRoot(dir);
     mkdirSync(aiMergeRoot, { recursive: true });
-    const strandedRoot = mkdtempSync(join(aiMergeRoot, "fusion-ai-merge-fn-1-"));
+    if (aiMergeRoot === tmpdir()) {
+      for (const entry of readdirSync(aiMergeRoot).filter((name) => name.startsWith(`fusion-ai-merge-${taskId.toLowerCase()}-`))) {
+        rmSync(join(aiMergeRoot, entry), RM);
+      }
+    }
+    const strandedRoot = mkdtempSync(join(aiMergeRoot, `fusion-ai-merge-${taskId.toLowerCase()}-`));
     tracked.add(strandedRoot);
     git(dir, `worktree add --detach ${strandedRoot} ${mainBefore}`);
-    execSync("git merge --squash fusion/fn-1", { cwd: strandedRoot, stdio: "pipe" });
+    execSync(`git merge --squash ${branch}`, { cwd: strandedRoot, stdio: "pipe" });
     execSync("git add -A", { cwd: strandedRoot, stdio: "pipe" });
-    execSync('git commit -q -m "FN-1: recovered clean-room" -m "Fusion-Task-Id: FN-1"', { cwd: strandedRoot, stdio: "pipe" });
+    execSync(`git commit -q -m "${taskId}: recovered clean-room" -m "Fusion-Task-Id: ${taskId}"`, { cwd: strandedRoot, stdio: "pipe" });
     const strandedSha = git(strandedRoot, "rev-parse HEAD");
     const { store, logs } = makeStore(dir, {
+      id: taskId,
+      branch,
       log: [
         { action: "Task marked done by agent", timestamp: new Date(Date.now() - 20 * 60_000).toISOString() },
-        { action: "AI merge review (pass 1): approved", timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
+        { action: `AI merge review (pass 1): approved squash ${strandedSha}`, timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
       ],
     });
     const mergeAgent = vi.fn(async () => { throw new Error("should not re-merge"); });
 
-    const result = await runAiMerge(store, dir, "FN-1", { manual: true }, {
+    const result = await runAiMerge(store, dir, taskId, { manual: true }, {
       mergeAgent,
       reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
     });
