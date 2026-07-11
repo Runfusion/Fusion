@@ -648,7 +648,15 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: color-mix(in srgb, var(--text) 10%, transparent);
+  background: var(--surface);
+}
+
+/*
+FNXC:SettingsSimplification 2026-07-11-00:42:
+The Settings rail is one navigation surface. The legacy translucent background on both the parent rail and nested section list compounded into a visibly lighter second tone; keep the parent opaque and the nested scroller transparent in every theme.
+*/
+.settings-navigation .settings-sidebar {
+  background: transparent;
 }
 
 .settings-search {
