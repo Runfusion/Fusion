@@ -62,8 +62,9 @@ After the header migrated to the shared .view-header (which is flex-shrink:0), t
 /*
 FNXC:MemoryView 2026-07-10-14:30:
 First-run review on a wide desktop viewport: the Working Memory content hugged the left half of the view and the entire right half was empty background.
-Cap each tab pane to a readable content-column width and center it with auto inline margins, matching the app convention for wide layouts (e.g. .project-overview__body caps and centers its scroll body).
-The pane stays the scroll owner; width:100% keeps narrow/mobile viewports (max-width: 768px / max-height: 480px breakpoint) unchanged because the cap only bites above it.
+
+FNXC:MemoryView 2026-07-10-18:45:
+Operator follow-up: the Memory tabs should use the FULL viewport width, not a centered 960px reading column — the editor benefits from every pixel. Each tab pane stretches to 100% and stays the scroll owner; the mobile breakpoint (max-width: 768px / max-height: 480px) is unaffected.
 */
 .memory-working-tab,
 .memory-insights-tab,
@@ -74,8 +75,6 @@ The pane stays the scroll owner; width:100% keeps narrow/mobile viewports (max-w
   flex-direction: column;
   overflow-y: auto;
   width: 100%;
-  max-width: 960px;
-  margin-inline: auto;
 }
 
 /*
