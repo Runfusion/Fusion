@@ -74,6 +74,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   const requestIdRef = useRef(0);
   const markdownPreviewRef = useRef<HTMLDivElement>(null);
   const plainPreviewRef = useRef<HTMLPreElement>(null);
+  const taskDocMarkdownPreviewRef = useRef<HTMLDivElement>(null);
+  const taskDocPlainPreviewRef = useRef<HTMLPreElement>(null);
   // Markdown render toggle for project file preview
   const [renderProjectMarkdown, setRenderProjectMarkdown] = useState(false);
   // Markdown render toggles per task document card (scoped by doc ID)
@@ -81,6 +83,8 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   const [selectionCommentOpen, setSelectionCommentOpen] = useState(false);
   const markdownSelection = useSelectionComment(markdownPreviewRef, { locked: selectionCommentOpen });
   const plainSelection = useSelectionComment(plainPreviewRef, { locked: selectionCommentOpen });
+  const taskDocMarkdownSelection = useSelectionComment(taskDocMarkdownPreviewRef, { locked: selectionCommentOpen });
+  const taskDocPlainSelection = useSelectionComment(taskDocPlainPreviewRef, { locked: selectionCommentOpen });
   const activeProjectSelection = renderProjectMarkdown ? markdownSelection : plainSelection;
 
   const taskSearchQuery = activeTab === "tasks" ? searchQuery.trim() : "";
@@ -168,7 +172,10 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
 
   /*
   FNXC:DocumentsView 2026-07-10-17:30:
-  Task Documents now mirrors the Project Files sidebar/right-pane contract: the task-document selection is deliberately separate from selectedFile so tab switching cannot leak project file content into the Task Documents pane. Select-to-comment remains Project-Files-only for FN-7811 and is tracked as follow-up scope; Task Documents preserves only its existing Plain/Markdown render toggle.
+  Task Documents now mirrors the Project Files sidebar/right-pane contract: the task-document selection is deliberately separate from selectedFile so tab switching cannot leak project file content into the Task Documents pane. Task Documents keeps its own Plain/Markdown render toggle so Project Files state never controls task-document rendering.
+
+  FNXC:DocumentsView 2026-07-10-23:41:
+  FN-7812 extends the existing select-to-comment affordance to the Task Documents right pane without a new comment model. The active task-document selection ref follows the same Plain/Markdown toggle, and the composed source path uses taskId/key so operators can identify the originating task document. Keep Task Documents gated by selectedTaskDocument and Project Files gated by selectedFile so tab switches cannot cross-render popovers; the shared composer-open lock is safe because only one tab pane is mounted at a time.
   */
   const selectedTaskDocument = useMemo(() => {
     if (!selectedTaskDocumentId) {
@@ -320,11 +327,22 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
   }, [activeTab, refreshArtifacts, refreshProjectFiles, refreshDocuments]);
 
   const activeCount = activeTab === "project" ? filteredProjectFiles.length : activeTab === "tasks" ? documents.length : artifacts.length;
-  const selectionPopover = selectedFile && onSendSelectionToTask && activeProjectSelection ? (
+  const selectedTaskDocumentRendersMarkdown = selectedTaskDocument ? (taskDocMarkdownStates.get(selectedTaskDocument.id) ?? false) : false;
+  const activeTaskDocumentSelection = selectedTaskDocumentRendersMarkdown ? taskDocMarkdownSelection : taskDocPlainSelection;
+  const selectionPopover = activeTab === "project" && selectedFile && onSendSelectionToTask && activeProjectSelection ? (
     <SelectionCommentPopover
       selectedText={activeProjectSelection.selectedText}
       anchorRect={activeProjectSelection.anchorRect}
       filePath={selectedFile.path}
+      onSubmit={onSendSelectionToTask}
+      onOpenChange={setSelectionCommentOpen}
+    />
+  ) : null;
+  const taskDocumentSelectionPopover = activeTab === "tasks" && selectedTaskDocument && onSendSelectionToTask && activeTaskDocumentSelection ? (
+    <SelectionCommentPopover
+      selectedText={activeTaskDocumentSelection.selectedText}
+      anchorRect={activeTaskDocumentSelection.anchorRect}
+      filePath={`${selectedTaskDocument.taskId}/${selectedTaskDocument.key}`}
       onSubmit={onSendSelectionToTask}
       onOpenChange={setSelectionCommentOpen}
     />
@@ -691,22 +709,23 @@ export function DocumentsView({ projectId, addToast, onOpenDetail, onOpenArtifac
                       <button
                         className="btn btn-sm document-mode-toggle"
                         onClick={() => handleToggleTaskDocMarkdown(selectedTaskDocument.id)}
-                        aria-label={(taskDocMarkdownStates.get(selectedTaskDocument.id) ?? false) ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
-                        aria-pressed={taskDocMarkdownStates.get(selectedTaskDocument.id) ?? false}
-                        title={(taskDocMarkdownStates.get(selectedTaskDocument.id) ?? false) ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
+                        aria-label={selectedTaskDocumentRendersMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
+                        aria-pressed={selectedTaskDocumentRendersMarkdown}
+                        title={selectedTaskDocumentRendersMarkdown ? t("documents.switchToPlainText", "Switch to plain text") : t("documents.switchToMarkdown", "Switch to markdown")}
                       >
-                        {(taskDocMarkdownStates.get(selectedTaskDocument.id) ?? false) ? t("documents.markdown", "Markdown") : t("documents.plain", "Plain")}
+                        {selectedTaskDocumentRendersMarkdown ? t("documents.markdown", "Markdown") : t("documents.plain", "Plain")}
                       </button>
                     </div>
-                    {(taskDocMarkdownStates.get(selectedTaskDocument.id) ?? false) ? (
-                      <div className="documents-content-markdown">
+                    {selectedTaskDocumentRendersMarkdown ? (
+                      <div ref={taskDocMarkdownPreviewRef} className="documents-content-markdown">
                         <div className="markdown-body">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedTaskDocument.content}</ReactMarkdown>
                         </div>
                       </div>
                     ) : (
-                      <pre className="document-card-content-text documents-content-viewer-text">{selectedTaskDocument.content}</pre>
+                      <pre ref={taskDocPlainPreviewRef} className="document-card-content-text documents-content-viewer-text">{selectedTaskDocument.content}</pre>
                     )}
+                    {taskDocumentSelectionPopover}
                   </div>
                 )}
               </section>

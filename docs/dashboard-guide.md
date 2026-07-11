@@ -836,7 +836,7 @@ Features:
 - Empty states: with no search query it shows `No artifacts yet.` plus the hint that artifacts are created by agents, users, and system tools; with a search query it shows `No artifacts match "<query>".`
 - Error state: a failed artifact list request uses the shared `Failed to load artifacts: <error>` panel with a **Retry** action that re-runs the artifact fetch
 - Toggle between raw text and rendered markdown using the **Markdown/Plain** button
-- Highlight text in raw or rendered project-file previews, choose **Add comment**, and send the file path, selected snippet, and your comment to the **New Task** dialog
+- Highlight text in raw or rendered project-file previews or the selected Task Document's right pane, choose **Add comment**, and send the source path/key, selected snippet, and your comment to the **New Task** dialog
 
 Agent registrations also surface through the [Mailbox View](#mailbox-view): successful `fn_artifact_register` calls send a best-effort system inbox notification so users can discover new media even before opening the gallery. Artifact list live-refresh does not depend on that best-effort message; it listens to the registry registration event.
 
@@ -871,7 +871,7 @@ Artifacts view supports toggling between raw text and formatted markdown when vi
 
 The toggle button is accessible with `aria-pressed` for screen readers. Toggle state is scoped per-document, so switching between documents resets the view to raw mode.
 
-Project-file previews also support selection comments in both raw and rendered markdown modes. Select text, click **Add comment**, enter a short note, and Fusion opens **New Task** with a seeded description containing the file path, snippet, and comment.
+Project-file previews and selected Task Documents also support selection comments in both raw and rendered markdown modes. Select text, click **Add comment**, enter a short note, and Fusion opens **New Task** with a seeded description containing the file path or task-document key, snippet, and comment.
 
 ## Todo View
 

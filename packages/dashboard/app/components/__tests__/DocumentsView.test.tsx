@@ -298,6 +298,7 @@ describe("DocumentsView", () => {
 
   afterEach(() => {
     window.innerWidth = originalInnerWidth;
+    document.getSelection()?.removeAllRanges();
   });
 
   /*
@@ -832,6 +833,98 @@ describe("DocumentsView", () => {
     expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: README.md"));
     expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Hello docs"));
     expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Review this rendered content."));
+  });
+
+  /*
+  FNXC:DocumentsView 2026-07-10-23:46:
+  FN-7812 adds select-to-comment parity to Task Documents, so tests must cover the same surface checklist as Project Files: plain and markdown render modes, desktop and mobile detail layouts, empty-pane gating, tab isolation, and task-document file context in the composed New Task description.
+  */
+  it("sends selected plain task document text to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    const plainPreview = screen.getByText("Alpha document content");
+    selectNodeText(plainPreview);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Follow up from the task doc." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: KB-001/plan"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Alpha document content"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Follow up from the task doc."));
+  });
+
+  it("sends selected markdown task document text to a new task description", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
+    const markdownPreviewText = await screen.findByText("Alpha document content");
+    selectNodeText(markdownPreviewText);
+
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Review rendered task doc." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: KB-001/plan"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Alpha document content"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Review rendered task doc."));
+  });
+
+  it("does not show the task document comment trigger in the empty right pane", () => {
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+
+    expect(screen.getByText("Select a task document to view its content.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add a comment/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps task document and project file selection comment popovers isolated", async () => {
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    selectNodeText(screen.getByText("Alpha document content"));
+    expect(await screen.findByRole("button", { name: /add a comment/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /show project markdown files/i }));
+    expect(screen.queryByRole("button", { name: /add a comment/i })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    const projectPreview = await screen.findByText(/Hello docs/);
+    selectNodeText(projectPreview);
+    fireEvent.click(await screen.findByRole("button", { name: /add a comment/i }));
+    fireEvent.change(screen.getByLabelText(/comment for the new task/i), { target: { value: "Project file still works." } });
+    fireEvent.click(screen.getByRole("button", { name: /send to new task/i }));
+
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("File: README.md"));
+    expect(onSendSelectionToTask).toHaveBeenCalledWith(expect.stringContaining("Project file still works."));
+    expect(onSendSelectionToTask).not.toHaveBeenCalledWith(expect.stringContaining("File: KB-001/plan"));
+  });
+
+  it("shows the task document comment trigger in the mobile detail pane", async () => {
+    window.innerWidth = 600;
+    mockSelectionRect();
+    const onSendSelectionToTask = vi.fn();
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} onSendSelectionToTask={onSendSelectionToTask} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /show task documents/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Open KB-001 plan" }));
+    const mobilePreview = screen.getByText("Alpha document content");
+    selectNodeText(mobilePreview);
+
+    expect(await screen.findByRole("button", { name: /add a comment/i })).toBeInTheDocument();
   });
 
   it("search filters task documents and clears filtered-out selection", async () => {
