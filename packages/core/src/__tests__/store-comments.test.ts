@@ -207,7 +207,9 @@ describe("TaskStore", () => {
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length + 1);
 
-      const refinement = allTasksAfter.find((t) => t.id !== task.id && t.title?.includes("Refinement"));
+      // FN-7165 titles refinements as `${sourceId}: ${feedback}` (not "Refinement …"),
+      // so identify the new task by its feedback-derived title.
+      const refinement = allTasksAfter.find((t) => t.id !== task.id && t.title?.includes("Need to fix edge case"));
       expect(refinement).toBeDefined();
       expect(refinement?.column).toBe("triage");
       expect(refinement?.dependencies).toContain(task.id);
@@ -572,7 +574,9 @@ describe("TaskStore", () => {
       const allTasksAfter = await store.listTasks();
       expect(allTasksAfter).toHaveLength(allTasksBefore.length + 1);
 
-      const refinement = allTasksAfter.find((t) => t.id !== task.id && t.title?.includes("Refinement"));
+      // FN-7165 titles refinements as `${sourceId}: ${feedback}` (not "Refinement …"),
+      // so identify the new task by its feedback-derived title.
+      const refinement = allTasksAfter.find((t) => t.id !== task.id && t.title?.includes("Need to fix edge case"));
       expect(refinement).toBeDefined();
     });
 
