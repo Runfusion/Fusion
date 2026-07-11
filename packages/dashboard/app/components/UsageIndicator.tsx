@@ -442,6 +442,13 @@ function getProviderIconKey(providerName: string): string {
   if (normalized.includes('xai') || normalized.includes('grok')) {
     return 'xai';
   }
+  /*
+  FNXC:UsageIndicator 2026-07-10-00:00:
+  Cursor usage cards are rendered by the generic ProviderCard path, so provider-name mapping is the only frontend-specific requirement: route "Cursor" to the existing cursor-cli icon token and SVG.
+  */
+  if (normalized.includes('cursor')) {
+    return 'cursor-cli';
+  }
   if (normalized.includes('opencode')) {
     return 'opencode';
   }
