@@ -238,6 +238,52 @@ type SettingsSection = {
 
 const MOBILE_SETTINGS_MEDIA_QUERY = "(max-width: 768px)";
 const DEFAULT_MEMORY_EDITOR_PATH = ".fusion/memory/DREAMS.md";
+const ADVANCED_SETTINGS_STORAGE_KEY = "fusion:settings:show-advanced";
+
+/*
+FNXC:SettingsSimplification 2026-07-10-23:24:
+Settings opens in a focused mode that omits specialist integration, runtime, diagnostics, and infrastructure sections. The Advanced settings switch restores every section, applies consistently to desktop navigation, mobile navigation, and search, and persists only as a browser-local display preference so it never changes or exports project settings.
+*/
+const ADVANCED_SETTINGS_SECTION_IDS = new Set([
+  "node-sync",
+  "global-mcp",
+  "cli-agents",
+  "research-global",
+  "remote",
+  "experimental",
+  "hermes-runtime",
+  "openclaw-runtime",
+  "paperclip-runtime",
+  "scheduled-evals",
+  "node-routing",
+  "agent-permissions",
+  "memory",
+  "backups",
+  "research-project",
+  "secrets",
+  "mcp",
+  "prompts",
+  "plugins",
+]);
+
+function readAdvancedSettingsPreference(): boolean {
+  try {
+    return localStorage.getItem(ADVANCED_SETTINGS_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function removeEmptySettingsGroups(sections: SettingsSection[]): SettingsSection[] {
+  return sections.filter((section, index) => {
+    if (!section.isGroupHeader) return true;
+    for (const candidate of sections.slice(index + 1)) {
+      if (candidate.isGroupHeader) return false;
+      return true;
+    }
+    return false;
+  });
+}
 
 function normalizeSettingsSearchText(value: string): string {
   return value.trim().toLocaleLowerCase();
@@ -978,6 +1024,22 @@ export function SettingsModal({
       : false),
   );
   const [settingsSearchQuery, setSettingsSearchQuery] = useState("");
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(() => {
+    const requestedSection = initialSection === "pi-extensions" ? "plugins" : initialSection;
+    /*
+    FNXC:SettingsSimplification 2026-07-10-23:24:
+    Product links that intentionally open a specific advanced section must remain usable. Reveal advanced navigation for that Settings session, but do not persist the implicit reveal; only a direct user toggle changes the local-storage preference.
+    */
+    return readAdvancedSettingsPreference() || (requestedSection !== undefined && ADVANCED_SETTINGS_SECTION_IDS.has(requestedSection));
+  });
+  const handleAdvancedSettingsChange = useCallback((enabled: boolean) => {
+    setShowAdvancedSettings(enabled);
+    try {
+      localStorage.setItem(ADVANCED_SETTINGS_STORAGE_KEY, String(enabled));
+    } catch {
+      // Storage can be unavailable in private/locked-down browser contexts; the in-session preference still works.
+    }
+  }, []);
   /*
    * FNXC:Settings 2026-07-09-00:00:
    * Mobile Settings previously always rendered the `.settings-search` row (label + input + result
@@ -1042,7 +1104,11 @@ export function SettingsModal({
   const experimentalFeatures = form.experimentalFeatures ?? {};
   const researchViewEnabled = isExperimentalFeatureEnabled(experimentalFeatures, "researchView");
   const evalsViewEnabled = isExperimentalFeatureEnabled(experimentalFeatures, "evalsView");
-  const visibleSections = useMemo(() => SETTINGS_SECTIONS.filter((section) => {
+  const visibleSections = useMemo(() => removeEmptySettingsGroups(SETTINGS_SECTIONS.filter((section) => {
+    if (!showAdvancedSettings && ADVANCED_SETTINGS_SECTION_IDS.has(section.id)) {
+      return false;
+    }
+
     if (section.id === "research-global" || section.id === "research-project") {
       return researchViewEnabled;
     }
@@ -1052,7 +1118,7 @@ export function SettingsModal({
     }
 
     return true;
-  }), [researchViewEnabled, evalsViewEnabled]);
+  })), [researchViewEnabled, evalsViewEnabled, showAdvancedSettings]);
   const firstVisibleSectionId = visibleSections.some((section) => section.id === DEFAULT_SETTINGS_SECTION)
     ? DEFAULT_SETTINGS_SECTION
     : resolveFirstSelectableSettingsSection(visibleSections, firstNonHeaderSection?.id ?? "general");
@@ -3740,6 +3806,14 @@ export function SettingsModal({
                   </div>
                 </div>
               )}
+              <label className="settings-advanced-toggle">
+                <input
+                  type="checkbox"
+                  checked={showAdvancedSettings}
+                  onChange={(event) => handleAdvancedSettingsChange(event.target.checked)}
+                />
+                <span>{t("settings.advanced.toggle", "Advanced settings")}</span>
+              </label>
               {settingsSearchRowVisible && (
                 <div className="settings-search" data-testid="settings-search">
                   <div id="settings-search-row-region" className="settings-search-row">

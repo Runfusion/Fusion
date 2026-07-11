@@ -641,6 +641,27 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
   border-bottom: var(--btn-border-width) solid var(--border);
 }
 
+/*
+FNXC:SettingsSimplification 2026-07-10-23:24:
+The Advanced settings preference is a navigation-level disclosure, so keep it visually adjacent to section search/picking in both desktop and mobile layouts and retain a full-row click target.
+*/
+.settings-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border-bottom: var(--btn-border-width) solid var(--border);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-advanced-toggle input {
+  margin: 0;
+  cursor: pointer;
+}
+
 /* FNXC:Settings 2026-07-09-12:00: the row wraps label + input + results; on desktop it always renders (see .settings-search-toggle below, hidden here). On mobile the inline section-picker toggle controls whether this wrapper mounts below the picker, avoiding an empty padded shell above the picker while collapsed. */
 .settings-search-row {
   display: flex;
@@ -2280,6 +2301,11 @@ The header row wraps so the badge drops below the heading on narrow widths inste
 
   .settings-search {
     padding: var(--space-sm) var(--space-md) var(--space-sm);
+  }
+
+  .settings-advanced-toggle {
+    padding: 0 var(--space-md) var(--space-sm);
+    border-bottom: none;
   }
 
   /* FNXC:Settings 2026-07-09-12:00: mobile-only collapse-by-default toggle sits in the section picker control row so search and section navigation share one horizontal affordance row. The row starts collapsed and expands to the full search row below the picker on tap. */
