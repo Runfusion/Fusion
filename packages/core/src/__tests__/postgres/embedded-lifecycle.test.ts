@@ -15,7 +15,15 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  existsSync,
+  rmSync,
+  writeFileSync,
+  readlinkSync,
+  mkdirSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import postgres from "postgres";
@@ -24,6 +32,7 @@ import {
   EmbeddedStartTimeoutError,
   DEFAULT_START_TIMEOUT_MS,
   isDataDirInitialized,
+  normalizeMacosEmbeddedPostgresDylibSymlinks,
   readPortFromPostmasterPid,
   type EmbeddedLifecycleOptions,
 } from "../../postgres/embedded-lifecycle.js";
@@ -135,6 +144,57 @@ describe("embedded-lifecycle: constructor + URL helpers (no process)", () => {
       password: "password",
     });
     expect(lifecycle.getPort()).toBe(55433);
+  });
+});
+
+describe("embedded-lifecycle: macOS dylib compatibility links", () => {
+  it("repairs missing compatibility-name symlinks from versioned dylibs", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-native-"));
+    try {
+      const libDir = join(nativeRoot, "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeFileSync(join(libDir, "libpq.5.15.dylib"), "");
+      writeFileSync(join(libDir, "libzstd.1.5.7.dylib"), "");
+      writeFileSync(join(libDir, "liblz4.1.10.0.dylib"), "");
+      writeFileSync(join(libDir, "libz.1.3.2.dylib"), "");
+      writeFileSync(join(libDir, "libicui18n.68.2.dylib"), "");
+
+      const created = normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot);
+
+      expect(created.map((link) => link.expected).sort()).toEqual([
+        "libicui18n.dylib",
+        "liblz4.1.dylib",
+        "libpq.5.dylib",
+        "libz.1.dylib",
+        "libzstd.1.dylib",
+      ]);
+      expect(readlinkSync(join(libDir, "libpq.5.dylib"))).toBe("libpq.5.15.dylib");
+      expect(readlinkSync(join(libDir, "libzstd.1.dylib"))).toBe("libzstd.1.5.7.dylib");
+
+      // Idempotent: the second pass sees the compatibility names and creates nothing.
+      expect(normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot)).toEqual([]);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("replaces stale broken compatibility-name symlinks", () => {
+    const nativeRoot = mkdtempSync(join(tmpdir(), "fusion-embedded-native-"));
+    try {
+      const libDir = join(nativeRoot, "lib");
+      mkdirSync(libDir, { recursive: true });
+      writeFileSync(join(libDir, "libpq.5.16.dylib"), "");
+      symlinkSync("libpq.5.15.dylib", join(libDir, "libpq.5.dylib"));
+
+      const created = normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot);
+
+      expect(created).toEqual([
+        { expected: "libpq.5.dylib", target: "libpq.5.16.dylib", created: true },
+      ]);
+      expect(readlinkSync(join(libDir, "libpq.5.dylib"))).toBe("libpq.5.16.dylib");
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
   });
 });
 

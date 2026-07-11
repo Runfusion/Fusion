@@ -44,9 +44,16 @@
 // (DATABASE_URL unset AND FUSION_NO_EMBEDDED_PG not set — the default since
 // the flip-embedded-pg-default change; the runtime startup factory is the
 // sole caller and it dynamically imports this module only in that case).
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  unlinkSync,
+} from "node:fs";
 import { createServer, type Server } from "node:net";
-import { join } from "node:path";
+import { dirname, join, basename } from "node:path";
 import { createRequire } from "node:module";
 import { createLogger } from "../logger.js";
 import { redactConnectionString } from "./credential-redact.js";
@@ -158,6 +165,130 @@ const PG_VERSION_FILENAME = "PG_VERSION";
  */
 export function isDataDirInitialized(dataDir: string): boolean {
   return existsSync(join(dataDir, PG_VERSION_FILENAME));
+}
+
+interface EmbeddedDylibSymlinkSpec {
+  readonly expected: string;
+  readonly candidate: RegExp;
+}
+
+export interface EmbeddedDylibNormalization {
+  readonly expected: string;
+  readonly target: string;
+  readonly created: boolean;
+}
+
+const MACOS_EMBEDDED_DYLIB_SYMLINKS: readonly EmbeddedDylibSymlinkSpec[] = [
+  { expected: "libpq.5.dylib", candidate: /^libpq\.5\..+\.dylib$/ },
+  { expected: "libzstd.1.dylib", candidate: /^libzstd\.1\..+\.dylib$/ },
+  { expected: "liblz4.1.dylib", candidate: /^liblz4\.1\..+\.dylib$/ },
+  { expected: "libz.1.dylib", candidate: /^libz\.1\..+\.dylib$/ },
+  { expected: "libicui18n.dylib", candidate: /^libicui18n\..+\.dylib$/ },
+];
+
+function sortDylibCandidates(files: readonly string[], candidate: RegExp): string[] {
+  return files
+    .filter((file) => candidate.test(file))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+}
+
+/**
+ * Normalize macOS embedded-postgres library names before initdb/postgres spawn.
+ *
+ * The @embedded-postgres/darwin-* packages can contain fully-versioned dylibs
+ * (for example libpq.5.15.dylib, libzstd.1.5.7.dylib) while the bundled
+ * binaries link against ABI compatibility names such as libpq.5.dylib and
+ * libzstd.1.dylib via @loader_path/../lib/.... When the package postinstall
+ * symlink hydration is skipped or incomplete, dyld fails before initdb can run.
+ *
+ * This is intentionally local to the embedded binary package and idempotent:
+ * existing compatibility names are left alone; missing compatibility names are
+ * repaired with relative symlinks to the matching versioned dylib.
+ */
+export function normalizeMacosEmbeddedPostgresDylibSymlinks(
+  nativeRoot: string,
+): EmbeddedDylibNormalization[] {
+  const libDir = join(nativeRoot, "lib");
+  if (!existsSync(libDir)) return [];
+
+  const files = readdirSync(libDir);
+  const results: EmbeddedDylibNormalization[] = [];
+  for (const spec of MACOS_EMBEDDED_DYLIB_SYMLINKS) {
+    const expectedPath = join(libDir, spec.expected);
+    if (existsSync(expectedPath)) continue;
+    const target = sortDylibCandidates(files, spec.candidate)[0];
+    if (!target) continue;
+    try {
+      // existsSync() returns false for dangling symlinks. If a previous install
+      // left libpq.5.dylib -> libpq.5.15.dylib behind and the versioned target
+      // was later removed, symlinkSync() would otherwise throw EEXIST and abort
+      // startup. Remove only that broken symlink case; leave real files alone.
+      const existing = lstatSync(expectedPath, { throwIfNoEntry: false });
+      if (existing?.isSymbolicLink()) {
+        unlinkSync(expectedPath);
+      }
+      symlinkSync(target, expectedPath);
+    } catch {
+      // Best-effort repair: read-only package stores or filesystem quirks should
+      // not crash startup before dyld gets a chance to use already-valid links.
+      continue;
+    }
+    files.push(spec.expected);
+    results.push({ expected: spec.expected, target, created: true });
+  }
+  return results;
+}
+
+function findPnpmVirtualStore(start: string): string | null {
+  let current = start;
+  for (let depth = 0; depth < 12; depth += 1) {
+    if (basename(current) === ".pnpm") return current;
+    const next = dirname(current);
+    if (next === current) return null;
+    current = next;
+  }
+  return null;
+}
+
+function resolvePnpmPlatformPackageNativeRoot(packageName: string): string | null {
+  try {
+    const embeddedEntrypoint = require.resolve("embedded-postgres");
+    const virtualStore = findPnpmVirtualStore(dirname(embeddedEntrypoint));
+    if (!virtualStore) return null;
+    const encodedName = packageName.replace("/", "+");
+    const entry = readdirSync(virtualStore).find((name) => name.startsWith(`${encodedName}@`));
+    if (!entry) return null;
+    const packageRoot = join(virtualStore, entry, "node_modules", ...packageName.split("/"));
+    return existsSync(packageRoot) ? join(packageRoot, "native") : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveMacosEmbeddedPostgresNativeRoot(): string | null {
+  if (process.platform !== "darwin") return null;
+  const packageName = process.arch === "arm64"
+    ? "@embedded-postgres/darwin-arm64"
+    : process.arch === "x64"
+      ? "@embedded-postgres/darwin-x64"
+      : null;
+  if (!packageName) return null;
+
+  try {
+    const entrypoint = require.resolve(packageName);
+    return join(dirname(entrypoint), "..", "native");
+  } catch {
+    return resolvePnpmPlatformPackageNativeRoot(packageName);
+  }
+}
+
+function normalizeBundledMacosDylibs(onLog: (message: string) => void): void {
+  const nativeRoot = resolveMacosEmbeddedPostgresNativeRoot();
+  if (!nativeRoot) return;
+  const created = normalizeMacosEmbeddedPostgresDylibSymlinks(nativeRoot);
+  for (const link of created) {
+    onLog(`embedded postgres: repaired macOS dylib link ${link.expected} -> ${link.target}`);
+  }
 }
 
 /**
@@ -452,6 +583,8 @@ export class EmbeddedPostgresLifecycle {
     this.resolvedPort = port;
 
     const alreadyInitialized = isDataDirInitialized(this.options.dataDir);
+
+    normalizeBundledMacosDylibs(this.options.onLog);
 
     this.pg = new (getEmbeddedPostgresCtor())({
       databaseDir: this.options.dataDir,
