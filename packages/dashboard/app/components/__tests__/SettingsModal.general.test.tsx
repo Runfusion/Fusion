@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within, cleanup } from "@testing-library/react";
 import path from "path";
 import { SettingsModal } from "../SettingsModal";
@@ -238,11 +238,13 @@ describe("SettingsModal", () => {
 
     const toggle = screen.getByRole("checkbox", { name: "Advanced settings" });
     expect(toggle).not.toBeChecked();
+    expect(document.querySelector(".settings-content")).toHaveAttribute("data-show-advanced", "false");
     expect(screen.queryByRole("button", { name: /^Node Sync$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Experimental Features$/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Appearance$/ })).toBeInTheDocument();
 
     await settingsModalUser.click(toggle);
+    expect(document.querySelector(".settings-content")).toHaveAttribute("data-show-advanced", "true");
     expect(localStorage.getItem("fusion:settings:show-advanced")).toBe("true");
     expect(screen.getByRole("button", { name: /^Node Sync$/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Experimental Features$/ })).toBeInTheDocument();
@@ -550,6 +552,7 @@ describe("SettingsModal", () => {
   it("persists the legacy sibling branch rename escape hatch in worktree settings", async () => {
     renderModal();
     await waitForSettingsModalReady();
+    await settingsModalUser.click(screen.getByRole("checkbox", { name: "Advanced settings" }));
 
     await settingsModalUser.click(screen.getByRole("button", { name: /^Worktrees$/ }));
 
@@ -617,6 +620,10 @@ describe("SettingsModal", () => {
   });
 
   describe("Global General", () => {
+    beforeEach(() => {
+      localStorage.setItem("fusion:settings:show-advanced", "true");
+    });
+
     // Read-only default-render assertions are merged into one rendered
     // instance to avoid re-rendering the full modal per pure-display check.
     it("renders default global logging fields, helper text, and tracking repo control", async () => {

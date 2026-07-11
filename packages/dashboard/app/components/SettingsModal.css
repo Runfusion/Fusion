@@ -44,6 +44,24 @@
     margin-left: auto;
     margin-right: var(--space-sm);
   }
+
+  /* Keep the mobile title readable by reducing promotional header actions to their already-labeled icons. */
+  .settings-header-actions .settings-github-star-btn__count {
+    display: none;
+  }
+
+  .settings-header-actions .settings-github-star-btn__action,
+  .settings-header-actions .settings-header-discord-btn {
+    width: 40px;
+    min-width: 40px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  .settings-header-actions .settings-github-star-btn__action {
+    gap: 0;
+  }
 }
 
 /* GitHub star button — split-pill layout: [Star half | Count half] */
@@ -624,8 +642,8 @@ Fix the invariant for BOTH presentations (standalone modal + embedded SettingsVi
 }
 
 .settings-navigation {
-  width: calc(var(--space-xl) * 7 + var(--space-sm));
-  min-width: calc(var(--space-xl) * 7 + var(--space-sm));
+  width: calc(var(--space-xl) * 10 + var(--space-sm));
+  min-width: calc(var(--space-xl) * 10 + var(--space-sm));
   border-right: var(--btn-border-width) solid var(--border);
   display: flex;
   flex-direction: column;
@@ -822,6 +840,72 @@ The Advanced settings preference is a navigation-level disclosure, so keep it vi
     color var(--transition-fast),
     border-color var(--transition-fast);
 }
+
+/*
+FNXC:SettingsSimplification 2026-07-11-00:17:
+The simplified Settings surface needs one consistent reading rhythm across legacy and typed sections. Use a wider navigation rail to prevent routine labels wrapping, align section content to one gutter, normalize control height/type, and keep helper copy readable without changing the dashboard's existing tokens or font family.
+*/
+.settings-sidebar {
+  padding-block: var(--space-md);
+}
+
+.settings-nav-item {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  line-height: 1.25;
+}
+
+.settings-content {
+  padding: var(--space-lg) calc(var(--space-xl) + var(--space-sm)) calc(var(--space-xl) + var(--space-md));
+}
+
+.settings-content > :is(.settings-scope-banner, .settings-gitlab-disclosure) {
+  margin-inline: 0;
+}
+
+.settings-content .settings-section-heading {
+  padding-inline: 0;
+  color: var(--text);
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.settings-content h4.settings-section-heading {
+  font-size: 0.95rem;
+  margin-bottom: var(--space-md);
+}
+
+.settings-content h5.settings-section-heading {
+  font-size: 0.82rem;
+}
+
+.settings-content .form-group {
+  padding-inline: 0;
+  margin-top: var(--space-md);
+}
+
+.settings-content .form-group label:not(.checkbox-label) {
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.settings-content .checkbox-label {
+  min-height: 32px;
+  line-height: 1.35;
+}
+
+.settings-content .form-group :is(input:not([type="checkbox"]), select, textarea),
+.settings-content :is(.input, .select, .form-input) {
+  min-height: 38px;
+  box-sizing: border-box;
+}
+
+.settings-content :is(.form-group small, .settings-description, .settings-section-description) {
+  max-width: 78ch;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
 .settings-nav-item:hover {
   background: var(--bg);
   color: var(--text);
@@ -860,6 +944,86 @@ The Advanced settings preference is a navigation-level disclosure, so keep it vi
   padding: var(--space-md) var(--space-xl) var(--space-lg);
   scrollbar-color: var(--border) transparent;
   scrollbar-width: thin;
+}
+
+/*
+FNXC:SettingsSimplification 2026-07-11-00:04:
+Basic Settings mode also removes low-frequency controls inside otherwise common sections. Keep the fields mounted so toggling Advanced settings never discards unsaved edits, but remove them from layout and accessibility navigation until the browser-local disclosure is enabled.
+*/
+.settings-content[data-show-advanced="false"] :is(
+  .form-group:has(#globalGitlabApiBaseUrl),
+  .form-group:has(#persistAgentToolOutput),
+  .form-group:has(#persistAgentThinkingLogPermanent),
+  .form-group:has(#fnBinaryCheckEnabled),
+  .form-group:has(#updateCheckFrequency),
+  .form-group:has(#autoReloadOnVersionChange),
+  .form-group:has(#taskDetailChatFirst),
+  .form-group:has(#sessionBannersHidden),
+  .form-group:has(#failureNotificationDelayMs),
+  .form-group:has(#webhookFormat),
+  .form-group:has(#allowAbsoluteFileBrowserPaths),
+  .form-group:has(#operationalLogRetentionDays),
+  .form-group:has(#chatRoomRecentVerbatimMessages),
+  .form-group:has(#chatRoomCompactionFetchLimit),
+  .form-group:has(#chatRoomSummaryMaxChars),
+  .form-group:has(#capacityRiskTodoThresholdGeneral),
+  .form-group:has(#githubTrackingDedupEnabled),
+  .form-group:has(#gitlabApiBaseUrl),
+  .form-group:has(#worktreeInitCommand),
+  .form-group:has(#recycleWorktrees),
+  .form-group:has(#showWorktreeGrouping),
+  .form-group:has(#worktree-copy-files-list),
+  .form-group:has(#executorAllowSiblingBranchRename),
+  .form-group:has(#worktreeNaming),
+  .form-group:has(#worktreesDir),
+  .form-group:has(#worktreeRebaseRemote),
+  .form-group:has(#worktreeRebaseLocalBase),
+  .form-group:has(#worktrunkBinaryPath),
+  .form-group:has(#worktrunkOnFailure),
+  .form-group:has(#pollIntervalMs),
+  .form-group:has(#heartbeatScopeDiscipline),
+  .form-group:has(#taskStuckTimeoutMs),
+  .form-group:has(#buildTimeoutMs),
+  .form-group:has(#staleHighFanoutBlockerAgeThresholdMs),
+  .form-group:has(#preserveProgressOnStuckRequeue),
+  .form-group:has(#specStalenessEnabled),
+  .form-group:has(#specStalenessMaxAgeMs),
+  .form-group:has(#autoArchiveDoneAfterMs),
+  .form-group:has(#archiveAgentLogMode),
+  .form-group:has(#autoArchiveDuplicateTasksEnabled),
+  .form-group:has(#maxStuckKills),
+  .form-group:has(#ignoreHiddenOverlapPaths),
+  .form-group:has(.settings-overlap-ignore-row),
+  .form-group:has(#maxAutoMergeRetries),
+  #legacy-automerge-stamp-cleanup-panel,
+  .form-group:has(#mergerMaxReviewPasses),
+  .form-group:has(#mergerAllowDirtyLocalCheckoutSync),
+  .form-group:has(#testMode),
+  .form-group:has(#directMergeCommitStrategy),
+  .form-group:has(#mergeIntegrationWorktree),
+  .form-group:has(#mergeAdvanceAutoSync),
+  .form-group:has(#commitAuthorEnabled),
+  .form-group:has(#commitAuthorName),
+  .form-group:has(#commitAuthorEmail),
+  .form-group:has(#autoResolveConflicts),
+  .form-group:has(#smartConflictResolution),
+  .form-group:has(#mergeConflictStrategy),
+  .form-group:has(#mergeStrategyOverlapBehavior),
+  .form-group:has(#postMergeAuditMode),
+  .form-group:has(#pushAfterMerge),
+  .form-group:has(#pushRemote),
+  .form-group:has(#project-model-lane-title-summarizer-fallback),
+  .form-group:has(#autoSelectModelPreset),
+  .form-group:has(#autoSummarizeTitles),
+  .form-group:has(#useAiMergeCommitSummary),
+  .form-group:has(#prTitlePromptInstructions),
+  .form-group:has(#prDescriptionPromptInstructions),
+  .model-pricing-section,
+  details:has(#openrouterAppAttributionReferer),
+  .form-group:has(#openrouterModelSync),
+  .form-group:has(#opencodeGoModelSync)
+) {
+  display: none;
 }
 
 .settings-content::-webkit-scrollbar {
@@ -2424,7 +2588,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
-    padding: var(--space-sm) var(--space-sm) var(--space-md);
+    padding: var(--space-md) var(--space-md) var(--space-lg);
   }
 
   .settings-content .form-group small {
@@ -2439,7 +2603,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-section-heading {
-    padding: var(--space-md) var(--space-sm) var(--space-sm);
+    padding: var(--space-md) 0 var(--space-sm);
     margin: 0 0 var(--space-sm);
   }
 
@@ -2460,7 +2624,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .form-group {
-    padding: 0 var(--space-sm);
+    padding: 0;
   }
 
   .settings-scope-banner {
@@ -2492,7 +2656,7 @@ The header row wraps so the badge drops below the heading on narrow widths inste
   }
 
   .settings-description {
-    padding: 0 var(--space-sm);
+    padding: 0;
   }
 
   .settings-empty-state {

@@ -3895,7 +3895,11 @@ export function SettingsModal({
                 )}
               </nav>
             </aside>
-            <div className="settings-content" ref={settingsContentRef}>
+            <div
+              className="settings-content"
+              ref={settingsContentRef}
+              data-show-advanced={showAdvancedSettings ? "true" : "false"}
+            >
               {hasSettingsSearchResults ? renderSectionFields() : (
                 <div className="settings-empty-state settings-search-content-empty" role="status">
                   <p>{t("settings.search.noResults", "No settings sections match \"{{query}}\".", { query: settingsSearchQuery.trim() })}</p>
