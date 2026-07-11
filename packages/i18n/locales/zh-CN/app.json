@@ -2282,7 +2282,9 @@
     "closeLightbox": "Close artifact preview",
     "expandArtifact": "Expand {{title}}",
     "expandArtifactHint": "Click to expand",
-    "lightboxLabel": "Artifact media preview"
+    "lightboxLabel": "Artifact media preview",
+    "readOnly": "",
+    "readOnlyHint": ""
   },
   "droidCli": {
     "active": "活跃",
@@ -3423,6 +3425,7 @@
     "dreamProcessingFailed": "运行梦境处理失败",
     "dreamsEnabledHint": "将每日笔记转换为 DREAMS.md，并将可复用的经验提升到 MEMORY.md。",
     "dreamsEnabledLabel": "从每日记忆中处理梦境",
+    "dreamsEnabledTooltip": "每日笔记会被提炼到 DREAMS.md，可复用的经验会被提升到 MEMORY.md。",
     "dreamsScheduleHint": "梦境处理的 Cron 表达式。",
     "dreamsScheduleLabel": "梦境计划",
     "editorDefaultDescription": "编辑所选记忆文件。",

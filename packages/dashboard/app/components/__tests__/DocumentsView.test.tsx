@@ -567,6 +567,24 @@ describe("DocumentsView", () => {
     expect(await screen.findByText(/Hello docs/)).toBeInTheDocument();
   });
 
+  /*
+  FNXC:ArtifactsView 2026-07-10-16:20:
+  First-run review: the preview pane did not communicate that it is view-only. The Read-only
+  badge must render with the preview header in BOTH render modes (plain and markdown) — the
+  header markup is shared between desktop and mobile layouts.
+  */
+  it("shows a Read-only badge in the project file preview header in plain and markdown modes", async () => {
+    render(<DocumentsView addToast={addToast} onOpenDetail={onOpenDetail} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open README.md" }));
+    await screen.findByText(/Hello docs/);
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /switch to markdown/i }));
+    await screen.findByText("Hello docs");
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
+  });
+
   it("sends selected plain project file preview text to a new task description", async () => {
     mockSelectionRect();
     const onSendSelectionToTask = vi.fn();

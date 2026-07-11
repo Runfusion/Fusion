@@ -2282,7 +2282,9 @@
     "closeLightbox": "Close artifact preview",
     "expandArtifact": "Expand {{title}}",
     "expandArtifactHint": "Click to expand",
-    "lightboxLabel": "Artifact media preview"
+    "lightboxLabel": "Artifact media preview",
+    "readOnly": "",
+    "readOnlyHint": ""
   },
   "droidCli": {
     "active": "Activo",
@@ -3423,6 +3425,7 @@
     "dreamProcessingFailed": "Error al ejecutar el procesamiento de sueños",
     "dreamsEnabledHint": "Convierte las notas diarias en DREAMS.md y promueve las lecciones reutilizables en MEMORY.md.",
     "dreamsEnabledLabel": "Procesar sueños desde la memoria diaria",
+    "dreamsEnabledTooltip": "Las notas diarias se destilan en DREAMS.md y las lecciones reutilizables se promueven a MEMORY.md.",
     "dreamsScheduleHint": "Expresión cron para el procesamiento de sueños.",
     "dreamsScheduleLabel": "Programación de sueños",
     "editorDefaultDescription": "Edita el archivo de memoria seleccionado.",

@@ -1727,6 +1727,16 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               touchButtonRef.current = null;
             }}
           >
+            {/*
+            FNXC:BoardComposer 2026-07-10-12:00:
+            First-run review flagged the quick-add composer as disorganized: chips wrapped into four
+            arbitrary-looking rows with Save buried mid-row. Reorganize into two logical clusters inside
+            the single wrapping action row: an options group (workflow, priority, optional steps, subtask,
+            deps, models, node, agent, GitHub tracking) and a right-aligned primary group (attach, Fast,
+            Save) so the primary Save action always reads last/right. All triggers, popovers, and test ids
+            are unchanged — this is a layout/organization pass only.
+            */}
+            <div className="quick-entry-options-group" data-testid="quick-entry-options-group">
             {showWorkflowSelector && (
               <div className="quick-entry-workflow-wrap" ref={workflowPickerRef}>
                 <button
@@ -1826,62 +1836,6 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
                 )}
               </div>
             )}
-
-            <button
-              type="button"
-              className="btn btn-task-create btn-sm"
-              onClick={handleSaveClick}
-              onMouseDown={(e) => e.preventDefault()}
-              disabled={!description.trim() || isSubmitting}
-              data-testid="quick-entry-save"
-              title={t("tasks.createTaskTitle", "Create task")}
-            >
-              <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
-              {t("tasks.save", "Save")}
-            </button>
-
-            {/* FNXC:QuickAddAttachments 2026-06-30-00:00: Keep the Quick Add attachment affordance immediately to the right of Save while preserving the icon-only label, hidden file input trigger, and pending-count badge. */}
-            <button
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              className="btn btn-icon btn-sm quick-entry-attach-button"
-              data-testid="quick-entry-attach"
-              onClick={() => fileInputRef.current?.click()}
-              aria-label={attachLabel}
-              title={attachLabel}
-            >
-              <Paperclip size={12} aria-hidden="true" />
-              {pendingImages.length > 0 && (
-                <span className="quick-entry-attach-count" aria-hidden="true">{pendingImages.length}</span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              className={`btn btn-sm ${isFastMode ? "btn-primary" : ""}`}
-              onClick={toggleFastMode}
-              onMouseDown={(e) => e.preventDefault()}
-              aria-pressed={isFastMode}
-              data-testid="quick-entry-fast-toggle"
-              title={t("tasks.toggleFastMode", "Toggle fast execution mode")}
-            >
-              {t("tasks.fast", "Fast")}
-            </button>
-
-            <button
-              type="button"
-              className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
-              onClick={() => {
-                setGithubTrackingOverride((prev) => !(prev ?? projectGithubTrackingDefault));
-              }}
-              onMouseDown={(e) => e.preventDefault()}
-              aria-pressed={effectiveGithubTracking}
-              data-testid="quick-entry-github-toggle"
-              title={githubToggleLabel}
-              aria-label={githubToggleLabel}
-            >
-              <ProviderIcon provider="github" size="sm" />
-            </button>
 
             <div className="priority-trigger-wrap" ref={priorityPickerRef}>
               <button
@@ -2259,6 +2213,72 @@ export function QuickEntryBox({ onCreate, addToast, tasks = [], availableModels,
               portalRoot,
             )}
 
+            <button
+              type="button"
+              className={`btn btn-sm ${effectiveGithubTracking ? "btn-primary" : ""}`}
+              onClick={() => {
+                setGithubTrackingOverride((prev) => !(prev ?? projectGithubTrackingDefault));
+              }}
+              onMouseDown={(e) => e.preventDefault()}
+              aria-pressed={effectiveGithubTracking}
+              data-testid="quick-entry-github-toggle"
+              title={githubToggleLabel}
+              aria-label={githubToggleLabel}
+            >
+              <ProviderIcon provider="github" size="sm" />
+            </button>
+            </div>
+
+            {/*
+            FNXC:BoardComposer 2026-07-10-12:00:
+            Primary action cluster: attach + Fast sit directly beside Save, and Save is the LAST control in
+            DOM order so it is right-aligned (margin-left auto on the cluster) and reads as the composer's
+            primary action. Save keeps its distinct `btn-task-create` styling.
+            FNXC:QuickAddAttachments 2026-06-30-00:00 (relocated 2026-07-10): the attachment affordance
+            stays adjacent to Save (now immediately to its LEFT) preserving the icon-only label, hidden
+            file input trigger, and pending-count badge.
+            */}
+            <div className="quick-entry-primary-group" data-testid="quick-entry-primary-group">
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                className="btn btn-icon btn-sm quick-entry-attach-button"
+                data-testid="quick-entry-attach"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label={attachLabel}
+                title={attachLabel}
+              >
+                <Paperclip size={12} aria-hidden="true" />
+                {pendingImages.length > 0 && (
+                  <span className="quick-entry-attach-count" aria-hidden="true">{pendingImages.length}</span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                className={`btn btn-sm ${isFastMode ? "btn-primary" : ""}`}
+                onClick={toggleFastMode}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-pressed={isFastMode}
+                data-testid="quick-entry-fast-toggle"
+                title={t("tasks.toggleFastMode", "Toggle fast execution mode")}
+              >
+                {t("tasks.fast", "Fast")}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-task-create btn-sm"
+                onClick={handleSaveClick}
+                onMouseDown={(e) => e.preventDefault()}
+                disabled={!description.trim() || isSubmitting}
+                data-testid="quick-entry-save"
+                title={t("tasks.createTaskTitle", "Create task")}
+              >
+                <Save size={12} style={{ verticalAlign: "middle", marginRight: 4 }} />
+                {t("tasks.save", "Save")}
+              </button>
+            </div>
           </div>
         )}
 

@@ -450,11 +450,17 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
                     <label>{selectedMemoryFile?.label || t("memory.editorLabel", "Memory Editor")}</label>
                     <small>{selectedLayerDescription}</small>
                     <div className="memory-editor-container">
+                      {/*
+                      FNXC:MemoryView 2026-07-10-14:30:
+                      First-run review: the FileEditor's collapsed toolbar rendered as an unlabeled empty bar with only a chevron above the editor, and a user asked "what is this button?".
+                      Force the toolbar actions (Edit/Preview/Wrap) to stay visible so the toolbar always shows labeled controls instead of a mystery chevron-only bar.
+                      */}
                       <FileEditor
                         content={selectedFileContent}
                         onChange={setSelectedFileContent}
                         readOnly={!isWritable}
                         filePath={selectedFilePath}
+                        forceToolbarActionsVisible
                         onSendSelectionToTask={onSendSelectionToTask}
                       />
                     </div>
@@ -501,9 +507,19 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
                 </div>
 
                 <div className="memory-config-section">
+                  {/*
+                  FNXC:MemoryView 2026-07-10-14:30:
+                  First-run review: the two automation checkbox rows ("Process dreams from daily memory" / "Auto-Summarize Memory") had inconsistent checkbox/label/hint alignment and mixed casing (sentence case vs Title Case).
+                  Both rows now share the .memory-toggle-row layout (hint indented under the label text, aligned past the checkbox) and use sentence-case labels.
+                  The dreams row also carries a hover tooltip (title attr) explaining the pipeline: daily notes are distilled into DREAMS.md and reusable lessons are promoted into MEMORY.md.
+                  */}
                   <div className="memory-settings-group">
-                    <div className="form-group">
-                      <label htmlFor="memoryDreamsEnabled" className="checkbox-label">
+                    <div className="form-group memory-toggle-row">
+                      <label
+                        htmlFor="memoryDreamsEnabled"
+                        className="checkbox-label"
+                        title={t("memory.dreamsEnabledTooltip", "Daily notes are distilled into DREAMS.md and reusable lessons are promoted into MEMORY.md.")}
+                      >
                         <input
                           id="memoryDreamsEnabled"
                           type="checkbox"
@@ -564,7 +580,7 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
                   </div>
 
                   <div className="memory-settings-group">
-                    <div className="form-group">
+                    <div className="form-group memory-toggle-row">
                       <label htmlFor="memoryAutoSummarizeEnabled" className="checkbox-label">
                         <input
                           id="memoryAutoSummarizeEnabled"
@@ -578,9 +594,9 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
                           }}
                           disabled={!memorySettingsDraft.memoryEnabled || settingsLoading}
                         />
-                        {t("memory.autoSummarizeLabel", "Auto-Summarize Memory")}
+                        {t("memory.autoSummarizeLabel", "Auto-summarize memory")}
                       </label>
-                      <small>{t("memory.autoSummarizeHint", "Automatically compact memory when it exceeds the threshold on a schedule")}</small>
+                      <small>{t("memory.autoSummarizeHint", "Automatically compacts memory when it exceeds the threshold on a schedule.")}</small>
                     </div>
 
                     {memorySettingsDraft.memoryEnabled && memorySettingsDraft.memoryAutoSummarizeEnabled && (
@@ -668,11 +684,16 @@ export function MemoryView({ projectId, addToast, onSendSelectionToTask }: Memor
               // Raw editor mode
               <div className="memory-insights-editor-layout">
                 <div className="memory-editor-container">
+                  {/*
+                  FNXC:MemoryView 2026-07-10-14:30:
+                  Same as the working-memory editor: keep toolbar actions visible so no unlabeled chevron-only bar renders above the raw insights editor.
+                  */}
                   <FileEditor
                     content={insightsEditorContent ?? ""}
                     onChange={setInsightsEditorContent}
                     readOnly={false}
                     filePath=".fusion/memory/INSIGHTS.md"
+                    forceToolbarActionsVisible
                     onSendSelectionToTask={onSendSelectionToTask}
                   />
                 </div>

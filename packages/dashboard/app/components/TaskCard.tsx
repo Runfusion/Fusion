@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { memo, useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo, type CSSProperties, type ReactElement } from "react";
 import { createPortal } from "react-dom";
-import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye } from "lucide-react";
+import { Link, Clock, Layers, Pencil, ChevronDown, Folder, Target, Bot, Trash2, RotateCw, Zap, GitBranch, GitPullRequest, AlertTriangle, ArrowUpRight, Eye, MoreHorizontal } from "lucide-react";
 import type { Task, TaskDetail, Column, ColumnId, PrInfo, IssueInfo, TaskPriority, GithubIssueAction, MergeResult, PlannerOversightLevel } from "@fusion/core";
 import {
   DEFAULT_PLANNER_OVERSIGHT_LEVEL,
@@ -915,6 +915,13 @@ function TaskCardComponent({
   const touchOpenHandledRef = useRef(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  /*
+  FNXC:TaskCardMenu 2026-07-10-12:00:
+  Ref for the visible card actions (⋯) button, so the context-menu outside-pointerdown closer can
+  ignore presses on the button itself — otherwise pointerdown would close the menu and the following
+  click would immediately reopen it, breaking the toggle affordance.
+  */
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const sendBackRef = useRef<HTMLDivElement>(null);
   const [isInViewport, setIsInViewport] = useState(false);
   const { badgeUpdates, subscribeToBadge, unsubscribeFromBadge } = useBadgeWebSocket(projectId);
@@ -2443,6 +2450,26 @@ function TaskCardComponent({
   }, [clearLongPressTimer]);
 
   /*
+  FNXC:TaskCardMenu 2026-07-10-12:00:
+  First-run review: the card's Edit/Delete/Review/New chat/Interventions actions were ONLY reachable
+  via right-click (or touch long-press), which the user never discovered. Add a visible ⋯ button that
+  opens the SAME portaled TaskContextMenu (same `contextMenuActions` model — no duplicated item
+  logic), anchored under the button. Toggles closed when the menu is already open. Rendered only when
+  `hasContextMenuActions` so no empty button shell appears on handler-less surfaces (e.g. read-only
+  docks). Hover-revealed on desktop, always visible on mobile/touch (see TaskCard.css).
+  */
+  const handleMenuButtonClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (contextMenuPosition) {
+      closeContextMenu();
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    suppressNextCardClickRef.current = true;
+    openContextMenuAt(rect.left, rect.bottom + MENU_BUTTON_MENU_GAP);
+  }, [closeContextMenu, contextMenuPosition, openContextMenuAt]);
+
+  /*
   FNXC:TaskContextMenu 2026-07-01-00:00:
   Board columns intentionally clip and scroll their bodies, so card context menus must be portaled to document.body and positioned in viewport coordinates. Clamp after render using the measured menu size so right-click, keyboard, and long-press menus escape column borders without weakening board overflow containment.
   */
@@ -2464,6 +2491,9 @@ function TaskCardComponent({
     if (!contextMenuPosition) return;
     const handleDocumentPointerDown = (event: PointerEvent) => {
       if (contextMenuRef.current?.contains(event.target as Node)) return;
+      // FNXC:TaskCardMenu 2026-07-10-12:00: let the ⋯ button's own click handler toggle the menu closed
+      // instead of racing it shut on pointerdown (see menuButtonRef comment above).
+      if (menuButtonRef.current?.contains(event.target as Node)) return;
       closeContextMenu();
     };
     const handleDocumentKeyDown = (event: KeyboardEvent) => {
@@ -3119,6 +3149,29 @@ function TaskCardComponent({
               {task.size}
             </span>
           )}
+          {/*
+          FNXC:TaskCardMenu 2026-07-10-12:00:
+          Visible entry point for the card's action menu (Edit/Delete/Review/New chat/Interventions…)
+          — previously right-click/long-press only and therefore undiscoverable. Opens the same
+          portaled TaskContextMenu anchored at this button. Only rendered when the menu has actions
+          (no empty shell); applies on every surface that renders TaskCard (Board columns, worktree
+          groups, dock task lists).
+          */}
+          {hasContextMenuActions && (
+            <button
+              ref={menuButtonRef}
+              type="button"
+              className="card-menu-btn"
+              onClick={handleMenuButtonClick}
+              title={t("tasks.taskActions", "Task actions")}
+              aria-label={t("tasks.taskActions", "Task actions")}
+              aria-haspopup="menu"
+              aria-expanded={contextMenuPosition != null}
+              data-testid={`card-menu-btn-${task.id}`}
+            >
+              <MoreHorizontal size={14} />
+            </button>
+          )}
         </div>
       </div>
       {showStalledReview && stalledReview && (
@@ -3590,6 +3643,8 @@ const TOUCH_TAP_MAX_DURATION = 300; // milliseconds
 const TOUCH_CONTEXT_MENU_DELAY_MS = 550; // milliseconds
 const CONTEXT_MENU_VIEWPORT_MARGIN = 8;
 const KEYBOARD_CONTEXT_MENU_OFFSET = 32;
+// FNXC:TaskCardMenu 2026-07-10-12:00: vertical gap between the ⋯ button and the menu it anchors.
+const MENU_BUTTON_MENU_GAP = 4;
 const MAX_TITLE_LENGTH = 140;
 
 function truncate(s: string | undefined, max: number): string {

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SelectionCommentPopover, composeSelectionCommentDescription } from "../SelectionCommentPopover";
@@ -63,6 +65,72 @@ describe("SelectionCommentPopover", () => {
     expect(onOpenChange).toHaveBeenCalledWith(true);
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
     expect(screen.getByRole("button", { name: /add a comment/i })).toBeInTheDocument();
+  });
+
+  /*
+  FNXC:ArtifactsView 2026-07-10-16:20:
+  Regression guard for the "Add comment does nothing" bug: the trigger is positioned solely
+  by its transform translate, and the global `.btn:active { transform: scale(0.97) }` press
+  feedback replaced it while pressed, moving the button out from under the cursor so `click`
+  never fired. jsdom cannot reproduce hit-testing, so this invariant is asserted on the CSS:
+  every `.selection-comment-trigger` transform rule — base AND :active, desktop AND mobile —
+  must include the `translate(-50%` positioning component. The popover is shared by
+  DocumentsView (plain + markdown preview) and FileEditor (editor + preview), so this one
+  stylesheet invariant covers all surfaces.
+  */
+  it("keeps the positioning translate in every trigger transform, including :active press state", () => {
+    const css = readFileSync(join(__dirname, "..", "SelectionCommentPopover.css"), "utf8");
+    const uncommented = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    // Collect the declaration block of every rule whose selector list targets the trigger.
+    const triggerBlocks: Array<{ selector: string; block: string }> = [];
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    for (const match of uncommented.matchAll(rulePattern)) {
+      const selector = match[1].trim();
+      if (selector.split(",").some((part) => part.trim().startsWith(".selection-comment-trigger"))) {
+        triggerBlocks.push({ selector, block: match[2] });
+      }
+    }
+
+    const transformBlocks = triggerBlocks.filter(({ block }) => /transform\s*:/.test(block));
+    // Base + :active on desktop, base + :active in the mobile media query.
+    expect(transformBlocks.length).toBeGreaterThanOrEqual(4);
+
+    for (const { selector, block } of transformBlocks) {
+      expect(block, `trigger transform for "${selector}" must keep the positioning translate`).toContain("translate(-50%");
+    }
+
+    const activeBlocks = transformBlocks.filter(({ selector }) => selector.includes(":active"));
+    expect(activeBlocks.length, "both desktop and mobile need an :active override that restates the translate").toBeGreaterThanOrEqual(2);
+  });
+
+  /*
+  FNXC:ArtifactsView 2026-07-10-18:20:
+  Regression guard for the composer-panel drift: the panel carries the shared `.card` class, and
+  `.card { position: relative }` loads after this stylesheet, so a bare `.selection-comment-panel`
+  rule lost `position: fixed` to bundle order and the panel rendered clipped at the viewport's
+  bottom-right, far from the selection. The fixed positioning must live on a selector that
+  out-specifies `.card` regardless of order, and the panel's `left` must be a width-aware clamp so
+  a selection near a viewport edge cannot push half the panel off-screen.
+  */
+  it("keeps the composer panel fixed-positioned over .card and clamps it inside the viewport", () => {
+    const css = readFileSync(join(__dirname, "..", "SelectionCommentPopover.css"), "utf8");
+    const uncommented = css.replace(/\/\*[\s\S]*?\*\//g, "");
+
+    const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+    const blocks = [...uncommented.matchAll(rulePattern)].map((m) => ({ selector: m[1].trim(), block: m[2] }));
+
+    const fixedOverCard = blocks.find(({ selector, block }) =>
+      selector.split(",").some((part) => {
+        const s = part.trim();
+        return s.includes(".selection-comment-panel") && s.includes(".card");
+      }) && /position\s*:\s*fixed/.test(block));
+    expect(fixedOverCard, "a .selection-comment-panel selector compounded with .card must restate position: fixed").toBeTruthy();
+
+    const panelBlocks = blocks.filter(({ selector }) => selector.split(",").some((p) => p.trim() === ".selection-comment-panel"));
+    const clampBlock = panelBlocks.find(({ block }) => /left\s*:\s*clamp\(/.test(block));
+    expect(clampBlock, "panel must declare a width-aware left clamp").toBeTruthy();
+    expect(clampBlock!.block, "left clamp must account for half the panel width").toContain("--scp-width) / 2");
   });
 
   it("uses a longer markdown fence when the snippet contains backticks", () => {

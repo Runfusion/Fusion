@@ -318,6 +318,19 @@ Artifacts controls are the first page content below the shared header, so add a 
   flex: 1;
 }
 
+/*
+FNXC:ArtifactsView 2026-07-10-16:10:
+Subtle view-only indicator for the project-file preview header; muted so it informs without competing with the Plain/Markdown toggle. Shared markup serves desktop and mobile.
+*/
+.documents-readonly-badge {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
 .documents-content-viewer-text {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

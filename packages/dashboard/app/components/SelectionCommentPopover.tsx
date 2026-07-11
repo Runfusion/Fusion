@@ -87,7 +87,14 @@ export function SelectionCommentPopover({
 
   useEffect(() => {
     if (!expanded) return;
-    textareaRef.current?.focus();
+    /*
+    FNXC:ArtifactsView 2026-07-10-18:20:
+    The panel is position:fixed, so the default focus scroll-into-view is meaningless for it — but
+    the browser still scrolled the underlying preview pane, yanking the selected content out of
+    view the moment the composer opened. preventScroll keeps the pane exactly where the user
+    selected the text.
+    */
+    textareaRef.current?.focus({ preventScroll: true });
   }, [expanded]);
 
   const setPanelExpanded = useCallback((open: boolean) => {
