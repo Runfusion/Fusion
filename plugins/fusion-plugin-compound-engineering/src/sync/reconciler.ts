@@ -1,5 +1,5 @@
 import type { PluginContext, Task } from "@fusion/core";
-import { listStages } from "../session/stage-registry.js";
+import { listPipelineStages } from "../session/stage-registry.js";
 import { createCeTaskWithLink } from "./ce-task.js";
 import {
   getCePipelineStore,
@@ -57,12 +57,11 @@ export interface ReconcileResult {
 
 /**
  * The linear CE stage order. The pipeline advances along this sequence.
- * `listStages()` is sorted by each stage's explicit `order` ordinal (NOT Map
- * insertion order), so a stage registered out of order — or inserted mid-
- * pipeline later — slots into the correct position here.
+ * Manual utility stages are excluded; remaining stages are sorted by explicit
+ * `order`, so runtime stages inserted mid-pipeline slot into the right place.
  */
 function stageOrder(): string[] {
-  return listStages().map((s) => s.stageId);
+  return listPipelineStages().map((s) => s.stageId);
 }
 
 /** The stage AFTER `stageId` in the pipeline, or `undefined` if it's terminal. */

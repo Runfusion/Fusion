@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Trash2 } from "lucide-react";
 import type { PlanningQuestion } from "@fusion/core";
 import type { CeActivityTurn, CeConversationTurn, CeSession } from "../session/session-store.js";
+import { getStage } from "../session/stage-registry.js";
 import { canRenderRichly } from "./ce-question-support.js";
 
 /**
@@ -38,6 +39,27 @@ export interface CeFlowProps {
   onCancel?: () => void;
   /** Back to the launcher. */
   onClose?: () => void;
+  /** Open the completed stage artifact. */
+  onOpenArtifact?: (artifactPath: string) => void;
+  /** Pipeline stage available after this session. Debug is intentionally manual-only. */
+  nextStageId?: string;
+  /** Start the next pipeline stage. */
+  onStartNextStage?: (stageId: string) => void;
+}
+
+/*
+FNXC:CompoundEngineeringFlow 2026-07-10-22:51:
+The active flow uses registry labels, explicit choice confirmation, secondary optional guidance, accessible async status announcements, and hierarchical recovery/completion actions. Debug remains a manual investigation and must never appear as automatic next-stage progression.
+*/
+
+function humanizeIdentifier(value: string): string {
+  return value
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function stageLabel(stageId: string): string {
+  return getStage(stageId)?.label ?? humanizeIdentifier(stageId);
 }
 
 // ── Transcript parsing ───────────────────────────────────────────────────────
@@ -270,6 +292,7 @@ function RichQuestion({
   onAnswer: (questionId: string, response: unknown) => void;
 }) {
   const [text, setText] = useState("");
+  const [single, setSingle] = useState<string | null>(null);
   const [multi, setMulti] = useState<string[]>([]);
 
   const submit = (response: unknown) => onAnswer(question.id, response);
@@ -326,22 +349,36 @@ function RichQuestion({
       ) : null}
 
       {question.type === "single_select" ? (
-        <ul className="ce-flow-options" data-testid="ce-flow-single">
-          {(question.options ?? []).map((opt) => (
-            <li key={opt.id}>
-              <button
-                type="button"
-                className="ce-flow-option btn"
-                data-option={opt.id}
-                disabled={disabled}
-                onClick={() => submit(opt.id)}
-              >
-                <span className="ce-flow-option-label">{opt.label}</span>
-                {opt.description ? <span className="ce-flow-option-desc">{opt.description}</span> : null}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="ce-flow-choice-group" data-testid="ce-flow-single">
+          <ul className="ce-flow-options" aria-label={question.question}>
+            {(question.options ?? []).map((opt) => (
+              <li key={opt.id}>
+                <button
+                  type="button"
+                  className={`ce-flow-option btn${single === opt.id ? " is-selected" : ""}`}
+                  data-option={opt.id}
+                  disabled={disabled}
+                  aria-pressed={single === opt.id}
+                  onClick={() => setSingle(opt.id)}
+                >
+                  <span className="ce-flow-option-label">{opt.label}</span>
+                  {opt.description ? <span className="ce-flow-option-desc">{opt.description}</span> : null}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            className="btn btn-primary ce-flow-choice-submit"
+            data-testid="ce-flow-single-submit"
+            disabled={disabled || single === null}
+            onClick={() => {
+              if (single !== null) submit(single);
+            }}
+          >
+            Confirm choice
+          </button>
+        </div>
       ) : null}
 
       {question.type === "multi_select" ? (
@@ -350,7 +387,7 @@ function RichQuestion({
           data-testid="ce-flow-multi"
           onSubmit={(e) => {
             e.preventDefault();
-            submit(multi);
+            if (multi.length > 0) submit(multi);
           }}
         >
           <ul>
@@ -377,7 +414,12 @@ function RichQuestion({
               );
             })}
           </ul>
-          <button type="submit" className="btn btn-primary" data-testid="ce-flow-multi-submit" disabled={disabled}>
+          <button
+            type="submit"
+            className="btn btn-primary ce-flow-choice-submit"
+            data-testid="ce-flow-multi-submit"
+            disabled={disabled || multi.length === 0}
+          >
             Confirm selection
           </button>
         </form>
@@ -483,9 +525,10 @@ function QuestionPanel({
         <DegradedQuestion question={question} disabled={disabled} onAnswer={onAnswer} />
       )}
       {showGuidance ? (
-        <div className="ce-flow-guidance" data-testid="ce-flow-guidance">
+        <details className="ce-flow-guidance ce-flow-progressive-disclosure" data-testid="ce-flow-guidance">
+          <summary className="ce-flow-guidance-summary">Add guidance (optional)</summary>
           <label className="ce-flow-guidance-label" htmlFor="ce-flow-guidance-input">
-            Steer in your own words (optional — attached to your answer, or sent on its own)
+            Attach context to your answer, or send guidance on its own
           </label>
           <div className="ce-flow-guidance-row">
             <textarea
@@ -508,7 +551,7 @@ function QuestionPanel({
               Send guidance
             </button>
           </div>
-        </div>
+        </details>
       ) : null}
     </div>
   );
@@ -517,7 +560,18 @@ function QuestionPanel({
 // ── Flow surface ─────────────────────────────────────────────────────────────
 
 export function CeFlow(props: CeFlowProps) {
-  const { session, busy, error, onAnswer, onResume, onCancel, onClose } = props;
+  const {
+    session,
+    busy,
+    error,
+    onAnswer,
+    onResume,
+    onCancel,
+    onClose,
+    onOpenArtifact,
+    nextStageId,
+    onStartNextStage,
+  } = props;
 
   const question = session?.currentQuestion ?? undefined;
 
@@ -539,13 +593,15 @@ export function CeFlow(props: CeFlowProps) {
   const recoverable = status === "interrupted" || status === "error";
   const cancellable = status === "launching" || status === "active" || status === "awaiting_input";
   const working = status === "active" || status === "launching";
+  const currentStageLabel = stageLabel(session.stage);
+  const automaticNextStageId = nextStageId && nextStageId !== "debug" && session.stage !== "debug" ? nextStageId : undefined;
 
   return (
     <div className="ce-flow card" data-testid="ce-flow" data-status={status} data-stage={session.stage}>
       <header className="ce-flow-header">
-        <h3>{session.stage}</h3>
-        <span className="ce-flow-status" data-testid="ce-flow-status">
-          {status.replace("_", " ")}
+        <h3>{currentStageLabel}</h3>
+        <span className="ce-flow-status" data-testid="ce-flow-status" role="status" aria-live="polite" aria-atomic="true">
+          {humanizeIdentifier(status)}
         </span>
         {onCancel && cancellable ? (
           <button
@@ -570,7 +626,7 @@ export function CeFlow(props: CeFlowProps) {
       <Transcript history={session.conversationHistory} />
 
       {working || (busy && status !== "awaiting_input") ? (
-        <div className="ce-flow-working" data-testid="ce-flow-thinking">
+        <div className="ce-flow-working" data-testid="ce-flow-thinking" role="status" aria-live="polite" aria-atomic="false">
           <p className="ce-flow-working-label">
             <span className="ce-flow-pulse" aria-hidden="true" />
             Agent working…
@@ -588,11 +644,11 @@ export function CeFlow(props: CeFlowProps) {
       ) : null}
 
       {status === "awaiting_input" && question ? (
-        <QuestionPanel question={question} disabled={Boolean(busy)} onAnswer={onAnswer} />
+        <QuestionPanel key={question.id} question={question} disabled={Boolean(busy)} onAnswer={onAnswer} />
       ) : null}
 
       {recoverable ? (
-        <div className="ce-flow-recover" data-testid="ce-flow-recover">
+        <div className="ce-flow-recover ce-flow-action-state" data-testid="ce-flow-recover">
           <p className="ce-flow-error" role="alert">
             Session {status}{session.error ? `: ${session.error}` : ""}.
           </p>
@@ -605,13 +661,29 @@ export function CeFlow(props: CeFlowProps) {
       ) : null}
 
       {settledTerminal ? (
-        <div className="ce-flow-complete" data-testid="ce-flow-complete">
-          <p>Stage complete.</p>
+        <div className="ce-flow-complete ce-flow-action-state" data-testid="ce-flow-complete" role="status" aria-live="polite">
+          <p>{currentStageLabel} complete.</p>
           {session.artifactPath ? (
             <p className="ce-flow-artifact-path" data-testid="ce-flow-artifact-path">
               Artifact: {session.artifactPath}
             </p>
           ) : null}
+          <div className="ce-flow-complete-actions">
+            {session.artifactPath && onOpenArtifact ? (
+              <button type="button" className="btn" onClick={() => onOpenArtifact(session.artifactPath!)}>
+                Open artifact
+              </button>
+            ) : null}
+            {automaticNextStageId && onStartNextStage ? (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => onStartNextStage(automaticNextStageId)}
+              >
+                Start {stageLabel(automaticNextStageId)}
+              </button>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as realFs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerStage } from "../../session/stage-registry.js";
 
 // Mock node:fs so we can observe/inject behaviour around readFileSync and
 // accessSync without relying on vi.spyOn (ESM namespace exports are not
@@ -44,35 +45,39 @@ describe("discoverArtifacts", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns grouped artifacts from legacy brainstorm and unified plan locations (happy path)", () => {
+  it("returns registry-backed pipeline artifacts plus explicit knowledge collections", () => {
     root = makeRepo();
     writeFileSync(join(root, "STRATEGY.md"), "# Strategy");
     writeFileSync(join(root, "CONCEPTS.md"), "# Concepts");
     mkdirSync(join(root, "docs/ideation"), { recursive: true });
     writeFileSync(join(root, "docs/ideation/a.md"), "ideation a");
     writeFileSync(join(root, "docs/ideation/b.md"), "ideation b");
-    mkdirSync(join(root, "docs/brainstorms"), { recursive: true });
-    writeFileSync(join(root, "docs/brainstorms/x.md"), "brainstorm x");
     mkdirSync(join(root, "docs/plans"), { recursive: true });
     writeFileSync(join(root, "docs/plans/plan1.md"), "plan 1");
+    mkdirSync(join(root, "docs/work"), { recursive: true });
+    writeFileSync(join(root, "docs/work/work.md"), "work");
+    mkdirSync(join(root, "docs/debug"), { recursive: true });
+    writeFileSync(join(root, "docs/debug/debug.md"), "debug");
     mkdirSync(join(root, "docs/solutions"), { recursive: true });
     writeFileSync(join(root, "docs/solutions/sol.md"), "solution");
 
     const result = discoverArtifacts(root);
     const byStage = Object.fromEntries(result.groups.map((g) => [g.stage, g]));
 
-    expect(result.totalArtifacts).toBe(7);
+    expect(result.totalArtifacts).toBe(8);
     expect(result.totalErrors).toBe(0);
     expect(byStage.strategy.entries).toHaveLength(1);
     expect(byStage.concepts.entries).toHaveLength(1);
-    expect(byStage.ideation.entries).toHaveLength(2);
-    expect(byStage.brainstorm.entries).toHaveLength(1);
-    expect(byStage.brainstorm.entries[0]).toMatchObject({ path: "docs/brainstorms/x.md" });
+    expect(byStage.ideate.entries).toHaveLength(2);
     expect(byStage.plan.entries).toHaveLength(1);
     expect(byStage.plan.entries[0]).toMatchObject({ path: "docs/plans/plan1.md" });
+    expect(byStage.plan.label).toBe("Brainstorm / Plan");
+    expect(byStage.work.entries[0]).toMatchObject({ path: "docs/work/work.md" });
+    expect(byStage.debug.entries[0]).toMatchObject({ path: "docs/debug/debug.md" });
     expect(byStage.solution.entries).toHaveLength(1);
     // Every group present is flagged present.
-    expect(byStage.ideation.present).toBe(true);
+    expect(byStage.ideate.present).toBe(true);
+    expect(byStage.brainstorm).toBeUndefined();
     // All entries are artifacts in the happy path.
     expect(result.groups.flatMap((g) => g.entries).every((e) => e.kind === "artifact")).toBe(true);
   });
@@ -107,7 +112,7 @@ describe("discoverArtifacts", () => {
     expect(populated.map((g) => g.stage).sort()).toEqual(["plan", "strategy"]);
     expect(empty.length).toBeGreaterThan(0);
     // Empty groups are still present in the result so the hub can render them.
-    expect(result.groups).toHaveLength(6);
+    expect(result.groups).toHaveLength(7);
   });
 
   it("returns an all-empty result when nothing is present (first-run)", () => {
@@ -118,10 +123,8 @@ describe("discoverArtifacts", () => {
     expect(result.groups.every((g) => g.entries.length === 0 && !g.present)).toBe(true);
   });
 
-  it("classifies unified plan readiness metadata while keeping legacy files valid without frontmatter", () => {
+  it("classifies both readiness states in the single unified plan collection", () => {
     root = makeRepo();
-    mkdirSync(join(root, "docs/brainstorms"), { recursive: true });
-    writeFileSync(join(root, "docs/brainstorms/legacy.md"), "# Legacy brainstorm");
     mkdirSync(join(root, "docs/plans"), { recursive: true });
     writeFileSync(
       join(root, "docs/plans/requirements.md"),
@@ -133,18 +136,10 @@ describe("discoverArtifacts", () => {
     );
 
     const result = discoverArtifacts(root);
-    const brainstorm = result.groups.find((g) => g.stage === "brainstorm")!;
     const plan = result.groups.find((g) => g.stage === "plan")!;
-    const legacy = brainstorm.entries[0];
     const requirementsOnly = plan.entries.find((e) => e.name === "requirements.md");
     const implementationReady = plan.entries.find((e) => e.name === "implementation.md");
 
-    expect(legacy).toMatchObject({
-      kind: "artifact",
-      artifactContract: null,
-      artifactReadiness: null,
-      productContractSource: null,
-    });
     expect(requirementsOnly).toMatchObject({
       kind: "artifact",
       artifactContract: "ce-unified-plan/v1",
@@ -277,6 +272,26 @@ describe("discoverArtifacts", () => {
     writeFileSync(join(root, "secrets.md"), "secret");
 
     expect(readArtifactById(root, "plan:../../secrets.md")).toBeUndefined();
+  });
+
+  it("discovers artifacts for a runtime-registered stage", () => {
+    registerStage({
+      stageId: "publish-check",
+      order: 550,
+      skillId: "ce-publish-check",
+      artifactLocation: "docs/publish-check/",
+      icon: "FileCheck",
+      label: "Publish Check",
+    });
+    root = makeRepo();
+    mkdirSync(join(root, "docs/publish-check"), { recursive: true });
+    writeFileSync(join(root, "docs/publish-check/result.md"), "# Ready");
+
+    const result = discoverArtifacts(root);
+    expect(result.groups.find((group) => group.stage === "publish-check")).toMatchObject({
+      label: "Publish Check",
+      entries: [expect.objectContaining({ path: "docs/publish-check/result.md" })],
+    });
   });
 });
 

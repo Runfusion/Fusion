@@ -14,6 +14,9 @@ const cancelSession = vi.fn(async (_id: string, _projectId?: string): Promise<Ce
 const getSession = vi.fn(async (_id: string, _projectId?: string): Promise<CeSession> => {
   throw new Error("getSession mock not configured");
 });
+const startSession = vi.fn(async (_stage: string, _opts?: unknown): Promise<CeSession> => {
+  throw new Error("startSession mock not configured");
+});
 vi.mock("../hooks/api.js", () => ({
   listArtifacts: (projectId?: string) => listArtifacts(projectId),
   getArtifactPreviewUrl: (id: string) => `/preview/${id}`,
@@ -21,7 +24,7 @@ vi.mock("../hooks/api.js", () => ({
   deleteSession: (id: string, projectId?: string) => deleteSession(id, projectId),
   cancelSession: (id: string, projectId?: string) => cancelSession(id, projectId),
   getSession: (id: string, projectId?: string) => getSession(id, projectId),
-  startSession: vi.fn(),
+  startSession: (stage: string, opts?: unknown) => startSession(stage, opts),
   answerSession: vi.fn(),
   resumeSession: vi.fn(),
 }));
@@ -50,9 +53,10 @@ function mkCeSession(over: Partial<CeSession>): CeSession {
 
 const ALL_STAGES: Array<{ stage: DiscoveryResult["groups"][number]["stage"]; label: string }> = [
   { stage: "strategy", label: "Strategy" },
-  { stage: "ideation", label: "Ideation" },
-  { stage: "brainstorm", label: "Brainstorms" },
-  { stage: "plan", label: "Plans" },
+  { stage: "ideate", label: "Ideate" },
+  { stage: "plan", label: "Brainstorm / Plan" },
+  { stage: "work", label: "Work" },
+  { stage: "debug", label: "Debug" },
   { stage: "solution", label: "Solutions" },
   { stage: "concepts", label: "Concepts" },
 ];
@@ -77,6 +81,7 @@ function makeResult(overrides: Partial<Record<DiscoveryResult["groups"][number][
 
 describe("CompoundEngineeringView", () => {
   beforeEach(() => {
+    window.history.replaceState({}, "", "/");
     __test_clearArtifactsCache();
     listArtifacts.mockReset();
     listSessions.mockReset();
@@ -86,6 +91,7 @@ describe("CompoundEngineeringView", () => {
     cancelSession.mockReset();
     cancelSession.mockImplementation(async (id: string, projectId?: string) => mkCeSession({ id, projectId: projectId ?? null, status: "interrupted", error: "Cancelled by user" }));
     getSession.mockReset();
+    startSession.mockReset();
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -213,6 +219,8 @@ describe("CompoundEngineeringView", () => {
     expect(rows[0].querySelector("[data-testid='ce-session-cancel']")).toBeInTheDocument();
     expect(rows[1].querySelector("[data-testid='ce-session-cancel']")).toBeInTheDocument();
     expect(rows[2].querySelector("[data-testid='ce-session-cancel']")).not.toBeInTheDocument();
+    expect(screen.getByTestId("ce-resume-latest")).toHaveTextContent(/input needed/i);
+    expect(screen.getAllByTestId("ce-pipeline-stage")).toHaveLength(5);
   });
 
   it("renders no cancel affordance for an empty sessions list", async () => {
@@ -283,13 +291,30 @@ describe("CompoundEngineeringView", () => {
     await screen.findByTestId("ce-sessions");
     fireEvent.click(screen.getByTestId("ce-session-open"));
     await screen.findByTestId("ce-flow");
+    expect(new URLSearchParams(window.location.search).get("ceSession")).toBe("flow");
     listSessions.mockResolvedValue([mkCeSession({ id: "flow", stage: "plan", status: "interrupted", error: "Cancelled by user" })]);
     fireEvent.click(screen.getByTestId("ce-flow-cancel"));
 
     await waitFor(() => expect(cancelSession).toHaveBeenCalledWith("flow", "p1"));
     await waitFor(() => expect(screen.queryByTestId("ce-flow")).not.toBeInTheDocument());
+    expect(new URLSearchParams(window.location.search).has("ceSession")).toBe(false);
     expect(screen.getByTestId("ce-sessions")).toBeInTheDocument();
     expect(screen.getByTestId("ce-session-discard")).toBeInTheDocument();
+  });
+
+  it("writes a newly launched session to the URL", async () => {
+    listArtifacts.mockResolvedValue(makeResult({}));
+    startSession.mockResolvedValue(mkCeSession({ id: "new-strategy", stage: "strategy", status: "active" }));
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    fireEvent.click(await screen.findByTestId("ce-start-action"));
+    const strategy = (await screen.findAllByTestId("ce-launcher-stage")).find(
+      (node) => node.getAttribute("data-stage") === "strategy",
+    )!;
+    fireEvent.click(strategy);
+
+    await screen.findByTestId("ce-flow");
+    expect(new URLSearchParams(window.location.search).get("ceSession")).toBe("new-strategy");
   });
 
   it("discards a terminal session via the list", async () => {
@@ -300,9 +325,56 @@ describe("CompoundEngineeringView", () => {
     await screen.findByTestId("ce-sessions");
     listSessions.mockResolvedValue([]);
     fireEvent.click(screen.getByTestId("ce-session-discard"));
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(screen.getByTestId("ce-discard-confirm")).toHaveTextContent(/delete permanently/i);
+    fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith("done", "p1"));
     await waitFor(() => expect(screen.queryByTestId("ce-sessions")).not.toBeInTheDocument());
+  });
+
+  it("shows unified plan readiness and derives rail completion from artifacts", async () => {
+    listArtifacts.mockResolvedValue(makeResult({
+      plan: [{
+        kind: "artifact",
+        id: "plan:docs/plans/ready.md",
+        stage: "plan",
+        path: "docs/plans/ready.md",
+        name: "ready.md",
+        size: 10,
+        updatedAt: 2,
+        artifactContract: "ce-unified-plan/v1",
+        artifactReadiness: "implementation-ready",
+      }],
+    }));
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    expect(await screen.findByText("Implementation ready")).toBeInTheDocument();
+    const plan = screen.getAllByTestId("ce-pipeline-stage").find((node) => node.getAttribute("data-stage") === "plan")!;
+    expect(plan).toHaveTextContent("Complete");
+    const brainstorm = screen.getAllByTestId("ce-pipeline-stage").find((node) => node.getAttribute("data-stage") === "brainstorm")!;
+    expect(brainstorm).toHaveTextContent("Complete");
+  });
+
+  it("keeps Plan incomplete when only a requirements artifact exists", async () => {
+    listArtifacts.mockResolvedValue(makeResult({
+      plan: [{
+        kind: "artifact",
+        id: "plan:docs/plans/requirements.md",
+        stage: "plan",
+        path: "docs/plans/requirements.md",
+        name: "requirements.md",
+        size: 10,
+        updatedAt: 2,
+        artifactContract: "ce-unified-plan/v1",
+        artifactReadiness: "requirements-only",
+      }],
+    }));
+    render(<CompoundEngineeringView projectId="p1" enabledOverride />);
+
+    const stages = await screen.findAllByTestId("ce-pipeline-stage");
+    expect(stages.find((node) => node.getAttribute("data-stage") === "brainstorm")).toHaveTextContent("Complete");
+    expect(stages.find((node) => node.getAttribute("data-stage") === "plan")).toHaveTextContent("Not started");
   });
 
   it("does not fetch when the viewport-gated flag is disabled", async () => {

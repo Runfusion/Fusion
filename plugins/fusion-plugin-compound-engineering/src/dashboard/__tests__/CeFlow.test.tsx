@@ -96,7 +96,7 @@ describe("CeFlow — rich question rendering + submit", () => {
     expect(onAnswer).toHaveBeenCalledWith("q-text", "ship faster");
   });
 
-  it("renders + submits a single_select question", () => {
+  it("selects a single_select answer and submits only after explicit confirmation", () => {
     const onAnswer = vi.fn();
     const q: PlanningQuestion = {
       id: "q-single",
@@ -109,7 +109,33 @@ describe("CeFlow — rich question rendering + submit", () => {
     };
     render(<CeFlow session={makeSession({ currentQuestion: q })} onAnswer={onAnswer} />);
     fireEvent.click(screen.getByText("Beta"));
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(screen.getByText("Beta").closest("button")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm choice" }));
     expect(onAnswer).toHaveBeenCalledWith("q-single", "b");
+  });
+
+  it("resets local answer state when the session advances to another question", () => {
+    const onAnswer = vi.fn();
+    const first: PlanningQuestion = {
+      id: "q-first",
+      type: "single_select",
+      question: "First choice",
+      options: [{ id: "shared", label: "First shared option" }],
+    };
+    const second: PlanningQuestion = {
+      id: "q-second",
+      type: "single_select",
+      question: "Second choice",
+      options: [{ id: "shared", label: "Second shared option" }],
+    };
+    const { rerender } = render(<CeFlow session={makeSession({ currentQuestion: first })} onAnswer={onAnswer} />);
+    fireEvent.click(screen.getByText("First shared option"));
+    expect(screen.getByTestId("ce-flow-single-submit")).toBeEnabled();
+
+    rerender(<CeFlow session={makeSession({ currentQuestion: second })} onAnswer={onAnswer} />);
+    expect(screen.getByText("Second shared option").closest("button")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("ce-flow-single-submit")).toBeDisabled();
   });
 
   it("renders + submits a multi_select question", () => {
@@ -130,6 +156,21 @@ describe("CeFlow — rich question rendering + submit", () => {
     fireEvent.click(boxes[2]);
     fireEvent.click(screen.getByTestId("ce-flow-multi-submit"));
     expect(onAnswer).toHaveBeenCalledWith("q-multi", ["g1", "g3"]);
+  });
+
+  it("does not submit an empty multi_select", () => {
+    const onAnswer = vi.fn();
+    const question: PlanningQuestion = {
+      id: "q-multi",
+      type: "multi_select",
+      question: "Which goals?",
+      options: [{ id: "g1", label: "Speed" }],
+    };
+    render(<CeFlow session={makeSession({ currentQuestion: question })} onAnswer={onAnswer} />);
+    const submit = screen.getByTestId("ce-flow-multi-submit");
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(onAnswer).not.toHaveBeenCalled();
   });
 
   it("renders + submits a confirm question (both branches)", () => {
@@ -204,6 +245,8 @@ describe("CeFlow — steering (guidance channel)", () => {
       target: { value: "focus on mobile" },
     });
     fireEvent.click(screen.getByText("Beta"));
+    expect(onAnswer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm choice" }));
     expect(onAnswer).toHaveBeenCalledWith("q-steer", { value: "b", comment: "focus on mobile" });
   });
 
@@ -223,6 +266,7 @@ describe("CeFlow — steering (guidance channel)", () => {
     const onAnswer = vi.fn();
     render(<CeFlow session={makeSession({ currentQuestion: q })} onAnswer={onAnswer} />);
     fireEvent.click(screen.getByText("Alpha"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm choice" }));
     expect(onAnswer).toHaveBeenCalledWith("q-steer", "a");
   });
 
@@ -399,6 +443,14 @@ describe("CeFlow — Q&A transcript rendering", () => {
 });
 
 describe("CeFlow — lifecycle surfaces", () => {
+  it("renders the registry label and exposes async state through polite live regions", () => {
+    render(<CeFlow session={makeSession({ stage: "brainstorm", status: "active" })} onAnswer={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Brainstorm" })).toBeInTheDocument();
+    expect(screen.getByTestId("ce-flow-status")).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("ce-flow-status")).toHaveAttribute("aria-live", "polite");
+    expect(screen.getByTestId("ce-flow-thinking")).toHaveAttribute("role", "status");
+  });
+
   it("shows the working pane while a turn runs", () => {
     render(<CeFlow session={makeSession({ status: "active", currentQuestion: null })} busy onAnswer={vi.fn()} />);
     expect(screen.getByTestId("ce-flow-thinking")).toBeInTheDocument();
@@ -456,5 +508,36 @@ describe("CeFlow — lifecycle surfaces", () => {
     );
     fireEvent.click(screen.getByTestId("ce-flow-resume"));
     expect(onResume).toHaveBeenCalled();
+  });
+
+  it("offers artifact and next-stage actions after completion", () => {
+    const onOpenArtifact = vi.fn();
+    const onStartNextStage = vi.fn();
+    render(
+      <CeFlow
+        session={makeSession({ status: "completed", stage: "plan", artifactPath: "/repo/docs/plans/x.md" })}
+        onAnswer={vi.fn()}
+        onOpenArtifact={onOpenArtifact}
+        nextStageId="work"
+        onStartNextStage={onStartNextStage}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open artifact" }));
+    expect(onOpenArtifact).toHaveBeenCalledWith("/repo/docs/plans/x.md");
+    fireEvent.click(screen.getByRole("button", { name: "Start Work" }));
+    expect(onStartNextStage).toHaveBeenCalledWith("work");
+    expect(screen.getByTestId("ce-flow-complete")).toHaveAttribute("role", "status");
+  });
+
+  it("keeps Debug outside automatic next-stage completion actions", () => {
+    render(
+      <CeFlow
+        session={makeSession({ status: "completed", stage: "work" })}
+        onAnswer={vi.fn()}
+        nextStageId="debug"
+        onStartNextStage={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /start debug/i })).not.toBeInTheDocument();
   });
 });

@@ -719,3 +719,67 @@ The shared ViewHeader sits directly above plugin content, so the body needs top 
 .ce-flow-complete p {
   margin: 0;
 }
+
+/*
+FNXC:CompoundEngineeringUI 2026-07-10-12:10:
+The pipeline overview must communicate progression and the next useful action at a glance on desktop and mobile. Use a connected, restrained stage rail, a single high-signal resume row, and progressive disclosure for session management; avoid nested cards and oversized dashboard typography.
+*/
+.ce-pipeline { display: flex; flex-direction: column; gap: var(--space-md); }
+.ce-pipeline-header { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-md); }
+.ce-pipeline-header h2 { margin: 0; font-size: 1rem; font-weight: 650; }
+.ce-pipeline-header p { margin: calc(var(--space-xs) / 2) 0 0; color: var(--text-muted); font-size: 0.78rem; }
+.ce-investigate { display: inline-flex; align-items: center; gap: var(--space-xs); flex: none; }
+.ce-stage-rail { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+.ce-stage-step { position: relative; min-width: 0; border-block: 1px solid var(--border); border-left: 1px solid var(--border); background: var(--surface); }
+.ce-stage-step:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.ce-stage-step:last-child { border-right: 1px solid var(--border); border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+.ce-stage-step::after { position: absolute; z-index: 2; top: calc(var(--space-lg) + 1px); right: calc(var(--space-xs) * -1); width: calc(var(--space-sm) - 2px); height: calc(var(--space-sm) - 2px); border-top: 1px solid var(--border); border-right: 1px solid var(--border); background: inherit; content: ""; transform: rotate(45deg); }
+.ce-stage-step:last-child::after { display: none; }
+.ce-stage-main { display: flex; width: 100%; min-height: calc(var(--space-2xl) * 2.25); align-items: flex-start; gap: var(--space-sm); border: 0; background: transparent; color: inherit; cursor: pointer; padding: var(--space-md); text-align: left; }
+.ce-stage-main:hover:not(:disabled), .ce-stage-main:focus-visible { background: var(--card-hover); }
+.ce-stage-main:focus-visible { position: relative; z-index: 3; outline: 2px solid var(--color-info); outline-offset: -2px; }
+.ce-stage-icon { display: grid; width: calc(var(--space-lg) + var(--space-xs)); height: calc(var(--space-lg) + var(--space-xs)); flex: none; place-items: center; border: 1px solid var(--border); border-radius: 50%; color: var(--text-muted); }
+.ce-stage-step[data-status="complete"] .ce-stage-icon { border-color: color-mix(in srgb, var(--color-success) 45%, var(--border)); color: var(--color-success); }
+.ce-stage-step[data-status="active"] .ce-stage-icon, .ce-stage-step[data-status="needs-input"] .ce-stage-icon { border-color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, var(--surface)); color: var(--color-info); }
+.ce-stage-step[data-status="needs-input"] .ce-stage-status { color: var(--color-warning); }
+.ce-stage-copy { display: flex; min-width: 0; flex-direction: column; gap: calc(var(--space-xs) / 2); }
+.ce-stage-copy strong { overflow: hidden; font-size: 0.86rem; text-overflow: ellipsis; white-space: nowrap; }
+.ce-stage-status { color: var(--text-muted); font-size: 0.7rem; }
+.ce-stage-artifact { display: flex; width: calc(100% - var(--space-lg)); min-width: 0; align-items: center; gap: var(--space-xs); margin: 0 var(--space-sm) var(--space-sm); border: 0; background: transparent; color: var(--text-dim); cursor: pointer; font: inherit; font-size: 0.68rem; text-align: left; }
+.ce-stage-artifact span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ce-stage-artifact.is-empty { cursor: default; }
+.ce-resume-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm); width: 100%; border: 1px solid color-mix(in srgb, var(--color-info) 35%, var(--border)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-info) 6%, var(--surface)); color: inherit; cursor: pointer; padding: var(--space-sm) var(--space-md); text-align: left; }
+.ce-resume-banner:hover, .ce-resume-banner:focus-visible { border-color: var(--color-info); }
+.ce-resume-banner > span:not(.ce-resume-icon) { display: flex; min-width: 0; flex-direction: column; gap: calc(var(--space-xs) / 2); }
+.ce-resume-banner strong { font-size: 0.84rem; }
+.ce-resume-banner small { overflow: hidden; color: var(--text-muted); font-size: 0.72rem; text-overflow: ellipsis; white-space: nowrap; }
+.ce-resume-icon { display: grid; width: calc(var(--space-lg) + var(--space-xs)); height: calc(var(--space-lg) + var(--space-xs)); place-items: center; border-radius: 50%; background: var(--color-info); color: var(--surface); }
+.ce-readiness { width: max-content; margin-top: calc(var(--space-xs) / 2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 0.65rem; padding: 1px var(--space-xs); }
+.ce-readiness-implementation-ready { border-color: color-mix(in srgb, var(--color-success) 40%, var(--border)); color: var(--color-success); }
+.ce-flow-choice-group { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-md); }
+.ce-flow-option.is-selected { border-color: var(--color-info); background: color-mix(in srgb, var(--color-info) 9%, var(--surface)); }
+.ce-flow-choice-submit { min-width: calc(var(--space-2xl) * 3); }
+.ce-flow-progressive-disclosure { border-top: 1px solid var(--border); padding-top: var(--space-sm); }
+.ce-flow-guidance-summary { width: max-content; color: var(--text-muted); cursor: pointer; font-size: 0.76rem; font-weight: 600; }
+.ce-flow-progressive-disclosure[open] .ce-flow-guidance-summary { margin-bottom: var(--space-sm); color: var(--text); }
+.ce-flow-action-state { display: flex; min-height: calc(var(--space-2xl) * 3); flex: 1 1 auto; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-md); text-align: center; }
+.ce-flow-action-state > p { max-width: 34rem; }
+.ce-flow-complete-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-sm); }
+.ce-flow[data-status="awaiting_input"] .ce-flow-question-panel { border-color: color-mix(in srgb, var(--color-info) 40%, var(--border)); }
+.ce-flow[data-status="active"] .ce-flow-status, .ce-flow[data-status="launching"] .ce-flow-status { color: var(--color-info); }
+.ce-sessions { border-top: 1px solid var(--border); padding-top: var(--space-sm); }
+.ce-sessions-summary { display: flex; align-items: center; justify-content: space-between; color: var(--text-muted); cursor: pointer; font-size: 0.8rem; font-weight: 600; padding: var(--space-xs) 0; }
+.ce-sessions[open] .ce-sessions-summary { margin-bottom: var(--space-sm); }
+.ce-discard-confirm { display: flex; align-items: center; gap: var(--space-xs); margin-left: auto; }
+
+@media (max-width: 768px) {
+  .ce-pipeline-header { align-items: center; }
+  .ce-stage-rail { grid-template-columns: 1fr; }
+  .ce-stage-step, .ce-stage-step:first-child, .ce-stage-step:last-child { border: 1px solid var(--border); border-bottom: 0; border-radius: 0; }
+  .ce-stage-step:first-child { border-radius: var(--radius-md) var(--radius-md) 0 0; }
+  .ce-stage-step:last-child { border-bottom: 1px solid var(--border); border-radius: 0 0 var(--radius-md) var(--radius-md); }
+  .ce-stage-step::after { display: none; }
+  .ce-stage-main { min-height: auto; align-items: center; padding: var(--space-sm) var(--space-md); }
+  .ce-stage-artifact { margin-left: calc(var(--space-2xl) + var(--space-xs)); }
+  .ce-discard-confirm { flex-wrap: wrap; justify-content: flex-end; }
+}

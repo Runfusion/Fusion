@@ -46,7 +46,7 @@ export {
   CE_PLUGIN_ID,
   CE_WORK_SOURCE_TYPE,
 } from "./session/orchestrator.js";
-export { getStage, listStages, registerStage } from "./session/stage-registry.js";
+export { getStage, listPipelineStages, listStages, registerStage } from "./session/stage-registry.js";
 export {
   settingsSchema,
   getDefaultProvider,
