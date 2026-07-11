@@ -76,6 +76,15 @@ describe("getTask PROMPT.md read resilience (task-write-API 500 regression)", ()
       const afterMutation = await store.getTask(task.id);
       expect(afterMutation.title).toBe("renamed with broken PROMPT.md");
 
+      // Atomicity: an *explicit* prompt write that can't hit disk (PROMPT.md is a
+      // directory → EISDIR) must reject AND leave the accompanying field change
+      // uncommitted — no partial commit of the row with a stale prompt.
+      await expect(
+        store.updateTask(task.id, { prompt: "new spec body", title: "atomic-should-not-apply" }),
+      ).rejects.toThrow();
+      const afterFailedPromptWrite = await store.getTask(task.id);
+      expect(afterFailedPromptWrite.title).toBe("renamed with broken PROMPT.md");
+
       // reset path: advance the task then reopen to todo, which triggers
       // resetPromptCheckboxes against the unreadable PROMPT.md. (New tasks start
       // in `triage`, so step through todo → in-progress → todo.)

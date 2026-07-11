@@ -9647,6 +9647,23 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       }
       task.updatedAt = new Date().toISOString();
 
+      // FNXC:TaskDetailPromptResilience 2026-07-10-17:00:
+      // Perform the explicit PROMPT.md write (and its File Scope validation) BEFORE
+      // committing the task row, so a failed write (EACCES/EISDIR/disk-full) or an
+      // invalid File Scope aborts the whole update atomically. Previously this ran
+      // AFTER the row/task.json commit, so a failed prompt write returned an error
+      // while the field changes stayed committed and PROMPT.md went stale — a
+      // partial commit. (This is the write counterpart to the read-resilience
+      // guards elsewhere in getTask/updateStep.)
+      if (updates.prompt !== undefined) {
+        const validation = validateFileScopeInPromptContent(updates.prompt);
+        if (validation.invalid.length > 0) {
+          throw new InvalidFileScopeError(id, validation.invalid);
+        }
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "PROMPT.md"), updates.prompt);
+      }
+
       // When runContext is provided, record audit event atomically with task mutation
       if (runContext) {
         await this.atomicWriteTaskJsonWithAudit(dir, task, {
@@ -9667,15 +9684,6 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
 
       // Update cache if watcher is active
       if (this.isWatching) this.taskCache.set(id, { ...task });
-
-      if (updates.prompt !== undefined) {
-        const validation = validateFileScopeInPromptContent(updates.prompt);
-        if (validation.invalid.length > 0) {
-          throw new InvalidFileScopeError(id, validation.invalid);
-        }
-        await mkdir(dir, { recursive: true });
-        await writeFile(join(dir, "PROMPT.md"), updates.prompt);
-      }
 
       // Sync PROMPT.md when title or description changes (but not when explicit
       // prompt update — that already wrote the new content above).
