@@ -83,6 +83,11 @@ describe("getTask PROMPT.md read resilience (task-write-API 500 regression)", ()
       await expect(store.moveTask(task.id, "in-progress")).resolves.toBeTruthy();
       await expect(store.moveTask(task.id, "todo")).resolves.toBeTruthy();
 
+      // Directly updating a step whose definition lives only in the unreadable
+      // PROMPT.md genuinely cannot succeed, but the error must name the real
+      // cause (PROMPT.md) rather than a misleading "task has 0 steps".
+      await expect(store.updateStep(task.id, 0, "in-progress")).rejects.toThrow(/PROMPT\.md/);
+
       await expect(store.archiveTask(task.id)).resolves.toBeTruthy();
       const archived = await store.getTask(task.id);
       expect(archived.column).toBe("archived");

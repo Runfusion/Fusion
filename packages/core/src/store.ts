@@ -9965,11 +9965,17 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       // FNXC:TaskDetailPromptResilience 2026-07-10-15:00: step auto-init is
       // best-effort — an unreadable PROMPT.md must not fail updateStep (on the
       // reported reset path); proceed with the persisted (empty) steps.
+      let promptStepsUnavailable: string | undefined;
       if (task.steps.length === 0 && !graphSource) {
         try {
           task.steps = await this.parseStepsFromPrompt(id);
         } catch (err) {
-          storeLog.warn(`[task-detail] failed to auto-init steps from PROMPT.md for ${id}: ${getErrorMessage(err)}`);
+          // Remember WHY steps couldn't be resolved so the range check below
+          // attributes the failure to the unreadable PROMPT.md rather than a
+          // misleading "0 steps". A step defined only in an unreadable PROMPT.md
+          // genuinely cannot be updated — but the error should say so.
+          promptStepsUnavailable = getErrorMessage(err);
+          storeLog.warn(`[task-detail] failed to auto-init steps from PROMPT.md for ${id}: ${promptStepsUnavailable}`);
         }
       }
 
@@ -9979,6 +9985,14 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
       }
 
       if (stepIndex < 0 || stepIndex >= task.steps.length) {
+        // FNXC:TaskDetailPromptResilience 2026-07-10-16:30: when the range failure
+        // is caused by an unreadable PROMPT.md (not a genuinely stepless task),
+        // surface the real cause instead of a confusing "task has 0 steps".
+        if (promptStepsUnavailable !== undefined && task.steps.length === 0) {
+          throw new Error(
+            `Cannot update step ${stepIndex} for ${id}: its steps are defined in PROMPT.md, which could not be read (${promptStepsUnavailable}).`,
+          );
+        }
         throw new Error(
           `Step ${stepIndex} out of range (task has ${task.steps.length} steps)`,
         );
