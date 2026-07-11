@@ -195,6 +195,9 @@ function createMockGlobalSettingsStore() {
 
 function createMockStore(overrides: Partial<TaskStore> = {}): TaskStore {
   return {
+    // FNXC:PostgresCutover 2026-07-10: system-stats constructs an AgentStore
+    // with asyncLayer from store.getAsyncLayer(); null = legacy mode here.
+    getAsyncLayer: vi.fn().mockReturnValue(null),
     getTask: vi.fn(),
     listTasks: vi.fn().mockResolvedValue([]),
     searchTasks: vi.fn().mockResolvedValue([]),

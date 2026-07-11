@@ -59,6 +59,18 @@ vi.mock("@fusion/core", async () => {
       applyRemoteSettings: mockApplyRemoteSettings,
       applyAuthMaterialSnapshot: mockApplyAuthMaterialSnapshot,
     }; }),
+    // FNXC:PostgresCutover 2026-07-10: the mesh sync response path constructs a
+    // REAL AgentStore for the agents/agentRuns shared-state snapshots; the
+    // sqlite runtime is removed on this branch, so a real init() throws and
+    // 500s the route. Stub the store surface the route touches.
+    AgentStore: vi.fn().mockImplementation(function () { return {
+      init: vi.fn(async () => undefined),
+      close: vi.fn(async () => undefined),
+      getAgentSnapshot: vi.fn(() => undefined),
+      getAgentRunSnapshot: vi.fn(() => undefined),
+      applyAgentSnapshot: vi.fn(async () => undefined),
+      applyAgentRunSnapshot: vi.fn(async () => undefined),
+    }; }),
   };
 });
 
@@ -90,6 +102,19 @@ vi.mock("@fusion/engine", async (importOriginal) => {
 });
 
 class MockStore extends EventEmitter {
+  // FNXC:PostgresCutover 2026-07-10: createServer resolves the chat/session
+  // layers via store.getAsyncLayer(); null = legacy mode for this mock (this
+  // single missing method had the whole file red since the cutover).
+  getAsyncLayer(): null {
+    return null;
+  }
+
+  // Settings sync stays enabled for this mock (sqlite topology); the PG-mode
+  // 409 gating is covered in routes-system.test.ts.
+  get backendMode(): boolean {
+    return false;
+  }
+
   getRootDir(): string {
     return "/tmp/fn-1224";
   }
