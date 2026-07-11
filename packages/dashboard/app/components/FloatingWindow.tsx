@@ -55,6 +55,8 @@ export interface FloatingWindowProps {
   closeOnOutsidePointerDown?: boolean;
   /** Layer band for z-index claiming. Task details stay with the board/task-detail surface; utilities use the global floating stack. */
   layer?: "utility" | "task-detail";
+  // FNXC:FloatingWindow 2026-07-11-11:30: accessible name for the dialog overlay so headerless windows (e.g. artifact viewers with their own header chrome) stay queryable/announcable by label.
+  ariaLabel?: string;
 }
 
 const DEFAULT_WIDTH = 720;
@@ -158,6 +160,7 @@ export function FloatingWindow({
   persistGeometryKey,
   closeOnOutsidePointerDown = false,
   layer = "utility",
+  ariaLabel,
 }: FloatingWindowProps) {
   const resolvedMinSize: FloatingWindowSize = minSize ?? { width: DEFAULT_MIN_WIDTH, height: DEFAULT_MIN_HEIGHT };
   const initialGeometry = useRef<{ size: FloatingWindowSize; position: FloatingWindowPosition } | null>(null);
@@ -411,6 +414,7 @@ export function FloatingWindow({
       className="floating-window-overlay"
       role="dialog"
       aria-modal="false"
+      aria-label={ariaLabel}
       data-testid={`floating-window-overlay-${windowKey}`}
       // FNXC:FloatingWindow 2026-06-22-23:00: The z-index MUST live on the position:fixed overlay (which creates a stacking context), not the panel. A panel z-index is trapped inside the overlay's context and loses to page elements that are stacking contexts in body's context (e.g. the right dock at position:absolute z-index:20). With z on the overlay, the whole window sits at the shared floating band in body's stacking context and reliably paints above page content + tap-to-front reorders correctly.
       style={{ zIndex }}

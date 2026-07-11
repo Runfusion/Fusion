@@ -1,5 +1,5 @@
 import "./ArtifactsGallery.css";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import {
@@ -20,6 +20,7 @@ import type { Artifact, ArtifactWithTask } from "@fusion/core";
 import type { ToastType } from "../hooks/useToast";
 import { artifactMediaUrl, fetchArtifact, updateArtifact } from "../api";
 import { FileEditor } from "./FileEditor";
+import { FloatingWindow } from "./FloatingWindow";
 
 /*
 FNXC:ArtifactRegistry 2026-07-10-15:40:
@@ -425,8 +426,6 @@ interface OverlayProps {
 
 function useOverlayDismiss(onClose: () => void, closeRef: React.RefObject<HTMLButtonElement | null>) {
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     closeRef.current?.focus();
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -438,37 +437,40 @@ function useOverlayDismiss(onClose: () => void, closeRef: React.RefObject<HTMLBu
 
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [closeRef, onClose]);
 }
 
 /*
-FNXC:ArtifactsGallery 2026-07-10-15:40:
-Each viewer owns its close-button ref and passes it to both OverlayShell (Escape/scroll-lock lifecycle + autofocus so keyboard users land on a dismiss affordance) and ViewerHeader (which renders the actual button).
+FNXC:ArtifactsGallery 2026-07-11-11:30:
+Artifact viewers host inside the app's canonical FloatingWindow so every popup is DRAGGABLE (by the
+viewer header — FloatingWindow ignores pointerdowns on buttons, so header actions stay clickable) and
+RESIZABLE (edge/corner handles), with geometry persisted per viewer kind. hideHeader keeps the
+viewer's own header chrome (title + actions + close); Escape still dismisses and the close button
+autofocuses via useOverlayDismiss. Each viewer owns its close-button ref and passes it to both
+OverlayShell and ViewerHeader.
 */
-function OverlayShell({ label, onClose, children, wide, closeRef }: { label: string; onClose: () => void; children: React.ReactNode; wide?: boolean; closeRef: React.RefObject<HTMLButtonElement | null> }) {
+function OverlayShell({ label, onClose, children, wide, closeRef, windowKey, persistKey }: { label: string; onClose: () => void; children: React.ReactNode; wide?: boolean; closeRef: React.RefObject<HTMLButtonElement | null>; windowKey: string; persistKey: string }) {
   useOverlayDismiss(onClose, closeRef);
 
-  const handleOverlayClick = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  };
-
   return (
-    <div
-      className="modal-overlay open artifacts-gallery-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={label}
-      onClick={handleOverlayClick}
+    <FloatingWindow
+      windowKey={windowKey}
+      title={null}
+      onClose={onClose}
+      hideHeader
+      dragHandleSelector=".artifacts-gallery-viewer-header"
+      className="artifacts-gallery-window"
+      ariaLabel={label}
+      persistGeometryKey={persistKey}
+      defaultSize={wide ? { width: 1024, height: 720 } : { width: 720, height: 640 }}
+      minSize={{ width: 320, height: 280 }}
     >
-      <div className={`artifacts-gallery-viewer${wide ? " artifacts-gallery-viewer--wide" : ""}`} onClick={(event) => event.stopPropagation()}>
+      <div className="artifacts-gallery-viewer">
         {children}
       </div>
-    </div>
+    </FloatingWindow>
   );
 }
 
@@ -511,7 +513,7 @@ function MediaLightbox({ artifact, projectId, t, onClose, onOpenTask }: OverlayP
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <OverlayShell label={t("documents.lightboxLabel", "Artifact media preview")} onClose={onClose} wide closeRef={closeRef}>
+    <OverlayShell label={t("documents.lightboxLabel", "Artifact media preview")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-media-${artifact.id}`} persistKey="fn-artifact-viewer-media-geometry">
       <ViewerHeader
         title={title}
         onClose={onClose}
@@ -547,7 +549,7 @@ function PdfViewer({ artifact, projectId, t, onClose, onOpenTask }: OverlayProps
   const closeRef = useRef<HTMLButtonElement>(null);
 
   return (
-    <OverlayShell label={t("documents.pdfViewerLabel", "PDF artifact viewer")} onClose={onClose} wide closeRef={closeRef}>
+    <OverlayShell label={t("documents.pdfViewerLabel", "PDF artifact viewer")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-pdf-${artifact.id}`} persistKey="fn-artifact-viewer-pdf-geometry">
       <ViewerHeader
         title={title}
         onClose={onClose}
@@ -640,7 +642,7 @@ function DocViewer({ artifact, projectId, t, addToast, onClose, onOpenTask, onAr
   };
 
   return (
-    <OverlayShell label={t("documents.docViewerLabel", "Document artifact viewer")} onClose={onClose} wide closeRef={closeRef}>
+    <OverlayShell label={t("documents.docViewerLabel", "Document artifact viewer")} onClose={onClose} wide closeRef={closeRef} windowKey={`artifact-doc-${artifact.id}`} persistKey="fn-artifact-viewer-doc-geometry">
       <ViewerHeader
         title={title}
         onClose={onClose}

@@ -351,34 +351,33 @@ grids drop to two columns, cards/rows go single-column, and viewers become full-
 
 /* ── Viewers (lightbox / pdf / doc) ────────────────────────────────── */
 
-.artifacts-gallery-overlay {
+/*
+FNXC:ArtifactsGallery 2026-07-11-11:30:
+Viewers live inside the shared FloatingWindow (draggable by the viewer header, resizable by edge/corner handles), so the viewer fills the window body and its media/doc content flexes with the user-chosen size instead of fixed dvh heights.
+*/
+.artifacts-gallery-window .floating-window__body {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-lg);
+  min-height: 0;
 }
 
 .artifacts-gallery-viewer {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  width: min(46rem, 100%);
-  max-height: 90dvh;
+  width: 100%;
+  min-height: 0;
   padding: var(--space-md);
-  border: thin solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--bg);
-  box-shadow: var(--shadow-lg);
-}
-
-.artifacts-gallery-viewer--wide {
-  width: min(64rem, 100%);
 }
 
 .artifacts-gallery-viewer-header {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  cursor: grab;
+}
+
+.artifacts-gallery-viewer-header:active {
+  cursor: grabbing;
 }
 
 .artifacts-gallery-viewer-title {
@@ -402,6 +401,7 @@ grids drop to two columns, cards/rows go single-column, and viewers become full-
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
   border-radius: var(--radius-lg);
@@ -411,13 +411,14 @@ grids drop to two columns, cards/rows go single-column, and viewers become full-
 .artifacts-gallery-viewer-media {
   display: block;
   max-width: 100%;
-  max-height: 65dvh;
+  max-height: 100%;
   object-fit: contain;
 }
 
 .artifacts-gallery-viewer-pdf {
   width: 100%;
-  height: 65dvh;
+  flex: 1;
+  min-height: 0;
   border: thin solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -426,7 +427,8 @@ grids drop to two columns, cards/rows go single-column, and viewers become full-
 /* HTML mockup live preview; white canvas because agent mockups usually assume a page background. */
 .artifacts-gallery-viewer-html {
   width: 100%;
-  height: 60dvh;
+  height: 100%;
+  min-height: 20rem;
   border: thin solid var(--border);
   border-radius: var(--radius-lg);
   background: #fff;
@@ -530,24 +532,8 @@ grids drop to two columns, cards/rows go single-column, and viewers become full-
     width: 100%;
   }
 
-  .artifacts-gallery-overlay {
-    padding: 0;
-  }
-
-  .artifacts-gallery-viewer,
-  .artifacts-gallery-viewer--wide {
-    width: 100%;
-    height: 100dvh;
-    max-height: none;
-    border: 0;
-    border-radius: 0;
-  }
-
-  .artifacts-gallery-viewer-media {
-    max-height: 70dvh;
-  }
-
-  .artifacts-gallery-viewer-pdf {
-    height: 70dvh;
+  /* FloatingWindow clamps viewer geometry to the viewport, so mobile only tightens the inner padding. */
+  .artifacts-gallery-viewer {
+    padding: var(--space-sm);
   }
 }

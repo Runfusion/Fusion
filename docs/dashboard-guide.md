@@ -809,7 +809,7 @@ For per-run aggregation, `GET /api/agents/:id/runs/:runId/cited-goals` returns `
 
 ## Artifacts View
 
-Artifacts view aggregates project markdown files, task documents, and registered artifacts. The dashboard title is **Artifacts**; the internal tab bar keeps the shipped **Project Files**, **Task Documents**, and **Artifacts** labels.
+Artifacts view aggregates registered artifacts, project markdown files, and task documents. The dashboard title is **Artifacts**; the internal tab bar leads with **Artifacts** (the landing tab), followed by **Project Files** and **Task Documents**. On mobile the tab buttons render at the uniform 44px control height with non-wrapping labels in a horizontally scrollable row.
 
 Features:
 
@@ -824,10 +824,10 @@ Features:
 - Video artifacts (agent-registered recordings, `path`-ingested MP4/WebM/MOV, and bridged video attachments) play with working seek because the media route serves HTTP byte ranges
 - HTML doc artifacts (`mimeType: text/html`) render as **live sandboxed previews** by default in the document viewer (scripts allowed, same-origin denied), with a Preview/Source toggle and the same Edit mode as other docs
 - **Edit any inline-content doc in place**: the document viewer's **Edit** button switches to an editor whose **Save** persists through `PATCH /api/artifacts/:id` and live-refreshes open galleries via the `artifact:updated` registry event; binary-backed documents stay read-only with a media link
-- Dismiss any viewer with the close button, backdrop click, or Escape
+- Every viewer (image/video lightbox, PDF viewer, document viewer) opens in a draggable, resizable floating window (drag by the viewer header, resize by any edge/corner; geometry persists per viewer kind); dismiss with the close button or Escape. Windows are non-blocking, so the gallery behind them stays interactive
 - Read artifact metadata on cards, rows, and viewer footers: title, optional description, author ID, timestamp, size, and linked task ID when present
 - Use the task link on a card/row or viewer footer to jump back to the originating task when the artifact has a `taskId`; inside task detail, the **Artifacts** tab shows that task's documents and registered media artifacts together
-- The gallery scales down at the mobile breakpoint (including landscape phones): category chips scroll horizontally, visual grids collapse to two columns, cards and rows go single-column, and viewers become full-screen sheets
+- The gallery scales down at the mobile breakpoint (including landscape phones): category chips scroll horizontally, visual grids collapse to two columns, cards and rows go single-column, and viewer windows clamp to the viewport
 - Loading state: the Artifacts tab shows `Loading artifacts…` while the first artifact list request is pending and no artifact results are loaded
 - Empty states: with no search query it shows `No artifacts yet.` plus the hint that artifacts are created by agents, users, and system tools; with a search query it shows `No artifacts match "<query>".`
 - Error state: a failed artifact list request uses the shared `Failed to load artifacts: <error>` panel with a **Retry** action that re-runs the artifact fetch
