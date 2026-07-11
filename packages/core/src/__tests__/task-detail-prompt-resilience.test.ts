@@ -57,18 +57,37 @@ describe("getTask PROMPT.md read resilience (task-write-API 500 regression)", ()
       expect(detail.id).toBe(task.id);
       expect(detail.prompt).toBe("");
 
+      // The board read paths must survive too — listTasks/searchTasks slim-sync
+      // steps from PROMPT.md for stepless tasks and would otherwise reject their
+      // Promise.all and 500 the whole board/search on one unreadable file.
+      const listed = await store.listTasks({ slim: true });
+      expect(listed.some((t) => t.id === task.id)).toBe(true);
+      const found = await store.searchTasks("unreadable", { slim: true });
+      expect(Array.isArray(found)).toBe(true);
+
       // The mutation path must stay usable too. These store methods back the
       // reported failing endpoints and each independently touches PROMPT.md:
-      //   PATCH  -> updateTask (title/description PROMPT.md heading sync)
-      //   archive-> archiveTask (readPromptForArchive)
+      //   PATCH   -> updateTask (title/description PROMPT.md heading sync)
+      //   reset   -> moveTask reopen-to-todo (resetPromptCheckboxes) + updateStep
+      //   archive -> archiveTask (readPromptForArchive)
+      //   delete  -> deleteTask
       // A read failure in that PROMPT.md work must not brick the DB mutation.
       await expect(store.updateTask(task.id, { title: "renamed with broken PROMPT.md" })).resolves.toBeTruthy();
       const afterMutation = await store.getTask(task.id);
       expect(afterMutation.title).toBe("renamed with broken PROMPT.md");
 
+      // reset path: advance the task then reopen to todo, which triggers
+      // resetPromptCheckboxes against the unreadable PROMPT.md. (New tasks start
+      // in `triage`, so step through todo → in-progress → todo.)
+      await expect(store.moveTask(task.id, "todo")).resolves.toBeTruthy();
+      await expect(store.moveTask(task.id, "in-progress")).resolves.toBeTruthy();
+      await expect(store.moveTask(task.id, "todo")).resolves.toBeTruthy();
+
       await expect(store.archiveTask(task.id)).resolves.toBeTruthy();
       const archived = await store.getTask(task.id);
       expect(archived.column).toBe("archived");
+
+      await expect(store.deleteTask(task.id)).resolves.toBeTruthy();
     } finally {
       await store.close();
     }

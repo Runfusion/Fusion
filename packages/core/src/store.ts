@@ -6176,8 +6176,16 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         return task;
       }
 
-      const steps = await this.parseStepsFromPrompt(task.id);
-      return steps.length > 0 ? { ...task, steps } : task;
+      // FNXC:TaskDetailPromptResilience 2026-07-10-16:00: an unreadable PROMPT.md
+      // must not reject this Promise.all and 500 the entire board list — degrade
+      // to the persisted (empty) steps and log, matching getTask.
+      try {
+        const steps = await this.parseStepsFromPrompt(task.id);
+        return steps.length > 0 ? { ...task, steps } : task;
+      } catch (err) {
+        storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${task.id} during listTasks: ${getErrorMessage(err)}`);
+        return task;
+      }
     }));
     const archivedTasks = includeArchived && (!columnFilter || columnFilter === "archived") ? this.archiveDb.list().map((entry) => this.archiveEntryToTask(entry, slim)) : [];
     // FNXC:BoardConsistency 2026-06-21-08:34: FN-6851's cache-sync fix is primary; listTasks still collapses duplicate storage sources so one task ID cannot render in two columns. Active SQLite rows are authoritative over archive snapshots.
@@ -6906,8 +6914,16 @@ ${TASK_UPSERT_SQL_ASSIGNMENTS}
         return task;
       }
 
-      const steps = await this.parseStepsFromPrompt(task.id);
-      return steps.length > 0 ? { ...task, steps } : task;
+      // FNXC:TaskDetailPromptResilience 2026-07-10-16:00: an unreadable PROMPT.md
+      // must not reject this Promise.all and 500 the entire search — degrade to
+      // the persisted (empty) steps and log, matching getTask/listTasks.
+      try {
+        const steps = await this.parseStepsFromPrompt(task.id);
+        return steps.length > 0 ? { ...task, steps } : task;
+      } catch (err) {
+        storeLog.warn(`[task-detail] failed to sync steps from PROMPT.md for ${task.id} during searchTasks: ${getErrorMessage(err)}`);
+        return task;
+      }
     }));
     const archiveMatches = includeArchived
       ? this.archiveDb.search(trimmedQuery, limit >= 0 ? limit : 100).map((entry) => this.archiveEntryToTask(entry, slim))

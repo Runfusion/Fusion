@@ -765,6 +765,22 @@ describe("runServe", () => {
     expect(mockSyncStartupModels).toHaveBeenCalledTimes(1);
   });
 
+  // FNXC:DaemonSignalExit 2026-07-10-16:00: `fn serve` must honor the same POSIX
+  // exit-code contract as `fn daemon` — a memory-pressure SIGTERM exits non-zero
+  // (143) so `Restart=on-failure` restarts it; SIGINT exits 130. Guards against
+  // the two headless-server paths regressing independently.
+  it("exits 143 on SIGTERM-initiated shutdown", async () => {
+    await runServe(0, {});
+    await triggerSignal("SIGTERM");
+    expect(process.exit).toHaveBeenCalledWith(143);
+  });
+
+  it("exits 130 on SIGINT-initiated shutdown", async () => {
+    await runServe(0, {});
+    await triggerSignal("SIGINT");
+    expect(process.exit).toHaveBeenCalledWith(130);
+  });
+
   it("registers built-in zai GLM-5.2 before refreshing models", async () => {
     await runServe(0, {});
 

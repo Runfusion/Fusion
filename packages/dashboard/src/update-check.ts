@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -131,12 +131,30 @@ function detectRunningBinaryPath(): string | null {
   return typeof process.execPath === "string" ? process.execPath : null;
 }
 
+/*
+FNXC:UpdateInstallPermissions 2026-07-10-16:00:
+Detect a Homebrew-managed install so the remediation says `brew upgrade` rather than
+the npm/sudo guidance. Formulae live under a Cellar and are symlinked into bin — on
+Apple Silicon everything is under `/opt/homebrew/`, but on Intel macOS the bin symlink
+is `/usr/local/bin/fn` -> `/usr/local/Cellar/...` (and `/usr/local/Homebrew/` is only
+brew's own git repo, not where formulae install). So resolve the symlink and match the
+real Cellar/opt install roots — checking only `/usr/local/Homebrew/` missed Intel Macs.
+`/usr/local/bin` is deliberately NOT matched: it is shared with npm-global bins.
+*/
 function isHomebrewInstall(binaryPath: string | null): boolean {
   if (!binaryPath) return false;
-  return (
-    binaryPath.startsWith("/opt/homebrew/") ||
-    binaryPath.startsWith("/usr/local/Homebrew/") ||
-    binaryPath.startsWith("/home/linuxbrew/")
+  let resolved = binaryPath;
+  try {
+    resolved = realpathSync(binaryPath);
+  } catch {
+    // Unresolvable symlink/path — fall back to the raw path.
+  }
+  return [binaryPath, resolved].some((p) =>
+    p.startsWith("/opt/homebrew/") ||     // Apple Silicon (bin, opt, Cellar)
+    p.startsWith("/usr/local/Cellar/") || // Intel formula install root
+    p.startsWith("/usr/local/opt/") ||    // Intel formula opt symlinks
+    p.includes("/Homebrew/") ||           // brew's own repo checkout
+    p.startsWith("/home/linuxbrew/"),     // Linuxbrew
   );
 }
 

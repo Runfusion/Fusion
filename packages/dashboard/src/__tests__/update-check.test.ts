@@ -260,6 +260,25 @@ describe("update-check", () => {
     expect(execFake).toHaveBeenCalledTimes(1);
   });
 
+  // FNXC:UpdateInstallPermissions 2026-07-10-16:00: an Intel-macOS Homebrew install
+  // resolves through `/usr/local/Cellar/…` (not `/usr/local/Homebrew/`), so the
+  // remediation must recommend `brew upgrade`, not the npm/sudo guidance.
+  it("performUpdateInstall recommends brew for an Intel-macOS Homebrew install path", async () => {
+    const originalArgv1 = process.argv[1];
+    process.argv[1] = "/usr/local/Cellar/fusion/0.57.0/bin/fn";
+    try {
+      const execFake = vi.fn().mockRejectedValue(
+        Object.assign(new Error("EACCES"), { code: "EACCES", stderr: "npm error EACCES" }),
+      );
+      const result = await performUpdateInstall("1.0.0", "2.0.0", { exec: execFake, fusionDir });
+      expect(result.updated).toBe(false);
+      expect(result.error).toMatch(/brew upgrade fusion/);
+      expect(result.error).not.toMatch(/sudo npm/);
+    } finally {
+      process.argv[1] = originalArgv1;
+    }
+  });
+
   describe("frequency", () => {
     beforeEach(() => {
       __resetStartupRefreshFlag();
