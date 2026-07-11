@@ -8980,14 +8980,45 @@ export class SelfHealingManager {
     }
   }
 
+  /*
+   * FNXC:SelfHealing 2026-07-10-23:09:
+   * AI merge review approval is logged as `AI merge review (pass N): approved` and, after SHA binding,
+   * optionally `approved (<full-or-abbrev-sha>)`. Recovery must only land a commit tied to that approval
+   * evidence — not an arbitrary same-task clean-room HEAD when multiple fusion-ai-merge worktrees exist.
+   */
+  private static readonly APPROVED_AI_MERGE_REVIEW_RE =
+    /AI merge review \(pass \d+\): approved(?:\s*\(([0-9a-f]{7,40})\))?/i;
+
   private hasApprovedAiMergeReview(task: Task): boolean {
     return (task.log ?? []).some((entry) =>
       typeof entry.action === "string"
-      && /AI merge review \(pass \d+\): approved/.test(entry.action)
+      && SelfHealingManager.APPROVED_AI_MERGE_REVIEW_RE.test(entry.action)
+    );
+  }
+
+  /** Full/abbrev SHAs recorded on approve log lines; empty when only legacy task-level approval exists. */
+  private getApprovedAiMergeReviewShas(task: Task): string[] {
+    const shas: string[] = [];
+    for (const entry of task.log ?? []) {
+      if (typeof entry.action !== "string") continue;
+      const match = entry.action.match(SelfHealingManager.APPROVED_AI_MERGE_REVIEW_RE);
+      if (match?.[1]) shas.push(match[1].toLowerCase());
+    }
+    return shas;
+  }
+
+  private commitMatchesApprovedAiMergeReview(sha: string, approvedShas: string[]): boolean {
+    if (approvedShas.length === 0) return true;
+    const normalized = sha.toLowerCase();
+    return approvedShas.some((approved) =>
+      normalized === approved
+      || normalized.startsWith(approved)
+      || approved.startsWith(normalized)
     );
   }
 
   private async listAiMergeWorktreeCandidates(taskId: string, settings: Settings): Promise<string[]> {
+    // Keep root discovery local (avoid merger-ai-worktree import cycle via MIN_TEMP_WORKTREE_REAP_AGE_MS).
     const roots = Array.from(new Set([
       resolveRepoLocalAiMergeRoot(this.options.rootDir, settings),
       resolveLegacyAiMergeRootPath(this.options.rootDir),
@@ -9007,6 +9038,18 @@ export class SelfHealingManager {
     return paths;
   }
 
+  /*
+   * FNXC:SelfHealing 2026-07-10-23:09:
+   * Recover an approved AI-merge clean-room squash that never advanced the integration branch
+   * (merger crash after review pass). Safety gates: in-review, not mergeConfirmed, approved review
+   * log (prefer SHA-bound approve lines), all steps done/skipped, commit task ownership, and either
+   * already-landed ancestry or tip-is-ancestor for ff-only / CAS advance.
+   * When not checked out on the integration branch, advance via advanceIntegrationBranchRef with
+   * rootDir = project root (the ref tip was read there) — never the detached candidate worktree alone.
+   * Quote full refs/heads/<branch> tokens for shell git (shellQuote of only the branch name yields
+   * invalid refs like refs/heads/'main').
+   * Legacy approve logs without a SHA: refuse when more than one same-task owned candidate exists.
+   */
   private async recoverApprovedStrandedAiMergeCommit(task: Task, settings: Settings): Promise<boolean> {
     if (task.column !== "in-review") return false;
     if (task.mergeDetails?.mergeConfirmed === true) return false;
@@ -9017,6 +9060,8 @@ export class SelfHealingManager {
     if (!integrationBranch) return false;
     const candidates = await this.listAiMergeWorktreeCandidates(task.id, settings);
     if (candidates.length === 0) return false;
+    const approvedShas = this.getApprovedAiMergeReviewShas(task);
+    const integrationRef = `refs/heads/${integrationBranch}`;
 
     const auditor = createRunAuditor(this.store, {
       runId: generateSyntheticRunId("self-heal-stranded-ai-merge", task.id),
@@ -9026,6 +9071,8 @@ export class SelfHealingManager {
       phase: "recover-stranded-ai-merge-commit",
     });
 
+    type OwnedCandidate = { candidate: string; canonicalCandidate: string; strandedSha: string; subject: string; body: string };
+    const ownedCandidates: OwnedCandidate[] = [];
     for (const candidate of candidates) {
       let canonicalCandidate = candidate;
       try { canonicalCandidate = realpathSync(candidate); } catch { /* keep original */ }
@@ -9044,22 +9091,42 @@ export class SelfHealingManager {
         const [subject = "", body = ""] = showStdout.split("\x1f");
         const ownership = getCommitTaskOwnership(task.id, task.lineageId, subject, body);
         if (!ownership.owned) continue;
+        if (!this.commitMatchesApprovedAiMergeReview(strandedSha, approvedShas)) continue;
+        ownedCandidates.push({ candidate, canonicalCandidate, strandedSha, subject, body });
+      } catch (err: unknown) {
+        log.warn(`recoverApprovedStrandedAiMergeCommit: ${task.id} candidate ${candidate} pre-scan skipped: ${getErrorMessage(err)}`);
+      }
+    }
 
-        const { stdout: tipStdout } = await execAsync(`git rev-parse --verify refs/heads/${shellQuote(integrationBranch)}`, {
+    // Legacy task-level approve without SHA: refuse ambiguous multi-candidate ownership.
+    if (approvedShas.length === 0 && ownedCandidates.length > 1) {
+      await this.store.logEntry(
+        task.id,
+        `Skipped stranded AI merge recovery: ${ownedCandidates.length} same-task clean-room candidates without an approved commit SHA binding`,
+      ).catch(() => undefined);
+      return false;
+    }
+
+    for (const { candidate, canonicalCandidate, strandedSha } of ownedCandidates) {
+      try {
+        const { stdout: tipStdout } = await execAsync(`git rev-parse --verify ${shellQuote(integrationRef)}`, {
           cwd: this.options.rootDir,
           timeout: 30_000,
         });
         const tipSha = tipStdout.trim();
         if (!tipSha) continue;
 
-        const alreadyAncestor = await execAsync(`git merge-base --is-ancestor ${shellQuote(strandedSha)} refs/heads/${shellQuote(integrationBranch)}`, {
+        // Prefer already-landed detection before requiring tip⊆squash (mutually exclusive for non-equal SHAs).
+        const alreadyAncestor = await execAsync(`git merge-base --is-ancestor ${shellQuote(strandedSha)} ${shellQuote(integrationRef)}`, {
           cwd: this.options.rootDir,
           timeout: 30_000,
         }).then(() => true, () => false);
-        const tipIsAncestor = await execAsync(`git merge-base --is-ancestor ${shellQuote(tipSha)} ${shellQuote(strandedSha)}`, {
-          cwd: this.options.rootDir,
-          timeout: 30_000,
-        }).then(() => true, () => false);
+        const tipIsAncestor = alreadyAncestor
+          ? false
+          : await execAsync(`git merge-base --is-ancestor ${shellQuote(tipSha)} ${shellQuote(strandedSha)}`, {
+            cwd: this.options.rootDir,
+            timeout: 30_000,
+          }).then(() => true, () => false);
         if (!alreadyAncestor && !tipIsAncestor) continue;
 
         const landedFiles = await execAsync(`git diff-tree --no-commit-id --name-only -r ${shellQuote(strandedSha)}`, {
@@ -9079,8 +9146,9 @@ export class SelfHealingManager {
             if (head !== tipSha || dirty) continue;
             await execAsync(`git merge --ff-only ${shellQuote(strandedSha)}`, { cwd: this.options.rootDir, timeout: 120_000 });
           } else {
+            // CAS on the project root's integration ref (tip was read from rootDir).
             const advanced = await advanceIntegrationBranchRef({
-              rootDir: canonicalCandidate,
+              rootDir: this.options.rootDir,
               projectRootDir: this.options.rootDir,
               integrationBranch,
               newSha: strandedSha,

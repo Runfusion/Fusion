@@ -38,7 +38,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { realpathSync, readdirSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertNotWorkspaceTaskMerge,
@@ -83,9 +82,9 @@ import cycle (merger-ai-worktree imports `MIN_TEMP_WORKTREE_REAP_AGE_MS` from se
 import { isRepoLanded, findProvenLandedCommit, FUSION_TASK_ID_TRAILER_KEY } from "./workspace-land-predicate.js";
 import { finalizeProvenAutoMergeTask } from "./auto-merge-finalization.js";
 import { getCommitTaskOwnership } from "./already-merged-detector.js";
-import { resolveLegacyAiMergeRootPath } from "./worktree-paths.js";
 import {
   cleanupAiMergeWorktree,
+  getAiMergeTempSearchRoots,
   pruneExistingAiMergeWorktrees,
   resolveAiMergeRoot,
 } from "./merger-ai-worktree.js";
@@ -131,16 +130,46 @@ function short(sha: string): string {
   return /^[0-9a-f]{7,40}$/i.test(sha) ? sha.slice(0, 8) : sha;
 }
 
+/*
+ * FNXC:AIMerge 2026-07-10-23:09:
+ * Approve log lines may include the reviewed squash SHA: `AI merge review (pass N): approved (<sha>)`.
+ * Pre-prune recovery must bind to that SHA when present; legacy task-level approve without SHA refuses
+ * when multiple same-task clean-room HEADs exist so an older unreviewed worktree cannot land first.
+ */
+const APPROVED_AI_MERGE_REVIEW_RE =
+  /AI merge review \(pass \d+\): approved(?:\s*\(([0-9a-f]{7,40})\))?/i;
+
 function taskHasApprovedAiMergeReview(task: Task | undefined): boolean {
   return (task?.log ?? []).some((entry) =>
     typeof entry.action === "string"
-    && /AI merge review \(pass \d+\): approved/.test(entry.action)
+    && APPROVED_AI_MERGE_REVIEW_RE.test(entry.action)
+  );
+}
+
+function getApprovedAiMergeReviewShas(task: Task | undefined): string[] {
+  const shas: string[] = [];
+  for (const entry of task?.log ?? []) {
+    if (typeof entry.action !== "string") continue;
+    const match = entry.action.match(APPROVED_AI_MERGE_REVIEW_RE);
+    if (match?.[1]) shas.push(match[1].toLowerCase());
+  }
+  return shas;
+}
+
+function commitMatchesApprovedAiMergeReview(sha: string, approvedShas: string[]): boolean {
+  if (approvedShas.length === 0) return true;
+  const normalized = sha.toLowerCase();
+  return approvedShas.some((approved) =>
+    normalized === approved
+    || normalized.startsWith(approved)
+    || approved.startsWith(normalized)
   );
 }
 
 function listAiMergeWorktreeCandidates(taskId: string, projectRootDir: string, settings?: Settings): string[] {
   const prefix = `fusion-ai-merge-${taskId.toLowerCase()}-`;
-  const roots = Array.from(new Set([resolveAiMergeRoot(projectRootDir, settings), resolveLegacyAiMergeRootPath(projectRootDir), tmpdir()]));
+  // Same root set as pre-merge prune (modern / legacy / tmpdir / test redirs).
+  const roots = getAiMergeTempSearchRoots(projectRootDir, settings);
   const candidates: string[] = [];
   for (const root of roots) {
     let entries: string[];
@@ -159,12 +188,19 @@ async function recoverApprovedPreexistingAiMergeWorktree(
   integrationBranch: string,
   ctx: LandRepoContext,
 ): Promise<LandOneRepoResult | null> {
-  const { taskId, settings, store, audit, log, allowDirtyLocalCheckoutSync, stashResolveAgent } = ctx;
+  const { taskId, settings, store, audit, log, allowDirtyLocalCheckoutSync, stashResolveAgent, signal } = ctx;
+  // Honor hard-cancel before any recovery checkout/land (matches later landOneRepo abort gate).
+  throwIfAborted(signal, taskId);
   const task = await store.getTask(taskId).catch(() => undefined);
   if (!taskHasApprovedAiMergeReview(task)) return null;
 
+  const approvedShas = getApprovedAiMergeReviewShas(task);
   const tipSha = await git(["rev-parse", "--verify", `refs/heads/${integrationBranch}`], repoRootDir);
+  type OwnedCandidate = { mergeRoot: string; squashSha: string };
+  const ownedCandidates: OwnedCandidate[] = [];
+
   for (const candidate of listAiMergeWorktreeCandidates(taskId, repoRootDir, settings)) {
+    throwIfAborted(signal, taskId);
     let mergeRoot = candidate;
     try { mergeRoot = realpathSync(candidate); } catch { /* keep original */ }
     if (activeSessionRegistry.isPathActive(candidate) || activeSessionRegistry.isPathActive(mergeRoot)) continue;
@@ -175,29 +211,46 @@ async function recoverApprovedPreexistingAiMergeWorktree(
       const show = await git(["show", "-s", "--format=%s%x1f%b", squashSha], mergeRoot);
       const [subject = "", body = ""] = show.split("\x1f");
       if (!getCommitTaskOwnership(taskId, task?.lineageId, subject, body).owned) continue;
+      if (!commitMatchesApprovedAiMergeReview(squashSha, approvedShas)) continue;
+      ownedCandidates.push({ mergeRoot, squashSha });
+    } catch (err: unknown) {
+      await log(`AI merge: skipped pre-existing clean-room recovery candidate ${mergeRoot}: ${getErrorMessage(err)}`);
+    }
+  }
+
+  if (approvedShas.length === 0 && ownedCandidates.length > 1) {
+    await log(
+      `AI merge: skipped pre-existing clean-room recovery — ${ownedCandidates.length} same-task candidates without an approved commit SHA binding`,
+    );
+    return null;
+  }
+
+  for (const { mergeRoot, squashSha } of ownedCandidates) {
+    throwIfAborted(signal, taskId);
+    try {
+      // alreadyLanded before tip⊆squash: once landed, tip is a descendant so the old tip-first gate made recovery unreachable.
+      const alreadyLanded = await gitOk(["merge-base", "--is-ancestor", squashSha, `refs/heads/${integrationBranch}`], repoRootDir);
+      if (alreadyLanded) {
+        await log(`AI merge: recovered already-landed clean-room commit ${short(squashSha)} before pruning`);
+        return { outcome: "landed", squashSha, localSync: "skipped-other-branch", tipSha, integrationBranch };
+      }
       if (!(await gitOk(["merge-base", "--is-ancestor", tipSha, squashSha], repoRootDir))) continue;
 
-      const alreadyLanded = await gitOk(["merge-base", "--is-ancestor", squashSha, `refs/heads/${integrationBranch}`], repoRootDir);
-      if (!alreadyLanded) {
-        const land = await landSquash({
-          projectRootDir: repoRootDir,
-          mergeRoot,
-          integrationBranch,
-          tipSha,
-          squashSha,
-          taskId,
-          audit,
-          resolveConflicts: stashResolveAgent,
-          allowDirtyLocalCheckoutSync,
-        });
-        if (land.outcome !== "advanced") continue;
-        await log(`AI merge: recovered approved pre-existing clean-room commit ${short(squashSha)} before pruning`);
-        await audit.git({ type: "merge:ai-landed", target: integrationBranch, metadata: { taskId, landedSha: squashSha, source: "pre-prune-clean-room-recovery", mergeRoot } }).catch(() => undefined);
-        return { outcome: "landed", squashSha, localSync: land.localSync, tipSha, integrationBranch };
-      }
-
-      await log(`AI merge: recovered already-landed clean-room commit ${short(squashSha)} before pruning`);
-      return { outcome: "landed", squashSha, localSync: "skipped-other-branch", tipSha, integrationBranch };
+      const land = await landSquash({
+        projectRootDir: repoRootDir,
+        mergeRoot,
+        integrationBranch,
+        tipSha,
+        squashSha,
+        taskId,
+        audit,
+        resolveConflicts: stashResolveAgent,
+        allowDirtyLocalCheckoutSync,
+      });
+      if (land.outcome !== "advanced") continue;
+      await log(`AI merge: recovered approved pre-existing clean-room commit ${short(squashSha)} before pruning`);
+      await audit.git({ type: "merge:ai-landed", target: integrationBranch, metadata: { taskId, landedSha: squashSha, source: "pre-prune-clean-room-recovery", mergeRoot } }).catch(() => undefined);
+      return { outcome: "landed", squashSha, localSync: land.localSync, tipSha, integrationBranch };
     } catch (err: unknown) {
       await log(`AI merge: skipped pre-existing clean-room recovery candidate ${mergeRoot}: ${getErrorMessage(err)}`);
     }
@@ -690,6 +743,11 @@ export async function landOneRepo(
     includeTaskId, trailers, taskTitle, signal, store,
   } = ctx;
 
+  /*
+   * FNXC:AIMerge 2026-07-10-23:09:
+   * Recovery-critical prune order: land any approved stranded clean-room squash before
+   * pre-merge pruning, which would otherwise delete the only easy reference to that commit.
+   */
   // If a prior merger died after the clean-room squash was approved but before
   // landing/finalization, land that commit before the normal pre-merge prune can
   // delete the only easy reference to it.
@@ -1620,7 +1678,8 @@ async function mergeAndReview(input: {
     });
 
     if (verdict.verdict === "approve") {
-      await log(`AI merge review (pass ${attempt + 1}): approved`);
+      // FNXC:AIMerge 2026-07-10-23:09: Persist the approved squash SHA on the log line so stranded recovery can bind to the reviewed commit, not any same-task clean-room HEAD.
+      await log(`AI merge review (pass ${attempt + 1}): approved (${head})`);
       return head;
     }
 

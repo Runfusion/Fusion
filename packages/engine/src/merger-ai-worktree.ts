@@ -84,7 +84,13 @@ export function resolveAiMergeRoot(projectRootDir: string, settings?: Settings):
   return root;
 }
 
-function getAiMergeTempSearchRoots(projectRootDir: string, settings?: Settings): string[] {
+/*
+ * FNXC:AIMerge 2026-07-10-23:09:
+ * Prune and stranded-recovery candidate discovery must scan the same root set.
+ * Includes modern resolved root, legacy .fusion/ai-merge, system tmpdir, and
+ * FUSION_TEST_WORKER_ROOT redir-* children used by the test harness.
+ */
+export function getAiMergeTempSearchRoots(projectRootDir: string, settings?: Settings): string[] {
   const roots = [resolveAiMergeRoot(projectRootDir, settings), resolveLegacyAiMergeRootPath(projectRootDir), tmpdir()];
   const testWorkerRoot = process.env.FUSION_TEST_WORKER_ROOT;
   if (testWorkerRoot) {

@@ -277,22 +277,93 @@ describe("runAiMerge", () => {
     expect(emitted.some((e) => e.event === "task:merged")).toBe(true);
   });
 
-  it("recovers an approved pre-existing clean-room commit before pruning and re-merging", async () => {
-    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
-    const mainBefore = git(dir, "rev-parse main");
-    const aiMergeRoot = join(dir, ".fusion", "ai-merge");
+  function createStrandedCleanRoom(dir: string, aiMergeRoot: string): { strandedRoot: string; strandedSha: string } {
     mkdirSync(aiMergeRoot, { recursive: true });
+    const mainBefore = git(dir, "rev-parse main");
     const strandedRoot = mkdtempSync(join(aiMergeRoot, "fusion-ai-merge-fn-1-"));
     tracked.add(strandedRoot);
     git(dir, `worktree add --detach ${strandedRoot} ${mainBefore}`);
     execSync("git merge --squash fusion/fn-1", { cwd: strandedRoot, stdio: "pipe" });
     execSync("git add -A", { cwd: strandedRoot, stdio: "pipe" });
     execSync('git commit -q -m "FN-1: recovered clean-room" -m "Fusion-Task-Id: FN-1"', { cwd: strandedRoot, stdio: "pipe" });
-    const strandedSha = git(strandedRoot, "rev-parse HEAD");
+    return { strandedRoot, strandedSha: git(strandedRoot, "rev-parse HEAD") };
+  }
+
+  it.each([
+    {
+      name: "legacy .fusion/ai-merge root",
+      resolveRoot: (dir: string) => join(dir, ".fusion", "ai-merge"),
+    },
+    {
+      name: "modern resolved .worktrees/.ai-merge root",
+      resolveRoot: (dir: string) => join(dir, ".worktrees", ".ai-merge"),
+    },
+    {
+      name: "direct tmpdir() root",
+      resolveRoot: () => tmpdir(),
+    },
+  ])("recovers an approved pre-existing clean-room commit before pruning ($name)", async ({ resolveRoot }) => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { strandedSha } = createStrandedCleanRoom(dir, resolveRoot(dir));
     const { store, logs } = makeStore(dir, {
       log: [
         { action: "Task marked done by agent", timestamp: new Date(Date.now() - 20 * 60_000).toISOString() },
-        { action: "AI merge review (pass 1): approved", timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
+        { action: `AI merge review (pass 1): approved (${strandedSha})`, timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
+      ],
+    });
+    const mergeAgent = vi.fn(async () => { throw new Error("should not re-merge"); });
+
+    let result: Awaited<ReturnType<typeof runAiMerge>>;
+    try {
+      result = await runAiMerge(store, dir, "FN-1", { manual: true, allowDirtyLocalCheckoutSync: true }, {
+        mergeAgent,
+        reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+      });
+    } catch (err) {
+      throw new Error(`recovery failed for root (${resolveRoot(dir)}): ${(err as Error).message}\nlogs:\n${logs.join("\n")}`);
+    }
+
+    expect(result.merged).toBe(true);
+    expect(result.commitSha).toBe(strandedSha);
+    expect(git(dir, "rev-parse main")).toBe(strandedSha);
+    expect(mergeAgent).not.toHaveBeenCalled();
+    expect(logs.some((line) => line.includes("recovered approved pre-existing clean-room commit"))).toBe(true);
+  });
+
+  it("lands only the SHA-bound approved clean-room when multiple same-task candidates exist", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const mainBefore = git(dir, "rev-parse main");
+    const legacyRoot = join(dir, ".fusion", "ai-merge");
+    mkdirSync(legacyRoot, { recursive: true });
+
+    // Older unreviewed candidate listed first (filesystem order depends on names; pin via prefixes).
+    const olderRoot = join(legacyRoot, "fusion-ai-merge-fn-1-aaa-old");
+    const approvedRoot = join(legacyRoot, "fusion-ai-merge-fn-1-zzz-approved");
+    mkdirSync(olderRoot, { recursive: true });
+    mkdirSync(approvedRoot, { recursive: true });
+    tracked.add(olderRoot);
+    tracked.add(approvedRoot);
+    git(dir, `worktree add --detach ${olderRoot} ${mainBefore}`);
+    git(dir, `worktree add --detach ${approvedRoot} ${mainBefore}`);
+
+    execSync("git merge --squash fusion/fn-1", { cwd: olderRoot, stdio: "pipe" });
+    execSync("git add -A", { cwd: olderRoot, stdio: "pipe" });
+    execSync('git commit -q -m "FN-1: older clean-room" -m "Fusion-Task-Id: FN-1"', { cwd: olderRoot, stdio: "pipe" });
+    writeFileSync(join(olderRoot, "older-extra.txt"), "older\n");
+    execSync("git add -A", { cwd: olderRoot, stdio: "pipe" });
+    execSync('git commit -q -m "FN-1: older extra" -m "Fusion-Task-Id: FN-1"', { cwd: olderRoot, stdio: "pipe" });
+    const olderSha = git(olderRoot, "rev-parse HEAD");
+
+    execSync("git merge --squash fusion/fn-1", { cwd: approvedRoot, stdio: "pipe" });
+    execSync("git add -A", { cwd: approvedRoot, stdio: "pipe" });
+    execSync('git commit -q -m "FN-1: approved clean-room" -m "Fusion-Task-Id: FN-1"', { cwd: approvedRoot, stdio: "pipe" });
+    const approvedSha = git(approvedRoot, "rev-parse HEAD");
+    expect(approvedSha).not.toBe(olderSha);
+
+    const { store, logs } = makeStore(dir, {
+      log: [
+        { action: "Task marked done by agent", timestamp: new Date(Date.now() - 20 * 60_000).toISOString() },
+        { action: `AI merge review (pass 1): approved (${approvedSha})`, timestamp: new Date(Date.now() - 12 * 60_000).toISOString() },
       ],
     });
     const mergeAgent = vi.fn(async () => { throw new Error("should not re-merge"); });
@@ -303,10 +374,30 @@ describe("runAiMerge", () => {
     });
 
     expect(result.merged).toBe(true);
-    expect(result.commitSha).toBe(strandedSha);
-    expect(git(dir, "rev-parse main")).toBe(strandedSha);
+    expect(result.commitSha).toBe(approvedSha);
+    expect(git(dir, "rev-parse main")).toBe(approvedSha);
     expect(mergeAgent).not.toHaveBeenCalled();
     expect(logs.some((line) => line.includes("recovered approved pre-existing clean-room commit"))).toBe(true);
+  });
+
+  it("aborts pre-prune recovery when the land signal is already aborted", async () => {
+    const { dir } = initRepoWithBranch({ branch: "fusion/fn-1" });
+    const { strandedSha } = createStrandedCleanRoom(dir, join(dir, ".fusion", "ai-merge"));
+    const { store } = makeStore(dir, {
+      log: [
+        { action: `AI merge review (pass 1): approved (${strandedSha})`, timestamp: new Date().toISOString() },
+      ],
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const mergeAgent = vi.fn(async () => { throw new Error("should not re-merge"); });
+
+    await expect(runAiMerge(store, dir, "FN-1", { manual: true, signal: controller.signal }, {
+      mergeAgent,
+      reviewAgent: vi.fn(async () => "REVIEW_VERDICT: approve"),
+    })).rejects.toMatchObject({ name: "MergeAbortedError" });
+    expect(mergeAgent).not.toHaveBeenCalled();
+    expect(git(dir, "rev-parse main")).not.toBe(strandedSha);
   });
 
   it("backfills custom AI-merge co-author trailer and respects commitAuthorEnabled false", async () => {
