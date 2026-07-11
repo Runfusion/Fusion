@@ -112,8 +112,7 @@ describe("WorkflowArea", () => {
     await screen.findByTestId("cc-area-workflows");
     expect(mocks.api).toHaveBeenCalledWith("/command-center/workflows?from=2026-06-08", undefined);
     expect(screen.getByTestId("cc-workflows-total-tokens").textContent).toContain("1,650");
-    expect(screen.getByTestId("cc-workflows-total-cost").textContent).toContain("—");
-    expect(screen.getByTestId("cc-workflows-total-cost").textContent).not.toContain("$0");
+    expect(screen.getByTestId("cc-workflows-total-cost").textContent).toContain("$4.25+");
     expect(screen.getByTestId("cc-workflows-tokens-chart").textContent).toContain("Coding");
 
     const table = screen.getByTestId("cc-workflows-table");

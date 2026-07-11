@@ -54,7 +54,7 @@ type OrgChartDragState = {
 };
 
 function costSortValue(cost: CostResult): number {
-  return cost.unavailable || cost.usd === null ? -1 : cost.usd;
+  return cost.usd ?? -1;
 }
 
 function agentLabel(agent: TeamAgentSummary, unknownLabel: string): string {

@@ -715,6 +715,18 @@ describe("CommandCenter shell", () => {
     expect(liveMetricValue("command-center-live-tokens")).toBe("1,234,567,890");
   });
 
+  it("shows the priced subtotal in Overview when some usage has unknown pricing", async () => {
+    mockOverviewApi({
+      tokens: {
+        ...tokenFixture(1_500),
+        cost: { usd: 911.39004125, unavailable: true, stale: false },
+      },
+    });
+    render(<CommandCenter />);
+
+    expect(await screen.findByTestId("command-center-stat-tokens")).toHaveTextContent("$911.39+");
+  });
+
   it("live-polls token totals for the Overview card, live strip, and model charts", async () => {
     vi.useFakeTimers();
     let resolvePoll: ((value: ReturnType<typeof tokenFixture>) => void) | null = null;

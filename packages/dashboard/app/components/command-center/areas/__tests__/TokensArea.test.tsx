@@ -180,6 +180,24 @@ afterEach(() => {
 });
 
 describe("TokensArea provider model icons", () => {
+  it("renders a priced subtotal when the aggregate also contains unpriced usage", async () => {
+    apiMock.mockResolvedValue({
+      ...tokenFixture(),
+      cost: { usd: 11.25, unavailable: true, stale: false },
+      groups: [
+        {
+          ...tokenFixture().groups[0],
+          cost: { usd: 3.5, unavailable: true, stale: false },
+        },
+      ],
+    });
+
+    render(<TokensArea range={range7d} />);
+
+    expect(await screen.findByTestId("cc-tokens-cost")).toHaveTextContent("$11.25+");
+    expect(screen.getByTestId("cc-tokens-row-claude-sonnet-4-5")).toHaveTextContent("$3.50+");
+  });
+
   it("renders current OpenAI Codex priced costs as dollars instead of the unavailable sentinel", async () => {
     const usage = { inputTokens: 1_000_000, outputTokens: 200_000, cachedTokens: 500_000, cacheWriteTokens: 100_000 };
     const cost = costFor(usage, { provider: "openai-codex", model: "gpt-5.5" });
