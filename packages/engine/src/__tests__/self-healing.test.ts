@@ -10729,8 +10729,8 @@ describe("stranded AI merge clean-room recovery", () => {
       if (command.includes("git show -s --format")) {
         return Buffer.from("FN-5858: render headings\x1fFusion-Task-Id: FN-5858\nFusion-Task-Lineage: lineage-5858\n");
       }
-      if (command.includes("git rev-parse --verify refs/heads/'main'")) return Buffer.from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
-      if (command.includes("git merge-base --is-ancestor 'dddddddddddddddddddddddddddddddddddddddd' refs/heads/'main'")) {
+      if (command.includes("git rev-parse --verify 'refs/heads/main'")) return Buffer.from("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n");
+      if (command.includes("git merge-base --is-ancestor 'dddddddddddddddddddddddddddddddddddddddd' 'refs/heads/main'")) {
         throw new Error("not already landed");
       }
       if (command.includes("git merge-base --is-ancestor 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' 'dddddddddddddddddddddddddddddddddddddddd'")) {
