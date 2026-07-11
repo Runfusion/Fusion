@@ -25,6 +25,12 @@ vi.mock("../logger.js", async () => {
 });
 vi.mock("../pi.js", () => ({
   createFnAgent: vi.fn(),
+  // FNXC:EngineTestDrift 2026-07-11-22:23:
+  // DefaultPiRuntime.describeModel (runtime-resolution.ts) now reaches the real
+  // pi.js describeModel export on the heartbeat path. The hand-written pi.js
+  // mock must surface it or vitest throws "No describeModel export is defined",
+  // which cascades into createFnAgent failing and every heartbeat ending 'failed'.
+  describeModel: vi.fn().mockReturnValue("mock-provider/mock-model"),
   promptWithFallback: vi.fn(async (session: any, prompt: string) => {
     await session.prompt(prompt);
   }),
