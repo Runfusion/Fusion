@@ -1386,7 +1386,8 @@
     "untitledSession": "제목 없음",
     "workingStatus": "작업 중…",
     "you": "나",
-    "contextWindowAria": "Estimated {{used}} of {{total}} context tokens"
+    "contextWindowAria": "Estimated {{used}} of {{total}} context tokens",
+    "noMessage": ""
   },
   "chatRooms": {
     "error": {
@@ -6837,6 +6838,7 @@
     "githubCliAuthBody": "GitHub CLI is installed but not authenticated on the Fusion host. Run this command in the environment where Fusion is running, then return here and continue.",
     "githubCliAuthTitle": "Authenticate GitHub CLI",
     "githubCliInstallBody": "Fusion could not find `gh` on the host running Fusion. Install GitHub CLI there to import issues and track pull requests with CLI authentication.",
+    "githubCliInstallShowInstructions": "설치 안내 보기",
     "githubCliInstallLink": "Open GitHub CLI releases",
     "githubCliInstallLinux": "Linux: install `gh` with your distribution package manager or the packages from cli.github.com.",
     "githubCliInstallMac": "macOS: `brew install gh` or download the installer from GitHub CLI releases.",
@@ -6916,12 +6918,14 @@
     "projectRegisteredSuccess": "프로젝트가 성공적으로 등록되었습니다.",
     "projectRequired": "첫 번째 작업 동작을 사용하려면 프로젝트가 필요합니다.",
     "projectSelected": "프로젝트 선택됨 — 작업 생성 및 가져오기를 사용할 수 있습니다.",
+    "projectStepContext": "5단계 중 3단계 — 프로젝트 · Fusion 설정",
     "projectSetupDescription": "작업을 생성하거나 가져오기 전에 첫 번째 프로젝트를 선택하세요. 기존 로컬 디렉터리를 등록하거나, 설정 마법사를 통해 GitHub 저장소 URL을 클론할 수 있습니다.",
     "providersConnectedSummary": "✓ {{total}}개 제공자 중 {{connected}}개 연결됨",
     "providersSkippedSummary_one_one": "",
     "providersSkippedSummary_one_other": "",
     "providersSkippedSummary_other_one": "",
     "providersSkippedSummary_other_other": "",
+    "quickStartAllConnected": "빠른 시작 제공자가 모두 이미 연결되어 있습니다.",
     "quickStartProviders": "빠른 시작 제공자",
     "readinessAiProviderConnected": "{{name}} 연결됨 — AI 에이전트가 작업을 처리할 수 있습니다",
     "readinessAiProviderLabel": "AI 제공자",
@@ -6953,6 +6957,7 @@
     "retry": "재시도",
     "reviewStep": "{{label}} 검토",
     "runtimeNode": "런타임 노드",
+    "runtimeNodeHint": "런타임 노드는 이 프로젝트의 작업이 실행되는 머신입니다. \"로컬 노드\"는 이 컴퓨터이며, 다른 곳에서 작업을 실행하려면 원격 노드를 선택하세요.",
     "savedProfileButFailedToActivate": "프로필을 저장했지만 활성화에 실패했습니다",
     "saveKey": "저장",
     "saveRemoteServer": "원격 서버 저장",

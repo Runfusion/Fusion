@@ -106,6 +106,19 @@
   line-height: 1.1;
 }
 
+/*
+FNXC:SetupWizard 2026-07-10-11:05:
+Eyebrow shown when this wizard runs as the onboarding "Project" step sub-flow, so the user keeps the
+"Step 3 of 5" context instead of feeling ejected into an unrelated modal.
+*/
+.setup-wizard-step-context {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .setup-wizard-content {
   padding: var(--space-md) var(--space-xl);
   flex: 1 1 auto;
@@ -250,7 +263,13 @@
   margin-bottom: var(--space-xs);
 }
 
-.setup-wizard-manual .form-group input,
+/*
+FNXC:SetupWizard 2026-07-10-11:10:
+Exclude radios/checkboxes from the full-width text-input styling. This rule previously matched the
+isolation-mode radio inputs too, stretching the native radio into a full-width accent-colored bar
+across the option card on click/focus (first-run review bug).
+*/
+.setup-wizard-manual .form-group input:not([type="radio"]):not([type="checkbox"]),
 .setup-wizard-manual .form-group select {
   width: 100%;
   padding: 10px 12px;
@@ -262,7 +281,7 @@
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.setup-wizard-manual .form-group input:focus,
+.setup-wizard-manual .form-group input:not([type="radio"]):not([type="checkbox"]):focus,
 .setup-wizard-manual .form-group select:focus {
   outline: none;
   border-color: var(--todo);
@@ -560,7 +579,27 @@
   flex-direction: column;
 }
 
+/*
+FNXC:SetupWizard 2026-07-10-11:10:
+Isolation-mode option cards ARE the selectable control (first-run review): the native radio used to
+float centered in the card and stretched into a full-width orange bar on focus/click. The radio is now
+visually hidden (kept in the DOM for form semantics and keyboard selection), the card shows the
+selected state via border/ring, and focus-visible on the hidden radio draws the focus ring on the card.
+Descriptions render in sentence case — the global ".form-group label" uppercase transform is
+explicitly neutralized here because each option card is itself a <label> inside a .form-group.
+
+FNXC:SetupWizard 2026-07-10-16:40:
+The neutralization must out-specify the global ".form-group label" rule (0,1,1); a bare
+".setup-wizard-isolation-option" (0,1,0) silently lost the cascade and the cards still rendered
+ALL-CAPS. Keep the dedicated higher-specificity rule below in sync if the card class changes.
+*/
+.setup-wizard-manual .form-group label.setup-wizard-isolation-option {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .setup-wizard-isolation-option {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: var(--space-md);
@@ -569,6 +608,8 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
   transition:
     background-color var(--transition-fast),
     border-color var(--transition-fast);
@@ -586,8 +627,20 @@
 }
 
 .setup-wizard-isolation-option input[type="radio"] {
-  margin-top: 2px;
-  accent-color: var(--todo);
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  appearance: none;
+}
+
+.setup-wizard-isolation-option:has(input[type="radio"]:focus-visible) {
+  border-color: var(--todo);
+  box-shadow: var(--focus-ring-strong);
 }
 
 .setup-wizard-isolation-option-content {
@@ -649,12 +702,23 @@
   background: var(--surface);
 }
 
-.setup-wizard-footer .btn-primary {
+/*
+FNXC:SetupWizard 2026-07-10-10:55:
+Match ModelOnboarding footer sizing: all footer controls share the same height/type scale; the
+primary action keeps its filled emphasis and wider padding only.
+*/
+.setup-wizard-footer .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-sm);
-  padding: 10px 24px;
+  min-height: 38px;
+  padding: 8px 16px;
   font-size: 14px;
+}
+
+.setup-wizard-footer .btn-primary {
+  padding: 8px 24px;
   font-weight: 600;
 }
 

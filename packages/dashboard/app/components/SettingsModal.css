@@ -307,6 +307,18 @@ The embedded title reads like other embedded-view titles (Planning modal-header-
   min-width: 0;
 }
 
+/*
+FNXC:SettingsLayout 2026-07-10-12:25:
+First-run review video showed the footer Save button clipped at the panel edge. The base `.modal-actions` row is a no-wrap flex rail of non-shrinking buttons (Help + Version + Export/Import/Reset + Save, plus the optional update-check result text); on narrow desktop panes its intrinsic width exceeds the panel and, because `.settings-modal`/`.modal` clip overflow, the rightmost Save button gets cut off (at ~770px pane width Save already sat exactly at the padding edge — any extra footer text or font scaling clipped it).
+Fix the invariant for BOTH presentations (standalone modal + embedded SettingsView share `.settings-modal .modal-actions`): let the desktop footer wrap onto additional rows instead of clipping. The ≤768px mobile block below (FN-7752/FN-7773) intentionally re-asserts a single nowrap rail with horizontal scroll and overrides this inside its media query.
+*/
+.settings-modal .modal-actions {
+  flex-wrap: wrap;
+  align-items: center;
+  row-gap: var(--space-xs);
+  min-width: 0;
+}
+
 @media (max-width: 768px) {
   /*
   FNXC:Settings 2026-07-09-00:00:
@@ -1375,11 +1387,17 @@ Settings section headings should preserve hierarchy through spacing and type onl
 FNXC:GitLabSettings 2026-07-02-00:00:
 FN-7453 keeps GitLab's enable switch visible while hiding noisy URL/token fields behind native details disclosure. The layout uses token spacing and native summary semantics so collapsed and disabled states do not leave empty icon-button shells or focusable hidden fields.
 */
+/*
+FNXC:SettingsLayout 2026-07-10-12:20:
+First-run review video showed the GitLab Configuration box (and its right-flushed "Enable GitLab integration" checkbox) leaking past the alignment line of every other General control, reading as overflow at the panel/viewport edge.
+Root cause: settings controls get their horizontal gutter from the base `.form-group { padding: 0 var(--space-xl) }`, but this disclosure is a direct `.settings-content` child that carried no gutter of its own, so its bordered box spanned the full content width.
+Fix the invariant: bordered boxes that are direct settings-content children align their OUTER edge to the form-group gutter via horizontal margins (same convention as `.settings-scope-banner`), desktop `var(--space-xl)` and mobile `var(--space-sm)` to mirror the mobile `.form-group` gutter below.
+*/
 .settings-gitlab-disclosure {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
-  margin-top: var(--space-md);
+  margin: var(--space-md) var(--space-xl) 0;
   padding: var(--space-md);
   border: var(--btn-border-width) solid var(--border);
   border-radius: var(--radius-md);
@@ -1433,7 +1451,9 @@ FN-7453 keeps GitLab's enable switch visible while hiding noisy URL/token fields
 }
 
 @media (max-width: 768px) {
+  /* FNXC:SettingsLayout 2026-07-10-12:20: mobile keeps the disclosure aligned with the mobile `.form-group { padding: 0 var(--space-sm) }` gutter. */
   .settings-gitlab-disclosure {
+    margin-inline: var(--space-sm);
     padding: var(--space-sm);
   }
 

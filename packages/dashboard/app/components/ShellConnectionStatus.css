@@ -4,11 +4,11 @@
   gap: var(--space-sm);
 }
 
-.shell-connection-status__kind {
-  color: var(--text-muted);
-  font-size: calc(var(--space-sm) + var(--space-xs));
-}
-
+/*
+FNXC:ShellConnectionStatusPill 2026-07-10-14:22:
+The pill previously mixed a tiny host-kind label with a larger summary; the separate __kind span was removed and all pill text now shares one font size.
+Summary and action intentionally have no font-size overrides so they inherit the same size; the action is distinguished by color only.
+*/
 .shell-connection-status__summary {
   color: var(--text);
   max-width: calc(var(--space-2xl) * 8);
@@ -19,7 +19,6 @@
 
 .shell-connection-status__action {
   color: var(--color-info);
-  font-size: calc(var(--space-sm) + var(--space-xs));
 }
 
 @media (max-width: 768px) {

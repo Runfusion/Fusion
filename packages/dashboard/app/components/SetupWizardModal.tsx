@@ -20,6 +20,7 @@ function suggestTaskPrefixFromName(name: string): string {
   return "FN";
 }
 import { useNodes } from "../hooks/useNodes";
+import { getSelectableRuntimeNodes, shouldShowRuntimeNodeSelector } from "./setupWizardNodes";
 import { AgentAvatar } from "./AgentAvatar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { AGENT_PRESETS, getPresetById } from "./agent-presets";
@@ -404,8 +405,24 @@ export function SetupWizardModal({
               </svg>
               <span className="setup-wizard-brand-name">{t("setup.brandName", "Fusion")}</span>
             </div>
+            {/*
+              FNXC:SetupWizard 2026-07-10-11:05:
+              First-run review: opening project registration from the 5-step onboarding wizard (its
+              Project step) replaced the stepper chrome with a bare "Welcome to Fusion" modal, which read
+              as being thrown out of setup. When this wizard runs as that sub-flow (includeAgentStep is
+              false — see AppModals: it is only false while ModelOnboarding is driving), the header keeps
+              the onboarding context explicit: a "Step 3 of 5 — Project" eyebrow plus the onboarding
+              step's own title instead of the standalone welcome title.
+            */}
+            {!includeAgentStep && state.step === "manual" && (
+              <span className="setup-wizard-step-context">
+                {t("setup.projectStepContext", "Step 3 of 5 — Project · Fusion setup")}
+              </span>
+            )}
             <h2 id="wizard-title" className="setup-wizard-title">
-              {state.step === "manual" && t("setup.welcomeToFusion", "Welcome to Fusion")}
+              {state.step === "manual" && (includeAgentStep
+                ? t("setup.welcomeToFusion", "Welcome to Fusion")
+                : t("setup.titleSetUpProject", "Set Up Your Project"))}
               {state.step === "agent" && t("setup.firstAgentTitle", "Create your first agent")}
               {state.step === "complete" && t("setup.setupCompleteTitle", "Setup Complete!")}
             </h2>
@@ -614,26 +631,49 @@ export function SetupWizardModal({
                 </button>
                 {showAdvancedSettings && (
                   <div className="setup-wizard-advanced-panel">
-                    <div className="form-group">
-                      <div className="project-node-selector">
-                        <span className="project-node-selector__label">{t("setup.runtimeNode", "Runtime Node")}</span>
-                        <select
-                          value={state.manualNodeId}
-                          onChange={(e) => setState((prev) => ({ ...prev, manualNodeId: e.target.value }))}
-                          disabled={nodesLoading || state.isRegistering}
-                        >
-                          <option value="">{t("setup.localNode", "Local node")}</option>
-                          {nodes.map((node) => (
-                            <option key={node.id} value={node.id}>
-                              {node.name} ({node.type})
-                            </option>
-                          ))}
-                        </select>
+                    {/*
+                      FNXC:SetupWizard 2026-07-10-11:00:
+                      Runtime Node dedupe (first-run review): registered local-type node records used to
+                      render as a second "local (local)" option next to the built-in "Local node" default.
+                      Local-type records are filtered out (see setupWizardNodes.ts) and the whole selector
+                      is hidden when only the local machine is available, with a plain-language description
+                      of what a runtime node is when the choice does exist.
+                    */}
+                    {shouldShowRuntimeNodeSelector(nodes) && (
+                      <div className="form-group">
+                        <div className="project-node-selector">
+                          <span className="project-node-selector__label">{t("setup.runtimeNode", "Runtime Node")}</span>
+                          <select
+                            value={state.manualNodeId}
+                            onChange={(e) => setState((prev) => ({ ...prev, manualNodeId: e.target.value }))}
+                            disabled={nodesLoading || state.isRegistering}
+                          >
+                            <option value="">{t("setup.localNode", "Local node")}</option>
+                            {getSelectableRuntimeNodes(nodes).map((node) => (
+                              <option key={node.id} value={node.id}>
+                                {node.name} ({node.type})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <p className="form-hint">
+                          {t("setup.runtimeNodeHint", "A runtime node is the machine where this project's tasks run. \"Local node\" is this computer; pick a remote node to run tasks elsewhere.")}
+                        </p>
                       </div>
-                    </div>
+                    )}
 
                     <div className="form-group">
                       <label>{t("setup.isolationMode", "Isolation Mode")}</label>
+                      {/*
+                        FNXC:SetupWizard 2026-07-10-11:10:
+                        First-run review: the isolation-mode cards rendered a raw radio dot floating in the
+                        card, and clicking/focusing stretched the native radio into a full-width accent bar
+                        (a global ".form-group input { width: 100% }" rule hit the radio). The whole card is
+                        the selectable control: the radio input is visually hidden (kept for semantics and
+                        keyboard toggling), selection/focus is shown via the card's border/ring, and the
+                        descriptions must read in sentence case — the global ".form-group label" uppercase
+                        transform is neutralized for these option cards. See SetupWizardModal.css.
+                      */}
                       <div className="setup-wizard-isolation-options">
                         <label
                           className={`setup-wizard-isolation-option${state.manualIsolationMode === "in-process" ? " selected" : ""}`}

@@ -338,6 +338,27 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
+    it("hides the redundant Skip for now on AI Setup once a provider is connected", async () => {
+      // FNXC:Onboarding 2026-07-10-10:40: with a connected provider the user has effectively
+      // completed the step, so only "Skip setup →" and "Next →" remain in the footer.
+      mockFetchAuthStatus.mockResolvedValue({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "Next →" })).toBeTruthy();
+      });
+
+      expect(screen.queryByRole("button", { name: "Skip for now" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Skip setup →" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Next →" })).toBeTruthy();
+    });
+
     // FNXC:Onboarding 2026-07-03: the "Research runs require provider credentials and an enabled
     // Research View" note was intentionally removed from onboarding at the operator's request (it
     // belongs in Settings, not first-run), so the assertion that it renders no longer applies.
@@ -686,6 +707,34 @@ describe("ModelOnboardingModal", () => {
       expect(within(connectedSection).getByText("MiniMax")).toBeTruthy();
       expect(screen.queryByTestId("onboarding-provider-card-minimax")).toBeTruthy();
       expect(screen.queryByTestId("onboarding-advanced-provider-settings")).toBeNull();
+    });
+
+    it("surfaces connected quick-start providers in the Connected section at the top of the step", async () => {
+      /*
+      FNXC:Onboarding 2026-07-10-10:15:
+      After connecting a provider the user must immediately see it on step open, without scrolling:
+      ALL connected providers render in "Connected providers" ABOVE quick start, and the connected
+      provider leaves the quick-start list.
+      */
+      mockFetchAuthStatus.mockResolvedValueOnce({
+        providers: [
+          { id: "anthropic", name: "Anthropic", authenticated: true, type: "oauth" },
+          { id: "openai", name: "OpenAI", authenticated: false, type: "api_key" },
+        ],
+      });
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      const connectedSection = await screen.findByTestId("onboarding-connected-providers");
+      expect(getProviderOrderInSection(connectedSection)).toEqual(["anthropic"]);
+
+      const quickStartSection = screen.getByTestId("onboarding-quick-start-providers");
+      expect(getProviderOrderInSection(quickStartSection)).toEqual(["openai"]);
+      expect(
+        connectedSection.compareDocumentPosition(quickStartSection) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      // The "N of M providers connected" summary keeps working with the new layout.
+      expect(screen.getByTestId("provider-summary")).toHaveTextContent("1 of 2 providers connected");
     });
 
     it("renders onboarding provider icon wrapper for connected advanced providers", async () => {
@@ -1705,7 +1754,10 @@ describe("ModelOnboardingModal", () => {
 
       expect(screen.getByText(/Dashboard GitHub OAuth is not configured/)).toBeTruthy();
       expect(screen.getByText(/GitHub CLI setup guidance above/)).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
+      // FNXC:Onboarding 2026-07-10-10:35: the in-body "Continue without GitHub →" CTA was
+      // removed — footer "Skip GitHub →" is the single skip affordance for this step.
+      expect(screen.queryByRole("button", { name: "Continue without GitHub →" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Skip GitHub →" })).toBeTruthy();
     });
 
     it("shows feature availability callout on GitHub step", async () => {
@@ -1812,7 +1864,8 @@ describe("ModelOnboardingModal", () => {
 
       expect(screen.getByTestId("onboarding-git-prerequisite")).toHaveTextContent("Git prerequisite ready");
       expect(screen.queryByTestId("github-status-badge")).toBeNull();
-      expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Continue without GitHub →" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Skip GitHub →" })).toBeTruthy();
     });
 
     it("does not treat GitHub Copilot provider auth as GitHub integration readiness", async () => {
@@ -1829,7 +1882,8 @@ describe("ModelOnboardingModal", () => {
 
       expect(screen.queryByTestId("github-status-badge")).toBeNull();
       expect(screen.getByText(/Dashboard GitHub OAuth is not configured/)).toBeTruthy();
-      expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Continue without GitHub →" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Skip GitHub →" })).toBeTruthy();
       expect(screen.queryByText(/GitHub is connected — issue imports/)).toBeNull();
     });
 
@@ -1869,9 +1923,16 @@ describe("ModelOnboardingModal", () => {
       const installCard = screen.getByTestId("onboarding-gh-cli-install-card");
       expect(installCard).toHaveTextContent("Install GitHub CLI");
       expect(installCard).toHaveTextContent("host running Fusion");
+      // FNXC:Onboarding 2026-07-10-10:30: the per-OS install wall of text is collapsed
+      // behind a single disclosure; expand it to see the platform instructions, and the
+      // `gh` / `brew install gh` commands render as real <code> elements.
+      expect(installCard).not.toHaveTextContent("macOS");
+      fireEvent.click(within(installCard).getByRole("button", { name: /Show install instructions/ }));
       expect(installCard).toHaveTextContent("macOS");
       expect(installCard).toHaveTextContent("Windows");
       expect(installCard).toHaveTextContent("Linux");
+      expect(installCard.querySelector("code")).toBeTruthy();
+      expect(installCard).not.toHaveTextContent("`gh`");
       expect(screen.getByRole("link", { name: "Open GitHub CLI releases" })).toHaveAttribute("href", "https://github.com/cli/cli/releases/latest");
       expect(screen.getByRole("button", { name: /Connect GitHub OAuth/ })).toBeTruthy();
       expect(screen.getByRole("button", { name: "Skip GitHub →" })).toBeTruthy();
@@ -1890,7 +1951,8 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByTestId("onboarding-gh-cli-install-card")).toHaveTextContent("Install GitHub CLI");
       expect(screen.getByText(/Dashboard GitHub OAuth is not configured/)).toBeTruthy();
       expect(screen.queryByRole("button", { name: /Connect GitHub OAuth/ })).toBeNull();
-      expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Continue without GitHub →" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Skip GitHub →" })).toBeTruthy();
     });
 
     it("preserves missing-Git guidance when GitHub OAuth provider is absent and gh CLI is ready", async () => {
@@ -1947,7 +2009,8 @@ describe("ModelOnboardingModal", () => {
       await navigateToGitHubStep();
 
       expect(screen.queryByTestId("onboarding-git-prerequisite")).toBeNull();
-      expect(screen.getByRole("button", { name: "Continue without GitHub →" })).toBeTruthy();
+      expect(screen.queryByRole("button", { name: "Continue without GitHub →" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Skip GitHub →" })).toBeTruthy();
     });
 
     it("GitHub step shows connected state when already authenticated", async () => {
@@ -1973,6 +2036,86 @@ describe("ModelOnboardingModal", () => {
       expect(screen.getByText("✓ Connected")).toBeTruthy();
       expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
       expect(screen.queryByTestId("onboarding-github-connect-cta")).toBeNull();
+    });
+
+    it("state-driven GitHub step: a ready connection suppresses install/auth guidance and the feature pitch", async () => {
+      /*
+      FNXC:Onboarding 2026-07-10-10:30:
+      Surface Enumeration for the state-driven step: when GitHub is ready via EITHER path (OAuth or
+      gh CLI), neither gh CLI setup card nor the with/without feature list may render — one primary
+      path per state. Previously an OAuth-connected user was still told to install the GitHub CLI.
+      */
+      const readyScenarios = [
+        {
+          label: "OAuth connected, gh missing",
+          providers: [{ id: "github", name: "GitHub", authenticated: true, type: "oauth" }],
+          ghCli: { available: false, authenticated: false },
+        },
+        {
+          label: "OAuth connected, gh unauthenticated",
+          providers: [{ id: "github", name: "GitHub", authenticated: true, type: "oauth" }],
+          ghCli: { available: true, authenticated: false },
+        },
+        {
+          label: "gh authenticated, no OAuth provider",
+          providers: [],
+          ghCli: { available: true, authenticated: true },
+        },
+      ];
+
+      for (const scenario of readyScenarios) {
+        mockFetchAuthStatus.mockResolvedValueOnce({
+          providers: scenario.providers,
+          ghCli: scenario.ghCli,
+        });
+
+        const { unmount } = render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+        await navigateToGitHubStep();
+
+        expect(screen.queryByTestId("onboarding-gh-cli-install-card")).toBeNull();
+        expect(screen.queryByTestId("onboarding-gh-cli-auth-card")).toBeNull();
+        expect(document.querySelector(".onboarding-feature-list")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Continue without GitHub →" })).toBeNull();
+
+        unmount();
+      }
+    });
+
+    it("revalidates GitHub connection status when the window regains focus (mid-session gh auth)", async () => {
+      /*
+      FNXC:Onboarding 2026-07-10-10:10:
+      Regression test for the stale-status bug: the user authenticated the gh CLI in a terminal while
+      the wizard stayed open, and later steps still showed GitHub as not connected. Regaining window
+      focus must refetch auth/gh status and flip the step to connected.
+      */
+      mockFetchAuthStatus.mockImplementation(() => Promise.resolve({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+        ghCli: { available: true, authenticated: false },
+      }));
+
+      render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
+
+      await navigateToGitHubStep();
+
+      expect(screen.getByTestId("github-status-badge")).toHaveTextContent("Not connected");
+
+      // The user runs `gh auth login` in a terminal, then switches back to the dashboard.
+      mockFetchAuthStatus.mockImplementation(() => Promise.resolve({
+        providers: [
+          { id: "github", name: "GitHub", authenticated: false, type: "oauth" },
+        ],
+        ghCli: { available: true, authenticated: true },
+      }));
+
+      fireEvent(window, new Event("focus"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("github-status-badge")).toHaveTextContent("✓ Connected");
+      });
+      expect(screen.queryByTestId("onboarding-gh-cli-auth-card")).toBeNull();
     });
 
     it("GitHub step explains gh CLI auth when OAuth provider is absent", async () => {
@@ -2211,12 +2354,14 @@ describe("ModelOnboardingModal", () => {
       });
     });
 
-    it("allows navigating to First Task step via Continue without GitHub", async () => {
+    it("allows navigating to First Task step via footer Skip GitHub", async () => {
+      // FNXC:Onboarding 2026-07-10-10:35: the in-body "Continue without GitHub →" CTA was
+      // removed; footer "Skip GitHub →" is the single skip affordance for this step.
       render(<ModelOnboardingModal onComplete={vi.fn()} addToast={vi.fn()} projectId="proj_123" />);
 
       await navigateToGitHubStep();
 
-      fireEvent.click(screen.getByText("Continue without GitHub →"));
+      fireEvent.click(screen.getByText("Skip GitHub →"));
 
       await waitFor(() => {
         expect(screen.getByText("Set Up Your Project")).toBeTruthy();

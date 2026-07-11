@@ -1386,7 +1386,8 @@
     "untitledSession": "Sans titre",
     "workingStatus": "Traitement en cours…",
     "you": "Vous",
-    "contextWindowAria": "Estimated {{used}} of {{total}} context tokens"
+    "contextWindowAria": "Estimated {{used}} of {{total}} context tokens",
+    "noMessage": ""
   },
   "chatRooms": {
     "error": {
@@ -6837,6 +6838,7 @@
     "githubCliAuthBody": "GitHub CLI is installed but not authenticated on the Fusion host. Run this command in the environment where Fusion is running, then return here and continue.",
     "githubCliAuthTitle": "Authenticate GitHub CLI",
     "githubCliInstallBody": "Fusion could not find `gh` on the host running Fusion. Install GitHub CLI there to import issues and track pull requests with CLI authentication.",
+    "githubCliInstallShowInstructions": "Afficher les instructions d'installation",
     "githubCliInstallLink": "Open GitHub CLI releases",
     "githubCliInstallLinux": "Linux: install `gh` with your distribution package manager or the packages from cli.github.com.",
     "githubCliInstallMac": "macOS: `brew install gh` or download the installer from GitHub CLI releases.",
@@ -6916,12 +6918,14 @@
     "projectRegisteredSuccess": "Votre projet a été enregistré avec succès.",
     "projectRequired": "Un projet est requis avant que les actions de première tâche soient disponibles.",
     "projectSelected": "Projet sélectionné — la création de tâches et les imports sont disponibles.",
+    "projectStepContext": "Étape 3 sur 5 — Projet · Configuration de Fusion",
     "projectSetupDescription": "Choisissez votre premier projet avant de créer ou d'importer des tâches. Vous pouvez enregistrer un répertoire local existant ou cloner une URL de dépôt GitHub via l'assistant de configuration.",
     "providersConnectedSummary": "✓ {{connected}} fournisseur(s) sur {{total}} connecté(s)",
     "providersSkippedSummary_one_one": "",
     "providersSkippedSummary_one_other": "",
     "providersSkippedSummary_other_one": "",
     "providersSkippedSummary_other_other": "",
+    "quickStartAllConnected": "Tous les fournisseurs de démarrage rapide sont déjà connectés.",
     "quickStartProviders": "Fournisseurs de démarrage rapide",
     "readinessAiProviderConnected": "{{name}} connecté — les agents IA peuvent travailler sur les tâches",
     "readinessAiProviderLabel": "Fournisseur IA",
@@ -6953,6 +6957,7 @@
     "retry": "Réessayer",
     "reviewStep": "Revoir {{label}}",
     "runtimeNode": "Nœud d'exécution",
+    "runtimeNodeHint": "Un nœud d'exécution est la machine où s'exécutent les tâches de ce projet. « Nœud local » désigne cet ordinateur ; choisissez un nœud distant pour exécuter les tâches ailleurs.",
     "savedProfileButFailedToActivate": "Profil enregistré mais échec de l'activation",
     "saveKey": "Enregistrer",
     "saveRemoteServer": "Enregistrer le serveur distant",

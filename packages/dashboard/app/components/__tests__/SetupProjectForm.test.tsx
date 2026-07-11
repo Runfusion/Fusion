@@ -147,21 +147,21 @@ describe("SetupProjectForm", () => {
       const select = screen.getByRole("combobox") as HTMLSelectElement;
       expect(select.value).toBe("");
 
-      // Check options directly by querying the select's children
+      // FNXC:SetupWizard 2026-07-10-11:00: registered local-type node records must NOT
+      // render as a second near-identical option next to the built-in "Local node" default.
       const options = Array.from(select.querySelectorAll("option"));
       const optionValues = options.map((opt) => opt.value);
-      expect(optionValues).toContain("local-1");
+      expect(optionValues).not.toContain("local-1");
       expect(optionValues).toContain("remote-1");
+      expect(optionValues.filter((value) => value === "")).toHaveLength(1);
     });
 
-    it("does not render extra node options when only local node is in list", () => {
+    it("hides the node selector when only a local node is in the list", () => {
       render(<SetupProjectForm onSubmit={vi.fn()} nodes={[localNode]} />);
-      // When only the local node is provided, it appears as the default option
-      // The extra options from nodes.map should include localNode's entry
-      const select = screen.getByRole("combobox") as HTMLSelectElement;
-      const options = Array.from(select.querySelectorAll("option"));
-      // Should have at least the local node option
-      expect(options.some((opt) => opt.value === "local-1")).toBe(true);
+      // FNXC:SetupWizard 2026-07-10-11:00: a single-local-node install has no runtime
+      // choice to make — the selector (and its duplicate local option) is gone entirely.
+      expect(screen.queryByText("Runtime Node")).toBeNull();
+      expect(screen.queryByRole("combobox")).toBeNull();
     });
 
     it("uses selectedNodeId as default value", () => {

@@ -170,6 +170,23 @@ describe("SetupWizardModal", () => {
     );
   });
 
+  it("keeps onboarding step context when opened as the onboarding Project sub-flow", () => {
+    // FNXC:SetupWizard 2026-07-10-11:05: opened from the 5-step onboarding wizard
+    // (includeAgentStep=false), the header must keep the "Step 3 of 5" context instead
+    // of the standalone "Welcome to Fusion" chrome, so users don't feel ejected from setup.
+    render(
+      <SetupWizardModal
+        onProjectRegistered={vi.fn()}
+        onClose={vi.fn()}
+        includeAgentStep={false}
+      />
+    );
+
+    expect(screen.getByText("Step 3 of 5 — Project · Fusion setup")).toBeDefined();
+    expect(screen.getByText("Set Up Your Project")).toBeDefined();
+    expect(screen.queryByText("Welcome to Fusion")).toBeNull();
+  });
+
   it("has DirectoryPicker for path selection", () => {
     render(
       <SetupWizardModal
@@ -872,7 +889,9 @@ describe("SetupWizardModal", () => {
 
     fireEvent.click(screen.getByText("Advanced settings"));
 
-    expect(screen.getByText("Runtime Node")).toBeDefined();
+    // FNXC:SetupWizard 2026-07-10-11:00: with no non-local node registered there is
+    // nothing to choose, so the Runtime Node selector stays hidden in advanced settings.
+    expect(screen.queryByText("Runtime Node")).toBeNull();
     expect(screen.getByText("In-Process")).toBeDefined();
     expect(screen.getByText("Child-Process")).toBeDefined();
     expect(screen.getByText("Recommended")).toBeDefined();
@@ -945,12 +964,16 @@ describe("SetupWizardModal", () => {
       const select = screen.getByRole("combobox") as HTMLSelectElement;
       expect(select.value).toBe("");
 
-      // Check options directly by querying the select's children
+      // FNXC:SetupWizard 2026-07-10-11:00: registered local-type node records must NOT
+      // render as a second near-identical "local (local)" option — the built-in
+      // "Local node" default option already represents the local machine.
       const options = Array.from(select.querySelectorAll("option"));
       const optionValues = options.map((opt) => opt.value);
-      const optionLabels = options.map((opt) => opt.label);
-      expect(optionValues).toContain("local-1");
+      expect(optionValues).not.toContain("local-1");
       expect(optionValues).toContain("remote-1");
+      expect(optionValues.filter((value) => value === "")).toHaveLength(1);
+      // Plain-language explanation of what a runtime node is.
+      expect(screen.getByText(/A runtime node is the machine where this project's tasks run/)).toBeDefined();
     });
 
     it("registration includes selected nodeId", async () => {
@@ -1004,7 +1027,7 @@ describe("SetupWizardModal", () => {
       });
     });
 
-    it("registration includes undefined nodeId when local node selected", async () => {
+    it("registration includes undefined nodeId when only a local node exists (selector hidden)", async () => {
       mockUseNodes.mockImplementation(() => ({
         nodes: [localNode],
         loading: false,
@@ -1028,9 +1051,10 @@ describe("SetupWizardModal", () => {
 
       fireEvent.click(screen.getByText("Advanced settings"));
 
-      // Local node is selected by default (empty value)
-      const select = screen.getByRole("combobox") as HTMLSelectElement;
-      expect(select.value).toBe("");
+      // FNXC:SetupWizard 2026-07-10-11:00: a single-local-node install has no runtime
+      // choice to make, so the selector is hidden and registration runs locally.
+      expect(screen.queryByText("Runtime Node")).toBeNull();
+      expect(screen.queryByRole("combobox")).toBeNull();
 
       // Fill path and name
       fireEvent.change(screen.getByPlaceholderText("/path/to/your/project"), {

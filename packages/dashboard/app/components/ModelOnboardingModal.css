@@ -667,20 +667,31 @@
   gap: var(--space-lg);
 }
 
+/*
+FNXC:Onboarding 2026-07-10-10:45:
+First-run review: the GitHub step mixed tiny bold micro-headers with helper-text bullets in one flat
+list. The with/without comparison now renders as two labeled groups on a single consistent type scale
+(font-size-sm headings + font-size-sm items), side by side on desktop and stacked on mobile.
+*/
 .onboarding-feature-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-lg);
   padding: var(--space-md);
   border-radius: var(--radius-md);
   background: var(--surface);
   border: 1px solid var(--border);
-  font-size: calc(var(--space-md) + (var(--space-xs) / 4));
-  color: var(--text-muted);
   line-height: 1.5;
 }
 
-.onboarding-feature-list ul {
+.onboarding-feature-list__group h4 {
+  margin: 0 0 var(--space-xs);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.onboarding-feature-list__group ul {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -689,31 +700,17 @@
   gap: var(--space-xs);
 }
 
-.onboarding-feature-list .onboarding-feature-list-heading strong {
-  display: block;
-  font-size: var(--space-md);
-  font-weight: 600;
-  color: var(--text);
-  margin-top: var(--space-sm);
-}
-
-.onboarding-feature-list .onboarding-feature-list-heading:first-child strong {
-  margin-top: 0;
-}
-
-.onboarding-feature-list li:not(.onboarding-feature-list-heading) {
+.onboarding-feature-list__group li {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
   padding-left: var(--space-md);
   position: relative;
 }
 
-.onboarding-feature-list li:not(.onboarding-feature-list-heading)::before {
+.onboarding-feature-list__group li::before {
   content: "•";
   position: absolute;
   left: 0;
-}
-
-.onboarding-feature-list .onboarding-feature-list-item--with-github {
-  color: var(--text-muted);
 }
 
 /* === Onboarding GitHub Step === */
@@ -873,6 +870,24 @@
   background: var(--surface-raised);
   color: var(--text);
   font-family: var(--font-mono);
+}
+
+/*
+FNXC:Onboarding 2026-07-10-10:50:
+Inline command fragments (`gh`, `brew install gh`, `sudo apt install git`) in git/gh install guidance
+render as real <code> elements (see renderWithInlineCode) instead of raw backtick literals.
+*/
+.onboarding-github-setup-card p code,
+.onboarding-github-setup-card li code,
+.onboarding-github-git-prerequisite p code,
+.onboarding-github-git-prerequisite li code {
+  padding: 1px var(--space-xs);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
 }
 
 /* === GitHub Connection Status Feedback (FN-1934) === */
@@ -1271,12 +1286,25 @@
   background: var(--surface);
 }
 
-.model-onboarding-footer .btn-primary {
-  display: flex;
+/*
+FNXC:Onboarding 2026-07-10-10:55:
+First-run review: footer buttons had wildly different sizes ("Next →" much larger than the skip
+buttons). Every footer control shares the same 38px height and 14px type; the primary action keeps
+its filled emphasis and wider padding only.
+*/
+.model-onboarding-footer .btn,
+.model-onboarding-footer .onboarding-skip-step-link {
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-sm);
-  padding: 10px 24px;
+  min-height: 38px;
+  padding: 8px 16px;
   font-size: 14px;
+}
+
+.model-onboarding-footer .btn-primary {
+  padding: 8px 24px;
   font-weight: 600;
 }
 
@@ -1524,6 +1552,12 @@
     padding: var(--space-md);
     flex-wrap: wrap;
     gap: var(--space-sm);
+  }
+
+  /* FNXC:Onboarding 2026-07-10-10:45: stack the with/without GitHub comparison on phones. */
+  .onboarding-feature-list {
+    grid-template-columns: 1fr;
+    gap: var(--space-md);
   }
 
   .model-onboarding-footer .btn-primary {

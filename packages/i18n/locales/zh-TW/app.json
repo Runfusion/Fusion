@@ -1386,7 +1386,8 @@
     "untitledSession": "未命名",
     "workingStatus": "處理中……",
     "you": "你",
-    "contextWindowAria": "Estimated {{used}} of {{total}} context tokens"
+    "contextWindowAria": "Estimated {{used}} of {{total}} context tokens",
+    "noMessage": ""
   },
   "chatRooms": {
     "error": {
@@ -6837,6 +6838,7 @@
     "githubCliAuthBody": "GitHub CLI is installed but not authenticated on the Fusion host. Run this command in the environment where Fusion is running, then return here and continue.",
     "githubCliAuthTitle": "Authenticate GitHub CLI",
     "githubCliInstallBody": "Fusion could not find `gh` on the host running Fusion. Install GitHub CLI there to import issues and track pull requests with CLI authentication.",
+    "githubCliInstallShowInstructions": "顯示安裝說明",
     "githubCliInstallLink": "Open GitHub CLI releases",
     "githubCliInstallLinux": "Linux: install `gh` with your distribution package manager or the packages from cli.github.com.",
     "githubCliInstallMac": "macOS: `brew install gh` or download the installer from GitHub CLI releases.",
@@ -6916,12 +6918,14 @@
     "projectRegisteredSuccess": "您的專案已成功註冊。",
     "projectRequired": "在可以使用第一個任務操作之前，需要先有一個專案。",
     "projectSelected": "已選擇專案——任務建立和匯入功能已可用。",
+    "projectStepContext": "第 3 步（共 5 步）— 專案 · Fusion 設定",
     "projectSetupDescription": "在建立或匯入任務之前，請選擇您的第一個專案。您可以註冊現有的本機目錄，或透過設定精靈複製 GitHub 儲存庫 URL。",
     "providersConnectedSummary": "✓ {{total}} 個提供商中已連接 {{connected}} 個",
     "providersSkippedSummary_one_one": "",
     "providersSkippedSummary_one_other": "",
     "providersSkippedSummary_other_one": "",
     "providersSkippedSummary_other_other": "",
+    "quickStartAllConnected": "所有快速開始供應商均已連線。",
     "quickStartProviders": "快速啟動提供商",
     "readinessAiProviderConnected": "{{name}} 已連接——AI 代理可以處理任務",
     "readinessAiProviderLabel": "AI 提供商",
@@ -6953,6 +6957,7 @@
     "retry": "重試",
     "reviewStep": "查看{{label}}",
     "runtimeNode": "執行時節點",
+    "runtimeNodeHint": "執行節點是執行此專案任務的機器。「本機節點」即這台電腦；選擇遠端節點可在其他地方執行任務。",
     "savedProfileButFailedToActivate": "設定檔已儲存但啟用失敗",
     "saveKey": "儲存",
     "saveRemoteServer": "儲存遠端伺服器",
