@@ -132,6 +132,20 @@ vi.mock("../agent-session-helpers.js", async () => {
       }
       return { provider: undefined, modelId: undefined };
     },
+    // FNXC:EngineTestDrift 2026-07-11-22:30:
+    // agent-session-helpers gained phase/lane thinking-level + fallback resolvers
+    // (Settings-ThinkingLevel precedence, 2026-07-10) and an implicit planning
+    // fallback model resolver. The exercised executor + triage paths import them;
+    // surface the full set so the next export doesn't re-break this mock.
+    resolveExecutorThinkingLevel: vi.fn(() => undefined),
+    resolveExecutorFallbackThinkingLevel: vi.fn(() => undefined),
+    resolvePlanningThinkingLevel: vi.fn(() => undefined),
+    resolvePlanningFallbackThinkingLevel: vi.fn(() => undefined),
+    resolveValidatorThinkingLevel: vi.fn(() => undefined),
+    resolveValidatorFallbackThinkingLevel: vi.fn(() => undefined),
+    resolveMergerThinkingLevel: vi.fn(() => undefined),
+    resolveMergerFallbackThinkingLevel: vi.fn(() => undefined),
+    resolveImplicitPlanningFallbackModel: vi.fn(() => ({ provider: undefined, modelId: undefined })),
   };
 });
 vi.mock("node:child_process", () => {

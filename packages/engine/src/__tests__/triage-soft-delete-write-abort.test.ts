@@ -16,6 +16,20 @@ vi.mock("../agent-session-helpers.js", () => ({
   createResolvedAgentSession: mockCreateResolvedAgentSession,
   extractRuntimeHint: vi.fn(),
   resolvePlanningSessionModel: vi.fn().mockReturnValue({ provider: "mock", modelId: "mock-model" }),
+  // FNXC:EngineTestDrift 2026-07-11-22:30:
+  // triage.ts planning imports resolvePlanningThinkingLevel +
+  // resolveImplicitPlanningFallbackModel (Settings-ThinkingLevel precedence +
+  // implicit fallback model, 2026-07-10). Surface the full resolver set so the
+  // next export doesn't re-break specifyTask on a missing mock member.
+  resolveExecutorThinkingLevel: vi.fn(() => undefined),
+  resolveExecutorFallbackThinkingLevel: vi.fn(() => undefined),
+  resolvePlanningThinkingLevel: vi.fn(() => undefined),
+  resolvePlanningFallbackThinkingLevel: vi.fn(() => undefined),
+  resolveValidatorThinkingLevel: vi.fn(() => undefined),
+  resolveValidatorFallbackThinkingLevel: vi.fn(() => undefined),
+  resolveMergerThinkingLevel: vi.fn(() => undefined),
+  resolveMergerFallbackThinkingLevel: vi.fn(() => undefined),
+  resolveImplicitPlanningFallbackModel: vi.fn(() => ({ provider: undefined, modelId: undefined })),
 }));
 
 vi.mock("../pi.js", () => {
