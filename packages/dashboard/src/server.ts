@@ -1930,13 +1930,22 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
   // API Error Handling Middleware - MUST be after API routes but before SPA fallback
   // This ensures API errors return JSON instead of falling through to the SPA fallback (which returns HTML)
    
+  /*
+  FNXC:ApiErrorDiagnostics 2026-07-10-14:00:
+  The /api error boundary is the chokepoint for every unhandled per-request error.
+  It must LOG the underlying error (stack + cause), not just echo a message, so a
+  500 is root-causable server-side — the reported "task write API returns 500 for
+  every task" was undiagnosable because the wrapped error's origin was never
+  recorded. The client-facing body stays generic in production (avoid leaking
+  internals); pass `error: err` so sendErrorResponse logs the stack/cause.
+  */
   app.use("/api", (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     if (res.headersSent) {
       return;
     }
 
     if (err instanceof ApiError) {
-      sendErrorResponse(res, err.statusCode, err.message, { details: err.details });
+      sendErrorResponse(res, err.statusCode, err.message, { details: err.details, error: err });
       return;
     }
 
@@ -1948,7 +1957,7 @@ export function createServer(store: TaskStore, options?: ServerOptions): ReturnT
           ? err.message
           : fallbackMessage;
 
-    sendErrorResponse(res, 500, message);
+    sendErrorResponse(res, 500, message, { error: err });
   });
 
   if (!isHeadless) {

@@ -823,6 +823,22 @@ describe("runDaemon", () => {
     await triggerSignal("SIGINT");
   });
 
+  // FNXC:DaemonSignalExit 2026-07-10-14:00: a memory-pressure SIGTERM must exit
+  // non-zero (128+signal) so a `Restart=on-failure` supervisor restarts the
+  // daemon instead of treating the kill as a clean stop. Regression for the
+  // "daemon exits clean under memory pressure and isn't restarted" report.
+  it("exits 143 on SIGTERM-initiated shutdown", async () => {
+    await runDaemon({});
+    await triggerSignal("SIGTERM");
+    expect(process.exit).toHaveBeenCalledWith(143);
+  });
+
+  it("exits 130 on SIGINT-initiated shutdown", async () => {
+    await runDaemon({});
+    await triggerSignal("SIGINT");
+    expect(process.exit).toHaveBeenCalledWith(130);
+  });
+
   it("auto-loads installed plugins during startup", async () => {
     const { PluginLoader } = await import("@fusion/core");
 
