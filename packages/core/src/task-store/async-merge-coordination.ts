@@ -39,7 +39,7 @@ import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
-import { recordRunAuditEventWithinTransaction } from "../postgres/data-layer.js";
+import { recordRunAuditEventWithinTransaction, taskProjectScope } from "../postgres/data-layer.js";
 import { normalizeTaskPriority } from "../task-priority.js";
 import type {
   MergeQueueAcquireOptions,
@@ -96,13 +96,24 @@ function leaseAvailable(now: string) {
   );
 }
 
-/** Predicate: the queue row's task is still in the `in-review` column. */
-function taskStillInReview() {
+/**
+ * Predicate: the queue row's task is still in the `in-review` column.
+ *
+ * FNXC:MultiProjectIsolation 2026-07-10: when `projectId` is bound, the EXISTS
+ * additionally requires the task to belong to this project so a project's
+ * merger can only lease its OWN queue rows (merge_queue has no project_id, so
+ * it is scoped transitively through its task on the shared embedded-PG cluster).
+ */
+function taskStillInReview(projectId?: string) {
+  const projectClause = projectId
+    ? sql`AND ${schema.project.tasks.projectId} = ${projectId}`
+    : sql``;
   return sql<boolean>`
     EXISTS (
       SELECT 1 FROM ${schema.project.tasks}
       WHERE ${schema.project.tasks.id} = ${schema.project.mergeQueue.taskId}
         AND ${schema.project.tasks.column} = 'in-review'
+        ${projectClause}
     )
   `;
 }
@@ -325,6 +336,10 @@ export async function acquireMergeQueueLease(
     throw new InvalidMergeQueueLeaseDurationError(opts.leaseDurationMs);
   }
 
+  // FNXC:MultiProjectIsolation 2026-07-10: the merger's lease candidate scans
+  // must be scoped to this project so a project's merger can never lease (and
+  // then merge in the wrong repo) another project's in-review task.
+  const projectId = layer.projectId;
   return layer.transactionImmediate(async (tx) => {
     const now = opts.now ?? new Date().toISOString();
     const leaseExpiresAt = new Date(Date.parse(now) + opts.leaseDurationMs).toISOString();
@@ -338,7 +353,7 @@ export async function acquireMergeQueueLease(
         .where(
           and(
             eq(schema.project.mergeQueue.taskId, opts.targetTaskId),
-            taskStillInReview(),
+            taskStillInReview(projectId),
             leaseAvailable(now),
           ),
         )
@@ -391,7 +406,7 @@ export async function acquireMergeQueueLease(
         .where(
           and(
             eq(schema.project.mergeQueue.taskId, opts.targetTaskId),
-            taskStillInReview(),
+            taskStillInReview(projectId),
             leaseAvailable(now),
           ),
         )
@@ -433,6 +448,8 @@ export async function acquireMergeQueueLease(
       .where(
         and(
           eq(schema.project.tasks.column, "in-review"),
+          // FNXC:MultiProjectIsolation 2026-07-10: only this project's tasks.
+          taskProjectScope(layer),
           leaseAvailable(now),
         ),
       )

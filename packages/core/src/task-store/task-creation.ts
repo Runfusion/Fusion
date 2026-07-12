@@ -346,7 +346,9 @@ export async function _createTaskInternalBackendImpl(store: TaskStore, input: Ta
     const context = store.createTaskPersistSerializationContext(task);
     try {
       await layer.transactionImmediate(async (tx) => {
-        await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+        // FNXC:MultiProjectIsolation 2026-07-10: stamp the bound projectId so the
+        // new task row is attributed to (and later filtered under) this project.
+        await insertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
       });
     } catch (error) {
       if (isTaskIdConflictError(error)) {

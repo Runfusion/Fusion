@@ -23,7 +23,7 @@
  *   The sync `readConfig()`/`writeConfig()` remain the live path until U15.
  *   These helpers are the PostgreSQL target the integration tests exercise.
  */
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, type SQL } from "drizzle-orm";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer } from "../postgres/data-layer.js";
 
@@ -40,8 +40,23 @@ export interface ProjectConfigRow {
   settings: Record<string, unknown> | null;
 }
 
-/** Sentinel config id (singleton row). */
+/** Sentinel config id (legacy singleton-row id; still written for column parity). */
 export const CONFIG_ROW_ID = 1;
+
+/**
+ * FNXC:MultiProjectIsolation 2026-07-11:
+ * Per-project scope predicate for the config row. Embedded-PG mode consolidated
+ * every project's config into the shared `project.config` table, so the row is
+ * now keyed on `project_id`. When the layer is bound to a project we scope by
+ * `project_id`; otherwise (single-project store, SQLite parity, project-agnostic
+ * reads) we fall back to the legacy `id = CONFIG_ROW_ID` singleton row so the
+ * pre-isolation behavior is preserved.
+ */
+function configScope(layer: Pick<AsyncDataLayer, "projectId">): SQL {
+  return layer.projectId
+    ? eq(schema.project.config.projectId, layer.projectId)
+    : eq(schema.project.config.id, CONFIG_ROW_ID);
+}
 
 /**
  * Read the project config row. Returns a default empty config when the row is
@@ -61,7 +76,7 @@ export async function readProjectConfig(
       settings: schema.project.config.settings,
     })
     .from(schema.project.config)
-    .where(eq(schema.project.config.id, CONFIG_ROW_ID));
+    .where(configScope(layer));
   const row = rows[0];
   if (!row) {
     return { nextId: 1, nextWorkflowStepId: 1, nextWorkflowDefinitionId: 1, settings: null };
@@ -84,7 +99,7 @@ export async function readProjectSettings(
   const rows = await layer.db
     .select({ settings: schema.project.config.settings })
     .from(schema.project.config)
-    .where(eq(schema.project.config.id, CONFIG_ROW_ID));
+    .where(configScope(layer));
   const row = rows[0];
   if (!row) {
     return null;
@@ -127,7 +142,9 @@ export async function writeProjectConfig(
     .insert(schema.project.config)
     .values({
       id: CONFIG_ROW_ID,
-      nextId: sql`COALESCE((SELECT next_id FROM ${schema.project.config} WHERE id = ${CONFIG_ROW_ID} LIMIT 1), 1)`,
+      // FNXC:MultiProjectIsolation 2026-07-11: key the row per-project.
+      projectId: layer.projectId ?? "",
+      nextId: sql`COALESCE((SELECT next_id FROM ${schema.project.config} WHERE ${configScope(layer)} LIMIT 1), 1)`,
       nextWorkflowStepId,
       nextWorkflowDefinitionId,
       settings,
@@ -135,7 +152,7 @@ export async function writeProjectConfig(
       updatedAt: nowIso,
     })
     .onConflictDoUpdate({
-      target: schema.project.config.id,
+      target: schema.project.config.projectId,
       set: {
         nextWorkflowStepId,
         nextWorkflowDefinitionId,
@@ -168,6 +185,8 @@ export async function patchProjectSettings(
     .insert(schema.project.config)
     .values({
       id: CONFIG_ROW_ID,
+      // FNXC:MultiProjectIsolation 2026-07-11: key the row per-project.
+      projectId: layer.projectId ?? "",
       nextId: 1,
       nextWorkflowStepId: 1,
       settings: patch,
@@ -175,7 +194,7 @@ export async function patchProjectSettings(
       updatedAt: nowIso,
     })
     .onConflictDoUpdate({
-      target: schema.project.config.id,
+      target: schema.project.config.projectId,
       set: {
         settings: sql`COALESCE(${schema.project.config.settings}, '{}'::jsonb) || (${patchJson}::jsonb)`,
         updatedAt: nowIso,

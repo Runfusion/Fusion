@@ -51,7 +51,7 @@
  *   Drizzle transaction callback wrapper.
  */
 
-import { sql, type SQL } from "drizzle-orm";
+import { sql, eq, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase, PostgresJsTransaction } from "drizzle-orm/postgres-js";
 import { randomUUID } from "node:crypto";
 import type { PostgresConnections } from "./connection.js";
@@ -138,6 +138,22 @@ export interface AsyncDataLayer {
   /** Schema-typed runtime Drizzle instance for non-transactional queries. */
   readonly db: DrizzleDb;
   /**
+   * FNXC:MultiProjectIsolation 2026-07-10:
+   * The central-registry project ID this data layer is bound to, or undefined
+   * for a project-agnostic layer (single-project / global / analytics reads).
+   *
+   * In embedded-PG mode every per-project TaskStore gets its OWN AsyncDataLayer
+   * instance (constructed by the startup factory per projectId) but they all
+   * connect to the SAME shared `fusion` database + `project` schema. This field
+   * lets the task-store helpers scope every read/claim/insert on the flat
+   * `project.tasks` / `project.archived_tasks` tables to a single project so
+   * per-project engines cannot poll/claim/execute each other's tasks. When
+   * undefined the scope filter is a no-op (back-compat: single-project stores,
+   * cross-project analytics, and the SQLite path — which isolates by file — are
+   * unaffected).
+   */
+  readonly projectId?: string;
+  /**
    * Run an async callback inside a PostgreSQL transaction. All writes inside
    * the callback commit atomically; a thrown error rolls back every write
    * including audit rows. Concurrent transactions do not observe each other's
@@ -203,8 +219,13 @@ export interface RunAuditEvent {
  * data-layer contract plugin stores consume.
  *
  * @param connections The resolved PostgreSQL connection set (runtime + migration).
+ * @param options Optional binding: `projectId` scopes task-table reads/writes
+ *   to a single project (embedded-PG multi-project isolation, FNXC:MultiProjectIsolation).
  */
-export function createAsyncDataLayer(connections: PostgresConnections): AsyncDataLayer {
+export function createAsyncDataLayer(
+  connections: PostgresConnections,
+  options?: { projectId?: string },
+): AsyncDataLayer {
   // The runtime Drizzle instance is schema-less at the connection layer
   // (connection.ts constructs it without a schema binding so it works for
   // any caller). We cast to the schema-typed view so callers get
@@ -213,6 +234,7 @@ export function createAsyncDataLayer(connections: PostgresConnections): AsyncDat
 
   return {
     db,
+    projectId: options?.projectId,
     async transaction<T>(fn: (tx: DbTransaction) => Promise<T>, options?: TransactionOptions): Promise<T> {
       return runInTransaction(db, fn, options);
     },
@@ -356,4 +378,36 @@ export async function recordRunAuditEvent(
  */
 export function projectTable(tableName: string): SQL {
   return sql.raw(`${PROJECT_SCHEMA}."${tableName}"`);
+}
+
+/**
+ * FNXC:MultiProjectIsolation 2026-07-10:
+ * The per-project scope predicate for the flat `project.tasks` table. Returns
+ * `project_id = <layer.projectId>` when the data layer is bound to a project,
+ * or `undefined` (a no-op inside Drizzle's `and(...)`) when it is not.
+ *
+ * Every backend-mode task READ / CLAIM / LIST / COUNT path folds this into its
+ * WHERE clause so a per-project engine only ever sees its own project's rows on
+ * the shared embedded-PG cluster. `undefined` preserves the pre-isolation
+ * behavior for project-agnostic layers (single-project stores, cross-project
+ * analytics) and is safe to pass through `and()` (Drizzle drops undefined
+ * operands).
+ *
+ * NOTE: this operand is passed to `and(...)` so it is only enforced where a
+ * caller actually threads it in. The load-bearing sites are the row-scan
+ * readers (readLiveTaskRows, readTaskRow, countLiveTasks), the merge-lease
+ * candidate scan, and the search scans — see the FNXC:MultiProjectIsolation
+ * markers in the task-store helpers.
+ */
+export function taskProjectScope(layer: Pick<AsyncDataLayer, "projectId">): SQL | undefined {
+  return layer.projectId ? eq(schema.project.tasks.projectId, layer.projectId) : undefined;
+}
+
+/** As {@link taskProjectScope} but for the `project.archived_tasks` table. */
+export function archivedTaskProjectScope(
+  layer: Pick<AsyncDataLayer, "projectId">,
+): SQL | undefined {
+  return layer.projectId
+    ? eq(schema.project.archivedTasks.projectId, layer.projectId)
+    : undefined;
 }

@@ -69,11 +69,18 @@ export function sanitizeSearchTokens(query: string): string[] {
  * @param includeArchived Whether to include archived tasks in the results.
  * @returns The composed SQL predicate.
  */
-export function liveSearchPredicate(includeArchived: boolean): SQL {
-  if (includeArchived) {
-    return ACTIVE_TASK_FILTER;
-  }
-  return and(ACTIVE_TASK_FILTER, ne(schema.project.tasks.column, "archived")) as SQL;
+export function liveSearchPredicate(includeArchived: boolean, projectId?: string): SQL {
+  // FNXC:MultiProjectIsolation 2026-07-10:
+  // Fold the per-project partition key into the shared search predicate so BOTH
+  // full-text (tsvector) and LIKE search paths are scoped to the bound project.
+  // This is load-bearing for the CREATE-time near-duplicate check, which calls
+  // scopedStore.searchTasks(): without it a task in project B is rejected as a
+  // duplicate of a same-titled task in project A on the shared embedded-PG table.
+  const projectScope = projectId ? eq(schema.project.tasks.projectId, projectId) : undefined;
+  const base = includeArchived
+    ? ACTIVE_TASK_FILTER
+    : and(ACTIVE_TASK_FILTER, ne(schema.project.tasks.column, "archived"));
+  return (projectScope ? and(base, projectScope) : base) as SQL;
 }
 
 /**
@@ -139,7 +146,7 @@ export function buildLikeSearchPredicate(tokens: readonly string[]): SQL | undef
 export async function searchTasksLike(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { limit?: number; offset?: number; includeArchived?: boolean },
+  options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string },
 ): Promise<Record<string, unknown>[]> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return [];
@@ -148,7 +155,7 @@ export async function searchTasksLike(
   const textPredicate = buildLikeSearchPredicate(tokens);
   if (!textPredicate) return [];
 
-  const conditions = [textPredicate, liveSearchPredicate(includeArchived)];
+  const conditions = [textPredicate, liveSearchPredicate(includeArchived, options?.projectId)];
 
   const baseQuery = db
     .select()
@@ -170,7 +177,7 @@ export async function searchTasksLike(
 export async function countSearchTasksLike(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { includeArchived?: boolean },
+  options?: { includeArchived?: boolean; projectId?: string },
 ): Promise<number> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return 0;
@@ -179,7 +186,7 @@ export async function countSearchTasksLike(
   const textPredicate = buildLikeSearchPredicate(tokens);
   if (!textPredicate) return 0;
 
-  const conditions = [textPredicate, liveSearchPredicate(includeArchived)];
+  const conditions = [textPredicate, liveSearchPredicate(includeArchived, options?.projectId)];
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(schema.project.tasks)
@@ -319,7 +326,7 @@ function buildTsqueryFragment(query: string): SQL | undefined {
 export async function searchTasksTsvector(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { limit?: number; offset?: number; includeArchived?: boolean },
+  options?: { limit?: number; offset?: number; includeArchived?: boolean; projectId?: string },
 ): Promise<Record<string, unknown>[]> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return [];
@@ -334,7 +341,7 @@ export async function searchTasksTsvector(
   const includeArchived = options?.includeArchived ?? true;
   const conditions = [
     sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
-    liveSearchPredicate(includeArchived),
+    liveSearchPredicate(includeArchived, options?.projectId),
   ];
 
   const baseQuery = db
@@ -360,7 +367,7 @@ export async function searchTasksTsvector(
 export async function countSearchTasksTsvector(
   db: AsyncDataLayer["db"] | DbTransaction,
   query: string,
-  options?: { includeArchived?: boolean },
+  options?: { includeArchived?: boolean; projectId?: string },
 ): Promise<number> {
   const tokens = sanitizeSearchTokens(query);
   if (tokens.length === 0) return 0;
@@ -372,7 +379,7 @@ export async function countSearchTasksTsvector(
   const includeArchived = options?.includeArchived ?? true;
   const conditions = [
     sql`${schema.project.tasks.searchVector} @@ ${tsquery}`,
-    liveSearchPredicate(includeArchived),
+    liveSearchPredicate(includeArchived, options?.projectId),
   ];
   const rows = await db
     .select({ count: sql<number>`count(*)::int` })

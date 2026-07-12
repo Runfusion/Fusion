@@ -35,6 +35,11 @@ CREATE SCHEMA IF NOT EXISTS archive;
 
 CREATE TABLE IF NOT EXISTS project.tasks (
   id text PRIMARY KEY,
+  -- FNXC:MultiProjectIsolation 2026-07-10: per-project partition key for
+  -- embedded-PG multi-project isolation (shared cluster/db/schema). Populated
+  -- from the store's bound projectId on insert; filtered on every backend-mode
+  -- read/claim/list. Nullable so SQLite mode + legacy rows are unaffected.
+  project_id text,
   lineage_id text,
   title text,
   description text NOT NULL,
@@ -174,8 +179,14 @@ CREATE TABLE IF NOT EXISTS project.tasks (
   ) STORED
 );
 
+-- FNXC:MultiProjectIsolation 2026-07-11: per-project config isolation. The old
+-- singleton row (id = 1, CHECK-enforced) forced every project in the shared
+-- `project` schema to share one taskPrefix / maxConcurrent / maxWorktrees. The
+-- row is now keyed per-project on project_id (the PK); `id` stays for column
+-- parity (always 1) but is no longer the PK / no longer CHECK-constrained.
 CREATE TABLE IF NOT EXISTS project.config (
-  id integer PRIMARY KEY,
+  id integer DEFAULT 1,
+  project_id text NOT NULL DEFAULT '' PRIMARY KEY,
   next_id integer DEFAULT 1,
   next_workflow_step_id integer DEFAULT 1,
   -- FNXC:SqliteFinalRemoval 2026-06-28: WF-id counter for createWorkflowDefinition
@@ -183,8 +194,7 @@ CREATE TABLE IF NOT EXISTS project.config (
   next_workflow_definition_id integer DEFAULT 1,
   settings jsonb DEFAULT '{}',
   workflow_steps jsonb DEFAULT '[]',
-  updated_at text,
-  CONSTRAINT config_id_check CHECK (id = 1)
+  updated_at text
 );
 
 CREATE TABLE IF NOT EXISTS project.distributed_task_id_state (
@@ -276,10 +286,13 @@ CREATE INDEX IF NOT EXISTS "idxActivityLogTaskId" ON project.activity_log(task_i
 
 CREATE TABLE IF NOT EXISTS project.archived_tasks (
   id text PRIMARY KEY,
+  -- FNXC:MultiProjectIsolation 2026-07-10: per-project partition key (see project.tasks.project_id).
+  project_id text,
   data text NOT NULL,
   archived_at text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS "idxArchivedTasksId" ON project.archived_tasks(id);
+CREATE INDEX IF NOT EXISTS "idxArchivedTasksProjectId" ON project.archived_tasks(project_id);
 
 CREATE TABLE IF NOT EXISTS project.task_commit_associations (
   id text PRIMARY KEY,
@@ -1465,6 +1478,9 @@ CREATE INDEX IF NOT EXISTS "idxTasksSourceParentTaskId" ON project.tasks(source_
 -- The partial predicate shrinks the index to live rows only so the planner
 -- can serve the most common board filter without a bitmap-AND over two indexes.
 CREATE INDEX IF NOT EXISTS "idxTasksLiveColumn" ON project.tasks("column") WHERE deleted_at IS NULL;
+-- FNXC:MultiProjectIsolation 2026-07-10: composite (project_id, column) partial
+-- index for the per-project board scan + scheduler poll.
+CREATE INDEX IF NOT EXISTS "idxTasksProjectLiveColumn" ON project.tasks(project_id, "column") WHERE deleted_at IS NULL;
 -- FNXC:TaskStoreSearch 2026-06-24-12:35:
 -- GIN index on the tasks search_vector for full-text search (VAL-SEARCH-001).
 -- Replaces the FTS5 index. REINDEX restores search after bloat (VAL-SEARCH-007).

@@ -127,9 +127,10 @@ export async function atomicWriteTaskJsonImpl2(store: TaskStore, dir: string, ta
           // Update-only path: never resurrect a soft-deleted row; a missing row
           // falls through to the legacy full upsert (matches sqlite's
           // upsertTaskWithFtsRecovery fallback for vanished rows).
+          // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
           if (!pgRow) {
             const context = store.createTaskPersistSerializationContext(task);
-            await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+            await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
           }
           return;
         }

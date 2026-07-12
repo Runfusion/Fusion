@@ -546,9 +546,12 @@ export function createSharedPgTaskStoreTestHarness(options?: {
       // not user input, so interpolation is safe here).
       await harness.adminDb.execute(
         sql.raw(
-          `INSERT INTO ${PROJECT_SCHEMA}.config (id, next_id, next_workflow_step_id, settings, workflow_steps, updated_at)
-           VALUES (1, 1, 1, '${defaultsJson.replace(/'/g, "''")}'::jsonb, '[]'::jsonb, now())
-           ON CONFLICT (id) DO UPDATE SET next_id = 1, next_workflow_step_id = 1, settings = EXCLUDED.settings, workflow_steps = '[]'::jsonb, updated_at = now()`,
+          // FNXC:MultiProjectIsolation 2026-07-11: config is keyed per-project on
+          // project_id (the PK) — id is no longer unique, so the upsert arbiter
+          // must be project_id. Harness stores run project-agnostic (projectId '').
+          `INSERT INTO ${PROJECT_SCHEMA}.config (id, project_id, next_id, next_workflow_step_id, settings, workflow_steps, updated_at)
+           VALUES (1, '', 1, 1, '${defaultsJson.replace(/'/g, "''")}'::jsonb, '[]'::jsonb, now())
+           ON CONFLICT (project_id) DO UPDATE SET next_id = 1, next_workflow_step_id = 1, settings = EXCLUDED.settings, workflow_steps = '[]'::jsonb, updated_at = now()`,
         ),
       );
       // Drop any in-memory caches so the store doesn't serve stale rows.

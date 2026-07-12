@@ -153,6 +153,11 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ table: string; column: st
   { table: "tasks", column: "created_at", type: "text" },
   { table: "tasks", column: "updated_at", type: "text" },
   { table: "tasks", column: "deleted_at", type: "text" },
+  // FNXC:MultiProjectIsolation 2026-07-11: per-project partition key (PR #2007).
+  // Listed so existing embedded-PG databases self-heal the column on boot —
+  // the baseline's CREATE TABLE IF NOT EXISTS never upgrades an existing
+  // table, and every scoped task read/claim now folds project_id into WHERE.
+  { table: "tasks", column: "project_id", type: "text" },
   // distributed_task_id_state
   { table: "distributed_task_id_state", column: "prefix", type: "text" },
   { table: "distributed_task_id_state", column: "next_sequence", type: "integer" },
@@ -163,6 +168,8 @@ export const EXPECTED_PROJECT_COLUMNS: ReadonlyArray<{ table: string; column: st
   { table: "archived_tasks", column: "id", type: "text" },
   { table: "archived_tasks", column: "data", type: "text" },
   { table: "archived_tasks", column: "archived_at", type: "text" },
+  // FNXC:MultiProjectIsolation 2026-07-11: see tasks.project_id above.
+  { table: "archived_tasks", column: "project_id", type: "text" },
   // chat_sessions — FN-7775 per-chat thinking level (added 2026-07-10); listed
   // so existing embedded-PG databases self-heal the column via ALTER TABLE
   // ADD COLUMN IF NOT EXISTS on boot (CREATE TABLE IF NOT EXISTS alone never

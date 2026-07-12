@@ -54,6 +54,20 @@ export const projectSchema = pgSchema(PROJECT_SCHEMA);
 // ── Tasks ────────────────────────────────────────────────────────────
 export const tasks = projectSchema.table("tasks", {
   id: text("id").primaryKey(),
+  /*
+  FNXC:MultiProjectIsolation 2026-07-10:
+  Partition key for embedded-PG multi-project isolation. In embedded mode every
+  project's per-project TaskStore connects its AsyncDataLayer to ONE shared
+  `fusion` database + ONE `project` schema, so this flat tasks table is shared
+  across all projects. Without a project_id, per-project engines poll the same
+  unfiltered table and claim/execute each other's tasks in the wrong repo.
+  This column (populated from the store's bound projectId on every insert and
+  filtered on every read/claim/list in backend mode) re-adds the partition key
+  the SQLite per-file storage provided implicitly. Nullable so SQLite mode (which
+  isolates via per-file storage) and legacy rows are unaffected; the filter is
+  a no-op when the layer has no bound projectId (single-project / global reads).
+  */
+  projectId: text("project_id"),
   lineageId: text("lineage_id"),
   title: text("title"),
   description: text("description").notNull(),
@@ -257,6 +271,17 @@ export const tasks = projectSchema.table("tasks", {
     .on(t.column)
     .where(sql`${t.deletedAt} IS NULL`),
   /*
+  FNXC:MultiProjectIsolation 2026-07-10:
+  Composite index for the per-project isolation filter. Every backend-mode task
+  read/claim/list adds `project_id = $current`; the hottest board query shape is
+  `WHERE deleted_at IS NULL AND project_id = ? AND "column" = ?`. Leading with
+  project_id (then column) serves the per-project board scan and the scheduler
+  poll from one index. Partial on live rows keeps it small.
+  */
+  index("idxTasksProjectLiveColumn")
+    .on(t.projectId, t.column)
+    .where(sql`${t.deletedAt} IS NULL`),
+  /*
   FNXC:TaskStoreSearch 2026-06-24-12:15:
   GIN index on the search_vector tsvector for full-text search
   (VAL-SEARCH-001). This is the PostgreSQL replacement for the FTS5 index.
@@ -270,7 +295,16 @@ export const tasks = projectSchema.table("tasks", {
 
 // ── Config ───────────────────────────────────────────────────────────
 export const config = projectSchema.table("config", {
-  id: integer("id").primaryKey(),
+  // FNXC:MultiProjectIsolation 2026-07-11:
+  // In embedded-PG mode every project shares this `project` schema, so the old
+  // singleton config row (id = 1, enforced by a CHECK constraint) forced ALL
+  // projects to share one taskPrefix / maxConcurrent / maxWorktrees. The row is
+  // now keyed per-project on `project_id` (the effective PK). `id` is retained
+  // for column-shape parity (always 1) but is no longer the PK and no longer
+  // CHECK-constrained. Single-project / SQLite-parity callers leave project_id
+  // at its '' default (one row), preserving the pre-isolation behavior.
+  id: integer("id").default(1),
+  projectId: text("project_id").notNull().default("").primaryKey(),
   nextId: integer("next_id").default(1),
   nextWorkflowStepId: integer("next_workflow_step_id").default(1),
   // FNXC:SqliteFinalRemoval 2026-06-28:
@@ -281,7 +315,7 @@ export const config = projectSchema.table("config", {
   settings: jsonb("settings").default({}),
   workflowSteps: jsonb("workflow_steps").default([]),
   updatedAt: text("updated_at"),
-}, (t) => [check("config_id_check", sql`${t.id} = 1`)]);
+});
 
 // ── Distributed task ID allocator ────────────────────────────────────
 export const distributedTaskIdState = projectSchema.table("distributed_task_id_state", {
@@ -381,9 +415,14 @@ export const activityLog = projectSchema.table("activity_log", {
 // ── Archived tasks (project-side legacy copy) ────────────────────────
 export const archivedTasks = projectSchema.table("archived_tasks", {
   id: text("id").primaryKey(),
+  // FNXC:MultiProjectIsolation 2026-07-10: per-project partition key (see tasks.projectId).
+  projectId: text("project_id"),
   data: text("data").notNull(),
   archivedAt: text("archived_at").notNull(),
-}, (t) => [index("idxArchivedTasksId").on(t.id)]);
+}, (t) => [
+  index("idxArchivedTasksId").on(t.id),
+  index("idxArchivedTasksProjectId").on(t.projectId),
+]);
 
 // ── Task commit associations ─────────────────────────────────────────
 export const taskCommitAssociations = projectSchema.table("task_commit_associations", {

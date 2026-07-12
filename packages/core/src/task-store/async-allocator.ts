@@ -74,12 +74,16 @@ interface ConfiguredPrefixRow {
  */
 export async function getConfiguredPrefixAndLegacyNextId(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId?: string,
 ): Promise<ConfiguredPrefixRow> {
   try {
     const rows = await db
       .select({ nextId: schema.project.config.nextId, settings: schema.project.config.settings })
       .from(schema.project.config)
-      .where(eq(schema.project.config.id, 1));
+      // FNXC:MultiProjectIsolation 2026-07-11: the config row is now keyed
+      // per-project. Scope by project_id when bound to a project, else fall back
+      // to the legacy singleton id = 1 row (single-project / SQLite parity).
+      .where(projectId ? eq(schema.project.config.projectId, projectId) : eq(schema.project.config.id, 1));
     const row = rows[0];
     if (!row) {
       return { prefix: "KB", legacyNextId: null };
@@ -167,8 +171,9 @@ async function getMaxReservationSequence(
 export async function computeNextSequenceFloor(
   db: AsyncDataLayer["db"] | DbTransaction,
   prefix: string,
+  projectId?: string,
 ): Promise<number> {
-  const configured = await getConfiguredPrefixAndLegacyNextId(db);
+  const configured = await getConfiguredPrefixAndLegacyNextId(db, projectId);
   let nextSequence = 1;
   if (configured.prefix === prefix && configured.legacyNextId && configured.legacyNextId > nextSequence) {
     nextSequence = configured.legacyNextId;
@@ -188,9 +193,10 @@ export async function computeNextSequenceFloor(
  */
 export async function getKnownPrefixes(
   db: AsyncDataLayer["db"] | DbTransaction,
+  projectId?: string,
 ): Promise<Set<string>> {
   const prefixes = new Set<string>();
-  const configured = await getConfiguredPrefixAndLegacyNextId(db);
+  const configured = await getConfiguredPrefixAndLegacyNextId(db, projectId);
   if (configured.prefix) {
     prefixes.add(configured.prefix);
   }
@@ -297,9 +303,9 @@ export async function reconcileTaskIdStateAsync(
   const nowIso = new Date().toISOString();
   return layer.transactionImmediate(async (tx) => {
     const reconciled: string[] = [];
-    const prefixes = await getKnownPrefixes(tx);
+    const prefixes = await getKnownPrefixes(tx, layer.projectId);
     for (const prefix of prefixes) {
-      const floor = await computeNextSequenceFloor(tx, prefix);
+      const floor = await computeNextSequenceFloor(tx, prefix, layer.projectId);
 
       // Read the current nextSequence so we can detect a change.
       const beforeRows = await tx
@@ -434,7 +440,7 @@ export function createAsyncDistributedTaskIdAllocator(
           }
 
           // Ensure the state row exists with the correct floor.
-          const floor = await computeNextSequenceFloor(tx, prefix);
+          const floor = await computeNextSequenceFloor(tx, prefix, layer.projectId);
           await ensureStateRow(tx, prefix, floor, nowIso);
 
           // Read the current nextSequence.
@@ -518,7 +524,7 @@ export function createAsyncDistributedTaskIdAllocator(
             .where(eq(schema.project.distributedTaskIdReservations.reservationId, row.reservationId));
 
           // Ensure state row exists and bump committed count.
-          const floor = await computeNextSequenceFloor(tx, row.prefix);
+          const floor = await computeNextSequenceFloor(tx, row.prefix, layer.projectId);
           await ensureStateRow(tx, row.prefix, floor, nowIso);
           await tx
             .update(schema.project.distributedTaskIdState)
@@ -573,7 +579,7 @@ export function createAsyncDistributedTaskIdAllocator(
               .where(eq(schema.project.distributedTaskIdReservations.reservationId, row.reservationId));
           }
 
-          const floor = await computeNextSequenceFloor(tx, row.prefix);
+          const floor = await computeNextSequenceFloor(tx, row.prefix, layer.projectId);
           await ensureStateRow(tx, row.prefix, floor, nowIso);
           const stateRows = await tx
             .select({ committedClusterTaskCount: schema.project.distributedTaskIdState.committedClusterTaskCount })
@@ -600,7 +606,7 @@ export function createAsyncDistributedTaskIdAllocator(
           if (!prefix) {
             throw new Error("prefix is required");
           }
-          const floor = await computeNextSequenceFloor(tx, prefix);
+          const floor = await computeNextSequenceFloor(tx, prefix, layer.projectId);
           await ensureStateRow(tx, prefix, floor, nowIso);
 
           const stateRows = await tx

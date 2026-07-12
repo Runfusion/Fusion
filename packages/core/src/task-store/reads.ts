@@ -581,7 +581,7 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
     let disableAgeStalenessHydration = false;
 
     if (store.backendMode) {
-      const { and, asc, gt, sql } = await import("drizzle-orm");
+      const { and, asc, eq, gt, sql } = await import("drizzle-orm");
       const schema = await import("../postgres/schema/index.js");
       const conditions = [
         sql`(${schema.project.tasks.deletedAt} IS NULL)`,
@@ -591,6 +591,12 @@ export async function listTasksModifiedSinceImpl(store: TaskStore, since: string
         conditions.push(sql`${schema.project.tasks.column} != 'archived'`);
       }
       const layer = store.asyncLayer!;
+      // FNXC:MultiProjectIsolation 2026-07-10: scope the incremental-sync scan
+      // (backs the SSE watcher / modified-since polling) to the bound project so
+      // one project's dashboard never receives another project's task updates.
+      if (layer.projectId) {
+        conditions.push(eq(schema.project.tasks.projectId, layer.projectId));
+      }
       const pgRows = await layer.db
         .select()
         .from(schema.project.tasks)
@@ -775,12 +781,16 @@ export async function searchTasksImpl(store: TaskStore, query: string, options?:
         limit,
         offset,
         includeArchived,
+        // FNXC:MultiProjectIsolation 2026-07-10: scope search to the bound project
+        // (load-bearing for the CREATE-time near-duplicate check via searchTasks).
+        projectId: layer.projectId,
       });
       if (pgRows.length === 0) {
         pgRows = await searchTasksLike(layer.db, trimmedQuery, {
           limit,
           offset,
           includeArchived,
+          projectId: layer.projectId,
         });
       }
       const now = Date.now();

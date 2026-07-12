@@ -115,6 +115,23 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
   /** Mutable limit read by the shared semaphore's getter function. */
   private currentGlobalLimit = 4;
   private globalLimitRefreshInterval: ReturnType<typeof setInterval>;
+  /**
+   * FNXC:LiveGlobalConcurrency 2026-07-11:
+   * Listener that applies a live global-concurrency change to the shared
+   * semaphore's limit immediately, so a PUT /api/global-concurrency takes effect
+   * without waiting for the 30s refresh poll (or a process restart). This is the
+   * binding semaphore: it is injected into every InProcessRuntime (which only
+   * installs its OWN concurrency:changed listener when it has to create a local
+   * semaphore, i.e. NOT in the shared-semaphore path), so the subscription must
+   * live here. Mirrors project-engine-manager.ts.
+   */
+  private concurrencyListener = (state: unknown): void => {
+    const s = state as { globalMaxConcurrent?: number };
+    if (typeof s.globalMaxConcurrent === "number") {
+      this.currentGlobalLimit = s.globalMaxConcurrent;
+      projectManagerLog.log(`Global concurrency limit updated to ${this.currentGlobalLimit}`);
+    }
+  };
 
   /**
    * @param centralCore - CentralCore reference for global coordination
@@ -128,7 +145,13 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     // cross-project concurrency is enforced correctly.
     this.globalSemaphore = new AgentSemaphore(() => this.currentGlobalLimit);
 
-    // Refresh the global limit periodically
+    // Subscribe to live concurrency changes so limit updates take effect
+    // immediately (no restart / no 30s poll wait) on the shared semaphore.
+    if (typeof centralCore.on === "function") {
+      centralCore.on("concurrency:changed", this.concurrencyListener);
+    }
+
+    // Refresh the global limit periodically (fallback reconciliation).
     this.refreshGlobalLimit();
     this.globalLimitRefreshInterval = setInterval(() => this.refreshGlobalLimit(), 30000);
     this.globalLimitRefreshInterval.unref?.();
@@ -537,6 +560,9 @@ export class ProjectManager extends EventEmitter<ProjectManagerEvents> {
     await Promise.all(stopPromises);
 
     clearInterval(this.globalLimitRefreshInterval);
+    if (typeof this.centralCore.off === "function") {
+      this.centralCore.off("concurrency:changed", this.concurrencyListener);
+    }
     projectManagerLog.log("All project runtimes stopped");
     this.removeAllListeners();
   }

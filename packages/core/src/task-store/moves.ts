@@ -716,7 +716,9 @@ export async function moveTaskInternalImpl(store: TaskStore, id: string, toColum
         }
 
         // Upsert the task row (update column + all mutated fields).
-        await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+        // FNXC:MultiProjectIsolation 2026-07-10: pass the bound projectId (stamped
+        // on insert, preserved on update) so partitioning survives moves.
+        await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
 
         // U4 (flag-ON) parity with the SQLite branch below: write the
         // crash-safe transitionPending marker in the SAME transaction as the

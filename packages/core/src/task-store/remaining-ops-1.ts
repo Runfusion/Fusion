@@ -174,8 +174,9 @@ export async function atomicWriteTaskJsonWithAuditImpl(store: TaskStore, dir: st
               .where(eq(schema.project.tasks.id, id));
           }
         } else {
+          // FNXC:MultiProjectIsolation 2026-07-10: preserve the bound projectId partition key.
           const context = store.createTaskPersistSerializationContext(task);
-          await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context);
+          await upsertTaskRowInTransaction(tx, task as unknown as Record<string, unknown>, context, layer.projectId);
         }
         if (auditInput) {
           await recordRunAuditEventWithinTransaction(tx, auditInput);

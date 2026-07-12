@@ -370,8 +370,21 @@ export async function createTaskStoreForBackend(
       const fusionDir = join(rootDir, ".fusion");
       const legacySqlitePath = join(fusionDir, "fusion.db");
       if (existsSync(legacySqlitePath) && isValidSqliteDatabaseFile(legacySqlitePath)) {
+        /*
+        FNXC:MultiProjectIsolation 2026-07-11:
+        With per-project task partitioning (project_id on project.tasks), the
+        first-boot emptiness check must be scoped to THIS project — otherwise
+        the second project booting against the shared embedded cluster sees the
+        first project's rows and silently skips migrating its own legacy
+        fusion.db (the exact data-loss trap Step 5.5 exists to close). NULL
+        project_id rows are counted as blocking: they may be this project's
+        pre-isolation data, and migrating on top of them risks id collisions.
+        Without a bound projectId the pre-isolation whole-table check applies.
+        */
         const countRows = (await connections.migration.execute(
-          drizzleSql`SELECT count(*)::int AS count FROM project.tasks`,
+          options.projectId
+            ? drizzleSql`SELECT count(*)::int AS count FROM project.tasks WHERE project_id = ${options.projectId} OR project_id IS NULL`
+            : drizzleSql`SELECT count(*)::int AS count FROM project.tasks`,
         )) as Array<{ count: number }>;
         const pgTaskCount = Number(countRows[0]?.count ?? 0);
         if (pgTaskCount === 0) {
@@ -394,6 +407,24 @@ export async function createTaskStoreForBackend(
             log.log(`startup-factory: empty PostgreSQL database with legacy SQLite data present — auto-migrating ${sources.length} source(s) (SQLite files are kept as backups)`);
             const report = await migrateSqliteToPostgres(connections.migration, sources, { skipBaseline: true });
             const migratedRows = report.tables.reduce((sum, table) => sum + table.insertedRows, 0);
+            /*
+            FNXC:MultiProjectIsolation 2026-07-11:
+            The SQLite migrator predates partitioning and leaves project_id
+            NULL — rows the strict taskProjectScope filter (project_id = $bound)
+            would never surface, so the scheduler/board would show an empty
+            project right after a "successful" migration. Stamp the
+            just-migrated rows with the booting project's id. Safe because the
+            scoped emptiness check above guarantees every NULL-project_id row
+            in tasks/archived_tasks was written by THIS migration pass.
+            */
+            if (options.projectId) {
+              await connections.migration.execute(
+                drizzleSql`UPDATE project.tasks SET project_id = ${options.projectId} WHERE project_id IS NULL`,
+              );
+              await connections.migration.execute(
+                drizzleSql`UPDATE project.archived_tasks SET project_id = ${options.projectId} WHERE project_id IS NULL`,
+              );
+            }
             log.log(`startup-factory: SQLite → PostgreSQL auto-migration complete (${migratedRows} row(s) across ${report.tables.length} table(s))`);
           }
         }
@@ -412,7 +443,13 @@ export async function createTaskStoreForBackend(
   }
 
   // Step 6: construct the AsyncDataLayer.
-  const asyncLayer = createAsyncDataLayer(connections);
+  // FNXC:MultiProjectIsolation 2026-07-10:
+  // Bind the layer to this project so the task-store helpers scope every
+  // read/claim/insert on the shared embedded-PG `project.tasks` table to a
+  // single project. options.projectId is the central-registry ID both the
+  // dashboard (getOrCreateProjectStore) and the engine (InProcessRuntime) pass,
+  // so a task's row is stamped and filtered under one consistent partition key.
+  const asyncLayer = createAsyncDataLayer(connections, { projectId: options.projectId });
 
   // Step 7: construct the TaskStore in backend mode.
   /*

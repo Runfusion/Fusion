@@ -33,6 +33,7 @@ import { and, Column, eq, is, isNull, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import * as schema from "../postgres/schema/index.js";
 import type { AsyncDataLayer, DbTransaction } from "../postgres/data-layer.js";
+import { taskProjectScope } from "../postgres/data-layer.js";
 import {
   TASK_COLUMN_DESCRIPTORS,
   type TaskPersistSerializationContext,
@@ -123,6 +124,7 @@ const TASK_JSONB_COLUMNS: ReadonlySet<string> = new Set([
 export function buildTaskInsertValues(
   taskRecord: Record<string, unknown>,
   context: TaskPersistSerializationContext,
+  projectId?: string,
 ): Record<string, unknown> {
   const values: Record<string, unknown> = {};
   for (const descriptor of TASK_COLUMN_DESCRIPTORS) {
@@ -137,6 +139,15 @@ export function buildTaskInsertValues(
       value = value === "" ? null : JSON.parse(value);
     }
     values[descriptor.column] = value;
+  }
+  // FNXC:MultiProjectIsolation 2026-07-10:
+  // Stamp the per-project partition key so every task row is attributed to the
+  // project whose store wrote it. The task-store descriptors don't include
+  // project_id (it isn't a Task field), so it is set here from the bound layer
+  // projectId. When undefined (single-project store / SQLite path), the column
+  // stays NULL and the scope filter is a no-op — behavior-preserving.
+  if (projectId !== undefined) {
+    values.projectId = projectId;
   }
   return values;
 }
@@ -158,7 +169,7 @@ export async function insertTaskRow(
   taskRecord: Record<string, unknown>,
   context: TaskPersistSerializationContext,
 ): Promise<void> {
-  const values = buildTaskInsertValues(taskRecord, context);
+  const values = buildTaskInsertValues(taskRecord, context, layer.projectId);
   await layer.db.insert(schema.project.tasks).values(values as never);
 }
 
@@ -171,8 +182,9 @@ export async function insertTaskRowInTransaction(
   tx: DbTransaction,
   taskRecord: Record<string, unknown>,
   context: TaskPersistSerializationContext,
+  projectId?: string,
 ): Promise<void> {
-  const values = buildTaskInsertValues(taskRecord, context);
+  const values = buildTaskInsertValues(taskRecord, context, projectId);
   await tx.insert(schema.project.tasks).values(values as never);
 }
 
@@ -260,6 +272,12 @@ export async function readTaskRow(
   if (!options?.includeDeleted) {
     conditions.push(ACTIVE_TASK_FILTER);
   }
+  // FNXC:MultiProjectIsolation 2026-07-10: scope the by-id read to the bound
+  // project so one project's store can never resolve another project's task
+  // (defence-in-depth; also protects the merger, which loads each merge-queue
+  // entry's task via getTask -> readTaskRow and skips when not found).
+  const projectScope = taskProjectScope(layer);
+  if (projectScope) conditions.push(projectScope);
   const rows = await layer.db
     .select()
     .from(schema.project.tasks)
@@ -329,6 +347,15 @@ export async function readLiveTaskRows(
   // applied so soft-deleted tasks never appear on the board (VAL-DATA-005).
   // When includeDeleted is true the filter is dropped entirely, exposing
   // tombstoned rows for admin/forensic surfaces (e.g. GET /api/tasks?includeDeleted=true).
+  // FNXC:MultiProjectIsolation 2026-07-10:
+  // THE load-bearing isolation filter. readLiveTaskRows backs store.listTasks(),
+  // which the engine scheduler/executor uses to decide what to run, plus the
+  // board/kanban/count reads and the /api/tasks list. Scoping it to the bound
+  // project is what stops a per-project engine from ever seeing — and therefore
+  // claiming/executing in the wrong repo — another project's tasks on the shared
+  // embedded-PG cluster. `and(...)` drops undefined operands, so the scope
+  // collapses to just the live filter when the layer is project-agnostic.
+  const projectScope = taskProjectScope(layer);
   /*
   FNXC:TaskStoreReadsPerf 2026-07-11 (PR #1793 review):
   Push the board filters and pagination into SQL. The previous shape read the
@@ -344,8 +371,8 @@ export async function readLiveTaskRows(
       ? sql`${schema.project.tasks.column} IS DISTINCT FROM ${options.excludeColumn}`
       : undefined;
   const liveFilter = options?.includeDeleted
-    ? columnScope
-    : (columnScope ? and(ACTIVE_TASK_FILTER, columnScope) : ACTIVE_TASK_FILTER);
+    ? and(projectScope, columnScope)
+    : and(ACTIVE_TASK_FILTER, projectScope, columnScope);
   const paginate = options?.limit !== undefined || (options?.offset ?? 0) > 0;
   // Mirrors the JS comparator: createdAt ASC, then the numeric suffix of the
   // task id ("FN-12" → 12; no trailing digits → 0). substring() returns NULL
@@ -386,10 +413,11 @@ export async function readLiveTaskRows(
  * board count never includes tombstoned tasks (VAL-DATA-005).
  */
 export async function countLiveTasks(layer: AsyncDataLayer): Promise<number> {
+  // FNXC:MultiProjectIsolation 2026-07-10: scope live counts to the bound project.
   const rows = await layer.db
     .select({ count: sql<number>`count(*)::int` })
     .from(schema.project.tasks)
-    .where(ACTIVE_TASK_FILTER);
+    .where(and(ACTIVE_TASK_FILTER, taskProjectScope(layer)));
   return rows[0]?.count ?? 0;
 }
 
@@ -412,11 +440,14 @@ export async function upsertTaskRowInTransaction(
   tx: DbTransaction,
   taskRecord: Record<string, unknown>,
   context: TaskPersistSerializationContext,
+  projectId?: string,
 ): Promise<void> {
-  const values = buildTaskInsertValues(taskRecord, context);
+  const values = buildTaskInsertValues(taskRecord, context, projectId);
   const updateValues: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(values)) {
-    if (key === "id") continue;
+    // Never rewrite the primary key or the per-project partition key on update
+    // (FNXC:MultiProjectIsolation — project_id is stable for a task's lifetime).
+    if (key === "id" || key === "projectId") continue;
     updateValues[key] = value;
   }
   await tx
